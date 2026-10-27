@@ -51,7 +51,7 @@ pub(super) async fn require_nullable_additions(
 /// Keep staged DDL within the implemented, expression-free column addition path.
 pub(super) async fn require_owned_column_additions(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     package: &str,
     mutations: &[&PlannedDefinitionMutation],
 ) -> anyhow::Result<()> {
@@ -69,9 +69,9 @@ pub(super) async fn require_owned_column_additions(
         let owned: bool = tx
             .query_one(
                 "SELECT EXISTS (SELECT 1 FROM catalog.package_definition_owners \
-             WHERE tenant_id=$1 AND schema_name=$2 AND relation_name=$3 \
+             WHERE env_key=$1 AND schema_name=$2 AND relation_name=$3 \
                AND definition_type='relation' AND owner_package_id=$4)",
-                &[&tenant, &mutation.schema(), &mutation.relation(), &package],
+                &[&env_key, &mutation.schema(), &mutation.relation(), &package],
             )
             .await?
             .try_get(0)?;
@@ -88,7 +88,7 @@ pub(super) async fn require_owned_column_additions(
 /// Read owned ordinary relations and their actual scalar column types.
 pub(super) async fn owned_relations(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     package: &str,
     schema: &str,
 ) -> anyhow::Result<Vec<StageRelation>> {
@@ -100,10 +100,10 @@ pub(super) async fn owned_relations(
          JOIN pg_catalog.pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped \
          JOIN pg_catalog.pg_type t ON t.oid=a.atttypid \
          JOIN pg_catalog.pg_namespace tn ON tn.oid=t.typnamespace \
-         WHERE o.tenant_id=$1 AND o.owner_package_id=$2 AND o.definition_type='relation' \
+         WHERE o.env_key=$1 AND o.owner_package_id=$2 AND o.definition_type='relation' \
            AND n.nspname=$3 AND tn.nspname='pg_catalog' \
          ORDER BY n.nspname,c.relname,a.attnum",
-        &[&tenant, &package, &schema],
+        &[&env_key, &package, &schema],
     ).await.context("read package-owned stage relations")?;
     let mut relations: BTreeMap<String, StageRelation> = BTreeMap::new();
     for row in rows {
@@ -125,13 +125,13 @@ pub(super) async fn owned_relations(
 /// Evaluate named conditions using current ownership, within the migration transaction.
 pub(super) async fn conditions(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     package: &str,
     schema: &str,
     section: &str,
     conditions: &BTreeMap<String, String>,
 ) -> anyhow::Result<()> {
-    let relations = owned_relations(tx, tenant, package, schema).await?;
+    let relations = owned_relations(tx, env_key, package, schema).await?;
     // Validate the complete condition set before executing any package SQL.
     for (name, sql) in conditions {
         validate_stage_condition(

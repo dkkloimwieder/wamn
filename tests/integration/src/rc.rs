@@ -22,7 +22,7 @@ use resources::Resources;
 
 const CLUSTER: &str = "wamn-rc";
 const NAMESPACE: &str = "wamn-rc";
-const TENANT: &str = "00000000-0000-0000-0000-000000000001";
+const ENV_KEY: &str = "00000000-0000-0000-0000-000000000001";
 
 /// Run the RC on its explicitly owned disposable cluster.
 #[derive(Args, Debug)]
@@ -119,7 +119,7 @@ async fn execute(
 ) -> anyhow::Result<()> {
     let scope = Triple::new("rc", "app", "dev");
     let advisory = events::advisory_stream_config(&scope, source.num_replicas);
-    let broker = event_broker::prepare(&resources.work, &scope, TENANT, &source, &advisory, &[])?;
+    let broker = event_broker::prepare(&resources.work, &scope, ENV_KEY, &source, &advisory, &[])?;
     resources::write_private(
         &resources.work.join("kind.yaml"),
         rendering::render_kind_cluster(&fs::read_to_string(

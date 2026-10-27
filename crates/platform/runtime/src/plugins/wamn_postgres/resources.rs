@@ -397,7 +397,7 @@ pub(super) fn record_query_ms(op: &'static str, project: &str, elapsed: std::tim
 
 /// [9.1] A `wamn.postgres` span over one guest DB call, enriched host-side with
 /// the executing component's tenant/project (the same claim maps that inject
-/// `app.tenant`; the guest cannot spoof them). The name and the `db.*` fields are
+/// `app.env_key`; the guest cannot spoof them). The name and the `db.*` fields are
 /// this surface's own, while the `wamn.*` identity block is [`effect_span`]'s, shared with
 /// every other effect surface.
 ///
@@ -423,12 +423,12 @@ pub(super) fn db_span_for_project(
     project: &str,
     op: &'static str,
 ) -> tracing::Span {
-    let tenant = plugin.tenant_for(component_id).unwrap_or_default();
+    let env_key = plugin.env_key_for(component_id).unwrap_or_default();
     let run = plugin.current_run_for(component_id);
     let span = effect_span!(
         "wamn.postgres",
         EffectIdentity {
-            tenant: &tenant,
+            env_key: &env_key,
             project,
             component: component_id,
         },
@@ -454,7 +454,7 @@ async fn begin_transaction(
     component_id: &str,
     project: &str,
 ) -> Result<PgTransaction, PgError> {
-    let tenant = plugin.require_tenant(component_id)?;
+    let env_key = plugin.require_env_key(component_id)?;
     let schema = plugin.schema_for(component_id);
     let runner = plugin.runner_for(component_id);
     let role = plugin.role_for(component_id);
@@ -463,7 +463,7 @@ async fn begin_transaction(
     let application = plugin.application_for(component_id);
     let run = plugin.current_run_for(component_id);
     let (connection, pp, authority) = plugin
-        .checkout_workload(component_id, project, &tenant)
+        .checkout_workload(component_id, project, &env_key)
         .await?;
     let connection = StatementConnectionGuard::new(connection, Arc::clone(&plugin.destroyed));
     plugin
@@ -471,7 +471,7 @@ async fn begin_transaction(
             connection.connection(),
             authority,
             plugin.active_read(component_id),
-            &tenant,
+            &env_key,
             schema.as_deref(),
             runner.as_deref(),
             role.as_deref(),
@@ -522,7 +522,7 @@ pub(super) async fn prepare_statement_transaction(
     component_id: &str,
     project: &str,
 ) -> Result<(PgTransaction, super::claims::transactions::BoundClaims), PgError> {
-    let tenant = plugin.require_tenant(component_id)?;
+    let env_key = plugin.require_env_key(component_id)?;
     let schema = plugin.schema_for(component_id);
     let runner = plugin.runner_for(component_id);
     let role = plugin.role_for(component_id);
@@ -531,7 +531,7 @@ pub(super) async fn prepare_statement_transaction(
     let application = plugin.application_for(component_id);
 
     let (connection, policy, authority) = plugin
-        .checkout_workload(component_id, project, &tenant)
+        .checkout_workload(component_id, project, &env_key)
         .await?;
     let connection = StatementConnectionGuard::new(connection, Arc::clone(&plugin.destroyed));
     let claims = plugin
@@ -539,7 +539,7 @@ pub(super) async fn prepare_statement_transaction(
             connection.connection(),
             authority,
             plugin.active_read(component_id),
-            &tenant,
+            &env_key,
             schema.as_deref(),
             runner.as_deref(),
             role.as_deref(),
@@ -884,7 +884,7 @@ async fn txn_open_cursor<T: 'static>(
     })?;
     trace
         .run(async move {
-            // A cursor over `SELECT set_config('app.tenant', …)` would execute the
+            // A cursor over `SELECT set_config('app.env_key', …)` would execute the
             // override on fetch; guard the same surface as query/execute (wamn-cjv.2).
             if let Err(e) = reject_claim_mutation(&sql) {
                 return Ok(Err(e));
@@ -1849,7 +1849,7 @@ mod tests {
         })
         .expect("an offline postgres plugin opens no connection");
         plugin
-            .set_tenant(COMPONENT_ID, "tenant-a")
+            .set_env_key(COMPONENT_ID, "tenant-a")
             .expect("the tenant claim is valid");
         plugin
     }
@@ -1995,7 +1995,7 @@ mod tests {
             expected_attributes(&[
                 ("db.system", "postgresql"),
                 ("db.operation", "query"),
-                ("wamn.tenant", "tenant-a"),
+                ("wamn.env_key", "tenant-a"),
                 ("wamn.project", "project-a"),
                 ("wamn.component", COMPONENT_ID),
                 ("wamn.package_id", "package_a"),
@@ -2034,7 +2034,7 @@ mod tests {
             expected_attributes(&[
                 ("db.system", "postgresql"),
                 ("db.operation", "query"),
-                ("wamn.tenant", "tenant-a"),
+                ("wamn.env_key", "tenant-a"),
                 ("wamn.project", "project-a"),
                 ("wamn.component", COMPONENT_ID),
                 ("wamn.package_id", ""),

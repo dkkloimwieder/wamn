@@ -203,7 +203,7 @@ impl WorkloadRoleFamily {
     /// Exact scope class used to derive generation identities.
     pub const fn scope_kind(self) -> WorkloadRoleScopeKind {
         match self {
-            Self::App | Self::Retention | Self::AuditRetention => WorkloadRoleScopeKind::Tenant,
+            Self::App | Self::Retention | Self::AuditRetention => WorkloadRoleScopeKind::EnvKey,
             Self::ManagementAdmitter
             | Self::ServiceReader
             | Self::ExecutorPlatform
@@ -261,7 +261,7 @@ impl WorkloadRoleFamily {
     /// case: an RLS arm with no table grant behind it admits nothing, while the
     /// edge prevents a future first grant from silently reading zero rows.
     ///
-    /// `Retention` is `Tenant`-scoped and is a member anyway. Its login names
+    /// `Retention` is `EnvKey`-scoped and is a member anyway. Its login names
     /// carry a tenant DIGEST, but `current_tenant_key` recovers a key only from
     /// the guest generation pattern, and widening that regex is refused
     /// (`wamn-0h0g.22.17` owner ruling). The shared arm therefore makes it
@@ -325,7 +325,7 @@ impl WorkloadRoleFamily {
         match self {
             // The guest credential IS the tenant authority, so its Secret
             // carries the tenant key that keys every governed predicate.
-            Self::App => WorkloadSecretBodyKind::TenantUrl,
+            Self::App => WorkloadSecretBodyKind::EnvKeyUrl,
             // The credential and trusted target coordinates publish atomically.
             Self::SessionRoleReader => WorkloadSecretBodyKind::SessionTarget,
             _ => WorkloadSecretBodyKind::Url,
@@ -396,8 +396,8 @@ impl From<AuthorityClass> for WorkloadRoleFamily {
 pub enum WorkloadSecretBodyKind {
     /// One `url` key.
     Url,
-    /// One `url` key, plus the tenant key label and tenant annotation.
-    TenantUrl,
+    /// One `url` key, plus the tenant key label and env_key annotation.
+    EnvKeyUrl,
     /// One validated environment target and credential in `target.json`.
     SessionTarget,
 }
@@ -405,7 +405,7 @@ pub enum WorkloadSecretBodyKind {
 /// The four admitted provisioning scope shapes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkloadRoleScopeKind {
-    Tenant,
+    EnvKey,
     ProjectEnvironment,
     Control,
     /// One org on the control database.
@@ -415,7 +415,7 @@ pub enum WorkloadRoleScopeKind {
 impl WorkloadRoleScopeKind {
     const fn as_str(self) -> &'static str {
         match self {
-            Self::Tenant => "tenant",
+            Self::EnvKey => "env_key",
             Self::ProjectEnvironment => "project-environment",
             Self::Control => "control",
             Self::Org => "org",
@@ -426,8 +426,8 @@ impl WorkloadRoleScopeKind {
 /// Exact identity inputs for one workload generation pair.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkloadRoleScope<'a> {
-    Tenant {
-        tenant: &'a str,
+    EnvKey {
+        env_key: &'a str,
         database: &'a str,
     },
     ProjectEnvironment {
@@ -452,7 +452,7 @@ impl<'a> WorkloadRoleScope<'a> {
     /// Database receiving this generation's sole direct CONNECT grant.
     pub const fn database(self) -> &'a str {
         match self {
-            Self::Tenant { database, .. }
+            Self::EnvKey { database, .. }
             | Self::ProjectEnvironment { database, .. }
             | Self::Control { database, .. }
             | Self::Org { database, .. } => database,
@@ -461,7 +461,7 @@ impl<'a> WorkloadRoleScope<'a> {
 
     const fn scope_type(self) -> WorkloadRoleScopeKind {
         match self {
-            Self::Tenant { .. } => WorkloadRoleScopeKind::Tenant,
+            Self::EnvKey { .. } => WorkloadRoleScopeKind::EnvKey,
             Self::ProjectEnvironment { .. } => WorkloadRoleScopeKind::ProjectEnvironment,
             Self::Control { .. } => WorkloadRoleScopeKind::Control,
             Self::Org { .. } => WorkloadRoleScopeKind::Org,
@@ -510,17 +510,17 @@ pub fn workload_role_scope_hash(
     // a resolved guest credential belongs to the tenant it is about to serve.
     // Delegation, not duplication — there is still ONE definition.
     if family == WorkloadRoleFamily::App {
-        let WorkloadRoleScope::Tenant { tenant, database } = scope else {
+        let WorkloadRoleScope::EnvKey { env_key, database } = scope else {
             unreachable!("scope kind was checked above")
         };
-        return Ok(app_scope_hash(tenant, database));
+        return Ok(app_scope_hash(env_key, database));
     }
 
     let mut preimage = Vec::new();
     frame(&mut preimage, family.scope_domain());
     match scope {
-        WorkloadRoleScope::Tenant { tenant, database } => {
-            push_field(&mut preimage, "tenant", tenant);
+        WorkloadRoleScope::EnvKey { env_key, database } => {
+            push_field(&mut preimage, "env_key", env_key);
             push_field(&mut preimage, "database", database);
         }
         WorkloadRoleScope::ProjectEnvironment {
@@ -708,15 +708,15 @@ mod tests {
                 WorkloadRoleScopeKind::Control,
                 WorkloadRoleScopeKind::ProjectEnvironment,
                 WorkloadRoleScopeKind::ProjectEnvironment,
-                WorkloadRoleScopeKind::Tenant,
-                WorkloadRoleScopeKind::Tenant,
+                WorkloadRoleScopeKind::EnvKey,
+                WorkloadRoleScopeKind::EnvKey,
                 WorkloadRoleScopeKind::ProjectEnvironment,
                 WorkloadRoleScopeKind::ProjectEnvironment,
                 WorkloadRoleScopeKind::ProjectEnvironment,
                 WorkloadRoleScopeKind::Control,
                 WorkloadRoleScopeKind::Control,
                 WorkloadRoleScopeKind::ProjectEnvironment,
-                WorkloadRoleScopeKind::Tenant,
+                WorkloadRoleScopeKind::EnvKey,
                 WorkloadRoleScopeKind::ProjectEnvironment,
                 WorkloadRoleScopeKind::Org,
                 WorkloadRoleScopeKind::Control,
@@ -772,7 +772,7 @@ mod tests {
             CredentialGeneration::A,
         )
         .expect_err("a tenant family accepted a control scope");
-        assert_eq!(error.expected, WorkloadRoleScopeKind::Tenant);
+        assert_eq!(error.expected, WorkloadRoleScopeKind::EnvKey);
         assert_eq!(error.actual, WorkloadRoleScopeKind::Control);
     }
 
@@ -808,15 +808,15 @@ mod tests {
             ),
             (
                 WorkloadRoleFamily::App,
-                WorkloadRoleScope::Tenant {
-                    tenant: "t",
+                WorkloadRoleScope::EnvKey {
+                    env_key: "t",
                     database: "db",
                 },
             ),
             (
                 WorkloadRoleFamily::Retention,
-                WorkloadRoleScope::Tenant {
-                    tenant: "t",
+                WorkloadRoleScope::EnvKey {
+                    env_key: "t",
                     database: "db",
                 },
             ),
@@ -885,8 +885,8 @@ mod tests {
             ),
             (
                 WorkloadRoleFamily::AuditRetention,
-                WorkloadRoleScope::Tenant {
-                    tenant: "t",
+                WorkloadRoleScope::EnvKey {
+                    env_key: "t",
                     database: "db",
                 },
             ),
@@ -920,7 +920,7 @@ mod tests {
     /// THE TRUNCATION HAZARD, CLOSED BY CONSTRUCTION rather than by a runtime
     /// refusal (`wamn-0h0g.22.6.4`).
     ///
-    /// `valid_tenant` admits 64 bytes and PostgreSQL caps identifiers at 63,
+    /// `valid_env_key` admits 64 bytes and PostgreSQL caps identifiers at 63,
     /// truncating with a NOTICE instead of refusing — so a name carrying the
     /// tenant verbatim would collapse two long tenants onto ONE role, which is
     /// a cross-tenant breach wearing a naming bug. The scope digest is
@@ -928,14 +928,14 @@ mod tests {
     /// here against the longest tenant the validator admits, so the property is
     /// measured rather than assumed.
     #[test]
-    fn the_longest_admitted_tenant_still_mints_a_bounded_role() {
+    fn the_longest_admitted_env_key_still_mints_a_bounded_role() {
         let longest = "t".repeat(64);
-        let short = WorkloadRoleScope::Tenant {
-            tenant: "t",
+        let short = WorkloadRoleScope::EnvKey {
+            env_key: "t",
             database: "wamn-db-acme--billing--dev",
         };
-        let long = WorkloadRoleScope::Tenant {
-            tenant: &longest,
+        let long = WorkloadRoleScope::EnvKey {
+            env_key: &longest,
             database: "wamn-db-acme--billing--dev",
         };
         for family in [
@@ -1179,13 +1179,13 @@ mod tests {
         assert_eq!(family.acl_role(), "wamn_audit_retention");
         assert_eq!(family.label(), "audit-retention");
         assert_eq!(family.scope_domain(), b"wamn.audit-retention.scope.v0.1");
-        assert_eq!(family.scope_kind(), WorkloadRoleScopeKind::Tenant);
+        assert_eq!(family.scope_kind(), WorkloadRoleScopeKind::EnvKey);
         assert_eq!(family.generation_prefix(), family.acl_role());
         assert!(!family.is_platform_grain());
         let derived = workload_generation_role(
             family,
-            WorkloadRoleScope::Tenant {
-                tenant: "acme-prod",
+            WorkloadRoleScope::EnvKey {
+                env_key: "acme-prod",
                 database: "wamn-db-acme--billing--dev--k3m9x2p7",
             },
             CredentialGeneration::A,
@@ -1193,7 +1193,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             derived,
-            "wamn_audit_retention_bd22eb963b03bd528015fd2fba92768578166321_a"
+            "wamn_audit_retention_83510e5a897ed9456257d115dbb600c7b2a45a39_a"
         );
         assert_eq!(derived.len(), 63);
     }

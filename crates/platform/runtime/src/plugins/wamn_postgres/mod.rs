@@ -8,13 +8,13 @@
 //!   owned by the plugin; guests get resource handles.
 //! - Claims are derived from the executing component's identity
 //!   (`Ctx::component_id` → tenant, registered at workload bind time from
-//!   `localResources.config["wamn.tenant"]` or via [`WamnPostgres::set_tenant`])
+//!   `localResources.config["wamn.env_key"]` or via [`WamnPostgres::set_env_key`])
 //!   and injected by one fully-bound `set_config(…, is_local => true)` statement
 //!   — the `SET LOCAL` equivalent — inside the plugin-managed transaction; every
 //!   claim value travels as a bind parameter, so no interpolation path exists
 //!   (R2/R16). Guest SQL that tries to set or reset a session variable or
 //!   role in-band (`SET` / `RESET` / `set_config`, e.g. a later
-//!   `SET app.tenant = 'other'` that would override the BEGIN-time claim) is
+//!   `SET app.env_key = 'other'` that would override the BEGIN-time claim) is
 //!   rejected on the raw query/execute/cursor surface (see
 //!   `reject_claim_mutation`, wamn-cjv.2), closing the reachable
 //!   transaction-API override. A verified statement (`statements.run`,
@@ -22,7 +22,7 @@
 //!   also refuses these and the other unsafe constructs on its parse tree. The TENANT axis no longer rests on that
 //!   blocklist: the `wamn-0h0g.22.6` lineage re-keyed guest tenant authority
 //!   onto `current_user` plus per-tenant guest LOGIN generations — a
-//!   non-settable identity — so a session that rewrites `app.tenant` no longer
+//!   non-settable identity — so a session that rewrites `app.env_key` no longer
 //!   rewrites its tenant. The matcher is still only a blocklist: a `DO` block
 //!   whose `EXECUTE` string carries `SET app.role` walks past it, and that
 //!   escape is dormant only while no reachable guest API bears an RLS policy
@@ -236,7 +236,7 @@ pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::
 /// Per-workload config key carrying the tenant identity (plumbed end-to-end
 /// from the WorkloadDeployment CRD's `localResources.config`, i.e. set by the
 /// platform, not the guest).
-pub const TENANT_CONFIG_KEY: &str = "wamn.tenant";
+pub const ENV_KEY_CONFIG_KEY: &str = "wamn.env_key";
 
 /// Per-workload config key carrying the `search_path` schema. Optional: absent
 /// leaves the server's default search_path in place. Set by the platform (not
@@ -321,14 +321,18 @@ impl WamnPostgres {
                 "wamn:postgres workload authority registered"
             );
         }
-        if let Some(tenant) = config.get(TENANT_CONFIG_KEY) {
-            let tenant = tenant.clone();
-            self.set_tenant(scope, &tenant)?;
-            tracing::debug!(component = scope, tenant, "wamn:postgres tenant registered");
+        if let Some(env_key) = config.get(ENV_KEY_CONFIG_KEY) {
+            let env_key = env_key.clone();
+            self.set_env_key(scope, &env_key)?;
+            tracing::debug!(
+                component = scope,
+                env_key,
+                "wamn:postgres tenant registered"
+            );
         } else {
             tracing::warn!(
                 component = scope,
-                "component imports wamn:postgres but sets no {TENANT_CONFIG_KEY}; calls will be refused"
+                "component imports wamn:postgres but sets no {ENV_KEY_CONFIG_KEY}; calls will be refused"
             );
         }
         if let Some(project) = config.get(PROJECT_CONFIG_KEY) {

@@ -14,7 +14,9 @@ use tokio_postgres::types::ToSql;
 use tracing::Instrument as _;
 
 use wamn_catalog::ManifestDigest;
-use wamn_control_registry::identifiers::{valid_project, valid_runner, valid_schema, valid_tenant};
+use wamn_control_registry::identifiers::{
+    valid_env_key, valid_project, valid_runner, valid_schema,
+};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_event_wire::Causation;
 use wamn_run_state::AuthorityClass;
@@ -216,7 +218,7 @@ pub struct WamnPostgres {
     /// distinct cache makes cross-lifecycle session reuse unrepresentable.
     platform_pools: std::sync::RwLock<HashMap<PoolKey, Arc<ProjectPool>>>,
     /// component id → tenant claim.
-    tenants: std::sync::RwLock<HashMap<String, String>>,
+    env_keys: std::sync::RwLock<HashMap<String, String>>,
     /// component id → project id (which database). Absent ⇒ the default project.
     projects: std::sync::RwLock<HashMap<String, String>>,
     /// component id → `search_path` schema. Empty (the default) leaves the
@@ -360,9 +362,9 @@ impl ReleaseIdentity {
 /// an acquisition that declares nothing must get.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SessionClaims {
-    /// `app.tenant` — the RLS claim. Required: a session with no tenant is
-    /// refused by [`WamnPostgres::require_tenant`] rather than run unscoped.
-    pub tenant: String,
+    /// `app.env_key` — the RLS claim. Required: a session with no tenant is
+    /// refused by [`WamnPostgres::require_env_key`] rather than run unscoped.
+    pub env_key: String,
     /// Which project database this session resolves against. `None` ⇒ the
     /// default project.
     pub project: Option<String>,
@@ -400,7 +402,7 @@ pub struct SessionClaims {
 /// an operator can find the missing row. It carries no connection material.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnprovisionedPrincipal {
-    tenant: String,
+    env_key: String,
     project: String,
     principal_id: String,
 }
@@ -408,8 +410,8 @@ pub struct UnprovisionedPrincipal {
 impl UnprovisionedPrincipal {
     /// The tenant whose `platform."user"` table was read.
     #[must_use]
-    pub fn tenant(&self) -> &str {
-        &self.tenant
+    pub fn env_key(&self) -> &str {
+        &self.env_key
     }
 
     /// The project database the read used.
@@ -430,7 +432,7 @@ impl std::fmt::Display for UnprovisionedPrincipal {
         write!(
             formatter,
             "principal {} has no platform.\"user\" row in tenant {} of project {}",
-            self.principal_id, self.tenant, self.project
+            self.principal_id, self.env_key, self.project
         )
     }
 }
@@ -618,20 +620,20 @@ pub struct ConnectionEffectSnapshot {
 /// derives its hash, and the connection owner compares it with the run.
 static CONNECTION_EFFECT_SNAPSHOT_SQL: &str = "\
 WITH release_manifest AS MATERIALIZED ( \
-    SELECT release.tenant_id, \
+    SELECT release.env_key, \
            convert_from(release.canonical_bytes, 'UTF8')::jsonb AS manifest \
       FROM catalog.releases AS release \
-     WHERE release.tenant_id = $1 \
+     WHERE release.env_key = $1 \
        AND release.manifest_digest = $3 \
 ), release_member AS MATERIALIZED ( \
-    SELECT release_manifest.tenant_id, \
+    SELECT release_manifest.env_key, \
            package.value ->> 'package-id' AS package_id, \
            package.value ->> 'package-version' AS package_version \
       FROM release_manifest \
      CROSS JOIN LATERAL jsonb_array_elements(release_manifest.manifest #> '{release,packages}') \
            AS package(value) \
 ), release_component AS MATERIALIZED ( \
-    SELECT release_manifest.tenant_id, \
+    SELECT release_manifest.env_key, \
            member.value ->> 'package-id' AS package_id, \
            member.value -> 'descriptor' ->> 'component' AS component, \
            member.value -> 'descriptor' ->> 'interface-version' AS interface_version, \
@@ -641,12 +643,12 @@ WITH release_manifest AS MATERIALIZED ( \
      CROSS JOIN LATERAL jsonb_array_elements(release_manifest.manifest -> 'components') \
            AS member(value) \
 ), member AS MATERIALIZED ( \
-    SELECT tenant_id, $12::text AS package_id FROM release_manifest \
+    SELECT env_key, $12::text AS package_id FROM release_manifest \
      WHERE $5::text IS NOT NULL OR EXISTS (SELECT 1 FROM release_member WHERE package_id = $12) \
 ), selected_wiring AS MATERIALIZED ( \
     SELECT workflow.graph_json \
       FROM catalog.workflows AS workflow \
-     WHERE workflow.tenant_id = $1 AND workflow.environment = $4 \
+     WHERE workflow.env_key = $1 AND workflow.environment = $4 \
        AND workflow.application = $12 AND workflow.workflow_id = $5 AND workflow.version = $6 \
 ) \
 SELECT wiring.graph_json::text, component.component, component.interface_version, \
@@ -676,30 +678,30 @@ SELECT wiring.graph_json::text, component.component, component.interface_version
   FROM member \
   LEFT JOIN selected_wiring AS wiring ON true \
   LEFT JOIN release_member AS origin_member \
-    ON origin_member.tenant_id = member.tenant_id \
+    ON origin_member.env_key = member.env_key \
    AND origin_member.package_id = $13 \
   LEFT JOIN release_component AS origin_component \
-    ON origin_component.tenant_id = origin_member.tenant_id \
+    ON origin_component.env_key = origin_member.env_key \
    AND origin_component.package_id = origin_member.package_id \
    AND origin_component.component_digest = $14 \
    AND origin_component.component = $15 \
    AND origin_component.interface_version = $16 \
   LEFT JOIN release_member AS executing_member \
-    ON executing_member.tenant_id = member.tenant_id \
+    ON executing_member.env_key = member.env_key \
    AND executing_member.package_id = $2 \
   LEFT JOIN release_component AS component \
-    ON component.tenant_id = executing_member.tenant_id \
+    ON component.env_key = executing_member.env_key \
    AND component.package_id = executing_member.package_id \
    AND component.component_digest = $8 \
   LEFT JOIN LATERAL ( \
       SELECT wiring.graph_json #> ARRAY['nodes', $7] AS value \
   ) AS node ON true \
   LEFT JOIN catalog.connection_requirements AS requirement \
-    ON requirement.tenant_id = $1 \
+    ON requirement.env_key = $1 \
    AND requirement.component_digest = $8 \
    AND requirement.store_alias = $9 \
   LEFT JOIN catalog.connection_bindings AS binding \
-    ON binding.tenant_id = $1 \
+    ON binding.env_key = $1 \
    AND binding.manifest_digest = $3 \
    AND binding.component_digest = $8 \
    AND binding.store_alias = $9 \
@@ -707,11 +709,11 @@ SELECT wiring.graph_json::text, component.component, component.interface_version
    AND binding.package_id = $2 \
    AND ($10::text IS NULL OR binding.instance_id = $10) \
   LEFT JOIN catalog.connection_instances AS instance \
-    ON instance.tenant_id = binding.tenant_id \
+    ON instance.env_key = binding.env_key \
    AND instance.environment = binding.environment \
    AND instance.instance_id = binding.instance_id \
   LEFT JOIN catalog.connection_generations AS generation \
-    ON generation.tenant_id = instance.tenant_id \
+    ON generation.env_key = instance.env_key \
    AND generation.environment = instance.environment \
    AND generation.instance_id = instance.instance_id \
    AND generation.generation = COALESCE($11::bigint, instance.active_generation) \
@@ -737,7 +739,7 @@ SELECT wiring.graph_json::text, component.component, component.interface_version
 /// `current_user`, `.22.6.4` minted per-tenant guest LOGIN generations, and
 /// `.22.6.7` cut the guest SQL path onto per-tenant connections.
 /// `wamn_authority.current_tenant_key()` reads the CONNECTED ROLE, which no
-/// session can rewrite, so a guest that succeeds in setting `app.tenant`
+/// session can rewrite, so a guest that succeeds in setting `app.env_key`
 /// changes nothing. Measured on PostgreSQL 18 as a guest generation login
 /// asserted NOT (`rolsuper` OR `rolbypassrls`): plain `SET`, `set_config`, `SET
 /// LOCAL` and `DO` + `EXECUTE` all SUCCEEDED and all left the visible row set
@@ -935,7 +937,7 @@ fn statement_forges_causation(sql: &str) -> bool {
 /// the no-hyphen `valid_schema` rule still matters where a schema name is quoted
 /// into DDL elsewhere).
 fn validate_claims(
-    tenant: &str,
+    env_key: &str,
     schema: Option<&str>,
     runner: Option<&str>,
     role: Option<&str>,
@@ -943,10 +945,10 @@ fn validate_claims(
     operation: Option<&str>,
     application: Option<&str>,
 ) -> Result<(), PgError> {
-    if !valid_tenant(tenant) {
+    if !valid_env_key(env_key) {
         return Err(PgError::QueryError((
             "WAMN0".to_string(),
-            "invalid tenant identity".to_string(),
+            "invalid env_key identity".to_string(),
         )));
     }
     if let Some(schema) = schema
@@ -1117,7 +1119,7 @@ impl WamnPostgres {
             provider,
             guest_pools: std::sync::RwLock::new(HashMap::new()),
             platform_pools: std::sync::RwLock::new(HashMap::new()),
-            tenants: std::sync::RwLock::new(HashMap::new()),
+            env_keys: std::sync::RwLock::new(HashMap::new()),
             projects: std::sync::RwLock::new(HashMap::new()),
             schemas: std::sync::RwLock::new(HashMap::new()),
             runners: std::sync::RwLock::new(HashMap::new()),
@@ -1209,22 +1211,22 @@ impl WamnPostgres {
 
     /// Register the tenant claim for a component id. The bench harness calls
     /// this directly; the host path feeds it from workload bind.
-    pub fn set_tenant(&self, component_id: &str, tenant: &str) -> anyhow::Result<()> {
+    pub fn set_env_key(&self, component_id: &str, env_key: &str) -> anyhow::Result<()> {
         anyhow::ensure!(
-            valid_tenant(tenant),
-            "invalid tenant {tenant:?}: 1-64 chars of [A-Za-z0-9_-] required"
+            valid_env_key(env_key),
+            "invalid env_key {env_key:?}: 1-64 chars of [A-Za-z0-9_-] required"
         );
-        self.tenants
+        self.env_keys
             .write()
-            .expect("tenants lock poisoned")
-            .insert(component_id.to_string(), tenant.to_string());
+            .expect("env_keys lock poisoned")
+            .insert(component_id.to_string(), env_key.to_string());
         Ok(())
     }
 
-    pub(super) fn tenant_for(&self, component_id: &str) -> Option<String> {
-        self.tenants
+    pub(super) fn env_key_for(&self, component_id: &str) -> Option<String> {
+        self.env_keys
             .read()
-            .expect("tenants lock poisoned")
+            .expect("env_keys lock poisoned")
             .get(component_id)
             .cloned()
     }
@@ -1473,7 +1475,7 @@ impl WamnPostgres {
     /// component is driving (l5i9.12.2). While set, each write transaction the plugin
     /// opens for the component carries a `wamn.causation` message. Host-injected
     /// like the other claim registries — callers set it directly, exactly like
-    /// [`set_tenant`](Self::set_tenant) / [`set_runner`](Self::set_runner).
+    /// [`set_env_key`](Self::set_env_key) / [`set_runner`](Self::set_runner).
     pub fn set_current_run(&self, component_id: &str, ctx: Option<Causation>) {
         let mut w = self.current_run.write().expect("current_run lock poisoned");
         match ctx {
@@ -1608,7 +1610,7 @@ impl WamnPostgres {
         // actor-required.
         if let Some(user_id) = claims.user_id.as_deref() {
             let project = claims.project.as_deref().unwrap_or(DEFAULT_PROJECT);
-            self.require_provisioned_principal(&claims.tenant, project, user_id)
+            self.require_provisioned_principal(&claims.env_key, project, user_id)
                 .await?;
         }
         Ok(())
@@ -1637,7 +1639,7 @@ impl WamnPostgres {
         // An acquisition starts with no statement authority. The router
         // activates the selected operation only after claims bind.
         self.revoke_statement_operation(component_id);
-        self.set_tenant(component_id, &claims.tenant)?;
+        self.set_env_key(component_id, &claims.env_key)?;
         match claims.project.as_deref() {
             Some(project) => self.set_project(component_id, project)?,
             None => drop(
@@ -1736,18 +1738,18 @@ impl WamnPostgres {
     /// fail closed either way.
     async fn require_provisioned_principal(
         &self,
-        tenant: &str,
+        env_key: &str,
         project: &str,
         principal_id: &str,
     ) -> anyhow::Result<()> {
-        let Err(ticket) = self.auth.provisioned(tenant, principal_id) else {
+        let Err(ticket) = self.auth.provisioned(env_key, principal_id) else {
             return Ok(());
         };
         let (connection, _policy) = self
-            .checkout_guest(project, tenant)
+            .checkout_guest(project, env_key)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))
-            .context("check out the tenant connection that reads platform.\"user\"")?;
+            .context("check out the env_key connection that reads platform.\"user\"")?;
         let statement = match connection.prepare_cached(PROVISIONED_PRINCIPAL_SQL).await {
             Ok(statement) => statement,
             Err(error) => {
@@ -1762,20 +1764,20 @@ impl WamnPostgres {
             .context("read the executing principal's platform.\"user\" row")?;
         if rows.is_empty() {
             tracing::warn!(
-                tenant,
+                env_key,
                 project,
                 principal_id,
                 "wamn:postgres: refusing a bind for a principal with no platform.\"user\" row"
             );
             return Err(UnprovisionedPrincipal {
-                tenant: tenant.to_owned(),
+                env_key: env_key.to_owned(),
                 project: project.to_owned(),
                 principal_id: principal_id.to_owned(),
             }
             .into());
         }
         self.auth
-            .keep_provisioned(tenant, principal_id, ticket)
+            .keep_provisioned(env_key, principal_id, ticket)
             .await;
         Ok(())
     }
@@ -1783,7 +1785,7 @@ impl WamnPostgres {
     /// Read back the claim set one component id currently resolves to.
     ///
     /// `None` is the deny floor: no tenant is bound, so
-    /// [`require_tenant`](Self::require_tenant) refuses every call made under
+    /// [`require_env_key`](Self::require_env_key) refuses every call made under
     /// this id. That is what an idle, never-acquired execution instance must
     /// report, and it is the read half of the checkout-identity seam — the pair
     /// this and [`bind_session_claims`](Self::bind_session_claims) form is what
@@ -1791,7 +1793,7 @@ impl WamnPostgres {
     /// identity.
     pub fn session_claims(&self, component_id: &str) -> Option<SessionClaims> {
         Some(SessionClaims {
-            tenant: self.tenant_for(component_id)?,
+            env_key: self.env_key_for(component_id)?,
             project: self
                 .projects
                 .read()
@@ -1814,13 +1816,13 @@ impl WamnPostgres {
     /// Called when a checkout ends, on every path — repooled, retired, or
     /// dropped. An idle instance that still resolved a tenant would be a warm
     /// store carrying identity, which is the whole defect this seam closes; and
-    /// a `require_tenant` failure is how an unbound instance fails closed
+    /// a `require_env_key` failure is how an unbound instance fails closed
     /// instead of serving someone else's rows.
     pub fn revoke_session_claims(&self, component_id: &str) {
         self.revoke_statement_operation(component_id);
-        self.tenants
+        self.env_keys
             .write()
-            .expect("tenants lock poisoned")
+            .expect("env_keys lock poisoned")
             .remove(component_id);
         self.projects
             .write()
@@ -1877,9 +1879,9 @@ impl WamnPostgres {
     /// an unknown workload id is a no-op.
     pub(super) fn clear_component_claims(&self, workload_id: &str) {
         let retain = |c: &String| !c.starts_with(workload_id);
-        self.tenants
+        self.env_keys
             .write()
-            .expect("tenants lock poisoned")
+            .expect("env_keys lock poisoned")
             .retain(|c, _| retain(c));
         self.projects
             .write()
@@ -1947,7 +1949,7 @@ impl WamnPostgres {
     ///
     /// # Why the caller's tenant is checked against the registry (wamn-0h0g.17.7)
     ///
-    /// `tenant` arrives from `ConnectionHttp`, which froze it into a `Box<str>`
+    /// `env_key` arrives from `ConnectionHttp`, which froze it into a `Box<str>`
     /// when its store was constructed
     /// (`crates/platform/runtime/src/plugins/connection_http.rs:77`). That value
     /// is NOT rebound at checkout — the store's `Ctx.plugins` map is private to
@@ -1967,24 +1969,24 @@ impl WamnPostgres {
     /// registry is only meaningful when the registry HAS an entry, so a guard
     /// that skipped the absent case would be a guard whose strength depended on
     /// the caller having been bound. It is the same deny floor
-    /// [`require_tenant`](Self::require_tenant) applies to every other read:
+    /// [`require_env_key`](Self::require_env_key) applies to every other read:
     /// nothing resolves under an unbound claim scope.
     pub async fn connection_effect_snapshot(
         &self,
         component_id: &str,
         project: &str,
-        tenant: &str,
+        env_key: &str,
         lookup: &ConnectionEffectLookup<'_>,
     ) -> anyhow::Result<Option<ConnectionEffectSnapshot>> {
-        let registered = self.tenant_for(component_id).ok_or_else(|| {
+        let registered = self.env_key_for(component_id).ok_or_else(|| {
             anyhow::anyhow!(
-                "HTTP effect authorization for component {component_id:?} has no bound tenant \
+                "HTTP effect authorization for component {component_id:?} has no bound env_key \
                  claim; refusing to resolve under an unbound identity"
             )
         })?;
         anyhow::ensure!(
-            registered == tenant,
-            "HTTP effect authorization tenant {tenant:?} disagrees with the tenant bound \
+            registered == env_key,
+            "HTTP effect authorization env_key {env_key:?} disagrees with the env_key bound \
              to component {component_id:?}; refusing to resolve under a stale identity"
         );
         let schema = self.schema_for(component_id);
@@ -1999,7 +2001,7 @@ impl WamnPostgres {
                 &conn,
                 AuthorityClass::CallableHttp,
                 false,
-                tenant,
+                env_key,
                 schema.as_deref(),
                 None,
                 None,
@@ -2016,7 +2018,7 @@ impl WamnPostgres {
         }
         let result: anyhow::Result<Option<ConnectionEffectSnapshot>> = async {
             if let Some(local) = &self.local_application {
-                return local.effect_snapshot(&conn, tenant, lookup).await;
+                return local.effect_snapshot(&conn, env_key, lookup).await;
             }
             let candidate_instance = lookup
                 .candidate_binding
@@ -2026,7 +2028,7 @@ impl WamnPostgres {
             let wiring_version = lookup.entry.wiring.map(|wiring| wiring.wiring_version);
             let node_id = lookup.entry.wiring.map(|wiring| wiring.node_id);
             let params: [&(dyn ToSql + Sync); 18] = [
-                &tenant,
+                &env_key,
                 &lookup.package_id,
                 &lookup.manifest_digest,
                 &lookup.environment,
@@ -2122,11 +2124,11 @@ impl WamnPostgres {
     pub async fn session_operation_permissions(
         &self,
         project: &str,
-        tenant: &str,
+        env_key: &str,
         roles: &[String],
         principal: &wamn_platform_identity::PrincipalId,
     ) -> anyhow::Result<HeldOperationGrants> {
-        let grants = self.principal_grants(project, tenant, principal).await?;
+        let grants = self.principal_grants(project, env_key, principal).await?;
         session_grants(&grants, roles)
     }
 
@@ -2158,10 +2160,12 @@ impl WamnPostgres {
     pub async fn user_operation_permissions(
         &self,
         project: &str,
-        tenant: &str,
+        env_key: &str,
         principal_id: &wamn_platform_identity::PrincipalId,
     ) -> anyhow::Result<HeldOperationGrants> {
-        let grants = self.principal_grants(project, tenant, principal_id).await?;
+        let grants = self
+            .principal_grants(project, env_key, principal_id)
+            .await?;
         Ok(held_grants(&grants, None))
     }
 
@@ -2172,15 +2176,18 @@ impl WamnPostgres {
     pub async fn principal_grants(
         &self,
         project: &str,
-        tenant: &str,
+        env_key: &str,
         principal: &wamn_platform_identity::PrincipalId,
     ) -> anyhow::Result<crate::auth_cache::PrincipalGrants> {
         anyhow::ensure!(
             valid_project(project),
             "invalid operation-permission project"
         );
-        anyhow::ensure!(valid_tenant(tenant), "invalid operation-permission tenant");
-        let ticket = match self.auth.grants(tenant, principal.as_str()) {
+        anyhow::ensure!(
+            valid_env_key(env_key),
+            "invalid operation-permission tenant"
+        );
+        let ticket = match self.auth.grants(env_key, principal.as_str()) {
             Ok(grants) => return Ok(grants),
             Err(ticket) => ticket,
         };
@@ -2202,7 +2209,7 @@ impl WamnPostgres {
             .context("read the principal grants")?;
         let grants = principal_grants_from_rows(&rows).context("decode the principal grants")?;
         self.auth
-            .keep_grants(tenant, principal.as_str(), ticket, grants.clone())
+            .keep_grants(env_key, principal.as_str(), ticket, grants.clone())
             .await;
         Ok(grants)
     }
@@ -2239,12 +2246,12 @@ impl WamnPostgres {
     pub async fn held_operation_grants(
         &self,
         project: &str,
-        tenant: &str,
+        env_key: &str,
         principal_id: &wamn_platform_identity::PrincipalId,
         operation: &str,
     ) -> anyhow::Result<HeldOperationGrants> {
         let rows = self
-            .administration_transaction(project, tenant, principal_id, operation, async |client| {
+            .administration_transaction(project, env_key, principal_id, operation, async |client| {
                 client
                     .query(USER_OPERATION_PERMISSIONS_SQL, &[&principal_id.as_str()])
                     .await
@@ -2261,20 +2268,20 @@ impl WamnPostgres {
     /// `app.operation`, so every row it writes is stamped with them. It commits
     /// when `work` returns `Ok` and rolls back when `work` returns `Err`, whose
     /// value is the inner result. The outer error is a failure of the
-    /// transaction itself. Whether the environment of `tenant` is inactive,
+    /// transaction itself. Whether the environment of `env_key` is inactive,
     /// from its row of `platform.environment`, read as `wamn_app`
     /// (docs/architecture/execution.md#routing-and-availability). No row means
     /// active. The host keeps the answer in its [auth
     /// memory](crate::auth_cache).
-    pub async fn environment_inactive(&self, project: &str, tenant: &str) -> anyhow::Result<bool> {
+    pub async fn environment_inactive(&self, project: &str, env_key: &str) -> anyhow::Result<bool> {
         anyhow::ensure!(valid_project(project), "invalid environment-status project");
-        anyhow::ensure!(valid_tenant(tenant), "invalid environment-status tenant");
-        let ticket = match self.auth.environment_inactive(tenant) {
+        anyhow::ensure!(valid_env_key(env_key), "invalid environment-status tenant");
+        let ticket = match self.auth.environment_inactive(env_key) {
             Ok(inactive) => return Ok(inactive),
             Err(ticket) => ticket,
         };
         let (connection, _pool) = self
-            .checkout_guest(project, tenant)
+            .checkout_guest(project, env_key)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         let statement = connection
@@ -2290,7 +2297,7 @@ impl WamnPostgres {
         };
         let inactive = row.is_some_and(|row| row.get(0));
         self.auth
-            .keep_environment_inactive(tenant, ticket, inactive)
+            .keep_environment_inactive(env_key, ticket, inactive)
             .await;
         Ok(inactive)
     }
@@ -2298,13 +2305,13 @@ impl WamnPostgres {
     pub async fn administration_transaction<T, E>(
         &self,
         project: &str,
-        tenant: &str,
+        env_key: &str,
         principal_id: &wamn_platform_identity::PrincipalId,
         operation: &str,
         work: impl AsyncFnOnce(&tokio_postgres::Client) -> Result<T, E>,
     ) -> anyhow::Result<Result<T, E>> {
         anyhow::ensure!(valid_project(project), "invalid host-route project");
-        anyhow::ensure!(valid_tenant(tenant), "invalid host-route tenant");
+        anyhow::ensure!(valid_env_key(env_key), "invalid host-route tenant");
         let (connection, policy) = self
             .checkout_platform(project, AuthorityClass::Administration)
             .await
@@ -2314,7 +2321,7 @@ impl WamnPostgres {
                 &connection,
                 AuthorityClass::Administration,
                 false,
-                tenant,
+                env_key,
                 None,
                 None,
                 None,
@@ -2344,12 +2351,12 @@ impl WamnPostgres {
     pub async fn queued_run_caller(
         &self,
         project: &str,
-        tenant: &str,
+        env_key: &str,
         principal_id: &str,
         role: Option<&str>,
     ) -> anyhow::Result<wamn_engine::flow_http_routing::AuthenticatedCaller> {
         anyhow::ensure!(valid_project(project), "invalid queued-run project");
-        anyhow::ensure!(valid_tenant(tenant), "invalid queued-run tenant");
+        anyhow::ensure!(valid_env_key(env_key), "invalid queued-run tenant");
         let (connection, _policy) = self
             .checkout_platform(project, AuthorityClass::CallableHttp)
             .await
@@ -2366,14 +2373,14 @@ impl WamnPostgres {
     pub async fn workflow_node_caller(
         &self,
         project: &str,
-        tenant: &str,
+        env_key: &str,
         principal_id: &str,
         role: &str,
     ) -> anyhow::Result<Option<wamn_engine::flow_http_routing::AuthenticatedCaller>> {
         let principal: wamn_platform_identity::PrincipalId = principal_id
             .parse()
             .context("the run's principal is not a principal id")?;
-        let grants = self.principal_grants(project, tenant, &principal).await?;
+        let grants = self.principal_grants(project, env_key, &principal).await?;
         Ok(grants
             .active
             .then(|| {
@@ -2386,8 +2393,8 @@ impl WamnPostgres {
             .flatten())
     }
 
-    pub(super) fn require_tenant(&self, component_id: &str) -> Result<String, PgError> {
-        self.tenant_for(component_id).ok_or_else(|| {
+    pub(super) fn require_env_key(&self, component_id: &str) -> Result<String, PgError> {
+        self.env_key_for(component_id).ok_or_else(|| {
             tracing::warn!(
                 component_id,
                 "wamn:postgres call from component with no tenant identity"

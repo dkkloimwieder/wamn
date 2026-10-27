@@ -40,7 +40,7 @@ CREATE TABLE catalog.tenant_environments (
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
-    tenant_id            text        NOT NULL CHECK (tenant_id <> ''),
+    env_key              text        NOT NULL CHECK (env_key <> ''),
     org                  text        NOT NULL CHECK (org <> ''),
     project              text        NOT NULL CHECK (project <> ''),
     env                  text        NOT NULL CHECK (env <> ''),
@@ -48,7 +48,7 @@ CREATE TABLE catalog.tenant_environments (
     disposable           boolean     NOT NULL,
     environment_instance text        NOT NULL,
     projected_at         timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT tenant_environments_pkey PRIMARY KEY (tenant_id)
+    CONSTRAINT tenant_environments_pkey PRIMARY KEY (env_key)
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON catalog.tenant_environments
@@ -62,7 +62,7 @@ CREATE TABLE catalog.authoring_command_audit (
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
-    tenant_id         text        NOT NULL CHECK (tenant_id <> ''),
+    env_key           text        NOT NULL CHECK (env_key <> ''),
     audit_id          uuid        NOT NULL DEFAULT gen_random_uuid(),
     command_id        text        NOT NULL CHECK (command_id <> ''),
     command_type      text        NOT NULL CHECK (command_type IN ('gate', 'publish')),
@@ -82,8 +82,8 @@ CREATE TABLE catalog.authoring_command_audit (
     provenance_dirty  boolean,
     recorded_at       timestamptz NOT NULL DEFAULT clock_timestamp(),
     CONSTRAINT authoring_command_audit_pkey
-        PRIMARY KEY (tenant_id, principal_id, command_id),
-    CONSTRAINT authoring_command_audit_id_key UNIQUE (tenant_id, audit_id),
+        PRIMARY KEY (env_key, principal_id, command_id),
+    CONSTRAINT authoring_command_audit_id_key UNIQUE (env_key, audit_id),
     CONSTRAINT authoring_command_audit_provenance_check CHECK (
         (provenance_commit IS NULL) = (provenance_dirty IS NULL)
         AND (provenance_commit IS NULL OR provenance_commit <> '')
@@ -96,19 +96,19 @@ CREATE TRIGGER wamn_record_history_stamp
     FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(
         'created_at', 'created_by', 'updated_at', 'updated_by');
 CREATE INDEX authoring_command_audit_recorded
-    ON catalog.authoring_command_audit (tenant_id, recorded_at);
+    ON catalog.authoring_command_audit (env_key, recorded_at);
 
 CREATE TABLE wamn_run.gate_reports (
     created_at timestamptz NOT NULL,
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
-    tenant_id   text        NOT NULL CHECK (tenant_id <> ''),
+    env_key     text        NOT NULL CHECK (env_key <> ''),
     wiring_hash text        NOT NULL CHECK (wiring_hash ~ '^sha256:[0-9a-f]{64}$'),
     passed      boolean     NOT NULL,
     summary     jsonb       NOT NULL CHECK (jsonb_typeof(summary) = 'object'),
     gated_at    timestamptz NOT NULL DEFAULT clock_timestamp(),
-    CONSTRAINT gate_reports_pkey PRIMARY KEY (tenant_id, wiring_hash)
+    CONSTRAINT gate_reports_pkey PRIMARY KEY (env_key, wiring_hash)
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON wamn_run.gate_reports
@@ -130,7 +130,7 @@ BEGIN
         EXECUTE format('ALTER TABLE %s FORCE ROW LEVEL SECURITY', relation_name);
         policy_name := split_part(relation_name, '.', 2) || '_tenant';
         EXECUTE format(
-            'CREATE POLICY %I ON %s USING (tenant_id = NULLIF(current_setting(''app.tenant'', true), '''')) WITH CHECK (tenant_id = NULLIF(current_setting(''app.tenant'', true), ''''))',
+            'CREATE POLICY %I ON %s USING (env_key = NULLIF(current_setting(''app.env_key'', true), '''')) WITH CHECK (env_key = NULLIF(current_setting(''app.env_key'', true), ''''))',
             policy_name, relation_name
         );
     END LOOP;
@@ -162,7 +162,7 @@ REVOKE ALL ON SCHEMA wamn_authority FROM PUBLIC;
 
 CREATE TABLE wamn_authority.author_login_tenants (
     login_identity text        NOT NULL CHECK (login_identity <> ''),
-    tenant_id      text        NOT NULL CHECK (tenant_id <> ''),
+    env_key        text        NOT NULL CHECK (env_key <> ''),
     org_id         text        NOT NULL CHECK (org_id <> ''),
     project_id     text        NOT NULL CHECK (project_id <> ''),
     environment    text        NOT NULL CHECK (environment <> ''),
@@ -178,18 +178,18 @@ CREATE TRIGGER wamn_record_history_stamp
         'created_at', 'created_by', 'updated_at', 'updated_by');
 REVOKE ALL ON TABLE wamn_authority.author_login_tenants FROM PUBLIC;
 
-CREATE OR REPLACE FUNCTION wamn_authority.session_author_tenant()
+CREATE OR REPLACE FUNCTION wamn_authority.session_author_env_key()
 RETURNS text
 LANGUAGE sql
 STABLE
 SECURITY DEFINER
 SET search_path = pg_catalog, wamn_authority
 AS $$
-    SELECT mapping.tenant_id
+    SELECT mapping.env_key
       FROM wamn_authority.author_login_tenants AS mapping
      WHERE mapping.login_identity = session_user
 $$;
-REVOKE ALL ON FUNCTION wamn_authority.session_author_tenant() FROM PUBLIC;
+REVOKE ALL ON FUNCTION wamn_authority.session_author_env_key() FROM PUBLIC;
 
 DO $author_policies$
 DECLARE
@@ -202,7 +202,7 @@ BEGIN
     ] LOOP
         policy_name := split_part(relation_name, '.', 2) || '_author_tenant';
         EXECUTE format(
-            'CREATE POLICY %I ON %s AS RESTRICTIVE TO wamn_control_author USING (tenant_id = wamn_authority.session_author_tenant()) WITH CHECK (tenant_id = wamn_authority.session_author_tenant())',
+            'CREATE POLICY %I ON %s AS RESTRICTIVE TO wamn_control_author USING (env_key = wamn_authority.session_author_env_key()) WITH CHECK (env_key = wamn_authority.session_author_env_key())',
             policy_name, relation_name
         );
     END LOOP;
@@ -212,7 +212,7 @@ $author_policies$;
 REVOKE ALL PRIVILEGES ON SCHEMA catalog, wamn_run, wamn_authority
     FROM wamn_control_author;
 GRANT USAGE ON SCHEMA catalog, wamn_run, wamn_authority TO wamn_control_author;
-GRANT EXECUTE ON FUNCTION wamn_authority.session_author_tenant()
+GRANT EXECUTE ON FUNCTION wamn_authority.session_author_env_key()
     TO wamn_control_author;
 
 REVOKE ALL PRIVILEGES ON catalog.authoring_command_audit, wamn_run.gate_reports

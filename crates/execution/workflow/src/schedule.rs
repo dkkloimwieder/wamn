@@ -41,7 +41,7 @@ pub trait ScheduleRows: Send + Sync {
 /// tenant, `$2` environment, `$3` the application names.
 const ENABLED_SCHEDULES_SQL: &str = "\
 SELECT application, workflow_id, schedule FROM catalog.workflows \
- WHERE tenant_id = $1 AND environment = $2 AND application = ANY($3) \
+ WHERE env_key = $1 AND environment = $2 AND application = ANY($3) \
    AND enabled AND trigger = 'schedule'";
 
 /// The schedule rows of the applications a host's environment declares. It
@@ -51,7 +51,7 @@ pub struct PostgresSchedules {
     client: tokio_postgres::Client,
     postgres: Arc<WamnPostgres>,
     project: String,
-    tenant: String,
+    env_key: String,
     environment: String,
     applications: wamn_catalog::EnvironmentApplications,
     /// The names of `applications`, as the read binds them.
@@ -64,7 +64,7 @@ impl std::fmt::Debug for PostgresSchedules {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PostgresSchedules")
             .field("project", &self.project)
-            .field("tenant", &self.tenant)
+            .field("env_key", &self.env_key)
             .field("environment", &self.environment)
             .field("applications", &self.applications)
             .field("manifest_digest", &self.manifest_digest)
@@ -73,13 +73,13 @@ impl std::fmt::Debug for PostgresSchedules {
 }
 
 impl PostgresSchedules {
-    /// Serve the schedules of `applications` in `tenant` and `environment`,
+    /// Serve the schedules of `applications` in `env_key` and `environment`,
     /// against the release `manifest_digest`.
     pub fn new(
         client: tokio_postgres::Client,
         postgres: Arc<WamnPostgres>,
         project: impl Into<String>,
-        tenant: impl Into<String>,
+        env_key: impl Into<String>,
         environment: impl Into<String>,
         applications: wamn_catalog::EnvironmentApplications,
         manifest_digest: impl Into<String>,
@@ -90,7 +90,7 @@ impl PostgresSchedules {
             client,
             postgres,
             project: project.into(),
-            tenant: tenant.into(),
+            env_key: env_key.into(),
             environment: environment.into(),
             applications,
             manifest_digest: manifest_digest.into(),
@@ -105,7 +105,7 @@ impl ScheduleRows for PostgresSchedules {
             .client
             .query(
                 ENABLED_SCHEDULES_SQL,
-                &[&self.tenant, &self.environment, &self.names],
+                &[&self.env_key, &self.environment, &self.names],
             )
             .await
             .context("read the enabled workflow schedules")?;
@@ -133,7 +133,7 @@ impl ScheduleRows for PostgresSchedules {
         self.postgres
             .admit_schedule_run(
                 &self.project,
-                &self.tenant,
+                &self.env_key,
                 &ScheduleRunAdmission {
                     environment: &self.environment,
                     application: &schedule.application,

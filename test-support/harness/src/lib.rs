@@ -104,13 +104,13 @@ pub fn has_name(rows: &[Value], name: &str) -> bool {
 /// both bound as parameters via set_config — no interpolation path.
 pub async fn scope_session(
     client: &tokio_postgres::Client,
-    tenant: &str,
+    env_key: &str,
     schema: &str,
 ) -> anyhow::Result<()> {
     client
         .query(
-            "SELECT set_config('app.tenant', $1, false), set_config('search_path', $2, false)",
-            &[&tenant, &schema],
+            "SELECT set_config('app.env_key', $1, false), set_config('search_path', $2, false)",
+            &[&env_key, &schema],
         )
         .await?;
     Ok(())
@@ -121,7 +121,7 @@ pub async fn scope_session(
 /// `active`; the S6 seed forced the row active.
 pub async fn seed_flow_version(
     client: &tokio_postgres::Client,
-    tenant: &str,
+    env_key: &str,
     flow_id: &str,
     version: i32,
     active: bool,
@@ -134,12 +134,12 @@ pub async fn seed_flow_version(
         "DO UPDATE SET graph_json = excluded.graph_json"
     };
     let sql = format!(
-        "INSERT INTO flows (tenant_id, flow_id, version, active, graph_json) \
+        "INSERT INTO flows (env_key, flow_id, version, active, graph_json) \
          VALUES ($1, $2, $3, $4, $5::text::jsonb) \
-         ON CONFLICT (tenant_id, flow_id, version) {tail}"
+         ON CONFLICT (env_key, flow_id, version) {tail}"
     );
     client
-        .execute(&sql, &[&tenant, &flow_id, &version, &active, &graph_json])
+        .execute(&sql, &[&env_key, &flow_id, &version, &active, &graph_json])
         .await?;
     Ok(())
 }
@@ -149,7 +149,7 @@ pub async fn seed_flow_version(
 /// graph_json or active flag of a production-registered flow row).
 pub async fn seed_flow_version_if_absent(
     client: &tokio_postgres::Client,
-    tenant: &str,
+    env_key: &str,
     flow_id: &str,
     version: i32,
     active: bool,
@@ -157,10 +157,10 @@ pub async fn seed_flow_version_if_absent(
 ) -> anyhow::Result<()> {
     client
         .execute(
-            "INSERT INTO flows (tenant_id, flow_id, version, active, graph_json) \
+            "INSERT INTO flows (env_key, flow_id, version, active, graph_json) \
              VALUES ($1, $2, $3, $4, $5::text::jsonb) \
-             ON CONFLICT (tenant_id, flow_id, version) DO NOTHING",
-            &[&tenant, &flow_id, &version, &active, &graph_json],
+             ON CONFLICT (env_key, flow_id, version) DO NOTHING",
+            &[&env_key, &flow_id, &version, &active, &graph_json],
         )
         .await?;
     Ok(())
@@ -169,14 +169,14 @@ pub async fn seed_flow_version_if_absent(
 /// Flip the active flow version: exactly one active version per flow.
 pub async fn set_active_flow_version(
     client: &tokio_postgres::Client,
-    tenant: &str,
+    env_key: &str,
     flow_id: &str,
     version: i32,
 ) -> anyhow::Result<()> {
     client
         .execute(
-            "UPDATE flows SET active = (version = $3) WHERE tenant_id = $1 AND flow_id = $2",
-            &[&tenant, &flow_id, &version],
+            "UPDATE flows SET active = (version = $3) WHERE env_key = $1 AND flow_id = $2",
+            &[&env_key, &flow_id, &version],
         )
         .await?;
     Ok(())

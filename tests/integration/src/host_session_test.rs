@@ -15,7 +15,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio::io::AsyncReadExt as _;
 use wamn_control_provision::identity_issuer::validate_identity_issuer;
-use wamn_control_provision::session_target::{session_audience, validate_session_tenant_id};
+use wamn_control_provision::session_target::{session_audience, validate_session_env_key};
 use wamn_session::keys::{PublicSessionKey, SessionJwks, decode_public_key};
 use wamn_session::token::{
     MAXIMUM_LIFETIME, SessionScope, TOLERANCE, session_key_id, verify_session_token,
@@ -54,7 +54,7 @@ struct Fixture {
     org: String,
     project: String,
     environment: String,
-    tenant: String,
+    env_key: String,
     instance_suffix: String,
     roles: Vec<String>,
     request_body: Value,
@@ -122,7 +122,7 @@ fn fixture(bytes: &[u8]) -> anyhow::Result<Fixture> {
             .is_ok_and(|audience| audience == fixture.audience),
         "host fixture audience differs from its scope"
     );
-    validate_session_tenant_id(&fixture.tenant)
+    validate_session_env_key(&fixture.env_key)
         .map_err(|_| anyhow!("host fixture tenant refused"))?;
     wamn_catalog::ManifestDigest::parse(&fixture.manifest_digest)
         .map_err(|_| anyhow!("host fixture manifest digest refused"))?;

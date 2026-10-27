@@ -700,7 +700,7 @@ fn credential_lookup_uses_the_login_scope_and_current_generation() {
         admin_url,
         "map only the authenticated reader logins",
         &format!(
-            "BEGIN; SET LOCAL ROLE wamn_system; {} INSERT INTO wamn_authority.author_login_tenants(login_identity,tenant_id,org_id,project_id,environment) VALUES ('{mapped}','acme--widgets--dev','{ORG}','{PROJECT}','{ENV}'),('{unenabled}','acme--unenabled--dev','{ORG}','unenabled','{ENV}'); COMMIT;",
+            "BEGIN; SET LOCAL ROLE wamn_system; {} INSERT INTO wamn_authority.author_login_tenants(login_identity,env_key,org_id,project_id,environment) VALUES ('{mapped}','acme--widgets--dev','{ORG}','{PROJECT}','{ENV}'),('{unenabled}','acme--unenabled--dev','{ORG}','unenabled','{ENV}'); COMMIT;",
             wamn_control_provision::bind_platform_principal_sql(
                 wamn_control_provision::PlatformComponent::Provisioning,
             ),
@@ -861,7 +861,7 @@ fn file_connection_lookup_scopes_bindings_and_pins_on_fresh_and_upgrade() {
     run_system(
         "map the authenticated file reader",
         &format!(
-            "INSERT INTO wamn_authority.author_login_tenants(login_identity,tenant_id,org_id,project_id,environment) VALUES ('{mapped}','acme--widgets--dev','{ORG}','{PROJECT}','{ENV}');"
+            "INSERT INTO wamn_authority.author_login_tenants(login_identity,env_key,org_id,project_id,environment) VALUES ('{mapped}','acme--widgets--dev','{ORG}','{PROJECT}','{ENV}');"
         ),
     );
     let reader = role_url(admin, &mapped, READER_PW);

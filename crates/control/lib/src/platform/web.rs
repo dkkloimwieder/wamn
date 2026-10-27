@@ -80,13 +80,13 @@ pub(super) fn request(
         anyhow::bail!("web upload requires a declared release");
     };
     ensure!(!bucket.is_empty(), "web upload requires a bucket");
-    let tenant = wamn_control_registry::project_env_tenant(
+    let env_key = wamn_control_registry::project_env_key(
         &environment.org,
         &environment.project,
         &environment.env,
     );
     let mut request = JobRequest {
-        name: format!("platform-web-{tenant}"),
+        name: format!("platform-web-{env_key}"),
         image: image.into(),
         calls_kubernetes: true,
         service_account: Some("wamn-host".into()),
@@ -103,7 +103,7 @@ pub(super) fn request(
             ("WAMN_RELEASE_CHART".into(), "/inputs".into()),
         ].into(),
         secret_mounts: vec![
-            SecretMount { name: format!("wamn-registry-reader-{tenant}"), path: "/etc/wamn/registry-reader".into(), keys: vec!["url".into()] },
+            SecretMount { name: format!("wamn-registry-reader-{env_key}"), path: "/etc/wamn/registry-reader".into(), keys: vec!["url".into()] },
         ],
         permissions: vec![Access {
             namespace: "hosts".into(),

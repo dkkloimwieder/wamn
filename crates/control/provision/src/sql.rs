@@ -63,21 +63,21 @@ pub(crate) use wamn_pg_core::quote_ident;
 use wamn_pg_core::quote_literal;
 
 /// Insert the declared tenant identity without replacing an existing row.
-pub fn insert_tenant_environment_sql() -> &'static str {
+pub fn insert_env_key_environment_sql() -> &'static str {
     "INSERT INTO catalog.tenant_environments \
-     (tenant_id, org, project, env, instance_suffix, disposable, environment_instance) \
-     VALUES ($1, $2, $3, $4, $5, $6, '') ON CONFLICT (tenant_id) DO NOTHING"
+     (env_key, org, project, env, instance_suffix, disposable, environment_instance) \
+     VALUES ($1, $2, $3, $4, $5, $6, '') ON CONFLICT (env_key) DO NOTHING"
 }
 
 /// Lock and read the winning identity after the insert attempt.
-pub fn read_tenant_environment_sql() -> &'static str {
-    "SELECT org, project, env FROM catalog.tenant_environments WHERE tenant_id = $1 FOR UPDATE"
+pub fn read_env_key_environment_sql() -> &'static str {
+    "SELECT org, project, env FROM catalog.tenant_environments WHERE env_key = $1 FOR UPDATE"
 }
 
 /// Refresh the declared values and clear the old instance after Rust accepts the identity.
-pub fn refresh_tenant_environment_sql() -> &'static str {
+pub fn refresh_env_key_environment_sql() -> &'static str {
     "UPDATE catalog.tenant_environments SET instance_suffix = $2, disposable = $3, \
-     environment_instance = '', projected_at = now() WHERE tenant_id = $1"
+     environment_instance = '', projected_at = now() WHERE env_key = $1"
 }
 
 /// Idempotently create or harden the shared, cluster-global [`APP_ROLE`] as a
@@ -169,7 +169,7 @@ pub const HTTP_ADMITTER_CATALOG_RELATIONS: [&str; 5] = [
 /// reads: the key of one workflow version and its graph. The admitter gets
 /// these columns only, not the whole table.
 pub const HTTP_ADMITTER_WORKFLOW_COLUMNS: [&str; 6] = [
-    "tenant_id",
+    "env_key",
     "environment",
     "application",
     "workflow_id",
@@ -286,7 +286,7 @@ pub const EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS: [&str; 4] = [
 /// reaches no binding world, legacy flow, capture or
 /// caller-outcome column.
 pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 22] = [
-    "tenant_id",
+    "env_key",
     "package_id",
     "manifest_digest",
     "environment",
@@ -312,7 +312,7 @@ pub const EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS: [&str; 22] = [
 
 /// The `run_queue` columns an event or schedule admission writes. The FIFO position, the
 /// crash budget and the lease take their defaults.
-pub const EXECUTOR_PLATFORM_QUEUE_INSERT_COLUMNS: [&str; 2] = ["tenant_id", "run_id"];
+pub const EXECUTOR_PLATFORM_QUEUE_INSERT_COLUMNS: [&str; 2] = ["env_key", "run_id"];
 /// Idempotently create or harden [`PLATFORM_GROUP_ROLE`], the shared NOLOGIN
 /// group every non-guest tenant-floor arm targets (`wamn-0h0g.22.17`).
 ///
@@ -1089,24 +1089,24 @@ pub fn stable_surface_sql(family: WorkloadRoleFamily) -> Option<String> {
 
 /// Record the owner-maintained login-identity-to-tenant mapping for one scope.
 ///
-/// `$1` login identity, `$2` tenant, `$3` org, `$4` project, `$5` environment.
+/// `$1` login identity, `$2` `env_key`, `$3` org, `$4` project, `$5` environment.
 /// Tenant authority is database-authoritative: this row, not a caller-set
-/// `app.tenant`, is what every author-accessed relation's restrictive policy
+/// `app.env_key`, is what every author-accessed relation's restrictive policy
 /// resolves through, so the statement is deliberately an owner statement with no
 /// grant to the author. `DO UPDATE` is restricted to a row whose tenant already
 /// matches, so a replay converges while a re-point to a different tenant returns
 /// **zero rows** instead of widening one login's reach — the caller must read an
 /// empty result as a refusal, not as a no-op.
-pub fn upsert_control_author_tenant_mapping_sql() -> &'static str {
+pub fn upsert_control_author_env_key_mapping_sql() -> &'static str {
     "INSERT INTO wamn_authority.author_login_tenants \
-       (login_identity, tenant_id, org_id, project_id, environment) \
+       (login_identity, env_key, org_id, project_id, environment) \
      VALUES ($1, $2, $3, $4, $5) \
      ON CONFLICT (login_identity) DO UPDATE \
        SET org_id = EXCLUDED.org_id, \
            project_id = EXCLUDED.project_id, \
            environment = EXCLUDED.environment \
-       WHERE author_login_tenants.tenant_id = EXCLUDED.tenant_id \
-     RETURNING tenant_id"
+       WHERE author_login_tenants.env_key = EXCLUDED.env_key \
+     RETURNING env_key"
 }
 
 #[cfg(test)]
@@ -1294,7 +1294,7 @@ mod tests {
              GRANT SELECT ON TABLE platform.\"permission\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE platform.\"user\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE platform.\"user_role\" TO \"wamn_http_admitter\"; \
-             GRANT SELECT (\"tenant_id\", \"environment\", \"application\", \"workflow_id\", \
+             GRANT SELECT (\"env_key\", \"environment\", \"application\", \"workflow_id\", \
              \"version\", \"graph_json\") ON TABLE catalog.\"workflows\" TO \"wamn_http_admitter\";",
             "the callable-HTTP admitter reads five catalog relations, the selected workflow columns and three platform relations, and holds nothing on the run plane, no write of any grain, and no EXECUTE"
         );
@@ -1340,7 +1340,7 @@ mod tests {
              \"caller_outcome_json\", \"caller_http_status\", \"caller_release_node_id\", \
              \"caller_outcome_hash\", \"caller_released_at\", \"updated_at\") \
              ON TABLE \"wamn_run\".\"runs\" TO \"wamn_executor_platform\"; \
-             GRANT INSERT (\"tenant_id\", \"package_id\", \"manifest_digest\", \
+             GRANT INSERT (\"env_key\", \"package_id\", \"manifest_digest\", \
              \"environment\", \"wiring_id\", \"wiring_version\", \"wiring_hash\", \
              \"trigger_source\", \"registration_id\", \"service_principal_id\", \
              \"execution_principal_id\", \"execution_role\", \"invoked_by\", \
@@ -1351,7 +1351,7 @@ mod tests {
              TO \"wamn_executor_platform\"; \
              GRANT UPDATE (\"lease_owner\", \"lease_expires_at\", \"lease_generation\", \
              \"attempts\") ON TABLE \"wamn_run\".\"run_queue\" TO \"wamn_executor_platform\"; \
-             GRANT INSERT (\"tenant_id\", \"run_id\") \
+             GRANT INSERT (\"env_key\", \"run_id\") \
              ON TABLE \"wamn_run\".\"run_queue\" TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE \"wamn_run\".\"environment_policies\" \
              TO \"wamn_executor_platform\"; \
@@ -1697,8 +1697,8 @@ mod tests {
     /// tenant: a converging replay updates the scope columns, a tenant change
     /// matches no row and therefore returns nothing.
     #[test]
-    fn tenant_mapping_upsert_converges_but_never_repoints_a_tenant() {
-        let sql = upsert_control_author_tenant_mapping_sql();
+    fn env_key_mapping_upsert_converges_but_never_repoints_a_env_key() {
+        let sql = upsert_control_author_env_key_mapping_sql();
         assert!(sql.starts_with("INSERT INTO wamn_authority.author_login_tenants"));
         for parameter in ["$1", "$2", "$3", "$4", "$5"] {
             assert!(sql.contains(parameter), "mapping upsert drops {parameter}");
@@ -1706,17 +1706,17 @@ mod tests {
         assert_eq!(sql.matches('$').count(), 5);
         assert!(sql.contains("ON CONFLICT (login_identity) DO UPDATE"));
         assert!(
-            sql.contains("WHERE author_login_tenants.tenant_id = EXCLUDED.tenant_id"),
+            sql.contains("WHERE author_login_tenants.env_key = EXCLUDED.env_key"),
             "a mapping row's tenant must not be re-pointed: {sql}"
         );
         // The tenant column is never in the SET list, so even a matching row
         // cannot have its tenant rewritten.
         let set_list = sql.split("DO UPDATE").nth(1).expect("an upsert body");
         let set_list = set_list.split("WHERE").next().expect("a SET clause");
-        assert!(!set_list.contains("tenant_id"), "{set_list}");
-        assert!(sql.contains("RETURNING tenant_id"));
+        assert!(!set_list.contains("env_key"), "{set_list}");
+        assert!(sql.contains("RETURNING env_key"));
         // Owner-maintained: the statement grants nothing and names no author role.
-        for forbidden in ["GRANT", "wamn_control_author", "app.tenant"] {
+        for forbidden in ["GRANT", "wamn_control_author", "app.env_key"] {
             assert!(!sql.contains(forbidden), "mapping upsert names {forbidden}");
         }
     }

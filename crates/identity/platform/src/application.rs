@@ -60,7 +60,7 @@ pub struct ApplicationUser<'a> {
 
 /// Refuse a project database without platform rows. The database is the org
 /// boundary, so its rows name no tenant: the caller derives the tenant of
-/// the environment from its triple (`project_env_tenant`).
+/// the environment from its triple (`project_env_key`).
 pub async fn require_platform_rows(
     client: &(impl GenericClient + Sync),
 ) -> Result<(), IdentityError> {
@@ -83,7 +83,7 @@ pub async fn require_platform_rows(
 /// its host reads (docs/architecture/execution.md#routing-and-availability).
 pub async fn write_environment_status(
     client: &(impl GenericClient + Sync),
-    environment_key: &str,
+    env_key: &str,
     status: crate::org::EnvironmentStatus,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
@@ -91,14 +91,14 @@ pub async fn write_environment_status(
         .execute(ENVIRONMENT_STATUS_ROW_SQL, &[&status.as_str()])
         .await
         .map_err(|error| database_error(&error))?;
-    drops.tenant(environment_key);
+    drops.env_key(env_key);
     Ok(())
 }
 
 /// Write the user row of `user`, and keep a row that exists.
 pub async fn write_user(
     client: &(impl GenericClient + Sync),
-    environment_key: &str,
+    env_key: &str,
     user: ApplicationUser<'_>,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
@@ -109,14 +109,14 @@ pub async fn write_user(
         )
         .await
         .map_err(|error| database_error(&error))?;
-    drops.principal(environment_key, user.principal_id.as_str());
+    drops.principal(env_key, user.principal_id.as_str());
     Ok(())
 }
 
 /// Write the user row of the service principal `service`.
 pub async fn write_service(
     client: &(impl GenericClient + Sync),
-    environment_key: &str,
+    env_key: &str,
     service: ApplicationUser<'_>,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
@@ -131,7 +131,7 @@ pub async fn write_service(
         )
         .await
         .map_err(|error| database_error(&error))?;
-    drops.principal(environment_key, service.principal_id.as_str());
+    drops.principal(env_key, service.principal_id.as_str());
     Ok(())
 }
 
@@ -139,11 +139,11 @@ pub async fn write_service(
 /// when the environment has none yet.
 pub async fn write_admin(
     client: &(impl GenericClient + Sync),
-    environment_key: &str,
+    env_key: &str,
     user: ApplicationUser<'_>,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
-    write_user(client, environment_key, user, drops).await?;
+    write_user(client, env_key, user, drops).await?;
     client
         .execute(ROLE_SQL, &[&ADMIN_ROLE])
         .await
@@ -158,7 +158,7 @@ pub async fn write_admin(
 /// Remove the `admin` row of the principal. Its other roles stay.
 pub async fn remove_admin(
     client: &(impl GenericClient + Sync),
-    environment_key: &str,
+    env_key: &str,
     principal_id: &PrincipalId,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
@@ -166,7 +166,7 @@ pub async fn remove_admin(
         .execute(DROP_USER_ROLE_SQL, &[&principal_id.as_str(), &ADMIN_ROLE])
         .await
         .map_err(|error| database_error(&error))?;
-    drops.principal(environment_key, principal_id.as_str());
+    drops.principal(env_key, principal_id.as_str());
     Ok(())
 }
 
@@ -174,7 +174,7 @@ pub async fn remove_admin(
 /// rows and its API keys.
 pub async fn remove_user(
     client: &(impl GenericClient + Sync),
-    environment_key: &str,
+    env_key: &str,
     principal_id: &PrincipalId,
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
@@ -182,7 +182,7 @@ pub async fn remove_user(
         .execute(DROP_USER_ROW_SQL, &[&principal_id.as_str()])
         .await
         .map_err(|error| database_error(&error))?;
-    drops.principal(environment_key, principal_id.as_str());
+    drops.principal(env_key, principal_id.as_str());
     Ok(())
 }
 
@@ -306,7 +306,7 @@ const DROP_PERMISSION_SQL: &str = "DELETE FROM platform.permission \
 /// Create the empty authored role `role`. A second create changes nothing.
 pub async fn create_role(
     client: &(impl GenericClient + Sync),
-    environment_key: &str,
+    env_key: &str,
     role: &str,
     drops: &mut AuthDrops,
 ) -> Result<bool, AdministrationError> {
@@ -323,7 +323,7 @@ pub async fn create_role(
         .execute(ROLE_SQL, &[&role])
         .await
         .map_err(|error| database_error(&error))?;
-    drops.tenant(environment_key);
+    drops.env_key(env_key);
     Ok(written == 1)
 }
 
@@ -331,7 +331,7 @@ pub async fn create_role(
 /// delete of an absent role changes nothing.
 pub async fn delete_role(
     client: &(impl GenericClient + Sync),
-    environment_key: &str,
+    env_key: &str,
     role: &str,
     drops: &mut AuthDrops,
 ) -> Result<bool, AdministrationError> {
@@ -342,7 +342,7 @@ pub async fn delete_role(
         .execute(DROP_ROLE_SQL, &[&role])
         .await
         .map_err(|error| database_error(&error))?;
-    drops.tenant(environment_key);
+    drops.env_key(env_key);
     Ok(removed == 1)
 }
 
@@ -371,7 +371,7 @@ pub async fn require_role(
 /// release serves it or not.
 pub async fn grant_permission(
     client: &(impl GenericClient + Sync),
-    environment_key: &str,
+    env_key: &str,
     role: &str,
     reference: &str,
     drops: &mut AuthDrops,
@@ -384,7 +384,7 @@ pub async fn grant_permission(
         .execute(PERMISSION_SQL, &[&role, &reference])
         .await
         .map_err(|error| database_error(&error))?;
-    drops.tenant(environment_key);
+    drops.env_key(env_key);
     Ok(PermissionGrantOutcome { rows_added })
 }
 
@@ -392,7 +392,7 @@ pub async fn grant_permission(
 /// does not hold refuses.
 pub async fn revoke_permission(
     client: &(impl GenericClient + Sync),
-    environment_key: &str,
+    env_key: &str,
     role: &str,
     reference: &str,
     drops: &mut AuthDrops,
@@ -409,7 +409,7 @@ pub async fn revoke_permission(
         }
         .into());
     }
-    drops.tenant(environment_key);
+    drops.env_key(env_key);
     Ok(())
 }
 
@@ -417,7 +417,7 @@ pub async fn revoke_permission(
 /// changes nothing.
 pub async fn grant_user_role(
     client: &(impl GenericClient + Sync),
-    environment_key: &str,
+    env_key: &str,
     user_id: &str,
     role: &str,
     drops: &mut AuthDrops,
@@ -427,7 +427,7 @@ pub async fn grant_user_role(
         .execute(USER_ROLE_SQL, &[&user_id, &role])
         .await
         .map_err(|error| database_error(&error))?;
-    drops.principal(environment_key, user_id);
+    drops.principal(env_key, user_id);
     Ok(written == 1)
 }
 
@@ -435,7 +435,7 @@ pub async fn grant_user_role(
 /// does not hold changes nothing.
 pub async fn revoke_user_role(
     client: &(impl GenericClient + Sync),
-    environment_key: &str,
+    env_key: &str,
     user_id: &str,
     role: &str,
     drops: &mut AuthDrops,
@@ -444,7 +444,7 @@ pub async fn revoke_user_role(
         .execute(DROP_USER_ROLE_SQL, &[&user_id, &role])
         .await
         .map_err(|error| database_error(&error))?;
-    drops.principal(environment_key, user_id);
+    drops.principal(env_key, user_id);
     Ok(removed == 1)
 }
 

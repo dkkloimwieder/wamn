@@ -41,7 +41,7 @@ fn state_sql() -> String {
 const ORG: &str = "pg18order";
 const PROJECT: &str = "inventory";
 const ENVIRONMENT: &str = "dev";
-const TENANT: &str = "pg18order--inventory--dev";
+const ENV_KEY: &str = "pg18order--inventory--dev";
 const INSTANCE: &str = "k3m9x2p7";
 
 async fn connect(url: &str) -> Client {
@@ -228,8 +228,8 @@ async fn the_documented_provisioning_order_completes_end_to_end() {
     admin_url.set_path("/postgres");
     let admin_url = admin_url.to_string();
     let database = project_env_database_name(ORG, PROJECT, ENVIRONMENT, INSTANCE);
-    let scope = WorkloadRoleScope::Tenant {
-        tenant: TENANT,
+    let scope = WorkloadRoleScope::EnvKey {
+        env_key: ENV_KEY,
         database: &database,
     };
     let role_a = workload_generation_role(WorkloadRoleFamily::App, scope, CredentialGeneration::A)
@@ -350,8 +350,8 @@ async fn a_refused_prepare_leaves_the_state_its_documentation_promises() {
     admin_url.set_path("/postgres");
     let admin_url = admin_url.to_string();
     let database = project_env_database_name(ORG, PROJECT, ENVIRONMENT, INSTANCE);
-    let scope = WorkloadRoleScope::Tenant {
-        tenant: TENANT,
+    let scope = WorkloadRoleScope::EnvKey {
+        env_key: ENV_KEY,
         database: &database,
     };
     let role_a = workload_generation_role(WorkloadRoleFamily::App, scope, CredentialGeneration::A)

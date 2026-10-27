@@ -68,7 +68,7 @@ const EXECUTOR_LOGIN: &str = "wamn_transitions_executor_login";
 fn executor_preamble() -> String {
     format!(
         "BEGIN; SET LOCAL ROLE {EXECUTOR_LOGIN}; SET LOCAL search_path TO wamn_run; \
-         SET LOCAL app.tenant = 't1';"
+         SET LOCAL app.env_key = 't1';"
     )
 }
 
@@ -131,8 +131,8 @@ fn run_state_live() {
         .to_string();
     let app_login = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::Tenant {
-            tenant: "t1",
+        WorkloadRoleScope::EnvKey {
+            env_key: "t1",
             database: &database,
         },
         CredentialGeneration::A,
@@ -179,10 +179,10 @@ fn run_state_live() {
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              {catalog} {run_state} {run_queue} {app_schema} \
              INSERT INTO catalog.packages \
-               (tenant_id,package_id,package_version,artifact_digest) \
+               (env_key,package_id,package_version,artifact_digest) \
              VALUES ('t1','cat','1.0.0', \
                'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'); \
-             INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) \
+             INSERT INTO catalog.releases (env_key,manifest_digest,canonical_bytes) \
              VALUES ('t1','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}'); \
              GRANT wamn_platform TO wamn_executor_platform \
                WITH INHERIT TRUE, SET FALSE, ADMIN FALSE; \
@@ -291,15 +291,15 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.environment_policies \
-           (tenant_id,expected_environment,durability_class) \
+           (env_key,expected_environment,durability_class) \
          VALUES ('t1','prod','standard'); \
          INSERT INTO wamn_run.runs \
-           (tenant_id, run_id, flow_id, flow_version, package_id, manifest_digest, environment, \
+           (env_key, run_id, flow_id, flow_version, package_id, manifest_digest, environment, \
             wiring_id, wiring_version, attachment_id, status) \
          VALUES ('t1', 'release-1', 'f', 1, 'cat', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', 'prod', \
            'fixture-wiring', 1, 'http-a', 'running'); \
          INSERT INTO wamn_run.run_queue \
-           (tenant_id, run_id, lease_owner, lease_expires_at, lease_generation) \
+           (env_key, run_id, lease_owner, lease_expires_at, lease_generation) \
          VALUES ('t1', 'release-1', 'worker-a', now() + interval '1 minute', 1);",
     );
     let release_script = format!(
@@ -363,7 +363,7 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
+           (env_key,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status,trigger_source) VALUES \
            ('t1','terminal-cron','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
             'fixture-wiring',1,'cron-a','running','cron'), \
@@ -372,7 +372,7 @@ fn run_state_live() {
            ('t1','terminal-http-open','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
             'fixture-wiring',1,'http-open','running','http'); \
          INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
+           (env_key,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status,trigger_source, \
             caller_outcome_type,caller_outcome_json,caller_http_status,caller_release_node_id, \
             caller_outcome_hash,caller_released_at) VALUES \
@@ -380,7 +380,7 @@ fn run_state_live() {
             'fixture-wiring',1,'http-released','running','http', \
             'responded','{}',200,'respond','sha256:released',now()); \
          INSERT INTO wamn_run.run_queue \
-           (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) VALUES \
+           (env_key,run_id,lease_owner,lease_expires_at,lease_generation) VALUES \
            ('t1','terminal-cron','worker-source',now()+interval '1 minute',1), \
            ('t1','terminal-event','worker-source',now()+interval '1 minute',1), \
            ('t1','terminal-http-open','worker-source',now()+interval '1 minute',1), \
@@ -452,12 +452,12 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
+           (env_key,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status) \
          VALUES ('t1','race-1','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
            'fixture-wiring',1,'http-race','running'); \
          INSERT INTO wamn_run.run_queue \
-           (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) \
+           (env_key,run_id,lease_owner,lease_expires_at,lease_generation) \
          VALUES ('t1','race-1','stale-worker',now()+interval '1 minute',7);",
     );
     let race_url = url.clone();
@@ -498,12 +498,12 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
+           (env_key,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status) \
          VALUES ('t1','fault-1','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
            'fixture-wiring',1,'http-fault','running'); \
          INSERT INTO wamn_run.run_queue \
-           (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) \
+           (env_key,run_id,lease_owner,lease_expires_at,lease_generation) \
          VALUES ('t1','fault-1','worker-f',now()+interval '1 minute',9);",
     );
     let fault_script = format!(
@@ -547,7 +547,7 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
+           (env_key,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,status,durability_class) VALUES \
            ('t1','record-claim','f',1,'cat', \
             'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
@@ -558,7 +558,7 @@ fn run_state_live() {
            ('t1','record-standard-effect','f',1,'cat', \
             'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
             'fixture-wiring',1,'running','standard'); \
-         INSERT INTO wamn_run.run_queue (tenant_id,run_id) VALUES \
+         INSERT INTO wamn_run.run_queue (env_key,run_id) VALUES \
            ('t1','record-claim'),('t1','record-foreign');",
     );
 
@@ -668,7 +668,7 @@ fn run_state_live() {
                   'the standard policy did not select the cheap tier'; \
            BEGIN \
              INSERT INTO wamn_run.runs \
-               (tenant_id,run_id,flow_id,flow_version,package_id,manifest_digest, \
+               (env_key,run_id,flow_id,flow_version,package_id,manifest_digest, \
                 environment,wiring_id,wiring_version,status,durability_class) \
              VALUES ('t1','record-unruled-class','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
                'fixture-wiring',1,'running','premium'); \
@@ -701,22 +701,22 @@ fn run_state_live() {
     // exit status.
     //
     // `t2` is a second tenant in the same database. `run_queue`'s only policy
-    // is `run_queue_tenant`, which carries NO `TO` clause and keys on
-    // `app.tenant` — so the queue fence applies to this family too, unlike
+    // is `run_queue_env_key`, which carries NO `TO` clause and keys on
+    // `app.env_key` — so the queue fence applies to this family too, unlike
     // `runs`, whose `runs_platform` arm is `USING (true)`.
     success(
         &url,
         "INSERT INTO catalog.packages \
-           (tenant_id,package_id,package_version,artifact_digest) \
+           (env_key,package_id,package_version,artifact_digest) \
          VALUES ('t2','cat','1.0.0', \
            'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'); \
-         INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) \
+         INSERT INTO catalog.releases (env_key,manifest_digest,canonical_bytes) \
          VALUES ('t2','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{}'); \
          INSERT INTO wamn_run.environment_policies \
-           (tenant_id,expected_environment,durability_class) \
+           (env_key,expected_environment,durability_class) \
          VALUES ('t2','prod','standard'); \
          INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
+           (env_key,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status,input_json) VALUES \
            ('t1','renew-live','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod','fixture-wiring',1,'http-renew', \
             'running','{}'), \
@@ -725,7 +725,7 @@ fn run_state_live() {
            ('t2','renew-other-tenant','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod','fixture-wiring',1,'http-renew-t2', \
             'running','{}'); \
          INSERT INTO wamn_run.run_queue \
-           (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) VALUES \
+           (env_key,run_id,lease_owner,lease_expires_at,lease_generation) VALUES \
            ('t1','renew-live','renew-worker',now()+interval '30 seconds',3), \
            ('t1','renew-expired','renew-worker',now()-interval '30 seconds',3), \
            ('t2','renew-other-tenant','renew-worker',now()+interval '30 seconds',3);",
@@ -783,7 +783,7 @@ fn run_state_live() {
         &url,
         "DO $$ BEGIN \
            ASSERT (SELECT q.lease_expires_at FROM wamn_run.run_queue AS q \
-                    WHERE q.tenant_id='t2' AND q.run_id='renew-other-tenant') \
+                    WHERE q.env_key='t2' AND q.run_id='renew-other-tenant') \
                   < now() + interval '2 minutes', \
                   'the executor extended another tenant lease'; \
          END $$;",
@@ -797,7 +797,7 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,environment, \
+           (env_key,run_id,flow_id,flow_version,package_id,environment, \
             wiring_id,wiring_version,attachment_id,status,input_json,state_json, \
             manifest_digest) VALUES \
            ('t1','reclaim-dead','f',1,'cat','prod','fixture-wiring',1,'http-reclaim', \
@@ -809,7 +809,7 @@ fn run_state_live() {
             'http-reclaim-t2','running','{}','{\"cursor\":9}', \
             'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'); \
          INSERT INTO wamn_run.run_queue \
-           (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation,attempts) VALUES \
+           (env_key,run_id,lease_owner,lease_expires_at,lease_generation,attempts) VALUES \
            ('t1','reclaim-dead','dead-worker',now()-interval '1 minute',5,1), \
            ('t1','reclaim-fresh',NULL,NULL,0,0), \
            ('t2','reclaim-other-tenant','dead-worker',now()-interval '1 minute',5,1);",
@@ -859,14 +859,14 @@ fn run_state_live() {
         &url,
         "DO $$ BEGIN \
            ASSERT (SELECT q.attempts FROM wamn_run.run_queue AS q \
-                    WHERE q.tenant_id='t2' AND q.run_id='reclaim-other-tenant') = 1, \
+                    WHERE q.env_key='t2' AND q.run_id='reclaim-other-tenant') = 1, \
                   'the executor spent another tenant crash budget'; \
            ASSERT (SELECT r.state_json FROM wamn_run.runs AS r \
-                    WHERE r.tenant_id='t2' AND r.run_id='reclaim-other-tenant') \
+                    WHERE r.env_key='t2' AND r.run_id='reclaim-other-tenant') \
                   = '{\"cursor\":9}'::jsonb, \
                   'the executor erased another tenant attempt state'; \
            ASSERT (SELECT r.manifest_digest FROM wamn_run.runs AS r \
-                    WHERE r.tenant_id='t2' AND r.run_id='reclaim-other-tenant') \
+                    WHERE r.env_key='t2' AND r.run_id='reclaim-other-tenant') \
                   = 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
                   'the executor erased another tenant release pin'; \
          END $$;",
@@ -879,12 +879,12 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
+           (env_key,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status,trigger_source,input_json) VALUES \
            ('t1','reap-exhausted','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod','fixture-wiring',1,'http-reap', \
             'running','http','{}'); \
          INSERT INTO wamn_run.run_queue \
-           (tenant_id,run_id,available_at,stream_seq,lease_owner,lease_expires_at, \
+           (env_key,run_id,available_at,stream_seq,lease_owner,lease_expires_at, \
             lease_generation,attempts,max_attempts) \
          VALUES ('t1','reap-exhausted','2000-01-01',900,'dead-worker','2000-01-01',5,3,3);",
     );
@@ -951,7 +951,7 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
+           (env_key,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
             wiring_id,wiring_version,attachment_id,status) \
          VALUES ('t1','clock-skew','f',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','prod', \
            'fixture-wiring',1,'http-skew','running');",
@@ -989,7 +989,7 @@ fn run_state_live() {
         "DO $$ DECLARE refusal text; BEGIN \
            BEGIN \
              INSERT INTO wamn_run.runs \
-               (tenant_id,run_id,flow_id,flow_version,package_id,manifest_digest, \
+               (env_key,run_id,flow_id,flow_version,package_id,manifest_digest, \
                 environment,wiring_id,wiring_version,status) \
              VALUES ('t1','record-invalid-digest','f',1,'cat','sha256:not-a-digest', \
                'prod','fixture-wiring',1,'running'); \

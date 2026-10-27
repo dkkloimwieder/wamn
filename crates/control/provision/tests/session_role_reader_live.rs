@@ -293,7 +293,7 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
             assert_eq!(
                 run(
                     url,
-                    "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'platform' AND table_name = 'user_role' AND column_name = 'tenant_id'"
+                    "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'platform' AND table_name = 'user_role' AND column_name = 'env_key'"
                 ),
                 "0"
             );

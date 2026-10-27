@@ -17,7 +17,7 @@ use wamn_schema_control::{
 
 /// Every column `wamn_run.runs` carries, in `deploy/sql/run-state.sql` order.
 const CANONICAL_RUN_COLUMNS: &[&str] = &[
-    "tenant_id",
+    "env_key",
     "run_id",
     "flow_id",
     "flow_version",

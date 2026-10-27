@@ -13,7 +13,7 @@ use wamn_test_infrastructure::locked_database;
 
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
-const TENANT: &str = "package-runner-live--fixture--dev";
+const ENV_KEY: &str = "package-runner-live--fixture--dev";
 /// The test principal that the fixture seed writes as.
 const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
 
@@ -340,8 +340,8 @@ async fn successor_view_rebuild_applies_atomically_and_rolls_back_failure() {
             "SELECT EXISTS (SELECT FROM information_schema.columns \
                 WHERE table_schema='inventory' AND table_name='dock' AND column_name='report_note'), \
              (SELECT count(*) FROM catalog.package_migrations \
-                WHERE tenant_id=$1 AND package_id='wamn_inventory' AND package_version='1.0.0')",
-            &[&TENANT],
+                WHERE env_key=$1 AND package_id='wamn_inventory' AND package_version='1.0.0')",
+            &[&ENV_KEY],
         ).await.unwrap();
         assert_eq!(row.get::<_, bool>(0), !fail);
         assert_eq!(row.get::<_, i64>(1), if fail { 1 } else { 2 });
@@ -670,7 +670,7 @@ fn rename_internal_relation(root: &Path, from: &str, to: &str) {
 }
 
 async fn apply(url: &str, package: &Path) -> anyhow::Result<apply_package::ApplyOutcome> {
-    apply_for_tenant(url, package, TENANT).await
+    apply_for_env_key(url, package, ENV_KEY).await
 }
 
 /// Apply the tree at `package` under a digest the test names, not one of its
@@ -694,10 +694,10 @@ async fn apply_as(
     .await
 }
 
-async fn apply_for_tenant(
+async fn apply_for_env_key(
     url: &str,
     package: &Path,
-    tenant: &str,
+    env_key: &str,
 ) -> anyhow::Result<apply_package::ApplyOutcome> {
     // A release apply takes a verified artifact. The fixture tree stands in
     // for one under a digest of its own bytes.
@@ -710,7 +710,7 @@ async fn apply_for_tenant(
             ),
         },
         database_url: url.to_owned(),
-        org: tenant.split("--").next().expect("fixture org").to_owned(),
+        org: env_key.split("--").next().expect("fixture org").to_owned(),
         project: "fixture".into(),
         environment: "dev".into(),
     })
@@ -718,7 +718,7 @@ async fn apply_for_tenant(
 }
 
 async fn assert_concurrent_package_grants_share_one_carrier(url: &str) {
-    const RACE_TENANT: &str = "package-runner-race--fixture--dev";
+    const RACE_ENV_KEY: &str = "package-runner-race--fixture--dev";
     let alpha =
         fixture_root().with_file_name(format!("apply-package-race-alpha-{}", std::process::id()));
     let beta =
@@ -733,16 +733,16 @@ async fn assert_concurrent_package_grants_share_one_carrier(url: &str) {
         .await
         .expect("begin grant lock blocker");
     blocker_tx
-        .query_one(OPERATION_GRANT_LOCK_SQL, &[&RACE_TENANT])
+        .query_one(OPERATION_GRANT_LOCK_SQL, &[&RACE_ENV_KEY])
         .await
         .expect("hold the shared tenant grant lock");
 
     let alpha_url = url.to_owned();
     let alpha_task =
-        tokio::spawn(async move { apply_for_tenant(&alpha_url, &alpha, RACE_TENANT).await });
+        tokio::spawn(async move { apply_for_env_key(&alpha_url, &alpha, RACE_ENV_KEY).await });
     let beta_url = url.to_owned();
     let beta_task =
-        tokio::spawn(async move { apply_for_tenant(&beta_url, &beta, RACE_TENANT).await });
+        tokio::spawn(async move { apply_for_env_key(&beta_url, &beta, RACE_ENV_KEY).await });
 
     // Package application takes the database data-access lock first. One
     // package holds it while waiting on the grant carrier, and the other
@@ -811,15 +811,15 @@ async fn write_identity(client: &Client) -> Vec<String> {
         .query(
             "SELECT identity FROM ( \
                SELECT 'package:' || xmin::text AS identity \
-                 FROM catalog.packages WHERE tenant_id = $1 \
+                 FROM catalog.packages WHERE env_key = $1 \
                UNION ALL \
                SELECT 'migration:' || ordinal::text || ':' || xmin::text \
-                 FROM catalog.package_migrations WHERE tenant_id = $1 \
+                 FROM catalog.package_migrations WHERE env_key = $1 \
                UNION ALL \
                SELECT 'definition:' || schema_name || ':' || relation_name || ':' || \
                       definition_type || ':' || definition_name || ':' || \
                       owner_package_id || ':' || client_field_extensible::text || ':' || xmin::text \
-                 FROM catalog.package_definition_owners WHERE tenant_id = $1 \
+                 FROM catalog.package_definition_owners WHERE env_key = $1 \
                UNION ALL \
                SELECT 'entity:' || package_id || ':' || entity_id || ':' || xmin::text \
                  FROM inventory.wamn_entities \
@@ -833,7 +833,7 @@ async fn write_identity(client: &Client) -> Vec<String> {
                SELECT 'permission:' || permission || ':' || xmin::text \
                  FROM platform.permission \
              ) AS observed ORDER BY identity COLLATE \"C\"",
-            &[&TENANT],
+            &[&ENV_KEY],
         )
         .await
         .expect("read package, migration, and entity-map write identities")
@@ -913,12 +913,12 @@ async fn platform_successor_without_qualification_preserves_predecessor_state() 
         client
             .query_one(
                 "SELECT NOT EXISTS (SELECT FROM catalog.packages \
-                    WHERE tenant_id = $1 AND package_id = 'platform_fixture' \
+                    WHERE env_key = $1 AND package_id = 'platform_fixture' \
                       AND package_version = '2.2.0') \
                     AND NOT EXISTS (SELECT FROM information_schema.columns \
                     WHERE table_schema = 'inventory' AND table_name = 'widget_maker' \
                       AND column_name = 'note')",
-                &[&TENANT],
+                &[&ENV_KEY],
             )
             .await
             .expect("inspect the unchanged package and column")
@@ -1057,9 +1057,9 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
             .query_one(
                 "SELECT apply_effective_role::text = current_user::text \
                    FROM catalog.package_migrations \
-                  WHERE tenant_id = $1 AND package_id = 'wamn_inventory' \
+                  WHERE env_key = $1 AND package_id = 'wamn_inventory' \
                     AND package_version = '1.0.0' AND ordinal = 1",
-                &[&TENANT],
+                &[&ENV_KEY],
             )
             .await
             .expect("read server-visible authority used for the migration records")
@@ -1170,8 +1170,8 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         client
             .query_one(
                 "SELECT count(*) FROM catalog.package_migrations \
-                 WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3",
-                &[&TENANT, &"wamn_inventory", &"1.0.0"],
+                 WHERE env_key = $1 AND package_id = $2 AND package_version = $3",
+                &[&ENV_KEY, &"wamn_inventory", &"1.0.0"],
             )
             .await
             .unwrap()
@@ -1318,7 +1318,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
                 "SELECT definition_type, definition_name, owner_package_id, \
                         client_field_extensible \
                    FROM catalog.package_definition_owners \
-                  WHERE tenant_id = $1 AND schema_name = 'inventory' \
+                  WHERE env_key = $1 AND schema_name = 'inventory' \
                     AND relation_name = 'panel' \
                     AND ((definition_type = 'relation' AND definition_name = 'panel') \
                       OR (definition_type = 'field' AND definition_name IN \
@@ -1326,7 +1326,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
                       OR (definition_type = 'constraint' AND definition_name = \
                           'panel_overlay_quality_status_check')) \
                   ORDER BY definition_type, definition_name COLLATE \"C\"",
-                &[&TENANT],
+                &[&ENV_KEY],
             )
             .await
             .expect("read exact base and overlay definition owners")
@@ -1621,8 +1621,8 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         client
             .query_one(
                 "SELECT count(*) FROM catalog.package_migrations \
-                 WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3",
-                &[&TENANT, &"wamn_inventory", &"1.0.0"],
+                 WHERE env_key = $1 AND package_id = $2 AND package_version = $3",
+                &[&ENV_KEY, &"wamn_inventory", &"1.0.0"],
             )
             .await
             .unwrap()
@@ -1638,10 +1638,10 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     write_receipt(&package);
     client
         .execute(
-            "INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
+            "INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) \
              SELECT $1, 'sha256:' || encode(sha256(bytes), 'hex'), bytes \
                FROM (SELECT convert_to($2, 'UTF8') AS bytes) AS release",
-            &[&TENANT, &r#"{"release":{"packages":[{"package-id":"wamn_inventory","package-version":"1.0.0"}]}}"#],
+            &[&ENV_KEY, &r#"{"release":{"packages":[{"package-id":"wamn_inventory","package-version":"1.0.0"}]}}"#],
         )
         .await
         .expect("seal the applied package coordinate through release membership");
@@ -1686,9 +1686,9 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         client
             .query_one(
                 "SELECT count(*) FROM catalog.package_migrations \
-                  WHERE tenant_id = $1 AND package_id = 'wamn_inventory' \
+                  WHERE env_key = $1 AND package_id = 'wamn_inventory' \
                     AND package_version = '1.0.0'",
-                &[&TENANT],
+                &[&ENV_KEY],
             )
             .await
             .unwrap()
@@ -1756,9 +1756,9 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         !client
             .query_one(
                 "SELECT EXISTS (SELECT 1 FROM catalog.packages \
-                  WHERE tenant_id = $1 AND package_id = 'wamn_inventory' \
+                  WHERE env_key = $1 AND package_id = 'wamn_inventory' \
                     AND package_version = '1.0.1')",
-                &[&TENANT],
+                &[&ENV_KEY],
             )
             .await
             .unwrap()
@@ -1813,9 +1813,9 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         client
             .query_one(
                 "SELECT count(*) FROM catalog.package_migrations \
-                  WHERE tenant_id = $1 AND package_id = 'wamn_inventory' \
+                  WHERE env_key = $1 AND package_id = 'wamn_inventory' \
                     AND package_version = '1.0.1'",
-                &[&TENANT],
+                &[&ENV_KEY],
             )
             .await
             .unwrap()
@@ -2360,7 +2360,7 @@ async fn record_after_seal(
     client.batch_execute("BEGIN").await?;
     let result = async {
         client
-            .query_one("SELECT set_config('app.tenant', $1, true)", &[&TENANT])
+            .query_one("SELECT set_config('app.env_key', $1, true)", &[&ENV_KEY])
             .await?;
         if let Some(setting) = setting {
             client
@@ -2373,9 +2373,9 @@ async fn record_after_seal(
         client
             .execute(
                 "INSERT INTO catalog.package_migrations \
-                     (tenant_id, package_id, package_version, ordinal, relative_path, sha256) \
+                     (env_key, package_id, package_version, ordinal, relative_path, sha256) \
                  VALUES ($1, 'wamn_inventory', '1.0.0', 99, 'migrations/0099_seal_probe.sql', $2)",
-                &[&TENANT, &format!("sha256:{}", "0".repeat(64))],
+                &[&ENV_KEY, &format!("sha256:{}", "0".repeat(64))],
             )
             .await
             .map(|_| ())
@@ -2416,7 +2416,7 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
         .expect("read the database instance")
         .get(0);
     let marker =
-        wamn_runtime::local_application::local_target_marker(TENANT, ENVIRONMENT, instance);
+        wamn_runtime::local_application::local_target_marker(ENV_KEY, ENVIRONMENT, instance);
     set_database_comment(&client, Some(&marker)).await;
     let apply_local = || {
         apply_package::apply_local_package(
@@ -2493,9 +2493,9 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
         client
             .query_one(
                 "SELECT artifact_digest FROM catalog.packages \
-                  WHERE tenant_id = $1 AND package_id = 'wamn_inventory' \
+                  WHERE env_key = $1 AND package_id = 'wamn_inventory' \
                     AND package_version = '1.0.0'",
-                &[&TENANT],
+                &[&ENV_KEY],
             )
             .await
             .expect("read the immutable package row")
@@ -2506,10 +2506,10 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
 
     client
         .execute(
-            "INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
+            "INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) \
              SELECT $1, 'sha256:' || encode(sha256(bytes), 'hex'), bytes \
                FROM (SELECT convert_to($2, 'UTF8') AS bytes) AS release",
-            &[&TENANT, &r#"{"release":{"packages":[{"package-id":"wamn_inventory","package-version":"1.0.0"}]}}"#],
+            &[&ENV_KEY, &r#"{"release":{"packages":[{"package-id":"wamn_inventory","package-version":"1.0.0"}]}}"#],
         )
         .await
         .expect("seal the coordinate through local release membership");
@@ -2667,7 +2667,7 @@ async fn a_local_target_recreates_for_a_changed_migration_or_a_history_table_wit
         .await
         .expect("apply declarations that keep a log");
     let reason = || {
-        apply_package::local_target_recreate_reason(&url, TENANT, std::slice::from_ref(&package))
+        apply_package::local_target_recreate_reason(&url, ENV_KEY, std::slice::from_ref(&package))
     };
     assert_eq!(reason().await.expect("check the applied package"), None);
 
@@ -2893,10 +2893,12 @@ async fn package_owner_migration_preserves_grants_and_excludes_platform_tables()
         ))
         .await
         .unwrap();
+    // Replay the owner changes with the current greenfield catalog key.
     let migration =
-        include_str!("../../../../deploy/sql/migrations/project/0037_package_owners.sql");
-    client.batch_execute(migration).await.unwrap();
-    client.batch_execute(migration).await.unwrap();
+        include_str!("../../../../deploy/sql/migrations/project/0037_package_owners.sql")
+            .replace("tenant_id", "env_key");
+    client.batch_execute(&migration).await.unwrap();
+    client.batch_execute(&migration).await.unwrap();
     // Reprovisioning uses the same identity as the numbered SQL migration.
     client
         .batch_execute(&wamn_control_provision::sql::ensure_package_owner_role_sql(

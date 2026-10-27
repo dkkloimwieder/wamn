@@ -49,7 +49,7 @@ pub(crate) async fn invoke_route(
     let release = host.release.scope();
     let span = invocation_span(
         &InvocationSite {
-            tenant_id: &release.tenant_id,
+            env_key: &release.env_key,
             project: &host.project,
             environment: &release.environment,
             wiring_id: "",
@@ -80,7 +80,7 @@ pub(crate) async fn invoke_route(
             config: "null".to_owned(),
         };
         let acquisition = NodeAcquisition {
-            claims: host.claims(&release.tenant_id, Some(host.release_identity())),
+            claims: host.claims(&release.env_key, Some(host.release_identity())),
             invocation: component_invocation(
                 component,
                 route.operation,

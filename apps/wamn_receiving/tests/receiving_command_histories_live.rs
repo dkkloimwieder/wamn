@@ -40,7 +40,7 @@ pub(crate) struct Inputs {
     route_endpoint: String,
     route_host: String,
     operator_secret: PathBuf,
-    tenant: String,
+    env_key: String,
     caller_role: String,
     evidence_file: PathBuf,
     component_digests: BTreeMap<String, String>,
@@ -970,7 +970,7 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
     for user in &holders {
         revoke_role_on(
             &mut writer.client,
-            &inputs.tenant,
+            &inputs.env_key,
             user,
             &inputs.caller_role,
             &auth,
@@ -989,7 +989,7 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
     for user in &holders {
         let result = grant_role_on(
             &mut writer.client,
-            &inputs.tenant,
+            &inputs.env_key,
             user,
             &inputs.caller_role,
             &auth,

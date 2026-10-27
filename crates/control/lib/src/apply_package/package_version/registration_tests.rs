@@ -3,13 +3,13 @@ use tokio_postgres::{Client, NoTls};
 use wamn_catalog::PackageCoordinate;
 use wamn_schema_control::{PackageMigrationError, PackageMigrationErrorType};
 
-const TENANT: &str = "package-registration";
+const ENV_KEY: &str = "package-registration";
 
 async fn connect(url: &str) -> Client {
     let (client, connection) = tokio_postgres::connect(url, NoTls).await.unwrap();
     tokio::spawn(async move { connection.await.unwrap() });
     client
-        .batch_execute("SET app.tenant = 'package-registration'")
+        .batch_execute("SET app.env_key = 'package-registration'")
         .await
         .unwrap();
     client
@@ -25,7 +25,7 @@ async fn register(
     crate::apply_package::bind_apply_package_principal(&tx).await?;
     let inserted = register_package(
         &tx,
-        TENANT,
+        ENV_KEY,
         &PackageCoordinate::new("inventory", version).unwrap(),
         Some(hash),
         predecessor,
@@ -109,7 +109,7 @@ async fn registration_serializes_replay_conflicts_successors_and_rollback() {
             assert!(
                 register_package(
                     &tx,
-                    TENANT,
+                    ENV_KEY,
                     &PackageCoordinate::new("inventory", winner).unwrap(),
                     Some(&hash),
                     Some(predecessor)
@@ -142,7 +142,7 @@ async fn registration_serializes_replay_conflicts_successors_and_rollback() {
         assert!(
             register_package(
                 &tx,
-                TENANT,
+                ENV_KEY,
                 &PackageCoordinate::new("inventory", "5.0.0").unwrap(),
                 Some(&hash),
                 Some("4.0.0")

@@ -409,22 +409,22 @@ pub(crate) async fn read_project(
     let Ok(mut client) = connect(&project_url(platform, document, row)?).await else {
         return Ok(None);
     };
-    let tenant =
-        wamn_control_provision::project_env_tenant(&document.org, &document.project, &document.env);
+    let env_key =
+        wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
     let transaction = client
         .transaction()
         .await
         .context("begin the project read")?;
     transaction
-        .query_one("SELECT set_config('app.tenant', $1, true)", &[&tenant])
+        .query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
         .await
         .context("claim the tenant")?;
     let mut installed = BTreeMap::<String, Installed>::new();
     for row in transaction
         .query(
             "SELECT package_id, package_version, predecessor_version FROM catalog.packages \
-              WHERE tenant_id = $1",
-            &[&tenant],
+              WHERE env_key = $1",
+            &[&env_key],
         )
         .await
         .context("read the installed packages")?
@@ -447,8 +447,8 @@ pub(crate) async fn read_project(
     for row in transaction
         .query(
             "SELECT package_id, candidate_package_version \
-               FROM catalog.package_upgrade_qualifications WHERE tenant_id = $1",
-            &[&tenant],
+               FROM catalog.package_upgrade_qualifications WHERE env_key = $1",
+            &[&env_key],
         )
         .await
         .context("read the stage evidence")?
@@ -464,10 +464,10 @@ pub(crate) async fn read_project(
                     g.definition_json, g.credential_set_handle, to_jsonb(i)->>'org_connection_name' \
                FROM catalog.connection_instances i \
                LEFT JOIN catalog.connection_generations g \
-                 ON g.tenant_id = i.tenant_id AND g.environment = i.environment \
+                 ON g.env_key = i.env_key AND g.environment = i.environment \
                 AND g.instance_id = i.instance_id AND g.generation = i.active_generation \
-              WHERE i.tenant_id = $1 AND i.environment = $2",
-            &[&tenant, &document.env],
+              WHERE i.env_key = $1 AND i.environment = $2",
+            &[&env_key, &document.env],
         )
         .await
         .context("read the connection instances")?
@@ -486,8 +486,8 @@ pub(crate) async fn read_project(
     let bindings = transaction
         .query(
             "SELECT manifest_digest, component_digest, store_alias, instance_id \
-               FROM catalog.connection_bindings WHERE tenant_id = $1 AND environment = $2",
-            &[&tenant, &document.env],
+               FROM catalog.connection_bindings WHERE env_key = $1 AND environment = $2",
+            &[&env_key, &document.env],
         )
         .await
         .context("read the connection bindings")?
@@ -505,8 +505,8 @@ pub(crate) async fn read_project(
     let floors = if floors_installed {
         transaction
             .query(
-                "SELECT package_id, version FROM catalog.package_floors WHERE tenant_id = $1",
-                &[&tenant],
+                "SELECT package_id, version FROM catalog.package_floors WHERE env_key = $1",
+                &[&env_key],
             )
             .await
             .context("read the recorded floors")?
@@ -675,20 +675,20 @@ async fn read_revision_in(
 
 /// The release the environment serves: the digest of the newest successful
 /// revision of its release chart
-/// (docs/architecture/overview.md#environment-lifecycle). `tenant` is the
+/// (docs/architecture/overview.md#environment-lifecycle). `env_key` is the
 /// environment's `org--project--env`.
 ///
 /// None when the environment has no successful revision.
 ///
 /// # Errors
 ///
-/// When `tenant` is not a coordinate, or Helm cannot be read.
+/// When `env_key` is not a coordinate, or Helm cannot be read.
 pub async fn deployed_release(
     target: &release_chart::Target,
-    tenant: &str,
+    env_key: &str,
 ) -> anyhow::Result<Option<String>> {
-    let [org, project, env] = tenant.split("--").collect::<Vec<_>>()[..] else {
-        bail!("the tenant {tenant} is not an org--project--env coordinate");
+    let [org, project, env] = env_key.split("--").collect::<Vec<_>>()[..] else {
+        bail!("the tenant {env_key} is not an org--project--env coordinate");
     };
     let name = release_chart::release_name(org, project, env)?;
     Ok(read_revision_in(target, &name)

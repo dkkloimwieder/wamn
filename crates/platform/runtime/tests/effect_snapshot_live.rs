@@ -13,7 +13,7 @@ use wamn_runtime::plugins::wamn_postgres::{
     WamnPostgresConfig, WiringLookup,
 };
 
-const TENANT: &str = "effect-snapshot-live";
+const ENV_KEY: &str = "effect-snapshot-live";
 const PACKAGE: &str = "snapshot_fixture";
 const COMPONENT: &str = "http-request";
 const GENERATION: &str = "wamn_http_admitter_snapshot_live_a";
@@ -74,10 +74,10 @@ async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
     let bytes = serde_json::to_vec(&manifest)?;
     let manifest_digest: String = admin
         .query_one(
-            "INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
+            "INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) \
              VALUES ($1, 'sha256:' || encode(sha256($2::bytea), 'hex'), $2) \
              RETURNING manifest_digest",
-            &[&TENANT, &bytes],
+            &[&ENV_KEY, &bytes],
         )
         .await?
         .get(0);
@@ -102,12 +102,12 @@ async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
     admin
         .execute(
             "INSERT INTO catalog.workflows \
-             (tenant_id, environment, application, workflow_id, version, graph_json, \
+             (env_key, environment, application, workflow_id, version, graph_json, \
               wiring_hash, trigger, execution_type, created_by) \
              VALUES ($1, 'dev', $2, 'snapshot', 1, $3::text::jsonb, $4, 'manual', \
                      'invoker', '00000000-0000-0000-0000-000000000001')",
             &[
-                &TENANT,
+                &ENV_KEY,
                 &PACKAGE,
                 &serde_json::to_string(&graph)?,
                 &graph.wiring_hash().as_str(),
@@ -147,7 +147,7 @@ async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
         statement_timeout_ms: 10_000,
         row_limit: 10_000,
     })?;
-    postgres.set_tenant(COMPONENT, TENANT)?;
+    postgres.set_env_key(COMPONENT, ENV_KEY)?;
     let lookup = ConnectionEffectLookup {
         entry: ConnectionEntryLookup {
             package_id: PACKAGE,
@@ -171,7 +171,7 @@ async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
         candidate_binding: None,
     };
     let snapshot = postgres
-        .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, TENANT, &lookup)
+        .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, ENV_KEY, &lookup)
         .await
         .context("run the cluster effect snapshot as the HTTP admitter")?
         .context("the provisioned role must read the workflow and release")?;

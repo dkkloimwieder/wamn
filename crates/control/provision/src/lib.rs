@@ -30,7 +30,7 @@
 //! 2. **per-generation CONNECT** — `PUBLIC` and the stable `wamn_app` role hold
 //!    no `CONNECT`; each generation login is granted `CONNECT` on its own
 //!    database only, so a generation cannot open a session on another database;
-//! 3. **RLS within** — the 3.2 tenant floor confines rows by `app.tenant`.
+//! 3. **RLS within** — the 3.2 tenant floor confines rows by `app.env_key`.
 //!
 //! Per-project **distinct** roles/passwords (stronger credential isolation) are
 //! a hardening follow-up (8.2), not this MVP.
@@ -91,7 +91,7 @@ pub use control_author::{
     control_author_generation_role, control_author_scope_hash, parse_control_authoring_url,
 };
 pub use database::render_project_env_database;
-pub use error::{ProvisionError, check_tenant_environment_identity};
+pub use error::{ProvisionError, check_env_key_environment_identity};
 pub use management_admitter::{
     ManagementAdmissionConnection, ManagementAdmissionUrlError, ManagementAdmissionUrlErrorType,
     management_admitter_generation_role, management_admitter_scope_hash,
@@ -105,7 +105,7 @@ pub use name::{
     control_administration_secret_name, control_author_secret_name, event_stream_name,
     management_admitter_secret_name, org_workload_secret_name, package_owner_role,
     project_env_cdc_secret_name, project_env_database_name, project_env_guest_secret_name,
-    project_env_namespace, project_env_secret_name, project_env_tenant, validate_instance_suffix,
+    project_env_key, project_env_namespace, project_env_secret_name, validate_instance_suffix,
     validate_project_env, validate_project_env_cdc, validate_project_id, workload_secret_name,
 };
 pub use org::{OrgClusters, render_org_cluster_set};

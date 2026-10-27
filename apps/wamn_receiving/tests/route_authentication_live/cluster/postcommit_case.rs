@@ -172,7 +172,7 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
             work: &resources.work,
             namespace: NAMESPACE,
 
-            tenant: super::super::identity().tenant().as_str(),
+            env_key: super::super::identity().env_key().as_str(),
             project: super::super::identity().project.as_str(),
             environment: super::super::identity().environment.as_str(),
             requests: [("update", &update_trace), ("receipt", &receipt_trace)],

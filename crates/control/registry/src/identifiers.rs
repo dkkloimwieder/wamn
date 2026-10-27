@@ -12,10 +12,10 @@
 //! shared identifier budget.
 
 /// A tenant claim: 1–64 chars of `[A-Za-z0-9_-]`.
-pub fn valid_tenant(tenant: &str) -> bool {
-    !tenant.is_empty()
-        && tenant.len() <= 64
-        && tenant
+pub fn valid_env_key(env_key: &str) -> bool {
+    !env_key.is_empty()
+        && env_key.len() <= 64
+        && env_key
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
@@ -165,13 +165,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tenant_validation() {
-        assert!(valid_tenant("tenant-a"));
-        assert!(valid_tenant("T_1"));
-        assert!(!valid_tenant(""));
-        assert!(!valid_tenant("bad'tenant"));
-        assert!(!valid_tenant("x".repeat(65).as_str()));
-        assert!(!valid_tenant("a;b"));
+    fn env_key_validation() {
+        assert!(valid_env_key("tenant-a"));
+        assert!(valid_env_key("T_1"));
+        assert!(!valid_env_key(""));
+        assert!(!valid_env_key("bad'tenant"));
+        assert!(!valid_env_key("x".repeat(65).as_str()));
+        assert!(!valid_env_key("a;b"));
     }
 
     #[test]

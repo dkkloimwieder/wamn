@@ -69,9 +69,9 @@ fn encode_path(name: &str) -> String {
         .collect()
 }
 
-/// Tenants spanning the charset `valid_tenant` admits (ASCII alphanumeric plus
+/// Tenants spanning the charset `valid_env_key` admits (ASCII alphanumeric plus
 /// `-` and `_`), including the boundary lengths where a framing bug would show.
-const TENANTS: &[&str] = &[
+const ENV_KEYS: &[&str] = &[
     "acme",
     "t1",
     "a",
@@ -160,16 +160,16 @@ fn the_sql_tenant_key_equals_the_rust_tenant_key() {
     let db_url = reset(&admin, &scope);
     psql_file(&db_url, &ddl(&scope));
 
-    for tenant in TENANTS {
+    for env_key in ENV_KEYS {
         let observed = psql(
             &db_url,
             None,
-            &format!("SELECT wamn_authority.tenant_key('{tenant}')"),
+            &format!("SELECT wamn_authority.tenant_key('{env_key}')"),
         );
-        let expected = tenant_key(tenant, &scope.db);
+        let expected = tenant_key(env_key, &scope.db);
         assert_eq!(
             observed, expected,
-            "tenant {tenant:?}: the SQL derivation and the Rust derivation \
+            "tenant {env_key:?}: the SQL derivation and the Rust derivation \
              DISAGREE. Provisioning would mint a login named for one key while \
              every governed predicate computed the other, so every guest read \
              would refuse."
@@ -228,9 +228,9 @@ fn the_function_carries_the_flags_the_expression_index_requires() {
     // The expression index the ruling requires must actually be creatable.
     psql_file(
         &db_url,
-        "CREATE TABLE probe (tenant_id text NOT NULL); \
+        "CREATE TABLE probe (env_key text NOT NULL); \
          CREATE INDEX IF NOT EXISTS probe_tenant_key \
-           ON probe ((wamn_authority.tenant_key(tenant_id)))",
+           ON probe ((wamn_authority.tenant_key(env_key)))",
     );
     let indexed = psql(
         &db_url,
@@ -401,12 +401,12 @@ fn the_session_derivation_returns_the_key_of_the_connected_guest_login() {
     let db_url = reset(&admin, &scope);
     psql_file(&db_url, &ddl(&scope));
 
-    let tenant = "acme";
-    let key = tenant_key(tenant, &scope.db);
+    let env_key = "acme";
+    let key = tenant_key(env_key, &scope.db);
     let login = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::Tenant {
-            tenant,
+        WorkloadRoleScope::EnvKey {
+            env_key,
             database: &scope.db,
         },
         CredentialGeneration::A,
@@ -454,7 +454,7 @@ fn the_session_derivation_returns_the_key_of_the_connected_guest_login() {
         &role_url(&admin, &login, &scope.db),
         None,
         &format!(
-            "SELECT wamn_authority.tenant_key('{tenant}') \
+            "SELECT wamn_authority.tenant_key('{env_key}') \
              = wamn_authority.current_tenant_key()"
         ),
     );
@@ -483,7 +483,7 @@ fn the_session_derivation_returns_the_key_of_the_connected_guest_login() {
     }
 
     // FAIL CLOSED for anything that is not a guest generation at all — the
-    // posture `session_author_tenant()` takes for an unmapped login.
+    // posture `session_author_env_key()` takes for an unmapped login.
     let non_guest = psql(
         &db_url,
         None,
@@ -568,22 +568,22 @@ fn the_bootstrap_and_literal_renderings_install_the_same_object() {
     );
     psql_file(
         &db_url,
-        "CREATE TABLE boot_probe (tenant_id text NOT NULL); \
-         CREATE INDEX boot_probe_tkey ON boot_probe ((wamn_authority.tenant_key(tenant_id)))",
+        "CREATE TABLE boot_probe (env_key text NOT NULL); \
+         CREATE INDEX boot_probe_tkey ON boot_probe ((wamn_authority.tenant_key(env_key)))",
     );
 
     // And the value it computes is the Rust value for THIS database — the
     // bootstrap's whole job.
-    for tenant in TENANTS {
+    for env_key in ENV_KEYS {
         let observed = psql(
             &db_url,
             None,
-            &format!("SELECT wamn_authority.tenant_key('{tenant}')"),
+            &format!("SELECT wamn_authority.tenant_key('{env_key}')"),
         );
         assert_eq!(
             observed,
-            tenant_key(tenant, &scope.db),
-            "tenant {tenant:?}: the bootstrapped derivation disagrees with Rust"
+            tenant_key(env_key, &scope.db),
+            "tenant {env_key:?}: the bootstrapped derivation disagrees with Rust"
         );
     }
 }
@@ -606,10 +606,10 @@ fn administration_uses_the_database_boundary_while_catalog_keeps_tenant_keys() {
               ('role','user_role','permission','api_key','environment',
                'role_history','user_role_history','permission_history','api_key_history','environment_history')
               AND (c.relrowsecurity OR c.relforcerowsecurity
-                OR EXISTS (SELECT FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attname='tenant_id' AND NOT a.attisdropped)
+                OR EXISTS (SELECT FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attname='env_key' AND NOT a.attisdropped)
                 OR EXISTS (SELECT FROM pg_policy p WHERE p.polrelid=c.oid)
                 OR EXISTS (SELECT FROM pg_index i WHERE i.indrelid=c.oid AND pg_get_indexdef(i.indexrelid) LIKE '%tenant_key%')));
         ASSERT EXISTS (SELECT FROM pg_index WHERE indrelid='catalog.packages'::regclass AND pg_get_indexdef(indexrelid) LIKE '%tenant_key%');
-        ASSERT EXISTS (SELECT FROM pg_attribute WHERE attrelid='catalog.packages'::regclass AND attname='tenant_id' AND NOT attisdropped);
+        ASSERT EXISTS (SELECT FROM pg_attribute WHERE attrelid='catalog.packages'::regclass AND attname='env_key' AND NOT attisdropped);
         END $$;");
 }

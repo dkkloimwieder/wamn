@@ -59,16 +59,16 @@ pub enum WorkloadSecretBody<'a> {
     /// The single `url` key every consumer mounts through
     /// `secretKeyRef … key: url`.
     Url(&'a str),
-    /// The same single `url`, plus the tenant key as a label and the tenant id
+    /// The same single `url`, plus the tenant key as a label and the environment key
     /// as an annotation (`wamn-0h0g.22.6.4`).
     ///
-    /// The TENANT KEY is a label and the tenant id an ANNOTATION deliberately:
+    /// The TENANT KEY is a label and the environment key an ANNOTATION deliberately:
     /// a label value is capped at 63 characters and restricted to alphanumerics
-    /// plus `-_.`, while `valid_tenant` admits 64 bytes — so a label carrying
+    /// plus `-_.`, while `valid_env_key` admits 64 bytes — so a label carrying
     /// the tenant verbatim would be rejected by the API server for exactly the
     /// tenants the digest exists to handle.
-    TenantUrl {
-        tenant: &'a str,
+    EnvKeyUrl {
+        env_key: &'a str,
         tenant_key: &'a str,
         url: &'a str,
     },
@@ -80,7 +80,7 @@ impl WorkloadSecretBody<'_> {
     fn body_type(self) -> WorkloadSecretBodyKind {
         match self {
             Self::Url(_) => WorkloadSecretBodyKind::Url,
-            Self::TenantUrl { .. } => WorkloadSecretBodyKind::TenantUrl,
+            Self::EnvKeyUrl { .. } => WorkloadSecretBodyKind::EnvKeyUrl,
             Self::SessionTarget(_) => WorkloadSecretBodyKind::SessionTarget,
         }
     }
@@ -120,13 +120,13 @@ pub fn render_workload_secret_manifest(
     });
     let string_data = match body {
         WorkloadSecretBody::Url(url) => json!({ "url": url }),
-        WorkloadSecretBody::TenantUrl {
-            tenant,
+        WorkloadSecretBody::EnvKeyUrl {
+            env_key,
             tenant_key,
             url,
         } => {
             metadata["labels"]["wamn.tenant-key"] = json!(tenant_key);
-            metadata["annotations"] = json!({ "wamn.io/tenant": tenant });
+            metadata["annotations"] = json!({ "wamn.io/env_key": env_key });
             json!({ "url": url })
         }
         WorkloadSecretBody::SessionTarget(target) => json!({
@@ -244,7 +244,7 @@ pub fn render_management_admitter_secret_manifest(
 pub fn render_guest_secret_manifest(
     triple: &Triple,
     namespace: &str,
-    tenant: &str,
+    env_key: &str,
     tenant_key: &str,
     url: &str,
 ) -> Value {
@@ -252,8 +252,8 @@ pub fn render_guest_secret_manifest(
         WorkloadRoleFamily::App,
         triple,
         namespace,
-        WorkloadSecretBody::TenantUrl {
-            tenant,
+        WorkloadSecretBody::EnvKeyUrl {
+            env_key,
             tenant_key,
             url,
         },
@@ -361,7 +361,7 @@ mod tests {
             parsed.audience(),
             "urn:wamn:project-env:acme:widgets:dev:k3m9x2p7"
         );
-        assert_eq!(parsed.tenant_id(), "t1");
+        assert_eq!(parsed.env_key(), "t1");
         assert_eq!(parsed.connection().url(), url);
         assert!(
             !format!("{:?}", WorkloadSecretBody::SessionTarget(&target))

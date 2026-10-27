@@ -27,7 +27,7 @@ use crate::plugins::wamn_postgres::AuthorityClass;
 
 /// The environment durability policy, read under the executor credential.
 const SELECT_DURABILITY_SQL: &str = "SELECT durability_class FROM environment_policies \
-     WHERE tenant_id = $1 AND expected_environment = $2";
+     WHERE env_key = $1 AND expected_environment = $2";
 
 /// One manual workflow run to admit: the enabled workflow version, the
 /// release it gated against, who it executes as, who started it, and the
@@ -65,13 +65,13 @@ pub enum ManualRunAdmitted {
 }
 
 impl WamnPostgres {
-    /// Admit one manual workflow run in `project` for `tenant`: one `runs`
+    /// Admit one manual workflow run in `project` for `env_key`: one `runs`
     /// row of the manual grain and one `run_queue` row, in one transaction
     /// under the executor credential.
     pub async fn admit_manual_run(
         &self,
         project: &str,
-        tenant: &str,
+        env_key: &str,
         admission: &ManualRunAdmission<'_>,
     ) -> Result<ManualRunAdmitted, ProductionClaimError> {
         let (connection, policy) = self
@@ -90,7 +90,7 @@ impl WamnPostgres {
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
-                tenant,
+                env_key,
                 Some("wamn_run"),
                 None,
                 None,
@@ -112,7 +112,7 @@ impl WamnPostgres {
         let result = async {
             require_executor_authority(&connection).await?;
             let durability: String = connection
-                .query_opt(SELECT_DURABILITY_SQL, &[&tenant, &admission.environment])
+                .query_opt(SELECT_DURABILITY_SQL, &[&env_key, &admission.environment])
                 .await
                 .map_err(|error| storage("read the environment policy", &error))?
                 .ok_or_else(|| {
@@ -126,7 +126,7 @@ impl WamnPostgres {
             let input = admission.input.to_string();
             let node_digests = admission.node_digests.to_string();
             let binds: [&(dyn tokio_postgres::types::ToSql + Sync); 14] = [
-                &tenant,
+                &env_key,
                 &admission.package_id,
                 &admission.manifest_digest,
                 &admission.environment,
@@ -148,7 +148,7 @@ impl WamnPostgres {
             if let Some(row) = inserted {
                 let run_id: String = row.get(0);
                 connection
-                    .execute(insert_run_queue_sql(), &[&tenant, &run_id])
+                    .execute(insert_run_queue_sql(), &[&env_key, &run_id])
                     .await
                     .map_err(|error| storage("queue the manual run", &error))?;
                 return Ok(ManualRunAdmitted::Queued { run_id });
@@ -157,7 +157,7 @@ impl WamnPostgres {
                 match connection
                     .query_opt(
                         select_manual_run_sql(),
-                        &[&tenant, &admission.idempotency_key, &input],
+                        &[&env_key, &admission.idempotency_key, &input],
                     )
                     .await
                     .map_err(|error| storage("read the first manual run", &error))?
@@ -172,12 +172,12 @@ impl WamnPostgres {
     }
 }
 
-/// The enabled version of one schedule workflow. Binds: `$1` tenant, `$2`
+/// The enabled version of one schedule workflow. Binds: `$1` `env_key`, `$2`
 /// environment, `$3` application, `$4` workflow id.
 const ENABLED_SCHEDULE_SQL: &str = "\
 SELECT version, graph_json::text, wiring_hash, execution_role \
   FROM catalog.workflows \
- WHERE tenant_id = $1 AND environment = $2 AND application = $3 \
+ WHERE env_key = $1 AND environment = $2 AND application = $3 \
    AND workflow_id = $4 AND enabled AND trigger = 'schedule'";
 
 /// One due moment of a schedule workflow to admit, against the release the
@@ -219,7 +219,7 @@ pub fn due_text(due: DateTime<Utc>) -> String {
 
 impl WamnPostgres {
     /// Admit the run of schedule workflow `workflow_id` due at `due`, in
-    /// `project` for `tenant`: in one transaction under the executor
+    /// `project` for `env_key`: in one transaction under the executor
     /// credential, read the enabled schedule version, gate its graph against
     /// the release `manifest_digest`, freeze the component digest of every
     /// node, and write one `runs` row of the schedule workflow grain and one
@@ -230,7 +230,7 @@ impl WamnPostgres {
     pub async fn admit_schedule_run(
         &self,
         project: &str,
-        tenant: &str,
+        env_key: &str,
         admission: &ScheduleRunAdmission<'_>,
     ) -> Result<ScheduleRunAdmitted, ProductionClaimError> {
         let (connection, policy) = self
@@ -249,7 +249,7 @@ impl WamnPostgres {
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
-                tenant,
+                env_key,
                 Some("wamn_run"),
                 None,
                 None,
@@ -274,7 +274,7 @@ impl WamnPostgres {
                 .query_opt(
                     ENABLED_SCHEDULE_SQL,
                     &[
-                        &tenant,
+                        &env_key,
                         &admission.environment,
                         &admission.application,
                         &admission.workflow_id,
@@ -296,7 +296,7 @@ impl WamnPostgres {
                 contract("parse the stored workflow graph", format!("{error:#}"))
             })?;
             let bytes: Vec<u8> = connection
-                .query_opt(PINNED_RELEASE_SQL, &[&tenant, &admission.manifest_digest])
+                .query_opt(PINNED_RELEASE_SQL, &[&env_key, &admission.manifest_digest])
                 .await
                 .map_err(|error| storage("read the serving release", &error))?
                 .ok_or_else(|| {
@@ -309,9 +309,9 @@ impl WamnPostgres {
             let (manifest, _) = ServingManifest::from_canonical_bytes(&bytes)
                 .map_err(|error| contract("read the serving release", error.to_string()))?;
             let packages = admission.application_packages;
-            let served = gate_workflow_document(tenant, packages, &manifest, &graph)
+            let served = gate_workflow_document(env_key, packages, &manifest, &graph)
                 .is_ok_and(|hash| hash.as_str() == wiring_hash);
-            let components = match resolve_workflow_components(tenant, packages, &manifest, &graph)
+            let components = match resolve_workflow_components(env_key, packages, &manifest, &graph)
             {
                 Ok(components) if served => components,
                 _ => return Ok(ScheduleRunAdmitted::NotServed),
@@ -326,7 +326,7 @@ impl WamnPostgres {
             )
             .to_string();
             let durability: String = connection
-                .query_opt(SELECT_DURABILITY_SQL, &[&tenant, &admission.environment])
+                .query_opt(SELECT_DURABILITY_SQL, &[&env_key, &admission.environment])
                 .await
                 .map_err(|error| storage("read the environment policy", &error))?
                 .ok_or_else(|| {
@@ -345,7 +345,7 @@ impl WamnPostgres {
             );
             let input = serde_json::json!({ "due": due }).to_string();
             let binds: [&(dyn tokio_postgres::types::ToSql + Sync); 13] = [
-                &tenant,
+                &env_key,
                 &admission.application,
                 &admission.manifest_digest,
                 &admission.environment,
@@ -366,7 +366,7 @@ impl WamnPostgres {
             if let Some(row) = inserted {
                 let run_id: String = row.get(0);
                 connection
-                    .execute(insert_run_queue_sql(), &[&tenant, &run_id])
+                    .execute(insert_run_queue_sql(), &[&env_key, &run_id])
                     .await
                     .map_err(|error| storage("queue the schedule run", &error))?;
                 return Ok(ScheduleRunAdmitted::Queued { run_id });
@@ -375,7 +375,7 @@ impl WamnPostgres {
                 match connection
                     .query_opt(
                         select_workflow_schedule_run_sql(),
-                        &[&tenant, &idempotency_key, &input],
+                        &[&env_key, &idempotency_key, &input],
                     )
                     .await
                     .map_err(|error| storage("read the first schedule run", &error))?

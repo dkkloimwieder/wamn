@@ -237,7 +237,7 @@ impl NativePolicy {
             .context("native-invocation-component-identity-mismatch")?;
         let fact = &component.fact;
         anyhow::ensure!(
-            fact.scope.tenant_id == acquisition.claims.tenant
+            fact.scope.env_key == acquisition.claims.env_key
                 && acquisition.invocation.operation == operation
                 && acquisition.claims.project.as_deref() == Some(self.resources.project.as_str()),
             "native-invocation-component-identity-mismatch"
@@ -424,7 +424,7 @@ impl InvocationPolicy for NativePolicy {
         }
         resources
             .logging
-            .set_claim(scope, &acquisition.claims.tenant, &resources.project);
+            .set_claim(scope, &acquisition.claims.env_key, &resources.project);
         resources
             .connection_http
             .bind_invocation(scope, acquisition.invocation.clone())?;

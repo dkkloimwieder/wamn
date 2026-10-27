@@ -24,13 +24,13 @@ pub(super) async fn apply(
         .gates;
     let mut changed = apply_object(target, &account()).await?;
     for (_, environment) in super::broker::documents(environments)? {
-        let tenant = tenant(&environment);
+        let env_key = env_key(&environment);
         if kubectl::get::<Value>(
             &target.kubeconfig,
             &target.context,
             "hosts",
             "secret",
-            &format!("wamn-cdc-{tenant}"),
+            &format!("wamn-cdc-{env_key}"),
         )
         .await?
         .is_none()
@@ -71,18 +71,14 @@ fn account() -> Value {
     })
 }
 
-fn tenant(environment: &EnvironmentDocument) -> String {
-    wamn_control_registry::project_env_tenant(
-        &environment.org,
-        &environment.project,
-        &environment.env,
-    )
+fn env_key(environment: &EnvironmentDocument) -> String {
+    wamn_control_registry::project_env_key(&environment.org, &environment.project, &environment.env)
 }
 
 fn deployment(environment: &EnvironmentDocument, image: &str) -> Value {
-    let tenant = tenant(environment);
-    let name = format!("cdc-reader-{tenant}");
-    let publisher = format!("evt-nats-{tenant}-publisher");
+    let env_key = env_key(environment);
+    let name = format!("cdc-reader-{env_key}");
+    let publisher = format!("evt-nats-{env_key}-publisher");
     json!({
         "apiVersion": "apps/v1", "kind": "Deployment",
         "metadata": {"name": name, "namespace": "hosts"},
@@ -104,10 +100,10 @@ fn deployment(environment: &EnvironmentDocument, image: &str) -> Value {
                         ],
                         "env": [
                             {"name": "WAMN_CDC_URL", "valueFrom": {"secretKeyRef": {
-                                "name": format!("wamn-cdc-{tenant}"), "key": "url"
+                                "name": format!("wamn-cdc-{env_key}"), "key": "url"
                             }}},
                             {"name": "WAMN_SYSTEM_URL", "valueFrom": {"secretKeyRef": {
-                                "name": format!("wamn-registry-reader-{tenant}"), "key": "url"
+                                "name": format!("wamn-registry-reader-{env_key}"), "key": "url"
                             }}},
                             {"name": "WAMN_EVT_NATS_URL", "value": "nats://evt-nats.platform.svc.cluster.local:4222"},
                             {"name": "WAMN_EVT_NATS_USERNAME", "valueFrom": {"secretKeyRef": {

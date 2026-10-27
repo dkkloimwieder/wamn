@@ -118,7 +118,7 @@ async fn start(
         scratch: scratch.path(),
         component_directory: &components,
         flow_http_wasm: &flow_http,
-        tenant: "write-log",
+        env_key: "write-log",
         org: "acme",
         project: "fixture",
         environment: "dev",

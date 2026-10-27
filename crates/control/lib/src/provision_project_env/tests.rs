@@ -329,7 +329,7 @@ fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
         assert!(a.len() <= 63, "{family:?}: {a}");
         // Only a CONTROL-scoped family records a login-to-tenant mapping.
         assert_eq!(
-            lifecycle.control_tenant.is_some(),
+            lifecycle.control_env_key.is_some(),
             family.scope_kind() == WorkloadRoleScopeKind::Control,
             "{family:?}"
         );
@@ -653,7 +653,7 @@ fn session_reader_requires_exact_grants() {
         assert!(verify(&missing).is_err());
     }
     for extra in [
-        role_acl("column", "platform", "user_role.tenant_id", "SELECT"),
+        role_acl("column", "platform", "user_role.env_key", "SELECT"),
         role_acl("relation", "platform", "user", "SELECT"),
         role_acl("column", "platform", "user.email", "SELECT"),
         role_acl("column", "platform", "user.status", "UPDATE"),
@@ -843,7 +843,7 @@ fn the_management_admitter_action_is_one_more_stamp_of_the_workload_lifecycle() 
     assert_eq!(lifecycle.family, WorkloadRoleFamily::ManagementAdmitter);
     assert_eq!(lifecycle.database(), DATABASE);
     assert_eq!(lifecycle.label(), "management-admitter");
-    assert!(lifecycle.control_tenant.is_none());
+    assert!(lifecycle.control_env_key.is_none());
     assert!(matches!(
         lifecycle.scope,
         WorkloadRoleScope::ProjectEnvironment { .. }
@@ -934,11 +934,11 @@ fn every_workload_family_carries_a_distinct_frozen_label() {
     for (family, label) in expected {
         let lifecycle = WorkloadLifecycle {
             family,
-            scope: WorkloadRoleScope::Tenant {
-                tenant: "t",
+            scope: WorkloadRoleScope::EnvKey {
+                env_key: "t",
                 database: "db",
             },
-            control_tenant: None,
+            control_env_key: None,
         };
         assert_eq!(lifecycle.label(), label, "{family:?}");
         assert_eq!(family.label(), label, "{family:?}");
@@ -1002,7 +1002,7 @@ fn stable_acl_role_members_are_only_scoped_generation_roles() {
 }
 
 #[tokio::test]
-async fn tenant_projection_and_instance_claim_hold_on_postgres() {
+async fn env_key_projection_and_instance_claim_hold_on_postgres() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_control_provision::test_database::system();
     let url = database.url();
@@ -1021,8 +1021,8 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
     let mut second = connect().await;
     second.batch_execute("SET ROLE wamn_system").await.unwrap();
     let (one, two) = tokio::join!(
-        project_tenant_environment(&mut first, &triple, Some("tenant-race"), "abcd1234", false),
-        project_tenant_environment(&mut second, &other, Some("tenant-race"), "efgh5678", true),
+        project_env_key_environment(&mut first, &triple, Some("tenant-race"), "abcd1234", false),
+        project_env_key_environment(&mut second, &other, Some("tenant-race"), "efgh5678", true),
     );
     assert_ne!(
         one.is_ok(),
@@ -1036,7 +1036,7 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
     };
     assert!(matches!(
         error.downcast_ref::<wamn_control_provision::ProvisionError>(),
-        Some(wamn_control_provision::ProvisionError::TenantEnvironmentIdentityConflict { .. })
+        Some(wamn_control_provision::ProvisionError::EnvKeyEnvironmentIdentityConflict { .. })
     ));
     assert!(
         error
@@ -1044,10 +1044,10 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
             .starts_with("tenant-environment-identity-projection-content-conflict:")
     );
     first
-        .batch_execute("SET app.tenant='tenant-race'")
+        .batch_execute("SET app.env_key='tenant-race'")
         .await
         .unwrap();
-    let row = first.query_one("SELECT org,project,env,instance_suffix,disposable,environment_instance FROM catalog.tenant_environments WHERE tenant_id='tenant-race'", &[]).await.unwrap();
+    let row = first.query_one("SELECT org,project,env,instance_suffix,disposable,environment_instance FROM catalog.tenant_environments WHERE env_key='tenant-race'", &[]).await.unwrap();
     assert_eq!(row.get::<_, String>(0), winner.org);
     assert_eq!(row.get::<_, String>(1), winner.project);
     assert_eq!(row.get::<_, String>(2), winner.env.as_str());
@@ -1060,7 +1060,7 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
     wamn_test_infrastructure::record_history::assert_stamp(
         &first,
         "catalog.tenant_environments",
-        "tenant_id='tenant-race'",
+        "env_key='tenant-race'",
         &actor,
         &actor,
     )
@@ -1078,7 +1078,7 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
             .unwrap();
         transaction
             .execute(
-                sql::insert_tenant_environment_sql(),
+                sql::insert_env_key_environment_sql(),
                 &[
                     &"tenant-held",
                     &triple.org,
@@ -1091,7 +1091,7 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
             .await
             .unwrap();
         let waiting =
-            project_tenant_environment(&mut second, &other, Some("tenant-held"), "efgh5678", true);
+            project_env_key_environment(&mut second, &other, Some("tenant-held"), "efgh5678", true);
         tokio::pin!(waiting);
         assert!(
             tokio::time::timeout(Duration::from_millis(150), &mut waiting)
@@ -1134,12 +1134,12 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
         .await
         .unwrap();
     first
-        .batch_execute("SET app.tenant='tenant-a'")
+        .batch_execute("SET app.env_key='tenant-a'")
         .await
         .unwrap();
     let before: chrono::DateTime<chrono::Utc> = first
         .query_one(
-            "SELECT projected_at FROM catalog.tenant_environments WHERE tenant_id='tenant-a'",
+            "SELECT projected_at FROM catalog.tenant_environments WHERE env_key='tenant-a'",
             &[],
         )
         .await
@@ -1159,7 +1159,7 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
     .await
     .unwrap();
     assert_eq!(stored, "abcd1234", "the registry keeps its original suffix");
-    let row = first.query_one("SELECT environment_instance,projected_at,instance_suffix,disposable FROM catalog.tenant_environments WHERE tenant_id='tenant-a'", &[]).await.unwrap();
+    let row = first.query_one("SELECT environment_instance,projected_at,instance_suffix,disposable FROM catalog.tenant_environments WHERE env_key='tenant-a'", &[]).await.unwrap();
     assert_eq!(
         row.get::<_, String>(0),
         "",
@@ -1187,7 +1187,13 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
             .to_string()
             .starts_with("tenant-environment-identity-projection-content-conflict:")
     );
-    let row = first.query_one("SELECT project,projected_at FROM catalog.tenant_environments WHERE tenant_id='tenant-a'", &[]).await.unwrap();
+    let row = first
+        .query_one(
+            "SELECT project,projected_at FROM catalog.tenant_environments WHERE env_key='tenant-a'",
+            &[],
+        )
+        .await
+        .unwrap();
     assert_eq!(row.get::<_, String>(0), "inventory");
     assert_eq!(row.get::<_, chrono::DateTime<chrono::Utc>>(1), stable_at);
     assert_eq!(first.query_one("SELECT secret_name FROM registry.project_envs WHERE org='demo' AND project='shipping' AND env='dev'", &[]).await.unwrap().get::<_, String>(0), "db-other", "the earlier registry commit survives projection refusal");
@@ -1208,14 +1214,14 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
             .to_string()
             .contains("name the tenant when provisioning the project-env")
     );
-    assert_eq!(first.query_one("SELECT count(*) FROM catalog.tenant_environments WHERE tenant_id='tenant-unprojected'", &[]).await.unwrap().get::<_, i64>(0), 0);
-    project_tenant_environment(&mut second, &other, Some("tenant-b"), "efgh5678", false)
+    assert_eq!(first.query_one("SELECT count(*) FROM catalog.tenant_environments WHERE env_key='tenant-unprojected'", &[]).await.unwrap().get::<_, i64>(0), 0);
+    project_env_key_environment(&mut second, &other, Some("tenant-b"), "efgh5678", false)
         .await
         .unwrap();
     assert_eq!(
         first
             .query_one(
-                "SELECT count(*) FROM catalog.tenant_environments WHERE tenant_id='tenant-b'",
+                "SELECT count(*) FROM catalog.tenant_environments WHERE env_key='tenant-b'",
                 &[]
             )
             .await
@@ -1237,11 +1243,11 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
     );
 
     let lock = first.transaction().await.unwrap();
-    lock.query_one(sql::read_tenant_environment_sql(), &[&"tenant-a"])
+    lock.query_one(sql::read_env_key_environment_sql(), &[&"tenant-a"])
         .await
         .unwrap();
     let refresh =
-        project_tenant_environment(&mut second, &triple, Some("tenant-a"), "1234abcd", false);
+        project_env_key_environment(&mut second, &triple, Some("tenant-a"), "1234abcd", false);
     tokio::pin!(refresh);
     assert!(
         tokio::time::timeout(Duration::from_millis(150), &mut refresh)
@@ -1251,7 +1257,17 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
     );
     lock.rollback().await.unwrap();
     refresh.await.unwrap();
-    assert_eq!(first.query_one("SELECT instance_suffix FROM catalog.tenant_environments WHERE tenant_id='tenant-a'", &[]).await.unwrap().get::<_, String>(0), "1234abcd");
+    assert_eq!(
+        first
+            .query_one(
+                "SELECT instance_suffix FROM catalog.tenant_environments WHERE env_key='tenant-a'",
+                &[]
+            )
+            .await
+            .unwrap()
+            .get::<_, String>(0),
+        "1234abcd"
+    );
     first.batch_execute("RESET ROLE; DROP SCHEMA catalog CASCADE; DROP SCHEMA wamn_run CASCADE; DROP SCHEMA wamn_authority CASCADE; DROP SCHEMA registry CASCADE; DROP SCHEMA provisioning CASCADE; DROP SCHEMA identity CASCADE").await.unwrap();
 }
 
@@ -1314,12 +1330,12 @@ async fn a_record_without_a_marker_keeps_the_disposable_row() {
         .get(0);
     assert!(registry, "a record without a marker keeps the registry row");
     client
-        .batch_execute("SET app.tenant='tenant-a'")
+        .batch_execute("SET app.env_key='tenant-a'")
         .await
         .unwrap();
     let projected: bool = client
         .query_one(
-            "SELECT disposable FROM catalog.tenant_environments WHERE tenant_id='tenant-a'",
+            "SELECT disposable FROM catalog.tenant_environments WHERE env_key='tenant-a'",
             &[],
         )
         .await

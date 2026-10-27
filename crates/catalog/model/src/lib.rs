@@ -440,23 +440,36 @@ fn digest(input: &[u8]) -> String {
 }
 
 /// The tenant-scoped immutable identity of a flow artifact.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ArtifactId {
-    tenant_id: String,
+    env_key: String,
     flow_id: String,
     flow_version: u32,
 }
 
+impl Serialize for ArtifactId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct as _;
+        let mut id = serializer.serialize_struct("ArtifactId", 3)?;
+        id.serialize_field("env_key", &self.env_key)?;
+        id.serialize_field("flow-id", &self.flow_id)?;
+        id.serialize_field("flow-version", &self.flow_version)?;
+        id.end()
+    }
+}
+
 impl ArtifactId {
     pub fn new(
-        tenant_id: impl Into<String>,
+        env_key: impl Into<String>,
         flow_id: impl Into<String>,
         flow_version: u32,
     ) -> Result<Self, CatalogIdentityError> {
-        let tenant_id = tenant_id.into();
+        let env_key = env_key.into();
         let flow_id = flow_id.into();
-        validate_text(&tenant_id, "tenant-id")?;
+        validate_text(&env_key, "env_key")?;
         validate_text(&flow_id, "flow-id")?;
         if flow_version == 0 {
             return Err(CatalogIdentityError::ZeroVersion {
@@ -464,14 +477,14 @@ impl ArtifactId {
             });
         }
         Ok(Self {
-            tenant_id,
+            env_key,
             flow_id,
             flow_version,
         })
     }
 
-    pub fn tenant_id(&self) -> &str {
-        &self.tenant_id
+    pub fn env_key(&self) -> &str {
+        &self.env_key
     }
 
     pub fn flow_id(&self) -> &str {
@@ -601,7 +614,7 @@ impl ArtifactIdentity {
         frames(
             "artifact-identity",
             [
-                ("tenant-id", self.id.tenant_id.as_bytes()),
+                ("env_key", self.id.env_key.as_bytes()),
                 ("flow-id", self.id.flow_id.as_bytes()),
                 ("flow-version", &self.id.flow_version.to_be_bytes()),
                 ("artifact-hash", self.artifact_hash.as_str().as_bytes()),

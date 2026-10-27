@@ -22,7 +22,7 @@ use wamn_runtime::plugins::wamn_postgres::ResolvedActiveWiring;
 /// Tenant/package/environment identity shared by a wiring and its admitted facts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WiringScope<'a> {
-    pub tenant_id: &'a str,
+    pub env_key: &'a str,
     pub package_id: &'a str,
     pub environment: &'a str,
 }
@@ -292,10 +292,10 @@ fn validate_scope(
             WiringLoweringErrorType::ScopeMismatch,
             format!(
                 "active wiring scope ({:?}, {:?}, {:?}) differs from operation-fact scope ({:?}, {:?}, {:?})",
-                active.scope.tenant_id,
+                active.scope.env_key,
                 active.scope.package_id,
                 active.scope.environment,
-                facts.scope.tenant_id,
+                facts.scope.env_key,
                 facts.scope.package_id,
                 facts.scope.environment
             ),
@@ -496,7 +496,7 @@ mod tests {
         ComponentAdmissionRequest {
             declaration: ComponentDeclaration {
                 scope: ComponentPackageScope {
-                    tenant_id: "tenant-a".to_string(),
+                    env_key: "tenant-a".to_string(),
                     package_id: "orders".to_string(),
                     package_version: "1.0.0".to_string(),
                 },
@@ -564,7 +564,7 @@ mod tests {
         wamn_catalog::normalize_component_fact(
             ComponentDeclaration {
                 scope: ComponentPackageScope {
-                    tenant_id: "tenant-a".to_owned(),
+                    env_key: "tenant-a".to_owned(),
                     package_id: package_id.to_owned(),
                     package_version: package_version.to_owned(),
                 },
@@ -638,7 +638,7 @@ mod tests {
 
         let wiring = lower_resolved_wiring(
             WiringScope {
-                tenant_id: "tenant-a",
+                env_key: "tenant-a",
                 package_id: "overlay",
                 environment: "prod",
             },

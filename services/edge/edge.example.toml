@@ -3,7 +3,7 @@
 # named in services/edge/src/config.rs.
 
 [scope]
-# The environment coordinate of the box. The tenant is <org>--<project>--<environment>.
+# The environment coordinate of the box. The env_key is <org>--<project>--<environment>.
 # The variables of org and project are WAMN_ORG and WAMN_PROJECT. The
 # environment has no variable.
 org = "org-a"

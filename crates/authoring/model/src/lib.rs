@@ -360,7 +360,7 @@ pub struct Gate {
 ///
 /// # What this carries, and why each field is here (wamn-0h0g.7.10)
 ///
-/// `catalog.wirings` needs seven values. `tenant_id` is the authenticated
+/// `catalog.wirings` needs seven values. `env_key` is the authenticated
 /// scope's, `wiring_id` and `version` ride the document, and `graph_json` IS the
 /// document — but `package_id` and `package_version` ride NEITHER the
 /// document nor its hash, which is why `ctl author-wiring` takes both as

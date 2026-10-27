@@ -165,7 +165,7 @@ pub(super) async fn apply(
     .context("missing Secret platform/wamn-ctl-auth-nats")?;
     let mut changed = false;
     for (path, environment) in super::broker::documents(environments)? {
-        let tenant = wamn_control_registry::project_env_tenant(
+        let env_key = wamn_control_registry::project_env_key(
             &environment.org,
             &environment.project,
             &environment.env,
@@ -189,7 +189,8 @@ pub(super) async fn apply(
             let digest = pushed.digest;
             tags.push(tag.clone());
             artifacts.push(digest.clone());
-            let mut request = package_request(&tenant, tag, &environment, &image, registry, &auth)?;
+            let mut request =
+                package_request(&env_key, tag, &environment, &image, registry, &auth)?;
             registry_inputs(&mut request, registry)?;
             changed |= job::run(
                 target,
@@ -199,7 +200,7 @@ pub(super) async fn apply(
                 &secrets,
             )
             .await?;
-            let mut request = replica_request(&tenant, &identity.id, &image);
+            let mut request = replica_request(&env_key, &identity.id, &image);
             let opened = open_package(registry, &identity.id, &identity.version).await?;
             let source = crate::apply_package::read_package_directory(opened.root())?;
             request.files.insert(
@@ -215,7 +216,7 @@ pub(super) async fn apply(
             replicas.push((request, digest));
         }
         if !tags.is_empty() {
-            let mut request = access_request(&tenant, &environment, &image, registry);
+            let mut request = access_request(&env_key, &environment, &image, registry);
             for tag in &tags {
                 request
                     .arguments
@@ -246,7 +247,7 @@ pub(super) async fn apply(
 }
 
 pub(super) fn package_request(
-    tenant: &str,
+    env_key: &str,
     tag: String,
     environment: &EnvironmentDocument,
     image: &str,
@@ -256,7 +257,7 @@ pub(super) fn package_request(
     let mut request = JobRequest {
         name: format!(
             "platform-package-{}",
-            &job::input_digest(&json!([tenant, tag]))[..24]
+            &job::input_digest(&json!([env_key, tag]))[..24]
         ),
         image: image.into(),
         arguments: vec![
@@ -280,11 +281,11 @@ pub(super) fn package_request(
     Ok(request)
 }
 
-pub(super) fn replica_request(tenant: &str, package: &str, image: &str) -> JobRequest {
+pub(super) fn replica_request(env_key: &str, package: &str, image: &str) -> JobRequest {
     JobRequest {
         name: format!(
             "platform-replica-{}",
-            &job::input_digest(&json!([tenant, package]))[..24]
+            &job::input_digest(&json!([env_key, package]))[..24]
         ),
         image: image.into(),
         arguments: vec![
@@ -297,13 +298,13 @@ pub(super) fn replica_request(tenant: &str, package: &str, image: &str) -> JobRe
 }
 
 pub(super) fn access_request(
-    tenant: &str,
+    env_key: &str,
     environment: &EnvironmentDocument,
     image: &str,
     registry: &PackageRegistry,
 ) -> JobRequest {
     JobRequest {
-        name: format!("platform-package-access-{tenant}"),
+        name: format!("platform-package-access-{env_key}"),
         image: image.into(),
         arguments: vec![
             "reconcile-package-data-access".into(),

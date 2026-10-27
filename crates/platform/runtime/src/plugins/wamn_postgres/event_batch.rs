@@ -14,7 +14,7 @@ use super::{AuthorityClass, WamnPostgres};
 const ENABLED_EVENTS_SQL: &str = "SELECT application, workflow_id, source_package, entity, \
     array_to_json(ops)::text, condition, enable_sequence, version, graph_json::text, \
     wiring_hash, execution_role FROM catalog.workflows \
-    WHERE tenant_id = $1 AND environment = $2 AND application = ANY($3) \
+    WHERE env_key = $1 AND environment = $2 AND application = ANY($3) \
       AND enabled AND trigger = 'event' ORDER BY application, workflow_id";
 
 fn contract(operation: &'static str, detail: impl Into<String>) -> ProductionClaimError {
@@ -58,7 +58,7 @@ impl WamnPostgres {
         release: &LoadedRelease,
     ) -> Result<(), ProductionClaimError> {
         if self.workload_authority_for(component) != AuthorityClass::EventMaterializer
-            || self.tenant_for(component).as_deref() != Some(release.scope().tenant_id.as_str())
+            || self.env_key_for(component).as_deref() != Some(release.scope().env_key.as_str())
         {
             return Err(ProductionClaimError::new(
                 ProductionClaimErrorType::Identity,
@@ -77,11 +77,11 @@ impl WamnPostgres {
     ) -> Result<Vec<EventTrigger>, ProductionClaimError> {
         let scope = release.scope();
         let names: Vec<_> = scope.applications.keys().cloned().collect();
-        self.executor_read(project, &scope.tenant_id, async |connection| {
+        self.executor_read(project, &scope.env_key, async |connection| {
             connection
                 .query(
                     ENABLED_EVENTS_SQL,
-                    &[&scope.tenant_id, &scope.environment, &names],
+                    &[&scope.env_key, &scope.environment, &names],
                 )
                 .await?
                 .iter()
@@ -101,7 +101,7 @@ impl WamnPostgres {
         admission: &EventBatchAdmission<'_>,
     ) -> Result<(), ProductionClaimError> {
         let scope = release.scope();
-        let tenant = &scope.tenant_id;
+        let env_key = &scope.env_key;
         let (connection, policy) = self
             .checkout_platform(project, AuthorityClass::ExecutorPlatform)
             .await
@@ -112,7 +112,7 @@ impl WamnPostgres {
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
-                tenant,
+                env_key,
                 Some("wamn_run"),
                 None,
                 None,
@@ -131,7 +131,7 @@ impl WamnPostgres {
             require_executor_authority(&connection).await?;
             let source = SourceEvent::decode(admission.envelope.as_bytes())
                 .map_err(|error| invalid("decode event", error))?;
-            if admission.sequence == 0 || source.identity(tenant, project, &scope.environment, &[admission.source_event_id]).is_none() {
+            if admission.sequence == 0 || source.identity(env_key, project, &scope.environment, &[admission.source_event_id]).is_none() {
                 return Err(contract("identify event", "invalid event sequence or source identity"));
             }
             // Different packages can share an entity subject. Only its own
@@ -141,12 +141,12 @@ impl WamnPostgres {
             }
             let names: Vec<_> = scope.applications.keys().cloned().collect();
             let packages = scope.applications.values().flat_map(|application| application.packages.iter().cloned()).collect();
-            let rows = connection.query(ENABLED_EVENTS_SQL, &[tenant, &scope.environment, &names]).await
+            let rows = connection.query(ENABLED_EVENTS_SQL, &[env_key, &scope.environment, &names]).await
                 .map_err(|error| storage("read event workflows", error))?;
             let mut matches = Vec::new();
             for row in rows {
                 let event = trigger(&row)?;
-                if let Some(input) = event.matches(&source, admission.sequence, &packages, tenant)
+                if let Some(input) = event.matches(&source, admission.sequence, &packages, env_key)
                     .map_err(|error| invalid("filter event workflow", error))? {
                     matches.push((row, event, input));
                 }
@@ -157,8 +157,8 @@ impl WamnPostgres {
                 SourceEvent::Derived(_) => None,
             };
             let durability: String = connection.query_opt(
-                "SELECT durability_class FROM environment_policies WHERE tenant_id = $1 AND expected_environment = $2",
-                &[tenant, &scope.environment],
+                "SELECT durability_class FROM environment_policies WHERE env_key = $1 AND expected_environment = $2",
+                &[env_key, &scope.environment],
             ).await.map_err(|error| storage("read environment policy", error))?
                 .ok_or_else(|| contract("read environment policy", "environment policy is absent"))?.get(0);
             let parent = match &source {
@@ -179,24 +179,24 @@ impl WamnPostgres {
                 let graph = super::workflow_resolution::parse_graph(&graph_json)
                     .map_err(|error| invalid("parse event workflow", error))?;
                 let packages = &scope.applications[&event.application].packages;
-                let gated = wamn_catalog::gate_workflow_document(tenant, packages, release.manifest(), &graph)
+                let gated = wamn_catalog::gate_workflow_document(env_key, packages, release.manifest(), &graph)
                     .map_err(|error| invalid("gate event workflow", error))?;
                 if gated.as_str() != hash { return Err(contract("gate event workflow", "workflow hash differs")); }
-                let components = wamn_catalog::resolve_workflow_components(tenant, packages, release.manifest(), &graph)
+                let components = wamn_catalog::resolve_workflow_components(env_key, packages, release.manifest(), &graph)
                     .map_err(|error| invalid("resolve event workflow", error))?;
                 let digests = serde_json::Value::Object(components.into_iter().map(|(node, component)| (node, serde_json::Value::String(component.component_digest))).collect()).to_string();
                 let key = serde_json::json!(["event", scope.environment, event.application, event.workflow_id, delivery]).to_string();
                 let input = input.to_string();
                 let digest = release.release().manifest_digest.as_str();
                 let inserted = connection.query_opt(&insert_event_run_sql(), &[
-                    tenant, &event.application, &digest, &scope.environment, &event.workflow_id,
+                    env_key, &event.application, &digest, &scope.environment, &event.workflow_id,
                     &version, &hash, &principal, &role, &delivery, &actor, &digests, &key, &input, &durability, &source_run, &root_run, &depth,
                 ]).await.map_err(|error| storage("insert event run", error))?;
                 if let Some(row) = inserted {
                     let run_id: String = row.get(0);
-                    connection.execute(insert_run_queue_sql(), &[tenant, &run_id]).await
+                    connection.execute(insert_run_queue_sql(), &[env_key, &run_id]).await
                         .map_err(|error| storage("queue event run", error))?;
-                } else if connection.query_opt(select_event_run_sql(), &[tenant, &key, &input]).await
+                } else if connection.query_opt(select_event_run_sql(), &[env_key, &key, &input]).await
                     .map_err(|error| storage("read existing event run", error))?.is_none() {
                     return Err(contract("read existing event run", "event idempotency conflict"));
                 }

@@ -1,6 +1,6 @@
 {
   "scope": {
-    "tenant-id": "__TENANT_ID__",
+    "env_key": "__ENV_KEY__",
     "package-id": "wamn_integration"
   },
   "component": "wamn_integration",

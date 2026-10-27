@@ -29,7 +29,7 @@ use wasmtime_wasi::p3::bindings::Command;
 const COMPONENT_ENV: &str = "WAMN_SQLX_TRANSACTION_COMPONENT";
 const COMPONENT_ID: &str = "sqlx-command-live";
 const SCHEMA: &str = "sqlx_command_gate";
-const TENANT: &str = "sqlx-command-tenant";
+const ENV_KEY: &str = "sqlx-command-tenant";
 const PASSWORD: &str = "sqlx-command-live";
 
 struct TraceHarness {
@@ -80,7 +80,7 @@ async fn connect(url: &str) -> anyhow::Result<Client> {
 fn generation_role(database: &str) -> String {
     format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(TENANT, database)
+        wamn_run_state::app_scope_hash(ENV_KEY, database)
     )
 }
 
@@ -162,7 +162,7 @@ async fn run_component(component_path: &Path, guest_url: String) -> anyhow::Resu
         statement_timeout_ms: 5_000,
         row_limit: 100,
     })?);
-    postgres.set_tenant(COMPONENT_ID, TENANT)?;
+    postgres.set_env_key(COMPONENT_ID, ENV_KEY)?;
     postgres.set_schema(COMPONENT_ID, SCHEMA)?;
 
     let engine = build_engine(&[])?;

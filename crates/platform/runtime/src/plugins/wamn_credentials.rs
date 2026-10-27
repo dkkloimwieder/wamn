@@ -249,7 +249,7 @@ pub(crate) mod test_util {
             self.admin.batch_execute("GRANT EXECUTE ON FUNCTION registry.lookup_connection_binding_mode(text,text,text,text,text) TO wamn_conn_reader").await.unwrap();
             self.admin
                 .execute(
-                    wamn_control_provision::sql::upsert_control_author_tenant_mapping_sql(),
+                    wamn_control_provision::sql::upsert_control_author_env_key_mapping_sql(),
                     &[
                         &role,
                         &format!("acme--{project}--dev"),

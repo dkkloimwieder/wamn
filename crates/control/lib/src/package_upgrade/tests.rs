@@ -100,17 +100,17 @@ async fn seed(client: &mut Client, manifest: &ServingManifest) -> AcceptedUpgrad
          CREATE TABLE inventory.successor_only (id int); \
          GRANT USAGE ON SCHEMA inventory TO wamn_app; \
          GRANT SELECT (id,note) ON inventory.widget TO wamn_app; \
-         INSERT INTO catalog.packages (tenant_id,package_id,package_version,predecessor_version,artifact_digest) VALUES \
+         INSERT INTO catalog.packages (env_key,package_id,package_version,predecessor_version,artifact_digest) VALUES \
            ('upgrade-test','platform_fixture','2.0.0',NULL,'sha256:' || repeat('a',64)), \
            ('upgrade-test','platform_fixture','2.1.0','2.0.0','sha256:' || repeat('b',64)); \
-         INSERT INTO catalog.package_migrations (tenant_id,package_id,package_version,ordinal,relative_path,sha256) VALUES \
+         INSERT INTO catalog.package_migrations (env_key,package_id,package_version,ordinal,relative_path,sha256) VALUES \
            ('upgrade-test','platform_fixture','2.0.0',1,'migrations/0001_initial.sql','sha256:' || repeat('c',64)), \
            ('upgrade-test','platform_fixture','2.1.0',1,'migrations/0001_initial.sql','sha256:' || repeat('c',64)), \
            ('upgrade-test','platform_fixture','2.1.0',2,'migrations/0002_successor.sql','sha256:' || repeat('d',64));",
     ).await.unwrap();
     client
         .execute(
-            "INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) \
+            "INSERT INTO catalog.releases (env_key,manifest_digest,canonical_bytes) \
          VALUES ('upgrade-test',$1,$2)",
             &[&manifest.digest().as_str(), &manifest.canonical_bytes()],
         )
@@ -135,7 +135,7 @@ async fn seed(client: &mut Client, manifest: &ServingManifest) -> AcceptedUpgrad
         overlay: None,
         upgrade_stage: None,
         format_version: crate::qualify_upgrade::PLAIN_FORMAT,
-        tenant: "upgrade-test".to_owned(),
+        env_key: "upgrade-test".to_owned(),
         environment: "test".to_owned(),
         predecessor_manifest_digest: manifest.digest().as_str().to_owned(),
         predecessor_package: predecessor.clone(),

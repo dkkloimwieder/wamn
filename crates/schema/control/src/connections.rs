@@ -9,7 +9,7 @@ pub use wamn_catalog::ComponentConnectionRequirement;
 /// identical retries converge.
 pub fn insert_component_connection_requirement_sql() -> &'static str {
     "INSERT INTO catalog.connection_requirements \
-       (tenant_id, component_digest, store_alias, requirement_json, requirement_hash) \
+       (env_key, component_digest, store_alias, requirement_json, requirement_hash) \
      VALUES ($1, $2, $3, $4::text::jsonb, $5) \
      ON CONFLICT DO NOTHING"
 }
@@ -23,7 +23,7 @@ pub fn insert_component_connection_requirement_sql() -> &'static str {
 pub fn exact_component_connection_requirement_sql() -> &'static str {
     "SELECT EXISTS (\
        SELECT 1 FROM catalog.connection_requirements \
-        WHERE tenant_id = $1 AND component_digest = $2 AND store_alias = $3 \
+        WHERE env_key = $1 AND component_digest = $2 AND store_alias = $3 \
           AND requirement_json = $4::text::jsonb AND requirement_hash = $5\
      )"
 }
@@ -31,14 +31,14 @@ pub fn exact_component_connection_requirement_sql() -> &'static str {
 /// Insert one environment-owned stable instance identity.
 pub fn insert_connection_instance_sql() -> &'static str {
     "INSERT INTO catalog.connection_instances \
-       (tenant_id, environment, instance_id, requirement_type, contract) \
+       (env_key, environment, instance_id, requirement_type, contract) \
      VALUES ($1, $2, $3, $4, $5)"
 }
 
 /// Insert one immutable generation; secret material is represented only by a handle.
 pub fn insert_connection_generation_sql() -> &'static str {
     "INSERT INTO catalog.connection_generations \
-       (tenant_id, environment, instance_id, generation, definition_json, \
+       (env_key, environment, instance_id, generation, definition_json, \
         definition_hash, credential_set_handle) \
      VALUES ($1, $2, $3, $4, $5::text::jsonb, $6, $7)"
 }
@@ -54,7 +54,7 @@ pub fn insert_connection_generation_sql() -> &'static str {
 pub fn activate_connection_generation_sql() -> &'static str {
     "UPDATE catalog.connection_instances \
         SET active_generation = $4, revision = revision + 1 \
-      WHERE tenant_id = $1 AND environment = $2 AND instance_id = $3 \
+      WHERE env_key = $1 AND environment = $2 AND instance_id = $3 \
         AND active_generation IS NOT DISTINCT FROM $5 AND revision = $6"
 }
 
@@ -64,20 +64,20 @@ pub fn select_connection_instance_sql() -> &'static str {
             instance.active_generation, instance.revision, generation.definition_json::text, \
             generation.definition_hash, generation.credential_set_handle, \
             (SELECT max(generation) FROM catalog.connection_generations \
-              WHERE tenant_id = $1 AND environment = $2 AND instance_id = $3) \
+              WHERE env_key = $1 AND environment = $2 AND instance_id = $3) \
        FROM catalog.connection_instances AS instance \
        LEFT JOIN catalog.connection_generations AS generation \
-         ON generation.tenant_id = instance.tenant_id \
+         ON generation.env_key = instance.env_key \
         AND generation.environment = instance.environment \
         AND generation.instance_id = instance.instance_id \
         AND generation.generation = instance.active_generation \
-      WHERE instance.tenant_id = $1 AND instance.environment = $2 AND instance.instance_id = $3"
+      WHERE instance.env_key = $1 AND instance.environment = $2 AND instance.instance_id = $3"
 }
 
 /// Hold an unchanged selection until an identical binding transaction commits.
 pub fn lock_connection_selection_sql() -> &'static str {
     "SELECT 1 FROM catalog.connection_instances \
-      WHERE tenant_id = $1 AND environment = $2 AND instance_id = $3 \
+      WHERE env_key = $1 AND environment = $2 AND instance_id = $3 \
         AND active_generation IS NOT DISTINCT FROM $4 AND revision = $5 \
       FOR UPDATE"
 }
@@ -85,19 +85,19 @@ pub fn lock_connection_selection_sql() -> &'static str {
 /// Insert one immutable component release binding to an environment instance.
 pub fn insert_component_connection_binding_sql() -> &'static str {
     "INSERT INTO catalog.connection_bindings \
-       (tenant_id, manifest_digest, component_digest, store_alias, \
+       (env_key, manifest_digest, component_digest, store_alias, \
         environment, instance_id, binding_status, validation_status, validation_hash, package_id) \
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, \
        (SELECT component.value ->> 'package-id' FROM catalog.releases release \
         CROSS JOIN LATERAL jsonb_array_elements(convert_from(release.canonical_bytes,'UTF8')::jsonb -> 'components') component(value) \
-        WHERE release.tenant_id=$1 AND release.manifest_digest=$2 \
+        WHERE release.env_key=$1 AND release.manifest_digest=$2 \
           AND component.value -> 'descriptor' ->> 'component-digest'=$3))"
 }
 
 /// Insert an immutable binding with its declared access mode.
 pub fn insert_component_connection_binding_with_mode_sql() -> &'static str {
     "INSERT INTO catalog.connection_bindings \
-       (tenant_id, manifest_digest, component_digest, store_alias, \
+       (env_key, manifest_digest, component_digest, store_alias, \
         environment, instance_id, binding_status, validation_status, validation_hash, mode, package_id) \
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"
 }
@@ -108,7 +108,7 @@ pub fn insert_component_connection_binding_with_mode_sql() -> &'static str {
 /// bindings' release digests.
 pub fn remove_connection_bindings_outside_live_set_sql() -> &'static str {
     "DELETE FROM catalog.connection_bindings \
-      WHERE tenant_id = $1 AND environment = $2 AND NOT (manifest_digest = ANY($3)) \
+      WHERE env_key = $1 AND environment = $2 AND NOT (manifest_digest = ANY($3)) \
       RETURNING manifest_digest"
 }
 
@@ -118,12 +118,12 @@ pub fn remove_connection_bindings_outside_live_set_sql() -> &'static str {
 pub fn disable_unbound_connection_instances_sql() -> &'static str {
     "UPDATE catalog.connection_instances AS instance \
         SET lifecycle_status = 'disabled', revision = instance.revision + 1 \
-      WHERE instance.tenant_id = $1 AND instance.environment = $2 \
+      WHERE instance.env_key = $1 AND instance.environment = $2 \
         AND instance.lifecycle_status = 'enabled' \
         AND NOT (instance.instance_id = ANY($3)) \
         AND NOT EXISTS ( \
             SELECT 1 FROM catalog.connection_bindings AS binding \
-             WHERE binding.tenant_id = instance.tenant_id \
+             WHERE binding.env_key = instance.env_key \
                AND binding.environment = instance.environment \
                AND binding.instance_id = instance.instance_id) \
       RETURNING instance.instance_id"
@@ -146,6 +146,6 @@ pub(crate) fn prefixed_sha256(bytes: &[u8]) -> String {
 pub fn set_org_connection_source_sql() -> &'static str {
     "UPDATE catalog.connection_instances \
         SET org_connection_name = $4, revision = revision + 1 \
-      WHERE tenant_id = $1 AND environment = $2 AND instance_id = $3 \
+      WHERE env_key = $1 AND environment = $2 AND instance_id = $3 \
         AND org_connection_name IS DISTINCT FROM $4"
 }

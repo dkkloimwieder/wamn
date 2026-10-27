@@ -34,7 +34,7 @@ pub(crate) struct StageProgress {
 /// A package family cannot interleave different unfinished stage versions.
 pub(crate) async fn require_no_other_stage(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     package: &str,
     version: &str,
     package_artifact_digest: &str,
@@ -52,9 +52,9 @@ pub(crate) async fn require_no_other_stage(
     for row in tx
         .query(
             "SELECT package_version,cursor,package_artifact_digest FROM catalog.package_upgrade_stages \
-         WHERE tenant_id=$1 AND package_id=$2 AND (package_version=$3 OR status='in_progress') \
+         WHERE env_key=$1 AND package_id=$2 AND (package_version=$3 OR status='in_progress') \
          ORDER BY package_version",
-            &[&tenant, &package, &version],
+            &[&env_key, &package, &version],
         )
         .await?
     {
@@ -78,18 +78,18 @@ pub(crate) async fn require_no_other_stage(
 /// Create or lock a stage. A completed retry returns the retained final cursor.
 pub(crate) async fn open(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     identity: &StageIdentity,
     initial_cursor: &Value,
 ) -> anyhow::Result<StageProgress> {
     tx.execute(
         "INSERT INTO catalog.package_upgrade_stages \
-         (tenant_id,package_id,package_version,predecessor_version,package_artifact_digest,\
+         (env_key,package_id,package_version,predecessor_version,package_artifact_digest,\
           predecessor_release_digest,evidence_digest,status,cursor) \
          VALUES ($1,$2,$3,$4,$5,$6,$7,'in_progress',$8) \
-         ON CONFLICT (tenant_id,package_id,package_version) DO NOTHING",
+         ON CONFLICT (env_key,package_id,package_version) DO NOTHING",
         &[
-            &tenant,
+            &env_key,
             &identity.package_id,
             &identity.package_version,
             &identity.predecessor_version,
@@ -101,7 +101,7 @@ pub(crate) async fn open(
     )
     .await
     .context("create package upgrade stage progress")?;
-    let progress = locked(tx, tenant, identity).await?;
+    let progress = locked(tx, env_key, identity).await?;
     ensure!(
         progress.status != StageStatus::Abandoned,
         "package upgrade stage {}@{} was abandoned; retained cursor {}",
@@ -115,17 +115,17 @@ pub(crate) async fn open(
 /// Record a committed batch in the same transaction as its application writes.
 pub(crate) async fn advance(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     identity: &StageIdentity,
     cursor: &Value,
 ) -> anyhow::Result<StageProgress> {
-    let progress = locked(tx, tenant, identity).await?;
+    let progress = locked(tx, env_key, identity).await?;
     require_in_progress(identity, &progress)?;
     let row = tx.query_one(
         "UPDATE catalog.package_upgrade_stages SET cursor=$4, completed_batches=completed_batches+1 \
-         WHERE tenant_id=$1 AND package_id=$2 AND package_version=$3 \
+         WHERE env_key=$1 AND package_id=$2 AND package_version=$3 \
          RETURNING status,cursor,completed_batches",
-        &[&tenant, &identity.package_id, &identity.package_version, cursor],
+        &[&env_key, &identity.package_id, &identity.package_version, cursor],
     ).await.context("record package upgrade batch cursor")?;
     decode(&row)
 }
@@ -134,44 +134,44 @@ pub(crate) async fn advance(
 /// An exact retry returns the existing result without changing the record.
 pub(crate) async fn complete(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     identity: &StageIdentity,
 ) -> anyhow::Result<StageProgress> {
-    let progress = locked(tx, tenant, identity).await?;
+    let progress = locked(tx, env_key, identity).await?;
     if progress.status == StageStatus::Completed {
         return Ok(progress);
     }
     require_in_progress(identity, &progress)?;
-    set_status(tx, tenant, identity, "completed").await
+    set_status(tx, env_key, identity, "completed").await
 }
 
 /// Abandon a stage and return its retained cursor without changing installed packages.
 pub(crate) async fn abandon(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     identity: &StageIdentity,
 ) -> anyhow::Result<StageProgress> {
-    let progress = locked(tx, tenant, identity).await?;
+    let progress = locked(tx, env_key, identity).await?;
     if progress.status == StageStatus::Abandoned {
         return Ok(progress);
     }
     require_in_progress(identity, &progress)?;
-    set_status(tx, tenant, identity, "abandoned").await
+    set_status(tx, env_key, identity, "abandoned").await
 }
 
 async fn set_status(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     identity: &StageIdentity,
     status: &str,
 ) -> anyhow::Result<StageProgress> {
     let row = tx
         .query_one(
             "UPDATE catalog.package_upgrade_stages SET status=$4 \
-         WHERE tenant_id=$1 AND package_id=$2 AND package_version=$3 \
+         WHERE env_key=$1 AND package_id=$2 AND package_version=$3 \
          RETURNING status,cursor,completed_batches",
             &[
-                &tenant,
+                &env_key,
                 &identity.package_id,
                 &identity.package_version,
                 &status,
@@ -184,15 +184,15 @@ async fn set_status(
 
 async fn locked(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     identity: &StageIdentity,
 ) -> anyhow::Result<StageProgress> {
     let row = tx.query_opt(
         "SELECT predecessor_version,package_artifact_digest,predecessor_release_digest,evidence_digest,\
                 status,cursor,completed_batches \
          FROM catalog.package_upgrade_stages \
-         WHERE tenant_id=$1 AND package_id=$2 AND package_version=$3 FOR UPDATE",
-        &[&tenant, &identity.package_id, &identity.package_version],
+         WHERE env_key=$1 AND package_id=$2 AND package_version=$3 FOR UPDATE",
+        &[&env_key, &identity.package_id, &identity.package_version],
     ).await.context("lock package upgrade stage progress")?
         .with_context(|| format!("package upgrade stage {}@{} has no recorded cursor", identity.package_id, identity.package_version))?;
     for (field, expected) in [
@@ -287,7 +287,9 @@ mod tests {
             ),
             include_str!("../../../../../deploy/sql/migrations/project/0014_stage_digests.sql"),
         ] {
-            client.batch_execute(migration).await.unwrap();
+            // The historical carrier uses the current greenfield key in this fixture.
+            let migration = migration.replace("tenant_id", "env_key");
+            client.batch_execute(&migration).await.unwrap();
         }
         let migrated: Value = client.query_one(catalog, &[]).await.unwrap().get(0);
         assert_eq!(fresh, migrated);
@@ -363,7 +365,7 @@ mod tests {
             ))
             .await
             .unwrap();
-        client.batch_execute("CREATE TABLE retained (id int PRIMARY KEY, converted bool NOT NULL); INSERT INTO retained VALUES (1,false),(2,false); INSERT INTO catalog.packages (tenant_id,package_id,package_version,artifact_digest) VALUES ('stage-test','fixture','1.0.0','sha256:' || repeat('c',64));").await.unwrap();
+        client.batch_execute("CREATE TABLE retained (id int PRIMARY KEY, converted bool NOT NULL); INSERT INTO retained VALUES (1,false),(2,false); INSERT INTO catalog.packages (env_key,package_id,package_version,artifact_digest) VALUES ('stage-test','fixture','1.0.0','sha256:' || repeat('c',64));").await.unwrap();
         let identity = identity("2.0.0");
         let tx = client.transaction().await.unwrap();
         crate::apply_package::bind_apply_package_principal(&tx)
@@ -378,7 +380,7 @@ mod tests {
             &client,
             "catalog.package_upgrade_stages",
             &format!(
-                "tenant_id = 'stage-test' AND package_version = '{}'",
+                "env_key = 'stage-test' AND package_version = '{}'",
                 identity.package_version
             ),
             &wamn_control_provision::PlatformComponent::ApplyPackage
@@ -431,7 +433,7 @@ mod tests {
             &client,
             "catalog.package_upgrade_stages",
             &format!(
-                "tenant_id = 'stage-test' AND package_version = '{}'",
+                "env_key = 'stage-test' AND package_version = '{}'",
                 identity.package_version
             ),
             &wamn_control_provision::PlatformComponent::ApplyPackage
@@ -458,7 +460,7 @@ mod tests {
             &client,
             "catalog.package_upgrade_stages",
             &format!(
-                "tenant_id = 'stage-test' AND package_version = '{}'",
+                "env_key = 'stage-test' AND package_version = '{}'",
                 identity.package_version
             ),
             &wamn_control_provision::PlatformComponent::ApplyPackage
@@ -508,7 +510,7 @@ mod tests {
             &client,
             "catalog.package_upgrade_stages",
             &format!(
-                "tenant_id = 'stage-test' AND package_version = '{}'",
+                "env_key = 'stage-test' AND package_version = '{}'",
                 identity.package_version
             ),
             &wamn_control_provision::PlatformComponent::ApplyPackage
@@ -542,7 +544,7 @@ mod tests {
         );
         assert_eq!(
             tx.query_one(
-                "SELECT package_version FROM catalog.packages WHERE tenant_id='stage-test'",
+                "SELECT package_version FROM catalog.packages WHERE env_key='stage-test'",
                 &[]
             )
             .await
@@ -571,7 +573,7 @@ mod tests {
             &client,
             "catalog.package_upgrade_stages",
             &format!(
-                "tenant_id = 'stage-test' AND package_version = '{}'",
+                "env_key = 'stage-test' AND package_version = '{}'",
                 completed_identity.package_version
             ),
             &wamn_control_provision::PlatformComponent::ApplyPackage

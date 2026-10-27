@@ -50,9 +50,9 @@ pub struct TerminalizeEffectUncertain<'a> {
 }
 
 impl TerminalizeEffectUncertain<'_> {
-    /// The database tenant derived from the environment coordinate.
-    pub fn tenant(&self) -> String {
-        wamn_control_registry::project_env_tenant(self.org, self.project, self.environment)
+    /// The composed environment key derived from the environment coordinate.
+    pub fn env_key(&self) -> String {
+        wamn_control_registry::project_env_key(self.org, self.project, self.environment)
     }
 }
 
@@ -82,7 +82,7 @@ async fn lock_prior_actions(
     Ok(transaction
         .query(
             lock_operator_actions_sql(),
-            &[&request.tenant(), &request.correlation_id, &request.run],
+            &[&request.env_key(), &request.correlation_id, &request.run],
         )
         .await?
         .into_iter()
@@ -206,8 +206,8 @@ async fn terminalize_in_transaction(
         .await?;
     transaction
         .query_one(
-            "SELECT set_config('search_path', $1, true), set_config('app.tenant', $2, true)",
-            &[&schema.as_str(), &request.tenant()],
+            "SELECT set_config('search_path', $1, true), set_config('app.env_key', $2, true)",
+            &[&schema.as_str(), &request.env_key()],
         )
         .await?;
     let principal: String = transaction
@@ -221,7 +221,7 @@ async fn terminalize_in_transaction(
     }
 
     let run = transaction
-        .query_opt(lock_operator_run_sql(), &[&request.tenant(), &request.run])
+        .query_opt(lock_operator_run_sql(), &[&request.env_key(), &request.run])
         .await?;
 
     // The first identity read cannot gap-lock an absent row at READ COMMITTED.
@@ -241,13 +241,13 @@ async fn terminalize_in_transaction(
     let attempt_rows = transaction
         .query(
             lock_operator_effect_attempts_sql(),
-            &[&request.tenant(), &request.run],
+            &[&request.env_key(), &request.run],
         )
         .await?;
     let queue_present = transaction
         .query_opt(
             lock_operator_queue_fact_sql(),
-            &[&request.tenant(), &request.run],
+            &[&request.env_key(), &request.run],
         )
         .await?
         .is_some();
@@ -264,7 +264,7 @@ async fn terminalize_in_transaction(
         .query_one(
             insert_operator_action_sql(),
             &[
-                &request.tenant(),
+                &request.env_key(),
                 &request.correlation_id,
                 &request.run,
                 &request.basis.as_str(),
@@ -278,7 +278,7 @@ async fn terminalize_in_transaction(
     let updated = transaction
         .execute(
             terminalize_operator_run_sql(),
-            &[&request.tenant(), &request.run, &terminalized_at],
+            &[&request.env_key(), &request.run, &terminalized_at],
         )
         .await?;
     if updated != 1 {

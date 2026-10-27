@@ -1,6 +1,6 @@
 # wamn-l5i9.17 CDC materializer (D19 v3 §5) — EXAMPLE WorkloadDeployment for
-# ONE project-env × tenant. Per-env config (stream/org/project/env + the
-# tenant claim) makes this an example the provisioning runbook
+# ONE project-env. Per-env config (stream/org/project/env + the
+# env_key claim) makes this an example the provisioning runbook
 # instantiates, not an apply-as-is manifest; the demo values below match the
 # matbench fixture triple.
 #
@@ -15,17 +15,17 @@
 # imports as plugins; `hostInterfaces` is the host-plugin ALLOWLIST
 # (bind_plugins binds only what is declared here).
 #
-# IDENTITY (host-injected, non-spoofable): `wamn.tenant` scopes the fully
+# IDENTITY (host-injected, non-spoofable): `wamn.env_key` scopes the fully
 # qualified `catalog.packages` read;
 # `wamn.project` selects the per-project pool;
 # `wamn.postgres.authority` selects the closed event-materializer credential
 # class. The WAMN_MAT_* environment is guest-side SUBSCRIPTION config only
-# (stream name + subject segments + the tenant label checked against the
+# (stream name + subject segments + the env_key label checked against the
 # credential-scoped catalog row) — RLS holds regardless of what the env claims.
 #
-# ONE TENANT PER WORKLOAD (v1): registrations and claims are tenant-scoped, and
-# a multi-tenant project-env runs one materializer workload per tenant.
-# Multi-registration fan-out within the tenant is one workload
+# ONE ENV_KEY PER WORKLOAD (v1): registrations and claims use env_key.
+# Each project-env runs its own materializer workload.
+# Multi-registration fan-out within the env_key is one workload
 # (a durable consumer per registration).
 #
 # EXACTLY-ONCE: run_id = <flow>:evt:<stream_seq> (zero-padded) + ON CONFLICT
@@ -92,7 +92,7 @@ spec:
         localResources:
           allowedIpNameLookups: []
           config:
-            wamn.tenant: t1
+            wamn.env_key: t1
             wamn.project: default
             wamn.environment: menv
             wamn.postgres.authority: event-materializer
@@ -102,7 +102,7 @@ spec:
               WAMN_MAT_ORG: morg
               WAMN_MAT_PROJECT: mproj
               WAMN_MAT_ENV: menv
-              WAMN_MAT_TENANT: t1
+              WAMN_MAT_ENV_KEY: t1
               # Retry is bounded. The broker retains exhaustion and termination
               # advisories without a separate WAMN payload copy.
               WAMN_MAT_MAX_DELIVER: "5"

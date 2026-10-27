@@ -30,8 +30,8 @@ use wamn_runtime::plugins::wamn_postgres::{
 mod common;
 
 use common::{
-    COMPONENT, EMPTY_HASH, ENVIRONMENT, PACKAGE_ID, POD_MANIFEST_DIGEST, ROLLED_COMPONENT, SCHEMA,
-    TENANT, WIRING_ID, WIRING_VERSION, assert_callerless_terminal, assert_prior_winner_terminal,
+    COMPONENT, EMPTY_HASH, ENV_KEY, ENVIRONMENT, PACKAGE_ID, POD_MANIFEST_DIGEST, ROLLED_COMPONENT,
+    SCHEMA, WIRING_ID, WIRING_VERSION, assert_callerless_terminal, assert_prior_winner_terminal,
     assert_terminal_status_dequeued, connect, expire_effect_run, install_fixture,
     install_prior_caller_winner, make_callerless, queue_attempts, quote_literal, ready_run,
     release_record, seed_exhausted_run, seed_run, teardown,
@@ -91,7 +91,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
         ))
         .await?;
     first_claimer
-        .execute("SELECT set_config('app.tenant', $1, true)", &[&TENANT])
+        .execute("SELECT set_config('app.env_key', $1, true)", &[&ENV_KEY])
         .await?;
     let locked = first_claimer
         .query_one(
@@ -128,23 +128,23 @@ async fn production_claim_live() -> anyhow::Result<()> {
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (tenant_id,run_id,flow_id,flow_version,status,package_id,manifest_digest, \
+                   (env_key,run_id,flow_id,flow_version,status,package_id,manifest_digest, \
                     environment,wiring_id,wiring_version,trigger_source) \
                  VALUES ($1,'janitor','root',1,'running','cat_main','{POD_MANIFEST_DIGEST}', \
                          'test',$2,$3,'http')"
             ),
-            &[&TENANT, &WIRING_ID, &WIRING_VERSION],
+            &[&ENV_KEY, &WIRING_ID, &WIRING_VERSION],
         )
         .await?;
     admin
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.run_queue \
-                   (tenant_id,run_id,available_at,stream_seq,lease_owner,lease_expires_at, \
+                   (env_key,run_id,available_at,stream_seq,lease_owner,lease_expires_at, \
                     attempts,max_attempts) \
                  VALUES ($1,'janitor','2000-01-01',60,'dead','2000-01-01',3,3)"
             ),
-            &[&TENANT],
+            &[&ENV_KEY],
         )
         .await?;
     assert_eq!(
@@ -161,10 +161,10 @@ async fn production_claim_live() -> anyhow::Result<()> {
                 "SELECT status,caller_outcome_json::text,caller_http_status,caller_release_node_id, \
                         caller_outcome_hash,caller_released_at IS NOT NULL, \
                         EXISTS (SELECT 1 FROM {SCHEMA}.run_queue q \
-                                 WHERE q.tenant_id=r.tenant_id AND q.run_id=r.run_id) \
-                   FROM {SCHEMA}.runs r WHERE tenant_id=$1 AND run_id='janitor'"
+                                 WHERE q.env_key=r.env_key AND q.run_id=r.run_id) \
+                   FROM {SCHEMA}.runs r WHERE env_key=$1 AND run_id='janitor'"
             ),
-            &[&TENANT],
+            &[&ENV_KEY],
         )
         .await?;
     let janitor_body = json!({"error": {
@@ -231,9 +231,9 @@ async fn production_claim_live() -> anyhow::Result<()> {
                 "UPDATE {SCHEMA}.run_queue \
                     SET lease_owner='dead', lease_expires_at='2000-01-01', \
                         attempts=2, max_attempts=3 \
-                  WHERE tenant_id=$1 AND run_id='grant-refused'"
+                  WHERE env_key=$1 AND run_id='grant-refused'"
             ),
-            &[&TENANT],
+            &[&ENV_KEY],
         )
         .await?;
     admin
@@ -312,13 +312,13 @@ async fn production_claim_live() -> anyhow::Result<()> {
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.effect_attempts \
-                   (tenant_id,run_id,root_plan_hash,current_plan_hash,frame_id, \
+                   (env_key,run_id,root_plan_hash,current_plan_hash,frame_id, \
                     local_node_id,source_artifact_hash,requirement_name,occurrence,seq, \
                     generation_fact_type,attempt_deadline_at,attempt_input_ref) \
                  VALUES ($1,'standard-effect',$2,$2,0,'effect-node',$2,'manager',0,1, \
                          'not-required','2099-01-01T00:00:00Z','sha256:claim-live-effect-input')"
             ),
-            &[&TENANT, &EMPTY_HASH],
+            &[&ENV_KEY, &EMPTY_HASH],
         )
         .await?;
     assert_eq!(
@@ -409,9 +409,9 @@ async fn production_claim_live() -> anyhow::Result<()> {
             .execute(
                 &format!(
                     "UPDATE {SCHEMA}.runs SET manifest_digest={assignment} \
-                      WHERE tenant_id=$1 AND run_id='release-record'"
+                      WHERE env_key=$1 AND run_id='release-record'"
                 ),
-                &[&TENANT],
+                &[&ENV_KEY],
             )
             .await
             .expect_err("no path may rewrite an admitted release in place");
@@ -426,9 +426,9 @@ async fn production_claim_live() -> anyhow::Result<()> {
         .execute(
             &format!(
                 "DELETE FROM {SCHEMA}.run_queue \
-                  WHERE tenant_id=$1 AND run_id='release-record'"
+                  WHERE env_key=$1 AND run_id='release-record'"
             ),
-            &[&TENANT],
+            &[&ENV_KEY],
         )
         .await?;
 
@@ -443,14 +443,14 @@ async fn queue_writers_stamp_existing_executor_claims() -> anyhow::Result<()> {
     let admin = &fixture.admin;
     let plugin = &fixture.plugin;
     // Admission already binds the executor in its existing transaction.
-    admin.execute("INSERT INTO wamn_run.environment_policies (tenant_id, expected_environment, durability_class) VALUES ($1, $2, 'standard')", &[&TENANT, &ENVIRONMENT]).await?;
+    admin.execute("INSERT INTO wamn_run.environment_policies (env_key, expected_environment, durability_class) VALUES ($1, $2, 'standard')", &[&ENV_KEY, &ENVIRONMENT]).await?;
     let actor = wamn_project_state::PlatformComponent::Executor
         .principal_id()
         .to_string();
     let admitted = plugin
         .admit_manual_run(
             "default",
-            TENANT,
+            ENV_KEY,
             &wamn_runtime::plugins::wamn_postgres::ManualRunAdmission {
                 package_id: PACKAGE_ID,
                 manifest_digest: POD_MANIFEST_DIGEST,

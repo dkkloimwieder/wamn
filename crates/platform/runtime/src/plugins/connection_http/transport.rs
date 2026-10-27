@@ -56,7 +56,7 @@ type HttpClient = Client<PinnedConnector, Full<Bytes>>;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct ConnectionScope {
-    pub(crate) tenant: Box<str>,
+    pub(crate) env_key: Box<str>,
     pub(crate) project: Box<str>,
     pub(crate) environment: Box<str>,
     pub(crate) instance: Box<str>,

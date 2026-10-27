@@ -29,7 +29,7 @@ use wamn_control::workflow_lifecycle::{
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 use wamn_control_registry::Triple;
 
-const TENANT: &str = "workflow-tenant--fixture--dev";
+const ENV_KEY: &str = "workflow-tenant--fixture--dev";
 const ENVIRONMENT: &str = "dev";
 const APPLICATION: &str = "orders";
 
@@ -71,7 +71,7 @@ async fn connect(url: &str) -> Client {
 fn release() -> ServingManifest {
     let fact = AdmittedComponent {
         scope: ComponentPackageScope {
-            tenant_id: TENANT.to_owned(),
+            env_key: ENV_KEY.to_owned(),
             package_id: APPLICATION.to_owned(),
             package_version: "1.0.0".to_owned(),
         },
@@ -136,8 +136,8 @@ async fn fixture() -> Fixture {
     let control = connect(control_database.url()).await;
     control
         .execute(
-            "SELECT set_config('app.tenant', $1, false), set_config('app.user_id', $2, false)",
-            &[&TENANT, &ALICE],
+            "SELECT set_config('app.env_key', $1, false), set_config('app.user_id', $2, false)",
+            &[&ENV_KEY, &ALICE],
         )
         .await
         .expect("scope the control seed session");
@@ -148,9 +148,9 @@ async fn fixture() -> Fixture {
     let digest = manifest.digest().as_str().to_owned();
     project
         .execute(
-            "INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
+            "INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) \
              VALUES ($1, $2, $3)",
-            &[&TENANT, &digest, &bytes],
+            &[&ENV_KEY, &digest, &bytes],
         )
         .await
         .expect("install the serving release");
@@ -190,9 +190,9 @@ impl Fixture {
     async fn green(&self, document: &WiringDocument) {
         self.control
             .execute(
-                "INSERT INTO wamn_run.gate_reports (tenant_id, wiring_hash, passed, summary) \
+                "INSERT INTO wamn_run.gate_reports (env_key, wiring_hash, passed, summary) \
                  VALUES ($1, $2, true, '{}'::jsonb)",
-                &[&TENANT, &document.wiring_hash().as_str()],
+                &[&ENV_KEY, &document.wiring_hash().as_str()],
             )
             .await
             .expect("record a green gate report");
@@ -271,8 +271,8 @@ impl Fixture {
         self.project
             .query(
                 "SELECT version FROM catalog.workflows \
-                  WHERE tenant_id = $1 AND workflow_id = $2 AND enabled ORDER BY version",
-                &[&TENANT, &id],
+                  WHERE env_key = $1 AND workflow_id = $2 AND enabled ORDER BY version",
+                &[&ENV_KEY, &id],
             )
             .await
             .unwrap()
@@ -575,17 +575,18 @@ async fn the_migration_creates_the_table_of_the_full_schema() {
         .await
         .expect("remove the table of the full schema");
     client
-        .batch_execute(&format!("BEGIN;\n{MIGRATION}\nCOMMIT;"))
+        .batch_execute(&format!("BEGIN;\n{MIGRATION}\nCOMMIT;").replace("tenant_id", "env_key"))
         .await
         .expect("apply the migration");
     client
-        .batch_execute(&format!("BEGIN;\n{SCHEDULES}\nCOMMIT;"))
+        .batch_execute(&format!("BEGIN;\n{SCHEDULES}\nCOMMIT;").replace("tenant_id", "env_key"))
         .await
         .expect("apply the schedule migration");
     client
-        .batch_execute(include_str!(
-            "../../../../deploy/sql/migrations/project/0035_workflow_events.sql"
-        ))
+        .batch_execute(
+            &include_str!("../../../../deploy/sql/migrations/project/0035_workflow_events.sql")
+                .replace("tenant_id", "env_key"),
+        )
         .await
         .expect("apply the event migration");
     assert_eq!(shape().await, fresh);
@@ -691,8 +692,8 @@ async fn event_enable_records_stream_tail_and_requires_admin() {
     let graph = workflow("changed", 1, "get", "orders_data");
     fixture.green(&graph).await;
     let release_bytes = fixture.project.query_one(
-        "SELECT canonical_bytes FROM catalog.releases WHERE tenant_id = $1 AND manifest_digest = $2",
-        &[&TENANT, &fixture.digest],
+        "SELECT canonical_bytes FROM catalog.releases WHERE env_key = $1 AND manifest_digest = $2",
+        &[&ENV_KEY, &fixture.digest],
     ).await.unwrap().get::<_, Vec<u8>>(0);
     assert!(
         serde_json::from_slice::<serde_json::Value>(&release_bytes)
@@ -715,8 +716,8 @@ async fn event_enable_records_stream_tail_and_requires_admin() {
         .unwrap();
     assert_eq!(
         fixture.project.query_one(
-            "SELECT canonical_bytes FROM catalog.releases WHERE tenant_id = $1 AND manifest_digest = $2",
-            &[&TENANT, &fixture.digest],
+            "SELECT canonical_bytes FROM catalog.releases WHERE env_key = $1 AND manifest_digest = $2",
+            &[&ENV_KEY, &fixture.digest],
         ).await.unwrap().get::<_, Vec<u8>>(0),
         release_bytes,
         "author, enable and disable leave the release digest unchanged",
@@ -792,8 +793,8 @@ async fn event_enable_records_stream_tail_and_requires_admin() {
     .unwrap();
     assert_eq!(
         fixture.project.query_one(
-            "SELECT canonical_bytes FROM catalog.releases WHERE tenant_id = $1 AND manifest_digest = $2",
-            &[&TENANT, &fixture.digest],
+            "SELECT canonical_bytes FROM catalog.releases WHERE env_key = $1 AND manifest_digest = $2",
+            &[&ENV_KEY, &fixture.digest],
         ).await.unwrap().get::<_, Vec<u8>>(0),
         release_bytes,
         "author, enable and disable leave the release digest unchanged",
@@ -827,8 +828,8 @@ async fn event_enable_records_stream_tail_and_requires_admin() {
     );
     assert_eq!(
         fixture.project.query_one(
-            "SELECT canonical_bytes FROM catalog.releases WHERE tenant_id = $1 AND manifest_digest = $2",
-            &[&TENANT, &fixture.digest],
+            "SELECT canonical_bytes FROM catalog.releases WHERE env_key = $1 AND manifest_digest = $2",
+            &[&ENV_KEY, &fixture.digest],
         ).await.unwrap().get::<_, Vec<u8>>(0),
         release_bytes,
         "author, enable and disable leave the release digest unchanged",

@@ -20,7 +20,8 @@ pub type Millis = i64;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct QueueEntry {
-    pub tenant_id: String,
+    #[serde(flatten, with = "env_key")]
+    pub env_key: String,
     pub run_id: String,
     /// Persisted compatibility field; the global FIFO does not order by it.
     #[serde(default)]
@@ -59,16 +60,41 @@ pub struct QueueEntry {
     pub max_attempts: i32,
 }
 
+// Keep the composed key's exact spelling beside the queue's kebab-case fields.
+mod env_key {
+    use serde::{Deserialize, Deserializer, Serializer, ser::SerializeMap as _};
+
+    pub fn serialize<S>(value: &str, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(Some(1))?;
+        map.serialize_entry("env_key", value)?;
+        map.end()
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<String, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Key {
+            env_key: String,
+        }
+        Ok(Key::deserialize(deserializer)?.env_key)
+    }
+}
+
 impl QueueEntry {
     /// A fresh, immediately-claimable queue entry (no lease, first attempt).
     pub fn ready(
-        tenant_id: impl Into<String>,
+        env_key: impl Into<String>,
         run_id: impl Into<String>,
         available_at: Millis,
         max_attempts: i32,
     ) -> QueueEntry {
         QueueEntry {
-            tenant_id: tenant_id.into(),
+            env_key: env_key.into(),
             run_id: run_id.into(),
             priority: 0,
             available_at,

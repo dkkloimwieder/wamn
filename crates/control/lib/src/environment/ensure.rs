@@ -558,7 +558,7 @@ pub(super) async fn project_url(platform: &Platform, triple: &Triple) -> anyhow:
 pub(super) fn management_author_pat_name(triple: &Triple) -> String {
     format!(
         "wamn-pat-management-author-{}",
-        wamn_control_registry::project_env_tenant(&triple.org, &triple.project, &triple.env)
+        wamn_control_registry::project_env_key(&triple.org, &triple.project, &triple.env)
     )
 }
 

@@ -77,7 +77,7 @@ fn runs_only_spec() -> [(&'static str, Need); 6] {
 /// names out of `run-state.sql` rather than fragments of its CHECK bodies.
 fn runs_stand_in() -> String {
     "CREATE TABLE wamn_run.runs (\
-        tenant_id text NOT NULL, run_id text NOT NULL, flow_id text, \
+        env_key text NOT NULL, run_id text NOT NULL, flow_id text, \
         flow_version int, package_id text NOT NULL, \
         environment text NOT NULL, \
         attachment_id text, registration_id text, \
@@ -106,7 +106,7 @@ fn runs_stand_in() -> String {
         created_at timestamptz NOT NULL DEFAULT now(), \
         updated_at timestamptz NOT NULL DEFAULT now(), \
         CHECK (capture_mode <> 'full' OR trigger_source IS NOT DISTINCT FROM 'scenario-draft'), \
-        PRIMARY KEY (tenant_id, run_id));"
+        PRIMARY KEY (env_key, run_id));"
         .to_string()
 }
 
@@ -134,7 +134,7 @@ fn run_state_guard_rejects_a_dropped_column_a_longer_name_would_mask() {
     // only a by-NAME column comparison catches the drop.
     let mutant = stand_in.replacen(column, "", 1);
     assert!(
-        mutant.contains("event_root_run_id") && mutant.contains("PRIMARY KEY (tenant_id, run_id)")
+        mutant.contains("event_root_run_id") && mutant.contains("PRIMARY KEY (env_key, run_id)")
     );
 
     assert_run_state_stand_in("missing-run-id-mutant", &mutant, &runs_only_spec());

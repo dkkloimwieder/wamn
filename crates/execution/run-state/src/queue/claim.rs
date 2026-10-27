@@ -138,7 +138,7 @@ pub fn is_claimable(entry: &QueueEntry, now: Millis) -> bool {
 /// the production lease grant writes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Claimed {
-    pub tenant_id: String,
+    pub env_key: String,
     pub run_id: String,
     /// `attempts` after the claim. Counts **crash evidence only**: bumped iff the
     /// claim reclaimed an *expired* lease (the prior owner died holding the run);
@@ -185,7 +185,7 @@ pub fn plan_claim(
         .into_iter()
         .take(limit)
         .map(|e| Claimed {
-            tenant_id: e.tenant_id.clone(),
+            env_key: e.env_key.clone(),
             run_id: e.run_id.clone(),
             // Crash evidence only: a claimable row's lease is NULL or expired, so a
             // present lease IS an expired one — the prior owner died holding the run.

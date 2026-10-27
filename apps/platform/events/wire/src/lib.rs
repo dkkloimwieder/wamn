@@ -61,15 +61,14 @@ pub struct Causation {
 /// This is deliberately not [`Envelope`]. A derived event has no WAL
 /// provenance to report: its identity is the admitted terminal selector, the
 /// author's logical deduplication operand, and the causation the host derives
-/// from the delivery it is completing. Tenant, project, and environment are
-/// copied from bound host claims so no guest or wiring field can redirect the
+/// from the delivery it is completing. The environment key, project, and
+/// environment are copied from bound host claims so no guest or wiring field can redirect the
 /// event; package identity comes from the bound release/run/wiring source the
 /// native host emitter resolved.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DerivedEvent {
     pub format_version: String,
-    pub tenant: String,
+    pub env_key: String,
     pub project: String,
     pub environment: String,
     pub package_id: String,
@@ -80,6 +79,105 @@ pub struct DerivedEvent {
     pub causation: Causation,
 }
 
+impl Serialize for DerivedEvent {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct as _;
+        let mut event = serializer.serialize_struct("DerivedEvent", 10)?;
+        event.serialize_field("format-version", &self.format_version)?;
+        event.serialize_field("env_key", &self.env_key)?;
+        event.serialize_field("project", &self.project)?;
+        event.serialize_field("environment", &self.environment)?;
+        event.serialize_field("package-id", &self.package_id)?;
+        event.serialize_field("entity", &self.entity)?;
+        event.serialize_field("op", &self.op)?;
+        event.serialize_field("payload", &self.payload)?;
+        event.serialize_field("dedup-id", &self.dedup_id)?;
+        event.serialize_field("causation", &self.causation)?;
+        event.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for DerivedEvent {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct Fields;
+        impl<'input> serde::de::Visitor<'input> for Fields {
+            type Value = std::collections::BTreeMap<String, serde_json::Value>;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a derived event")
+            }
+
+            fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+            where
+                M: serde::de::MapAccess<'input>,
+            {
+                let mut fields = std::collections::BTreeMap::new();
+                while let Some((name, value)) = map.next_entry::<String, serde_json::Value>()? {
+                    match fields.entry(name) {
+                        std::collections::btree_map::Entry::Vacant(entry) => {
+                            entry.insert(value);
+                        }
+                        std::collections::btree_map::Entry::Occupied(entry) => {
+                            return Err(serde::de::Error::custom(format!(
+                                "duplicate field `{}`",
+                                entry.key()
+                            )));
+                        }
+                    }
+                }
+                Ok(fields)
+            }
+        }
+        let mut fields = deserializer.deserialize_map(Fields)?;
+        let mut take = |name| {
+            fields
+                .remove(name)
+                .ok_or_else(|| serde::de::Error::missing_field(name))
+        };
+        let event = Self {
+            format_version: serde_json::from_value(take("format-version")?)
+                .map_err(serde::de::Error::custom)?,
+            env_key: serde_json::from_value(take("env_key")?).map_err(serde::de::Error::custom)?,
+            project: serde_json::from_value(take("project")?).map_err(serde::de::Error::custom)?,
+            environment: serde_json::from_value(take("environment")?)
+                .map_err(serde::de::Error::custom)?,
+            package_id: serde_json::from_value(take("package-id")?)
+                .map_err(serde::de::Error::custom)?,
+            entity: serde_json::from_value(take("entity")?).map_err(serde::de::Error::custom)?,
+            op: serde_json::from_value(take("op")?).map_err(serde::de::Error::custom)?,
+            payload: serde_json::from_value(take("payload")?).map_err(serde::de::Error::custom)?,
+            dedup_id: serde_json::from_value(take("dedup-id")?)
+                .map_err(serde::de::Error::custom)?,
+            causation: serde_json::from_value(take("causation")?)
+                .map_err(serde::de::Error::custom)?,
+        };
+        if let Some(name) = fields.keys().next() {
+            return Err(serde::de::Error::unknown_field(
+                name,
+                &[
+                    "format-version",
+                    "env_key",
+                    "project",
+                    "environment",
+                    "package-id",
+                    "entity",
+                    "op",
+                    "payload",
+                    "dedup-id",
+                    "causation",
+                ],
+            ));
+        }
+        Ok(event)
+    }
+}
+
 impl DerivedEvent {
     /// Construct the record from host-owned scope and selector facts.
     #[expect(
@@ -87,7 +185,7 @@ impl DerivedEvent {
         reason = "the constructor makes every frozen wire field explicit"
     )]
     pub fn new(
-        tenant: impl Into<String>,
+        env_key: impl Into<String>,
         project: impl Into<String>,
         environment: impl Into<String>,
         package_id: impl Into<String>,
@@ -99,7 +197,7 @@ impl DerivedEvent {
     ) -> Self {
         Self {
             format_version: DERIVED_EVENT_FORMAT_VERSION.to_owned(),
-            tenant: tenant.into(),
+            env_key: env_key.into(),
             project: project.into(),
             environment: environment.into(),
             package_id: package_id.into(),
@@ -121,7 +219,7 @@ impl DerivedEvent {
             )));
         }
         for (field, value) in [
-            ("tenant", event.tenant.as_str()),
+            ("env_key", event.env_key.as_str()),
             ("project", event.project.as_str()),
             ("environment", event.environment.as_str()),
             ("package-id", event.package_id.as_str()),
@@ -328,13 +426,13 @@ pub fn msg_id(project: &str, env: &str, lsn: u64) -> String {
 ///
 /// The type discriminator keeps author ids that happen to be decimal apart
 /// from CDC LSN identities. The trusted scope prevents the same author id in a
-/// different tenant/project/environment/package and admitted terminal selector
+/// different env_key/project/environment/package and admitted terminal selector
 /// from colliding. Only a bounded digest reaches the NATS header; the logical
 /// operand itself remains byte-for-byte author supplied in
 /// [`DerivedEvent::dedup_id`]. Length framing prevents concatenation ambiguity
 /// between scope fields.
 pub fn derived_msg_id(
-    tenant: &str,
+    env_key: &str,
     project: &str,
     env: &str,
     package_id: &str,
@@ -347,7 +445,7 @@ pub fn derived_msg_id(
     let mut digest = Sha256::new();
     digest.update(b"wamn.event.derived-msg-id.v0.1\0");
     for field in [
-        tenant,
+        env_key,
         project,
         env,
         package_id,
@@ -703,9 +801,22 @@ mod tests {
         let bytes = serde_json::to_vec(&event).unwrap();
         assert_eq!(
             String::from_utf8(bytes.clone()).unwrap(),
-            r#"{"format-version":"0.1","tenant":"acme","project":"app","environment":"dev","package-id":"orders","entity":"orders","op":"update","payload":["arbitrary",{"nested":true}],"dedup-id":"orders:7:updated","causation":{"run":"registration:delivery:9","root":"root:1","depth":3}}"#
+            r#"{"format-version":"0.1","env_key":"acme","project":"app","environment":"dev","package-id":"orders","entity":"orders","op":"update","payload":["arbitrary",{"nested":true}],"dedup-id":"orders:7:updated","causation":{"run":"registration:delivery:9","root":"root:1","depth":3}}"#
         );
         assert_eq!(DerivedEvent::from_slice(&bytes).unwrap(), event);
+        let document = String::from_utf8(bytes.clone()).unwrap();
+        assert!(
+            DerivedEvent::from_slice(document.replace("\"env_key\":", "\"tenant\":").as_bytes())
+                .is_err()
+        );
+        assert!(
+            DerivedEvent::from_slice(
+                document
+                    .replace("\"env_key\":", "\"env_key\":\"other\",\"env_key\":")
+                    .as_bytes()
+            )
+            .is_err()
+        );
         assert!(
             serde_json::from_slice::<Envelope>(&bytes).is_err(),
             "derived bytes must never decode as the frozen CDC envelope"
@@ -720,7 +831,7 @@ mod tests {
 
         let future = serde_json::to_vec(&serde_json::json!({
             "format-version": "0.2",
-            "tenant": "acme",
+            "env_key": "acme",
             "project": "app",
             "environment": "dev",
             "package-id": "orders",

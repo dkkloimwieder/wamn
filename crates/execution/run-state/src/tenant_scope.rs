@@ -38,10 +38,10 @@ pub(crate) fn frame(output: &mut Vec<u8>, value: &[u8]) {
 /// The database is part of the preimage because role names are CLUSTER-wide:
 /// without it, one tenant in two project-environment databases would derive one
 /// key and collide on a single login.
-pub fn app_scope_hash(tenant: &str, database: &str) -> String {
+pub fn app_scope_hash(env_key: &str, database: &str) -> String {
     let mut preimage = Vec::new();
     frame(&mut preimage, APP_SCOPE_DOMAIN);
-    for (tag, value) in [("tenant", tenant), ("database", database)] {
+    for (tag, value) in [("env_key", env_key), ("database", database)] {
         frame(&mut preimage, tag.as_bytes());
         frame(&mut preimage, value.as_bytes());
     }
@@ -72,7 +72,7 @@ mod tests {
     fn the_digest_value_is_frozen() {
         assert_eq!(
             app_scope_hash("acme", "wamn-db-acme--billing--dev"),
-            "d00c90a7652322315fa96248dcb73b29c3decd54"
+            "bf86e8a0f34822959bcbabbbb9c0e92ed3910508"
         );
     }
 

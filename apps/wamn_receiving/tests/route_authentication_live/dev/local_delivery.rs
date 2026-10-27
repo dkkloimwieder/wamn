@@ -266,12 +266,12 @@ async fn require_local_facts(
         !facts.applications.is_empty(),
         "dev host declares no local application"
     );
-    let published: i64 = control.query_one("SELECT count(*) FROM catalog.authoring_command_audit WHERE tenant_id=$1 AND command_type='publish'", &[&identity().tenant().as_str()]).await?.get(0);
+    let published: i64 = control.query_one("SELECT count(*) FROM catalog.authoring_command_audit WHERE env_key=$1 AND command_type='publish'", &[&identity().env_key().as_str()]).await?.get(0);
     let (target, task) = connect(target_url).await?;
     let wirings: i64 = target
         .query_one(
-            "SELECT count(*) FROM catalog.workflows WHERE tenant_id=$1",
-            &[&identity().tenant().as_str()],
+            "SELECT count(*) FROM catalog.workflows WHERE env_key=$1",
+            &[&identity().env_key().as_str()],
         )
         .await?
         .get(0);
@@ -279,8 +279,8 @@ async fn require_local_facts(
     // else: dev authors no workflow on its own.
     let releases = target
         .query(
-            "SELECT manifest_digest, canonical_bytes FROM catalog.releases WHERE tenant_id=$1",
-            &[&identity().tenant().as_str()],
+            "SELECT manifest_digest, canonical_bytes FROM catalog.releases WHERE env_key=$1",
+            &[&identity().env_key().as_str()],
         )
         .await?
         .into_iter()

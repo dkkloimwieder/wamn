@@ -5,7 +5,7 @@
 //! parameters, identifiers are pinned, table names are UNQUALIFIED (the host
 //! injects the schema via `search_path` — the S6 schema-as-fixture pattern),
 //! and the tenant comes from the session claim
-//! (`current_setting('app.tenant', true)`). These are run-level statements.
+//! (`current_setting('app.env_key', true)`). These are run-level statements.
 //! Status literals interpolate from [`crate::RunStatus`] so the builders cannot
 //! drift from the model (the same discipline this crate's `queue` module uses).
 //!
@@ -42,17 +42,17 @@ pub(crate) fn execution_input_sql(run_alias: &str) -> String {
 /// via their `ON DELETE CASCADE` FK to `runs`. A `dispatched`/`running` run is
 /// never pruned (it may still complete). Age-based
 /// only in v0; no execution-lineage metadata participates.
-/// Params: `$1` tenant, `$2` retention_days.
+/// Params: `$1` `env_key`, `$2` retention_days.
 ///
 /// # The tenant is a BOUND PARAMETER, and that is the whole point
 ///
-/// This predicate used to read `current_setting('app.tenant', true)`, which is
+/// This predicate used to read `current_setting('app.env_key', true)`, which is
 /// the RETIRED tenant keying: `wamn-0h0g.22.6` re-keyed `runs`' floor onto
-/// `wamn_authority.tenant_key(tenant_id) =
-/// wamn_authority.current_tenant_key()`, and the `app.tenant` claim survives
+/// `wamn_authority.tenant_key(env_key) =
+/// wamn_authority.current_tenant_key()`, and the `app.env_key` claim survives
 /// only on `operator_run_actions` and `run_queue`. A GUC-shaped predicate has
 /// one failure mode no amount of care removes: `current_setting(_, true)`
-/// returns NULL when the claim was never injected, `tenant_id = NULL` is NULL,
+/// returns NULL when the claim was never injected, `env_key = NULL` is NULL,
 /// and the statement reports ZERO ROWS DELETED with no error — measured on
 /// PostgreSQL 18.6 as `DELETE 0` under the dedicated retention role
 /// (`wamn-0h0g.12.69`). A bound parameter cannot be forgotten: it is either
@@ -61,7 +61,7 @@ pub(crate) fn execution_input_sql(run_alias: &str) -> String {
 /// Dropping the claim costs nothing the cascade needs. Measured on the same
 /// server: the `run_queue` `ON DELETE CASCADE` fires as an internal
 /// referential-integrity trigger that consults neither the deleter's table
-/// grants nor `run_queue`'s FORCE-RLS `app.tenant` policy, so the queue row
+/// grants nor `run_queue`'s FORCE-RLS `app.env_key` policy, so the queue row
 /// still goes with the run in a session that never set the GUC and holds no
 /// privilege on that relation at all.
 ///
@@ -80,7 +80,7 @@ pub fn prune_terminal_runs_sql() -> String {
         .collect();
     format!(
         "DELETE FROM runs \
-          WHERE tenant_id = $1 \
+          WHERE env_key = $1 \
             AND status IN ({statuses}) \
             AND created_at < now() - ($2::bigint * interval '1 day')",
         statuses = terminal.join(", "),
@@ -110,7 +110,7 @@ mod tests {
     fn builder_columns_exist_in_the_canonical_ddl() {
         let ddl = include_str!("../../../../deploy/sql/run-state.sql");
         for col in [
-            "tenant_id",
+            "env_key",
             "run_id",
             "flow_id",
             "flow_version",
@@ -134,7 +134,7 @@ mod tests {
     fn prune_targets_terminal_runs_only() {
         let sql = prune_terminal_runs_sql();
         assert!(sql.starts_with("DELETE FROM runs"), "{sql}");
-        assert!(sql.contains("WHERE tenant_id = $1"), "{sql}");
+        assert!(sql.contains("WHERE env_key = $1"), "{sql}");
         assert!(
             sql.contains("created_at < now() - ($2::bigint * interval '1 day')"),
             "{sql}"

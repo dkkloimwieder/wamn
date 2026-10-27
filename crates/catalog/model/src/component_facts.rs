@@ -15,28 +15,41 @@ const JSON_SCHEMA_2020_12: &str = "https://json-schema.org/draft/2020-12/schema"
 const SCHEMA_URI: &str = "mem://wamn-component-schema.json";
 
 /// Package coordinate that owns an admitted component.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComponentPackageScope {
-    pub tenant_id: String,
+    pub env_key: String,
     pub package_id: String,
     pub package_version: String,
 }
 
 impl ComponentPackageScope {
     pub fn new(
-        tenant_id: impl Into<String>,
+        env_key: impl Into<String>,
         package_id: impl Into<String>,
         package_version: impl Into<String>,
     ) -> Result<Self, CatalogIdentityError> {
-        let tenant_id = tenant_id.into();
+        let env_key = env_key.into();
         let coordinate = PackageCoordinate::new(package_id, package_version)?;
-        validate_text(&tenant_id, "tenant-id")?;
+        validate_text(&env_key, "env_key")?;
         Ok(Self {
-            tenant_id,
+            env_key,
             package_id: coordinate.package_id().to_owned(),
             package_version: coordinate.package_version().to_owned(),
         })
+    }
+}
+
+impl Serialize for ComponentPackageScope {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct as _;
+        let mut scope = serializer.serialize_struct("ComponentPackageScope", 3)?;
+        scope.serialize_field("env_key", &self.env_key)?;
+        scope.serialize_field("package-id", &self.package_id)?;
+        scope.serialize_field("package-version", &self.package_version)?;
+        scope.end()
     }
 }
 
@@ -45,17 +58,51 @@ impl<'de> Deserialize<'de> for ComponentPackageScope {
     where
         D: Deserializer<'de>,
     {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-        struct Wire {
-            tenant_id: String,
-            package_id: String,
-            package_version: String,
-        }
+        struct Fields;
+        impl<'input> serde::de::Visitor<'input> for Fields {
+            type Value = std::collections::BTreeMap<String, String>;
 
-        let wire = Wire::deserialize(deserializer)?;
-        Self::new(wire.tenant_id, wire.package_id, wire.package_version)
-            .map_err(serde::de::Error::custom)
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a component scope")
+            }
+
+            fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+            where
+                M: serde::de::MapAccess<'input>,
+            {
+                let mut fields = std::collections::BTreeMap::new();
+                while let Some((name, value)) = map.next_entry::<String, String>()? {
+                    match fields.entry(name) {
+                        std::collections::btree_map::Entry::Vacant(entry) => {
+                            entry.insert(value);
+                        }
+                        std::collections::btree_map::Entry::Occupied(entry) => {
+                            return Err(serde::de::Error::custom(format!(
+                                "duplicate field `{}`",
+                                entry.key()
+                            )));
+                        }
+                    }
+                }
+                Ok(fields)
+            }
+        }
+        let mut fields = deserializer.deserialize_map(Fields)?;
+        let mut take = |name| {
+            fields
+                .remove(name)
+                .ok_or_else(|| serde::de::Error::missing_field(name))
+        };
+        let env_key = take("env_key")?;
+        let package_id = take("package-id")?;
+        let package_version = take("package-version")?;
+        if let Some(name) = fields.keys().next() {
+            return Err(serde::de::Error::unknown_field(
+                name,
+                &["env_key", "package-id", "package-version"],
+            ));
+        }
+        Self::new(env_key, package_id, package_version).map_err(serde::de::Error::custom)
     }
 }
 
@@ -494,7 +541,7 @@ pub fn normalize_component_fact(
     effects: Vec<AdmittedComponentEffect>,
 ) -> Result<AdmittedComponentFacts, ComponentFactError> {
     ComponentPackageScope::new(
-        &declaration.scope.tenant_id,
+        &declaration.scope.env_key,
         &declaration.scope.package_id,
         &declaration.scope.package_version,
     )
@@ -597,7 +644,7 @@ pub fn verify_stored_effect_projection(
     component: &AdmittedComponent,
 ) -> Result<(), ComponentFactError> {
     ComponentPackageScope::new(
-        &component.scope.tenant_id,
+        &component.scope.env_key,
         &component.scope.package_id,
         &component.scope.package_version,
     )
@@ -1098,7 +1145,7 @@ mod tests {
     fn declaration() -> ComponentDeclaration {
         ComponentDeclaration {
             scope: ComponentPackageScope {
-                tenant_id: "tenant-a".to_string(),
+                env_key: "tenant-a".to_string(),
                 package_id: "orders".to_string(),
                 package_version: "1.2.0".to_string(),
             },
@@ -1269,9 +1316,12 @@ mod tests {
 
     #[test]
     fn persisted_component_scope_uses_the_package_coordinate_guard() {
+        assert!(serde_json::from_str::<ComponentPackageScope>(
+            r#"{"env_key":"first","env_key":"second","package-id":"orders","package-version":"1.0.0"}"#
+        ).is_err());
         assert!(
             serde_json::from_value::<ComponentPackageScope>(json!({
-                "tenant-id": "tenant-a",
+                "env_key": "tenant-a",
                 "package-id": "not-snake",
                 "package-version": "1.0.0"
             }))
@@ -1466,7 +1516,7 @@ mod tests {
     fn migration_defaulted_fact(imports: &[&str]) -> AdmittedComponent {
         AdmittedComponent {
             scope: ComponentPackageScope {
-                tenant_id: "tenant-a".to_string(),
+                env_key: "tenant-a".to_string(),
                 package_id: "orders".to_string(),
                 package_version: "1.2.0".to_string(),
             },
@@ -1647,7 +1697,7 @@ mod tests {
         let document = serde_json::to_value(declaration()).expect("declaration serializes");
         assert!(document["operations"]["map"].get("input-ports").is_some());
         assert!(document.get("interface-version").is_some());
-        assert_eq!(document["scope"]["tenant-id"], "tenant-a");
+        assert_eq!(document["scope"]["env_key"], "tenant-a");
         assert_eq!(
             serde_json::from_value::<ComponentDeclaration>(document.clone())
                 .expect("exact declaration parses"),

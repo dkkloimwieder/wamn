@@ -1114,7 +1114,7 @@ mod tests {
     fn projection_component() -> AdmittedComponent {
         AdmittedComponent {
             scope: ComponentPackageScope {
-                tenant_id: "tenant-a".to_owned(),
+                env_key: "tenant-a".to_owned(),
                 package_id: "source_fixture".to_owned(),
                 package_version: "1.0.0".to_owned(),
             },
@@ -1144,7 +1144,7 @@ mod tests {
             "../tests/fixtures/component_package/component.json"
         ))
         .expect("fixture component declaration is JSON");
-        document["scope"]["tenant-id"] = serde_json::json!("tenant-a");
+        document["scope"]["env_key"] = serde_json::json!("tenant-a");
         let declaration: ComponentDeclaration =
             serde_json::from_value(document).expect("fixture component declaration parses");
         AdmittedComponent {
@@ -1391,7 +1391,7 @@ mod tests {
         let operation = "observer-fixture:audit/observe@3.0.0".to_owned();
         let component = AdmittedComponent {
             scope: wamn_catalog::ComponentPackageScope {
-                tenant_id: "tenant-a".to_owned(),
+                env_key: "tenant-a".to_owned(),
                 package_id: manifest.package.id.clone(),
                 package_version: manifest.package.version.clone(),
             },
@@ -1498,7 +1498,7 @@ mod tests {
     ) -> AdmittedComponent {
         AdmittedComponent {
             scope: wamn_catalog::ComponentPackageScope {
-                tenant_id: "tenant-a".to_owned(),
+                env_key: "tenant-a".to_owned(),
                 package_id: manifest.package.id.clone(),
                 package_version: manifest.package.version.clone(),
             },
@@ -1699,7 +1699,7 @@ mod tests {
             wamn_engine::component_admission::ComponentAdmissionRequest {
                 declaration: ComponentDeclaration {
                     scope: ComponentPackageScope {
-                        tenant_id: "tenant-a".to_owned(),
+                        env_key: "tenant-a".to_owned(),
                         package_id: "orders".to_owned(),
                         package_version: "1.0.0".to_owned(),
                     },

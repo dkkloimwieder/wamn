@@ -31,7 +31,7 @@ const NAMESPACE: &str = "hosts";
 /// One application's workloads.
 struct Application {
     project: &'static str,
-    tenant: &'static str,
+    env_key: &'static str,
     route_host: &'static str,
     event_stream: &'static str,
     host_group: &'static str,
@@ -44,7 +44,7 @@ struct Application {
 
 const RECEIVING: Application = Application {
     project: "receiving",
-    tenant: "dev",
+    env_key: "dev",
     route_host: "receiving.wamn.dev",
     event_stream: "EVT_3_dkk_9_receiving_3_dev",
     host_group: "default",
@@ -56,7 +56,7 @@ const RECEIVING: Application = Application {
 
 const WMS: Application = Application {
     project: "wms",
-    tenant: "wms",
+    env_key: "wms",
     route_host: "wms.wamn.dev",
     event_stream: "EVT_3_dkk_3_wms_3_dev",
     host_group: "wms",
@@ -93,7 +93,7 @@ fn write(
             image: http_image.to_owned(),
             route_host: application.route_host.to_owned(),
             claims: HttpClaims {
-                tenant: application.tenant.to_owned(),
+                env_key: application.env_key.to_owned(),
                 catalog: "default".to_owned(),
                 environment: NAMESPACE.to_owned(),
                 project: application.project.to_owned(),
@@ -107,7 +107,7 @@ fn write(
             workload: application.materializer_name.to_owned(),
             namespace: NAMESPACE.to_owned(),
             image: materializer_image.to_owned(),
-            tenant: application.tenant.to_owned(),
+            env_key: application.env_key.to_owned(),
             event: EventIdentity {
                 org: ORG.to_owned(),
                 project: application.project.to_owned(),

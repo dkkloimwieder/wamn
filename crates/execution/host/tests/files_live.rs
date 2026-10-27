@@ -44,7 +44,7 @@ mod files;
 mod session_fixture;
 #[path = "../../../control/lib/tests/support/file_package/signed_read.rs"]
 mod signed_read;
-use application_fixture::{ApplicationHost, MEMBER, PROJECT, READ, TENANT};
+use application_fixture::{ApplicationHost, ENV_KEY, MEMBER, PROJECT, READ};
 use session_fixture::{ORG, claims, header, signed};
 
 fn attachment(action: &str) -> String {
@@ -71,7 +71,7 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
     let manifest: wamn_catalog::ServingManifest = serde_json::from_value(manifest)?;
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_execution_contract::canonical_json_bytes(&serde_json::to_value(manifest)?),
-        "native files fixture", ReleaseScope::new(TENANT,"dev").with_applications(
+        "native files fixture", ReleaseScope::new(ENV_KEY,"dev").with_applications(
             serde_json::from_value(json!({
                 "files":{"packages":["session_test"],"connections":{
                     "files":files::STORE_NAME,"files_read":files::STORE_NAME,"files_no_cdn":"files-no-cdn"}},
@@ -127,7 +127,7 @@ impl FileHost {
                 Arc::clone(&registry.reader),
                 ORG,
             )),
-            TENANT,
+            ENV_KEY,
             PROJECT,
             Some(Arc::clone(&release)),
         ));
@@ -760,8 +760,8 @@ async fn referenced_file_delete_refuses_and_disablement_keeps_the_application_fo
     fixture.host.admin.batch_execute("GRANT USAGE ON SCHEMA file_fixture TO wamn_app; GRANT SELECT,INSERT,DELETE ON file_fixture.document TO wamn_app").await?;
     let role = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::Tenant {
-            tenant: TENANT,
+        WorkloadRoleScope::EnvKey {
+            env_key: ENV_KEY,
             database: "file_referenced_delete",
         },
         CredentialGeneration::A,
@@ -819,7 +819,7 @@ async fn referenced_file_delete_refuses_and_disablement_keeps_the_application_fo
 #[test]
 fn package_signed_read_admits_the_real_node_abi_and_manifest_owned_authority() -> anyhow::Result<()>
 {
-    let package = signed_read::signed_read_fixture(TENANT)?;
+    let package = signed_read::signed_read_fixture(ENV_KEY)?;
     let serving = package
         .release
         .manifest()
@@ -858,7 +858,7 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
     use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
     use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 
-    let package = signed_read::signed_read_fixture(TENANT)?;
+    let package = signed_read::signed_read_fixture(ENV_KEY)?;
     let fixture =
         FileHost::start_with_release("package_signed_file", Arc::clone(&package.release)).await?;
     let bytes = b"private bytes returned by the package's signed read";

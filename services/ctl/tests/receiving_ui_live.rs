@@ -104,14 +104,14 @@ async fn local_receiving_screens() -> anyhow::Result<()> {
             .and_then(|entry| entry["url"].as_str()).context("Receiving URL")?;
         let config: Value = serde_json::from_slice(&std::fs::read(root.join("dev.json"))?)?;
         let target = config["target_database_url"].as_str().context("target database URL")?;
-        let tenant = wamn_control_registry::project_env_tenant(ORG, PROJECT, ENVIRONMENT);
+        let env_key = wamn_control_registry::project_env_key(ORG, PROJECT, ENVIRONMENT);
         reconcile_journey_run_plane(&JourneyScope { org: ORG.to_owned(), project: PROJECT.to_owned(), environment: ENVIRONMENT.to_owned() }, system.url(), target).await?;
         let (mut business, business_driver) = tokio_postgres::connect(target, tokio_postgres::NoTls).await?;
         let business_driver = tokio::spawn(business_driver);
-        wamn_control::user_role::grant_role_on(&mut business, &tenant, DEVELOPER_EMAIL, wamn_project_state::ADMIN_ROLE, &wamn_platform_identity::auth_changes::AuthChanges::default()).await?;
+        wamn_control::user_role::grant_role_on(&mut business, &env_key, DEVELOPER_EMAIL, wamn_project_state::ADMIN_ROLE, &wamn_platform_identity::auth_changes::AuthChanges::default()).await?;
         business.execute(
-            "SELECT set_config('app.user_id', $1, false), set_config('app.tenant_id', $2, false), set_config('app.operation', 'admin:receiving-browser-fixture', false)",
-            &[&actor.as_str(), &tenant],
+            "SELECT set_config('app.user_id', $1, false), set_config('app.env_key', $2, false), set_config('app.operation', 'admin:receiving-browser-fixture', false)",
+            &[&actor.as_str(), &env_key],
         ).await?;
         business.batch_execute(include_str!("fixtures/receiving_ui.sql")).await?;
         drop(business);

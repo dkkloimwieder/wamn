@@ -719,7 +719,7 @@ An entry has these columns:
 
 - `position`: the per-row position, a `bigint` identity value that the function allocates under the row lock. Positions rise for each row, and gaps are allowed.
 - `id`: the id of the entry, a random `uuid` that PostgreSQL generates. A read that shows entries in a table keys its rows on it.
-- `tenant_id`: the tenant of the row, only in a history table under a tenant floor.
+- `tenant_id`: the tenant of the row, only in a legacy history table under a tenant floor.
 - `row_key`: a JSONB object of the primary key columns.
 - `type`: `insert`, `update`, or `delete`.
 - `operation`: the source of the write, from `app.operation`.
@@ -906,8 +906,12 @@ No status row means active. The application login reads that row from its select
 Project migration `0038_administration_database_boundary` removes the remaining tenant columns and rebuilds these keys.
 The migration preserves rows and history images. It removes `tenant_id` from history keys and gives environment history the key `{"id": true}`.
 A duplicate resulting key refuses the whole migration. Historical migrations stay unchanged.
-The shared control, catalog, and run tables retain the `org--project--env` key named `tenant`.
-Event fields and credential hashes retain their existing tenant representation.
+The shared control, catalog, and run tables store the composed `org--project--env` key in `env_key`.
+The separate `environment` field stores the short name, such as `dev`.
+Qualification JSON, target JSON, catalog identities, run keys, and manifest scopes use `env_key`.
+Event fields and workload claims use `env_key`. Credential hashes frame that name.
+The management variable is `WAMN_MANAGEMENT_ENV_KEY`, and `flow-http.json` carries `wamn.env_key`.
+The event subject keeps its separate organization, project, and short environment tokens.
 Auth invalidation keys still include the environment key, so equal principal IDs in separate environments keep separate cached grants and status.
 `wamn_app` holds `USAGE` on `platform`, `SELECT` on `user`, `role`, `user_role`, `permission`, `environment` and the seven platform configuration tables, `EXECUTE` on `platform.bump_counter`, `platform.assign_counter` and `platform.set_counter`, and the write log grants. It holds nothing else in `platform`: no grant on `api_key`, on a history table, or on `schema_migrations`.
 `platform.bump_counter(sequence, counter, key)` is `SECURITY DEFINER`. It inserts the counter row at 1 when the row is absent, returns the value, and increments it, under the row lock. It checks no tenant and reads no claim. It refuses an id that is not a sequence with `undefined_object`. The `wamn:postgres` plugin decides which sequences a caller reaches: it takes the application from host state and resolves the sequence id by that application and the sequence name. Component admission parses each statement a package declares with PostgreSQL's grammar (`pg_query`). It refuses a statement that names a counter function, writes a `platform.*` relation, or holds a `DO` block, a function body, a SQL `EXECUTE`, `SET`, `RESET`, `set_config`, `pg_logical_emit_message`, `query_to_xml*`, `cursor_to_xml*` or a `U&` escape (`crates/control/lib/src/component_admission/declared_sql.rs`). Publish checks the pushed descriptors again. Application guests run only declared statements, so only the plugin calls these functions. The host also runs a text guard (`reject_claim_mutation`) on every statement it runs: on declared statements, which covers a release admitted before the parsed check, and on the raw `wamn:postgres/client` interface, which only platform components import.
@@ -922,7 +926,7 @@ It holds no grant on `number_counter`: only `platform.bump_counter`, `platform.a
 It holds `INSERT` on the entry columns of their eleven history tables, `USAGE` on `wamn_history`, and `EXECUTE` on `wamn_history.row_image`. No entry column names a tenant, and administration holds no tenant derivation grant.
 It holds `USAGE` on `catalog` and `SELECT` on `catalog.releases`.
 The CLI role writer checks the target database against the registry and needs the administration grants. It requires no superuser or row-security bypass.
-It refuses a tenant key that differs from the registry environment key, so role writes invalidate the selected environment's cached grants.
+It refuses an `env_key` that differs from the registry environment key, so role writes invalidate the selected environment's cached grants.
 The session role reader holds `SELECT` only on `user.id`, `user.status`, `user_role.user_id`, and `user_role.role_name`.
 Its connection selects the environment database. Its query filters by principal ID and active status.
 The grant goes to this family only. `wamn_platform`, the group that every platform family inherits, holds none of it.

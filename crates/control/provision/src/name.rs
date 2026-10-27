@@ -197,7 +197,7 @@ pub fn project_env_secret_name(org: &str, project: &str, env: &str) -> String {
 
 /// The tenant of a project environment, owned by the registry beside
 /// [`wamn_control_registry::Triple`].
-pub use wamn_control_registry::project_env_tenant;
+pub use wamn_control_registry::project_env_key;
 
 /// ONE workload credential Secret name, for any family (`wamn-0h0g.22.16`).
 ///

@@ -250,9 +250,9 @@ pub const PROJECT: &str = "receiving";
 
 pub const ENVIRONMENT: &str = "dev";
 
-/// The tenant of the coordinate, as `project_env_tenant(ORG, PROJECT, ENVIRONMENT)`
+/// The `env_key` of the coordinate, as `project_env_key(ORG, PROJECT, ENVIRONMENT)`
 /// derives it.
-pub const TENANT: &str = "acme--receiving--dev";
+pub const ENV_KEY: &str = "acme--receiving--dev";
 
 /// The org, project, environment and tenant that one journey provisions.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -263,9 +263,9 @@ pub struct JourneyScope {
 }
 
 impl JourneyScope {
-    /// The database tenant derived from the environment coordinate.
-    pub fn tenant(&self) -> String {
-        wamn_control_registry::project_env_tenant(&self.org, &self.project, &self.environment)
+    /// The composed environment key derived from the environment coordinate.
+    pub fn env_key(&self) -> String {
+        wamn_control_registry::project_env_key(&self.org, &self.project, &self.environment)
     }
 }
 
@@ -697,7 +697,7 @@ pub async fn grant_operator_admin_role(
     org: &str,
     project: &str,
     environment: &str,
-    tenant: &str,
+    env_key: &str,
     platform_domain: &str,
 ) -> anyhow::Result<()> {
     let subject = wamn_platform_identity::operator_subject(org, project, environment)
@@ -708,7 +708,7 @@ pub async fn grant_operator_admin_role(
     let connection = tokio::spawn(connection);
     let granted = crate::user_role::grant_role_on(
         &mut client,
-        tenant,
+        env_key,
         &format!("{subject}@{platform_domain}"),
         wamn_project_state::ADMIN_ROLE,
         // A journey writes the role before its host serves.
@@ -978,7 +978,7 @@ pub async fn spawn_journey_management_gate(
         .env("WAMN_MANAGEMENT_ORG", &scope.org)
         .env("WAMN_MANAGEMENT_PROJECT", &scope.project)
         .env("WAMN_MANAGEMENT_ENVIRONMENT", &scope.environment)
-        .env("WAMN_MANAGEMENT_TENANT", scope.tenant())
+        .env("WAMN_MANAGEMENT_ENV_KEY", scope.env_key())
         // The gate reads component facts from verified package artifacts.
         .env(
             "WAMN_PACKAGE_ARTIFACT_BASE",
@@ -1151,14 +1151,14 @@ mod tests {
     }
 
     #[test]
-    fn the_journey_tenant_is_the_coordinate_tenant() {
+    fn the_journey_env_key_is_the_coordinate_env_key() {
         assert_eq!(
-            JourneyScope::receiving().tenant().as_bytes(),
+            JourneyScope::receiving().env_key().as_bytes(),
             b"acme--receiving--dev"
         );
         assert_eq!(
-            TENANT,
-            wamn_control_registry::project_env_tenant(ORG, PROJECT, ENVIRONMENT)
+            ENV_KEY,
+            wamn_control_registry::project_env_key(ORG, PROJECT, ENVIRONMENT)
         );
     }
 }

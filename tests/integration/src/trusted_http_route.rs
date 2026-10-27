@@ -57,7 +57,7 @@ use wamn_schema_control::connections::ComponentConnectionRequirement;
 use wamn_workflow::RouterDriver;
 
 /// The one tenant every seeded row and every claim is scoped to.
-pub const TENANT: &str = "tenant-a";
+pub const ENV_KEY: &str = "tenant-a";
 pub const PACKAGE: &str = "orders";
 pub const ENVIRONMENT: &str = "prod";
 pub const PACKAGE_VERSION: &str = "1.0.0";
@@ -207,8 +207,8 @@ async fn credential_fixture(
         wamn_control::provision_project_env::provisioning_transaction(&mut admin).await?;
     transaction
         .execute(
-            wamn_control_provision::sql::upsert_control_author_tenant_mapping_sql(),
-            &[&role, &TENANT, &"acme", &PROJECT, &ENVIRONMENT],
+            wamn_control_provision::sql::upsert_control_author_env_key_mapping_sql(),
+            &[&role, &ENV_KEY, &"acme", &PROJECT, &ENVIRONMENT],
         )
         .await?;
     transaction.commit().await?;
@@ -265,7 +265,7 @@ async fn build_with_credentials(
         LoadedRelease::load_canonical_bytes(
             &wamn_execution_contract::canonical_json_bytes(&release_manifest(&admitted, &document)),
             "trusted-http-route fixture",
-            wamn_engine::release_manifest::ReleaseScope::new(TENANT, ENVIRONMENT)
+            wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, ENVIRONMENT)
                 .with_applications(
                     [(
                         "orders".to_owned(),
@@ -348,7 +348,7 @@ fn declaration() -> anyhow::Result<ComponentDeclaration> {
     ))
     .context("read the http-request declaration template")?;
     let rendered = template
-        .replace("__TENANT_ID__", TENANT)
+        .replace("__ENV_KEY__", ENV_KEY)
         .replace("__PACKAGE_ID__", PACKAGE)
         .replace("__PACKAGE_VERSION__", PACKAGE_VERSION);
     serde_json::from_str(&rendered).context("parse the rendered http-request declaration")
@@ -580,10 +580,10 @@ async fn seed_with_client(
     })
     .to_string();
 
-    // Every catalog table FORCEs RLS on `app.tenant`, and a superuser is not
+    // Every catalog table FORCEs RLS on `app.env_key`, and a superuser is not
     // exempt from FORCE — the claim is what makes these writes land at all.
     client
-        .query_one("SELECT set_config('app.tenant', $1, false)", &[&TENANT])
+        .query_one("SELECT set_config('app.env_key', $1, false)", &[&ENV_KEY])
         .await
         .context("claim the seeding tenant")?;
 
@@ -600,10 +600,10 @@ async fn seed_with_client(
     client
         .execute(
             "INSERT INTO catalog.packages \
-                    (tenant_id, package_id, package_version, artifact_digest) \
+                    (env_key, package_id, package_version, artifact_digest) \
              VALUES ($1, $2, $3, $4)",
             &[
-                &TENANT,
+                &ENV_KEY,
                 &PACKAGE,
                 &PACKAGE_VERSION,
                 &package_artifact_digest,
@@ -617,19 +617,19 @@ async fn seed_with_client(
     let manifest_digest = release.release().manifest_digest.as_str();
     client
         .execute(
-            "INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
+            "INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) \
              VALUES ($1, $2, $3)",
-            &[&TENANT, &manifest_digest, &canonical_release],
+            &[&ENV_KEY, &manifest_digest, &canonical_release],
         )
         .await
         .context("record the release")?;
     client
         .execute(
-            "INSERT INTO catalog.workflows (tenant_id, environment, application, workflow_id, \
+            "INSERT INTO catalog.workflows (env_key, environment, application, workflow_id, \
                     version, graph_json, wiring_hash, trigger, execution_type, created_by) \
              VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, 'manual', 'invoker', $8::text::uuid)",
             &[
-                &TENANT,
+                &ENV_KEY,
                 &ENVIRONMENT,
                 &PACKAGE,
                 &WIRING_ID,
@@ -644,10 +644,10 @@ async fn seed_with_client(
     client
         .execute(
             "INSERT INTO catalog.connection_requirements (\
-                 tenant_id, component_digest, store_alias, requirement_json, requirement_hash\
+                 env_key, component_digest, store_alias, requirement_json, requirement_hash\
              ) VALUES ($1, $2, $3, $4::text::jsonb, $5)",
             &[
-                &TENANT,
+                &ENV_KEY,
                 &component.component_digest,
                 &STORE_ALIAS,
                 &requirement_json,
@@ -659,21 +659,21 @@ async fn seed_with_client(
     client
         .execute(
             "INSERT INTO catalog.connection_instances (\
-                 tenant_id, environment, instance_id, requirement_type, contract, \
+                 env_key, environment, instance_id, requirement_type, contract, \
                  lifecycle_status\
              ) VALUES ($1, $2, $3, 'http', $4, 'enabled')",
-            &[&TENANT, &ENVIRONMENT, &INSTANCE_ID, &CONTRACT],
+            &[&ENV_KEY, &ENVIRONMENT, &INSTANCE_ID, &CONTRACT],
         )
         .await
         .context("seed the connection instance")?;
     client
         .execute(
             "INSERT INTO catalog.connection_generations (\
-                 tenant_id, environment, instance_id, generation, definition_json, \
+                 env_key, environment, instance_id, generation, definition_json, \
                  definition_hash, credential_set_handle\
              ) VALUES ($1, $2, $3, $4, $5::text::jsonb, $6, $7)",
             &[
-                &TENANT,
+                &ENV_KEY,
                 &ENVIRONMENT,
                 &INSTANCE_ID,
                 &GENERATION,
@@ -692,19 +692,19 @@ async fn seed_with_client(
             "UPDATE catalog.connection_instances \
                 SET active_generation = $4, revision = revision + 1, \
                     updated_at = clock_timestamp() + interval '1 second' \
-              WHERE tenant_id = $1 AND environment = $2 AND instance_id = $3",
-            &[&TENANT, &ENVIRONMENT, &INSTANCE_ID, &GENERATION],
+              WHERE env_key = $1 AND environment = $2 AND instance_id = $3",
+            &[&ENV_KEY, &ENVIRONMENT, &INSTANCE_ID, &GENERATION],
         )
         .await
         .context("point the instance at its active generation")?;
     client
         .execute(
             "INSERT INTO catalog.connection_bindings (\
-                 tenant_id, manifest_digest, component_digest, store_alias, \
+                 env_key, manifest_digest, component_digest, store_alias, \
                  environment, instance_id, binding_status, validation_status, validation_hash, package_id\
              ) VALUES ($1, $2, $3, $4, $5, $6, 'active', 'valid', $7, $8)",
             &[
-                &TENANT,
+                &ENV_KEY,
                 &manifest_digest,
                 &component.component_digest,
                 &STORE_ALIAS,
@@ -729,15 +729,15 @@ async fn seed_with_client(
         .get_dbname()
         .context("the disposable admin URL names no database")?;
     let scope = WorkloadRoleScope::ProjectEnvironment {
-        org: TENANT,
+        org: ENV_KEY,
         project: PROJECT,
         environment: ENVIRONMENT,
         database,
     };
     let guest_role = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::Tenant {
-            tenant: TENANT,
+        WorkloadRoleScope::EnvKey {
+            env_key: ENV_KEY,
             database,
         },
         CredentialGeneration::A,
@@ -806,9 +806,9 @@ async fn seed_additional_wirings(
         let manifest = serde_json::json!({"package": {"id": package, "version": package_version},
             "models": {}, "custom_operations": {}, "queries": {}, "connections": {}, "components": {}});
         client.execute(
-            "INSERT INTO catalog.packages (tenant_id, package_id, package_version, artifact_digest) \
+            "INSERT INTO catalog.packages (env_key, package_id, package_version, artifact_digest) \
              VALUES ($1, $2, $3, $4)",
-            &[&TENANT, package, package_version,
+            &[&ENV_KEY, package, package_version,
               &wamn_execution_contract::canonical_json_sha256(&manifest)],
         ).await?;
     }
@@ -817,10 +817,10 @@ async fn seed_additional_wirings(
         let wiring_hash = document.wiring_hash().as_str().to_owned();
         client
             .execute(
-                "INSERT INTO catalog.workflows (tenant_id, environment, application, workflow_id, \
+                "INSERT INTO catalog.workflows (env_key, environment, application, workflow_id, \
              version, graph_json, wiring_hash, trigger, execution_type, created_by) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, 'manual', 'invoker', $8::text::uuid)",
                 &[
-                    &TENANT,
+                    &ENV_KEY,
                     &ENVIRONMENT,
                     &PACKAGE,
                     &document.wiring_id,
@@ -862,7 +862,7 @@ mod tests {
     use wamn_workflow::{RouterDelivery, RouterDriverRequest};
 
     use super::{
-        CREDENTIAL_HANDLE, ENVIRONMENT, INSTANCE_ID, NODE_ID, PACKAGE, RouteOptions, TENANT,
+        CREDENTIAL_HANDLE, ENV_KEY, ENVIRONMENT, INSTANCE_ID, NODE_ID, PACKAGE, RouteOptions,
         WIRING_ID, WIRING_VERSION, build_with_credentials, credential_fixture, credential_secret,
     };
 
@@ -985,7 +985,7 @@ mod tests {
 
     fn request(id: u64) -> RouterDriverRequest {
         RouterDriverRequest {
-            tenant_id: TENANT.to_owned(),
+            env_key: ENV_KEY.to_owned(),
             package_id: PACKAGE.to_owned(),
             environment: ENVIRONMENT.to_owned(),
             wiring_id: WIRING_ID.to_owned(),
@@ -1039,8 +1039,8 @@ mod tests {
                 .execute(
                     "UPDATE catalog.connection_instances \
                         SET lifecycle_status = $4, revision = revision + 1 \
-                      WHERE tenant_id = $1 AND environment = $2 AND instance_id = $3",
-                    &[&TENANT, &ENVIRONMENT, &INSTANCE_ID, &status],
+                      WHERE env_key = $1 AND environment = $2 AND instance_id = $3",
+                    &[&ENV_KEY, &ENVIRONMENT, &INSTANCE_ID, &status],
                 )
                 .await?,
             1
@@ -1054,12 +1054,12 @@ mod tests {
         assert_eq!(
             client
                 .execute(
-                    "INSERT INTO catalog.connection_generations (tenant_id, environment, \
+                    "INSERT INTO catalog.connection_generations (env_key, environment, \
                  instance_id, generation, definition_json, definition_hash, credential_set_handle) \
-             SELECT tenant_id, environment, instance_id, $4, definition_json, definition_hash, $5 \
+             SELECT env_key, environment, instance_id, $4, definition_json, definition_hash, $5 \
                FROM catalog.connection_generations \
-              WHERE tenant_id = $1 AND environment = $2 AND instance_id = $3 AND generation = 1",
-                    &[&TENANT, &ENVIRONMENT, &INSTANCE_ID, &generation, &handle],
+              WHERE env_key = $1 AND environment = $2 AND instance_id = $3 AND generation = 1",
+                    &[&ENV_KEY, &ENVIRONMENT, &INSTANCE_ID, &generation, &handle],
                 )
                 .await?,
             1
@@ -1069,8 +1069,8 @@ mod tests {
                 .execute(
                     "UPDATE catalog.connection_instances \
                 SET active_generation = $4, revision = revision + 1 \
-              WHERE tenant_id = $1 AND environment = $2 AND instance_id = $3",
-                    &[&TENANT, &ENVIRONMENT, &INSTANCE_ID, &generation],
+              WHERE env_key = $1 AND environment = $2 AND instance_id = $3",
+                    &[&ENV_KEY, &ENVIRONMENT, &INSTANCE_ID, &generation],
                 )
                 .await?,
             1

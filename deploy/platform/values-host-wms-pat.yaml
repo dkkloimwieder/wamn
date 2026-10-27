@@ -147,7 +147,7 @@ runtime:
         - "--release-artifact-base=registry.wamn-system.svc.cluster.local:5000/wamn/releases"
         - "--release-manifest-digest=sha256:0000000000000000000000000000000000000000000000000000000000000000"
         # The operator chart passes the pod namespace as --environment. The
-        # host derives its tenant from WAMN_ORG, WAMN_PROJECT and the
+        # host derives its env_key from WAMN_ORG, WAMN_PROJECT and the
         # environment name (R1), so this later flag names the real
         # environment, and the host keeps the last value.
         - "--environment=dev"

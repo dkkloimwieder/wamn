@@ -46,8 +46,8 @@ mod password_lifecycle;
 
 const ISSUER: &str = "https://identity.session-test.internal";
 const PASSWORD: &str = "session-exchange-disposable-fixture-password";
-const TENANT: &str = "session-tenant-a";
-const OTHER_TENANT: &str = "session-tenant-b";
+const ENV_KEY: &str = "session-tenant-a";
+const OTHER_ENV_KEY: &str = "session-tenant-b";
 const SUFFIX: &str = "s3ss10n2";
 /// The test principal that each environment fixture writes as.
 const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
@@ -550,7 +550,7 @@ async fn malformed_requests(https: &Https, pat: &str, audience: &str) {
         format!("{{\"aud\":\"{audience}\",\"aud\":\"{audience}\"}}"),
         json!({"aud":audience,"roles":["admin"]}).to_string(),
         json!({"aud":audience,"principal":"caller-supplied"}).to_string(),
-        json!({"aud":audience,"tenant":OTHER_TENANT}).to_string(),
+        json!({"aud":audience,"env_key":OTHER_ENV_KEY}).to_string(),
         json!({"aud":audience,"database_url":"postgres://untrusted.invalid/db"}).to_string(),
         json!({"aud":"x".repeat(2048)}).to_string(),
     ] {
@@ -983,7 +983,7 @@ async fn retained_successor_allows_real_retirement(
     let successor_target = SessionTarget::new(
         triple,
         target.instance_suffix(),
-        target.tenant_id(),
+        target.env_key(),
         &login_url(&parsed, target.connection().database(), &successor_role),
     )
     .expect_redacted("successor target capability");
@@ -1232,7 +1232,7 @@ async fn setup(raw: &str) -> Fixture {
             CredentialGeneration::A,
         )
         .expect_redacted("reader role");
-        let target = SessionTarget::new(&triple, SUFFIX, TENANT, &login_url(&admin, &name, &role))
+        let target = SessionTarget::new(&triple, SUFFIX, ENV_KEY, &login_url(&admin, &name, &role))
             .expect_redacted("production target capability");
         assert!(!format!("{target:?}").contains(PASSWORD));
         roles.push(role);

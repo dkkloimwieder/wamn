@@ -10,12 +10,12 @@ use wamn_run_state::AuthorityClass;
 
 use super::WamnPostgres;
 
-/// The component descriptors of the release. Binds: tenant and manifest digest.
+/// The component descriptors of the release. Binds: `env_key` and manifest digest.
 pub const RELEASE_COMPONENTS_SQL: &str = "\
 WITH release_scope AS MATERIALIZED ( \
     SELECT convert_from(release.canonical_bytes, 'UTF8')::jsonb AS manifest \
       FROM catalog.releases AS release \
-     WHERE release.tenant_id = $1 \
+     WHERE release.env_key = $1 \
        AND release.manifest_digest = $2 \
 ), release_package AS MATERIALIZED ( \
     SELECT package.value ->> 'package-id' AS package_id, \
@@ -28,7 +28,7 @@ SELECT COALESCE( \
            (SELECT jsonb_agg( \
                jsonb_build_object( \
                    'scope', jsonb_build_object( \
-                       'tenant-id', $1::text, \
+                       'env_key', $1::text, \
                        'package-id', release_package.package_id, \
                        'package-version', release_package.package_version \
                    ), \
@@ -57,21 +57,21 @@ pub(crate) const RELEASE_COMPONENT_BINDINGS_READY_SQL: &str = "\
 SELECT NOT EXISTS ( \
     SELECT 1 \
      FROM catalog.connection_requirements AS requirement \
-     WHERE requirement.tenant_id = $1 \
+     WHERE requirement.env_key = $1 \
        AND requirement.component_digest = ANY($4::text[]) \
        AND NOT EXISTS ( \
            SELECT 1 \
              FROM catalog.connection_bindings AS binding \
              JOIN catalog.connection_instances AS instance \
-               ON instance.tenant_id = binding.tenant_id \
+               ON instance.env_key = binding.env_key \
               AND instance.environment = binding.environment \
               AND instance.instance_id = binding.instance_id \
              JOIN catalog.connection_generations AS generation \
-               ON generation.tenant_id = instance.tenant_id \
+               ON generation.env_key = instance.env_key \
               AND generation.environment = instance.environment \
               AND generation.instance_id = instance.instance_id \
               AND generation.generation = instance.active_generation \
-            WHERE binding.tenant_id = requirement.tenant_id \
+            WHERE binding.env_key = requirement.env_key \
               AND binding.manifest_digest = $2 \
               AND binding.environment = $3 \
               AND binding.component_digest = requirement.component_digest \
@@ -112,7 +112,7 @@ impl WamnPostgres {
     pub async fn resolve_release_components(
         &self,
         project: &str,
-        tenant_id: &str,
+        env_key: &str,
         environment: &str,
         manifest_digest: &str,
     ) -> anyhow::Result<Vec<AdmittedComponent>> {
@@ -125,7 +125,7 @@ impl WamnPostgres {
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
-                tenant_id,
+                env_key,
                 None,
                 None,
                 None,
@@ -145,7 +145,7 @@ impl WamnPostgres {
             async {
                 local.require_instance(&connection).await?;
                 anyhow::ensure!(
-                    local.scope.tenant_id == tenant_id
+                    local.scope.env_key == env_key
                         && local.scope.environment == environment
                         && local.facts.manifest_digest.as_str() == manifest_digest,
                     "local release scope mismatch"
@@ -156,7 +156,7 @@ impl WamnPostgres {
         } else {
             async {
                 let row = connection
-                    .query_opt(RELEASE_COMPONENTS_SQL, &[&tenant_id, &manifest_digest])
+                    .query_opt(RELEASE_COMPONENTS_SQL, &[&env_key, &manifest_digest])
                     .await
                     .context("query release components")?
                     .ok_or_else(|| anyhow::anyhow!("release-snapshot-not-found"))?;
@@ -195,7 +195,7 @@ impl WamnPostgres {
     pub async fn release_component_bindings_ready(
         &self,
         project: &str,
-        tenant_id: &str,
+        env_key: &str,
         manifest_digest: &str,
         environment: &str,
         component_digests: &[String],
@@ -213,7 +213,7 @@ impl WamnPostgres {
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
-                tenant_id,
+                env_key,
                 None,
                 None,
                 None,
@@ -229,14 +229,10 @@ impl WamnPostgres {
             return Err(anyhow::anyhow!(error.to_string()));
         }
 
-        let params: [&(dyn ToSql + Sync); 4] = [
-            &tenant_id,
-            &manifest_digest,
-            &environment,
-            &component_digests,
-        ];
+        let params: [&(dyn ToSql + Sync); 4] =
+            [&env_key, &manifest_digest, &environment, &component_digests];
         let result = if let Some(local) = &self.local_application {
-            if local.scope.tenant_id != tenant_id
+            if local.scope.env_key != env_key
                 || local.scope.environment != environment
                 || local.facts.manifest_digest.as_str() != manifest_digest
             {
@@ -370,7 +366,7 @@ mod tests {
         normalize_component_fact(
             ComponentDeclaration {
                 scope: ComponentPackageScope {
-                    tenant_id: "tenant-a".to_owned(),
+                    env_key: "tenant-a".to_owned(),
                     package_id: "orders".to_owned(),
                     package_version: "1.2.0".to_owned(),
                 },
@@ -473,7 +469,7 @@ mod tests {
     fn migration_defaulted(imports: &[&str]) -> AdmittedComponent {
         AdmittedComponent {
             scope: ComponentPackageScope {
-                tenant_id: "tenant-a".to_owned(),
+                env_key: "tenant-a".to_owned(),
                 package_id: "orders".to_owned(),
                 package_version: "1.2.0".to_owned(),
             },

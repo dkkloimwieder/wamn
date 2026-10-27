@@ -16,7 +16,7 @@
 //! predicate is the equality of the two:
 //!
 //! ```sql
-//! wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()
+//! wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key()
 //! ```
 //!
 //! The left side is the BARE call the expression index is built on, which is
@@ -64,12 +64,12 @@ pub use wamn_pg_core::{
 ///
 /// Equal by construction to the scope digest provisioning mints role names
 /// from, because it IS that function.
-pub fn tenant_key(tenant: &str, database: &str) -> String {
+pub fn tenant_key(env_key: &str, database: &str) -> String {
     workload_role_scope_hash(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::Tenant { tenant, database },
+        WorkloadRoleScope::EnvKey { env_key, database },
     )
-    .expect("App's scope kind is Tenant, so a Tenant scope cannot mismatch it")
+    .expect("App's scope kind is EnvKey, so an EnvKey scope cannot mismatch it")
 }
 
 /// The anchored pattern that recovers a tenant key from a guest login name.
@@ -130,7 +130,7 @@ fn derivations_template(database_literal: &str, database_octets: &str, owner: &s
         "CREATE SCHEMA IF NOT EXISTS {schema} AUTHORIZATION {owner};\n\
          REVOKE ALL ON SCHEMA {schema} FROM PUBLIC;\n\
          GRANT USAGE ON SCHEMA {schema} TO {app};\n\
-         CREATE OR REPLACE FUNCTION {schema}.tenant_key(tenant text)\n\
+         CREATE OR REPLACE FUNCTION {schema}.tenant_key(env_key text)\n\
          RETURNS text\n\
          LANGUAGE sql\n\
          IMMUTABLE\n\
@@ -140,9 +140,9 @@ fn derivations_template(database_literal: &str, database_octets: &str, owner: &s
          AS $$\n    \
          SELECT substr(encode(sha256(\n           \
          int8send({domain_len}::bigint) || convert_to({domain_lit}, 'UTF8')\n        \
-         || int8send({tenant_tag_len}::bigint) || convert_to('tenant', 'UTF8')\n        \
-         || int8send(octet_length(convert_to(tenant, 'UTF8'))::bigint) \
-         || convert_to(tenant, 'UTF8')\n        \
+         || int8send({env_key_tag_len}::bigint) || convert_to('env_key', 'UTF8')\n        \
+         || int8send(octet_length(convert_to(env_key, 'UTF8'))::bigint) \
+         || convert_to(env_key, 'UTF8')\n        \
          || int8send({database_tag_len}::bigint) || convert_to('database', 'UTF8')\n        \
          || int8send({database_octets}::bigint) || convert_to({database_literal}, 'UTF8')\n       \
          ), 'hex'), 1, {hex_len})\n\
@@ -166,7 +166,7 @@ fn derivations_template(database_literal: &str, database_octets: &str, owner: &s
         app = quote_ident(APP_ROLE),
         domain_len = domain.len(),
         domain_lit = quote_literal(domain_text),
-        tenant_tag_len = "tenant".len(),
+        env_key_tag_len = "env_key".len(),
         database_tag_len = "database".len(),
         hex_len = SCOPE_HASH_HEX_LEN,
         pattern_lit = quote_literal(&current_tenant_key_pattern()),
@@ -247,8 +247,8 @@ mod tests {
     fn the_tenant_key_is_the_workload_scope_digest_and_not_a_second_one() {
         let expected = workload_role_scope_hash(
             WorkloadRoleFamily::App,
-            WorkloadRoleScope::Tenant {
-                tenant: "acme",
+            WorkloadRoleScope::EnvKey {
+                env_key: "acme",
                 database: DATABASE,
             },
         )
@@ -268,15 +268,15 @@ mod tests {
     /// delegate — measured: a domain drift survives this test and dies there.
     #[test]
     fn the_runtime_reachable_digest_is_the_same_one() {
-        for (tenant, database) in [
+        for (env_key, database) in [
             ("acme", DATABASE),
             ("t", "wamn-db-acme--billing--prod"),
             (&"t".repeat(64), DATABASE),
         ] {
             assert_eq!(
-                tenant_key(tenant, database),
-                wamn_run_state::app_scope_hash(tenant, database),
-                "tenant {tenant:?}: the provisioner and the runtime must agree"
+                tenant_key(env_key, database),
+                wamn_run_state::app_scope_hash(env_key, database),
+                "tenant {env_key:?}: the provisioner and the runtime must agree"
             );
         }
     }
@@ -284,7 +284,7 @@ mod tests {
     /// Two project-environment databases must not derive one key for one
     /// tenant, or their guest logins collide on a single role name.
     #[test]
-    fn the_same_tenant_derives_a_different_key_per_database() {
+    fn the_same_env_key_derives_a_different_key_per_database() {
         assert_ne!(
             tenant_key("acme", DATABASE),
             tenant_key("acme", "wamn-db-acme--billing--prod"),
@@ -302,8 +302,8 @@ mod tests {
         for generation in [CredentialGeneration::A, CredentialGeneration::B] {
             let role = workload_generation_role(
                 WorkloadRoleFamily::App,
-                WorkloadRoleScope::Tenant {
-                    tenant: "acme",
+                WorkloadRoleScope::EnvKey {
+                    env_key: "acme",
                     database: DATABASE,
                 },
                 generation,
@@ -346,7 +346,7 @@ mod tests {
             "CREATE SCHEMA IF NOT EXISTS \"wamn_authority\" AUTHORIZATION \"wamn_db_owner\";\n\
              REVOKE ALL ON SCHEMA \"wamn_authority\" FROM PUBLIC;\n\
              GRANT USAGE ON SCHEMA \"wamn_authority\" TO \"wamn_app\";\n\
-             CREATE OR REPLACE FUNCTION \"wamn_authority\".tenant_key(tenant text)\n\
+             CREATE OR REPLACE FUNCTION \"wamn_authority\".tenant_key(env_key text)\n\
              RETURNS text\n\
              LANGUAGE sql\n\
              IMMUTABLE\n\
@@ -356,9 +356,9 @@ mod tests {
              AS $$\n    \
              SELECT substr(encode(sha256(\n           \
              int8send(19::bigint) || convert_to('wamn.app.scope.v0.1', 'UTF8')\n        \
-             || int8send(6::bigint) || convert_to('tenant', 'UTF8')\n        \
-             || int8send(octet_length(convert_to(tenant, 'UTF8'))::bigint) \
-             || convert_to(tenant, 'UTF8')\n        \
+             || int8send(7::bigint) || convert_to('env_key', 'UTF8')\n        \
+             || int8send(octet_length(convert_to(env_key, 'UTF8'))::bigint) \
+             || convert_to(env_key, 'UTF8')\n        \
              || int8send(8::bigint) || convert_to('database', 'UTF8')\n        \
              || int8send(26::bigint) || convert_to('wamn-db-acme--billing--dev', 'UTF8')\n       \
              ), 'hex'), 1, 40)\n\

@@ -133,7 +133,7 @@ impl Fixture {
         .unwrap();
         let scope = ClientScope {
             connection: ConnectionScope {
-                tenant: plugin.tenant.clone(),
+                env_key: plugin.env_key.clone(),
                 project: plugin.project.clone(),
                 environment: "dev".into(),
                 instance: "instance".into(),

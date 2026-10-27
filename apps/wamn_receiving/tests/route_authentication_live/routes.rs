@@ -161,7 +161,7 @@ pub(super) async fn install_candidate_release(
         identity().org.as_str(),
         identity().project.as_str(),
         identity().environment.as_str(),
-        identity().tenant().as_str(),
+        identity().env_key().as_str(),
         PLATFORM_DOMAIN,
     )
     .await?;
@@ -196,7 +196,7 @@ pub(super) async fn publish_receiving_release(
         identity().org.as_str(),
         identity().project.as_str(),
         identity().environment.as_str(),
-        identity().tenant().as_str(),
+        identity().env_key().as_str(),
         PLATFORM_DOMAIN,
     )
     .await?;

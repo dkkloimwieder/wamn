@@ -430,7 +430,7 @@ pub(super) fn verify_audit_retention_grants(
 /// The only `runs` columns run-history pruning reads: the three its `WHERE`
 /// clause names. `run_id` is deliberately absent — the statement never selects
 /// it, and the verb reports a COUNT rather than a list.
-const RETENTION_RUN_READ_COLUMNS: [&str; 3] = ["tenant_id", "status", "created_at"];
+const RETENTION_RUN_READ_COLUMNS: [&str; 3] = ["env_key", "status", "created_at"];
 
 pub(super) fn verify_management_admitter_grants(
     role: &str,

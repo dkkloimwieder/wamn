@@ -1221,7 +1221,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         let database =
             wamn_control_provision::project_env_database_name(ORG, PROJECT, "dev", suffix);
         let dev_url = format!("postgresql://postgres:{password}@127.0.0.1:{port}/{database}");
-        let tenant = wamn_control_registry::project_env_tenant(ORG, PROJECT, "dev");
+        let env_key = wamn_control_registry::project_env_key(ORG, PROJECT, "dev");
         let secret = wamn_control_provision::workload_secret_name(
             WorkloadRoleFamily::Administration,
             ORG,
@@ -1263,8 +1263,8 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         let written = written?;
         let app = workload_generation_role(
             WorkloadRoleFamily::App,
-            WorkloadRoleScope::Tenant {
-                tenant: &tenant,
+            WorkloadRoleScope::EnvKey {
+                env_key: &env_key,
                 database: &database,
             },
             CredentialGeneration::A,
@@ -1388,7 +1388,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
 
     // 3. A connection-only change writes no revision and moves the generation.
     let generation = async |system: &tokio_postgres::Client| -> anyhow::Result<Option<i64>> {
-        let tenant = wamn_control_registry::project_env_tenant(ORG, PROJECT, "dev");
+        let env_key = wamn_control_registry::project_env_key(ORG, PROJECT, "dev");
         let row = system
             .query_opt(
                 "SELECT instance_suffix FROM registry.project_envs \
@@ -1408,8 +1408,8 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         let active = project
             .query_opt(
                 "SELECT active_generation FROM catalog.connection_instances \
-                  WHERE tenant_id = $1 AND environment = 'dev' AND instance_id = 'edge_device/labels'",
-                &[&tenant],
+                  WHERE env_key = $1 AND environment = 'dev' AND instance_id = 'edge_device/labels'",
+                &[&env_key],
             )
             .await?
             .and_then(|row| row.get(0));
@@ -1499,18 +1499,18 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     let database = wamn_control_provision::project_env_database_name(ORG, PROJECT, "http", &suffix);
     let http_project_url = format!("postgresql://postgres:{password}@127.0.0.1:{port}/{database}");
     let (http_project, http_task) = connect(&http_project_url).await?;
-    let http_tenant = wamn_control_registry::project_env_tenant(ORG, PROJECT, "http");
+    let http_env_key = wamn_control_registry::project_env_key(ORG, PROJECT, "http");
     let http_rows = async || -> anyhow::Result<Value> {
         Ok(http_project
             .query_one(
                 "SELECT jsonb_build_object(\
                     'instances', (SELECT jsonb_agg(to_jsonb(i) ORDER BY instance_id) \
-                        FROM catalog.connection_instances i WHERE tenant_id = $1 AND environment = 'http'), \
+                        FROM catalog.connection_instances i WHERE env_key = $1 AND environment = 'http'), \
                     'generations', (SELECT jsonb_agg(to_jsonb(g) ORDER BY instance_id, generation) \
-                        FROM catalog.connection_generations g WHERE tenant_id = $1 AND environment = 'http'), \
+                        FROM catalog.connection_generations g WHERE env_key = $1 AND environment = 'http'), \
                     'bindings', (SELECT jsonb_agg(to_jsonb(b) ORDER BY manifest_digest, component_digest, store_alias) \
-                        FROM catalog.connection_bindings b WHERE tenant_id = $1 AND environment = 'http'))",
-                &[&http_tenant],
+                        FROM catalog.connection_bindings b WHERE env_key = $1 AND environment = 'http'))",
+                &[&http_env_key],
             )
             .await?
             .get(0))
@@ -1551,7 +1551,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
             system_url: &platform.system_database_url,
             project_url: &http_project_url,
             scope: &http.triple(),
-            tenant: &http_tenant,
+            env_key: &http_env_key,
             digest: &http_digest,
             applications: &environment::show::serving_applications(&platform, &http.triple())
                 .await?,
@@ -1797,7 +1797,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
                 .to_string()],
         )
         .await?;
-    let tenant = wamn_control_registry::project_env_tenant(ORG, PROJECT, "dev");
+    let env_key = wamn_control_registry::project_env_key(ORG, PROJECT, "dev");
     let result = async {
     // 8. host_exits_before_its_grace_period: a host pod with a pinned backlog
     // it can claim finishes the run and exits with code 0 before its grace
@@ -1857,51 +1857,51 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     project
         .execute(
             "INSERT INTO wamn_run.runs \
-               (tenant_id, run_id, flow_id, flow_version, package_id, manifest_digest, environment, \
+               (env_key, run_id, flow_id, flow_version, package_id, manifest_digest, environment, \
                 wiring_id, wiring_version, status, trigger_source, input_json, service_principal_id) \
              VALUES ($1, 'drain-other-release', 'orders', 1, $2, $3, 'dev', 'orders', 1, \
                      'dispatched', 'automation', '{}', '00000000-0000-0000-0000-000000000001')",
-            &[&tenant, &PACKAGE, &digest_b],
+            &[&env_key, &PACKAGE, &digest_b],
         )
         .await?;
     project
         .execute(
-            "INSERT INTO wamn_run.run_queue (tenant_id, run_id, available_at) \
+            "INSERT INTO wamn_run.run_queue (env_key, run_id, available_at) \
              VALUES ($1, 'drain-other-release', now() - interval '1 minute')",
-            &[&tenant],
+            &[&env_key],
         )
         .await?;
     project
         .execute(
             "INSERT INTO wamn_run.runs \
-               (tenant_id, run_id, flow_id, flow_version, package_id, manifest_digest, environment, \
+               (env_key, run_id, flow_id, flow_version, package_id, manifest_digest, environment, \
                 wiring_id, wiring_version, status, trigger_source, input_json, service_principal_id, \
                 durability_class) \
              VALUES ($1, 'drain-claimable', 'orders', 1, $2, $3, 'dev', 'orders', 1, \
                      'running', 'automation', '{}', '00000000-0000-0000-0000-000000000001', \
                      'durable')",
-            &[&tenant, &PACKAGE, &digest],
+            &[&env_key, &PACKAGE, &digest],
         )
         .await?;
     project
         .execute(
             "INSERT INTO wamn_run.run_queue \
-               (tenant_id, run_id, available_at, lease_owner, lease_expires_at, lease_generation) \
+               (env_key, run_id, available_at, lease_owner, lease_expires_at, lease_generation) \
              VALUES ($1, 'drain-claimable', now() + interval '10 seconds', 'gone-replica', \
                      '2000-01-01', 1)",
-            &[&tenant],
+            &[&env_key],
         )
         .await?;
     let hash = format!("sha256:{}", "5".repeat(64));
     project
         .execute(
             "INSERT INTO wamn_run.effect_attempts \
-               (tenant_id, run_id, root_plan_hash, current_plan_hash, frame_id, local_node_id, \
+               (env_key, run_id, root_plan_hash, current_plan_hash, frame_id, local_node_id, \
                 source_artifact_hash, requirement_name, occurrence, seq, generation_fact_type, \
                 attempt_deadline_at, attempt_input_ref) \
              VALUES ($1, 'drain-claimable', $2, $2, 0, 'effect-node', $2, 'manager', 0, 1, \
                      'not-required', '2099-01-01T00:00:00Z', 'sha256:drain-effect-input')",
-            &[&tenant, &hash],
+            &[&env_key, &hash],
         )
         .await?;
     let pod = pods["items"][0]["metadata"]["name"]
@@ -2028,18 +2028,18 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     let finished = project
         .query_one(
             "SELECT r.status, EXISTS (SELECT 1 FROM wamn_run.run_queue q \
-                                      WHERE q.tenant_id = r.tenant_id AND q.run_id = r.run_id) \
-               FROM wamn_run.runs r WHERE r.tenant_id = $1 AND r.run_id = 'drain-claimable'",
-            &[&tenant],
+                                      WHERE q.env_key = r.env_key AND q.run_id = r.run_id) \
+               FROM wamn_run.runs r WHERE r.env_key = $1 AND r.run_id = 'drain-claimable'",
+            &[&env_key],
         )
         .await?;
     let (status, queued): (String, bool) = (finished.get(0), finished.get(1));
     let other = project
         .query_one(
             "SELECT r.status, EXISTS (SELECT 1 FROM wamn_run.run_queue q \
-                                      WHERE q.tenant_id = r.tenant_id AND q.run_id = r.run_id) \
-               FROM wamn_run.runs r WHERE r.tenant_id = $1 AND r.run_id = 'drain-other-release'",
-            &[&tenant],
+                                      WHERE q.env_key = r.env_key AND q.run_id = r.run_id) \
+               FROM wamn_run.runs r WHERE r.env_key = $1 AND r.run_id = 'drain-other-release'",
+            &[&env_key],
         )
         .await?;
     let (other_status, other_queued): (String, bool) = (other.get(0), other.get(1));
@@ -2076,18 +2076,18 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     project
         .execute(
             "INSERT INTO wamn_run.runs \
-               (tenant_id, run_id, flow_id, flow_version, package_id, manifest_digest, environment, \
+               (env_key, run_id, flow_id, flow_version, package_id, manifest_digest, environment, \
                 wiring_id, wiring_version, status, trigger_source, input_json, service_principal_id) \
              VALUES ($1, 'pinned-backlog', 'orders', 1, $2, $3, 'dev', 'orders', 1, \
                      'dispatched', 'automation', '{}', '00000000-0000-0000-0000-000000000001')",
-            &[&tenant, &PACKAGE, &digest],
+            &[&env_key, &PACKAGE, &digest],
         )
         .await?;
     project
         .execute(
-            "INSERT INTO wamn_run.run_queue (tenant_id, run_id, available_at) \
+            "INSERT INTO wamn_run.run_queue (env_key, run_id, available_at) \
              VALUES ($1, 'pinned-backlog', 'infinity')",
-            &[&tenant],
+            &[&env_key],
         )
         .await?;
     project_task.abort();
@@ -2103,12 +2103,12 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     let qa_live = run.live_digests(&qa_name).await?;
     let (_, qa_url) = project_database("qa").await?;
     let (project, project_task) = connect(&qa_url).await?;
-    let qa_tenant = wamn_control_registry::project_env_tenant(ORG, PROJECT, "qa");
+    let qa_env_key = wamn_control_registry::project_env_key(ORG, PROJECT, "qa");
     let enabled: Vec<String> = project
         .query(
             "SELECT instance_id FROM catalog.connection_instances \
-              WHERE tenant_id = $1 AND environment = 'qa' AND lifecycle_status = 'enabled'",
-            &[&qa_tenant],
+              WHERE env_key = $1 AND environment = 'qa' AND lifecycle_status = 'enabled'",
+            &[&qa_env_key],
         )
         .await?
         .iter()
@@ -2116,8 +2116,8 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         .collect();
     let bindings: i64 = project
         .query_one(
-            "SELECT count(*) FROM catalog.connection_bindings WHERE tenant_id = $1",
-            &[&qa_tenant],
+            "SELECT count(*) FROM catalog.connection_bindings WHERE env_key = $1",
+            &[&qa_env_key],
         )
         .await?
         .get(0);
@@ -2536,7 +2536,7 @@ fn fixture_http_entry(
         .context("the fixture build contains its device component")?;
     let declaration = wamn_control::component_declaration::render_declaration_document(
         &package.join("publication/components/device.json.in"),
-        &wamn_control_registry::project_env_tenant(ORG, PROJECT, "http"),
+        &wamn_control_registry::project_env_key(ORG, PROJECT, "http"),
     )?;
     let declaration_path = work.join("device-declaration.json");
     std::fs::write(&declaration_path, serde_json::to_vec(&declaration)?)?;

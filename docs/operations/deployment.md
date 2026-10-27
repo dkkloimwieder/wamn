@@ -276,8 +276,9 @@ For a map with multiple applications, pass the application name through `--appli
 Add one `--wiring` argument for each wiring that the release keeps. Receiving has none, because every Receiving attachment targets a route.
 
 ```bash
+ENV_KEY=dkk--receiving--dev
 WAMN_RELEASE_ARTIFACT_BASE="$RELEASE_BASE" wamn-ctl publish-release \
-  deploy/gcp/environments/"$TENANT".k \
+  deploy/gcp/environments/"$ENV_KEY".k \
   --database-url "$OWNER_URL" --control-database-url "$CONTROL_URL" \
   --verified-publisher-principal "$PUBLISHER_PRINCIPAL" \
   --run-schema "$RUN_SCHEMA" \
@@ -303,8 +304,9 @@ It pushes the manifest to the release repository that `WAMN_RELEASE_ARTIFACT_BAS
 The credential of `--registry-auth-file` must pull the packages and push to the release repository.
 Each component of the release carries its admitted descriptor from the package artifact.
 Set `RELEASE_DIGEST` to it.
-The manifest names no tenant and no environment, so one release has one digest in every environment.
-The tenant of an environment is `<org>--<project>--<environment>`.
+The manifest names no environment key and no environment, so one release has one digest in every environment.
+The composed `env_key` is `<org>--<project>--<environment>`.
+The separate `environment` field keeps the short name.
 The release also names no route host.
 The route host is only the `host` of the http workload config. The router matches routes under it.
 `publish-release` takes the same `--oci-ca-path` input as `push-package`.

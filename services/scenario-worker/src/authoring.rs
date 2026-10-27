@@ -91,7 +91,7 @@ SELECT current_user = session_user, \
          AND NOT pg_catalog.has_table_privilege( \
              current_user, 'wamn_run.gate_reports', 'DELETE'), \
        pg_catalog.has_function_privilege( \
-           current_user, 'wamn_authority.session_author_tenant()', 'EXECUTE'), \
+           current_user, 'wamn_authority.session_author_env_key()', 'EXECUTE'), \
        NOT EXISTS ( \
            SELECT 1 FROM pg_catalog.unnest( \
                ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) \
@@ -155,18 +155,18 @@ SELECT current_user = session_user, \
 /// The database-authoritative tenant binding, checked separately from the
 /// authority probe so each refusal is attributable.
 ///
-/// The mapping — not the caller-set `app.tenant` — decides which tenant this
+/// The mapping — not the caller-set `app.env_key` — decides which tenant this
 /// login may reach. An unmapped login resolves NULL, so the comparison is NULL
 /// and the process refuses.
-const AUTHORING_TENANT_BINDING_SQL: &str = "SELECT wamn_authority.session_author_tenant() = $1";
+const AUTHORING_ENV_KEY_BINDING_SQL: &str = "SELECT wamn_authority.session_author_env_key() = $1";
 
-/// `app.tenant` is retained as a CONSISTENCY ASSERTION ONLY (wamn-0h0g.8.18).
+/// `app.env_key` is retained as a CONSISTENCY ASSERTION ONLY (wamn-0h0g.8.18).
 ///
 /// It still has to agree with the mapping for any row to be visible, because the
 /// permissive tenant policy reads it, but it cannot widen anything: the
 /// restrictive author policy is ANDed on top and resolves through `session_user`.
 const AUTHORING_SCOPE_SQL: &str = "SELECT \
-    pg_catalog.set_config('app.tenant', $1, false), \
+    pg_catalog.set_config('app.env_key', $1, false), \
     pg_catalog.set_config('search_path', $2, false)";
 
 /// Capability token held only by the trusted host-side development adapter.
@@ -198,7 +198,7 @@ pub struct ControlAuthoringScope {
     /// The tenant this process authors for. The database mapping is
     /// authoritative; this is the value the mapping has to agree with, and
     /// disagreement refuses at startup rather than authoring for someone else.
-    pub tenant_id: String,
+    pub env_key: String,
     /// Schema carrying the reservation, case-map, and report relations. The
     /// qualified names are unchanged by the residency move: database residency,
     /// not a renamed schema, distinguishes the two stores.
@@ -216,7 +216,7 @@ impl std::fmt::Debug for InternalAuthoringBackend {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("InternalAuthoringBackend")
-            .field("tenant_id", &self.tenant_id)
+            .field("env_key", &self.env_key)
             .field("source_schema", &self.source_schema)
             .finish_non_exhaustive()
     }
@@ -226,7 +226,7 @@ pub struct InternalAuthoringBackend {
     authority: InternalDevAdmin,
     client: Client,
     connection_task: tokio::task::JoinHandle<()>,
-    tenant_id: Box<str>,
+    env_key: Box<str>,
     source_schema: BareSchemaName,
 }
 
@@ -250,7 +250,7 @@ impl InternalAuthoringBackend {
             &scope.project,
             &scope.environment,
         )?;
-        if !wamn_control_registry::identifiers::valid_tenant(&scope.tenant_id) {
+        if !wamn_control_registry::identifiers::valid_env_key(&scope.env_key) {
             bail!("invalid fixed authoring tenant identity");
         }
         let source_schema = BareSchemaName::new(scope.source_schema.clone())
@@ -292,9 +292,9 @@ impl InternalAuthoringBackend {
                 );
             }
         }
-        // Tenant authority is the owner-maintained mapping, never `app.tenant`.
+        // Tenant authority is the owner-maintained mapping, never `app.env_key`.
         let bound = client
-            .query_one(AUTHORING_TENANT_BINDING_SQL, &[&scope.tenant_id])
+            .query_one(AUTHORING_ENV_KEY_BINDING_SQL, &[&scope.env_key])
             .await
             .context("resolve the control author's mapped tenant")?
             .try_get::<_, Option<bool>>(0)
@@ -307,15 +307,15 @@ impl InternalAuthoringBackend {
             authority: InternalDevAdmin::at_process_boundary(),
             client,
             connection_task,
-            tenant_id: scope.tenant_id.clone().into_boxed_str(),
+            env_key: scope.env_key.clone().into_boxed_str(),
             source_schema,
         };
         backend.scope().await?;
         Ok(backend)
     }
 
-    fn require_tenant(&self, tenant_id: &str) -> anyhow::Result<()> {
-        if tenant_id != self.tenant_id.as_ref() {
+    fn require_env_key(&self, env_key: &str) -> anyhow::Result<()> {
+        if env_key != self.env_key.as_ref() {
             bail!("authoring command tenant differs from the backend's fixed tenant");
         }
         Ok(())
@@ -325,7 +325,7 @@ impl InternalAuthoringBackend {
         self.client
             .query_one(
                 AUTHORING_SCOPE_SQL,
-                &[&self.tenant_id.as_ref(), &self.source_schema.as_str()],
+                &[&self.env_key.as_ref(), &self.source_schema.as_str()],
             )
             .await
             .context("inject fixed authoring tenant and run schema")?;
@@ -339,9 +339,9 @@ impl InternalAuthoringBackend {
     /// command, and persist its exact outcome as one atomic unit.
     pub(crate) async fn begin_command_transaction(
         &mut self,
-        tenant_id: &str,
+        env_key: &str,
     ) -> anyhow::Result<(InternalDevAdmin, Transaction<'_>)> {
-        self.require_tenant(tenant_id)?;
+        self.require_env_key(env_key)?;
         self.scope().await?;
         let authority = self.authority;
         let transaction = self
@@ -383,10 +383,10 @@ pub enum GetReportResult {
 /// policies, on the same terms as every other statement this credential runs: a
 /// query whose only scope is a session claim reads as unscoped.
 ///
-/// Params: `$1` tenant, `$2` wiring hash.
+/// Params: `$1` `env_key`, `$2` wiring hash.
 const SELECT_GATE_REPORT_SQL: &str = "SELECT passed, summary \
     FROM wamn_run.gate_reports \
-    WHERE tenant_id = $1 AND wiring_hash = $2";
+    WHERE env_key = $1 AND wiring_hash = $2";
 
 impl InternalAuthoringBackend {
     /// Read one finalized report from the fixed control-store scope.
@@ -399,14 +399,14 @@ impl InternalAuthoringBackend {
     /// no report under that key.
     pub async fn get_report(
         &self,
-        tenant_id: &str,
+        env_key: &str,
         report_id: &str,
     ) -> anyhow::Result<GetReportResult> {
-        self.require_tenant(tenant_id)?;
+        self.require_env_key(env_key)?;
         validate_identity(report_id, "report-id")?;
         let Some(row) = self
             .client
-            .query_opt(SELECT_GATE_REPORT_SQL, &[&tenant_id, &report_id])
+            .query_opt(SELECT_GATE_REPORT_SQL, &[&env_key, &report_id])
             .await
             .context("read one gate report")?
         else {
@@ -487,13 +487,13 @@ mod tests {
         // missing mapping and a missing privilege are distinguishable failures.
         assert!(
             AUTHORING_ROLE_PROBE_SQL
-                .contains("'wamn_authority.session_author_tenant()', 'EXECUTE'")
+                .contains("'wamn_authority.session_author_env_key()', 'EXECUTE'")
         );
         assert_eq!(
-            AUTHORING_TENANT_BINDING_SQL,
-            "SELECT wamn_authority.session_author_tenant() = $1"
+            AUTHORING_ENV_KEY_BINDING_SQL,
+            "SELECT wamn_authority.session_author_env_key() = $1"
         );
-        assert!(!AUTHORING_TENANT_BINDING_SQL.contains("app.tenant"));
+        assert!(!AUTHORING_ENV_KEY_BINDING_SQL.contains("app.env_key"));
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("pg_catalog.pg_database"));
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("pg_catalog.pg_namespace"));
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("relation.relowner = session_role.oid"));

@@ -236,8 +236,8 @@ impl TraceReader {
                         ));
                     }
                     let id = span.trace_id.to_ascii_lowercase();
-                    let scoped = attribute(&span.attributes, "wamn.tenant")
-                        == Some(self.identity.tenant().as_str())
+                    let scoped = attribute(&span.attributes, "wamn.env_key")
+                        == Some(self.identity.env_key().as_str())
                         && attribute(&span.attributes, "wamn.project")
                             == Some(self.identity.project.as_str())
                         && attribute(&span.attributes, "wamn.environment")
@@ -382,7 +382,7 @@ mod tests {
             vec![]
         } else {
             vec![
-                json!({"key":"wamn.tenant", "value":{"stringValue":reader.identity.tenant()}}),
+                json!({"key":"wamn.env_key", "value":{"stringValue":reader.identity.env_key()}}),
                 json!({"key":"wamn.project", "value":{"stringValue":reader.identity.project}}),
                 json!({"key":"wamn.environment", "value":{"stringValue":reader.identity.environment}}),
             ]

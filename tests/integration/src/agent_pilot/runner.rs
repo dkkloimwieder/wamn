@@ -681,7 +681,7 @@ impl Run {
         task_dir: &Path,
         commit: &str,
     ) -> Result<(), GradeFailure> {
-        for field in ["org", "project", "env", "schema", "tenant", "route_host"] {
+        for field in ["org", "project", "env", "schema", "env_key", "route_host"] {
             if text(&task["identity"][field]).is_empty() {
                 return Err(failure(2, format!("task.json identity.{field} is empty")));
             }

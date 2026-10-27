@@ -97,7 +97,7 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
         document.route_hosts.control
     );
     let environments = "environments/*.k beside cluster.k (read at the step)";
-    let tenants = "<org>--<project>--<env>";
+    let env_keys = "<org>--<project>--<env>";
     let blob_account = format!("wamn-blob@{project}.iam.gserviceaccount.com");
     let otel_account = format!("wamn-otel@{project}.iam.gserviceaccount.com");
     let quota = OwnerInput {
@@ -187,7 +187,7 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
         InstallStep {
             number: "4.8", title: "Event NATS",
             runs: Runner::Verb("Kubernetes API"),
-            inputs: vec![("environments", environments.into()), ("tenants", tenants.into()), ("event NATS", "nats://evt-nats.platform.svc.cluster.local:4222".into()), ("broker Secret", "platform/evt-nats-authorization".into()), ("users per tenant", "provisioning, publisher, observer, runtime, materializer".into())],
+            inputs: vec![("environments", environments.into()), ("environment keys", env_keys.into()), ("event NATS", "nats://evt-nats.platform.svc.cluster.local:4222".into()), ("broker Secret", "platform/evt-nats-authorization".into()), ("users per tenant", "provisioning, publisher, observer, runtime, materializer".into())],
             owner_inputs: vec![],
         },
         InstallStep {
@@ -205,7 +205,7 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
         InstallStep {
             number: "4.11", title: "First apply",
             runs: Runner::Job("platform/platform-first-apply-<org>--<project>--<env>"),
-            inputs: vec![("environments", environments.into()), ("tenants", tenants.into()), ("database names", "wamn-db-<org>--<project>--<env>--<new instance suffix>".into()), ("release", "none".into()), ("release namespace", "hosts".into())],
+            inputs: vec![("environments", environments.into()), ("environment keys", env_keys.into()), ("database names", "wamn-db-<org>--<project>--<env>--<new instance suffix>".into()), ("release", "none".into()), ("release namespace", "hosts".into())],
             owner_inputs: vec![],
         },
         InstallStep {
@@ -220,13 +220,13 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
         InstallStep {
             number: "4.13", title: "Packages",
             runs: Runner::Job("platform/platform-packages-<org>--<project>--<env>"),
-            inputs: vec![("environments", environments.into()), ("tenants", tenants.into()), ("package artifact base", format!("{registry}/packages")), ("component artifact base", format!("{registry}/components")), ("package versions", "from environment documents".into())],
+            inputs: vec![("environments", environments.into()), ("environment keys", env_keys.into()), ("package artifact base", format!("{registry}/packages")), ("component artifact base", format!("{registry}/components")), ("package versions", "from environment documents".into())],
             owner_inputs: vec![registry_owner.clone()],
         },
         InstallStep {
             number: "4.14", title: "Publish releases",
             runs: Runner::Job("platform/platform-release-<org>--<project>--<env>"),
-            inputs: vec![("org", org.clone()), ("environments", environments.into()), ("tenants", tenants.into()), ("publisher principals", "wamn-management-author-<org>--<project>--<env>".into()), ("package artifact base", format!("{registry}/packages")), ("release artifact base", format!("{registry}/releases")), ("operator certificate", format!("identity/operator-{org}")), ("skip inputs", "package artifact digests and database path".into()), ("packages", "from environment documents and package artifacts".into())],
+            inputs: vec![("org", org.clone()), ("environments", environments.into()), ("environment keys", env_keys.into()), ("publisher principals", "wamn-management-author-<org>--<project>--<env>".into()), ("package artifact base", format!("{registry}/packages")), ("release artifact base", format!("{registry}/releases")), ("operator certificate", format!("identity/operator-{org}")), ("skip inputs", "package artifact digests and database path".into()), ("packages", "from environment documents and package artifacts".into())],
             owner_inputs: vec![registry_owner.clone()],
         },
         InstallStep {

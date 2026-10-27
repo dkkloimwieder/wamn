@@ -5,15 +5,15 @@ use std::time::Duration;
 use tokio_postgres::{Client, NoTls};
 use wamn_test_infrastructure::locked_database;
 
-const TENANT: &str = "publish-release-live";
+const ENV_KEY: &str = "publish-release-live";
 const INSERT_MIGRATION_SQL: &str = "\
 INSERT INTO catalog.package_migrations (\
-       tenant_id, package_id, package_version, ordinal, relative_path, sha256\
+       env_key, package_id, package_version, ordinal, relative_path, sha256\
      ) VALUES ($1, $2, $3, $4, $5, $6)";
 /// The project database records a release as its manifest bytes, and its
 /// package membership is read from them.
 const INSERT_PROJECT_MEMBERSHIP_SQL: &str = "\
-INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
+INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) \
 SELECT $1, 'sha256:' || encode(sha256($2::bytea), 'hex'), $2::bytea";
 const PROJECT_MANIFEST: &[u8] =
     br#"{"release":{"packages":[{"package-id":"inventory","package-version":"1.0.0"}]}}"#;
@@ -34,10 +34,10 @@ async fn connect(url: &str) -> Client {
 
 async fn seed_package(client: &Client) {
     client
-        .query_one("SELECT set_config('app.tenant', $1, false)", &[&TENANT])
+        .query_one("SELECT set_config('app.env_key', $1, false)", &[&ENV_KEY])
         .await
         .expect("claim the test tenant");
-    let insert_package = "INSERT INTO catalog.packages (tenant_id, package_id, package_version, artifact_digest, predecessor_version) VALUES ($1, $2, $3, $4, $5)";
+    let insert_package = "INSERT INTO catalog.packages (env_key, package_id, package_version, artifact_digest, predecessor_version) VALUES ($1, $2, $3, $4, $5)";
     for (package_id, package_version, predecessor_version) in [
         ("inventory", "1.0.0", None),
         ("inventory", "2.0.0", Some("1.0.0")),
@@ -46,7 +46,7 @@ async fn seed_package(client: &Client) {
             .execute(
                 insert_package,
                 &[
-                    &TENANT,
+                    &ENV_KEY,
                     &package_id,
                     &package_version,
                     &format!("sha256:{}", "a".repeat(64)),
@@ -60,7 +60,7 @@ async fn seed_package(client: &Client) {
         .execute(
             INSERT_MIGRATION_SQL,
             &[
-                &TENANT,
+                &ENV_KEY,
                 &"inventory",
                 &"1.0.0",
                 &1_i32,
@@ -117,7 +117,7 @@ async fn assert_package_seal(url: &str) {
     let mut publisher = connect(url).await;
     let migrator = connect(url).await;
     migrator
-        .query_one("SELECT set_config('app.tenant', $1, false)", &[&TENANT])
+        .query_one("SELECT set_config('app.env_key', $1, false)", &[&ENV_KEY])
         .await
         .expect("claim the migration tenant");
     let publication = publisher
@@ -125,18 +125,21 @@ async fn assert_package_seal(url: &str) {
         .await
         .expect("begin release membership");
     publication
-        .query_one("SELECT set_config('app.tenant', $1, true)", &[&TENANT])
+        .query_one("SELECT set_config('app.env_key', $1, true)", &[&ENV_KEY])
         .await
         .expect("claim the publication tenant");
     publication
-        .execute(INSERT_PROJECT_MEMBERSHIP_SQL, &[&TENANT, &PROJECT_MANIFEST])
+        .execute(
+            INSERT_PROJECT_MEMBERSHIP_SQL,
+            &[&ENV_KEY, &PROJECT_MANIFEST],
+        )
         .await
         .expect("insert the first membership while holding the package row");
 
     let late_hash = format!("sha256:{}", "c".repeat(64));
     let late_ordinal = 2_i32;
     let late_params: [&(dyn tokio_postgres::types::ToSql + Sync); 6] = [
-        &TENANT,
+        &ENV_KEY,
         &"inventory",
         &"1.0.0",
         &late_ordinal,
@@ -181,7 +184,7 @@ async fn assert_package_seal(url: &str) {
                 .execute(
                     INSERT_MIGRATION_SQL,
                     &[
-                        &TENANT,
+                        &ENV_KEY,
                         &"inventory",
                         &"2.0.0",
                         &ordinal,

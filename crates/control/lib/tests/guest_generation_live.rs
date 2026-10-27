@@ -40,7 +40,7 @@ fn state_sql() -> String {
 const ORG: &str = "pg18guest";
 const PROJECT: &str = "inventory";
 const ENVIRONMENT: &str = "dev";
-const TENANT: &str = "pg18guest--inventory--dev";
+const ENV_KEY: &str = "pg18guest--inventory--dev";
 const INSTANCE: &str = "k3m9x2p7";
 
 async fn connect(url: &str) -> Client {
@@ -157,7 +157,7 @@ async fn assert_guest_attributes(admin: &Client, role: &str, database: &str) {
 }
 
 #[tokio::test]
-async fn guest_generations_are_per_tenant_and_carry_the_predicate_key() {
+async fn guest_generations_are_per_env_key_and_carry_the_predicate_key() {
     let _lock = wamn_test_postgres::lock();
     // The system store lives in the maintenance database `postgres`, where
     // `action_args` points the verb.
@@ -167,22 +167,22 @@ async fn guest_generations_are_per_tenant_and_carry_the_predicate_key() {
     let admin_url = admin_url.to_string();
 
     let database = project_env_database_name(ORG, PROJECT, ENVIRONMENT, INSTANCE);
-    let scope = WorkloadRoleScope::Tenant {
-        tenant: TENANT,
+    let scope = WorkloadRoleScope::EnvKey {
+        env_key: ENV_KEY,
         database: &database,
     };
     let role_a = workload_generation_role(WorkloadRoleFamily::App, scope, CredentialGeneration::A)
         .expect("App takes a tenant scope");
     let role_b = workload_generation_role(WorkloadRoleFamily::App, scope, CredentialGeneration::B)
         .expect("App takes a tenant scope");
-    let key = tenant_key(TENANT, &database);
+    let key = tenant_key(ENV_KEY, &database);
 
     // THE SHARPEST FAILURE MODE, asserted before anything is provisioned: the
     // name the mint will issue carries the key the predicate will compute.
     assert!(role_a.contains(&key), "{role_a} must carry {key}");
     assert!(role_b.contains(&key), "{role_b} must carry {key}");
     assert!(
-        !role_a.contains(TENANT),
+        !role_a.contains(ENV_KEY),
         "the tenant id must never appear verbatim in a role name"
     );
     assert!(role_a.len() <= 63 && role_b.len() <= 63, "identifier cap");
@@ -285,9 +285,9 @@ async fn guest_generations_are_per_tenant_and_carry_the_predicate_key() {
         "the Secret label must name the key the predicate computes"
     );
     assert_eq!(
-        secret["metadata"]["annotations"]["wamn.io/tenant"],
-        serde_json::json!(TENANT),
-        "the tenant travels in an annotation, which has no label's charset or \
+        secret["metadata"]["annotations"]["wamn.io/env_key"],
+        serde_json::json!(ENV_KEY),
+        "the env_key travels in an annotation, which has no label's charset or \
          length limit"
     );
     let url_a = secret["stringData"]["url"]
@@ -325,7 +325,7 @@ async fn guest_generations_are_per_tenant_and_carry_the_predicate_key() {
         let matches_row: bool = guest
             .query_one(
                 "SELECT wamn_authority.tenant_key($1::text) = wamn_authority.current_tenant_key()",
-                &[&TENANT],
+                &[&ENV_KEY],
             )
             .await
             .expect("evaluate the governed predicate")

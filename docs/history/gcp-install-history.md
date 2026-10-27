@@ -1497,7 +1497,7 @@ The wiring `inventory_move_and_label` passes the authoring gate before `author-w
 cargo build -p wamn-scenario-worker
 WAMN_SYSTEM_URL=<identity-reader url> WAMN_CONTROL_AUTHORING_PG_URL=<control-author url> \
 WAMN_MANAGEMENT_ADMISSION_PG_URL=<management-admitter url> WAMN_MANAGEMENT_ORG=dkk \
-WAMN_MANAGEMENT_PROJECT=wms WAMN_MANAGEMENT_ENVIRONMENT=dev WAMN_MANAGEMENT_TENANT=wms \
+WAMN_MANAGEMENT_PROJECT=wms WAMN_MANAGEMENT_ENVIRONMENT=dev WAMN_MANAGEMENT_ENV_KEY=wms \
   target/debug/wamn-scenario-worker serve --bind 127.0.0.1:18090 &
 cargo run -p wamn-test-infrastructure --example gate_request -- wamn_wms 1.0.0 wms dev \
   apps/wamn_wms/publication/wirings/inventory_move_and_label.json > $P/gate-request.json

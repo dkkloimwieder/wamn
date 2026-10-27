@@ -80,10 +80,10 @@ pub fn validate_wiring_compatibility(
             format!(
                 "component {:?} fact scope ({:?}, {:?}, {:?}) differs from wiring gate scope ({:?}, {:?}, {:?})",
                 component.component,
-                component.scope.tenant_id,
+                component.scope.env_key,
                 component.scope.package_id,
                 component.scope.package_version,
-                scope.tenant_id,
+                scope.env_key,
                 scope.package_id,
                 scope.package_version,
             ),
@@ -462,7 +462,7 @@ mod tests {
 
     fn scope() -> ComponentPackageScope {
         ComponentPackageScope {
-            tenant_id: "t1".to_string(),
+            env_key: "t1".to_string(),
             package_id: "app".to_string(),
             package_version: "1.0.0".to_string(),
         }

@@ -64,8 +64,8 @@ const ENVIRONMENT: &str = "dev";
 
 /// The tenant every tenant-scoped generation in this gate is minted for, and
 /// the tenant the guest may read. `TENANT_B` is the neighbour it may not.
-const TENANT_A: &str = "t1";
-const TENANT_B: &str = "t2";
+const ENV_KEY_A: &str = "t1";
+const ENV_KEY_B: &str = "t2";
 
 /// Throwaway password for the probe logins. Not a credential of record: the
 /// gate builds and drops these roles inside a disposable container.
@@ -522,7 +522,7 @@ fn login_url(admin_url: &str, role: &str) -> String {
 /// The database a family's credential reaches.
 fn database_of(family: WorkloadRoleFamily) -> &'static str {
     match family.scope_kind() {
-        WorkloadRoleScopeKind::Tenant | WorkloadRoleScopeKind::ProjectEnvironment => DATABASE,
+        WorkloadRoleScopeKind::EnvKey | WorkloadRoleScopeKind::ProjectEnvironment => DATABASE,
         WorkloadRoleScopeKind::Control | WorkloadRoleScopeKind::Org => CONTROL_DATABASE,
     }
 }
@@ -541,8 +541,8 @@ struct Fixture {
 /// The deterministic generation name the real mint would issue for one family.
 fn generation(family: WorkloadRoleFamily) -> String {
     let scope = match family.scope_kind() {
-        WorkloadRoleScopeKind::Tenant => WorkloadRoleScope::Tenant {
-            tenant: TENANT_A,
+        WorkloadRoleScopeKind::EnvKey => WorkloadRoleScope::EnvKey {
+            env_key: ENV_KEY_A,
             database: DATABASE,
         },
         WorkloadRoleScopeKind::ProjectEnvironment => WorkloadRoleScope::ProjectEnvironment {
@@ -630,35 +630,35 @@ const SEED: &str = "\
 DO $seed$ DECLARE t text; a uuid; BEGIN
 FOREACH t IN ARRAY ARRAY['t1','t2'] LOOP
   INSERT INTO catalog.packages
-    (tenant_id, package_id, package_version, artifact_digest)
+    (env_key, package_id, package_version, artifact_digest)
     VALUES (t, 'widgets', '1.0.0', 'sha256:'||repeat('f',64));
   INSERT INTO catalog.releases
-    (tenant_id, manifest_digest, canonical_bytes)
+    (env_key, manifest_digest, canonical_bytes)
     VALUES (t, 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', '{}');
-  INSERT INTO wamn_run.environment_policies (tenant_id, expected_environment, durability_class)
+  INSERT INTO wamn_run.environment_policies (env_key, expected_environment, durability_class)
     VALUES (t, 'dev', 'standard');
   INSERT INTO wamn_run.runs
-    (tenant_id, run_id, package_id, environment, status, trigger_source,
+    (env_key, run_id, package_id, environment, status, trigger_source,
      wiring_id, wiring_version, wiring_hash, binding_world_json, input_json)
     VALUES (t, 'r1', 'widgets', 'dev', 'dispatched', 'internal', 'w', 1,
             'sha256:'||repeat('c',64), '[]', '{\"a\":1}');
   a := gen_random_uuid();
   INSERT INTO wamn_run.effect_attempts
-    (tenant_id, attempt_id, run_id, root_plan_hash, current_plan_hash, local_node_id,
+    (env_key, attempt_id, run_id, root_plan_hash, current_plan_hash, local_node_id,
      source_artifact_hash, requirement_name, occurrence, seq, generation_fact_type,
      attempt_started_at, attempt_deadline_at, attempt_input_ref)
     VALUES (t, a, 'r1', 'sha256:'||repeat('a',64), 'sha256:'||repeat('b',64), 'n1',
             'sha256:'||repeat('d',64), 'req', 0, 0, 'not-required',
             now(), now() + interval '1 hour', 'ref');
   INSERT INTO wamn_run.effect_attempt_dispatches
-    (tenant_id, attempt_id, attempt_started_at, run_id, frame_id, local_node_id,
+    (env_key, attempt_id, attempt_started_at, run_id, frame_id, local_node_id,
      occurrence, dispatched_at)
     SELECT t, a, e.attempt_started_at, 'r1', 0, 'n1', 0, e.attempt_started_at
-      FROM wamn_run.effect_attempts e WHERE e.tenant_id = t AND e.attempt_id = a;
+      FROM wamn_run.effect_attempts e WHERE e.env_key = t AND e.attempt_id = a;
   INSERT INTO wamn_run.effect_attempt_outcomes
-    (tenant_id, attempt_id, dispatched_at, outcome_status, recorded_at)
+    (env_key, attempt_id, dispatched_at, outcome_status, recorded_at)
     SELECT t, a, d.dispatched_at, 'success', d.dispatched_at
-      FROM wamn_run.effect_attempt_dispatches d WHERE d.tenant_id = t AND d.attempt_id = a;
+      FROM wamn_run.effect_attempt_dispatches d WHERE d.env_key = t AND d.attempt_id = a;
 END LOOP;
 END $seed$;
 ";
@@ -1220,7 +1220,7 @@ const CONTAINED_PAIRS: [(&str, &str); 8] = [
 /// still BOUNDS it is its own table grants. Both halves are read back here: rows
 /// where a grant exists, `42501` where it does not.
 #[test]
-fn a_platform_family_without_tenant_context_reads_exactly_what_its_grants_say() {
+fn a_platform_family_without_env_key_context_reads_exactly_what_its_grants_say() {
     let fixture = fixture();
     let executor = WorkloadRoleFamily::ExecutorPlatform;
     assert!(
@@ -1291,18 +1291,18 @@ fn a_platform_family_without_tenant_context_reads_exactly_what_its_grants_say() 
 /// only subject the arm still has. That is asserted here
 /// rather than remembered, so the day a second one appears this arm reds.
 #[test]
-fn the_tenant_scoped_platform_member_reads_nothing_outside_its_grants() {
+fn the_env_key_scoped_platform_member_reads_nothing_outside_its_grants() {
     let fixture = fixture();
-    let tenant_scoped_members: Vec<WorkloadRoleFamily> = MATRIX
+    let env_key_scoped_members: Vec<WorkloadRoleFamily> = MATRIX
         .iter()
         .map(|reach| reach.family)
         .filter(|family| {
-            matches!(family.scope_kind(), WorkloadRoleScopeKind::Tenant)
+            matches!(family.scope_kind(), WorkloadRoleScopeKind::EnvKey)
                 && family.is_platform_grain()
         })
         .collect();
     assert_eq!(
-        tenant_scoped_members,
+        env_key_scoped_members,
         vec![WorkloadRoleFamily::Retention],
         "the set of TENANT-SCOPED platform members moved; wamn-0h0g.22.25 was \
          ruled for exactly the families in this set"
@@ -1389,7 +1389,7 @@ fn the_audit_retention_family_reads_only_the_retention_columns_of_its_history_ta
 /// separates an isolated credential from a blind one for the family whose
 /// confinement is RLS-shaped rather than grant-shaped.
 #[test]
-fn the_guest_family_reads_its_own_tenant_and_only_its_own() {
+fn the_guest_family_reads_its_own_env_key_and_only_its_own() {
     let fixture = fixture();
     let login = generation(WorkloadRoleFamily::App);
     let as_guest = login_url(&fixture.admin, &login);
@@ -1398,7 +1398,7 @@ fn the_guest_family_reads_its_own_tenant_and_only_its_own() {
             &as_guest,
             &format!(
                 "SELECT count(*)::text || ' ' || \
-                        count(*) FILTER (WHERE tenant_id = '{TENANT_B}')::text \
+                        count(*) FILTER (WHERE env_key = '{ENV_KEY_B}')::text \
                    FROM wamn_run.runs"
             ),
         ),
@@ -1407,12 +1407,12 @@ fn the_guest_family_reads_its_own_tenant_and_only_its_own() {
          second row is a CROSS-TENANT READ and zero rows is a silent lockout"
     );
     // A settable claim must not move it. The floor keys on `current_user`, and
-    // this shows that the retired `app.tenant` path is inert for the guest.
+    // this shows that the retired `app.env_key` path is inert for the guest.
     assert_eq!(
         query(
             &as_guest,
             &format!(
-                "BEGIN; SET LOCAL app.tenant = '{TENANT_B}'; \
+                "BEGIN; SET LOCAL app.env_key = '{ENV_KEY_B}'; \
                  SELECT count(*) FROM wamn_run.runs; COMMIT"
             ),
         ),
@@ -1426,7 +1426,7 @@ fn the_guest_family_reads_its_own_tenant_and_only_its_own() {
 // ---------------------------------------------------------------------------
 
 /// The expression every governed relation's index must carry, verbatim.
-const TENANT_KEY_INDEX_EXPRESSION: &str = "wamn_authority.tenant_key(tenant_id)";
+const TENANT_KEY_INDEX_EXPRESSION: &str = "wamn_authority.tenant_key(env_key)";
 
 /// EVERY RELATION CARRYING THE GUEST PREDICATE HAS ITS EXPRESSION INDEX, AND
 /// THE EXPRESSION IS READ BACK.
@@ -1462,7 +1462,9 @@ fn every_governed_relation_carries_the_tenant_key_expression_index() {
                JOIN pg_catalog.pg_class c ON c.oid = i.indrelid \
                JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
               WHERE i.indexprs IS NOT NULL \
-                AND pg_get_expr(i.indexprs, i.indrelid) = '{TENANT_KEY_INDEX_EXPRESSION}' \
+                AND pg_get_expr(i.indexprs, i.indrelid) = CASE WHEN n.nspname = 's2' \
+                    THEN 'wamn_authority.tenant_key(tenant_id)' \
+                    ELSE '{TENANT_KEY_INDEX_EXPRESSION}' END \
               ORDER BY (n.nspname || '.' || c.relname) COLLATE \"C\""
         ),
     );
@@ -1521,7 +1523,7 @@ fn every_governed_relation_carries_the_tenant_key_expression_index() {
 /// diagnosable rather than merely red.
 const FROZEN_DERIVATION_DIGESTS: [&str; 2] = [
     "current_tenant_key 448719229148c4c5051b50ecbe55d70d8ff22bbcf652e3f12387296dd3fa1eb8",
-    "tenant_key 4390e3ef73c0cfffec72585be90345a77c9436118202f4a1d23da77156a150e8",
+    "tenant_key 4d12e9a29b297c5e6fa00d39b0f93e4e283f08da734c06ac1ced00f67a5e7a53",
 ];
 
 /// THE DERIVATIONS ARE FROZEN BY DIGEST.

@@ -43,7 +43,7 @@ It replaces the GCS exporters with OTLP JSON file exporters under `<dev-root>/lo
 The collector keeps the deployed batch timeout, so small batches take up to 60 seconds to arrive.
 An individual request can have no sampled trace.
 The observation reader follows complete records in `<local_artifacts.directory>/otel/traces.jsonl` once per second.
-It groups spans by trace ID and filters them by tenant, project, and environment.
+It groups spans by trace ID and filters them by `env_key`, project, and environment.
 It keeps bounded summaries and accepts an empty sample without blocking activation.
 Supply the published collector address through `--otel-exporter-otlp-endpoint`.
 The benchmark and pilot render and start this collector themselves.

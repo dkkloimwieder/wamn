@@ -20,9 +20,9 @@
 -- here is HOST-INJECTED, not guest-settable. Re-keying it onto `current_user`
 -- would be change without a threat, and would break the host writers that do
 -- reach it. FORCE RLS therefore stays keyed on
--- NULLIF(current_setting('app.tenant', true), ''), NULL (=> zero rows) when no
+-- NULLIF(current_setting('app.env_key', true), ''), NULL (=> zero rows) when no
 -- claim was injected — PG resets a custom GUC to '' (not NULL) after SET LOCAL,
--- and CHECK (tenant_id <> '') forbids a ''-tenant row, so an empty claim
+-- and CHECK (env_key <> '') forbids a ''-tenant row, so an empty claim
 -- matches nothing structurally.
 --
 -- `wamn_run.operator_run_actions` (deploy/sql/run-state.sql) is the only other
@@ -53,7 +53,7 @@ CREATE TABLE wamn_run.run_queue (
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
-    tenant_id        text NOT NULL CHECK (tenant_id <> ''),
+    env_key          text NOT NULL CHECK (env_key <> ''),
     run_id           text NOT NULL,
     priority         int  NOT NULL DEFAULT 0,
     available_at     timestamptz NOT NULL DEFAULT now(),
@@ -73,8 +73,8 @@ CREATE TABLE wamn_run.run_queue (
     attempts         int  NOT NULL DEFAULT 0,
     max_attempts     int  NOT NULL DEFAULT 20,
     enqueued_at      timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (tenant_id, run_id),
-    FOREIGN KEY (tenant_id, run_id) REFERENCES wamn_run.runs (tenant_id, run_id) ON DELETE CASCADE
+    PRIMARY KEY (env_key, run_id),
+    FOREIGN KEY (env_key, run_id) REFERENCES wamn_run.runs (env_key, run_id) ON DELETE CASCADE
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON wamn_run.run_queue
@@ -85,11 +85,11 @@ CREATE TRIGGER wamn_record_history_stamp
 -- `ORDER BY available_at, stream_seq, run_id` is index-supported;
 -- `lease_expires_at` remains the trailing in-index filter column.
 CREATE INDEX run_queue_claimable ON wamn_run.run_queue
-    (tenant_id, available_at, stream_seq, run_id, lease_expires_at);
+    (env_key, available_at, stream_seq, run_id, lease_expires_at);
 ALTER TABLE wamn_run.run_queue ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.run_queue FORCE ROW LEVEL SECURITY;
-CREATE POLICY run_queue_tenant ON wamn_run.run_queue
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+CREATE POLICY run_queue_env_key ON wamn_run.run_queue
+    USING (env_key = NULLIF(current_setting('app.env_key', true), ''))
+    WITH CHECK (env_key = NULLIF(current_setting('app.env_key', true), ''));
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.run_queue
     FROM PUBLIC, wamn_app;

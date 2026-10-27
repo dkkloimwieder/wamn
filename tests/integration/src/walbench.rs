@@ -50,7 +50,7 @@ use wamn_control_provision::{
 use wamn_gate_harness::{check, emit_csv, percentile};
 
 const SCHEMA: &str = "wamn_walbench";
-const TENANT: &str = "walbench-tenant";
+const ENV_KEY: &str = "walbench-tenant";
 const APP_GENERATION_PASSWORD: &str = "walbench-app-generation-0123456789abcdef0123456789abcdef";
 const APP_GENERATION_EXPIRES_AT: &str = "2099-01-01T00:00:00Z";
 
@@ -154,8 +154,8 @@ async fn provision(admin_url: &str) -> anyhow::Result<PreparedAppGeneration> {
             .get(0);
         let app_role = workload_generation_role(
             WorkloadRoleFamily::App,
-            WorkloadRoleScope::Tenant {
-                tenant: TENANT,
+            WorkloadRoleScope::EnvKey {
+                env_key: ENV_KEY,
                 database: &database,
             },
             CredentialGeneration::A,
@@ -251,7 +251,7 @@ async fn connect_admin(admin_url: &str) -> anyhow::Result<(Client, tokio::task::
     Ok((client, handle))
 }
 
-/// A scoped App-generation writer pinned to the schema. `app.tenant` remains a
+/// A scoped App-generation writer pinned to the schema. `app.env_key` remains a
 /// row-value input for the production statements below; authorization derives
 /// independently from the authenticated `current_user` generation.
 async fn connect_app(
@@ -274,7 +274,7 @@ async fn connect_app(
     });
     client
         .batch_execute(&format!(
-            "SET search_path TO {SCHEMA}; SET app.tenant TO '{TENANT}';"
+            "SET search_path TO {SCHEMA}; SET app.env_key TO '{ENV_KEY}';"
         ))
         .await
         .context("set search_path + tenant row input")?;
@@ -282,13 +282,13 @@ async fn connect_app(
         .query_one(
             "SELECT current_user::text, \
                     wamn_authority.current_tenant_key() = wamn_authority.tenant_key($1)",
-            &[&TENANT],
+            &[&ENV_KEY],
         )
         .await
         .context("verify walbench App-generation scope")?;
     ensure!(
         identity.get::<_, String>(0) == app_generation.role && identity.get::<_, bool>(1),
-        "walbench writer is not the derived App generation for {TENANT}"
+        "walbench writer is not the derived App generation for {ENV_KEY}"
     );
     Ok((client, handle))
 }
@@ -367,7 +367,7 @@ pub async fn run(args: WalBenchArgs) -> anyhow::Result<()> {
     let rates = parse_rates(&args.mixed_rates)?;
 
     println!(
-        "# wamn-gates EVT-C-WAL-0 walbench (schema {SCHEMA}, tenant {TENANT}) — pre-CDC baseline WAL volume"
+        "# wamn-gates EVT-C-WAL-0 walbench (schema {SCHEMA}, tenant {ENV_KEY}) — pre-CDC baseline WAL volume"
     );
     let app_generation = provision(&admin_url)
         .await
@@ -526,7 +526,7 @@ async fn perop_phase(
     let s_ins = app
         .prepare(
             "INSERT INTO \"suppliers\" (tenant_id, name, contact_email, standard_cost) \
-             VALUES (current_setting('app.tenant', true), $1, $2, $3::text::numeric) \
+             VALUES (current_setting('app.env_key', true), $1, $2, $3::text::numeric) \
              RETURNING id::text",
         )
         .await?;
@@ -540,7 +540,7 @@ async fn perop_phase(
     let u_ins = app
         .prepare(
             "INSERT INTO \"users\" (tenant_id, email, display_name, cert_level) \
-             VALUES (current_setting('app.tenant', true), $1, $2, $3) \
+             VALUES (current_setting('app.env_key', true), $1, $2, $3) \
              RETURNING id::text",
         )
         .await?;
@@ -714,7 +714,7 @@ async fn seed_reference(app: &Client) -> anyhow::Result<Reference> {
     let ins_site = app
         .prepare(
             "INSERT INTO \"sites\" (tenant_id, name, code) \
-             VALUES (current_setting('app.tenant', true), $1, $2) RETURNING id::text",
+             VALUES (current_setting('app.env_key', true), $1, $2) RETURNING id::text",
         )
         .await?;
     let mut sites = Vec::new();
@@ -728,7 +728,7 @@ async fn seed_reference(app: &Client) -> anyhow::Result<Reference> {
     let ins_sup = app
         .prepare(
             "INSERT INTO \"suppliers\" (tenant_id, name, contact_email, standard_cost) \
-             VALUES (current_setting('app.tenant', true), $1, $2, $3::text::numeric) RETURNING id::text",
+             VALUES (current_setting('app.env_key', true), $1, $2, $3::text::numeric) RETURNING id::text",
         )
         .await?;
     let mut suppliers = Vec::new();
@@ -749,7 +749,7 @@ async fn seed_reference(app: &Client) -> anyhow::Result<Reference> {
     let ins_mat = app
         .prepare(
             "INSERT INTO \"materials\" (tenant_id, name, moisture_max_pct, weight_tolerance_kg) \
-             VALUES (current_setting('app.tenant', true), $1, $2::text::numeric, $3::text::numeric) RETURNING id::text",
+             VALUES (current_setting('app.env_key', true), $1, $2::text::numeric, $3::text::numeric) RETURNING id::text",
         )
         .await?;
     let mut materials = Vec::new();
@@ -763,7 +763,7 @@ async fn seed_reference(app: &Client) -> anyhow::Result<Reference> {
     let ins_user = app
         .prepare(
             "INSERT INTO \"users\" (tenant_id, email, display_name, cert_level) \
-             VALUES (current_setting('app.tenant', true), $1, $2, $3) RETURNING id::text",
+             VALUES (current_setting('app.env_key', true), $1, $2, $3) RETURNING id::text",
         )
         .await?;
     let mut users = Vec::new();
@@ -803,28 +803,28 @@ impl EventStmts {
             receipt: app
                 .prepare(
                     "INSERT INTO \"receipts\" (tenant_id, receipt_no, supplier_id, site_id, received_at) \
-                     VALUES (current_setting('app.tenant', true), $1, $2::text::uuid, $3::text::uuid, now()) \
+                     VALUES (current_setting('app.env_key', true), $1, $2::text::uuid, $3::text::uuid, now()) \
                      RETURNING id::text",
                 )
                 .await?,
             line: app
                 .prepare(
                     "INSERT INTO \"receipt_lines\" (tenant_id, receipt_id, material_id, quantity) \
-                     VALUES (current_setting('app.tenant', true), $1::text::uuid, $2::text::uuid, $3::text::numeric) \
+                     VALUES (current_setting('app.env_key', true), $1::text::uuid, $2::text::uuid, $3::text::numeric) \
                      RETURNING id::text",
                 )
                 .await?,
             hold: app
                 .prepare(
                     "INSERT INTO \"quality_holds\" (tenant_id, line_id, site_id, status, opened_at) \
-                     VALUES (current_setting('app.tenant', true), $1::text::uuid, $2::text::uuid, 'open', now()) \
+                     VALUES (current_setting('app.env_key', true), $1::text::uuid, $2::text::uuid, 'open', now()) \
                      RETURNING id::text",
                 )
                 .await?,
             disposition: app
                 .prepare(
                     "INSERT INTO \"dispositions\" (tenant_id, hold_id, inspector_id, decision, decided_at) \
-                     VALUES (current_setting('app.tenant', true), $1::text::uuid, $2::text::uuid, 'accept', now())",
+                     VALUES (current_setting('app.env_key', true), $1::text::uuid, $2::text::uuid, 'accept', now())",
                 )
                 .await?,
         })

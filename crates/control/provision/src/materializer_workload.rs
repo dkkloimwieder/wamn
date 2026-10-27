@@ -28,7 +28,7 @@ pub struct MaterializerInput {
     pub workload: String,
     pub namespace: String,
     pub image: String,
-    pub tenant: String,
+    pub env_key: String,
     pub event: EventIdentity,
     pub event_stream: String,
     pub fetch_ms: u64,
@@ -48,7 +48,7 @@ pub fn render_materializer(
     let service = &mut spec.service;
     service.image.clone_from(&input.image);
     let config = &mut service.local_resources.config;
-    config.tenant.clone_from(&input.tenant);
+    config.env_key.clone_from(&input.env_key);
     config.project.clone_from(&input.event.project);
     config.environment.clone_from(&input.event.environment);
     let environment = &mut service.local_resources.environment.config;
@@ -56,7 +56,7 @@ pub fn render_materializer(
     environment.org.clone_from(&input.event.org);
     environment.project.clone_from(&input.event.project);
     environment.environment.clone_from(&input.event.environment);
-    environment.tenant.clone_from(&input.tenant);
+    environment.env_key.clone_from(&input.env_key);
     environment.fetch_ms = Some(input.fetch_ms.to_string());
     environment.sweep_ms = Some(input.sweep_ms.to_string());
     serde_yaml::to_string(&workload)
@@ -145,8 +145,8 @@ struct MaterializerResources {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MaterializerClaims {
-    #[serde(rename = "wamn.tenant")]
-    tenant: String,
+    #[serde(rename = "wamn.env_key")]
+    env_key: String,
     #[serde(rename = "wamn.project")]
     project: String,
     #[serde(rename = "wamn.environment")]
@@ -179,8 +179,8 @@ struct MaterializerConfig {
     project: String,
     #[serde(rename = "WAMN_MAT_ENV")]
     environment: String,
-    #[serde(rename = "WAMN_MAT_TENANT")]
-    tenant: String,
+    #[serde(rename = "WAMN_MAT_ENV_KEY")]
+    env_key: String,
     #[serde(rename = "WAMN_MAT_MAX_DELIVER")]
     max_deliver: String,
     #[serde(
@@ -209,7 +209,7 @@ mod tests {
             workload: "fixture-materializer".into(),
             namespace: "warehouse-eu-3".into(),
             image: "registry.test.invalid:5000/materializer@sha256:abc123".into(),
-            tenant: "fixture-route-auth".into(),
+            env_key: "fixture-route-auth".into(),
             event: EventIdentity {
                 org: "example".into(),
                 project: "fixture".into(),
@@ -226,7 +226,7 @@ mod tests {
         let first = materializer_input();
         let second = MaterializerInput {
             workload: "hopper-materializer".into(),
-            tenant: "quay-9-route-auth".into(),
+            env_key: "quay-9-route-auth".into(),
             event: EventIdentity {
                 org: "zamboni".into(),
                 project: "quay9".into(),
@@ -247,7 +247,7 @@ mod tests {
             assert_eq!(spec.environment, input.namespace);
             assert_eq!(spec.service.image, input.image);
             let claims = &spec.service.local_resources.config;
-            assert_eq!(claims.tenant, input.tenant);
+            assert_eq!(claims.env_key, input.env_key);
             assert_eq!(claims.project, input.event.project);
             assert_eq!(claims.environment, input.event.environment);
             assert_eq!(claims.authority, MaterializerAuthority::EventMaterializer);
@@ -256,7 +256,7 @@ mod tests {
             assert_eq!(environment.org, input.event.org);
             assert_eq!(environment.project, input.event.project);
             assert_eq!(environment.environment, input.event.environment);
-            assert_eq!(environment.tenant, input.tenant);
+            assert_eq!(environment.env_key, input.env_key);
             assert_eq!(
                 environment.fetch_ms.as_deref(),
                 Some(input.fetch_ms.to_string().as_str())
@@ -294,7 +294,7 @@ mod tests {
             "WAMN_MAT_ORG",
             "WAMN_MAT_PROJECT",
             "WAMN_MAT_ENV",
-            "WAMN_MAT_TENANT",
+            "WAMN_MAT_ENV_KEY",
         ] {
             let mut document: Value = serde_yaml::from_str(MATERIALIZER).unwrap();
             document["spec"]["template"]["spec"]["service"]["localResources"]["environment"]["config"]
@@ -344,7 +344,7 @@ mod tests {
                 "service",
                 "localResources",
                 "config",
-                "wamn.tenant",
+                "wamn.env_key",
             ],
             vec![
                 "spec",

@@ -4,7 +4,7 @@
 # retention window is pruned on a cadence — no new long-lived service, no queue.
 #
 # WHY (platform-plan risk #5): accumulated run history is a storage-cost driver,
-# so the hot `runs` store must be bounded. This verb DELETEs the named tenant's
+# so the hot `runs` store must be bounded. This verb DELETEs the named env_key's
 # runs in a TERMINAL state (completed / failed / infrastructure-failure) older
 # than `--retention-days`; the run's `run_queue` row — the ONE cascade out of
 # `runs` — goes with it through its `ON DELETE CASCADE`. It is idempotent and
@@ -13,9 +13,9 @@
 # ROLE (wamn-0h0g.12.69, and it is NOT wamn_app any more): pruning runs as a
 # scoped `wamn_run_retention` credential GENERATION whose entire cluster-wide
 # authority is `DELETE` plus a three-column `SELECT` on `wamn_run.runs`. It
-# needs no superuser, no queue privilege, and no `app.tenant` claim — the tenant
+# needs no superuser, no queue privilege, and no `app.env_key` claim — the env_key
 # reaches the statement as a bound parameter, and the verb REFUSES unless the
-# connected generation's own name shows it was minted for that tenant in that
+# connected generation's own name shows it was minted for that env_key in that
 # database. A CronJob pointed at the wrong Secret therefore FAILS LOUDLY instead
 # of reporting `pruned 0 terminal run(s)` and exiting 0.
 #
@@ -24,7 +24,7 @@
 # deploy/sql/run-state.sql bounds WHAT may be deleted (wamn-0h0g.12.128). A
 # non-terminal run is refused by the trigger even under this role.
 #
-# Deploy ONE CronJob per project-env, substituting the schema, the tenant, and
+# Deploy ONE CronJob per project-env, substituting the schema, the env_key, and
 # the retention Secret (deploy/platform/run-retention-db.example.yaml).
 #
 # v0 LIMITATION: retention is age-based only.
@@ -79,7 +79,7 @@ spec:
                   "--retention-days", "30",
                 ]
               env:
-                # Retention-generation connection — a per-(tenant, database)
+                # Retention-generation connection — a per-(env_key, database)
                 # LOGIN with no ALTER, no ownership, no queue privilege and no
                 # run-payload read. The demo project envs live in the fixture
                 # pod's `wamn` database.
@@ -88,7 +88,7 @@ spec:
                 # credential material lives in K8s Secrets; see
                 # wamn-sysdb.yaml:8-11). The Secret is per-project-env like this
                 # CronJob, so a copy for another project-env substitutes the
-                # Secret alongside the schema and tenant. Defined in
+                # Secret alongside the schema and env_key. Defined in
                 # deploy/platform/run-retention-db.example.yaml — APPLY IT
                 # FIRST, or the Job Pod never starts.
                 - name: WAMN_PG_URL

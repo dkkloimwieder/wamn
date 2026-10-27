@@ -339,16 +339,16 @@ impl IntentStore for OperationTransaction {
 pub struct WriteLogStore {
     postgres: Arc<WamnPostgres>,
     project: String,
-    tenant: String,
+    env_key: String,
 }
 
 impl WriteLogStore {
-    /// The write log of `tenant`'s database in `project`.
-    pub fn new(postgres: Arc<WamnPostgres>, project: String, tenant: String) -> Self {
+    /// The write log of `env_key`'s database in `project`.
+    pub fn new(postgres: Arc<WamnPostgres>, project: String, env_key: String) -> Self {
         Self {
             postgres,
             project,
-            tenant,
+            env_key,
         }
     }
 
@@ -360,7 +360,7 @@ impl WriteLogStore {
     ) -> Result<Vec<Row>, PgError> {
         let (connection, _pool) = self
             .postgres
-            .checkout_guest(&self.project, &self.tenant)
+            .checkout_guest(&self.project, &self.env_key)
             .await?;
         let params: Vec<&(dyn ToSql + Sync)> = params
             .iter()
@@ -384,12 +384,12 @@ impl WriteLogStore {
 #[async_trait]
 impl IntentStore for WriteLogStore {
     async fn begin(&self, intent: &Intent<'_>) -> Result<Begun, StoreError> {
-        if intent.tenant != self.tenant {
+        if intent.tenant != self.env_key {
             return Err(contract(
                 "begin",
                 format!(
                     "the write log of {} holds no key of {}",
-                    self.tenant, intent.tenant
+                    self.env_key, intent.tenant
                 ),
             ));
         }
@@ -427,7 +427,7 @@ impl IntentStore for WriteLogStore {
                 let key: String = row.get(1);
                 UncertainIntent {
                     id: intent_id(&operation, &key),
-                    tenant: self.tenant.clone(),
+                    tenant: self.env_key.clone(),
                     // The write log keeps neither: its key is the operation.
                     release: String::new(),
                     package: operation

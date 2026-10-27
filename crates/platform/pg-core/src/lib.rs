@@ -145,7 +145,7 @@ use std::fmt;
 /// Schema hosting the per-database authority derivations (`wamn-0h0g.22.6`).
 pub const AUTHORITY_SCHEMA: &str = "wamn_authority";
 
-/// The schema-qualified derivation from a row's `tenant_id` to its tenant key.
+/// The schema-qualified derivation from a row's `env_key` to its tenant key.
 ///
 /// Lives in this leaf so the provisioner that CREATES it and the schema
 /// compiler that EMITS CALLS TO IT name one object. An unqualified call would

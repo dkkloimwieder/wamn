@@ -11,10 +11,10 @@
 # ROLE: the verb connects as a scoped `wamn_audit_retention` credential
 # generation. apply-package grants that role `DELETE` and
 # `SELECT (row_key, position, changed_at)` only on the history tables of P<n>D
-# relations. The verb refuses any other login and any tenant that the
+# relations. The verb refuses any other login and any env_key that the
 # credential was not minted for, so a CronJob with the wrong Secret fails.
 #
-# Deploy ONE CronJob per project-env. Substitute the tenant and the audit
+# Deploy ONE CronJob per project-env. Substitute the env_key and the audit
 # retention Secret (deploy/platform/audit-retention-db.example.yaml).
 #
 #   kubectl -n wamn-system apply -f deploy/platform/audit-retention.example.yaml

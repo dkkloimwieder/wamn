@@ -162,7 +162,7 @@ fn admitted(bytes: &[u8]) -> AdmittedComponent {
     normalize_component_fact(
         ComponentDeclaration {
             scope: ComponentPackageScope {
-                tenant_id: "tenant-a".to_owned(),
+                env_key: "tenant-a".to_owned(),
                 package_id: "orders".to_owned(),
                 package_version: "1.0.0".to_owned(),
             },

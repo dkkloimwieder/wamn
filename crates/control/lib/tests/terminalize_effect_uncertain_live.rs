@@ -53,10 +53,10 @@ async fn reset_and_install(client: &Client) -> BareSchemaName {
     client
         .batch_execute(&format!(
             "INSERT INTO {SCHEMA}.environment_policies \
-               (tenant_id,expected_environment,durability_class) \
+               (env_key,expected_environment,durability_class) \
              VALUES ('fixture--runs--dev','dev','standard'); \
              INSERT INTO catalog.packages \
-               (tenant_id,package_id,package_version,artifact_digest) \
+               (env_key,package_id,package_version,artifact_digest) \
              VALUES ('fixture--runs--dev','cat','1.0.0','{HASH}');"
         ))
         .await
@@ -69,7 +69,7 @@ async fn seed_run(client: &Client, run: &str, status: &str, fail_type: Option<&s
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (tenant_id,run_id,flow_id,flow_version,package_id, \
+                   (env_key,run_id,flow_id,flow_version,package_id, \
                     environment,status,capture_mode,input_json, \
                     result_json,state_json,caller_outcome_type,caller_outcome_json, \
                     caller_release_node_id,caller_outcome_hash,caller_released_at,fail_type, \
@@ -90,7 +90,7 @@ async fn seed_attempt(client: &Client, run: &str, node: &str, occurrence: i32) {
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.effect_attempts \
-                   (tenant_id,run_id,root_plan_hash,current_plan_hash,frame_id,local_node_id, \
+                   (env_key,run_id,root_plan_hash,current_plan_hash,frame_id,local_node_id, \
                     source_artifact_hash,requirement_name,occurrence,seq,generation_fact_type, \
                     attempt_deadline_at,attempt_input_ref) \
                  VALUES ('fixture--runs--dev',$1,'{HASH}','{HASH}',0,$2,'{HASH}','database',$3,$3, \
@@ -137,7 +137,7 @@ async fn terminalize_effect_uncertain_is_atomic_exact_and_authority_closed_live(
     holder
         .batch_execute(&format!(
             "BEGIN; SELECT 1 FROM {SCHEMA}.runs \
-              WHERE tenant_id='fixture--runs--dev' AND run_id='concurrent' FOR UPDATE;"
+              WHERE env_key='fixture--runs--dev' AND run_id='concurrent' FOR UPDATE;"
         ))
         .await
         .expect("hold run row lock");
@@ -199,7 +199,7 @@ async fn terminalize_effect_uncertain_is_atomic_exact_and_authority_closed_live(
     holder
         .batch_execute(&format!(
             "BEGIN; SELECT 1 FROM {SCHEMA}.runs \
-              WHERE tenant_id='fixture--runs--dev' AND run_id='concurrent-conflict' FOR UPDATE;"
+              WHERE env_key='fixture--runs--dev' AND run_id='concurrent-conflict' FOR UPDATE;"
         ))
         .await
         .expect("hold conflicting run row lock");
@@ -262,7 +262,7 @@ async fn terminalize_effect_uncertain_is_atomic_exact_and_authority_closed_live(
         .query_one(
             &format!(
                 "SELECT (to_jsonb(r) - ARRAY['status','terminal_reason','updated_at']::text[])::text \
-                   FROM {SCHEMA}.runs r WHERE tenant_id='fixture--runs--dev' AND run_id='one-attempt'"
+                   FROM {SCHEMA}.runs r WHERE env_key='fixture--runs--dev' AND run_id='one-attempt'"
             ),
             &[],
         )
@@ -273,7 +273,7 @@ async fn terminalize_effect_uncertain_is_atomic_exact_and_authority_closed_live(
         .query_one(
             &format!(
                 "SELECT to_jsonb(a)::text FROM {SCHEMA}.effect_attempts a \
-                  WHERE tenant_id='fixture--runs--dev' AND run_id='one-attempt'"
+                  WHERE env_key='fixture--runs--dev' AND run_id='one-attempt'"
             ),
             &[],
         )
@@ -296,7 +296,7 @@ async fn terminalize_effect_uncertain_is_atomic_exact_and_authority_closed_live(
             &format!(
                 "SELECT status,fail_type,terminal_reason, \
                         (to_jsonb(r) - ARRAY['status','terminal_reason','updated_at']::text[])::text \
-                   FROM {SCHEMA}.runs r WHERE tenant_id='fixture--runs--dev' AND run_id='one-attempt'"
+                   FROM {SCHEMA}.runs r WHERE env_key='fixture--runs--dev' AND run_id='one-attempt'"
             ),
             &[],
         )
@@ -316,7 +316,7 @@ async fn terminalize_effect_uncertain_is_atomic_exact_and_authority_closed_live(
         .query_one(
             &format!(
                 "SELECT to_jsonb(a)::text FROM {SCHEMA}.effect_attempts a \
-                  WHERE tenant_id='fixture--runs--dev' AND run_id='one-attempt'"
+                  WHERE env_key='fixture--runs--dev' AND run_id='one-attempt'"
             ),
             &[],
         )
@@ -333,7 +333,7 @@ async fn terminalize_effect_uncertain_is_atomic_exact_and_authority_closed_live(
                         prior_started_node_local_node_id,prior_started_node_occurrence, \
                         prior_started_node_status \
                    FROM {SCHEMA}.operator_run_actions \
-                  WHERE tenant_id='fixture--runs--dev' AND run_id='one-attempt'"
+                  WHERE env_key='fixture--runs--dev' AND run_id='one-attempt'"
             ),
             &[],
         )
@@ -431,7 +431,7 @@ async fn terminalize_effect_uncertain_is_atomic_exact_and_authority_closed_live(
             &format!(
                 "SELECT status,(SELECT count(*) FROM {SCHEMA}.operator_run_actions \
                   WHERE run_id='no-attempt') FROM {SCHEMA}.runs \
-                  WHERE tenant_id='fixture--runs--dev' AND run_id='no-attempt'"
+                  WHERE env_key='fixture--runs--dev' AND run_id='no-attempt'"
             ),
             &[],
         )
@@ -456,7 +456,7 @@ async fn terminalize_effect_uncertain_is_atomic_exact_and_authority_closed_live(
     client
         .execute(
             &format!(
-                "INSERT INTO {SCHEMA}.run_queue (tenant_id,run_id) VALUES ('fixture--runs--dev',$1)"
+                "INSERT INTO {SCHEMA}.run_queue (env_key,run_id) VALUES ('fixture--runs--dev',$1)"
             ),
             &[&"queued"],
         )

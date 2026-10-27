@@ -1871,7 +1871,7 @@ mod tests {
     ) -> AdmittedComponent {
         AdmittedComponent {
             scope: crate::ComponentPackageScope {
-                tenant_id: "t1".into(),
+                env_key: "t1".into(),
                 package_id: package_id.into(),
                 package_version: package_version.into(),
             },

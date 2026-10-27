@@ -237,13 +237,13 @@ echo "http_route_sha256=$http_route_sha256"
 echo "materializer_sha256=$materializer_sha256"
 
 # Use the deployed permission generator with the development identity's owner.
-read -r org project environment tenant < <(python3 - <<'IDENTITY'
+read -r org project environment env_key < <(python3 - <<'IDENTITY'
 import pathlib
 import re
 
 source = pathlib.Path("crates/control/lib/src/dev/environment.rs").read_text()
 values = []
-for name in ("ORG", "PROJECT", "ENVIRONMENT", "TENANT"):
+for name in ("ORG", "PROJECT", "ENVIRONMENT", "ENV_KEY"):
     value, = re.findall(r'^pub const ' + name + r': &str = "([^"]+)";$', source, re.M)
     values.append(value)
 print(*values)
@@ -255,7 +255,7 @@ DATABASE_URL="postgresql://postgres:probe@127.0.0.1:$pg_port/wamn_system" \
     exit 1
   }
 "$bin/examples/event_broker_files" "$work" "nats://127.0.0.1:$event_port" \
-  "$org" "$project" "$environment" "$tenant" 1 \
+  "$org" "$project" "$environment" "$env_key" 1 \
   "$repository/apps/target/wamn/wamn_receiving/wamn.json" >"$work/event-broker.log"
 event_memory=$(python3 - "$work" "$prefix-events" <<'CONFIGURATION'
 import pathlib

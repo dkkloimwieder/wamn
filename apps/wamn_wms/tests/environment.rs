@@ -345,7 +345,7 @@ async fn after_install(route: &ProvisionedRoute, package: PathBuf) -> anyhow::Re
         identity().org.as_str(),
         identity().project.as_str(),
         identity().environment.as_str(),
-        identity().tenant().as_str(),
+        identity().env_key().as_str(),
         PLATFORM_DOMAIN,
     )
     .await?;
@@ -501,7 +501,7 @@ fn component_declaration(
     )?;
     route_schema::merge_operations(&mut source, generated.as_ref())?;
     let scope = ComponentPackageScope::new(
-        identity().tenant().as_str(),
+        identity().env_key().as_str(),
         package.package_id(),
         package.package_version(),
     )?;
@@ -517,10 +517,10 @@ fn component_declaration(
 
 /// Render the WMS template as `push-package` does: the version comes from
 /// the package's `wamn.json`, and the template authors none (wamn-uqs5.3).
-fn wms_component_declaration(root: &Path, tenant: &str, output: &Path) -> anyhow::Result<()> {
+fn wms_component_declaration(root: &Path, env_key: &str, output: &Path) -> anyhow::Result<()> {
     let declaration = wamn_control::component_declaration::render_declaration_document(
         &root.join("publication/components/wms.json.in"),
-        tenant,
+        env_key,
     )?;
     fs::write(output, serde_json::to_vec_pretty(&declaration)?)?;
     Ok(())
@@ -533,7 +533,7 @@ fn the_wms_declaration_takes_its_version_from_the_package() -> anyhow::Result<()
         .and_then(|()| Ok(serde_json::from_slice::<Value>(&fs::read(&output)?)?));
     let _ = fs::remove_file(&output);
     let scope = &rendered?["scope"];
-    assert_eq!(scope["tenant-id"], "wms");
+    assert_eq!(scope["env_key"], "wms");
     assert_eq!(scope["package-id"], "wamn_wms");
     assert_eq!(
         scope["package-version"].as_str(),
@@ -616,7 +616,7 @@ pub async fn publish(
     let blob_declaration = evidence.join("blob-put.declaration.json");
     let jsonata_declaration = evidence.join("jsonata.declaration.json");
     let store_alias = label_store_alias(&root)?;
-    wms_component_declaration(&root, identity().tenant().as_str(), &wms_declaration)?;
+    wms_component_declaration(&root, identity().env_key().as_str(), &wms_declaration)?;
     let label_packages = component_declaration(
         &repository.join("apps/platform/no-std/label-render/declaration.json.in"),
         &label_declaration,
@@ -805,8 +805,8 @@ async fn author_event_workflow(
     let (project, task) = connect(&route.database_url).await?;
     let digest: String = project
         .query_one(
-            "SELECT manifest_digest FROM catalog.releases WHERE tenant_id = $1",
-            &[&identity().tenant().as_str()],
+            "SELECT manifest_digest FROM catalog.releases WHERE env_key = $1",
+            &[&identity().env_key().as_str()],
         )
         .await?
         .get(0);

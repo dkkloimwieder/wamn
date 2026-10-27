@@ -151,7 +151,7 @@ async fn credential_reader(
         .unwrap();
     transaction
         .execute(
-            wamn_control_provision::sql::upsert_control_author_tenant_mapping_sql(),
+            wamn_control_provision::sql::upsert_control_author_env_key_mapping_sql(),
             &[
                 &role,
                 &format!("acme--{project}--dev"),
@@ -209,13 +209,13 @@ fn definition(host: &str) -> Value {
     json!({"primary-authority": format!("https://{host}/"), "tls-verification": "verify-authority"})
 }
 
-async fn seed(client: &Client, tenant: &str) -> Vec<ConnectionTarget> {
-    seed_typed(client, tenant, RequirementType::Http).await
+async fn seed(client: &Client, env_key: &str) -> Vec<ConnectionTarget> {
+    seed_typed(client, env_key, RequirementType::Http).await
 }
 
 async fn seed_typed(
     client: &Client,
-    tenant: &str,
+    env_key: &str,
     requirement_type: RequirementType,
 ) -> Vec<ConnectionTarget> {
     client.batch_execute(&format!(
@@ -229,7 +229,7 @@ async fn seed_typed(
         .await
         .unwrap();
     client
-        .execute("SELECT set_config('app.tenant', $1, false)", &[&tenant])
+        .execute("SELECT set_config('app.env_key', $1, false)", &[&env_key])
         .await
         .unwrap();
     let components: Vec<Value> = COMPONENTS
@@ -255,7 +255,7 @@ async fn seed_typed(
         "sha256:{}",
         hex::encode(ring::digest::digest(&ring::digest::SHA256, &bytes))
     );
-    client.execute("INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) VALUES ($1, $2, $3)", &[&tenant, &digest, &bytes]).await.unwrap();
+    client.execute("INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) VALUES ($1, $2, $3)", &[&env_key, &digest, &bytes]).await.unwrap();
     for component in COMPONENTS {
         let requirement =
             ComponentConnectionRequirement::new(component, "erp", requirement_type.descriptor());
@@ -263,7 +263,7 @@ async fn seed_typed(
             .execute(
                 wamn_schema_control::connections::insert_component_connection_requirement_sql(),
                 &[
-                    &tenant,
+                    &env_key,
                     &component,
                     &"erp",
                     &String::from_utf8(requirement.canonical_bytes()).unwrap(),
@@ -291,7 +291,7 @@ async fn seed_typed(
         .collect()
 }
 
-async fn selected(url: &str, tenant: &str, target: &ConnectionTarget) -> ConnectionEffectSnapshot {
+async fn selected(url: &str, env_key: &str, target: &ConnectionTarget) -> ConnectionEffectSnapshot {
     let postgres = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(url.to_owned())),
         guest_pool_max_size: 1,
@@ -301,12 +301,12 @@ async fn selected(url: &str, tenant: &str, target: &ConnectionTarget) -> Connect
         row_limit: 1_000,
     })
     .unwrap();
-    postgres.set_tenant("fixture", tenant).unwrap();
+    postgres.set_env_key("fixture", env_key).unwrap();
     let snapshot = postgres
         .connection_effect_snapshot(
             "fixture",
             DEFAULT_PROJECT,
-            tenant,
+            env_key,
             &ConnectionEffectLookup {
                 entry: ConnectionEntryLookup {
                     package_id: "org_fixture",
@@ -397,10 +397,10 @@ async fn org_connection_materializes_once_per_environment() {
     control.batch_execute("INSERT INTO registry.projects(org,id) VALUES ('acme','alpha'),('acme','beta'); INSERT INTO registry.env_policies(org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('acme','dev','{}',0,1,'1Gi','1','1Gi','image'); INSERT INTO registry.project_envs(org,project,env,secret_name,instance_suffix,policy_name) VALUES ('acme','alpha','dev','secret','aaaaaaaa','dev'),('acme','beta','dev','secret','bbbbbbbb','dev')").await.unwrap();
     let doc_a = document("alpha");
     let doc_b = document("beta");
-    let tenant_a = wamn_control_provision::project_env_tenant("acme", "alpha", "dev");
-    let tenant_b = wamn_control_provision::project_env_tenant("acme", "beta", "dev");
-    let targets_a = seed(&a, &tenant_a).await;
-    let targets_b = seed(&b, &tenant_b).await;
+    let env_key_a = wamn_control_provision::project_env_key("acme", "alpha", "dev");
+    let env_key_b = wamn_control_provision::project_env_key("acme", "beta", "dev");
+    let targets_a = seed(&a, &env_key_a).await;
+    let targets_b = seed(&b, &env_key_b).await;
     let mut declaration = DeclareConnectionRequest {
         system_database_url: control_database.url().to_owned(),
         org: "acme".to_owned(),
@@ -543,14 +543,14 @@ async fn org_connection_materializes_once_per_environment() {
         }
     }
 
-    for (database, tenant, targets) in [
-        (&database_a, &tenant_a, &targets_a),
-        (&database_b, &tenant_b, &targets_b),
+    for (database, env_key, targets) in [
+        (&database_a, &env_key_a, &targets_a),
+        (&database_b, &env_key_b, &targets_b),
     ] {
-        let project = tenant.split("--").nth(1).unwrap();
+        let project = env_key.split("--").nth(1).unwrap();
         let vault = credential_reader(&control_database, project).await;
         for target in targets {
-            let snapshot = selected(database.url(), tenant, target).await;
+            let snapshot = selected(database.url(), env_key, target).await;
             assert_eq!(snapshot.definition, Some(declaration.definition.clone()));
             assert_eq!(
                 vault
@@ -641,7 +641,7 @@ async fn org_connection_materializes_once_per_environment() {
     );
     assert_eq!(counts(&a).await, (4, 2));
     assert_eq!(counts(&b).await, (1, 2));
-    let previous_b = selected(database_b.url(), &tenant_b, &targets_b[0]).await;
+    let previous_b = selected(database_b.url(), &env_key_b, &targets_b[0]).await;
     assert_eq!(previous_b.definition, Some(definition("erp.example")));
     apply(
         database_b.url(),
@@ -651,9 +651,9 @@ async fn org_connection_materializes_once_per_environment() {
     )
     .await;
     assert_eq!(counts(&b).await, (2, 2));
-    for (database, client, tenant, targets) in [
-        (&database_a, &a, &tenant_a, &targets_a),
-        (&database_b, &b, &tenant_b, &targets_b),
+    for (database, client, env_key, targets) in [
+        (&database_a, &a, &env_key_a, &targets_a),
+        (&database_b, &b, &env_key_b, &targets_b),
     ] {
         let source: String = client
             .query_one(
@@ -664,10 +664,10 @@ async fn org_connection_materializes_once_per_environment() {
             .unwrap()
             .get(0);
         assert_eq!(source, "shared_erp");
-        let project = tenant.split("--").nth(1).unwrap();
+        let project = env_key.split("--").nth(1).unwrap();
         let vault = credential_reader(&control_database, project).await;
         for target in targets {
-            let snapshot = selected(database.url(), tenant, target).await;
+            let snapshot = selected(database.url(), env_key, target).await;
             assert_eq!(
                 snapshot.generation,
                 Some(if project == "alpha" { 4 } else { 2 })
@@ -807,8 +807,8 @@ async fn upgrade_import_seeds_only_bound_projects_and_scopes_atomically() {
             )
             .await
             .unwrap();
-        let tenant = wamn_control_provision::project_env_tenant("acme", project, "dev");
-        let mut targets = seed_typed(&target, &tenant, requirement_type).await;
+        let env_key = wamn_control_provision::project_env_key("acme", project, "dev");
+        let mut targets = seed_typed(&target, &env_key, requirement_type).await;
         if integration == "gcs" {
             for binding in &mut targets {
                 binding.mode = wamn_schema_generator::ConnectionMode::Write;

@@ -45,7 +45,7 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
         ),
     ];
     let scope = ComponentPackageScope {
-        tenant_id: "rest--publication--test".into(),
+        env_key: "rest--publication--test".into(),
         package_id: "rest_connector".into(),
         package_version: "0.1.0".into(),
     };
@@ -90,7 +90,7 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
         .map(|p| p.package_id().to_owned())
         .collect();
     for (_, document) in &documents {
-        wamn_catalog::gate_workflow_document(&scope.tenant_id, &packages, release, document)?;
+        wamn_catalog::gate_workflow_document(&scope.env_key, &packages, release, document)?;
     }
     composed_sql_uses_released_schemas(&roots, release, &admissions).await?;
     let mut wrong_port = documents.clone();
@@ -102,13 +102,8 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
         .unwrap()
         .from_port = "main".into();
     assert!(
-        wamn_catalog::gate_workflow_document(
-            &scope.tenant_id,
-            &packages,
-            release,
-            &wrong_port[0].1
-        )
-        .is_err()
+        wamn_catalog::gate_workflow_document(&scope.env_key, &packages, release, &wrong_port[0].1)
+            .is_err()
     );
     // Environment workflows resolve the node operation against the release,
     // not the package-local operation-dependency alias.
@@ -121,7 +116,7 @@ async fn both_applications_publish_with_exact_dependencies_and_private_state() -
         .operation = "rest-consumer-fixture:item/other@0.1.0".into();
     assert!(
         wamn_catalog::gate_workflow_document(
-            &scope.tenant_id,
+            &scope.env_key,
             &packages,
             release,
             &wrong_dependency[0].1

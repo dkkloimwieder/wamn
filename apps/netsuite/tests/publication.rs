@@ -65,7 +65,7 @@ fn fixture() -> Fixture {
         ),
     ];
     let scope = ComponentPackageScope {
-        tenant_id: "rest--publication--test".into(),
+        env_key: "rest--publication--test".into(),
         package_id: "netsuite".into(),
         package_version: "0.1.0".into(),
     };
@@ -181,7 +181,7 @@ fn gate_documents(
         .map(|p| p.package_id().to_owned())
         .collect();
     for (_, document) in documents {
-        wamn_catalog::gate_workflow_document(&args.tenant(), &packages, manifest, document)?;
+        wamn_catalog::gate_workflow_document(&args.env_key(), &packages, manifest, document)?;
     }
     Ok(())
 }

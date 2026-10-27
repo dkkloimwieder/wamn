@@ -111,17 +111,17 @@ fn control_history_migration_matches_fresh_schema_and_backfills_rows() {
             "../../../../deploy/sql/migrations/system/0034_control_record_history_stamp.sql"
         ),
         r"
-        INSERT INTO catalog.tenant_environments (tenant_id,org,project,env,instance_suffix,disposable,environment_instance) VALUES ('history','org','project','dev','abcdefgh',false,'');
-        INSERT INTO catalog.authoring_command_audit (tenant_id,command_id,command_type,principal_id,principal_type,principal_subject,effective_role,org,project,environment,target_ref,request_hash,outcome_bytes) VALUES ('history','command','gate','actor','user','actor','project-author','org','project','dev','target','sha256:'||repeat('a',64),'outcome');
-        INSERT INTO wamn_run.gate_reports (tenant_id,wiring_hash,passed,summary) VALUES ('history','sha256:'||repeat('a',64),true,'{}');
-        INSERT INTO wamn_authority.author_login_tenants (login_identity,tenant_id,org_id,project_id,environment) VALUES ('login','history','org','project','dev');
+        INSERT INTO catalog.tenant_environments (env_key,org,project,env,instance_suffix,disposable,environment_instance) VALUES ('history','org','project','dev','abcdefgh',false,'');
+        INSERT INTO catalog.authoring_command_audit (env_key,command_id,command_type,principal_id,principal_type,principal_subject,effective_role,org,project,environment,target_ref,request_hash,outcome_bytes) VALUES ('history','command','gate','actor','user','actor','project-author','org','project','dev','target','sha256:'||repeat('a',64),'outcome');
+        INSERT INTO wamn_run.gate_reports (env_key,wiring_hash,passed,summary) VALUES ('history','sha256:'||repeat('a',64),true,'{}');
+        INSERT INTO wamn_authority.author_login_tenants (login_identity,env_key,org_id,project_id,environment) VALUES ('login','history','org','project','dev');
     ",
     );
     // The production SQL writers stamp their rows with the transaction actor.
-    database.execute(&["BEGIN", &bind_platform_principal_sql(PlatformComponent::Provisioning), "SET LOCAL app.tenant='history';", &format!("PREPARE projection(text,text,text,text,text,boolean) AS {}; EXECUTE projection('production','org','project','dev','abcdefgh',false);", wamn_control_provision::sql::insert_tenant_environment_sql()), &format!("PREPARE mapping(text,text,text,text,text) AS {}; EXECUTE mapping('production-login','production','org','project','dev');", wamn_control_provision::sql::upsert_control_author_tenant_mapping_sql()), "COMMIT"]).unwrap();
+    database.execute(&["BEGIN", &bind_platform_principal_sql(PlatformComponent::Provisioning), "SET LOCAL app.env_key='history';", &format!("PREPARE projection(text,text,text,text,text,boolean) AS {}; EXECUTE projection('production','org','project','dev','abcdefgh',false);", wamn_control_provision::sql::insert_env_key_environment_sql()), &format!("PREPARE mapping(text,text,text,text,text) AS {}; EXECUTE mapping('production-login','production','org','project','dev');", wamn_control_provision::sql::upsert_control_author_env_key_mapping_sql()), "COMMIT"]).unwrap();
     let actor = PlatformComponent::Provisioning.principal_id();
     for (relation, predicate) in [
-        ("catalog.tenant_environments", "tenant_id='production'"),
+        ("catalog.tenant_environments", "env_key='production'"),
         (
             "wamn_authority.author_login_tenants",
             "login_identity='production-login'",
@@ -151,12 +151,12 @@ fn run_history_migrations_match_fresh_schema_and_backfill_rows() {
             "../../../../deploy/sql/migrations/project/0043_run_state_record_history_stamp.sql"
         ),
         r"
-        INSERT INTO wamn_run.environment_policies (tenant_id,expected_environment,durability_class) VALUES ('history','dev','standard');
-        INSERT INTO wamn_run.runs (tenant_id,run_id,flow_id,flow_version,package_id,environment) VALUES ('history','run','flow',1,'package','dev');
-        INSERT INTO wamn_run.effect_attempts (tenant_id,attempt_id,run_id,root_plan_hash,current_plan_hash,local_node_id,source_artifact_hash,requirement_name,occurrence,seq,generation_fact_type,attempt_deadline_at,attempt_input_ref) VALUES ('history','11111111-1111-4111-8111-111111111111','run','sha256:'||repeat('a',64),'sha256:'||repeat('a',64),'node','sha256:'||repeat('a',64),'database',0,0,'not-required',now()+interval '1 hour','input');
-        INSERT INTO wamn_run.effect_attempt_dispatches (tenant_id,attempt_id,attempt_started_at,run_id,frame_id,local_node_id,occurrence) SELECT tenant_id,attempt_id,attempt_started_at,run_id,frame_id,local_node_id,occurrence FROM wamn_run.effect_attempts;
-        INSERT INTO wamn_run.effect_attempt_outcomes (tenant_id,attempt_id,dispatched_at,outcome_status) SELECT tenant_id,attempt_id,dispatched_at,'success' FROM wamn_run.effect_attempt_dispatches;
-        INSERT INTO wamn_run.operator_run_actions (tenant_id,correlation_id,run_id,action_type,basis,evidence_ref,principal,principal_type,prior_run_status) VALUES ('history','action','run','terminalize-effect-uncertain','external-evidence','case','operator','database-role','effect-uncertain');
+        INSERT INTO wamn_run.environment_policies (env_key,expected_environment,durability_class) VALUES ('history','dev','standard');
+        INSERT INTO wamn_run.runs (env_key,run_id,flow_id,flow_version,package_id,environment) VALUES ('history','run','flow',1,'package','dev');
+        INSERT INTO wamn_run.effect_attempts (env_key,attempt_id,run_id,root_plan_hash,current_plan_hash,local_node_id,source_artifact_hash,requirement_name,occurrence,seq,generation_fact_type,attempt_deadline_at,attempt_input_ref) VALUES ('history','11111111-1111-4111-8111-111111111111','run','sha256:'||repeat('a',64),'sha256:'||repeat('a',64),'node','sha256:'||repeat('a',64),'database',0,0,'not-required',now()+interval '1 hour','input');
+        INSERT INTO wamn_run.effect_attempt_dispatches (env_key,attempt_id,attempt_started_at,run_id,frame_id,local_node_id,occurrence) SELECT env_key,attempt_id,attempt_started_at,run_id,frame_id,local_node_id,occurrence FROM wamn_run.effect_attempts;
+        INSERT INTO wamn_run.effect_attempt_outcomes (env_key,attempt_id,dispatched_at,outcome_status) SELECT env_key,attempt_id,dispatched_at,'success' FROM wamn_run.effect_attempt_dispatches;
+        INSERT INTO wamn_run.operator_run_actions (env_key,correlation_id,run_id,action_type,basis,evidence_ref,principal,principal_type,prior_run_status) VALUES ('history','action','run','terminalize-effect-uncertain','external-evidence','case','operator','database-role','effect-uncertain');
     ",
     );
     backfill(
@@ -165,6 +165,6 @@ fn run_history_migrations_match_fresh_schema_and_backfill_rows() {
         include_str!(
             "../../../../deploy/sql/migrations/project/0044_run_queue_record_history_stamp.sql"
         ),
-        "INSERT INTO wamn_run.run_queue(tenant_id,run_id) VALUES ('history','run');",
+        "INSERT INTO wamn_run.run_queue(env_key,run_id) VALUES ('history','run');",
     );
 }

@@ -1901,7 +1901,7 @@ pub(crate) mod tests {
         )
         .expect("complete config parses");
         assert_eq!(
-            config.activation_identity().tenant(),
+            config.activation_identity().env_key(),
             "acme--fixture--fixture-dev"
         );
         assert_eq!(config.host_binary(), Path::new("/opt/wamn/bin/wamn-host"));

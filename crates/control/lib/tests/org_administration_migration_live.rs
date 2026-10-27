@@ -125,7 +125,7 @@ INSERT INTO identity.password_credentials (principal_id, password_hash)
 INSERT INTO identity.pats (principal_id, principal_type, token_prefix, token_hash, label, expires_at)
   VALUES ('00000000-0000-4000-8000-000000000001', 'human', '0123456789abcdef',
           repeat('0', 64), 'fixture', now() + interval '1 day');
-INSERT INTO catalog.authoring_command_audit (tenant_id, command_id, command_type, principal_id,
+INSERT INTO catalog.authoring_command_audit (env_key, command_id, command_type, principal_id,
     principal_type, principal_subject, effective_role, org, project, environment, target_ref,
     request_hash, outcome_bytes)
   VALUES ('tenant', 'command', 'gate', '00000000-0000-4000-8000-000000000001', 'human',

@@ -29,12 +29,12 @@ use wamn_runtime::plugins::wamn_postgres::{
 
 /// Pin the session's `search_path` before any admission read.
 ///
-/// # The `app.tenant` injection that used to be here is DELETED, not moved
+/// # The `app.env_key` injection that used to be here is DELETED, not moved
 ///
 /// It claimed that every relation this connection reads keys its row policy on
-/// `NULLIF(current_setting('app.tenant', true), '')`. That stopped being true at
+/// `NULLIF(current_setting('app.env_key', true), '')`. That stopped being true at
 /// `wamn-0h0g.22.6.3`, which swept all 43 guest-reachable relations onto
-/// `wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()`
+/// `wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key()`
 /// — a derivation from `current_user`, precisely so that a session CANNOT set
 /// its own tenant. The `set_config` call had therefore been buying nothing for
 /// several waves: it wrote a GUC no surviving policy reads.
@@ -44,7 +44,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 /// whose login name carries no tenant at all, so it reaches these relations
 /// through the permissive `TO wamn_platform` arm (`wamn-0h0g.22.17`) and sees
 /// every tenant the database holds. What narrows it is the EXPLICIT
-/// `tenant_id = $1` predicate every statement below carries — which is where the
+/// `env_key = $1` predicate every statement below carries — which is where the
 /// scoping was already being done, and now the only place it is claimed.
 ///
 /// The `search_path` pin STAYS and is load-bearing: it resolves every unqualified
@@ -126,7 +126,7 @@ impl fmt::Debug for AdmissionSurface {
         formatter
             .debug_struct("AdmissionSurface")
             .field("sanitized_endpoint", &self.sanitized_endpoint)
-            .field("tenant_id", &self.tenant_id)
+            .field("env_key", &self.env_key)
             .finish_non_exhaustive()
     }
 }
@@ -137,7 +137,7 @@ pub struct AdmissionSurface {
     probe: CredentialExactnessProbe,
     connection: Option<AdmissionConnection>,
     sanitized_endpoint: Box<str>,
-    tenant_id: Box<str>,
+    env_key: Box<str>,
     /// Where the component facts of a package are read: its package artifact,
     /// the way publish reads them (R2).
     package_registry: PackageRegistry,
@@ -162,7 +162,7 @@ impl AdmissionSurface {
         org: &str,
         project: &str,
         environment: &str,
-        tenant_id: &str,
+        env_key: &str,
         package_registry: PackageRegistry,
     ) -> anyhow::Result<Self> {
         let connection = parse_management_admission_url(
@@ -171,14 +171,14 @@ impl AdmissionSurface {
             project,
             environment,
         )?;
-        if !wamn_control_registry::identifiers::valid_tenant(tenant_id) {
+        if !wamn_control_registry::identifiers::valid_env_key(env_key) {
             bail!("invalid fixed admission tenant identity");
         }
         let probe =
-            admission_credential_probe(management_admission_database_url, &connection, tenant_id)
+            admission_credential_probe(management_admission_database_url, &connection, env_key)
                 .map_err(|error| {
-                anyhow::anyhow!("management admission credential source refused: {error}")
-            })?;
+                    anyhow::anyhow!("management admission credential source refused: {error}")
+                })?;
         tracing::info!(
             database = connection.database(),
             role = connection.role(),
@@ -190,7 +190,7 @@ impl AdmissionSurface {
             probe,
             connection: None,
             sanitized_endpoint,
-            tenant_id: tenant_id.into(),
+            env_key: env_key.into(),
             package_registry,
         };
         surface.reconnect().await?;
@@ -326,11 +326,11 @@ fn sanitized_postgres_endpoint(config: &Config) -> Box<str> {
 fn admission_credential_probe(
     management_admission_database_url: &str,
     connection: &ManagementAdmissionConnection,
-    tenant_id: &str,
+    env_key: &str,
 ) -> Result<CredentialExactnessProbe, CredentialProbeError> {
     let source = explicit_credential_source(
         management_admission_database_url,
-        tenant_id,
+        env_key,
         AmbientCredentialState::Absent,
     )?;
     let acl = admission_acl_expectations();
@@ -341,7 +341,7 @@ fn admission_credential_probe(
         connection.role(),
         connection.role(),
         connection.database(),
-        tenant_id,
+        env_key,
         vec![MembershipExpectation::new(
             MANAGEMENT_ADMITTER_ROLE,
             MembershipMode::Member,
@@ -435,7 +435,7 @@ pub async fn run_gate(
         return Ok(GateJudgment::Refused(refusal));
     }
     let scope = match ComponentPackageScope::new(
-        admission.tenant_id.to_string(),
+        admission.env_key.to_string(),
         request.package_id,
         request.package_version,
     ) {

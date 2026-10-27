@@ -191,8 +191,8 @@ fn render(
     authorization: &mut Authorization,
 ) -> anyhow::Result<Vec<Secret>> {
     let scope = document.triple();
-    let tenant =
-        wamn_control_registry::project_env_tenant(&document.org, &document.project, &document.env);
+    let env_key =
+        wamn_control_registry::project_env_key(&document.org, &document.project, &document.env);
     let source = source_stream_config(&scope, 1, Duration::from_secs(120));
     let advisory = advisory_stream_config(&scope, 1);
     let consumers = wamn_control_provision::events::entity_consumers(
@@ -314,7 +314,7 @@ fn render(
             )]
             .into();
         }
-        let name = format!("evt-nats-{tenant}-{role}");
+        let name = format!("evt-nats-{env_key}-{role}");
         let namespace = if matches!(role, "runtime" | "materializer") {
             "hosts"
         } else {

@@ -16,7 +16,7 @@
 //! (`deploy/platform/run-retention.example.yaml`).
 //!
 //! The verb checks the tenant identity. `--tenant` used to be a free argument
-//! that reached the statement as an `app.tenant` GUC, which fails in two
+//! that reached the statement as an `app.env_key` GUC, which fails in two
 //! directions at once: an unset claim makes the predicate NULL, so the delete
 //! removes nothing and the verb still prints a success line; and a claim naming
 //! somebody else's tenant is honoured, because `wamn_run.runs`' one permissive
@@ -64,9 +64,9 @@ pub struct PruneRunHistoryRequest {
 }
 
 impl PruneRunHistoryRequest {
-    /// The database tenant derived from the environment coordinate.
-    pub fn tenant(&self) -> String {
-        wamn_control_registry::project_env_tenant(&self.org, &self.project, &self.environment)
+    /// The composed environment key derived from the environment coordinate.
+    pub fn env_key(&self) -> String {
+        wamn_control_registry::project_env_key(&self.org, &self.project, &self.environment)
     }
 }
 
@@ -92,11 +92,11 @@ pub async fn prune_terminal_run_history(request: PruneRunHistoryRequest) -> anyh
         .context("retention credential connect")?;
     let conn_task = tokio::spawn(conn);
     let result = async {
-        verify_retention_identity(&client, &request.tenant()).await?;
+        verify_retention_identity(&client, &request.env_key()).await?;
         prune(
             &mut client,
             &request.schema,
-            &request.tenant(),
+            &request.env_key(),
             request.retention_days,
             !request.dry_run,
         )
@@ -135,7 +135,7 @@ pub async fn prune_terminal_run_history(request: PruneRunHistoryRequest) -> anyh
 /// input that chose it establishes nothing.
 async fn verify_retention_identity(
     client: &tokio_postgres::Client,
-    tenant: &str,
+    env_key: &str,
 ) -> anyhow::Result<()> {
     let row = client
         .query_one(
@@ -147,8 +147,8 @@ async fn verify_retention_identity(
     let role: String = row.get("role");
     let database: String = row.get("database");
 
-    let scope = WorkloadRoleScope::Tenant {
-        tenant,
+    let scope = WorkloadRoleScope::EnvKey {
+        env_key,
         database: &database,
     };
     let mut expected = Vec::new();
@@ -163,7 +163,7 @@ async fn verify_retention_identity(
     }
     bail!(
         "refusing to prune: connected as {role:?} in database {database:?}, which is not a \
-         run-retention credential generation for tenant {tenant:?} (expected one of {expected:?}). \
+         run-retention credential generation for env_key {env_key:?} (expected one of {expected:?}). \
          Pruning under any other identity either carries authority this verb does not need or \
          would delete nothing and report success."
     )
@@ -175,16 +175,16 @@ async fn verify_retention_identity(
 /// exact affected count without mutating. Returns the number of `runs` rows
 /// removed.
 ///
-/// No `app.tenant` claim is injected any more. That GUC keyed the RETIRED floor;
+/// No `app.env_key` claim is injected any more. That GUC keyed the RETIRED floor;
 /// `wamn-0h0g.22.6` re-keyed `runs` onto `current_user`, and the one thing the
 /// claim still did here was supply a predicate that silently matched nothing
 /// when it was absent. The `run_queue` cascade does not need it: measured, a
 /// referential-integrity trigger consults neither the deleter's grants nor that
-/// relation's own `app.tenant` policy.
+/// relation's own `app.env_key` policy.
 pub async fn prune(
     client: &mut tokio_postgres::Client,
     schema: &str,
-    tenant: &str,
+    env_key: &str,
     retention_days: u32,
     apply: bool,
 ) -> anyhow::Result<u64> {
@@ -199,13 +199,13 @@ pub async fn prune(
     let sql = wamn_run_state::sql::prune_terminal_runs_sql();
     if apply {
         client
-            .execute(&sql, &[&tenant, &days])
+            .execute(&sql, &[&env_key, &days])
             .await
             .context("prune terminal runs")
     } else {
         let tx = client.transaction().await.context("begin dry-run tx")?;
         let n = tx
-            .execute(&sql, &[&tenant, &days])
+            .execute(&sql, &[&env_key, &days])
             .await
             .context("prune terminal runs (dry-run)")?;
         tx.rollback().await.context("roll back dry-run")?;
@@ -223,8 +223,8 @@ mod tests {
     /// claim a tenant it was not minted for.
     #[test]
     fn the_expected_retention_identities_are_the_two_generations_of_one_scope() {
-        let scope = WorkloadRoleScope::Tenant {
-            tenant: "acme-prod",
+        let scope = WorkloadRoleScope::EnvKey {
+            env_key: "acme-prod",
             database: "wamn-db-acme--billing--dev--ab12cd",
         };
         let a = workload_generation_role(
@@ -245,8 +245,8 @@ mod tests {
         assert_eq!(a[..a.len() - 1], b[..b.len() - 1]);
         let other = workload_generation_role(
             WorkloadRoleFamily::Retention,
-            WorkloadRoleScope::Tenant {
-                tenant: "other-tenant",
+            WorkloadRoleScope::EnvKey {
+                env_key: "other-tenant",
                 database: "wamn-db-acme--billing--dev--ab12cd",
             },
             CredentialGeneration::A,
@@ -258,8 +258,8 @@ mod tests {
         // between project-env databases.
         let elsewhere = workload_generation_role(
             WorkloadRoleFamily::Retention,
-            WorkloadRoleScope::Tenant {
-                tenant: "acme-prod",
+            WorkloadRoleScope::EnvKey {
+                env_key: "acme-prod",
                 database: "wamn-db-acme--billing--prod--ef34ab",
             },
             CredentialGeneration::A,
@@ -269,12 +269,12 @@ mod tests {
     }
 
     /// The statement the verb drives binds the tenant and never reads the
-    /// retired `app.tenant` claim.
+    /// retired `app.env_key` claim.
     #[test]
-    fn the_prune_statement_binds_the_tenant_and_reads_no_guc() {
+    fn the_prune_statement_binds_the_env_key_and_reads_no_guc() {
         let sql = wamn_run_state::sql::prune_terminal_runs_sql();
-        assert!(sql.contains("WHERE tenant_id = $1"), "{sql}");
-        assert!(!sql.contains("app.tenant"), "{sql}");
+        assert!(sql.contains("WHERE env_key = $1"), "{sql}");
+        assert!(!sql.contains("app.env_key"), "{sql}");
         assert!(!sql.contains("current_setting"), "{sql}");
     }
 }

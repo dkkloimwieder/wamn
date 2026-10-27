@@ -29,7 +29,7 @@ mod commands;
 use wamn_catalog::ServingManifest;
 use wamn_control_provision::session_target::session_audience;
 use wamn_control_provision::{SystemReader, parse_system_reader_url, project_env_database_name};
-use wamn_control_registry::{Triple, project_env_tenant};
+use wamn_control_registry::{Triple, project_env_key};
 use wamn_engine::artifact_source::{ArtifactSource, LocalComponentSource};
 use wamn_engine::engine::{
     DEFAULT_CORE_INSTANCES, build_engine_with_host_memory,
@@ -569,7 +569,7 @@ async fn load_release(
 /// The tenant, environment and declared applications this host serves (R1).
 /// The manifest names none of them, so they come from `--org`, `--project`,
 /// `--environment` and `--applications`, and the tenant is
-/// [`project_env_tenant`] of the first three.
+/// [`project_env_key`] of the first three.
 fn release_scope(args: &HostArgs) -> anyhow::Result<ReleaseScope> {
     let org = args
         .org
@@ -591,7 +591,7 @@ fn release_scope(args: &HostArgs) -> anyhow::Result<ReleaseScope> {
             .context("--applications is not the JSON of the declared applications")?,
     };
     Ok(ReleaseScope::new(
-        project_env_tenant(org, &args.project, environment),
+        project_env_key(org, &args.project, environment),
         environment,
     )
     .with_applications(applications))
@@ -980,13 +980,13 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         wamn_runtime::local_application::load_local_facts(
             directory,
             loaded.manifest(),
-            &loaded.scope().tenant_id,
+            &loaded.scope().env_key,
         )?;
         let target_url = std::env::var("WAMN_EXECUTOR_PLATFORM_PG_URL")
             .context("local application requires WAMN_EXECUTOR_PLATFORM_PG_URL")?;
         wamn_runtime::local_application::require_local_target(
             &target_url,
-            &loaded.scope().tenant_id,
+            &loaded.scope().env_key,
             &loaded.scope().environment,
         )
         .await?;
@@ -1308,7 +1308,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             reference,
             &component.name,
             operations.claims(
-                &operations.release.scope().tenant_id,
+                &operations.release.scope().env_key,
                 Some(operations.release_identity()),
             ),
         )?;
@@ -1332,13 +1332,13 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // The auth memory is the replica of the NATS KV bucket wamn-auth, and
     // the host deletes the keys of its own writes there
     // (docs/architecture/execution.md#auth-memory).
-    let tenant = release
+    let env_key = release
         .as_ref()
         .filter(|_| !args.control)
-        .map(|release| release.scope().tenant_id.clone());
+        .map(|release| release.scope().env_key.clone());
     let auth_changes = replicate(
         &scheduler_nats_client,
-        tenant.as_deref(),
+        env_key.as_deref(),
         Arc::clone(&postgres),
     );
     // The host always installs its authenticator, even an empty one, so a
@@ -1408,7 +1408,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore::new(
                 Arc::clone(&postgres),
                 Arc::clone(&credentials),
-                release.scope().tenant_id.clone(),
+                release.scope().env_key.clone(),
                 args.project.clone(),
                 Some(Arc::clone(release)),
             ),
@@ -1629,7 +1629,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                             client,
                             Arc::clone(&schedule_postgres),
                             &schedule_project,
-                            &scope.tenant_id,
+                            &scope.env_key,
                             &scope.environment,
                             scope.applications.clone(),
                             &digest,

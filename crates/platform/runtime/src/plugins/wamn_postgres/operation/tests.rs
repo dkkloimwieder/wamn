@@ -35,7 +35,7 @@ use crate::plugins::wamn_postgres::{
 };
 
 const WORKLOAD: &str = "entry-fixture";
-const TENANT: &str = "entryfixture";
+const ENV_KEY: &str = "entryfixture";
 const OPERATION: &str = "base:widget/update@1.0.0";
 const READ_OPERATION: &str = "base:widget/get@1.0.0";
 const RESULT: &str = "{ \"value\" : 7 }";
@@ -110,7 +110,7 @@ BTreeMap::from([("entry".into(), ServingAttachment {
         LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "entry fixture",
-            ReleaseScope::new(TENANT, "test").with_applications(
+            ReleaseScope::new(ENV_KEY, "test").with_applications(
                 serde_json::from_value(json!({"receiving": {"packages": ["base"]}})).unwrap(),
             ),
         )
@@ -248,7 +248,7 @@ async fn fixture() -> (
     Arc<LoadedRelease>,
 ) {
     let database = wamn_test_postgres::database();
-    let url = live_guest_url(database.url(), TENANT).await;
+    let url = live_guest_url(database.url(), ENV_KEY).await;
     ensure_live_user_rows(database.url(), &[LIVE_PRINCIPAL]).await;
     let schema = include_str!("../../../../../../../deploy/sql/app-schema.sql");
     let start = schema
@@ -290,7 +290,7 @@ async fn fixture() -> (
             &entry_start(&release),
             "entry",
             SessionClaims {
-                tenant: TENANT.into(),
+                env_key: ENV_KEY.into(),
                 release: Some(ReleaseIdentity::from_loaded(&release)),
                 ..SessionClaims::default()
             },
@@ -422,7 +422,7 @@ async fn anonymous_read_authorization_needs_no_database_credentials() {
             &entry_start(&release),
             "entry",
             SessionClaims {
-                tenant: TENANT.into(),
+                env_key: ENV_KEY.into(),
                 release: Some(ReleaseIdentity::from_loaded(&release)),
                 ..SessionClaims::default()
             },
@@ -731,7 +731,7 @@ fn entry_operations_use_the_application_of_their_own_package() {
         LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "two applications",
-            ReleaseScope::new(TENANT, "test").with_applications(
+            ReleaseScope::new(ENV_KEY, "test").with_applications(
                 serde_json::from_value(json!({
                     "receiving": {"packages": ["base"]}, "orders": {"packages": ["other"]}
                 }))
@@ -750,7 +750,7 @@ fn entry_operations_use_the_application_of_their_own_package() {
             &entry_start(&release),
             "entry",
             SessionClaims {
-                tenant: TENANT.into(),
+                env_key: ENV_KEY.into(),
                 release: Some(ReleaseIdentity::from_loaded(&release)),
                 ..SessionClaims::default()
             },
@@ -774,7 +774,7 @@ fn entry_binding_requires_the_started_reference_and_component_name() {
     })
     .unwrap();
     let claims = SessionClaims {
-        tenant: TENANT.into(),
+        env_key: ENV_KEY.into(),
         release: Some(ReleaseIdentity::from_loaded(&release)),
         ..SessionClaims::default()
     };

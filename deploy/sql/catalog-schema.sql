@@ -4,7 +4,7 @@
 -- provisioning bind wamn:provisioning. These tables keep no history log.
 
 CREATE TABLE catalog.packages (
-    tenant_id          text        NOT NULL CHECK (tenant_id <> ''),
+    env_key            text        NOT NULL CHECK (env_key <> ''),
     package_id         text        NOT NULL,
     package_version    text        NOT NULL,
     predecessor_version text,
@@ -15,7 +15,7 @@ CREATE TABLE catalog.packages (
     created_by         uuid        NOT NULL,
     updated_at         timestamptz NOT NULL,
     updated_by         uuid        NOT NULL,
-    CONSTRAINT packages_pkey PRIMARY KEY (tenant_id, package_id, package_version),
+    CONSTRAINT packages_pkey PRIMARY KEY (env_key, package_id, package_version),
     CONSTRAINT packages_package_id_check
         CHECK (package_id ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$'),
     CONSTRAINT packages_package_version_check CHECK (
@@ -42,11 +42,11 @@ CREATE TRIGGER wamn_record_history_stamp
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 CREATE UNIQUE INDEX packages_one_successor_per_version
-    ON catalog.packages (tenant_id, package_id, predecessor_version)
+    ON catalog.packages (env_key, package_id, predecessor_version)
     WHERE predecessor_version IS NOT NULL;
 
 CREATE TABLE catalog.package_migrations (
-    tenant_id       text        NOT NULL CHECK (tenant_id <> ''),
+    env_key         text        NOT NULL CHECK (env_key <> ''),
     package_id      text        NOT NULL CHECK (package_id <> ''),
     package_version text        NOT NULL CHECK (package_version <> ''),
     ordinal         int         NOT NULL CHECK (ordinal > 0),
@@ -58,12 +58,12 @@ CREATE TABLE catalog.package_migrations (
     updated_at      timestamptz NOT NULL,
     updated_by      uuid        NOT NULL,
     CONSTRAINT package_migrations_pkey
-        PRIMARY KEY (tenant_id, package_id, package_version, ordinal),
+        PRIMARY KEY (env_key, package_id, package_version, ordinal),
     CONSTRAINT package_migrations_path_key
-        UNIQUE (tenant_id, package_id, package_version, relative_path),
+        UNIQUE (env_key, package_id, package_version, relative_path),
     CONSTRAINT package_migrations_package_fkey
-        FOREIGN KEY (tenant_id, package_id, package_version)
-        REFERENCES catalog.packages (tenant_id, package_id, package_version)
+        FOREIGN KEY (env_key, package_id, package_version)
+        REFERENCES catalog.packages (env_key, package_id, package_version)
 );
 
 CREATE TRIGGER wamn_record_history_stamp
@@ -75,7 +75,7 @@ CREATE TRIGGER wamn_record_history_stamp
 -- map: shared relations retain their source package while fields and named
 -- constraints added by an overlay retain their own package owner.
 CREATE TABLE catalog.package_definition_owners (
-    tenant_id              text    NOT NULL CHECK (tenant_id <> ''),
+    env_key                text    NOT NULL CHECK (env_key <> ''),
     schema_name            text    NOT NULL
         CHECK (schema_name ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$'),
     relation_name          text    NOT NULL
@@ -92,7 +92,7 @@ CREATE TABLE catalog.package_definition_owners (
     updated_at             timestamptz NOT NULL,
     updated_by             uuid        NOT NULL,
     CONSTRAINT package_definition_owners_pkey PRIMARY KEY (
-        tenant_id, schema_name, relation_name, definition_type, definition_name
+        env_key, schema_name, relation_name, definition_type, definition_name
     ),
     CONSTRAINT package_definition_owners_relation_shape_check CHECK (
         definition_type <> 'relation' OR definition_name = relation_name
@@ -108,16 +108,16 @@ CREATE TRIGGER wamn_record_history_stamp
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 CREATE UNIQUE INDEX package_definition_owners_synchronization_function
-    ON catalog.package_definition_owners (tenant_id, schema_name, definition_name)
+    ON catalog.package_definition_owners (env_key, schema_name, definition_name)
     WHERE definition_type = 'synchronization_function';
 
 -- One installed release (docs/plan/platform-deploy.md R1). The manifest
 -- digest is the release; this row is an immutable cache of the canonical
--- manifest bytes, and the bytes must hash to the digest. tenant_id is the RLS
+-- manifest bytes, and the bytes must hash to the digest. env_key is the RLS
 -- scope of the row, not part of the release identity. Package membership and
 -- the component closure are read from the bytes.
 CREATE TABLE catalog.releases (
-    tenant_id       text        NOT NULL CHECK (tenant_id <> ''),
+    env_key         text        NOT NULL CHECK (env_key <> ''),
     manifest_digest text        NOT NULL CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
     canonical_bytes bytea       NOT NULL CHECK (octet_length(canonical_bytes) > 0),
     recorded_at     timestamptz NOT NULL DEFAULT now(),
@@ -125,7 +125,7 @@ CREATE TABLE catalog.releases (
     created_by      uuid        NOT NULL,
     updated_at      timestamptz NOT NULL,
     updated_by      uuid        NOT NULL,
-    CONSTRAINT releases_pkey PRIMARY KEY (tenant_id, manifest_digest),
+    CONSTRAINT releases_pkey PRIMARY KEY (env_key, manifest_digest),
     CONSTRAINT releases_exact_hash
         CHECK (manifest_digest = 'sha256:' || encode(sha256(canonical_bytes), 'hex'))
 );
@@ -152,7 +152,7 @@ BEGIN
            ) AS member(value)
         ON package.package_id = member.value ->> 'package-id'
        AND package.package_version = member.value ->> 'package-version'
-     WHERE package.tenant_id = NEW.tenant_id
+     WHERE package.env_key = NEW.env_key
      FOR UPDATE OF package;
     RETURN NEW;
 END
@@ -171,7 +171,7 @@ AS $$
 BEGIN
     PERFORM 1
       FROM catalog.packages
-     WHERE tenant_id = NEW.tenant_id
+     WHERE env_key = NEW.env_key
        AND package_id = NEW.package_id
        AND package_version = NEW.package_version
      FOR UPDATE;
@@ -182,7 +182,7 @@ BEGIN
           CROSS JOIN LATERAL jsonb_array_elements(
                convert_from(release.canonical_bytes, 'UTF8')::jsonb #> '{release,packages}'
           ) AS member(value)
-         WHERE release.tenant_id = NEW.tenant_id
+         WHERE release.env_key = NEW.env_key
            AND member.value ->> 'package-id' = NEW.package_id
            AND member.value ->> 'package-version' = NEW.package_version
     ) AND NOT EXISTS (
@@ -212,7 +212,7 @@ CREATE TRIGGER package_migrations_release_seal
     EXECUTE FUNCTION catalog.reject_package_migration_after_release_membership();
 
 CREATE TABLE catalog.connection_requirements (
-    tenant_id        text  NOT NULL CHECK (tenant_id <> ''),
+    env_key          text  NOT NULL CHECK (env_key <> ''),
     component_digest text  NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
     store_alias      text  NOT NULL CHECK (store_alias <> ''),
     requirement_json jsonb NOT NULL CHECK (jsonb_typeof(requirement_json) = 'object'),
@@ -222,7 +222,7 @@ CREATE TABLE catalog.connection_requirements (
     updated_at       timestamptz NOT NULL,
     updated_by       uuid        NOT NULL,
     CONSTRAINT connection_requirements_pkey
-        PRIMARY KEY (tenant_id, component_digest, store_alias)
+        PRIMARY KEY (env_key, component_digest, store_alias)
 );
 
 CREATE TRIGGER wamn_record_history_stamp
@@ -231,7 +231,7 @@ CREATE TRIGGER wamn_record_history_stamp
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 CREATE TABLE catalog.connection_instances (
-    tenant_id        text        NOT NULL CHECK (tenant_id <> ''),
+    env_key          text        NOT NULL CHECK (env_key <> ''),
     environment      text        NOT NULL CHECK (environment <> ''),
     instance_id      text        NOT NULL CHECK (instance_id <> ''),
     requirement_type text        NOT NULL CHECK (requirement_type <> ''),
@@ -244,11 +244,11 @@ CREATE TABLE catalog.connection_instances (
     created_at        timestamptz NOT NULL DEFAULT now(),
     updated_at        timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT connection_instances_pkey
-        PRIMARY KEY (tenant_id, environment, instance_id)
+        PRIMARY KEY (env_key, environment, instance_id)
 );
 
 CREATE TABLE catalog.connection_generations (
-    tenant_id            text        NOT NULL CHECK (tenant_id <> ''),
+    env_key              text        NOT NULL CHECK (env_key <> ''),
     environment          text        NOT NULL CHECK (environment <> ''),
     instance_id          text        NOT NULL CHECK (instance_id <> ''),
     generation           bigint      NOT NULL CHECK (generation > 0),
@@ -261,10 +261,10 @@ CREATE TABLE catalog.connection_generations (
     updated_at           timestamptz NOT NULL,
     updated_by           uuid        NOT NULL,
     CONSTRAINT connection_generations_pkey
-        PRIMARY KEY (tenant_id, environment, instance_id, generation),
+        PRIMARY KEY (env_key, environment, instance_id, generation),
     CONSTRAINT connection_generations_instance_fkey
-        FOREIGN KEY (tenant_id, environment, instance_id)
-        REFERENCES catalog.connection_instances (tenant_id, environment, instance_id)
+        FOREIGN KEY (env_key, environment, instance_id)
+        REFERENCES catalog.connection_instances (env_key, environment, instance_id)
 );
 
 CREATE TRIGGER wamn_record_history_stamp
@@ -274,13 +274,13 @@ CREATE TRIGGER wamn_record_history_stamp
 
 ALTER TABLE catalog.connection_instances
     ADD CONSTRAINT connection_instances_active_generation_fkey
-    FOREIGN KEY (tenant_id, environment, instance_id, active_generation)
+    FOREIGN KEY (env_key, environment, instance_id, active_generation)
     REFERENCES catalog.connection_generations
-        (tenant_id, environment, instance_id, generation)
+        (env_key, environment, instance_id, generation)
     DEFERRABLE INITIALLY DEFERRED;
 
 CREATE TABLE catalog.connection_bindings (
-    tenant_id            text        NOT NULL CHECK (tenant_id <> ''),
+    env_key              text        NOT NULL CHECK (env_key <> ''),
     manifest_digest      text        NOT NULL CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
     component_digest     text        NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
     store_alias          text        NOT NULL CHECK (store_alias <> ''),
@@ -297,17 +297,17 @@ CREATE TABLE catalog.connection_bindings (
     updated_at           timestamptz NOT NULL,
     updated_by           uuid        NOT NULL,
     CONSTRAINT connection_bindings_pkey
-        PRIMARY KEY (tenant_id, manifest_digest, component_digest, store_alias, package_id),
+        PRIMARY KEY (env_key, manifest_digest, component_digest, store_alias, package_id),
     CONSTRAINT connection_bindings_release_fkey
-        FOREIGN KEY (tenant_id, manifest_digest)
-        REFERENCES catalog.releases (tenant_id, manifest_digest),
+        FOREIGN KEY (env_key, manifest_digest)
+        REFERENCES catalog.releases (env_key, manifest_digest),
     CONSTRAINT connection_bindings_requirement_fkey
-        FOREIGN KEY (tenant_id, component_digest, store_alias)
+        FOREIGN KEY (env_key, component_digest, store_alias)
         REFERENCES catalog.connection_requirements
-            (tenant_id, component_digest, store_alias),
+            (env_key, component_digest, store_alias),
     CONSTRAINT connection_bindings_instance_fkey
-        FOREIGN KEY (tenant_id, environment, instance_id)
-        REFERENCES catalog.connection_instances (tenant_id, environment, instance_id)
+        FOREIGN KEY (env_key, environment, instance_id)
+        REFERENCES catalog.connection_instances (env_key, environment, instance_id)
 );
 
 CREATE TRIGGER wamn_record_history_stamp
@@ -320,10 +320,10 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
-    IF ROW(NEW.tenant_id, NEW.environment, NEW.instance_id,
+    IF ROW(NEW.env_key, NEW.environment, NEW.instance_id,
            NEW.requirement_type, NEW.contract, NEW.created_at)
        IS DISTINCT FROM
-       ROW(OLD.tenant_id, OLD.environment, OLD.instance_id,
+       ROW(OLD.env_key, OLD.environment, OLD.instance_id,
            OLD.requirement_type, OLD.contract, OLD.created_at) THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'connection-instance-identity-is-immutable';
@@ -344,7 +344,7 @@ CREATE TRIGGER connection_instances_delete_immutable
     FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 
 CREATE TABLE catalog.wiring_tombstones (
-    tenant_id   text        NOT NULL CHECK (tenant_id <> ''),
+    env_key     text        NOT NULL CHECK (env_key <> ''),
     package_id  text        NOT NULL CHECK (package_id <> ''),
     environment text        NOT NULL CHECK (environment <> ''),
     wiring_id   text        NOT NULL CHECK (wiring_id <> ''),
@@ -355,7 +355,7 @@ CREATE TABLE catalog.wiring_tombstones (
     updated_at  timestamptz NOT NULL,
     updated_by  uuid        NOT NULL,
     CONSTRAINT wiring_tombstones_pkey
-        PRIMARY KEY (tenant_id, package_id, environment, wiring_id)
+        PRIMARY KEY (env_key, package_id, environment, wiring_id)
 );
 
 CREATE TRIGGER wamn_record_history_stamp
@@ -368,7 +368,7 @@ CREATE TRIGGER wamn_record_history_stamp
 -- against the serving release. A version row is immutable except `enabled`,
 -- and at most one version of a workflow is enabled.
 CREATE TABLE catalog.workflows (
-    tenant_id      text        NOT NULL CHECK (tenant_id <> ''),
+    env_key        text        NOT NULL CHECK (env_key <> ''),
     environment    text        NOT NULL CHECK (environment <> ''),
     application    text        NOT NULL CHECK (application <> ''),
     workflow_id    text        NOT NULL CHECK (workflow_id <> ''),
@@ -389,7 +389,7 @@ CREATE TABLE catalog.workflows (
     created_by     uuid        NOT NULL,
     created_at     timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT workflows_pkey
-        PRIMARY KEY (tenant_id, environment, application, workflow_id, version),
+        PRIMARY KEY (env_key, environment, application, workflow_id, version),
     CONSTRAINT workflows_execution_identity_check
         CHECK ((execution_type = 'role') = (execution_role IS NOT NULL)),
     CONSTRAINT workflows_schedule_check
@@ -410,7 +410,7 @@ CREATE TABLE catalog.workflows (
             AND ops IS NULL AND condition IS NULL AND enable_sequence IS NULL))
 );
 CREATE UNIQUE INDEX workflows_one_enabled
-    ON catalog.workflows (tenant_id, environment, application, workflow_id)
+    ON catalog.workflows (env_key, environment, application, workflow_id)
     WHERE enabled;
 
 CREATE FUNCTION catalog.guard_workflow_update()
@@ -418,12 +418,12 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
-    IF ROW(NEW.tenant_id, NEW.environment, NEW.application, NEW.workflow_id,
+    IF ROW(NEW.env_key, NEW.environment, NEW.application, NEW.workflow_id,
            NEW.version, NEW.graph_json, NEW.wiring_hash, NEW.trigger, NEW.schedule,
            NEW.source_package, NEW.entity, NEW.ops, NEW.condition,
            NEW.execution_type, NEW.execution_role, NEW.created_by, NEW.created_at)
        IS DISTINCT FROM
-       ROW(OLD.tenant_id, OLD.environment, OLD.application, OLD.workflow_id,
+       ROW(OLD.env_key, OLD.environment, OLD.application, OLD.workflow_id,
            OLD.version, OLD.graph_json, OLD.wiring_hash, OLD.trigger, OLD.schedule,
            OLD.source_package, OLD.entity, OLD.ops, OLD.condition,
            OLD.execution_type, OLD.execution_role, OLD.created_by, OLD.created_at) THEN
@@ -446,7 +446,7 @@ CREATE TRIGGER workflows_delete_immutable
     FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 
 CREATE TABLE catalog.package_upgrade_qualifications (
-    tenant_id                   text        NOT NULL CHECK (tenant_id <> ''),
+    env_key                     text        NOT NULL CHECK (env_key <> ''),
     package_id                  text        NOT NULL CHECK (package_id <> ''),
     candidate_package_version   text        NOT NULL CHECK (candidate_package_version <> ''),
     canonical_bytes             bytea       NOT NULL CHECK (octet_length(canonical_bytes) > 0),
@@ -461,13 +461,13 @@ CREATE TABLE catalog.package_upgrade_qualifications (
     updated_at                  timestamptz NOT NULL,
     updated_by                  uuid        NOT NULL,
     CONSTRAINT package_upgrade_qualifications_pkey
-        PRIMARY KEY (tenant_id, package_id, candidate_package_version),
+        PRIMARY KEY (env_key, package_id, candidate_package_version),
     CONSTRAINT package_upgrade_qualifications_package_fkey
-        FOREIGN KEY (tenant_id, package_id, candidate_package_version)
-        REFERENCES catalog.packages (tenant_id, package_id, package_version),
+        FOREIGN KEY (env_key, package_id, candidate_package_version)
+        REFERENCES catalog.packages (env_key, package_id, package_version),
     CONSTRAINT package_upgrade_qualifications_predecessor_fkey
-        FOREIGN KEY (tenant_id, predecessor_manifest_digest)
-        REFERENCES catalog.releases (tenant_id, manifest_digest),
+        FOREIGN KEY (env_key, predecessor_manifest_digest)
+        REFERENCES catalog.releases (env_key, manifest_digest),
     CONSTRAINT package_upgrade_qualifications_exact_hash
         CHECK (result_sha256 = 'sha256:' || encode(sha256(canonical_bytes), 'hex'))
 );
@@ -479,7 +479,7 @@ CREATE TRIGGER wamn_record_history_stamp
 
 -- Stage progress survives committed batches before the package version advances.
 CREATE TABLE catalog.package_upgrade_stages (
-    tenant_id            text NOT NULL CHECK (tenant_id <> ''),
+    env_key              text NOT NULL CHECK (env_key <> ''),
     package_id           text NOT NULL CHECK (package_id <> ''),
     package_version      text NOT NULL CHECK (package_version <> ''),
     predecessor_version  text NOT NULL CHECK (predecessor_version <> '' AND predecessor_version <> package_version),
@@ -493,7 +493,7 @@ CREATE TABLE catalog.package_upgrade_stages (
     created_by           uuid        NOT NULL,
     updated_at           timestamptz NOT NULL,
     updated_by           uuid        NOT NULL,
-    CONSTRAINT package_upgrade_stages_pkey PRIMARY KEY (tenant_id, package_id, package_version)
+    CONSTRAINT package_upgrade_stages_pkey PRIMARY KEY (env_key, package_id, package_version)
 );
 
 CREATE TRIGGER wamn_record_history_stamp
@@ -510,10 +510,10 @@ BEGIN
     IF TG_OP = 'DELETE' THEN
         RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'package-upgrade-stage-cannot-be-deleted';
     END IF;
-    IF ROW(NEW.tenant_id, NEW.package_id, NEW.package_version, NEW.predecessor_version,
+    IF ROW(NEW.env_key, NEW.package_id, NEW.package_version, NEW.predecessor_version,
            NEW.package_artifact_digest, NEW.predecessor_release_digest, NEW.evidence_digest)
        IS DISTINCT FROM
-       ROW(OLD.tenant_id, OLD.package_id, OLD.package_version, OLD.predecessor_version,
+       ROW(OLD.env_key, OLD.package_id, OLD.package_version, OLD.predecessor_version,
            OLD.package_artifact_digest, OLD.predecessor_release_digest, OLD.evidence_digest) THEN
         RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'package-upgrade-stage-identity-is-immutable';
     END IF;
@@ -541,7 +541,7 @@ REVOKE ALL ON catalog.package_upgrade_stages FROM PUBLIC, wamn_app;
 -- advances along `predecessor_version`; `apply` refuses a document that omits
 -- it or declares an ancestor of it.
 CREATE TABLE catalog.package_floors (
-    tenant_id   text        NOT NULL CHECK (tenant_id <> ''),
+    env_key     text        NOT NULL CHECK (env_key <> ''),
     package_id  text        NOT NULL,
     version     text        NOT NULL,
     recorded_at timestamptz NOT NULL DEFAULT now(),
@@ -549,10 +549,10 @@ CREATE TABLE catalog.package_floors (
     created_by  uuid        NOT NULL,
     updated_at  timestamptz NOT NULL,
     updated_by  uuid        NOT NULL,
-    CONSTRAINT package_floors_pkey PRIMARY KEY (tenant_id, package_id),
+    CONSTRAINT package_floors_pkey PRIMARY KEY (env_key, package_id),
     CONSTRAINT package_floors_package_fkey
-        FOREIGN KEY (tenant_id, package_id, version)
-        REFERENCES catalog.packages (tenant_id, package_id, package_version)
+        FOREIGN KEY (env_key, package_id, version)
+        REFERENCES catalog.packages (env_key, package_id, package_version)
 );
 
 CREATE TRIGGER wamn_record_history_stamp
@@ -579,7 +579,7 @@ BEGIN
         EXECUTE format('ALTER TABLE catalog.%I ENABLE ROW LEVEL SECURITY', relation_name);
         EXECUTE format('ALTER TABLE catalog.%I FORCE ROW LEVEL SECURITY', relation_name);
         EXECUTE format(
-            'CREATE POLICY %I ON catalog.%I TO wamn_app USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()) WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())',
+            'CREATE POLICY %I ON catalog.%I TO wamn_app USING (wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key()) WITH CHECK (wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key())',
             relation_name || '_tenant', relation_name
         );
         EXECUTE format(
@@ -587,7 +587,7 @@ BEGIN
             relation_name || '_platform', relation_name
         );
         EXECUTE format(
-            'CREATE INDEX %I ON catalog.%I ((wamn_authority.tenant_key(tenant_id)))',
+            'CREATE INDEX %I ON catalog.%I ((wamn_authority.tenant_key(env_key)))',
             relation_name || '_tkey', relation_name
         );
     END LOOP;
@@ -635,7 +635,7 @@ REVOKE ALL ON ALL TABLES IN SCHEMA catalog FROM PUBLIC;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA catalog FROM PUBLIC;
 
 -- Read enabled bindings that survive the environment's release contraction.
-CREATE OR REPLACE FUNCTION catalog.connection_upgrade_bindings(tenant text, environment_name text)
+CREATE OR REPLACE FUNCTION catalog.connection_upgrade_bindings(env_key text, environment_name text)
 RETURNS TABLE(connection_name text, integration text)
 LANGUAGE sql
 STABLE
@@ -648,17 +648,17 @@ AS $$
                 ELSE instance.requirement_type END
       FROM catalog.connection_bindings AS binding
       JOIN catalog.connection_instances AS instance
-        ON (instance.tenant_id, instance.environment, instance.instance_id)
-         = (binding.tenant_id, binding.environment, binding.instance_id)
+        ON (instance.env_key, instance.environment, instance.instance_id)
+         = (binding.env_key, binding.environment, binding.instance_id)
       JOIN catalog.connection_generations AS generation
-        ON (generation.tenant_id, generation.environment, generation.instance_id, generation.generation)
-         = (instance.tenant_id, instance.environment, instance.instance_id, instance.active_generation)
+        ON (generation.env_key, generation.environment, generation.instance_id, generation.generation)
+         = (instance.env_key, instance.environment, instance.instance_id, instance.active_generation)
       JOIN catalog.connection_requirements AS requirement
-        ON (requirement.tenant_id, requirement.component_digest, requirement.store_alias)
-         = (binding.tenant_id, binding.component_digest, binding.store_alias)
+        ON (requirement.env_key, requirement.component_digest, requirement.store_alias)
+         = (binding.env_key, binding.component_digest, binding.store_alias)
       JOIN catalog.releases AS release
-        ON (release.tenant_id, release.manifest_digest) = (binding.tenant_id, binding.manifest_digest)
-     WHERE binding.tenant_id = tenant AND binding.environment = environment_name
+        ON (release.env_key, release.manifest_digest) = (binding.env_key, binding.manifest_digest)
+     WHERE binding.env_key = $1 AND binding.environment = environment_name
        AND binding.binding_status = 'active' AND binding.validation_status = 'valid'
        AND instance.lifecycle_status = 'enabled' AND instance.org_connection_name IS NOT NULL
      ORDER BY 1, 2

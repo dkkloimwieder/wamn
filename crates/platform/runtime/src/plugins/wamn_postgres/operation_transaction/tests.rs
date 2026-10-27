@@ -28,7 +28,7 @@ use wamn_engine::engine::build_engine;
 
 const OPERATION_OWNER: &str = "operation-transaction-owner";
 const OWNER_OPERATION: &str = "base:widget/record@1.0.0";
-const TENANT: &str = "operationtxn";
+const ENV_KEY: &str = "operationtxn";
 
 fn invocation(operation: &str, package_id: &str) -> ConnectionInvocation {
     ConnectionInvocation {
@@ -269,7 +269,7 @@ fn operation_owner_component(statement: &str) -> String {
 async fn the_host_owns_the_operation_transaction_and_the_guest_works_in_it() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
-    let guest_url = live_guest_url(database.url(), TENANT).await;
+    let guest_url = live_guest_url(database.url(), ENV_KEY).await;
     ensure_live_user_rows(database.url(), &[LIVE_PRINCIPAL]).await;
     let postgres = Arc::new(
         WamnPostgres::new(WamnPostgresConfig {
@@ -287,7 +287,7 @@ async fn the_host_owns_the_operation_transaction_and_the_guest_works_in_it() {
         .bind_session_claims(
             OPERATION_OWNER,
             &SessionClaims {
-                tenant: TENANT.into(),
+                env_key: ENV_KEY.into(),
                 user_id: Some(LIVE_PRINCIPAL.into()),
                 operation: Some(OWNER_OPERATION.into()),
                 ..SessionClaims::default()

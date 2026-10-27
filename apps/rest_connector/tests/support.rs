@@ -31,7 +31,7 @@ pub fn admit(
     bases: BTreeSet<String>,
 ) -> ComponentAdmission {
     let scope = ComponentPackageScope {
-        tenant_id: "rest--publication--test".into(),
+        env_key: "rest--publication--test".into(),
         package_id: manifest(package)["package"]["id"].as_str().unwrap().into(),
         package_version: "0.1.0".into(),
     };
@@ -41,7 +41,7 @@ pub fn admit(
         }
         None => render_declaration_document(
             &package.join(format!("publication/components/{name}.json.in")),
-            &scope.tenant_id,
+            &scope.env_key,
         )
         .unwrap(),
     };

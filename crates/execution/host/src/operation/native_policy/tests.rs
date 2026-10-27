@@ -601,7 +601,7 @@ impl HostPlugin for Observe {
 fn fact(operation: &str, bytes: &[u8], registered: bool) -> AdmittedComponent {
     AdmittedComponent {
         scope: ComponentPackageScope {
-            tenant_id: "tenant-a".into(),
+            env_key: "tenant-a".into(),
             package_id: operation
                 .split_once(':')
                 .expect("qualified operation")
@@ -894,7 +894,7 @@ impl Fixture {
             facts: NativeFacts::entry(
                 NodeAcquisition {
                     claims: SessionClaims {
-                        tenant: "tenant-a".into(),
+                        env_key: "tenant-a".into(),
                         project: Some("test".into()),
                         release: Some(ReleaseIdentity::for_test(
                             self.policy.resources.release.manifest().digest(),
@@ -1138,7 +1138,7 @@ async fn run_case(case: Case) {
                 "execution carries a distinct invocation scope"
             );
             let claims = event.claims.as_ref().expect("execution has host claims");
-            assert_eq!(claims.tenant, "tenant-a");
+            assert_eq!(claims.env_key, "tenant-a");
             if !matches!(case, Case::Cancellation) {
                 assert_eq!(
                     claims.user_id,
@@ -1374,9 +1374,9 @@ async fn assert_postgres_bind_warns() {
 }
 
 #[test]
-fn native_postgres_guest_binds_without_the_tenant_warn() {
+fn native_postgres_guest_binds_without_the_env_key_warn() {
     run_isolated_test(
-        "native_postgres_guest_binds_without_the_tenant_warn",
+        "native_postgres_guest_binds_without_the_env_key_warn",
         assert_postgres_bind_warns(),
     );
 }

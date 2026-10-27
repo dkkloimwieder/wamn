@@ -9,7 +9,7 @@ use wamn_platform_identity::auth_changes::AuthChanges;
 use wamn_runtime::plugins::route_authentication::queued_run_caller;
 use wamn_schema_control::BareSchemaName;
 
-const TENANT: &str = "acme--erp--dev";
+const ENV_KEY: &str = "acme--erp--dev";
 const OPERATION: &str = "consumer:item/import@1.0.0";
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
@@ -62,9 +62,9 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
                 .to_string()],
         )
         .await?;
-    admin.execute("INSERT INTO wamn_run.environment_policies (tenant_id, expected_environment, durability_class) VALUES ($1, 'dev', 'standard')", &[&TENANT]).await?;
+    admin.execute("INSERT INTO wamn_run.environment_policies (env_key, expected_environment, durability_class) VALUES ($1, 'dev', 'standard')", &[&ENV_KEY]).await?;
     for package in ["consumer", "integration"] {
-        admin.execute("INSERT INTO catalog.packages (tenant_id,package_id,package_version,artifact_digest) VALUES ($1,$2,'1.0.0',$3)", &[&TENANT, &package, &format!("sha256:{}", "a".repeat(64))]).await?;
+        admin.execute("INSERT INTO catalog.packages (env_key,package_id,package_version,artifact_digest) VALUES ($1,$2,'1.0.0',$3)", &[&ENV_KEY, &package, &format!("sha256:{}", "a".repeat(64))]).await?;
     }
     let mut manifest: ServingManifest = serde_json::from_value(json!({
         "format-version": wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION,
@@ -142,7 +142,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     materialize_application_principals(
         system.url(),
         project.url(),
-        TENANT,
+        ENV_KEY,
         &manifest,
         &packages,
         &AuthChanges::default(),
@@ -150,11 +150,11 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     .await?;
     let (_, digest) = ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?;
     for _ in 0..2 {
-        write_release(project.url(), TENANT, digest.as_str(), &manifest).await?;
+        write_release(project.url(), ENV_KEY, digest.as_str(), &manifest).await?;
         materialize_application_principals(
             system.url(),
             project.url(),
-            TENANT,
+            ENV_KEY,
             &manifest,
             &packages,
             &AuthChanges::default(),
@@ -204,7 +204,7 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
     materialize_application_principals(
         system.url(),
         project.url(),
-        TENANT,
+        ENV_KEY,
         &manifest,
         &packages,
         &AuthChanges::default(),

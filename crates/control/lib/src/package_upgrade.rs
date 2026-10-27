@@ -65,7 +65,7 @@ pub(crate) async fn apply_coordinated(
     );
     require_prefix(evidence)?;
     ensure!(
-        request.tenant() == evidence.tenant,
+        request.env_key() == evidence.env_key,
         "qualified tenant changed"
     );
     require_candidate_root(&request.package, evidence)?;
@@ -105,8 +105,8 @@ pub(crate) async fn apply_coordinated(
             tx.batch_execute("SET LOCAL lock_timeout = '5s'").await?;
         }
         tx.query_one(
-            "SELECT set_config('app.tenant', $1, true)",
-            &[&request.tenant()],
+            "SELECT set_config('app.env_key', $1, true)",
+            &[&request.env_key()],
         )
         .await?;
         bind_apply_package_principal(&tx).await?;
@@ -115,19 +115,19 @@ pub(crate) async fn apply_coordinated(
         for package in &evidence.presented_packages {
             tx.query_one(
                 crate::apply_package::LOCK_PACKAGE_SQL,
-                &[&request.tenant(), &package.package_id],
+                &[&request.env_key(), &package.package_id],
             )
             .await?;
         }
         let base = &ordered[0];
-        let installed = read_current_packages(&tx, &request.tenant()).await?;
+        let installed = read_current_packages(&tx, &request.env_key()).await?;
         let leaf = installed
             .iter()
             .find(|package| package.package_id == evidence.candidate_package.package_id)
             .context("qualified base has no installed leaf")?;
         let applied = crate::apply_package::load_applied_package(
             &tx,
-            &request.tenant(),
+            &request.env_key(),
             &leaf.package_id,
             &leaf.package_version,
         )
@@ -136,7 +136,7 @@ pub(crate) async fn apply_coordinated(
         let plan = wamn_schema_control::plan_package_migrations(&base.directory, Some(&applied))?;
         let persist = require_application(
             &tx,
-            &request.tenant(),
+            &request.env_key(),
             &base.root,
             &base.directory,
             &plan,
@@ -152,23 +152,23 @@ pub(crate) async fn apply_coordinated(
         }
         let mut outcomes = Vec::with_capacity(ordered.len());
         for package in &ordered {
-            outcomes.push(apply_in_transaction(&tx, &request.tenant(), package).await?);
+            outcomes.push(apply_in_transaction(&tx, &request.env_key(), package).await?);
         }
         ensure!(
-            read_current_packages(&tx, &request.tenant()).await? == evidence.presented_packages,
+            read_current_packages(&tx, &request.env_key()).await? == evidence.presented_packages,
             "atomic application does not match the complete qualified successor state"
         );
         if let Some(accepted) = &persist {
             if whole_row {
                 let manifest = read_release_manifest(
                     &tx,
-                    &request.tenant(),
+                    &request.env_key(),
                     &evidence.predecessor_manifest_digest,
                 )
                 .await?;
                 crate::apply_package::finish_whole_row_stage(
                     &mut tx,
-                    &request.tenant(),
+                    &request.env_key(),
                     roots,
                     &ordered,
                     &manifest,
@@ -218,15 +218,15 @@ fn require_presented_roots(
 
 async fn read_accepted(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     package: &str,
     version: &str,
 ) -> anyhow::Result<Option<AcceptedUpgrade>> {
     let Some(row) = tx.query_opt(
         "SELECT canonical_bytes, result_sha256, predecessor_manifest_digest \
          FROM catalog.package_upgrade_qualifications \
-         WHERE tenant_id = $1 AND package_id = $2 AND candidate_package_version = $3",
-        &[&tenant, &package, &version],
+         WHERE env_key = $1 AND package_id = $2 AND candidate_package_version = $3",
+        &[&env_key, &package, &version],
     ).await.context("read accepted upgrade evidence; install its platform carrier with upgrade-schema first")? else {
         return Ok(None);
     };
@@ -242,7 +242,7 @@ async fn read_accepted(
                 && evidence.upgrade_stage.is_some()))
             && wamn_execution_contract::canonical_json_bytes(&value) == bytes
             && sha256 == row.get::<_, String>(1)
-            && evidence.tenant == tenant
+            && evidence.env_key == env_key
             && evidence.candidate_package.package_id == package
             && evidence.candidate_package.package_version == version
             && evidence.predecessor_manifest_digest == row.get::<_, String>(2),
@@ -258,7 +258,7 @@ async fn read_accepted(
 /// Validate before the first persistent write; return only evidence to insert atomically.
 pub(crate) async fn require_application(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     root: &Path,
     directory: &PackageDirectory,
     plan: &PackageMigrationPlan,
@@ -288,7 +288,7 @@ pub(crate) async fn require_application(
     let current = tx
         .query_opt(
             crate::apply_package::SELECT_CURRENT_PACKAGE_VERSION_SQL,
-            &[&tenant, &candidate.package_id],
+            &[&env_key, &candidate.package_id],
         )
         .await?;
     if current.is_none() {
@@ -300,7 +300,7 @@ pub(crate) async fn require_application(
     }
     if let Some(accepted) = read_accepted(
         tx,
-        tenant,
+        env_key,
         &candidate.package_id,
         &candidate.package_version,
     )
@@ -349,7 +349,7 @@ pub(crate) async fn require_application(
     let evidence = &accepted.evidence;
     require_candidate_root(root, evidence)?;
     ensure!(
-        evidence.tenant == tenant && evidence.candidate_package == candidate,
+        evidence.env_key == env_key && evidence.candidate_package == candidate,
         "upgrade qualification does not identify these candidate bytes"
     );
     let suffix = plan
@@ -386,7 +386,7 @@ pub(crate) async fn require_application(
     // installed packages and their data access are the predecessor the evidence
     // was made against. `apply` holds the lifecycle lock, and the release the
     // predecessor serves is the evidence's own digest.
-    let installed = read_current_packages(tx, tenant).await?;
+    let installed = read_current_packages(tx, env_key).await?;
     ensure!(
         installed == evidence.predecessor_packages,
         "live predecessor package leaves or migrations changed after qualification: \
@@ -481,10 +481,10 @@ pub(crate) async fn persist(
     let evidence = &accepted.evidence;
     tx.execute(
         "INSERT INTO catalog.package_upgrade_qualifications \
-          (tenant_id, package_id, candidate_package_version, canonical_bytes, result_sha256, \
+          (env_key, package_id, candidate_package_version, canonical_bytes, result_sha256, \
            predecessor_manifest_digest, package_artifact_digest) VALUES ($1,$2,$3,$4,$5,$6,$7)",
         &[
-            &evidence.tenant,
+            &evidence.env_key,
             &evidence.candidate_package.package_id,
             &evidence.candidate_package.package_version,
             &accepted.bytes,
@@ -501,17 +501,17 @@ pub(crate) async fn persist(
 /// Select proof of this complete installed world, leaving earlier worlds as history.
 pub(crate) async fn reconciliation_evidence(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     roots: &[PackageRoot],
 ) -> anyhow::Result<Option<UpgradeQualification>> {
-    let installed = read_current_packages(tx, tenant).await?;
+    let installed = read_current_packages(tx, env_key).await?;
     let mut accepted = Vec::new();
     for package in &installed {
         if package.predecessor_version.is_none() {
             continue;
         }
         if let Some(evidence) =
-            read_accepted(tx, tenant, &package.package_id, &package.package_version).await?
+            read_accepted(tx, env_key, &package.package_id, &package.package_version).await?
         {
             accepted.push(evidence);
         }

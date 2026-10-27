@@ -52,9 +52,9 @@ pub struct QualifyUpgradeRequest {
 }
 
 impl QualifyUpgradeRequest {
-    /// The database tenant derived from the environment coordinate.
-    pub fn tenant(&self) -> String {
-        wamn_control_registry::project_env_tenant(&self.org, &self.project, &self.environment)
+    /// The composed environment key derived from the environment coordinate.
+    pub fn env_key(&self) -> String {
+        wamn_control_registry::project_env_key(&self.org, &self.project, &self.environment)
     }
 }
 
@@ -101,7 +101,7 @@ pub(crate) struct PackageIdentity {
 #[serde(deny_unknown_fields)]
 pub(crate) struct UpgradeQualification {
     pub(crate) format_version: u32,
-    pub(crate) tenant: String,
+    pub(crate) env_key: String,
     pub(crate) environment: String,
     pub(crate) predecessor_manifest_digest: String,
     pub(crate) predecessor_package: PackageIdentity,
@@ -286,9 +286,9 @@ async fn copy_predecessor(
         carrier_installed,
         "upgrade-schema must install the package qualification carrier before qualification"
     );
-    let predecessor_packages = read_current_packages(&tx, &request.tenant()).await?;
+    let predecessor_packages = read_current_packages(&tx, &request.env_key()).await?;
     let manifest_digest = request.predecessor_release.clone();
-    let manifest = read_release_manifest(&tx, &request.tenant(), &manifest_digest).await?;
+    let manifest = read_release_manifest(&tx, &request.env_key(), &manifest_digest).await?;
     require_installed_release(
         &manifest_digest,
         manifest
@@ -497,7 +497,7 @@ async fn copy_predecessor(
             PLAIN_FORMAT
         },
         upgrade_stage: candidate.manifest.upgrade_stage.clone(),
-        tenant: request.tenant(),
+        env_key: request.env_key(),
         environment: request.environment.clone(),
         predecessor_manifest_digest: manifest_digest,
         predecessor_package: predecessor.clone(),
@@ -579,12 +579,12 @@ async fn prove_connected_copy(
         .await
         .context("begin copied predecessor verification")?;
     ensure!(
-        read_current_packages(&tx, &request.tenant()).await? == evidence.predecessor_packages,
+        read_current_packages(&tx, &request.env_key()).await? == evidence.predecessor_packages,
         "copied package state differs from the source snapshot"
     );
     let copied_manifest = read_release_manifest(
         &tx,
-        &request.tenant(),
+        &request.env_key(),
         &evidence.predecessor_manifest_digest,
     )
     .await?;
@@ -627,7 +627,7 @@ async fn prove_connected_copy(
             .collect::<Vec<_>>();
         crate::apply_package::apply_qualification_packages(
             database_url,
-            &request.tenant(),
+            &request.env_key(),
             &roots,
             &complete_roots,
             manifest,
@@ -673,7 +673,7 @@ async fn prove_connected_copy(
         .context("predecessor statements fail under candidate grants")?;
     let tx = client.transaction().await?;
     ensure!(
-        read_current_packages(&tx, &request.tenant()).await? == evidence.presented_packages,
+        read_current_packages(&tx, &request.env_key()).await? == evidence.presented_packages,
         "upgraded copy does not match the qualified package leaves and migrations"
     );
     ensure!(
@@ -993,14 +993,14 @@ fn applied_package(identity: &PackageIdentity) -> anyhow::Result<AppliedPackage>
 /// Read immutable lineage leaves without locking or mutating the source database.
 pub(crate) async fn read_current_packages(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
 ) -> anyhow::Result<Vec<PackageIdentity>> {
     let rows = tx.query(
         "SELECT p.package_id, p.package_version, p.predecessor_version, p.artifact_digest \
-           FROM catalog.packages p WHERE p.tenant_id = $1 AND NOT EXISTS \
-             (SELECT FROM catalog.packages successor WHERE successor.tenant_id = p.tenant_id \
+           FROM catalog.packages p WHERE p.env_key = $1 AND NOT EXISTS \
+             (SELECT FROM catalog.packages successor WHERE successor.env_key = p.env_key \
               AND successor.package_id = p.package_id AND successor.predecessor_version = p.package_version) \
-          ORDER BY p.package_id COLLATE \"C\", p.package_version COLLATE \"C\"", &[&tenant],
+          ORDER BY p.package_id COLLATE \"C\", p.package_version COLLATE \"C\"", &[&env_key],
     ).await.context("read installed package leaves")?;
     let mut packages = Vec::new();
     for row in rows {
@@ -1009,8 +1009,8 @@ pub(crate) async fn read_current_packages(
         let migrations = tx
             .query(
                 "SELECT ordinal, relative_path, sha256 FROM catalog.package_migrations \
-              WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 ORDER BY ordinal",
-                &[&tenant, &package_id, &package_version],
+              WHERE env_key = $1 AND package_id = $2 AND package_version = $3 ORDER BY ordinal",
+                &[&env_key, &package_id, &package_version],
             )
             .await
             .context("read installed migration identities")?
@@ -1044,14 +1044,14 @@ pub(crate) async fn read_current_packages(
 /// database (docs/plan/platform-deploy.md §13).
 pub(crate) async fn read_release_manifest(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     digest: &str,
 ) -> anyhow::Result<ServingManifest> {
     let row = tx
         .query_opt(
             "SELECT canonical_bytes FROM catalog.releases \
-              WHERE tenant_id = $1 AND manifest_digest = $2",
-            &[&tenant, &digest],
+              WHERE env_key = $1 AND manifest_digest = $2",
+            &[&env_key, &digest],
         )
         .await
         .context("read the predecessor release")?

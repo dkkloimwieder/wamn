@@ -24,7 +24,7 @@ use super::declarations::{
     EFFECT_DISPATCH_ATTEMPT_FK_DEF, EFFECT_DISPATCH_ATTEMPT_FK_NAME,
     EFFECT_DISPATCH_ATTEMPT_FK_SQL, EFFECT_FRAME_COLUMNS, EFFECT_OUTCOME_DISPATCH_FK_DEF,
     EFFECT_OUTCOME_DISPATCH_FK_NAME, EFFECT_OUTCOME_DISPATCH_FK_SQL,
-    ENVIRONMENT_POLICY_TENANT_QUAL, RETIRED_EFFECT_ATTEMPT_COLUMNS, TABLE_PRIVILEGE_TYPES,
+    ENVIRONMENT_POLICY_ENV_KEY_QUAL, RETIRED_EFFECT_ATTEMPT_COLUMNS, TABLE_PRIVILEGE_TYPES,
     helper_specs, trigger_specs,
 };
 
@@ -49,12 +49,12 @@ pub(super) fn environment_policy_row_security_at_record() -> RowSecurityObservat
         forced: true,
         policies: BTreeMap::from([
             (
-                "environment_policies_tenant".to_string(),
+                "environment_policies_env_key".to_string(),
                 RowPolicyObservation {
                     command: "select".to_string(),
                     permissive: true,
                     roles: BTreeSet::from(["wamn_app".to_string()]),
-                    using_expression: Some(ENVIRONMENT_POLICY_TENANT_QUAL.to_string()),
+                    using_expression: Some(ENVIRONMENT_POLICY_ENV_KEY_QUAL.to_string()),
                     check_expression: None,
                 },
             ),
@@ -113,7 +113,7 @@ fn repair_run_capture_privilege_sql(
              EXECUTE 'REVOKE ALL PRIVILEGES ({all_columns}) ON TABLE {qualified} \
                         FROM wamn_run_retention'; \
              EXECUTE 'REVOKE ALL PRIVILEGES ON TABLE {qualified} FROM wamn_run_retention'; \
-             EXECUTE 'GRANT SELECT (\"tenant_id\", \"status\", \"created_at\"), DELETE \
+             EXECUTE 'GRANT SELECT (\"env_key\", \"status\", \"created_at\"), DELETE \
                         ON TABLE {qualified} TO wamn_run_retention'; \
            END IF; \
          END $run_retention_acl$; \
@@ -1359,8 +1359,8 @@ fn repair_environment_policy_row_security_sql(schema: &BareSchemaName) -> String
                'DROP POLICY %I ON {qualified}', policy_name); \
            END LOOP; \
          END $environment_policy_rows$; \
-         CREATE POLICY environment_policies_tenant ON {qualified} \
-           FOR SELECT TO wamn_app USING (wamn_authority.tenant_key(tenant_id) \
+         CREATE POLICY environment_policies_env_key ON {qualified} \
+           FOR SELECT TO wamn_app USING (wamn_authority.tenant_key(env_key) \
              = wamn_authority.current_tenant_key()); \
          CREATE POLICY environment_policies_platform ON {qualified} \
            AS PERMISSIVE FOR SELECT TO wamn_platform USING (true)"

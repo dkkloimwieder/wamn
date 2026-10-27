@@ -25,7 +25,7 @@ use wamn_platform_identity::configuration::PlatformConfiguration;
 #[path = "../support/platform_configuration.rs"]
 mod rows;
 
-const TENANT: &str = "acme--billing--dev";
+const ENV_KEY: &str = "acme--billing--dev";
 const ADMINISTRATION_PASSWORD: &str = "administration-generation-configuration-probe";
 
 /// Mint generation a of the environment's administration login through the
@@ -109,7 +109,7 @@ async fn platform_configuration_leg(su: &Client, system_url: &str) {
         6,
         "the first write writes one row of each table"
     );
-    let (generation, guest) = mint_guest_generation(&target, &target_url, TENANT).await;
+    let (generation, guest) = mint_guest_generation(&target, &target_url, ENV_KEY).await;
     assert_eq!(
         rows::read_back(&guest)
             .await

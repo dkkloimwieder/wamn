@@ -278,7 +278,7 @@ pub(super) async fn two_plane_residency_leg(su: &Client) {
         .get(0);
     assert_eq!(
         residency_columns,
-        "created_at,created_by,updated_at,updated_by,tenant_id,wiring_hash,passed,summary,gated_at",
+        "created_at,created_by,updated_at,updated_by,env_key,wiring_hash,passed,summary,gated_at",
         "the project reconciler rewrote the CONTROL plane's record"
     );
 
@@ -300,7 +300,7 @@ pub(super) async fn capture_mode_additive_leg(su: &Client, url: &str) {
     seed_run_admission_facts(su, "t1", "capture", "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,environment, \
+           (env_key,run_id,flow_id,flow_version,package_id,environment, \
             status) \
          VALUES ('t1','legacy-off','f',1,'capture','dev', \
                  'completed'); \
@@ -340,7 +340,7 @@ pub(super) async fn capture_mode_additive_leg(su: &Client, url: &str) {
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (tenant_id,run_id,flow_id,flow_version,package_id,environment, \
+                   (env_key,run_id,flow_id,flow_version,package_id,environment, \
                     status,trigger_source,capture_mode) \
                  VALUES ('t1','published-full','f',1,'capture','dev', \
                          'completed','http','full')"
@@ -353,7 +353,7 @@ pub(super) async fn capture_mode_additive_leg(su: &Client, url: &str) {
     su.execute(
         &format!(
             "INSERT INTO {SCHEMA}.runs \
-               (tenant_id,run_id,flow_id,flow_version,package_id,environment, \
+               (env_key,run_id,flow_id,flow_version,package_id,environment, \
                 status,trigger_source,capture_mode) \
              VALUES ('t1','draft-full','f',1,'capture','dev', \
                      'completed','scenario-draft','full')"
@@ -379,7 +379,7 @@ pub(super) async fn capture_mode_additive_leg(su: &Client, url: &str) {
             "admission",
             format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (tenant_id,run_id,flow_id,flow_version,package_id,environment, \
+                   (env_key,run_id,flow_id,flow_version,package_id,environment, \
                     status,trigger_source) \
                  VALUES ('t1','app-forged','f',1,'capture','dev','dispatched','test')"
             ),
@@ -467,14 +467,14 @@ pub(super) async fn stored_suite_cutover_leg(su: &Client) {
     // are synthesized.
     su.batch_execute(&format!(
         "CREATE TABLE {SCHEMA}.authoring_test_run_reservations ( \
-           tenant_id text NOT NULL, report_id text NOT NULL, \
-           PRIMARY KEY (tenant_id, report_id)); \
+           env_key text NOT NULL, report_id text NOT NULL, \
+           PRIMARY KEY (env_key, report_id)); \
          CREATE TABLE {SCHEMA}.authoring_test_reports ( \
-           tenant_id text NOT NULL, report_id text NOT NULL, \
-           PRIMARY KEY (tenant_id, report_id)); \
+           env_key text NOT NULL, report_id text NOT NULL, \
+           PRIMARY KEY (env_key, report_id)); \
          CREATE TABLE {SCHEMA}.authoring_test_case_runs ( \
-           tenant_id text NOT NULL, report_id text NOT NULL, ordinal int NOT NULL, \
-           PRIMARY KEY (tenant_id, report_id, ordinal));"
+           env_key text NOT NULL, report_id text NOT NULL, ordinal int NOT NULL, \
+           PRIMARY KEY (env_key, report_id, ordinal));"
     ))
     .await
     .expect("synthesize the legacy run-plane authoring-test orchestration shape");
@@ -485,8 +485,8 @@ pub(super) async fn stored_suite_cutover_leg(su: &Client) {
         "CREATE FUNCTION {SCHEMA}.reject_immutable_authoring_test_set_change() RETURNS trigger \
            LANGUAGE plpgsql AS $guard$ BEGIN RETURN NEW; END $guard$; \
          CREATE TABLE {SCHEMA}.authoring_test_sets ( \
-           tenant_id text NOT NULL, test_set_hash text NOT NULL, \
-           PRIMARY KEY (tenant_id, test_set_hash)); \
+           env_key text NOT NULL, test_set_hash text NOT NULL, \
+           PRIMARY KEY (env_key, test_set_hash)); \
          CREATE TRIGGER authoring_test_sets_update_immutable \
            BEFORE UPDATE ON {SCHEMA}.authoring_test_sets \
            FOR EACH ROW EXECUTE FUNCTION \
@@ -495,13 +495,13 @@ pub(super) async fn stored_suite_cutover_leg(su: &Client) {
          ALTER TABLE {SCHEMA}.authoring_test_run_reservations \
            ADD COLUMN test_set_hash text NOT NULL, \
            ADD CONSTRAINT authoring_test_reservation_test_set_fk \
-             FOREIGN KEY (tenant_id, test_set_hash) \
-             REFERENCES {SCHEMA}.authoring_test_sets (tenant_id, test_set_hash); \
+             FOREIGN KEY (env_key, test_set_hash) \
+             REFERENCES {SCHEMA}.authoring_test_sets (env_key, test_set_hash); \
          ALTER TABLE {SCHEMA}.authoring_test_reports \
            ADD COLUMN test_set_hash text NOT NULL, \
            ADD CONSTRAINT authoring_test_report_test_set_fk \
-             FOREIGN KEY (tenant_id, test_set_hash) \
-             REFERENCES {SCHEMA}.authoring_test_sets (tenant_id, test_set_hash);"
+             FOREIGN KEY (env_key, test_set_hash) \
+             REFERENCES {SCHEMA}.authoring_test_sets (env_key, test_set_hash);"
     ))
     .await
     .expect("install the retired test-set store and its FK columns");

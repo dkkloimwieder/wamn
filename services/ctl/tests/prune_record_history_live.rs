@@ -40,8 +40,8 @@ use wamn_test_infrastructure::locked_database;
 
 const SCHEMA: &str = "record_retention";
 const PACKAGE_ID: &str = "record_retention_fixture";
-const TENANT: &str = "record-retention-t--fixture--dev";
-const OTHER_TENANT: &str = "record-retention-other";
+const ENV_KEY: &str = "record-retention-t--fixture--dev";
+const OTHER_ENV_KEY: &str = "record-retention-other";
 const GENERATION_PASSWORD: &str = "record-retention-test-generation";
 /// The test principal that the fixture writes bind.
 const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f2";
@@ -200,10 +200,10 @@ async fn apply(url: &str, package: &Path) -> anyhow::Result<ApplyOutcome> {
     .await
 }
 
-fn generation(family: WorkloadRoleFamily, tenant: &str, database: &str) -> String {
+fn generation(family: WorkloadRoleFamily, env_key: &str, database: &str) -> String {
     workload_generation_role(
         family,
-        WorkloadRoleScope::Tenant { tenant, database },
+        WorkloadRoleScope::EnvKey { env_key, database },
         CredentialGeneration::A,
     )
     .unwrap_or_else(|error| panic!("derive the {} generation identity: {error}", family.label()))
@@ -320,13 +320,13 @@ async fn positions(admin: &Client) -> BTreeMap<String, Vec<i64>> {
     observed
 }
 
-fn prune_argv<'a>(url: &'a str, tenant: &'a str) -> [&'a str; 9] {
+fn prune_argv<'a>(url: &'a str, env_key: &'a str) -> [&'a str; 9] {
     [
         "prune-record-history",
         "--database-url",
         url,
         "--org",
-        tenant.split("--").next().expect("fixture org"),
+        env_key.split("--").next().expect("fixture org"),
         "--project",
         "fixture",
         "--environment",
@@ -335,8 +335,8 @@ fn prune_argv<'a>(url: &'a str, tenant: &'a str) -> [&'a str; 9] {
 }
 
 /// Run the verb and require the identity refusal.
-async fn assert_refused(url: &str, tenant: &str, label: &str) {
-    let error = ctl_process::run_ops_checked(prune_argv(url, tenant))
+async fn assert_refused(url: &str, env_key: &str, label: &str) {
+    let error = ctl_process::run_ops_checked(prune_argv(url, env_key))
         .await
         .expect_err(label);
     let rendered = format!("{error:#}");
@@ -575,8 +575,8 @@ async fn prune_removes_only_the_expired_prefix_of_each_row() {
     }
     let seeded = positions(&admin).await;
 
-    let credential_role = generation(WorkloadRoleFamily::AuditRetention, TENANT, &database);
-    let run_retention_role = generation(WorkloadRoleFamily::Retention, TENANT, &database);
+    let credential_role = generation(WorkloadRoleFamily::AuditRetention, ENV_KEY, &database);
+    let run_retention_role = generation(WorkloadRoleFamily::Retention, ENV_KEY, &database);
     mint(
         &admin,
         WorkloadRoleFamily::AuditRetention,
@@ -597,12 +597,12 @@ async fn prune_removes_only_the_expired_prefix_of_each_row() {
     // Spec test 15, against the populated history.
     assert_refused(
         &credential_url,
-        OTHER_TENANT,
+        OTHER_ENV_KEY,
         "foreign environment coordinate",
     )
     .await;
-    assert_refused(&run_retention_url, TENANT, "run retention generation").await;
-    assert_refused(&url, TENANT, "superuser login").await;
+    assert_refused(&run_retention_url, ENV_KEY, "run retention generation").await;
+    assert_refused(&url, ENV_KEY, "superuser login").await;
     assert_eq!(
         positions(&admin).await,
         seeded,
@@ -611,17 +611,17 @@ async fn prune_removes_only_the_expired_prefix_of_each_row() {
 
     assert_authority(&admin, &credential_url).await;
 
-    let pruned = ctl_process::run_ops_checked(prune_argv(&credential_url, TENANT))
+    let pruned = ctl_process::run_ops_checked(prune_argv(&credential_url, ENV_KEY))
         .await
         .expect("prune record history through wamn-ctl-ops");
     let stdout = String::from_utf8(pruned.stdout).expect("prune output is UTF-8");
     print!("{stdout}");
     for line in [
         format!(
-            "removed 5 entries from {SCHEMA}.shipment_history (retention P30D, tenant {TENANT})"
+            "removed 5 entries from {SCHEMA}.shipment_history (retention P30D, tenant {ENV_KEY})"
         ),
-        format!("removed 3 entries from {SCHEMA}.parcel_history (retention P7D, tenant {TENANT})"),
-        format!("pruned 2 history table(s) for tenant {TENANT}"),
+        format!("removed 3 entries from {SCHEMA}.parcel_history (retention P7D, tenant {ENV_KEY})"),
+        format!("pruned 2 history table(s) for env_key {ENV_KEY}"),
     ] {
         assert!(stdout.contains(&line), "the verb did not report: {line}");
     }
@@ -766,7 +766,7 @@ async fn a_retention_change_waits_for_a_running_prune() {
             kept.extend(written);
         }
     }
-    let credential_role = generation(WorkloadRoleFamily::AuditRetention, TENANT, &database);
+    let credential_role = generation(WorkloadRoleFamily::AuditRetention, ENV_KEY, &database);
     mint(
         &admin,
         WorkloadRoleFamily::AuditRetention,
@@ -788,7 +788,7 @@ async fn a_retention_change_waits_for_a_running_prune() {
         .expect("hold the audit retention lock");
 
     let prune_task = tokio::spawn(async move {
-        ctl_process::run_ops_checked(prune_argv(&credential_url, TENANT)).await
+        ctl_process::run_ops_checked(prune_argv(&credential_url, ENV_KEY)).await
     });
     await_lock_waiters(
         &admin,
@@ -824,7 +824,7 @@ async fn a_retention_change_waits_for_a_running_prune() {
     let stdout = String::from_utf8(pruned.stdout).expect("prune output is UTF-8");
     print!("{stdout}");
     let line =
-        format!("removed 1 entries from {SCHEMA}.parcel_history (retention P7D, tenant {TENANT})");
+        format!("removed 1 entries from {SCHEMA}.parcel_history (retention P7D, tenant {ENV_KEY})");
     assert!(stdout.contains(&line), "the verb did not report: {line}");
     assert_eq!(
         positions(&admin).await,

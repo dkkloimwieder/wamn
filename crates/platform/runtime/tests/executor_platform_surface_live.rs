@@ -54,7 +54,7 @@ const GENERATION_PASSWORD: &str = "executor-surface-test-password";
 /// The second database the wrong-`current_database` arm connects to.
 const ELSEWHERE: &str = "w68_execplat_elsewhere";
 
-const TENANT: &str = "t1";
+const ENV_KEY: &str = "t1";
 const PACKAGE_ID: &str = "cat";
 const PACKAGE_VERSION: &str = "1.0.0";
 const ENVIRONMENT: &str = "prod";
@@ -97,7 +97,7 @@ fn generation_url(admin: &str, database: Option<&str>) -> anyhow::Result<String>
 async fn begin_claimed(client: &Client) -> anyhow::Result<()> {
     client.batch_execute("BEGIN").await?;
     client
-        .execute("SELECT set_config('app.tenant', $1, true), set_config('app.user_id', $2, true), set_config('app.operation', $3, true)", &[&TENANT, &wamn_control_provision::PlatformComponent::Executor.principal_id().to_string(), &wamn_control_provision::PlatformComponent::Executor.principal_name()])
+        .execute("SELECT set_config('app.env_key', $1, true), set_config('app.user_id', $2, true), set_config('app.operation', $3, true)", &[&ENV_KEY, &wamn_control_provision::PlatformComponent::Executor.principal_id().to_string(), &wamn_control_provision::PlatformComponent::Executor.principal_name()])
         .await?;
     Ok(())
 }
@@ -254,46 +254,46 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     admin
         .batch_execute(&format!(
             "INSERT INTO catalog.packages \
-               (tenant_id,package_id,package_version,artifact_digest) \
-             VALUES ('{TENANT}','{PACKAGE_ID}','{PACKAGE_VERSION}','{artifact_digest}'); \
+               (env_key,package_id,package_version,artifact_digest) \
+             VALUES ('{ENV_KEY}','{PACKAGE_ID}','{PACKAGE_VERSION}','{artifact_digest}'); \
              INSERT INTO catalog.releases \
-               (tenant_id,manifest_digest,canonical_bytes) \
-             SELECT '{TENANT}', 'sha256:' || encode(sha256(bytes), 'hex'), bytes \
+               (env_key,manifest_digest,canonical_bytes) \
+             SELECT '{ENV_KEY}', 'sha256:' || encode(sha256(bytes), 'hex'), bytes \
                FROM (SELECT convert_to('{manifest_body}', 'UTF8') AS bytes) AS frozen; \
              INSERT INTO catalog.connection_requirements \
-               (tenant_id,component_digest,store_alias,requirement_json,requirement_hash) \
-             VALUES ('{TENANT}','{component_digest}','a-store', \
+               (env_key,component_digest,store_alias,requirement_json,requirement_hash) \
+             VALUES ('{ENV_KEY}','{component_digest}','a-store', \
                      '{{\"requirement-type\":\"http\"}}','{requirement_hash}'); \
              INSERT INTO catalog.connection_instances \
-               (tenant_id,environment,instance_id,requirement_type,contract) \
-             VALUES ('{TENANT}','{ENVIRONMENT}','instance-a','http','wamn:http/0.1'); \
+               (env_key,environment,instance_id,requirement_type,contract) \
+             VALUES ('{ENV_KEY}','{ENVIRONMENT}','instance-a','http','wamn:http/0.1'); \
              INSERT INTO catalog.connection_generations \
-               (tenant_id,environment,instance_id,generation,definition_json, \
+               (env_key,environment,instance_id,generation,definition_json, \
                 definition_hash,credential_set_handle) \
-             VALUES ('{TENANT}','{ENVIRONMENT}','instance-a',1, \
+             VALUES ('{ENV_KEY}','{ENVIRONMENT}','instance-a',1, \
                      '{{\"base-url\":\"https://a.invalid\"}}','{definition_hash}', \
                      'credential-a-1'); \
              UPDATE catalog.connection_instances \
                 SET active_generation=1,revision=revision+1, \
                     updated_at=clock_timestamp()+interval '1 second' \
-              WHERE tenant_id='{TENANT}' AND environment='{ENVIRONMENT}'; \
+              WHERE env_key='{ENV_KEY}' AND environment='{ENVIRONMENT}'; \
              INSERT INTO catalog.connection_bindings \
-               (tenant_id,manifest_digest,component_digest,store_alias, \
+               (env_key,manifest_digest,component_digest,store_alias, \
                 environment,instance_id,package_id,binding_status,validation_status, \
                 validation_hash) \
-             SELECT '{TENANT}',manifest_digest,'{component_digest}','a-store', \
+             SELECT '{ENV_KEY}',manifest_digest,'{component_digest}','a-store', \
                     '{ENVIRONMENT}','instance-a','{PACKAGE_ID}','active','valid', \
                     '{validation_hash}' \
                FROM catalog.releases; \
              INSERT INTO wamn_run.environment_policies \
-               (tenant_id,expected_environment,durability_class) \
-             VALUES ('{TENANT}','{ENVIRONMENT}','standard'); \
+               (env_key,expected_environment,durability_class) \
+             VALUES ('{ENV_KEY}','{ENVIRONMENT}','standard'); \
              INSERT INTO wamn_run.runs \
-               (tenant_id,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
+               (env_key,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
                 wiring_id,wiring_version,status,input_json) \
-             SELECT '{TENANT}','run-1','f',1,'{PACKAGE_ID}',manifest_digest,'{ENVIRONMENT}', \
+             SELECT '{ENV_KEY}','run-1','f',1,'{PACKAGE_ID}',manifest_digest,'{ENVIRONMENT}', \
                     '{WIRING_ID}',{WIRING_VERSION},'dispatched','{{}}' FROM catalog.releases; \
-             INSERT INTO wamn_run.run_queue (tenant_id,run_id) VALUES ('{TENANT}','run-1');",
+             INSERT INTO wamn_run.run_queue (env_key,run_id) VALUES ('{ENV_KEY}','run-1');",
         ))
         .await
         .context("seed the plan-supply fixture")?;
@@ -305,26 +305,26 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
 
     let manifest_digest: String = admin
         .query_one(
-            "SELECT manifest_digest FROM catalog.releases WHERE tenant_id=$1",
-            &[&TENANT],
+            "SELECT manifest_digest FROM catalog.releases WHERE env_key=$1",
+            &[&ENV_KEY],
         )
         .await?
         .get(0);
     let release = generation
-        .query_one(RELEASE_COMPONENTS_SQL, &[&TENANT, &manifest_digest])
+        .query_one(RELEASE_COMPONENTS_SQL, &[&ENV_KEY, &manifest_digest])
         .await?;
     let components: Value = serde_json::from_str(&release.get::<_, String>(0))?;
     assert_eq!(components.as_array().map(Vec::len), Some(1));
     assert_eq!(components[0]["component-digest"], component_digest);
     assert!(
         generation
-            .query(RELEASE_COMPONENTS_SQL, &[&TENANT, &digest("e")])
+            .query(RELEASE_COMPONENTS_SQL, &[&ENV_KEY, &digest("e")])
             .await?
             .is_empty()
     );
     // *** `has_table_privilege` IS BLIND TO RLS. *** The ACL says this
-    // principal may SELECT `wamn_run.run_queue`; `run_queue_tenant` carries no
-    // `TO` clause and keys on `app.tenant`, so the SAME connection reads one
+    // principal may SELECT `wamn_run.run_queue`; `run_queue_env_key` carries no
+    // `TO` clause and keys on `app.env_key`, so the SAME connection reads one
     // row with the claim injected and ZERO without it. This is why every arm in
     // this file asserts rows rather than privileges.
     let claimed_rows: i64 = generation
@@ -361,7 +361,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     // each ACL fact. Only the source arms refuse before a socket exists; the
     // rest are the server's own answers, and none of them had ever been asked.
     let expected_identity = |database: &str, memberships, acl| {
-        ExpectedCredentialIdentity::new(GENERATION, GENERATION, database, TENANT, memberships, acl)
+        ExpectedCredentialIdentity::new(GENERATION, GENERATION, database, ENV_KEY, memberships, acl)
     };
     let member_of_own_role = || {
         vec![MembershipExpectation::new(
@@ -375,7 +375,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     // connection, so every refusal below is the named predicate and not a
     // probe that refuses whatever it is given.
     let exact = credential_exactness_probe(
-        explicit_credential_source(&platform_url, TENANT, AmbientCredentialState::Absent)
+        explicit_credential_source(&platform_url, ENV_KEY, AmbientCredentialState::Absent)
             .map_err(|error| anyhow::anyhow!("{error}"))?,
         expected_identity(
             &database,
@@ -429,7 +429,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     // role this generation must never hold — the exact confusion that made the
     // platform pool dial the guest url before `wamn-0h0g.22.31`.
     let wrong_membership = credential_exactness_probe(
-        explicit_credential_source(&platform_url, TENANT, AmbientCredentialState::Absent)
+        explicit_credential_source(&platform_url, ENV_KEY, AmbientCredentialState::Absent)
             .map_err(|error| anyhow::anyhow!("{error}"))?,
         expected_identity(
             &database,
@@ -464,7 +464,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     // superuser, so this passes only because the principal asserted above is
     // not one.
     credential_exactness_probe(
-        explicit_credential_source(&platform_url, TENANT, AmbientCredentialState::Absent)
+        explicit_credential_source(&platform_url, ENV_KEY, AmbientCredentialState::Absent)
             .map_err(|error| anyhow::anyhow!("{error}"))?,
         expected_identity(
             &database,
@@ -487,7 +487,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     // family and INSERT for nothing, so an expectation that claims INSERT is
     // refused by the server's `has_table_privilege`, not by this test.
     let wrong_acl = credential_exactness_probe(
-        explicit_credential_source(&platform_url, TENANT, AmbientCredentialState::Absent)
+        explicit_credential_source(&platform_url, ENV_KEY, AmbientCredentialState::Absent)
             .map_err(|error| anyhow::anyhow!("{error}"))?,
         expected_identity(
             &database,
@@ -520,7 +520,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     // is `None` — the evidence that no server was consulted — while the
     // control arm above, differing only in this value, connected and read rows.
     let wrong_binding = credential_exactness_probe(
-        explicit_credential_source(&platform_url, TENANT, AmbientCredentialState::Absent)
+        explicit_credential_source(&platform_url, ENV_KEY, AmbientCredentialState::Absent)
             .map_err(|error| anyhow::anyhow!("{error}"))?,
         ExpectedCredentialIdentity::new(
             GENERATION,
@@ -565,7 +565,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         COMPONENT,
         wamn_control_provision::PlatformComponent::Executor.principal_name(),
     )?;
-    plugin.set_tenant(COMPONENT, TENANT)?;
+    plugin.set_env_key(COMPONENT, ENV_KEY)?;
     plugin.set_schema(COMPONENT, "wamn_run")?;
     plugin.set_runner(COMPONENT, COMPONENT)?;
     // A production host carries its release digest and claims only the runs
@@ -579,9 +579,9 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         ProductionLeaseRenewal::FenceLost
     );
     let snapshot = "SELECT jsonb_build_array(to_jsonb(r), to_jsonb(q)) \
-                    FROM wamn_run.runs r JOIN wamn_run.run_queue q USING (tenant_id, run_id) \
-                    WHERE r.tenant_id = $1 AND r.run_id = 'run-1'";
-    let before: Value = admin.query_one(snapshot, &[&TENANT]).await?.get(0);
+                    FROM wamn_run.runs r JOIN wamn_run.run_queue q USING (env_key, run_id) \
+                    WHERE r.env_key = $1 AND r.run_id = 'run-1'";
+    let before: Value = admin.query_one(snapshot, &[&ENV_KEY]).await?.get(0);
     admin
         .batch_execute(&format!(
             "REVOKE wamn_executor_platform FROM {GENERATION}; \
@@ -619,7 +619,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
                 .contains("executor-platform-authority-required")
         );
     }
-    let after: Value = admin.query_one(snapshot, &[&TENANT]).await?.get(0);
+    let after: Value = admin.query_one(snapshot, &[&ENV_KEY]).await?.get(0);
     assert_eq!(
         after, before,
         "every refused operation must leave the run and queue unchanged"

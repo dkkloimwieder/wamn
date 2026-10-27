@@ -182,8 +182,8 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     let database = live_database(&url);
     let app_role = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::Tenant {
-            tenant: "t1",
+        WorkloadRoleScope::EnvKey {
+            env_key: "t1",
             database: &database,
         },
         CredentialGeneration::A,
@@ -222,8 +222,8 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
          DROP SCHEMA IF EXISTS catalog CASCADE;\n\
          CREATE SCHEMA catalog;\n\
          CREATE TABLE catalog.releases (\n\
-           tenant_id text NOT NULL, manifest_digest text NOT NULL,\n\
-           PRIMARY KEY (tenant_id, manifest_digest)\n\
+           env_key text NOT NULL, manifest_digest text NOT NULL,\n\
+           PRIMARY KEY (env_key, manifest_digest)\n\
          );\n\
          INSERT INTO catalog.releases VALUES\n\
            ('t1','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'), ('t2','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'),\n\
@@ -241,7 +241,7 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     script.push('\n');
     script.push_str(
         "INSERT INTO wamn_run.environment_policies \
-           (tenant_id, expected_environment, durability_class) VALUES \
+           (env_key, expected_environment, durability_class) VALUES \
            ('t1', 'test', 'standard'), \
            ('t2', 'test', 'standard'), \
            ('t3', 'test', 'standard');\n",
@@ -249,7 +249,7 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     // Seed two tenants as the superuser (bypasses RLS): each has one run.
     script.push_str(
         "INSERT INTO wamn_run.runs (\
-           tenant_id, run_id, flow_id, flow_version, package_id, manifest_digest, environment,\
+           env_key, run_id, flow_id, flow_version, package_id, manifest_digest, environment,\
            wiring_id, wiring_version, status, idempotency_key\
          ) VALUES\
            ('t1','run-a','f',1,'run-state-fixture','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','test',\
@@ -283,7 +283,7 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
         "DO $$ BEGIN \
            BEGIN \
              INSERT INTO wamn_run.runs (\
-               tenant_id, run_id, flow_id, flow_version, package_id, manifest_digest, environment,\
+               env_key, run_id, flow_id, flow_version, package_id, manifest_digest, environment,\
                wiring_id, wiring_version, idempotency_key\
              ) VALUES ('t1','run-a2','f',1,'run-state-fixture','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','test',\
                'fixture-wiring',1,'k-a'); \
@@ -291,7 +291,7 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
            EXCEPTION WHEN unique_violation THEN NULL; END; \
          END $$;\n\
          INSERT INTO wamn_run.runs (\
-           tenant_id, run_id, flow_id, flow_version, package_id, manifest_digest, environment,\
+           env_key, run_id, flow_id, flow_version, package_id, manifest_digest, environment,\
            wiring_id, wiring_version, idempotency_key\
          ) VALUES ('t3','run-c','f',1,'run-state-fixture','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','test',\
            'fixture-wiring',1,'k-a');\n",
@@ -319,7 +319,7 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
              ordinal := ordinal + 1;\n\
              BEGIN\n\
                INSERT INTO wamn_run.runs (\
-                 tenant_id, run_id, flow_id, flow_version, package_id, manifest_digest,\
+                 env_key, run_id, flow_id, flow_version, package_id, manifest_digest,\
                  environment, wiring_id, wiring_version, status, idempotency_key\
                ) VALUES ('t3', 'status-probe-' || ordinal, 'f', 1, 'run-state-fixture', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',\
                  'test', 'fixture-wiring', 1, candidate, 'status-probe-' || ordinal);\n\
@@ -372,11 +372,11 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
          DO $$ BEGIN\n\
            ASSERT (SELECT count(*) FROM wamn_run.environment_policies) = 1,\n\
              'the App generation reads only its own environment policy';\n\
-           ASSERT (SELECT tenant_id FROM wamn_run.environment_policies) = 't1',\n\
+           ASSERT (SELECT env_key FROM wamn_run.environment_policies) = 't1',\n\
              'the App generation reads its own tenant''s policy';\n\
            BEGIN\n\
              INSERT INTO wamn_run.environment_policies\n\
-               (tenant_id, expected_environment, durability_class) VALUES ('t4', 'test', 'standard');\n\
+               (env_key, expected_environment, durability_class) VALUES ('t4', 'test', 'standard');\n\
              ASSERT false, 'the App generation must not write an environment policy';\n\
            EXCEPTION WHEN insufficient_privilege THEN NULL; END;\n\
          END $$;\n\
@@ -386,8 +386,8 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     // Terminal run history remains deletable.
     script.push_str(
         "UPDATE wamn_run.runs SET status='completed' \
-           WHERE tenant_id='t1' AND run_id='run-a';\n\
-         DELETE FROM wamn_run.runs WHERE tenant_id='t1' AND run_id='run-a';\n",
+           WHERE env_key='t1' AND run_id='run-a';\n\
+         DELETE FROM wamn_run.runs WHERE env_key='t1' AND run_id='run-a';\n",
     );
     writeln!(
         script,
@@ -503,20 +503,20 @@ DO $$ BEGIN
               FROM unnest(con.conkey) WITH ORDINALITY AS key(attnum, ordinality)
               JOIN pg_attribute AS att
                 ON att.attrelid = con.conrelid AND att.attnum = key.attnum)
-           = ARRAY['tenant_id', 'run_id', 'frame_id', 'local_node_id', 'occurrence']
+           = ARRAY['env_key', 'run_id', 'frame_id', 'local_node_id', 'occurrence']
   ), 'effect_attempts is unique per tenant, run, frame, node and occurrence';
 END $$;
 
 -- An admitted run defaults to no capture and the standard class, and refuses
 -- a class or capture outside its vocabulary.
 INSERT INTO wamn_run.runs (
-  tenant_id, run_id, flow_id, flow_version, package_id, manifest_digest, environment,
+  env_key, run_id, flow_id, flow_version, package_id, manifest_digest, environment,
   wiring_id, wiring_version, status, idempotency_key
 ) VALUES ('t3', 'record-probe', 'f', 1, 'run-state-fixture', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', 'test',
           'fixture-wiring', 1, 'running', 'record-probe');
 DO $$ BEGIN
   ASSERT (SELECT capture_mode || '/' || durability_class FROM wamn_run.runs
-           WHERE tenant_id = 't3' AND run_id = 'record-probe') = 'off/standard',
+           WHERE env_key = 't3' AND run_id = 'record-probe') = 'off/standard',
     'an admitted run defaults to capture off and the standard class';
 END $$;
 DO $$
@@ -529,7 +529,7 @@ BEGIN
   ] LOOP
     BEGIN
       EXECUTE format(
-        'INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, package_id, '
+        'INSERT INTO wamn_run.runs (env_key, run_id, flow_id, flow_version, package_id, '
         'manifest_digest, environment, wiring_id, wiring_version, idempotency_key, '
         'capture_mode, durability_class) VALUES (''t3'', ''record-refused'', ''f'', 1, '
         '''run-state-fixture'', ''sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'', ''test'', ''fixture-wiring'', 1, ''record-refused'', %s, %s)',
@@ -555,7 +555,7 @@ BEGIN
     refusal := NULL;
     BEGIN
       EXECUTE 'UPDATE wamn_run.runs SET ' || assignment
-        || ' WHERE tenant_id = ''t3'' AND run_id = ''record-probe''';
+        || ' WHERE env_key = ''t3'' AND run_id = ''record-probe''';
     EXCEPTION WHEN object_not_in_prerequisite_state THEN refusal := SQLERRM; END;
     ASSERT refusal = 'run-admission-pin-immutable',
       format('changing %s must be refused as run-admission-pin-immutable, got %s',
@@ -567,12 +567,12 @@ END $$;
 -- terminal status goes. The guard runs with its caller's rights and PUBLIC
 -- cannot call it.
 UPDATE wamn_run.runs SET status = 'effect-uncertain'
- WHERE tenant_id = 't3' AND run_id = 'record-probe';
+ WHERE env_key = 't3' AND run_id = 'record-probe';
 DO $$
 DECLARE refusal text;
 BEGIN
   BEGIN
-    DELETE FROM wamn_run.runs WHERE tenant_id = 't3' AND run_id = 'record-probe';
+    DELETE FROM wamn_run.runs WHERE env_key = 't3' AND run_id = 'record-probe';
   EXCEPTION WHEN object_not_in_prerequisite_state THEN refusal := SQLERRM; END;
   ASSERT refusal = 'run-delete-nonterminal',
     format('an effect-uncertain run must not be deletable, got %s', coalesce(refusal, 'a delete'));
@@ -582,11 +582,11 @@ DECLARE terminal text;
 BEGIN
   FOREACH terminal IN ARRAY ARRAY['completed', 'failed', 'infrastructure-failure'] LOOP
     INSERT INTO wamn_run.runs (
-      tenant_id, run_id, flow_id, flow_version, package_id, manifest_digest, environment,
+      env_key, run_id, flow_id, flow_version, package_id, manifest_digest, environment,
       wiring_id, wiring_version, status, idempotency_key
     ) VALUES ('t3', 'terminal-' || terminal, 'f', 1, 'run-state-fixture', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', 'test',
               'fixture-wiring', 1, terminal, 'terminal-' || terminal);
-    DELETE FROM wamn_run.runs WHERE tenant_id = 't3' AND run_id = 'terminal-' || terminal;
+    DELETE FROM wamn_run.runs WHERE env_key = 't3' AND run_id = 'terminal-' || terminal;
   END LOOP;
   ASSERT NOT (SELECT prosecdef FROM pg_proc
                WHERE oid = 'wamn_run.guard_terminal_run_delete()'::regprocedure),
@@ -611,7 +611,7 @@ END $$;
 -- a platform policy that reads every row, and an index on the tenant key.
 DO $$ BEGIN
   BEGIN
-    INSERT INTO wamn_run.environment_policies (tenant_id, expected_environment, durability_class)
+    INSERT INTO wamn_run.environment_policies (env_key, expected_environment, durability_class)
       VALUES ('t1', 'test', 'durable');
     ASSERT false, 'a second environment policy for one tenant must be refused';
   EXCEPTION WHEN unique_violation THEN NULL; END;
@@ -621,7 +621,7 @@ DO $$ BEGIN
   ASSERT EXISTS (
     SELECT FROM pg_index
      WHERE indrelid = 'wamn_run.environment_policies'::regclass
-       AND pg_get_indexdef(indexrelid) LIKE '%tenant_key(tenant_id)%'
+       AND pg_get_indexdef(indexrelid) LIKE '%tenant_key(env_key)%'
   ), 'environment_policies indexes its tenant key';
   ASSERT EXISTS (
     SELECT FROM pg_policy

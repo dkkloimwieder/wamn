@@ -660,7 +660,7 @@ for ns in hosts edge; do kubectl -n $ns create configmap identity-ca --from-file
 `platform apply` runs this step.
 The following commands describe the manual procedure.
 
-One event NATS serves both environments. Write the users of each environment into its own private directory. The tenant is `<org>--<project>--<env>`, the tenant that `env apply` gives the environment:
+One event NATS serves both environments. Write the users of each environment into its own private directory. The composed `env_key` is `<org>--<project>--<env>`, which `env apply` derives from the coordinate:
 
 ```bash
 W=$HOME/.cache/wamn-install
@@ -973,7 +973,7 @@ Mint the management-author PAT of WMS in the cluster. The Job [mint-pat.yaml](..
 
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
-(umask 077; sed -e 's/__ORG__/dkk/' -e 's/__PROJECT__/wms/' -e 's/__ENV__/dev/' -e 's/__TENANT__/dkk--wms--dev/' \
+(umask 077; sed -e 's/__ORG__/dkk/' -e 's/__PROJECT__/wms/' -e 's/__ENV__/dev/' -e 's/__ENV_KEY__/dkk--wms--dev/' \
   -e 's/__NAMESPACE__/hosts/' -e 's/__PAT_FLAG__/--emit-management-author-pat-secret/' \
   deploy/gcp/operator/mint-pat.yaml > $G/mint-pat.yaml)
 kubectl apply -f $G/mint-pat.yaml
@@ -1002,7 +1002,7 @@ Run the gate on this machine, and post the gate request with the PAT as a bearer
 . $HOME/.cache/wamn-install/platform.sh
 WAMN_SYSTEM_URL="$(cat $G/identity-reader.url)" WAMN_CONTROL_AUTHORING_PG_URL="$(url $G/control-author.json)" \
 WAMN_MANAGEMENT_ADMISSION_PG_URL="$(url $G/management-admitter.json)" WAMN_MANAGEMENT_ORG=dkk \
-WAMN_MANAGEMENT_PROJECT=wms WAMN_MANAGEMENT_ENVIRONMENT=dev WAMN_MANAGEMENT_TENANT=dkk--wms--dev \
+WAMN_MANAGEMENT_PROJECT=wms WAMN_MANAGEMENT_ENVIRONMENT=dev WAMN_MANAGEMENT_ENV_KEY=dkk--wms--dev \
   setsid $CARGO_TARGET_DIR/debug/wamn-scenario-worker serve --bind 127.0.0.1:18090 > $G/gate.log 2>&1 < /dev/null &
 cargo run --locked -p wamn-test-infrastructure --example gate_request -- wamn_wms 2.1.4 wms dev \
   apps/wamn_wms/publication/wirings/inventory_move_and_label.json > $G/gate-request.json

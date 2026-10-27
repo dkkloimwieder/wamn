@@ -7,8 +7,8 @@ async fn event(fixture: &Fixture, id: &str, sequence: i64, role: Option<&str>) {
     let graph = workflow(id);
     let execution = if role.is_some() { "role" } else { "invoker" };
     fixture.admin.execute(
-        "INSERT INTO catalog.workflows (tenant_id, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by) VALUES ($1, $2, $3, $4, 1, $5::text::jsonb, $6, 'event', $7, 'order', ARRAY['insert', 'update', 'delete'], $8, $9, $10, true, $11::text::uuid)",
-        &[&TENANT, &ENVIRONMENT, &APP, &id, &serde_json::to_string(&graph).unwrap(), &graph.wiring_hash().as_str(), &APPLICATION, &sequence, &execution, &role, &ADMIN],
+        "INSERT INTO catalog.workflows (env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, source_package, entity, ops, enable_sequence, execution_type, execution_role, enabled, created_by) VALUES ($1, $2, $3, $4, 1, $5::text::jsonb, $6, 'event', $7, 'order', ARRAY['insert', 'update', 'delete'], $8, $9, $10, true, $11::text::uuid)",
+        &[&ENV_KEY, &ENVIRONMENT, &APP, &id, &serde_json::to_string(&graph).unwrap(), &graph.wiring_hash().as_str(), &APPLICATION, &sequence, &execution, &role, &ADMIN],
     ).await.unwrap();
 }
 

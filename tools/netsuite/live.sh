@@ -8,7 +8,7 @@ usage() {
   cat >&2 <<'USAGE'
 Usage:
   live.sh prepare CREDENTIALS_JSON ORG OUTPUT_DIRECTORY
-  live.sh run CREDENTIALS_JSON ORG TENANT APPLICATION HOST_URL RECORD_ID QUERY_FILE
+  live.sh run CREDENTIALS_JSON ORG ENV_KEY APPLICATION HOST_URL RECORD_ID QUERY_FILE
 
 prepare writes a connection request and a private credential import file.
 Write the connection with connection write, then import the private file with connection import-credentials.
@@ -56,7 +56,7 @@ fi
 : "${WAMN_PG_ADMIN_URL:?Set the deployed project admin database URL}"
 : "${WAMN_CONTROL_DATABASE_URL:?Set the control database URL}"
 export WAMN_TOKEN="${WAMN_TOKEN:?Set the caller bearer token}"
-tenant=$4 application=$5 host_url=$6 record_id=$7 query_file=$8
+env_key=$4 application=$5 host_url=$6 record_id=$7 query_file=$8
 ctl=${WAMN_CTL:-target/debug/wamn-ctl}
 work=$(mktemp -d "${TMPDIR:-/var/tmp}/wamn-netsuite-live.XXXXXX")
 trap 'rm -rf -- "$work"' EXIT
@@ -75,9 +75,9 @@ for wiring in record_get suiteql_query; do
     --input "$work/$wiring.json")
   deadline=$((SECONDS + 120))
   while :; do
-    result=$(psql -XAt "$WAMN_PG_ADMIN_URL" -v ON_ERROR_STOP=1 -v run="$run_id" -v tenant="$tenant" <<'SQL'
+    result=$(psql -XAt "$WAMN_PG_ADMIN_URL" -v ON_ERROR_STOP=1 -v run="$run_id" -v env_key="$env_key" <<'SQL'
 SELECT jsonb_build_object('run_id',run_id,'status',status,'result',result_json,'reason',terminal_reason)
-FROM wamn_run.runs WHERE run_id=:'run' AND tenant_id=:'tenant';
+FROM wamn_run.runs WHERE run_id=:'run' AND env_key=:'env_key';
 SQL
 )
     status=$(jq -er '.status' <<< "$result")

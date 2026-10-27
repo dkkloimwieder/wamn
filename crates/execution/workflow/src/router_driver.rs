@@ -34,7 +34,7 @@ use wamn_runtime::plugins::wamn_postgres::{ResolvedActiveWiring, WorkflowRunKey}
 /// Trusted coordinates handed from an ingress admission owner to the driver.
 #[derive(Debug, Clone)]
 pub struct RouterDriverRequest {
-    pub tenant_id: String,
+    pub env_key: String,
     pub package_id: String,
     pub environment: String,
     pub wiring_id: String,
@@ -122,7 +122,7 @@ fn component_invocation_span(
 ) -> tracing::Span {
     invocation_span(
         &InvocationSite {
-            tenant_id: &request.tenant_id,
+            env_key: &request.env_key,
             project,
             environment: &request.environment,
             wiring_id: &request.wiring_id,
@@ -229,7 +229,7 @@ impl RouterDriver {
         let scope = self.release.scope();
         anyhow::ensure!(run.wiring_version > 0, "wiring-version-zero");
         anyhow::ensure!(
-            scope.tenant_id == run.tenant_id && scope.environment == run.environment,
+            scope.env_key == run.env_key && scope.environment == run.environment,
             "router-request-release-scope-mismatch"
         );
         let application_packages = &scope
@@ -249,7 +249,7 @@ impl RouterDriver {
             .resolve_workflow(
                 &self.operations.project,
                 &WorkflowRunKey {
-                    tenant_id: &run.tenant_id,
+                    env_key: &run.env_key,
                     environment: &run.environment,
                     application: &run.package_id,
                     application_packages,
@@ -263,7 +263,7 @@ impl RouterDriver {
             .instrument(tracing::info_span!("wamn.router.resolve"))
             .await?;
         let scope = WiringScope {
-            tenant_id: &run.tenant_id,
+            env_key: &run.env_key,
             package_id: &run.package_id,
             environment: &run.environment,
         };
@@ -440,7 +440,7 @@ impl RouterDriver {
             .postgres
             .workflow_node_caller(
                 &self.operations.project,
-                &request.tenant_id,
+                &request.env_key,
                 &identity.principal_id,
                 &identity.role,
             )
@@ -501,7 +501,7 @@ impl RouterDriver {
             deadline_ms,
             facts: NativeFacts::entry(
                 NodeAcquisition {
-                    claims: self.operations.claims(&request.tenant_id, release),
+                    claims: self.operations.claims(&request.env_key, release),
                     invocation: component_invocation(
                         component,
                         &call.operation,
@@ -624,7 +624,7 @@ mod tests {
 
     fn driver_request(traceparent: Option<&str>) -> RouterDriverRequest {
         RouterDriverRequest {
-            tenant_id: "tenant-a".to_owned(),
+            env_key: "tenant-a".to_owned(),
             package_id: "orders".to_owned(),
             environment: "prod".to_owned(),
             wiring_id: "route-order".to_owned(),
@@ -689,7 +689,7 @@ mod tests {
         assert_eq!(component.span_context.trace_id().to_string(), TRACE_ID);
         assert_eq!(component.parent_span_id.to_string(), PARENT_SPAN_ID);
         assert_eq!(
-            attribute(component, "wamn.tenant").as_deref(),
+            attribute(component, "wamn.env_key").as_deref(),
             Some("tenant-a")
         );
         assert_eq!(

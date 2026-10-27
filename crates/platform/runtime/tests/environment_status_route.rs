@@ -26,7 +26,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 };
 
 const PROJECT: &str = "project";
-const TENANT: &str = "tenant-a";
+const ENV_KEY: &str = "tenant-a";
 const ROUTE: &str = "purchase-read-http";
 const READ: &str = "status-test:purchase/read@1.0.0";
 const PASSWORD: &str = "environment-status-test-only";
@@ -69,7 +69,7 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_execution_contract::canonical_json_bytes(&manifest),
         "environment status test",
-        wamn_engine::release_manifest::ReleaseScope::new(TENANT, "dev").with_applications(
+        wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, "dev").with_applications(
             [(
                 "purchasing".to_owned(),
                 wamn_catalog::ApplicationDefinition {
@@ -103,8 +103,8 @@ async fn an_inactive_environment_refuses_every_route() -> anyhow::Result<()> {
         .get(0);
     let generation = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::Tenant {
-            tenant: TENANT,
+        WorkloadRoleScope::EnvKey {
+            env_key: ENV_KEY,
             database: &database,
         },
         CredentialGeneration::A,

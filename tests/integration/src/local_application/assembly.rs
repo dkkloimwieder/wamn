@@ -174,8 +174,8 @@ pub(super) async fn assemble(
         ),
     ] {
         let scope = if family == WorkloadRoleFamily::App {
-            WorkloadRoleScope::Tenant {
-                tenant: input.tenant,
+            WorkloadRoleScope::EnvKey {
+                env_key: input.env_key,
                 database: &database,
             }
         } else {
@@ -309,10 +309,10 @@ pub(super) async fn assemble(
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &canonical,
         "local application",
-        wamn_engine::release_manifest::ReleaseScope::new(input.tenant, input.environment)
+        wamn_engine::release_manifest::ReleaseScope::new(input.env_key, input.environment)
             .with_applications(environment.applications),
     )?);
-    project.execute("INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)", &[&input.tenant,&release.release().manifest_digest.as_str(),&canonical]).await?;
+    project.execute("INSERT INTO catalog.releases (env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)", &[&input.env_key,&release.release().manifest_digest.as_str(),&canonical]).await?;
 
     let project_config = ProjectConfig {
         credentials,
@@ -334,7 +334,7 @@ pub(super) async fn assemble(
         &entry_reference,
         "flow-http",
         wamn_runtime::plugins::wamn_postgres::SessionClaims {
-            tenant: input.tenant.to_owned(),
+            env_key: input.env_key.to_owned(),
             project: Some(input.project.to_owned()),
             schema: Some(input.schema.to_owned()),
             runner: Some("local-application".into()),
@@ -350,7 +350,7 @@ pub(super) async fn assemble(
     let auth_nats = super::LocalAuthNats::start(input.scratch).await?;
     wamn_runtime::auth_cache::replicate(
         &auth_nats.client,
-        Some(input.tenant),
+        Some(input.env_key),
         Arc::clone(&postgres),
     );
     let driver = Arc::new(RouterDriver::new(Arc::new(OperationHost::new(
@@ -406,7 +406,7 @@ pub(super) async fn assemble(
     let system_database = system_database_name(input.system_database_url)?;
     let identity_role = system_reader_generation_role(
         SystemReader::Identity,
-        input.tenant,
+        input.env_key,
         input.project,
         input.environment,
         &system_database,
@@ -466,7 +466,7 @@ pub(super) async fn assemble(
         route_host: input.route_host.to_owned(),
         bearer,
         caller_secret_path: secret,
-        tenant: input.tenant.to_owned(),
+        env_key: input.env_key.to_owned(),
         caller_role: input.caller_role.to_owned(),
         component_digests,
     })
@@ -505,7 +505,7 @@ fn render_declaration(
         }
     }
     let value =
-        wamn_control::component_declaration::render_declaration_document(source, input.tenant)?;
+        wamn_control::component_declaration::render_declaration_document(source, input.env_key)?;
     std::fs::write(target, serde_json::to_vec(&value)?)?;
     Ok(base_digests.into_values().map(String::from).collect())
 }

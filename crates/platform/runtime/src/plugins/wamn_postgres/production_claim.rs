@@ -163,7 +163,7 @@ impl RunStore for WamnPostgres {
                 "a nonempty canonical package set, environment, and positive lease TTL are required",
             ));
         }
-        let tenant = self.tenant_for(component_id).ok_or_else(|| {
+        let env_key = self.env_key_for(component_id).ok_or_else(|| {
             ProductionClaimError::new(
                 ProductionClaimErrorType::Identity,
                 "resolve tenant",
@@ -198,7 +198,7 @@ impl RunStore for WamnPostgres {
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
-                &tenant,
+                &env_key,
                 schema.as_deref(),
                 Some(&runner),
                 None,
@@ -277,7 +277,7 @@ impl RunStore for WamnPostgres {
                 "a nonempty canonical package set, environment, and non-negative janitor grace are required",
             ));
         }
-        let tenant = self.tenant_for(component_id).ok_or_else(|| {
+        let env_key = self.env_key_for(component_id).ok_or_else(|| {
             ProductionClaimError::new(
                 ProductionClaimErrorType::Identity,
                 "resolve janitor tenant",
@@ -311,7 +311,7 @@ impl RunStore for WamnPostgres {
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
-                &tenant,
+                &env_key,
                 schema.as_deref(),
                 Some(&runner),
                 None,
@@ -373,7 +373,7 @@ impl RunStore for WamnPostgres {
                 "lease generation and TTL must be positive",
             ));
         }
-        let tenant = self.tenant_for(component_id).ok_or_else(|| {
+        let env_key = self.env_key_for(component_id).ok_or_else(|| {
             ProductionClaimError::new(
                 ProductionClaimErrorType::Identity,
                 "resolve renewal tenant",
@@ -408,7 +408,7 @@ impl RunStore for WamnPostgres {
                 connection.connection(),
                 AuthorityClass::ExecutorPlatform,
                 false,
-                &tenant,
+                &env_key,
                 schema.as_deref(),
                 Some(&runner),
                 None,
@@ -456,7 +456,7 @@ impl RunStore for WamnPostgres {
                 "lease generation must be positive",
             ));
         }
-        let tenant = self.tenant_for(component_id).ok_or_else(|| {
+        let env_key = self.env_key_for(component_id).ok_or_else(|| {
             ProductionClaimError::new(
                 ProductionClaimErrorType::Identity,
                 "resolve completion tenant",
@@ -490,7 +490,7 @@ impl RunStore for WamnPostgres {
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
-                &tenant,
+                &env_key,
                 schema.as_deref(),
                 Some(&runner),
                 None,
@@ -531,7 +531,7 @@ impl RunStore for WamnPostgres {
                 "lease generation must be positive",
             ));
         }
-        let tenant = self.tenant_for(component_id).ok_or_else(|| {
+        let env_key = self.env_key_for(component_id).ok_or_else(|| {
             ProductionClaimError::new(
                 ProductionClaimErrorType::Identity,
                 "resolve deadline report tenant",
@@ -565,7 +565,7 @@ impl RunStore for WamnPostgres {
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
-                &tenant,
+                &env_key,
                 schema.as_deref(),
                 Some(&runner),
                 None,
@@ -655,8 +655,8 @@ async fn finish_guarded_queue_transaction<T>(
 /// replica counts: if that replica dies, this host reclaims it.
 const PINNED_BACKLOG_SQL: &str = "SELECT EXISTS ( \
      SELECT 1 FROM run_queue AS q \
-       JOIN runs AS r ON r.tenant_id = q.tenant_id AND r.run_id = q.run_id \
-      WHERE q.tenant_id = current_setting('app.tenant', true) \
+       JOIN runs AS r ON r.env_key = q.env_key AND r.run_id = q.run_id \
+      WHERE q.env_key = current_setting('app.env_key', true) \
         AND r.package_id = ANY($1::text[]) \
         AND r.environment = $2 \
         AND r.manifest_digest = $3 \
@@ -682,7 +682,7 @@ impl WamnPostgres {
         let Some(release) = self.release_identity_for(component_id) else {
             return Ok(false);
         };
-        let tenant = self.tenant_for(component_id).ok_or_else(|| {
+        let env_key = self.env_key_for(component_id).ok_or_else(|| {
             ProductionClaimError::new(
                 ProductionClaimErrorType::Identity,
                 "resolve backlog tenant",
@@ -716,7 +716,7 @@ impl WamnPostgres {
                 &connection,
                 AuthorityClass::ExecutorPlatform,
                 false,
-                &tenant,
+                &env_key,
                 schema.as_deref(),
                 Some(&runner),
                 None,
@@ -1897,7 +1897,7 @@ mod tests {
     fn pinned_backlog_reads_the_runnable_queue_of_one_release() {
         for required in [
             "FROM run_queue AS q",
-            "q.tenant_id = current_setting('app.tenant', true)",
+            "q.env_key = current_setting('app.env_key', true)",
             "r.package_id = ANY($1::text[])",
             "r.environment = $2",
             "r.manifest_digest = $3",

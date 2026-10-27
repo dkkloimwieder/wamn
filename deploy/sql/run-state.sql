@@ -19,11 +19,11 @@
 -- Security shape mirrors the rest of the platform (s2/s3, catalog): tenant
 -- separation from `current_user` (wamn-0h0g.22.6). Every guest-reachable table
 -- FORCEs RLS keyed on
---   wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()
+--   wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key()
 -- and carries the matching `<table>_tkey` expression index; CHECK
--- (tenant_id <> '') forbids a ''-tenant row, so the floor is structural.
+-- (env_key <> '') forbids a ''-tenant row, so the floor is structural.
 --
--- `operator_run_actions` deliberately KEEPS its `app.tenant` predicate: the
+-- `operator_run_actions` deliberately KEEPS its `app.env_key` predicate: the
 -- guest ACL role holds no privilege on it (measured from has_table_privilege,
 -- wamn-0h0g.22.6.3), so its claim is HOST-INJECTED and re-keying it would be
 -- change without a threat. `wamn_run.run_queue` is the same case in
@@ -106,7 +106,7 @@ BEGIN
     EXECUTE replace(replace($wamn_authority_derivations$CREATE SCHEMA IF NOT EXISTS "wamn_authority" AUTHORIZATION CURRENT_USER;
 REVOKE ALL ON SCHEMA "wamn_authority" FROM PUBLIC;
 GRANT USAGE ON SCHEMA "wamn_authority" TO "wamn_app";
-CREATE OR REPLACE FUNCTION "wamn_authority".tenant_key(tenant text)
+CREATE OR REPLACE FUNCTION "wamn_authority".tenant_key(env_key text)
 RETURNS text
 LANGUAGE sql
 IMMUTABLE
@@ -116,8 +116,8 @@ SET search_path = pg_catalog
 AS $$
     SELECT substr(encode(sha256(
            int8send(19::bigint) || convert_to('wamn.app.scope.v0.1', 'UTF8')
-        || int8send(6::bigint) || convert_to('tenant', 'UTF8')
-        || int8send(octet_length(convert_to(tenant, 'UTF8'))::bigint) || convert_to(tenant, 'UTF8')
+        || int8send(7::bigint) || convert_to('env_key', 'UTF8')
+        || int8send(octet_length(convert_to(env_key, 'UTF8'))::bigint) || convert_to(env_key, 'UTF8')
         || int8send(8::bigint) || convert_to('database', 'UTF8')
         || int8send(@wamn_database_octets@::bigint) || convert_to(@wamn_database_literal@, 'UTF8')
        ), 'hex'), 1, 40)
@@ -261,14 +261,14 @@ CREATE TABLE wamn_run.environment_policies (
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
-    tenant_id            text NOT NULL CHECK (tenant_id <> ''),
+    env_key              text NOT NULL CHECK (env_key <> ''),
     expected_environment text NOT NULL CHECK (expected_environment <> ''),
     durability_class    text NOT NULL
         CONSTRAINT environment_policies_durability_class_check
         CHECK (durability_class IN ('standard', 'durable')),
     source_policy_org   text,
     source_policy_hash  text,
-    PRIMARY KEY (tenant_id)
+    PRIMARY KEY (env_key)
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON wamn_run.environment_policies
@@ -276,16 +276,16 @@ CREATE TRIGGER wamn_record_history_stamp
         'created_at', 'created_by', 'updated_at', 'updated_by');
 ALTER TABLE wamn_run.environment_policies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.environment_policies FORCE ROW LEVEL SECURITY;
-CREATE POLICY environment_policies_tenant
+CREATE POLICY environment_policies_env_key
 ON wamn_run.environment_policies
 FOR SELECT
 TO wamn_app
-USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+USING (wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key());
 CREATE POLICY environment_policies_platform ON wamn_run.environment_policies
     AS PERMISSIVE FOR SELECT TO wamn_platform
     USING (true);
 CREATE INDEX environment_policies_tkey
-    ON wamn_run.environment_policies ((wamn_authority.tenant_key(tenant_id)));
+    ON wamn_run.environment_policies ((wamn_authority.tenant_key(env_key)));
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.environment_policies
     FROM PUBLIC, wamn_app, wamn_scenario_author;
 GRANT SELECT ON TABLE wamn_run.environment_policies TO wamn_app;
@@ -302,7 +302,7 @@ GRANT SELECT ON TABLE wamn_run.environment_policies TO wamn_app;
 -- as_sql (tied to the crate by a drift-guard test).
 -- ---------------------------------------------------------------------------
 CREATE TABLE wamn_run.runs (
-    tenant_id       text NOT NULL CHECK (tenant_id <> ''),
+    env_key         text NOT NULL CHECK (env_key <> ''),
     run_id          text NOT NULL DEFAULT gen_random_uuid()::text,
     -- Nullable legacy execution grain. New admissions leave both NULL and
     -- carry the complete component-era wiring grain below; no migration
@@ -536,37 +536,37 @@ CREATE TABLE wamn_run.runs (
       (trigger_source IS NOT DISTINCT FROM 'automation')
       = (service_principal_id IS NOT NULL)
     ),
-    PRIMARY KEY (tenant_id, run_id),
+    PRIMARY KEY (env_key, run_id),
     CONSTRAINT runs_release_fk
-        FOREIGN KEY (tenant_id, manifest_digest)
-        REFERENCES catalog.releases (tenant_id, manifest_digest)
+        FOREIGN KEY (env_key, manifest_digest)
+        REFERENCES catalog.releases (env_key, manifest_digest)
 );
 -- At-least-once: a redelivered trigger with the same key collapses to one run.
-CREATE UNIQUE INDEX runs_idempotency ON wamn_run.runs (tenant_id, idempotency_key)
+CREATE UNIQUE INDEX runs_idempotency ON wamn_run.runs (env_key, idempotency_key)
     WHERE idempotency_key IS NOT NULL;
 -- History listing and trusted CDC event-causation traversal.
-CREATE INDEX runs_flow ON wamn_run.runs (tenant_id, flow_id, created_at);
-CREATE INDEX runs_event_root ON wamn_run.runs (tenant_id, event_root_run_id)
+CREATE INDEX runs_flow ON wamn_run.runs (env_key, flow_id, created_at);
+CREATE INDEX runs_event_root ON wamn_run.runs (env_key, event_root_run_id)
     WHERE event_root_run_id IS NOT NULL;
-CREATE INDEX runs_response_deadline ON wamn_run.runs (tenant_id, response_deadline_at)
+CREATE INDEX runs_response_deadline ON wamn_run.runs (env_key, response_deadline_at)
     WHERE caller_released_at IS NULL
       AND response_deadline_at IS NOT NULL
       AND status IN ('dispatched', 'running');
-CREATE INDEX runs_run_deadline ON wamn_run.runs (tenant_id, run_deadline_at)
+CREATE INDEX runs_run_deadline ON wamn_run.runs (env_key, run_deadline_at)
     WHERE run_deadline_at IS NOT NULL
       AND status IN ('dispatched', 'running');
 ALTER TABLE wamn_run.runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.runs FORCE ROW LEVEL SECURITY;
-CREATE POLICY runs_tenant ON wamn_run.runs
+CREATE POLICY runs_env_key ON wamn_run.runs
     TO wamn_app
-    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
-    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+    USING (wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key());
 CREATE POLICY runs_platform ON wamn_run.runs
     AS PERMISSIVE FOR ALL TO wamn_platform
     USING (true)
     WITH CHECK (true);
 CREATE INDEX runs_tkey
-    ON wamn_run.runs ((wamn_authority.tenant_key(tenant_id)));
+    ON wamn_run.runs ((wamn_authority.tenant_key(env_key)));
 
 CREATE TRIGGER runs_event_lineage_immutable
 BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth
@@ -638,7 +638,7 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_terminal_run_delete();
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.runs
     FROM PUBLIC, wamn_app, wamn_run_retention;
 GRANT SELECT, DELETE ON wamn_run.runs TO wamn_app;
-GRANT SELECT (tenant_id, status, created_at), DELETE
+GRANT SELECT (env_key, status, created_at), DELETE
     ON wamn_run.runs TO wamn_run_retention;
 
 -- ---------------------------------------------------------------------------
@@ -649,7 +649,7 @@ GRANT SELECT (tenant_id, status, created_at), DELETE
 -- refusal; until then execution remains hard-refused.
 -- ---------------------------------------------------------------------------
 CREATE TABLE wamn_run.effect_attempts (
-    tenant_id       text NOT NULL,
+    env_key         text NOT NULL,
     attempt_id      uuid NOT NULL DEFAULT gen_random_uuid(),
     run_id          text NOT NULL,
     root_plan_hash  text NOT NULL,
@@ -675,7 +675,7 @@ CREATE TABLE wamn_run.effect_attempts (
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
-    CONSTRAINT effect_attempts_tenant_check CHECK (tenant_id <> ''),
+    CONSTRAINT effect_attempts_env_key_check CHECK (env_key <> ''),
     CONSTRAINT effect_attempts_root_plan_hash_check
         CHECK (root_plan_hash ~ '^sha256:[0-9a-f]{64}$'),
     CONSTRAINT effect_attempts_current_plan_hash_check
@@ -714,36 +714,36 @@ CREATE TABLE wamn_run.effect_attempts (
         CHECK (attempt_started_at <= attempt_deadline_at),
     CONSTRAINT effect_attempts_input_ref_check
         CHECK (attempt_input_ref <> ''),
-    PRIMARY KEY (tenant_id, attempt_id),
+    PRIMARY KEY (env_key, attempt_id),
     CONSTRAINT effect_attempts_occurrence_key
-        UNIQUE (tenant_id, run_id, frame_id, local_node_id, occurrence),
+        UNIQUE (env_key, run_id, frame_id, local_node_id, occurrence),
     CONSTRAINT effect_attempts_dispatch_identity_key
-        UNIQUE (tenant_id, attempt_id, attempt_started_at,
+        UNIQUE (env_key, attempt_id, attempt_started_at,
                 run_id, frame_id, local_node_id, occurrence)
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON wamn_run.effect_attempts
     FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(
         'created_at', 'created_by', 'updated_at', 'updated_by');
--- Deliberately no FK from (tenant_id, run_id) to runs: effect attempts are an
+-- Deliberately no FK from (env_key, run_id) to runs: effect attempts are an
 -- audit table with an independent retention lifetime. Pruning terminal run
 -- history cascades through the mutable node projection but must leave these
 -- immutable facts intact.
 CREATE INDEX effect_attempts_bulk_scope
     ON wamn_run.effect_attempts
-       (tenant_id, connection_name, connection_generation, attempt_started_at);
+       (env_key, connection_name, connection_generation, attempt_started_at);
 ALTER TABLE wamn_run.effect_attempts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.effect_attempts FORCE ROW LEVEL SECURITY;
-CREATE POLICY effect_attempts_tenant ON wamn_run.effect_attempts
+CREATE POLICY effect_attempts_env_key ON wamn_run.effect_attempts
     TO wamn_app
-    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
-    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+    USING (wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key());
 CREATE POLICY effect_attempts_platform ON wamn_run.effect_attempts
     AS PERMISSIVE FOR ALL TO wamn_platform
     USING (true)
     WITH CHECK (true);
 CREATE INDEX effect_attempts_tkey
-    ON wamn_run.effect_attempts ((wamn_authority.tenant_key(tenant_id)));
+    ON wamn_run.effect_attempts ((wamn_authority.tenant_key(env_key)));
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.effect_attempts
     FROM PUBLIC, wamn_app, wamn_scenario_author;
 GRANT SELECT ON wamn_run.effect_attempts TO wamn_app;
@@ -763,7 +763,7 @@ CREATE TABLE wamn_run.effect_attempt_dispatches (
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
-    tenant_id       text NOT NULL,
+    env_key         text NOT NULL,
     attempt_id      uuid NOT NULL,
     attempt_started_at timestamptz NOT NULL,
     run_id          text NOT NULL,
@@ -771,22 +771,22 @@ CREATE TABLE wamn_run.effect_attempt_dispatches (
     local_node_id   text NOT NULL,
     occurrence      int NOT NULL,
     dispatched_at   timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT effect_attempt_dispatches_tenant_check CHECK (tenant_id <> ''),
+    CONSTRAINT effect_attempt_dispatches_env_key_check CHECK (env_key <> ''),
     CONSTRAINT effect_attempt_dispatches_frame_check CHECK (frame_id >= 0),
     CONSTRAINT effect_attempt_dispatches_local_node_check
         CHECK (local_node_id ~ '^[a-z0-9-]+$'),
     CONSTRAINT effect_attempt_dispatches_occurrence_check CHECK (occurrence >= 0),
     CONSTRAINT effect_attempt_dispatches_time_check
         CHECK (attempt_started_at <= dispatched_at),
-    PRIMARY KEY (tenant_id, attempt_id),
-    UNIQUE (tenant_id, attempt_id, dispatched_at),
+    PRIMARY KEY (env_key, attempt_id),
+    UNIQUE (env_key, attempt_id, dispatched_at),
     CONSTRAINT effect_attempt_dispatches_occurrence_key
-        UNIQUE (tenant_id, run_id, frame_id, local_node_id, occurrence),
+        UNIQUE (env_key, run_id, frame_id, local_node_id, occurrence),
     CONSTRAINT effect_attempt_dispatches_attempt_fk
-        FOREIGN KEY (tenant_id, attempt_id, attempt_started_at,
+        FOREIGN KEY (env_key, attempt_id, attempt_started_at,
                      run_id, frame_id, local_node_id, occurrence)
         REFERENCES wamn_run.effect_attempts
-            (tenant_id, attempt_id, attempt_started_at,
+            (env_key, attempt_id, attempt_started_at,
              run_id, frame_id, local_node_id, occurrence)
 );
 CREATE TRIGGER wamn_record_history_stamp
@@ -795,16 +795,16 @@ CREATE TRIGGER wamn_record_history_stamp
         'created_at', 'created_by', 'updated_at', 'updated_by');
 ALTER TABLE wamn_run.effect_attempt_dispatches ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.effect_attempt_dispatches FORCE ROW LEVEL SECURITY;
-CREATE POLICY effect_attempt_dispatches_tenant ON wamn_run.effect_attempt_dispatches
+CREATE POLICY effect_attempt_dispatches_env_key ON wamn_run.effect_attempt_dispatches
     TO wamn_app
-    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
-    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+    USING (wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key());
 CREATE POLICY effect_attempt_dispatches_platform ON wamn_run.effect_attempt_dispatches
     AS PERMISSIVE FOR ALL TO wamn_platform
     USING (true)
     WITH CHECK (true);
 CREATE INDEX effect_attempt_dispatches_tkey
-    ON wamn_run.effect_attempt_dispatches ((wamn_authority.tenant_key(tenant_id)));
+    ON wamn_run.effect_attempt_dispatches ((wamn_authority.tenant_key(env_key)));
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.effect_attempt_dispatches
     FROM PUBLIC, wamn_app, wamn_scenario_author;
 GRANT SELECT ON wamn_run.effect_attempt_dispatches TO wamn_app;
@@ -822,21 +822,21 @@ CREATE TABLE wamn_run.effect_attempt_outcomes (
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
-    tenant_id       text NOT NULL,
+    env_key         text NOT NULL,
     attempt_id      uuid NOT NULL,
     dispatched_at   timestamptz NOT NULL,
     outcome_status  text NOT NULL,
     recorded_at     timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT effect_attempt_outcomes_tenant_check CHECK (tenant_id <> ''),
+    CONSTRAINT effect_attempt_outcomes_env_key_check CHECK (env_key <> ''),
     CONSTRAINT effect_attempt_outcomes_status_check
         CHECK (outcome_status IN ('success', 'error')),
     CONSTRAINT effect_attempt_outcomes_time_check
         CHECK (dispatched_at <= recorded_at),
-    PRIMARY KEY (tenant_id, attempt_id),
+    PRIMARY KEY (env_key, attempt_id),
     CONSTRAINT effect_attempt_outcomes_dispatch_fk
-        FOREIGN KEY (tenant_id, attempt_id, dispatched_at)
+        FOREIGN KEY (env_key, attempt_id, dispatched_at)
         REFERENCES wamn_run.effect_attempt_dispatches
-            (tenant_id, attempt_id, dispatched_at)
+            (env_key, attempt_id, dispatched_at)
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON wamn_run.effect_attempt_outcomes
@@ -844,16 +844,16 @@ CREATE TRIGGER wamn_record_history_stamp
         'created_at', 'created_by', 'updated_at', 'updated_by');
 ALTER TABLE wamn_run.effect_attempt_outcomes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.effect_attempt_outcomes FORCE ROW LEVEL SECURITY;
-CREATE POLICY effect_attempt_outcomes_tenant ON wamn_run.effect_attempt_outcomes
+CREATE POLICY effect_attempt_outcomes_env_key ON wamn_run.effect_attempt_outcomes
     TO wamn_app
-    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
-    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
+    USING (wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key())
+    WITH CHECK (wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key());
 CREATE POLICY effect_attempt_outcomes_platform ON wamn_run.effect_attempt_outcomes
     AS PERMISSIVE FOR ALL TO wamn_platform
     USING (true)
     WITH CHECK (true);
 CREATE INDEX effect_attempt_outcomes_tkey
-    ON wamn_run.effect_attempt_outcomes ((wamn_authority.tenant_key(tenant_id)));
+    ON wamn_run.effect_attempt_outcomes ((wamn_authority.tenant_key(env_key)));
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.effect_attempt_outcomes
     FROM PUBLIC, wamn_app, wamn_scenario_author;
 GRANT SELECT ON wamn_run.effect_attempt_outcomes TO wamn_app;
@@ -873,7 +873,7 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change();
 -- attribution and appends before changing the mutable terminal projections.
 -- ---------------------------------------------------------------------------
 CREATE TABLE wamn_run.operator_run_actions (
-    tenant_id       text NOT NULL,
+    env_key         text NOT NULL,
     action_id       uuid NOT NULL DEFAULT gen_random_uuid(),
     correlation_id  text NOT NULL,
     run_id          text NOT NULL,
@@ -891,7 +891,7 @@ CREATE TABLE wamn_run.operator_run_actions (
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
-    CONSTRAINT operator_run_actions_tenant_check CHECK (tenant_id <> ''),
+    CONSTRAINT operator_run_actions_env_key_check CHECK (env_key <> ''),
     CONSTRAINT operator_run_actions_correlation_check CHECK (correlation_id <> ''),
     CONSTRAINT operator_run_actions_run_check CHECK (run_id <> ''),
     CONSTRAINT operator_run_actions_type_check
@@ -917,9 +917,9 @@ CREATE TABLE wamn_run.operator_run_actions (
          AND prior_started_node_occurrence >= 0
          AND prior_started_node_status = 'started')
     ),
-    PRIMARY KEY (tenant_id, action_id),
-    CONSTRAINT operator_run_actions_run_key UNIQUE (tenant_id, run_id),
-    CONSTRAINT operator_run_actions_correlation_key UNIQUE (tenant_id, correlation_id)
+    PRIMARY KEY (env_key, action_id),
+    CONSTRAINT operator_run_actions_run_key UNIQUE (env_key, run_id),
+    CONSTRAINT operator_run_actions_correlation_key UNIQUE (env_key, correlation_id)
 );
 CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON wamn_run.operator_run_actions
@@ -927,9 +927,9 @@ CREATE TRIGGER wamn_record_history_stamp
         'created_at', 'created_by', 'updated_at', 'updated_by');
 ALTER TABLE wamn_run.operator_run_actions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.operator_run_actions FORCE ROW LEVEL SECURITY;
-CREATE POLICY operator_run_actions_tenant ON wamn_run.operator_run_actions
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+CREATE POLICY operator_run_actions_env_key ON wamn_run.operator_run_actions
+    USING (env_key = NULLIF(current_setting('app.env_key', true), ''))
+    WITH CHECK (env_key = NULLIF(current_setting('app.env_key', true), ''));
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.operator_run_actions
     FROM PUBLIC, wamn_app, wamn_scenario_author;
 CREATE TRIGGER operator_run_actions_update_immutable

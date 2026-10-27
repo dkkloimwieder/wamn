@@ -66,7 +66,7 @@ mod tests {
         "widgets",
         "--environment",
         "dev",
-        "--tenant",
+        "--env-key",
         "tenant-a",
         "--package-artifact-base",
         "registry.invalid/wamn/packages",
@@ -86,7 +86,7 @@ mod tests {
         assert_eq!(args.org, "fixture");
         assert_eq!(args.project, "widgets");
         assert_eq!(args.environment, "dev");
-        assert_eq!(args.tenant, "tenant-a");
+        assert_eq!(args.env_key, "tenant-a");
         assert_eq!(args.system_url, "postgres://system.invalid/system");
         assert_eq!(
             args.control_authoring_database_url,
@@ -97,7 +97,7 @@ mod tests {
             "postgres://project.invalid/wamn-db-fixture--widgets--dev--k3m9x2p7"
         );
         assert!(Cli::try_parse_from(["wamn-scenario-worker"]).is_err());
-        assert!(Cli::try_parse_from(["wamn-scenario-worker", "--tenant", "tenant-a"]).is_err());
+        assert!(Cli::try_parse_from(["wamn-scenario-worker", "--env-key", "tenant-a"]).is_err());
         // Every scope component is required: none of them has a default that
         // would silently bind this process to a scope nobody chose.
         for omitted in [
@@ -106,7 +106,7 @@ mod tests {
             "--org",
             "--project",
             "--environment",
-            "--tenant",
+            "--env-key",
         ] {
             let partial: Vec<&str> = SERVE
                 .iter()

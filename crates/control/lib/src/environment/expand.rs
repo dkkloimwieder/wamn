@@ -41,8 +41,8 @@ pub async fn expand(
     analysis: &Analysis,
 ) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
     let triple = document.triple();
-    let tenant =
-        wamn_control_provision::project_env_tenant(&document.org, &document.project, &document.env);
+    let env_key =
+        wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
     let mut system = connect(&platform.system_database_url).await?;
     system
         .batch_execute("SET ROLE wamn_system")
@@ -83,7 +83,7 @@ pub async fn expand(
     crate::reconcile_run_plane::converge_environment_policy(
         &mut project,
         &BareSchemaName::new(RUN_SCHEMA.to_owned())?,
-        &tenant,
+        &env_key,
         &document.env,
         &source,
         true,

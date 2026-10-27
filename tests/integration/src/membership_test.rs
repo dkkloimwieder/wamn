@@ -113,7 +113,7 @@ pub async fn run(args: MembershipTestArgs) -> anyhow::Result<()> {
     let role = format!("membership-test-{nonce}");
     if let Some(path) = &args.throughput_pat_file {
         let result = tokio::time::timeout(TEST_TIMEOUT, async {
-            seed_tenant_role(&args, &mut project, user.id(), &role, &auth).await?;
+            seed_env_key_role(&args, &mut project, user.id(), &role, &auth).await?;
             membership(&args, user.id(), "grant-project-env-membership", &auth).await?;
             let token = issue_pat(
                 &system,
@@ -132,7 +132,7 @@ pub async fn run(args: MembershipTestArgs) -> anyhow::Result<()> {
             cleanup(
                 &mut system,
                 &mut project,
-                &wamn_control_registry::project_env_tenant(&args.org, &args.project, &args.env),
+                &wamn_control_registry::project_env_key(&args.org, &args.project, &args.env),
                 user.id(),
                 &role,
                 &auth,
@@ -155,7 +155,7 @@ pub async fn run(args: MembershipTestArgs) -> anyhow::Result<()> {
         cleanup(
             &mut system,
             &mut project,
-            &wamn_control_registry::project_env_tenant(&args.org, &args.project, &args.env),
+            &wamn_control_registry::project_env_key(&args.org, &args.project, &args.env),
             user.id(),
             &role,
             &auth,
@@ -230,7 +230,7 @@ async fn exercise(
     )
     .await
     .context("assign the project role that must not imply membership")?;
-    seed_tenant_role(args, project, principal, role, auth).await?;
+    seed_env_key_role(args, project, principal, role, auth).await?;
 
     let request = |case: &'static str, status| get_case(args, http, token.token(), case, status);
     request("absent_membership", 401).await?;
@@ -241,7 +241,7 @@ async fn exercise(
     let user = format!("{role}@example.test");
     let removed = wamn_control::user_role::revoke_role_on(
         project,
-        &wamn_control_registry::project_env_tenant(&args.org, &args.project, &args.env),
+        &wamn_control_registry::project_env_key(&args.org, &args.project, &args.env),
         &user,
         role,
         auth,
@@ -255,7 +255,7 @@ async fn exercise(
     request("role_removed", 403).await?;
     wamn_control::user_role::grant_role_on(
         project,
-        &wamn_control_registry::project_env_tenant(&args.org, &args.project, &args.env),
+        &wamn_control_registry::project_env_key(&args.org, &args.project, &args.env),
         &user,
         role,
         auth,
@@ -270,7 +270,7 @@ async fn exercise(
     Ok(())
 }
 
-async fn seed_tenant_role(
+async fn seed_env_key_role(
     args: &MembershipTestArgs,
     project: &mut Client,
     principal: &PrincipalId,
@@ -301,7 +301,7 @@ async fn seed_tenant_role(
     let mut drops = AuthDrops::default();
     application::create_role(
         &tx,
-        &wamn_control_registry::project_env_tenant(&args.org, &args.project, &args.env),
+        &wamn_control_registry::project_env_key(&args.org, &args.project, &args.env),
         role,
         &mut drops,
     )
@@ -309,7 +309,7 @@ async fn seed_tenant_role(
     .context("seed the dedicated test role")?;
     application::grant_permission(
         &tx,
-        &wamn_control_registry::project_env_tenant(&args.org, &args.project, &args.env),
+        &wamn_control_registry::project_env_key(&args.org, &args.project, &args.env),
         role,
         &operation_grant()?,
         &mut drops,
@@ -318,7 +318,7 @@ async fn seed_tenant_role(
     .context("grant only the canonical purchase-order/get operation to the test role")?;
     application::grant_user_role(
         &tx,
-        &wamn_control_registry::project_env_tenant(&args.org, &args.project, &args.env),
+        &wamn_control_registry::project_env_key(&args.org, &args.project, &args.env),
         principal.as_str(),
         role,
         &mut drops,
@@ -423,7 +423,7 @@ fn check_record(body: &Value) -> anyhow::Result<()> {
 async fn cleanup(
     system: &mut Client,
     project: &mut Client,
-    tenant: &str,
+    env_key: &str,
     principal: &PrincipalId,
     role: &str,
     auth: &AuthChanges,
@@ -436,7 +436,7 @@ async fn cleanup(
         )
         .await?;
         let mut drops = AuthDrops::default();
-        application::delete_role(&tx, tenant, role, &mut drops).await?;
+        application::delete_role(&tx, env_key, role, &mut drops).await?;
         tx.commit().await?;
         auth.publish(drops).await;
         Ok(())

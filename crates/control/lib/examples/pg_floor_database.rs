@@ -1,7 +1,7 @@
 //! Install Receiving through the local package applier, without starting a host.
 use anyhow::Context as _;
 use wamn_control::apply_package::{ApplyPackageRequest, PackageRoot, apply_local_package};
-use wamn_control::dev::environment::{ENVIRONMENT, TENANT};
+use wamn_control::dev::environment::{ENV_KEY, ENVIRONMENT};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -40,7 +40,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .await?;
     let marker =
-        wamn_runtime::local_application::local_target_marker(TENANT, ENVIRONMENT, row.get(0));
+        wamn_runtime::local_application::local_target_marker(ENV_KEY, ENVIRONMENT, row.get(0));
     client
         .batch_execute(&format!(
             "COMMENT ON DATABASE {} IS {}",
@@ -67,7 +67,7 @@ async fn main() -> anyhow::Result<()> {
     wamn_control::reconcile_package_data_access::reconcile_local(
         &access,
         &url,
-        TENANT,
+        ENV_KEY,
         ENVIRONMENT,
         true,
         &wamn_platform_identity::auth_changes::AuthChanges::default(),

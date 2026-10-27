@@ -29,7 +29,7 @@ const REMOVAL_SLACK: Duration = Duration::from_secs(15);
 /// The stranded-run query: runs pinned to a release with no live pod.
 const STRANDED_SQL: &str = "\
 SELECT run_id, manifest_digest FROM wamn_run.runs \
- WHERE tenant_id = $1 AND environment = $2 \
+ WHERE env_key = $1 AND environment = $2 \
    AND status IN ('dispatched', 'running') \
    AND manifest_digest IS NOT NULL \
    AND NOT (manifest_digest = ANY($3)) \
@@ -68,9 +68,9 @@ pub async fn drain(
         );
     }
     let project_url = super::ensure::project_url(platform, &document.triple()).await?;
-    let tenant =
-        wamn_control_provision::project_env_tenant(&document.org, &document.project, &document.env);
-    let stranded = stranded(&project_url, &tenant, &document.env, &live).await?;
+    let env_key =
+        wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
+    let stranded = stranded(&project_url, &env_key, &document.env, &live).await?;
     if !stranded.is_empty() {
         let recovery = if target.is_some() {
             "`env rollback` brings hosts that can claim them"
@@ -137,7 +137,7 @@ pub fn largest_grace(pods: &Value, target: Option<&str>) -> Duration {
 /// When the project database cannot be read.
 pub async fn stranded(
     project_url: &str,
-    tenant: &str,
+    env_key: &str,
     environment: &str,
     live: &BTreeMap<String, usize>,
 ) -> anyhow::Result<Vec<Stranded>> {
@@ -148,11 +148,11 @@ pub async fn stranded(
         .await
         .context("begin the stranded-run read")?;
     transaction
-        .query_one("SELECT set_config('app.tenant', $1, true)", &[&tenant])
+        .query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
         .await
         .context("claim the tenant")?;
     let stranded = transaction
-        .query(STRANDED_SQL, &[&tenant, &environment, &live])
+        .query(STRANDED_SQL, &[&env_key, &environment, &live])
         .await
         .context("read the runs pinned to a release with no live pod")?
         .into_iter()

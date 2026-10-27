@@ -106,7 +106,7 @@ The kill is a SIGKILL of the `wamn-host` process of the WMS pod, sent from a nod
 ```sql
 SELECT r.status, r.updated_at, q.lease_generation, q.attempts, q.lease_owner, q.lease_expires_at
   FROM wamn_run.runs AS r
-  LEFT JOIN wamn_run.run_queue AS q USING (tenant_id, run_id)
+  LEFT JOIN wamn_run.run_queue AS q USING (env_key, run_id)
  WHERE r.run_id = '<run id>';
 ```
 

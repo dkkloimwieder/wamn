@@ -35,7 +35,7 @@ const PLURAL_TABLES: &str = include_str!(
 const ORG: &str = "us0";
 const PROJECT: &str = "app";
 const ENV: &str = "dev";
-const TENANT: &str = "us0-tenant";
+const ENV_KEY: &str = "us0-tenant";
 const CLUSTER: &str = "us0-pg18";
 
 struct WorkDirectory(std::path::PathBuf);
@@ -316,8 +316,15 @@ async fn upgrade_schema_applies_each_pending_file_once() {
     let client = connect(&project_url).await;
     client
         .0
+        .batch_execute(include_str!(
+            "../../../crates/catalog/model/tests/fixtures/catalog-before-env-key.sql"
+        ))
+        .await
+        .expect("restore the historical catalog key");
+    client
+        .0
         .batch_execute(&format!(
-            "SET wamn.fixture_tenant = '{TENANT}'; {ADMINISTRATION_BOUNDARY} {ORG_BOUNDARY}"
+            "SET wamn.fixture_tenant = '{ENV_KEY}'; {ADMINISTRATION_BOUNDARY} {ORG_BOUNDARY}"
         ))
         .await
         .expect("restore the tenant floors before 0038 and 0031");

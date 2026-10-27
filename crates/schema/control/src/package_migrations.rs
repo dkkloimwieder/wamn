@@ -754,8 +754,8 @@ fn record_migration_statement(
     Ok(SqlStatement {
         summary: format!("{action} {}", migration.source.relative_path),
         sql: "INSERT INTO catalog.package_migrations \
-              (tenant_id, package_id, package_version, ordinal, relative_path, sha256) \
-              VALUES (NULLIF(current_setting('app.tenant', true), ''), $1, $2, $3, $4, $5)"
+              (env_key, package_id, package_version, ordinal, relative_path, sha256) \
+              VALUES (NULLIF(current_setting('app.env_key', true), ''), $1, $2, $3, $4, $5)"
             .into(),
         params: vec![
             Value::Text(coordinate.package_id().into()),

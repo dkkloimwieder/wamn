@@ -48,12 +48,9 @@ pub async fn upload_release(
     bucket: &str,
 ) -> anyhow::Result<Vec<UploadedClient>> {
     let hex = release_hex(release)?;
-    let tenant = wamn_control_provision::project_env_tenant(
-        &triple.org,
-        &triple.project,
-        triple.env.as_str(),
-    );
-    let deployed = crate::environment::analyse::deployed_release(&platform.target, &tenant)
+    let env_key =
+        wamn_control_provision::project_env_key(&triple.org, &triple.project, triple.env.as_str());
+    let deployed = crate::environment::analyse::deployed_release(&platform.target, &env_key)
         .await?
         .with_context(|| format!("{triple} serves no release"))?;
     ensure!(

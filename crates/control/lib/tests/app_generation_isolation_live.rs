@@ -51,7 +51,7 @@ const NEIGHBOUR_ENVIRONMENT: &str = "staging";
 const INSTANCE: &str = "q4w8z1n6";
 /// ONE tenant across both environments. Same tenant, different database, so the
 /// refusal cannot be explained away as a tenant mismatch.
-const TENANT: &str = "tenant-dkzr";
+const ENV_KEY: &str = "tenant-dkzr";
 /// A throwaway probe string for a disposable server that dies with this test
 /// process. It is never printed and it names no real credential.
 const GENERATION_PROBE_PASSWORD: &str = "app-generation-probe";
@@ -117,8 +117,8 @@ async fn an_app_generation_cannot_open_a_session_on_a_neighbouring_project_env_d
     // `--prepare-guest-generation` calls.
     let generation = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::Tenant {
-            tenant: TENANT,
+        WorkloadRoleScope::EnvKey {
+            env_key: ENV_KEY,
             database: &home,
         },
         CredentialGeneration::A,

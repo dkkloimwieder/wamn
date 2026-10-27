@@ -26,12 +26,12 @@ async fn install_legacy_child_run_state(su: &Client) {
              (waiting_child_run_id IS NULL) = (waiting_child_occurrence IS NULL) AND \
              (waiting_child_run_id IS NULL) = (wait_generation IS NULL)); \
          CREATE UNIQUE INDEX runs_parent_occurrence ON {SCHEMA}.runs \
-           (tenant_id,parent_run_id,parent_node_id,parent_occurrence) \
+           (env_key,parent_run_id,parent_node_id,parent_occurrence) \
            WHERE parent_run_id IS NOT NULL; \
          CREATE INDEX runs_invoke_root ON {SCHEMA}.runs \
-           (tenant_id,invoke_root_run_id) WHERE invoke_root_run_id IS NOT NULL; \
+           (env_key,invoke_root_run_id) WHERE invoke_root_run_id IS NOT NULL; \
          CREATE INDEX runs_waiting_child ON {SCHEMA}.runs \
-           (tenant_id,waiting_child_run_id) WHERE waiting_child_run_id IS NOT NULL;"
+           (env_key,waiting_child_run_id) WHERE waiting_child_run_id IS NOT NULL;"
     ))
     .await
     .expect("install retired child-run state");
@@ -52,7 +52,7 @@ async fn seed_failure_detail_run(su: &Client, run_id: &str) {
     su.execute(
         &format!(
             "INSERT INTO {SCHEMA}.runs \
-               (tenant_id,run_id,flow_id,flow_version,package_id, \
+               (env_key,run_id,flow_id,flow_version,package_id, \
                 environment,status,fail_type,terminal_reason, \
                 caller_outcome_type,caller_outcome_json,caller_http_status, \
                 caller_released_at,fail_node,fail_reason) \
@@ -74,7 +74,7 @@ async fn assert_retained_failure_record(su: &Client, run_id: &str) {
                 "SELECT fail_type,terminal_reason,caller_outcome_type, \
                         caller_outcome_json::text,caller_http_status,status \
                    FROM {SCHEMA}.runs \
-                  WHERE tenant_id='failure-detail' AND run_id=$1"
+                  WHERE env_key='failure-detail' AND run_id=$1"
             ),
             &[&run_id],
         )
@@ -108,7 +108,7 @@ async fn failure_detail_snapshot(su: &Client) -> String {
                   WHERE attribute.attrelid='{SCHEMA}.runs'::regclass \
                     AND attribute.attnum > 0 AND NOT attribute.attisdropped), '[]'::jsonb), \
                'rows', COALESCE(( \
-                 SELECT jsonb_agg(to_jsonb(run_row) ORDER BY tenant_id,run_id) \
+                 SELECT jsonb_agg(to_jsonb(run_row) ORDER BY env_key,run_id) \
                    FROM {SCHEMA}.runs AS run_row), '[]'::jsonb), \
                'view', pg_catalog.pg_get_viewdef( \
                  pg_catalog.to_regclass('{SCHEMA}.retired_failure_detail_dependency'),true))::text"
@@ -157,10 +157,10 @@ pub(super) async fn node_runs_retirement_leg(su: &Client) {
         .expect("apply current run-state for node-runs retirement");
     su.batch_execute(&format!(
         "CREATE TABLE {SCHEMA}.node_runs ( \
-           tenant_id text NOT NULL, run_id text NOT NULL, node_id text NOT NULL, \
+           env_key text NOT NULL, run_id text NOT NULL, node_id text NOT NULL, \
            occurrence int NOT NULL DEFAULT 0, seq int NOT NULL, status text NOT NULL, \
-           PRIMARY KEY (tenant_id,run_id,node_id,occurrence)); \
-         INSERT INTO {SCHEMA}.node_runs(tenant_id,run_id,node_id,occurrence,seq,status) \
+           PRIMARY KEY (env_key,run_id,node_id,occurrence)); \
+         INSERT INTO {SCHEMA}.node_runs(env_key,run_id,node_id,occurrence,seq,status) \
            VALUES ('t1','r1','n1',0,0,'success'); \
          GRANT USAGE ON SCHEMA {SCHEMA} TO wamn_run_projection_writer; \
          GRANT SELECT, INSERT, UPDATE, DELETE ON {SCHEMA}.node_runs \
@@ -241,7 +241,7 @@ pub(super) async fn shared_runner_legacy_leg(su: &Client) {
     su.batch_execute(&format!(
         "CREATE SCHEMA {SCHEMA}; GRANT USAGE ON SCHEMA {SCHEMA} TO wamn_app; \
          CREATE TABLE {SCHEMA}.runs ( \
-           tenant_id text NOT NULL CHECK (tenant_id <> ''), run_id text NOT NULL, \
+           env_key text NOT NULL CHECK (env_key <> ''), run_id text NOT NULL, \
            flow_id text NOT NULL, flow_version int NOT NULL, \
            status text NOT NULL DEFAULT 'running' CHECK (status IN \
              ('dispatched','running','completed','failed','infrastructure-failure','effect-uncertain')), \
@@ -250,26 +250,26 @@ pub(super) async fn shared_runner_legacy_leg(su: &Client) {
            fail_type text CHECK (fail_type IN \
              ('terminal','retry-exhausted','invalid-input','runaway-budget')), \
            created_at timestamptz NOT NULL DEFAULT now(), \
-           updated_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (tenant_id,run_id)); \
-         CREATE TABLE {SCHEMA}.run_queue (tenant_id text NOT NULL CHECK (tenant_id <> ''), \
+           updated_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (env_key,run_id)); \
+         CREATE TABLE {SCHEMA}.run_queue (env_key text NOT NULL CHECK (env_key <> ''), \
            run_id text NOT NULL,partition_key text,partition_policy text NOT NULL DEFAULT 'blocking' \
              CHECK(partition_policy IN ('blocking','leapfrog')),priority int NOT NULL DEFAULT 0, \
            available_at timestamptz NOT NULL DEFAULT now(),stream_seq bigint NOT NULL DEFAULT 0, \
            lease_owner text,lease_expires_at timestamptz,attempts int NOT NULL DEFAULT 0, \
            max_attempts int NOT NULL DEFAULT 20,enqueued_at timestamptz NOT NULL DEFAULT now(), \
-           PRIMARY KEY(tenant_id,run_id),FOREIGN KEY(tenant_id,run_id) \
-             REFERENCES {SCHEMA}.runs(tenant_id,run_id) ON DELETE CASCADE); \
+           PRIMARY KEY(env_key,run_id),FOREIGN KEY(env_key,run_id) \
+             REFERENCES {SCHEMA}.runs(env_key,run_id) ON DELETE CASCADE); \
          CREATE INDEX run_queue_claimable ON {SCHEMA}.run_queue \
-           (tenant_id,available_at,stream_seq,lease_expires_at); \
-         CREATE INDEX run_queue_partition ON {SCHEMA}.run_queue(tenant_id,partition_key) \
+           (env_key,available_at,stream_seq,lease_expires_at); \
+         CREATE INDEX run_queue_partition ON {SCHEMA}.run_queue(env_key,partition_key) \
            WHERE partition_key IS NOT NULL; \
-         CREATE TABLE {SCHEMA}.partition_owner (tenant_id text NOT NULL CHECK(tenant_id <> ''), \
+         CREATE TABLE {SCHEMA}.partition_owner (env_key text NOT NULL CHECK(env_key <> ''), \
            partition_key text NOT NULL,lease_owner text NOT NULL,lease_expires_at timestamptz NOT NULL, \
-           acquired_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(tenant_id,partition_key)); \
-         CREATE TABLE {SCHEMA}.run_dead_letters (tenant_id text NOT NULL CHECK(tenant_id <> ''), \
+           acquired_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(env_key,partition_key)); \
+         CREATE TABLE {SCHEMA}.run_dead_letters (env_key text NOT NULL CHECK(env_key <> ''), \
            run_id text NOT NULL,partition_key text NOT NULL,flow_id text NOT NULL,reason text NOT NULL, \
-           failed_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(tenant_id,run_id), \
-           FOREIGN KEY(tenant_id,run_id) REFERENCES {SCHEMA}.runs(tenant_id,run_id) ON DELETE CASCADE);"
+           failed_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(env_key,run_id), \
+           FOREIGN KEY(env_key,run_id) REFERENCES {SCHEMA}.runs(env_key,run_id) ON DELETE CASCADE);"
     ))
     .await
     .expect("build shared-runner legacy run plane");
@@ -277,7 +277,7 @@ pub(super) async fn shared_runner_legacy_leg(su: &Client) {
         .await
         .expect("apply catalog schema");
     su.batch_execute(&format!(
-        "INSERT INTO {SCHEMA}.runs(tenant_id,run_id,flow_id,flow_version,status) \
+        "INSERT INTO {SCHEMA}.runs(env_key,run_id,flow_id,flow_version,status) \
            VALUES ('t1','history-run','f',1,'completed');"
     ))
     .await
@@ -338,7 +338,7 @@ pub(super) async fn child_run_cutover_leg(su: &Client) {
     seed_run_admission_facts(su, "child-cutover", "cat", "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id, \
+           (env_key,run_id,flow_id,flow_version,package_id, \
             environment,trigger_source, \
             event_source_run_id,event_root_run_id,event_depth) \
          VALUES ('child-cutover','retained-run','f',1,'cat','dev', \
@@ -386,7 +386,7 @@ pub(super) async fn child_run_cutover_leg(su: &Client) {
             &format!(
                 "SELECT r.trigger_source, r.event_source_run_id, r.event_root_run_id, r.event_depth \
                    FROM {SCHEMA}.runs AS r \
-                  WHERE r.tenant_id='child-cutover' AND r.run_id='retained-run'"
+                  WHERE r.env_key='child-cutover' AND r.run_id='retained-run'"
             ),
             &[],
         )
@@ -420,7 +420,7 @@ pub(super) async fn child_run_cutover_leg(su: &Client) {
         &format!(
             "UPDATE {SCHEMA}.runs \
                 SET waiting_child_run_id='child',waiting_child_occurrence=2,wait_generation=7 \
-              WHERE tenant_id='child-cutover' AND run_id='retained-run'"
+              WHERE env_key='child-cutover' AND run_id='retained-run'"
         ),
         &[],
     )
@@ -461,7 +461,7 @@ pub(super) async fn child_run_cutover_leg(su: &Client) {
         &format!(
             "UPDATE {SCHEMA}.runs \
                 SET waiting_child_run_id=NULL,waiting_child_occurrence=NULL,wait_generation=NULL \
-              WHERE tenant_id='child-cutover' AND run_id='retained-run'"
+              WHERE env_key='child-cutover' AND run_id='retained-run'"
         ),
         &[],
     )
@@ -486,10 +486,10 @@ pub(super) async fn rerun_lineage_cutover_leg(su: &Client) {
     su.batch_execute(&format!(
         "ALTER TABLE {SCHEMA}.runs \
            ADD COLUMN replay_of text, ADD COLUMN root_run_id text; \
-         CREATE INDEX runs_root ON {SCHEMA}.runs (tenant_id,root_run_id) \
+         CREATE INDEX runs_root ON {SCHEMA}.runs (env_key,root_run_id) \
            WHERE root_run_id IS NOT NULL; \
          INSERT INTO {SCHEMA}.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id, \
+           (env_key,run_id,flow_id,flow_version,package_id, \
             environment,trigger_source,input_json,state_json,replay_of,root_run_id, \
             event_source_run_id,event_root_run_id,event_depth) \
          VALUES ('rerun-cutover','retained-run','f',1,'cat','dev', \
@@ -521,7 +521,7 @@ pub(super) async fn rerun_lineage_cutover_leg(su: &Client) {
                 "SELECT trigger_source,event_source_run_id,event_root_run_id,event_depth, \
                         input_json::text,state_json::text \
                    FROM {SCHEMA}.runs \
-                  WHERE tenant_id='rerun-cutover' AND run_id='retained-run'"
+                  WHERE env_key='rerun-cutover' AND run_id='retained-run'"
             ),
             &[],
         )
@@ -595,8 +595,8 @@ pub(super) async fn rerun_lineage_cutover_leg(su: &Client) {
         "ALTER TABLE {SCHEMA}.runs \
            ADD COLUMN replay_of text, ADD COLUMN root_run_id text; \
          UPDATE {SCHEMA}.runs SET replay_of='restored-parent',root_run_id='restored-root' \
-          WHERE tenant_id='rerun-cutover' AND run_id='retained-run'; \
-         CREATE INDEX runs_root ON {SCHEMA}.runs (tenant_id,flow_id);"
+          WHERE env_key='rerun-cutover' AND run_id='retained-run'; \
+         CREATE INDEX runs_root ON {SCHEMA}.runs (env_key,flow_id);"
     ))
     .await
     .expect("install unknown same-name runs_root mutant");
@@ -618,7 +618,7 @@ pub(super) async fn rerun_lineage_cutover_leg(su: &Client) {
         .query_one(
             &format!(
                 "SELECT replay_of,root_run_id,event_root_run_id FROM {SCHEMA}.runs \
-                  WHERE tenant_id='rerun-cutover' AND run_id='retained-run'"
+                  WHERE env_key='rerun-cutover' AND run_id='retained-run'"
             ),
             &[],
         )
@@ -640,7 +640,7 @@ pub(super) async fn rerun_lineage_cutover_leg(su: &Client) {
 
     su.batch_execute(&format!(
         "DROP INDEX {SCHEMA}.runs_root; \
-         CREATE INDEX runs_root ON {SCHEMA}.runs (tenant_id,root_run_id) \
+         CREATE INDEX runs_root ON {SCHEMA}.runs (env_key,root_run_id) \
            WHERE root_run_id IS NOT NULL;"
     ))
     .await
@@ -723,7 +723,7 @@ pub(super) async fn failure_detail_cutover_leg(su: &Client) {
     seed_failure_detail_run(su, "dependent-run").await;
     su.batch_execute(&format!(
         "CREATE VIEW {SCHEMA}.retired_failure_detail_dependency AS \
-           SELECT tenant_id,run_id,fail_reason FROM {SCHEMA}.runs; \
+           SELECT env_key,run_id,fail_reason FROM {SCHEMA}.runs; \
          GRANT wamn_scenario_author TO wamn_app;"
     ))
     .await
@@ -842,7 +842,7 @@ pub(super) async fn persisted_literal_check_drift_leg(su: &Client) {
     seed_run_admission_facts(su, "t1", "cat", "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-             (tenant_id,run_id,flow_id,flow_version,package_id, \
+             (env_key,run_id,flow_id,flow_version,package_id, \
               environment) \
              VALUES ('t1','r-budget','f',1,'cat','dev');"
     ))
@@ -853,7 +853,7 @@ pub(super) async fn persisted_literal_check_drift_leg(su: &Client) {
         .execute(
             &format!(
                 "UPDATE {SCHEMA}.runs SET fail_type = 'runaway-budget' \
-                 WHERE tenant_id = 't1' AND run_id = 'r-budget'"
+                 WHERE env_key = 't1' AND run_id = 'r-budget'"
             ),
             &[],
         )
@@ -899,7 +899,7 @@ pub(super) async fn persisted_literal_check_drift_leg(su: &Client) {
         .execute(
             &format!(
                 "UPDATE {SCHEMA}.runs SET fail_type = 'runaway-budget' \
-                 WHERE tenant_id = 't1' AND run_id = 'r-budget'"
+                 WHERE env_key = 't1' AND run_id = 'r-budget'"
             ),
             &[],
         )

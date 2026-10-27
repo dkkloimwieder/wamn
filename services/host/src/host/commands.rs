@@ -192,7 +192,7 @@ impl HostCommandHandler for Commands {
                     &component.image,
                     &component.name,
                     operations.claims(
-                        &operations.release.scope().tenant_id,
+                        &operations.release.scope().env_key,
                         Some(operations.release_identity()),
                     ),
                 )?;

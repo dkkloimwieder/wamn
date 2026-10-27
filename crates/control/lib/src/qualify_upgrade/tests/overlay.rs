@@ -187,8 +187,8 @@ async fn overlay_fixture(name: &str) -> OverlayFixture {
     let bytes = base.manifest.canonical_bytes();
     let digest = base.manifest.digest().as_str().to_owned();
     base.source.execute(
-        "INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)",
-        &[&TENANT, &digest, &bytes],
+        "INSERT INTO catalog.releases (env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)",
+        &[&ENV_KEY, &digest, &bytes],
     ).await.unwrap();
     base.predecessor_release = digest;
 
@@ -919,8 +919,8 @@ async fn every_affected_overlay_is_required_and_applied_atomically() {
     let bytes = fixture.base.manifest.canonical_bytes();
     let digest = fixture.base.manifest.digest().as_str().to_owned();
     fixture.base.source.execute(
-        "INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)",
-        &[&TENANT, &digest, &bytes],
+        "INSERT INTO catalog.releases (env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)",
+        &[&ENV_KEY, &digest, &bytes],
     ).await.unwrap();
     fixture.base.predecessor_release = digest;
     let generation = fixture

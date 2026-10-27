@@ -46,7 +46,7 @@ const ORG: &str = "pg18admit";
 const PROJECT: &str = "inventory";
 const ENVIRONMENT: &str = "dev";
 /// Derived workload identity, not an input to this family's scope digest.
-const TENANT: &str = "pg18admit--inventory--dev";
+const ENV_KEY: &str = "pg18admit--inventory--dev";
 const INSTANCE: &str = "k3m9x2p7";
 const RUN_SCHEMA: &str = "wamn_run";
 
@@ -335,7 +335,7 @@ async fn management_admitter_generation_lifecycle_converges_and_rotates() {
     // The tenant is identity context, never scope: the derived pair must be the
     // same one the pure crate derives without it.
     assert_ne!(role_a, role_b);
-    assert!(!role_a.contains(TENANT));
+    assert!(!role_a.contains(ENV_KEY));
 
     // HERMETIC PREAMBLE. The stable ACL role is DROPPED, not left healthy: a
     // surviving one satisfies `ensure_workload_acl_role_sql`'s IF NOT EXISTS

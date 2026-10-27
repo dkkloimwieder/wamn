@@ -229,14 +229,14 @@ fn validate_fact(
 /// its recorded privileges afterward. All installed-set and ACL checks still run.
 pub(crate) async fn reconcile_upgrade_in_transaction(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     roots: &[crate::apply_package::PackageRoot],
 ) -> anyhow::Result<DataAccessReconcileResult> {
-    ensure!(!tenant.is_empty(), "tenant must not be empty");
+    ensure!(!env_key.is_empty(), "tenant must not be empty");
     let packages = super::read_presented_packages(roots)?;
     super::reconcile_in_transaction(
         tx,
-        tenant,
+        env_key,
         &packages,
         super::ReconcileMode::Qualification,
         true,
@@ -252,7 +252,7 @@ pub(crate) async fn reconcile_for_upgrade(
     let packages = super::read_presented_packages(&request.packages)?;
     super::execute_prepared(
         &request.database_url,
-        &request.tenant(),
+        &request.env_key(),
         &packages,
         super::ReconcileMode::Qualification,
         true,

@@ -442,9 +442,9 @@ pub async fn project(
         )
         .await?;
     let mut drops = AuthDrops::default();
-    let tenant = format!("{org}--{project}--{env}");
+    let env_key = format!("{org}--{project}--{env}");
     for row in system.query("SELECT service_principal_id::text FROM registry.connection_rows($1) WHERE id::text=ANY($2::text[])", &[&org, &disabled_ids]).await? {
-        drops.principal(&tenant, &row.get::<_,String>(0));
+        drops.principal(&env_key, &row.get::<_,String>(0));
     }
     for row in system.query("SELECT id::text, subject, display_name, status, platform_domain FROM registry.connection_principal_rows($1,$2)", &[&org, &project]).await? {
         let id: String = row.get(0);
@@ -452,7 +452,7 @@ pub async fn project(
         let domain = domain.ok_or_else(|| refuse("invalid_input", "platform_domain"))?;
         let email = format!("{}@{domain}", row.get::<_, String>(1));
         let changed = target.execute("INSERT INTO platform.\"user\"(id, type, email, display_name, status) VALUES ($1::text::uuid, 'service', $2, $3, $4) ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, display_name = EXCLUDED.display_name, status = EXCLUDED.status WHERE (\"user\".email, \"user\".display_name, \"user\".status) IS DISTINCT FROM (EXCLUDED.email, EXCLUDED.display_name, EXCLUDED.status)", &[&id, &email, &row.get::<_, String>(2), &row.get::<_, String>(3)]).await?;
-        if changed != 0 { drops.principal(&tenant, &id); }
+        if changed != 0 { drops.principal(&env_key, &id); }
     }
     Ok(drops)
 }

@@ -28,7 +28,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 use super::session_fixture::{self, AUDIENCE, ORG, Server, claims};
 
 pub(super) const PROJECT: &str = "project";
-pub(super) const TENANT: &str = "tenant-a";
+pub(super) const ENV_KEY: &str = "tenant-a";
 pub(super) const READ: &str = "session-test:purchase/read@1.0.0";
 pub(super) const WRITE: &str = "session-test:purchase/write@1.0.0";
 pub(super) const MEMBER: &str = "34f2085c-19d8-474f-b87a-2a29a5357b9b";
@@ -155,14 +155,14 @@ pub(super) async fn install(
     Ok((admitter, administration))
 }
 
-/// The App generation of the fixture tenant, as provisioning prepares it:
+/// The App generation of the fixture env_key, as provisioning prepares it:
 /// the guest authority that `number_counter.set` runs under. Returns its
 /// login name.
 pub(super) async fn app_generation(admin: &Client, database: &str) -> anyhow::Result<String> {
     let role = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::Tenant {
-            tenant: TENANT,
+        WorkloadRoleScope::EnvKey {
+            env_key: ENV_KEY,
             database,
         },
         CredentialGeneration::A,
@@ -232,7 +232,7 @@ pub(super) fn load_release() -> anyhow::Result<Arc<LoadedRelease>> {
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_execution_contract::canonical_json_bytes(&serde_json::to_value(&manifest)?),
         "host route test",
-        wamn_engine::release_manifest::ReleaseScope::new(TENANT, "dev").with_applications(
+        wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, "dev").with_applications(
             serde_json::from_value(json!({"receiving": {"packages": ["session_test"]}}))?,
         ),
     )?))
@@ -315,7 +315,7 @@ pub(super) async fn application_host_with_release(
                         Arc::clone(&postgres_credentials),
                         ORG,
                         PROJECT,
-                        TENANT,
+                        ENV_KEY,
                     )
                     .await?,
                 ))

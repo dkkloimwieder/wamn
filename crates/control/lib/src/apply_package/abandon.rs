@@ -8,7 +8,7 @@ use tokio_postgres::{Client, NoTls};
 use wamn_schema_generator::UpgradeStagePhase;
 
 use super::{
-    ApplyPackageRequest, CLAIM_TENANT_SQL, LOCK_PACKAGE_SQL, PreparedPackage,
+    ApplyPackageRequest, CLAIM_ENV_KEY_SQL, LOCK_PACKAGE_SQL, PreparedPackage,
     bind_apply_package_principal, current_package_version, prepare_package,
 };
 use crate::package_upgrade::progress::{self, StageIdentity};
@@ -44,13 +44,19 @@ pub async fn abandon_stage(
     );
     let package = prepare_package(&request.package)?;
     let (evidence, _, digest) = qualify_upgrade::read_qualification(evidence_path)?;
-    require_exact_stage(&request.tenant(), &package, &evidence)?;
+    require_exact_stage(&request.env_key(), &package, &evidence)?;
     let (mut client, connection) = tokio_postgres::connect(&request.database_url, NoTls)
         .await
         .context("connect to project environment for stage abandonment")?;
     let task = tokio::spawn(connection);
-    let result =
-        abandon_existing(&mut client, &request.tenant(), &package, &evidence, &digest).await;
+    let result = abandon_existing(
+        &mut client,
+        &request.env_key(),
+        &package,
+        &evidence,
+        &digest,
+    )
+    .await;
     drop(client);
     if result.is_err() {
         task.abort();
@@ -63,7 +69,7 @@ pub async fn abandon_stage(
 }
 
 fn require_exact_stage(
-    tenant: &str,
+    env_key: &str,
     package: &PreparedPackage,
     evidence: &UpgradeQualification,
 ) -> anyhow::Result<()> {
@@ -77,7 +83,7 @@ fn require_exact_stage(
         "only a backfill stage can be abandoned"
     );
     ensure!(
-        evidence.tenant == tenant,
+        evidence.env_key == env_key,
         "abandonment qualification tenant mismatch"
     );
     ensure!(
@@ -100,7 +106,7 @@ fn require_exact_stage(
 
 async fn abandon_existing(
     client: &mut Client,
-    tenant: &str,
+    env_key: &str,
     package: &PreparedPackage,
     evidence: &UpgradeQualification,
     digest: &str,
@@ -111,13 +117,13 @@ async fn abandon_existing(
         .await
         .context("begin stage abandonment")?;
     tx.batch_execute("SET LOCAL lock_timeout = '5s'").await?;
-    tx.query_one(CLAIM_TENANT_SQL, &[&tenant]).await?;
+    tx.query_one(CLAIM_ENV_KEY_SQL, &[&env_key]).await?;
     bind_apply_package_principal(&tx).await?;
     tx.query_one(crate::reconcile_package_data_access::LOCK_SQL, &[])
         .await?;
-    tx.query_one(LOCK_PACKAGE_SQL, &[&tenant, &candidate.package_id])
+    tx.query_one(LOCK_PACKAGE_SQL, &[&env_key, &candidate.package_id])
         .await?;
-    let installed_version = current_package_version(&tx, tenant, &candidate.package_id)
+    let installed_version = current_package_version(&tx, env_key, &candidate.package_id)
         .await?
         .context("abandonment requires its installed predecessor")?;
     ensure!(
@@ -127,7 +133,7 @@ async fn abandon_existing(
         evidence.predecessor_package.package_version,
         installed_version
     );
-    let installed = qualify_upgrade::read_current_packages(&tx, tenant).await?;
+    let installed = qualify_upgrade::read_current_packages(&tx, env_key).await?;
     ensure!(
         installed
             .iter()
@@ -143,8 +149,8 @@ async fn abandon_existing(
         evidence_digest: digest.to_owned(),
     };
     // Recheck the supplied snapshot immediately before the only durable mutation.
-    require_exact_stage(tenant, package, evidence)?;
-    let progress = progress::abandon(&tx, tenant, &identity).await?;
+    require_exact_stage(env_key, package, evidence)?;
+    let progress = progress::abandon(&tx, env_key, &identity).await?;
     tx.commit().await.context("commit stage abandonment")?;
     Ok(AbandonStageOutcome {
         package_id: candidate.package_id.clone(),
@@ -182,7 +188,7 @@ mod tests {
 
     #[tokio::test]
     async fn abandonment_requires_exact_bytes_and_preserves_installed_data_and_cursor() {
-        const TENANT: &str = "abandon-test--fixture--dev";
+        const ENV_KEY: &str = "abandon-test--fixture--dev";
         let files =
             Files(std::env::temp_dir().join(format!("wamn-abandon-stage-{}", std::process::id())));
         std::fs::create_dir(&files.0).unwrap();
@@ -214,7 +220,7 @@ mod tests {
         let candidate = qualify_upgrade::identity_from_directory(&prepared.directory).unwrap();
         let evidence = UpgradeQualification {
             format_version: crate::qualify_upgrade::STAGE_FORMAT,
-            tenant: TENANT.into(),
+            env_key: ENV_KEY.into(),
             environment: "offline".into(),
             predecessor_manifest_digest: format!("sha256:{}", "a".repeat(64)),
             predecessor_package: predecessor.clone(),
@@ -260,22 +266,22 @@ mod tests {
             ))
             .await
             .unwrap();
-        client.execute("INSERT INTO catalog.packages (tenant_id,package_id,package_version,predecessor_version,artifact_digest) VALUES ($1,$2,$3,$4,$5)",
-            &[&TENANT,&predecessor.package_id,&predecessor.package_version,&predecessor.predecessor_version,&predecessor.artifact_digest]).await.unwrap();
+        client.execute("INSERT INTO catalog.packages (env_key,package_id,package_version,predecessor_version,artifact_digest) VALUES ($1,$2,$3,$4,$5)",
+            &[&ENV_KEY,&predecessor.package_id,&predecessor.package_version,&predecessor.predecessor_version,&predecessor.artifact_digest]).await.unwrap();
         for migration in &predecessor.migrations {
             let ordinal = i32::try_from(migration.ordinal).unwrap();
-            client.execute("INSERT INTO catalog.package_migrations (tenant_id,package_id,package_version,ordinal,relative_path,sha256) VALUES ($1,$2,$3,$4,$5,$6)",
-                &[&TENANT,&predecessor.package_id,&predecessor.package_version,&ordinal,&migration.relative_path,&migration.sha256]).await.unwrap();
+            client.execute("INSERT INTO catalog.package_migrations (env_key,package_id,package_version,ordinal,relative_path,sha256) VALUES ($1,$2,$3,$4,$5,$6)",
+                &[&ENV_KEY,&predecessor.package_id,&predecessor.package_version,&ordinal,&migration.relative_path,&migration.sha256]).await.unwrap();
         }
         client.batch_execute("CREATE TABLE retained (id int PRIMARY KEY, converted bool NOT NULL); INSERT INTO retained VALUES (1,false),(2,false);").await.unwrap();
         let tx = client.transaction().await.unwrap();
-        progress::open(&tx, TENANT, &identity, &Value::Null)
+        progress::open(&tx, ENV_KEY, &identity, &Value::Null)
             .await
             .unwrap();
         tx.execute("UPDATE retained SET converted=true WHERE id=1", &[])
             .await
             .unwrap();
-        progress::advance(&tx, TENANT, &identity, &json!({"id":1}))
+        progress::advance(&tx, ENV_KEY, &identity, &json!({"id":1}))
             .await
             .unwrap();
         tx.commit().await.unwrap();
@@ -311,10 +317,10 @@ mod tests {
                 .contains("evidence_digest mismatch")
         );
         write_evidence(&files.0, &evidence);
-        let mut wrong_tenant = request();
-        wrong_tenant.org = "other".into();
+        let mut wrong_env_key = request();
+        wrong_env_key.org = "other".into();
         assert!(
-            abandon_stage(wrong_tenant, &evidence_path)
+            abandon_stage(wrong_env_key, &evidence_path)
                 .await
                 .unwrap_err()
                 .to_string()
@@ -359,20 +365,20 @@ mod tests {
         );
         let tx = client.transaction().await.unwrap();
         assert_eq!(
-            qualify_upgrade::read_current_packages(&tx, TENANT)
+            qualify_upgrade::read_current_packages(&tx, ENV_KEY)
                 .await
                 .unwrap(),
             vec![predecessor]
         );
         assert!(
-            progress::open(&tx, TENANT, &identity, &Value::Null)
+            progress::open(&tx, ENV_KEY, &identity, &Value::Null)
                 .await
                 .unwrap_err()
                 .to_string()
                 .contains("retained cursor")
         );
         assert!(
-            progress::advance(&tx, TENANT, &identity, &json!({"id":2}))
+            progress::advance(&tx, ENV_KEY, &identity, &json!({"id":2}))
                 .await
                 .is_err()
         );

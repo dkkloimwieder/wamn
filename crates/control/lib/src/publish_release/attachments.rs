@@ -476,7 +476,7 @@ mod tests {
         "sha256:5657ceb19b28ad30c47373028e2e885354d53d537c8e385365256b031a852b3e";
     /// The rendered fixture declaration with its generated route entries.
     const FIXTURE_DECLARATION_DIGEST: &str =
-        "sha256:e71c5a2ad61ed7857190e36e9f63ba807e57d8e2c7fa0ace58eba46d155cfaa3";
+        "sha256:350629cd2eaaac8a009f2fde7dbf062c1be7bad93a15dfbbf4e89ea77fe639ef";
 
     /// A publish of the fixture reads the same routes and the same component
     /// declaration from the generated entries as from the authored ones they

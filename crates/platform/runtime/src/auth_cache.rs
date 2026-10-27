@@ -3,8 +3,8 @@
 //!
 //! Postgres stays the owner of every fact here. The memory is the local
 //! replica of the NATS KV bucket [`BUCKET`] on the scheduler NATS. The key
-//! `<tenant>.<principal>` holds the grants of a principal, and the key
-//! `<tenant>.environment` holds the environment status. A host that reads a
+//! `<env_key>.<principal>` holds the grants of a principal, and the key
+//! `<env_key>.environment` holds the environment status. A host that reads a
 //! fact from Postgres puts it with the revision of the key from before the
 //! read, so a delete in between refuses the put. Every host watches the keys
 //! of its tenant and keeps each value it sees. Every writer of a fact deletes
@@ -34,7 +34,7 @@ use sha2::{Digest as _, Sha256};
 use wamn_platform_identity::AuthenticatedPrincipal;
 pub use wamn_platform_identity::auth_changes::AUTH_TTL;
 use wamn_platform_identity::auth_changes::{
-    AuthChanges, IDENTITY_TOKEN, auth_bucket, environment_key, principal_key,
+    AuthChanges, IDENTITY_TOKEN, auth_bucket, env_key as environment_status_key, principal_key,
 };
 
 /// A map that grows past this many entries drops its expired ones.
@@ -320,8 +320,8 @@ impl AuthCache {
     }
 
     /// The grants of a principal, or the ticket of a read of them.
-    pub fn grants(&self, tenant: &str, principal: &str) -> Result<PrincipalGrants, Ticket> {
-        let key = principal_key(tenant, principal);
+    pub fn grants(&self, env_key: &str, principal: &str) -> Result<PrincipalGrants, Ticket> {
+        let key = principal_key(env_key, principal);
         match self.answer(&key) {
             Ok(Answer::Principal {
                 grants: Some(grants),
@@ -336,12 +336,12 @@ impl AuthCache {
     /// provisioned-principal check of the claim bind.
     pub async fn keep_grants(
         &self,
-        tenant: &str,
+        env_key: &str,
         principal: &str,
         ticket: Ticket,
         grants: PrincipalGrants,
     ) {
-        let key = principal_key(tenant, principal);
+        let key = principal_key(env_key, principal);
         let provisioned = grants.present
             || matches!(
                 self.replaced(&key, ticket),
@@ -359,8 +359,8 @@ impl AuthCache {
 
     /// Whether the tenant has the user row of a principal, or the ticket of
     /// a read of it.
-    pub fn provisioned(&self, tenant: &str, principal: &str) -> Result<(), Ticket> {
-        let key = principal_key(tenant, principal);
+    pub fn provisioned(&self, env_key: &str, principal: &str) -> Result<(), Ticket> {
+        let key = principal_key(env_key, principal);
         match self.answer(&key) {
             Ok(Answer::Principal {
                 provisioned: true, ..
@@ -370,8 +370,8 @@ impl AuthCache {
         }
     }
 
-    pub async fn keep_provisioned(&self, tenant: &str, principal: &str, ticket: Ticket) {
-        let key = principal_key(tenant, principal);
+    pub async fn keep_provisioned(&self, env_key: &str, principal: &str, ticket: Ticket) {
+        let key = principal_key(env_key, principal);
         let grants = match self.replaced(&key, ticket) {
             Some(Answer::Principal { grants, .. }) => grants,
             _ => None,
@@ -384,8 +384,8 @@ impl AuthCache {
     }
 
     /// Whether the environment is inactive, or the ticket of a read of it.
-    pub fn environment_inactive(&self, tenant: &str) -> Result<bool, Ticket> {
-        let key = environment_key(tenant);
+    pub fn environment_inactive(&self, env_key: &str) -> Result<bool, Ticket> {
+        let key = environment_status_key(env_key);
         match self.answer(&key) {
             Ok(Answer::Environment { inactive }) => Ok(inactive),
             Ok(_) => Err(self.ticket(&key)),
@@ -393,9 +393,9 @@ impl AuthCache {
         }
     }
 
-    pub async fn keep_environment_inactive(&self, tenant: &str, ticket: Ticket, inactive: bool) {
+    pub async fn keep_environment_inactive(&self, env_key: &str, ticket: Ticket, inactive: bool) {
         self.put(
-            environment_key(tenant),
+            environment_status_key(env_key),
             ticket,
             Answer::Environment { inactive },
         )
@@ -438,16 +438,16 @@ impl AsRef<AuthCache> for AuthCache {
 
 /// Watch the bucket on the scheduler NATS into the memory that `holder`
 /// holds, and return the writer of the host's own changes. A host with
-/// `tenant` watches the keys of that tenant and the identity keys. The
+/// `env_key` watches the keys of that `env_key` and the identity keys. The
 /// control host serves every tenant, so it watches every key. The watch runs
 /// until the client closes, and opens the bucket again after it breaks.
 pub fn replicate<H: AsRef<AuthCache> + Send + Sync + 'static>(
     client: &async_nats::Client,
-    tenant: Option<&str>,
+    env_key: Option<&str>,
     holder: Arc<H>,
 ) -> AuthChanges {
-    let filters = match tenant {
-        Some(tenant) => vec![format!("{tenant}.*"), format!("{IDENTITY_TOKEN}.*")],
+    let filters = match env_key {
+        Some(env_key) => vec![format!("{env_key}.*"), format!("{IDENTITY_TOKEN}.*")],
         None => vec![">".to_owned()],
     };
     let client = client.clone();
@@ -641,7 +641,7 @@ pub(crate) mod tests {
         })
         .await;
         let mut drops = AuthDrops::default();
-        drops.tenant("t");
+        drops.env_key("t");
         writer.publish(drops).await;
         until("host b drops the tenant", || {
             b.environment_inactive("t").is_err() && b.grants("t", "p").is_err()

@@ -9,10 +9,10 @@ use wamn_control_provision::operation_grants::{
 /// whether a row was written. `admin` has no permission rows.
 pub(super) async fn ensure_admin_role(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     drops: &mut wamn_platform_identity::auth_changes::AuthDrops,
 ) -> anyhow::Result<bool> {
-    tx.query_one(OPERATION_GRANT_LOCK_SQL, &[&tenant])
+    tx.query_one(OPERATION_GRANT_LOCK_SQL, &[&env_key])
         .await
         .context("lock the tenant operation-grant carrier")?;
     tx.batch_execute(OPERATION_GRANT_TRANSACTION_PRELUDE_SQL)
@@ -26,7 +26,7 @@ pub(super) async fn ensure_admin_role(
         .await
         .context("create the admin role")?;
     if written > 0 {
-        drops.tenant(tenant);
+        drops.env_key(env_key);
     }
     Ok(written > 0)
 }

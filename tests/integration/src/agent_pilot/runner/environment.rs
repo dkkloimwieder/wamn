@@ -58,7 +58,7 @@ impl Run {
         let events = event_broker::prepare(
             &environment,
             &scope,
-            text(&self.task["identity"]["tenant"]),
+            text(&self.task["identity"]["env_key"]),
             &source,
             &advisory,
             &[],
@@ -131,7 +131,7 @@ impl Run {
             ("org", "acme"),
             ("project", "receiving"),
             ("env", "dev"),
-            ("tenant", "acme--receiving--dev"),
+            ("env_key", "acme--receiving--dev"),
         ] {
             let named = text(&self.task["identity"][field]);
             anyhow::ensure!(

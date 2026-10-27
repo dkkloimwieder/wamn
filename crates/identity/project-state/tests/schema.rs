@@ -110,10 +110,10 @@ fn current_database(url: &str) -> String {
     database.to_owned()
 }
 
-fn app_generation(database: &str, tenant: &str) -> String {
+fn app_generation(database: &str, env_key: &str) -> String {
     workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::Tenant { tenant, database },
+        WorkloadRoleScope::EnvKey { env_key, database },
         CredentialGeneration::A,
     )
     .expect("App accepts tenant scope")
@@ -128,22 +128,22 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     const U2: &str = "22222222-2222-2222-2222-222222222222";
     const U3: &str = "33333333-3333-3333-3333-333333333333";
     const U4: &str = "44444444-4444-4444-4444-444444444444";
-    const TENANT_1: &str = "t1";
-    const TENANT_2: &str = "t2";
+    const ENV_KEY_1: &str = "t1";
+    const ENV_KEY_2: &str = "t2";
 
     let _serialized = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::database();
     let url = test_database.url().to_owned();
 
     let database = current_database(&url);
-    let tenant_1_app = app_generation(&database, TENANT_1);
+    let env_key_1_app = app_generation(&database, ENV_KEY_1);
     let other = wamn_test_postgres::database();
     let other_database = current_database(other.url());
-    let tenant_2_app = app_generation(&other_database, TENANT_2);
+    let env_key_2_app = app_generation(&other_database, ENV_KEY_2);
     let mut other_script = sql::prepare_workload_generation_sql(
         WorkloadRoleFamily::App,
         &other_database,
-        &tenant_2_app,
+        &env_key_2_app,
         APP_GENERATION_PASSWORD,
         APP_GENERATION_VALID_UNTIL,
     );
@@ -151,7 +151,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     other_script.push_str(&record_history_sql());
     other_script.push_str(&record_history_app_grants_sql());
     other_script.push_str(&app_schema_sql());
-    writeln!(other_script, "SET ROLE {tenant_2_app}; DO $$ BEGIN
+    writeln!(other_script, "SET ROLE {env_key_2_app}; DO $$ BEGIN
         ASSERT (SELECT count(*) FROM platform.role)=0, 'another environment sees none of the first environment roles';
         END $$; RESET ROLE;").unwrap();
     run(other.url(), &other_script);
@@ -161,7 +161,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     let mut script = sql::prepare_workload_generation_sql(
         WorkloadRoleFamily::App,
         &database,
-        &tenant_1_app,
+        &env_key_1_app,
         APP_GENERATION_PASSWORD,
         APP_GENERATION_VALID_UNTIL,
     );
@@ -196,9 +196,9 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     writeln!(
         script,
         "BEGIN;\n\
-         SET LOCAL ROLE {tenant_1_app};\n\
+         SET LOCAL ROLE {env_key_1_app};\n\
          DO $$ BEGIN\n\
-           ASSERT current_user='{tenant_1_app}', 'tenant authority is the prepared tenant-1 generation';\n\
+           ASSERT current_user='{env_key_1_app}', 'tenant authority is the prepared tenant-1 generation';\n\
            ASSERT (SELECT count(*) FROM platform.\"user\")=3, 't1 sees every user of the database';\n\
            ASSERT (SELECT count(*) FROM platform.role)=2, 't1 sees its roles';\n\
            ASSERT (SELECT count(*) FROM platform.user_role)=1, 't1 sees its grant';\n\
@@ -211,7 +211,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     writeln!(
         script,
         "DO $$ BEGIN
-        ASSERT NOT has_database_privilege('{tenant_2_app}', current_database(), 'CONNECT'),
+        ASSERT NOT has_database_privilege('{env_key_2_app}', current_database(), 'CONNECT'),
         'another environment credential cannot connect to this database'; END $$;"
     )
     .unwrap();
@@ -219,13 +219,13 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     writeln!(
         script,
         "         BEGIN;\n\
-         SET LOCAL ROLE {tenant_1_app};\n\
-         SET LOCAL app.tenant = '{TENANT_2}';\n\
+         SET LOCAL ROLE {env_key_1_app};\n\
+         SET LOCAL app.env_key = '{ENV_KEY_2}';\n\
          DO $$ BEGIN ASSERT (SELECT count(*) FROM platform.role)=2, 'a settable tenant claim cannot spoof tenant 2'; END $$;\n\
          COMMIT;\n\
          BEGIN;\n\
          SET LOCAL ROLE wamn_app;\n\
-         SET LOCAL app.tenant = '{TENANT_1}';\n\
+         SET LOCAL app.env_key = '{ENV_KEY_1}';\n\
          DO $$ BEGIN ASSERT (SELECT count(*) FROM platform.role)=2, 'the ACL carrier reads the database roles'; END $$;\n\
          COMMIT;"
     )
@@ -292,32 +292,32 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
                            WHERE c.relrowsecurity OR c.relforcerowsecurity \
                               OR EXISTS (SELECT FROM pg_catalog.pg_policy AS p WHERE p.polrelid = c.oid) \
                               OR EXISTS (SELECT FROM pg_catalog.pg_attribute AS a \
-                                          WHERE a.attrelid = c.oid AND a.attname = 'tenant_id' \
+                                          WHERE a.attrelid = c.oid AND a.attname = 'env_key' \
                                             AND NOT a.attisdropped) \
                               OR EXISTS (SELECT FROM pg_catalog.pg_index AS i \
                                           WHERE i.indrelid = c.oid \
                                             AND pg_catalog.pg_get_indexdef(i.indexrelid) LIKE '%tenant_key%')) = 0, \
-                          '{qualified} and its history are at the org boundary: no tenant_id, row security, policy or tenant-key index';\n\
+                          '{qualified} and its history are at the org boundary: no env_key, row security, policy or tenant-key index';\n\
                  END $$;"
             )
             .expect("writing to a String cannot fail");
     }
     // The retired tenant column is refused instead of accepted as input.
     for (table, insert) in [
-        ("role", "(tenant_id, name) VALUES ('', 'empty')".to_owned()),
+        ("role", "(env_key, name) VALUES ('', 'empty')".to_owned()),
         (
             "user_role",
-            format!("(tenant_id, user_id, role_name) VALUES ('', '{U2}', 'admin')"),
+            format!("(env_key, user_id, role_name) VALUES ('', '{U2}', 'admin')"),
         ),
         (
             "permission",
-            "(tenant_id, role_name, permission) VALUES ('', 'clerk', 'platform-fixture:widget/get')"
+            "(env_key, role_name, permission) VALUES ('', 'clerk', 'platform-fixture:widget/get')"
                 .to_owned(),
         ),
         (
             "api_key",
             format!(
-                "(tenant_id, user_id, name, key_hash, prefix) VALUES ('', '{U2}', 'ci', 'hash-2', 'wk_b')"
+                "(env_key, user_id, name, key_hash, prefix) VALUES ('', '{U2}', 'ci', 'hash-2', 'wk_b')"
             ),
         ),
     ] {
@@ -784,7 +784,7 @@ fn platform_relations_log_every_row_change_on_postgres() {
         .map(|table| {
             format!(
                 "SELECT '{name}' AS relation, position, \
-                        COALESCE(to_jsonb(h) ->> 'tenant_id', '-') AS tenant_id, type, operation, \
+                        COALESCE(to_jsonb(h) ->> 'env_key', '-') AS env_key, type, operation, \
                         changed_by, row_key, before, after \
                    FROM {SCHEMA_NAME}.{name}_history AS h",
                 name = table.name,
@@ -794,7 +794,7 @@ fn platform_relations_log_every_row_change_on_postgres() {
         .join(" UNION ALL ");
     writeln!(
         script,
-        "SELECT 'entry|' || relation || '|' || tenant_id || '|' || type || '|' || operation \
+        "SELECT 'entry|' || relation || '|' || env_key || '|' || type || '|' || operation \
                 || '|' || changed_by || '|' || row_key::text \
                 || '|' || (before - '{{created_at,created_by,updated_at,updated_by}}'::text[])::text \
                 || '|' || (after - '{{created_at,created_by,updated_at,updated_by}}'::text[])::text \

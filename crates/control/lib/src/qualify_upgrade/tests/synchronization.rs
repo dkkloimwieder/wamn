@@ -63,7 +63,7 @@ async fn expand_installs_owned_mirror_and_retains_rows_during_single_column_writ
         format!("{failed:#}").contains("postconditions second"),
         "{failed:#}"
     );
-    let absent = fixture.source.query_one("SELECT to_regprocedure('inventory.mirror_widget_note()') IS NULL, NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='inventory' AND table_name='widget_tag' AND column_name='mirror_note'), NOT EXISTS (SELECT 1 FROM catalog.package_definition_owners WHERE tenant_id=$1 AND definition_type IN ('synchronization_function','synchronization_trigger'))", &[&TENANT]).await.unwrap();
+    let absent = fixture.source.query_one("SELECT to_regprocedure('inventory.mirror_widget_note()') IS NULL, NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='inventory' AND table_name='widget_tag' AND column_name='mirror_note'), NOT EXISTS (SELECT 1 FROM catalog.package_definition_owners WHERE env_key=$1 AND definition_type IN ('synchronization_function','synchronization_trigger'))", &[&ENV_KEY]).await.unwrap();
     assert!(absent.get::<_, bool>(0) && absent.get::<_, bool>(1) && absent.get::<_, bool>(2));
     fixture.source.batch_execute("BEGIN; SELECT set_config('app.user_id','00000000-0000-4000-8000-0000000000f1',true),set_config('app.operation','admin:restore-mirror-postcondition',true); UPDATE inventory.widget_tag SET label='second tag' WHERE label='missing second'; COMMIT").await.unwrap();
     let result = crate::apply_package::apply_qualified_package(
@@ -74,7 +74,7 @@ async fn expand_installs_owned_mirror_and_retains_rows_during_single_column_writ
     .unwrap();
     assert!(result.changed);
     assert_eq!(result.migrations_applied, 2);
-    let owners: i64 = fixture.source.query_one("SELECT count(*) FROM catalog.package_definition_owners WHERE tenant_id=$1 AND owner_package_id='platform_fixture' AND schema_name='inventory' AND relation_name='widget_tag' AND definition_type IN ('synchronization_function','synchronization_trigger')", &[&TENANT]).await.unwrap().get(0);
+    let owners: i64 = fixture.source.query_one("SELECT count(*) FROM catalog.package_definition_owners WHERE env_key=$1 AND owner_package_id='platform_fixture' AND schema_name='inventory' AND relation_name='widget_tag' AND definition_type IN ('synchronization_function','synchronization_trigger')", &[&ENV_KEY]).await.unwrap().get(0);
     assert_eq!(owners, 2);
     let stamped: bool = fixture.source.query_one(
         "SELECT bool_and(created_by = $1::text::uuid AND updated_by = $1::text::uuid AND created_at = updated_at) FROM catalog.package_definition_owners WHERE definition_type IN ('synchronization_function','synchronization_trigger')",
@@ -163,7 +163,7 @@ async fn expand_installs_owned_mirror_and_retains_rows_during_single_column_writ
         format!("{drift:#}").contains("SECURITY INVOKER"),
         "{drift:#}"
     );
-    assert!(!fixture.source.query_one("SELECT EXISTS (SELECT 1 FROM catalog.package_upgrade_stages WHERE tenant_id=$1 AND package_version='2.3.0')",&[&TENANT]).await.unwrap().get::<_,bool>(0));
+    assert!(!fixture.source.query_one("SELECT EXISTS (SELECT 1 FROM catalog.package_upgrade_stages WHERE env_key=$1 AND package_version='2.3.0')",&[&ENV_KEY]).await.unwrap().get::<_,bool>(0));
     fixture
         .source
         .batch_execute("ALTER FUNCTION inventory.mirror_widget_note() SECURITY INVOKER")

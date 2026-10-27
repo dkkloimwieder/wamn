@@ -82,7 +82,7 @@ spec:
           localResources:
             allowedIpNameLookups: []
             config:
-              wamn.tenant: "00000000-0000-0000-0000-000000000001"
+              wamn.env_key: "00000000-0000-0000-0000-000000000001"
               wamn.catalog: "default"
               wamn.environment: "poc"
               wamn.project: "default"

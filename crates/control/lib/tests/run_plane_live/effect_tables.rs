@@ -56,21 +56,21 @@ async fn create_old_frame_identity_tables(su: &Client, effect: bool, populated: 
     if effect {
         su.batch_execute(&format!(
             "CREATE TABLE {SCHEMA}.effect_attempts ( \
-               tenant_id text NOT NULL, attempt_id uuid NOT NULL, run_id text NOT NULL, \
+               env_key text NOT NULL, attempt_id uuid NOT NULL, run_id text NOT NULL, \
                node_id text NOT NULL, occurrence int NOT NULL, seq int NOT NULL, \
                generation_fact_type text NOT NULL, attempt_started_at timestamptz NOT NULL, \
                attempt_deadline_at timestamptz NOT NULL, attempt_input_ref text NOT NULL, \
-               PRIMARY KEY (tenant_id,attempt_id), \
-               UNIQUE (tenant_id,attempt_id,attempt_started_at), \
+               PRIMARY KEY (env_key,attempt_id), \
+               UNIQUE (env_key,attempt_id,attempt_started_at), \
                CONSTRAINT effect_attempts_occurrence_key \
-                 UNIQUE (tenant_id,run_id,node_id,occurrence));"
+                 UNIQUE (env_key,run_id,node_id,occurrence));"
         ))
         .await
         .expect("create old effect_attempts");
         if populated {
             su.batch_execute(&format!(
                 "INSERT INTO {SCHEMA}.effect_attempts \
-                   (tenant_id,attempt_id,run_id,node_id,occurrence,seq,generation_fact_type, \
+                   (env_key,attempt_id,run_id,node_id,occurrence,seq,generation_fact_type, \
                     attempt_started_at,attempt_deadline_at,attempt_input_ref) \
                  VALUES ('t1','00000000-0000-0000-0000-000000000413','r1','n1',0,0, \
                          'not-required','2026-01-01 UTC','2026-01-02 UTC','sha256:input');"
@@ -134,7 +134,7 @@ pub(super) async fn frame_identity_cutover_leg(su: &Client) {
                 "ALTER TABLE {SCHEMA}.effect_attempts \
                    DROP CONSTRAINT effect_attempts_occurrence_key, \
                    ADD CONSTRAINT effect_attempts_occurrence_key \
-                     UNIQUE (tenant_id,run_id,local_node_id,occurrence);"
+                     UNIQUE (env_key,run_id,local_node_id,occurrence);"
             ),
         ),
         (
@@ -155,11 +155,11 @@ pub(super) async fn frame_identity_cutover_leg(su: &Client) {
         seed_run_admission_facts(su, "t1", "frame_cat", "dev", "standard").await;
         su.batch_execute(&format!(
             "INSERT INTO {SCHEMA}.runs \
-               (tenant_id,run_id,flow_id,flow_version,package_id,environment, \
+               (env_key,run_id,flow_id,flow_version,package_id,environment, \
                 status) \
              VALUES ('t1',$${label}$$,'f',1,'frame_cat','dev','running'); \
              INSERT INTO {SCHEMA}.effect_attempts \
-               (tenant_id,attempt_id,run_id,root_plan_hash,current_plan_hash,frame_id, \
+               (env_key,attempt_id,run_id,root_plan_hash,current_plan_hash,frame_id, \
                 local_node_id,source_artifact_hash,requirement_name,occurrence,seq, \
                 generation_fact_type,attempt_deadline_at,attempt_input_ref) \
              VALUES ('t1','00000000-0000-0000-0000-000000000413',$${label}$$, \
@@ -284,7 +284,7 @@ pub(super) async fn frame_identity_cutover_leg(su: &Client) {
         .expect("read combined-cutover dispatch FK")
         .get(0);
     assert!(dispatch_fk.contains(
-        "FOREIGN KEY (tenant_id, attempt_id, attempt_started_at, run_id, frame_id, local_node_id, occurrence)"
+        "FOREIGN KEY (env_key, attempt_id, attempt_started_at, run_id, frame_id, local_node_id, occurrence)"
     ));
     let again = reconcile_run_plane::reconcile(su, &schema(), true)
         .await
@@ -340,7 +340,7 @@ pub(super) async fn frame_identity_cutover_leg(su: &Client) {
         .expect("read restored dispatch-to-attempt FK")
         .get(0);
     assert!(dispatch_fk.contains(
-        "FOREIGN KEY (tenant_id, attempt_id, attempt_started_at, run_id, frame_id, local_node_id, occurrence)"
+        "FOREIGN KEY (env_key, attempt_id, attempt_started_at, run_id, frame_id, local_node_id, occurrence)"
     ));
     let again = reconcile_run_plane::reconcile(su, &schema(), true)
         .await
@@ -365,7 +365,7 @@ pub(super) async fn frame_identity_cutover_leg(su: &Client) {
     seed_run_admission_facts(su, "t1", "frame_cat", "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,environment, \
+           (env_key,run_id,flow_id,flow_version,package_id,environment, \
             status) \
          VALUES ('t1','framed-current','f',1,'frame_cat','dev','running');"
     ))
@@ -445,7 +445,7 @@ pub(super) async fn effect_table_cutover_leg(su: &Client) {
     seed_run_admission_facts(su, "t1", "writer_cat", "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
-           (tenant_id,run_id,flow_id,flow_version,package_id,environment, \
+           (env_key,run_id,flow_id,flow_version,package_id,environment, \
             status) \
          VALUES ('t1','writer-projection','f',1,'writer_cat','dev', \
                  'running');"
@@ -502,7 +502,7 @@ pub(super) async fn effect_table_cutover_leg(su: &Client) {
         .get(0);
     assert_eq!(
         occurrence,
-        "UNIQUE (tenant_id, run_id, frame_id, local_node_id, occurrence)"
+        "UNIQUE (env_key, run_id, frame_id, local_node_id, occurrence)"
     );
     let foreign_key: String = su
         .query_one(
@@ -515,7 +515,7 @@ pub(super) async fn effect_table_cutover_leg(su: &Client) {
         .expect("read coordinate-bound attempt FK")
         .get(0);
     assert!(foreign_key.contains(
-        "FOREIGN KEY (tenant_id, attempt_id, attempt_started_at, run_id, frame_id, local_node_id, occurrence)"
+        "FOREIGN KEY (env_key, attempt_id, attempt_started_at, run_id, frame_id, local_node_id, occurrence)"
     ));
 
     let second = reconcile_run_plane::reconcile(su, &schema, true)
@@ -632,14 +632,14 @@ pub(super) async fn effect_table_populated_refusal_leg(su: &Client) {
         su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
             .await
             .expect("apply current run-state for effect-table refusal");
-        su.batch_execute("SELECT set_config('app.tenant','t1',false)")
+        su.batch_execute("SELECT set_config('app.env_key','t1',false)")
             .await
             .expect("prepare isolated incompatible record fact");
         match populated {
             "effect_attempts" => {
                 su.batch_execute(&format!(
                     "INSERT INTO {SCHEMA}.effect_attempts \
-                       (tenant_id,attempt_id,run_id,root_plan_hash,current_plan_hash,frame_id, \
+                       (env_key,attempt_id,run_id,root_plan_hash,current_plan_hash,frame_id, \
                         local_node_id,source_artifact_hash,requirement_name,occurrence,seq, \
                         generation_fact_type,attempt_deadline_at,attempt_input_ref) \
                      VALUES ('t1','00000000-0000-0000-0000-000000000491','r', \
@@ -655,7 +655,7 @@ pub(super) async fn effect_table_populated_refusal_leg(su: &Client) {
                     "ALTER TABLE {SCHEMA}.effect_attempt_dispatches \
                        DROP CONSTRAINT effect_attempt_dispatches_attempt_fk; \
                      INSERT INTO {SCHEMA}.effect_attempt_dispatches \
-                       (tenant_id,attempt_id,attempt_started_at,run_id,frame_id, \
+                       (env_key,attempt_id,attempt_started_at,run_id,frame_id, \
                         local_node_id,occurrence,dispatched_at) \
                      VALUES ('t1','00000000-0000-0000-0000-000000000492', \
                         '2026-01-01 UTC','r',0,'n',0,'2026-01-01 00:01 UTC');"
@@ -668,7 +668,7 @@ pub(super) async fn effect_table_populated_refusal_leg(su: &Client) {
                     "ALTER TABLE {SCHEMA}.effect_attempt_outcomes \
                        DROP CONSTRAINT effect_attempt_outcomes_dispatch_fk; \
                      INSERT INTO {SCHEMA}.effect_attempt_outcomes \
-                       (tenant_id,attempt_id,dispatched_at,outcome_status,recorded_at) \
+                       (env_key,attempt_id,dispatched_at,outcome_status,recorded_at) \
                      VALUES ('t1','00000000-0000-0000-0000-000000000493', \
                         '2026-01-01 UTC','success','2026-01-01 00:01 UTC');"
                 ))

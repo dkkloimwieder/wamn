@@ -81,11 +81,11 @@ impl WamnPostgres {
         &self,
         class: AuthorityClass,
         project: &str,
-        tenant: Option<&str>,
+        env_key: Option<&str>,
     ) -> Result<Arc<ProjectPool>, PgError> {
         let lifecycle = PoolLifecycle::for_class(class);
         let pools = self.pools(lifecycle);
-        let cfg = match self.provider.resolve(project, class, tenant) {
+        let cfg = match self.provider.resolve(project, class, env_key) {
             Ok(Some(c)) => c,
             Ok(None) => {
                 tracing::warn!(
@@ -276,8 +276,8 @@ impl WamnPostgres {
 
     /// Check out a raw connection from the default project and report its state
     /// *before* any claim injection. Gate verification only.
-    pub async fn probe_checkout(&self, tenant: &str) -> anyhow::Result<CheckoutProbe> {
-        self.probe_checkout_of(DEFAULT_PROJECT, tenant).await
+    pub async fn probe_checkout(&self, env_key: &str) -> anyhow::Result<CheckoutProbe> {
+        self.probe_checkout_of(DEFAULT_PROJECT, env_key).await
     }
 
     /// Check out a raw connection from a project's (lazily built) pool and
@@ -287,22 +287,22 @@ impl WamnPostgres {
     pub async fn probe_checkout_of(
         &self,
         project: &str,
-        tenant: &str,
+        env_key: &str,
     ) -> anyhow::Result<CheckoutProbe> {
         let pp = self
-            .ensure_pool(AuthorityClass::GuestSql, project, Some(tenant))
+            .ensure_pool(AuthorityClass::GuestSql, project, Some(env_key))
             .map_err(|_| anyhow::anyhow!("no pool for project {project:?}"))?;
         let conn = pp.pool.get().await?;
         let row = conn
             .query_one(
-                "SELECT pg_backend_pid(), current_setting('app.tenant', true), \
+                "SELECT pg_backend_pid(), current_setting('app.env_key', true), \
                  pg_current_xact_id_if_assigned()::text",
                 &[],
             )
             .await?;
         Ok(CheckoutProbe {
             backend_pid: row.try_get(0)?,
-            tenant_claim: row.try_get(1)?,
+            env_key_claim: row.try_get(1)?,
             xact_id: row.try_get(2)?,
         })
     }
@@ -315,10 +315,10 @@ impl WamnPostgres {
         &self,
         class: AuthorityClass,
         project: &str,
-        tenant: Option<&str>,
+        env_key: Option<&str>,
     ) -> Result<(Object, Arc<ProjectPool>), PgError> {
         async {
-            let pp = self.ensure_pool(class, project, tenant)?;
+            let pp = self.ensure_pool(class, project, env_key)?;
             let obj = pp.pool.get().await.map_err(|e| {
                 tracing::warn!(
                     project,
@@ -351,9 +351,9 @@ impl WamnPostgres {
     pub(in super::super) async fn checkout_guest(
         &self,
         project: &str,
-        tenant: &str,
+        env_key: &str,
     ) -> Result<(Object, Arc<ProjectPool>), PgError> {
-        self.checkout_class(AuthorityClass::GuestSql, project, Some(tenant))
+        self.checkout_class(AuthorityClass::GuestSql, project, Some(env_key))
             .await
     }
 
@@ -364,11 +364,11 @@ impl WamnPostgres {
         &self,
         component_id: &str,
         project: &str,
-        tenant: &str,
+        env_key: &str,
     ) -> Result<(Object, Arc<ProjectPool>, AuthorityClass), PgError> {
         let class = self.workload_authority_for(component_id);
         let (connection, pool) = match class {
-            AuthorityClass::GuestSql => self.checkout_guest(project, tenant).await?,
+            AuthorityClass::GuestSql => self.checkout_guest(project, env_key).await?,
             AuthorityClass::EventMaterializer => self.checkout_platform(project, class).await?,
             AuthorityClass::ExecutorPlatform
             | AuthorityClass::CallableHttp
@@ -385,7 +385,7 @@ impl WamnPostgres {
     /// distinct authorities (`wamn-0h0g.22.14`). Making the caller name which
     /// one is what stops executor-platform work and callable-HTTP admission
     /// sharing a pooled session.
-    /// `tenant` is deliberately absent: platform credentials are scoped to the
+    /// `env_key` is deliberately absent: platform credentials are scoped to the
     /// project-environment, not to a tenant, and the two relations that still
     /// carry a settable claim (`wamn_run.run_queue`,
     /// `wamn_run.operator_run_actions`) are exactly the ones the guest cannot

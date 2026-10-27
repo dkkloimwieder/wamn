@@ -10,14 +10,14 @@ use super::error::{ApplyPackageError, ApplyPackageErrorType};
 const SELECT_DEFINITION_OWNER_SQL: &str = "\
 SELECT owner_package_id, client_field_extensible \
   FROM catalog.package_definition_owners \
- WHERE tenant_id = $1 AND schema_name = $2 AND relation_name = $3 \
+ WHERE env_key = $1 AND schema_name = $2 AND relation_name = $3 \
    AND definition_type = $4 AND definition_name = $5";
 const INSERT_DEFINITION_OWNER_SQL: &str = "\
 INSERT INTO catalog.package_definition_owners \
-    (tenant_id, schema_name, relation_name, definition_type, definition_name, \
+    (env_key, schema_name, relation_name, definition_type, definition_name, \
      owner_package_id, client_field_extensible) \
 VALUES ($1, $2, $3, $4, $5, $6, $7) \
-ON CONFLICT (tenant_id, schema_name, relation_name, definition_type, definition_name) \
+ON CONFLICT (env_key, schema_name, relation_name, definition_type, definition_name) \
 DO NOTHING";
 pub(super) const SELECT_RELATION_PRESENT_SQL: &str = "\
 SELECT EXISTS (\
@@ -75,7 +75,7 @@ pub(super) struct StoredDefinitionOwner {
 
 pub(super) async fn reconcile_definition_ownership(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     coordinate: &str,
     package_id: &str,
     manifest: &PackageManifest,
@@ -93,7 +93,7 @@ pub(super) async fn reconcile_definition_ownership(
                         .is_some_and(|model| model.client_field_extensible);
                 changed |= insert_definition_owner(
                     tx,
-                    tenant,
+                    env_key,
                     coordinate,
                     planned,
                     DefinitionType::Relation,
@@ -118,7 +118,7 @@ pub(super) async fn reconcile_definition_ownership(
                     let definition = row.get::<_, String>(1);
                     changed |= insert_definition_owner(
                         tx,
-                        tenant,
+                        env_key,
                         coordinate,
                         planned,
                         kind,
@@ -133,7 +133,7 @@ pub(super) async fn reconcile_definition_ownership(
                 ensure_definition_present(tx, coordinate, planned).await?;
                 changed |= insert_definition_owner(
                     tx,
-                    tenant,
+                    env_key,
                     coordinate,
                     planned,
                     mutation.definition_type(),
@@ -185,7 +185,7 @@ async fn ensure_definition_present(
 )]
 async fn insert_definition_owner(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     coordinate: &str,
     planned: &PlannedDefinitionMutation,
     kind: DefinitionType,
@@ -198,7 +198,7 @@ async fn insert_definition_owner(
         .execute(
             INSERT_DEFINITION_OWNER_SQL,
             &[
-                &tenant,
+                &env_key,
                 &mutation.schema(),
                 &mutation.relation(),
                 &kind.as_str(),
@@ -214,7 +214,7 @@ async fn insert_definition_owner(
     }
     let existing = load_definition_owner(
         tx,
-        tenant,
+        env_key,
         mutation.schema(),
         mutation.relation(),
         kind,
@@ -242,7 +242,7 @@ async fn insert_definition_owner(
 
 pub(super) async fn load_definition_owner(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     schema: &str,
     relation: &str,
     kind: DefinitionType,
@@ -250,7 +250,7 @@ pub(super) async fn load_definition_owner(
 ) -> anyhow::Result<Option<StoredDefinitionOwner>> {
     tx.query_opt(
         SELECT_DEFINITION_OWNER_SQL,
-        &[&tenant, &schema, &relation, &kind.as_str(), &definition],
+        &[&env_key, &schema, &relation, &kind.as_str(), &definition],
     )
     .await
     .context("read durable definition owner")

@@ -58,8 +58,8 @@ pub(super) async fn assert_materializer_causation(
     let (project, project_task) = connect(&project_url).await?;
 
     let triggers = project.query(
-        "SELECT workflow_id, source_package, entity, ops FROM catalog.workflows WHERE tenant_id = $1 AND environment = $2 AND application = 'receiving' AND enabled AND trigger = 'event'",
-        &[&identity().tenant().as_str(), &identity().environment],
+        "SELECT workflow_id, source_package, entity, ops FROM catalog.workflows WHERE env_key = $1 AND environment = $2 AND application = 'receiving' AND enabled AND trigger = 'event'",
+        &[&identity().env_key().as_str(), &identity().environment],
     ).await.context("read enabled event workflows")?;
     anyhow::ensure!(
         triggers.len() == 1,

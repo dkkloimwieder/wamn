@@ -14,7 +14,8 @@ Without `--config`, `WAMN_EDGE_CONFIG` names the file. [`edge.example.toml`](../
 The `[scope]` keys name the org, the project and the environment of the box.
 The org and the project also take the variables `WAMN_ORG` and `WAMN_PROJECT` that the cloud host reads.
 The environment has no variable. The edge reads it only from the file.
-The release names no tenant, so the edge takes the tenant `<org>--<project>--<environment>` of that coordinate.
+The release names no environment key.
+The edge derives `env_key` as `<org>--<project>--<environment>` from that coordinate.
 
 ## Read the status of a running edge
 

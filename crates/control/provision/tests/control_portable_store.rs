@@ -158,7 +158,7 @@ fn control_portable_store_enforces_the_current_record_on_postgres() {
         "check the installed release record",
         r"
 SET ROLE wamn_system;
-SET app.tenant = 'tenant-a';
+SET app.env_key = 'tenant-a';
 DO $shape$
 DECLARE
   catalog_tables text[];
@@ -202,7 +202,7 @@ RESET ROLE;
 }
 
 #[test]
-fn control_author_is_tenant_bound_and_exactly_scoped_on_postgres() {
+fn control_author_is_env_key_bound_and_exactly_scoped_on_postgres() {
     const PASSWORD: &str = "control-author-live-test";
 
     let _serialized = wamn_test_postgres::lock();
@@ -244,7 +244,7 @@ fn control_author_is_tenant_bound_and_exactly_scoped_on_postgres() {
             r"
 SET ROLE wamn_system;
 INSERT INTO wamn_authority.author_login_tenants
-  (login_identity, tenant_id, org_id, project_id, environment)
+  (login_identity, env_key, org_id, project_id, environment)
 VALUES ('{author_a}', 'tenant-a', 'acme', 'widgets', 'dev'),
        ('{author_b}', 'tenant-b', 'acme', 'shipping', 'dev');
 RESET ROLE;
@@ -260,15 +260,15 @@ RESET ROLE;
 DO $identity$ BEGIN
   ASSERT session_user = '{author_a}';
   ASSERT current_user = session_user;
-  ASSERT wamn_authority.session_author_tenant() = 'tenant-a';
+  ASSERT wamn_authority.session_author_env_key() = 'tenant-a';
   ASSERT pg_has_role(session_user, 'wamn_control_author', 'USAGE');
   ASSERT NOT pg_has_role(session_user, 'wamn_system', 'USAGE');
 END
 $identity$;
 
-SET app.tenant = 'tenant-a';
+SET app.env_key = 'tenant-a';
 INSERT INTO catalog.authoring_command_audit
-  (tenant_id, command_id, command_type, principal_id, principal_type,
+  (env_key, command_id, command_type, principal_id, principal_type,
    principal_subject, effective_role, org, project, environment, target_ref,
    request_hash, outcome_bytes)
 VALUES
@@ -276,28 +276,28 @@ VALUES
    'project-author', 'acme', 'widgets', 'dev', 'widgets@1.0.0',
    'sha256:' || repeat('1', 64), '\x7b7d'::bytea);
 INSERT INTO wamn_run.gate_reports
-  (tenant_id, wiring_hash, passed, summary)
+  (env_key, wiring_hash, passed, summary)
 VALUES ('tenant-a', 'sha256:' || repeat('2', 64), true, '{{}}');
 
-SET app.tenant = 'tenant-b';
+SET app.env_key = 'tenant-b';
 DO $narrowed$ BEGIN
   ASSERT (SELECT count(*) FROM catalog.authoring_command_audit) = 0;
   BEGIN
     INSERT INTO catalog.authoring_command_audit
-      (tenant_id, command_id, command_type, principal_id, principal_type,
+      (env_key, command_id, command_type, principal_id, principal_type,
        principal_subject, effective_role, org, project, environment, target_ref,
        request_hash, outcome_bytes)
     VALUES
       ('tenant-b', 'forged', 'gate', 'principal-1', 'user', 'someone',
        'project-author', 'acme', 'shipping', 'dev', 'forged',
        'sha256:' || repeat('3', 64), '\x7b7d'::bytea);
-    ASSERT false, 'app.tenant widened the author mapping';
+    ASSERT false, 'app.env_key widened the author mapping';
   EXCEPTION WHEN insufficient_privilege THEN NULL;
   END;
 END
 $narrowed$;
 
-SET app.tenant = 'tenant-a';
+SET app.env_key = 'tenant-a';
 DO $denied$ BEGIN
   BEGIN PERFORM 1 FROM wamn_authority.author_login_tenants;
     ASSERT false, 'the author read its tenant mapping';
@@ -316,10 +316,10 @@ $denied$;
         "check tenant-b author isolation",
         &format!(
             r"
-SET app.tenant = 'tenant-b';
+SET app.env_key = 'tenant-b';
 DO $second$ BEGIN
   ASSERT session_user = '{author_b}';
-  ASSERT wamn_authority.session_author_tenant() = 'tenant-b';
+  ASSERT wamn_authority.session_author_env_key() = 'tenant-b';
   ASSERT (SELECT count(*) FROM catalog.authoring_command_audit) = 0;
   ASSERT (SELECT count(*) FROM wamn_run.gate_reports) = 0;
 END
@@ -354,8 +354,8 @@ fn gate_reports_refuse_update_and_delete() {
         "gate report immutability",
         r#"
 SET ROLE wamn_system;
-SET app.tenant = 'tenant-a';
-INSERT INTO wamn_run.gate_reports (tenant_id, wiring_hash, passed, summary)
+SET app.env_key = 'tenant-a';
+INSERT INTO wamn_run.gate_reports (env_key, wiring_hash, passed, summary)
 VALUES ('tenant-a', 'sha256:' || repeat('a', 64), true, '{"cases": 1}');
 DO $immutable$
 DECLARE
@@ -363,17 +363,17 @@ DECLARE
 BEGIN
   ASSERT current_user = 'wamn_system';
   SELECT * INTO STRICT original FROM wamn_run.gate_reports
-   WHERE tenant_id = 'tenant-a' AND wiring_hash = 'sha256:' || repeat('a', 64);
+   WHERE env_key = 'tenant-a' AND wiring_hash = 'sha256:' || repeat('a', 64);
   BEGIN
     UPDATE wamn_run.gate_reports SET passed = false, summary = '{"cases": 0}'
-     WHERE tenant_id = original.tenant_id AND wiring_hash = original.wiring_hash;
+     WHERE env_key = original.env_key AND wiring_hash = original.wiring_hash;
     ASSERT false, 'a gate report allowed UPDATE';
   EXCEPTION WHEN SQLSTATE '55000' THEN
     ASSERT SQLERRM = 'wamn_run.gate_reports is immutable';
   END;
   BEGIN
     DELETE FROM wamn_run.gate_reports
-     WHERE tenant_id = original.tenant_id AND wiring_hash = original.wiring_hash;
+     WHERE env_key = original.env_key AND wiring_hash = original.wiring_hash;
     ASSERT false, 'a gate report allowed DELETE';
   EXCEPTION WHEN SQLSTATE '55000' THEN
     ASSERT SQLERRM = 'wamn_run.gate_reports is immutable';

@@ -47,9 +47,9 @@ pub struct PruneRecordHistoryRequest {
 }
 
 impl PruneRecordHistoryRequest {
-    /// The database tenant derived from the environment coordinate.
-    pub fn tenant(&self) -> String {
-        wamn_control_registry::project_env_tenant(&self.org, &self.project, &self.environment)
+    /// The composed environment key derived from the environment coordinate.
+    pub fn env_key(&self) -> String {
+        wamn_control_registry::project_env_key(&self.org, &self.project, &self.environment)
     }
 }
 
@@ -82,7 +82,7 @@ pub async fn prune_expired_record_history(
         .context("audit retention credential connect")?;
     let connection_task = tokio::spawn(connection);
     let result = async {
-        verify_audit_retention_identity(&client, &request.tenant()).await?;
+        verify_audit_retention_identity(&client, &request.env_key()).await?;
         prune(&mut client).await
     }
     .await;
@@ -97,7 +97,7 @@ pub async fn prune_expired_record_history(
 /// The verb derives the expected names from the environment coordinate and the server's
 /// `current_database()`. The URL is operator input, so the verb does not read
 /// the database from it.
-async fn verify_audit_retention_identity(client: &Client, tenant: &str) -> anyhow::Result<()> {
+async fn verify_audit_retention_identity(client: &Client, env_key: &str) -> anyhow::Result<()> {
     let row = client
         .query_one(
             "SELECT current_user::text AS role, current_database()::text AS database",
@@ -107,8 +107,8 @@ async fn verify_audit_retention_identity(client: &Client, tenant: &str) -> anyho
         .context("read connected audit retention identity")?;
     let role: String = row.get("role");
     let database: String = row.get("database");
-    let scope = WorkloadRoleScope::Tenant {
-        tenant,
+    let scope = WorkloadRoleScope::EnvKey {
+        env_key,
         database: &database,
     };
     let mut expected = Vec::new();
@@ -123,7 +123,7 @@ async fn verify_audit_retention_identity(client: &Client, tenant: &str) -> anyho
     }
     bail!(
         "refusing to prune record history: connected as {role:?} in database {database:?}, which \
-         is not an audit-retention credential generation for tenant {tenant:?} (expected one of \
+         is not an audit-retention credential generation for env_key {env_key:?} (expected one of \
          {expected:?})"
     )
 }

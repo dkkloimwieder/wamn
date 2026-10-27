@@ -14,7 +14,7 @@ use super::{
     connect_config, ensure_secret_path, exact_project_database_config, named_database_config,
     project_env_database_name, read_project_env_instance, read_project_env_policy,
     render_org_workload_secret_manifest, render_workload_secret_manifest, resolve_cluster,
-    role_sql, sql, tenant_key, validate_project_env, validate_session_tenant_id,
+    role_sql, sql, tenant_key, validate_project_env, validate_session_env_key,
     workload_action_flag, workload_config, workload_generation_role, workload_secret_flag,
     workload_url, write_output, write_secret_json,
 };
@@ -219,7 +219,7 @@ pub(super) fn is_workload_generation_role(family: WorkloadRoleFamily, role: &str
 pub(super) struct WorkloadLifecycle<'a> {
     pub(super) family: WorkloadRoleFamily,
     pub(super) scope: WorkloadRoleScope<'a>,
-    pub(super) control_tenant: Option<&'a str>,
+    pub(super) control_env_key: Option<&'a str>,
 }
 
 impl<'a> WorkloadLifecycle<'a> {
@@ -254,7 +254,7 @@ impl<'a> WorkloadLifecycle<'a> {
 pub(super) fn workload_lifecycle<'a>(
     family: WorkloadRoleFamily,
     identity: WorkloadActionIdentity<'a>,
-    tenant: &'a str,
+    env_key: &'a str,
     database: &'a str,
 ) -> WorkloadLifecycle<'a> {
     let WorkloadActionIdentity {
@@ -267,7 +267,7 @@ pub(super) fn workload_lifecycle<'a>(
         // the tenant key, so the login the mint issues and the key
         // `wamn_authority.tenant_key` computes are the same string
         // (`wamn-0h0g.22.6.4`).
-        WorkloadRoleScopeKind::Tenant => WorkloadRoleScope::Tenant { tenant, database },
+        WorkloadRoleScopeKind::EnvKey => WorkloadRoleScope::EnvKey { env_key, database },
         WorkloadRoleScopeKind::ProjectEnvironment => WorkloadRoleScope::ProjectEnvironment {
             org,
             project,
@@ -285,7 +285,7 @@ pub(super) fn workload_lifecycle<'a>(
     WorkloadLifecycle {
         family,
         scope,
-        control_tenant: (family.scope_kind() == WorkloadRoleScopeKind::Control).then_some(tenant),
+        control_env_key: (family.scope_kind() == WorkloadRoleScopeKind::Control).then_some(env_key),
     }
 }
 
@@ -472,8 +472,8 @@ pub async fn run_workload_action(
             );
             None
         };
-    let tenant = wamn_control_registry::project_env_tenant(&args.org, &args.project, &args.env);
-    let tenant = tenant.as_str();
+    let env_key = wamn_control_registry::project_env_key(&args.org, &args.project, &args.env);
+    let env_key = env_key.as_str();
     let identity = workload_action_identity(args)?;
     let WorkloadActionIdentity {
         org,
@@ -481,7 +481,7 @@ pub async fn run_workload_action(
         environment,
     } = identity;
     if family == WorkloadRoleFamily::SessionRoleReader {
-        validate_session_tenant_id(tenant)?;
+        validate_session_env_key(env_key)?;
     }
     let triple = Triple::new(org, project, environment);
     let system_url = args
@@ -515,7 +515,7 @@ pub async fn run_workload_action(
         let config = exact_project_database_config(admin_url, &database)?;
         (admin_url, database, config, Some(instance))
     };
-    let lifecycle = workload_lifecycle(family, identity, tenant, &database);
+    let lifecycle = workload_lifecycle(family, identity, env_key, &database);
     let mut passwords =
         GenerationPasswords::connect(&named_database_config(system_url, "system database")?)
             .await?;
@@ -542,7 +542,7 @@ pub async fn run_workload_action(
             // The key the RLS predicate computes, taken from the ONE Rust
             // definition rather than re-derived here — the Secret's label must
             // name the same tenant the role name's digest does.
-            let key = tenant_key(tenant, &database);
+            let key = tenant_key(env_key, &database);
             prepare_workload_generation(
                 &admin_config,
                 &mut passwords,
@@ -559,7 +559,7 @@ pub async fn run_workload_action(
                             &args.namespace,
                             WorkloadSecretBody::Url(&credential_url),
                         ),
-                        WorkloadSecretBodyKind::TenantUrl => {
+                        WorkloadSecretBodyKind::EnvKeyUrl => {
                             anyhow::ensure!(
                                 role.contains(&key),
                                 "the minted {label} login does not carry the tenant key the RLS \
@@ -569,8 +569,8 @@ pub async fn run_workload_action(
                                 family,
                                 &triple,
                                 &args.namespace,
-                                WorkloadSecretBody::TenantUrl {
-                                    tenant,
+                                WorkloadSecretBody::EnvKeyUrl {
+                                    env_key,
                                     tenant_key: &key,
                                     url: &credential_url,
                                 },
@@ -582,7 +582,7 @@ pub async fn run_workload_action(
                                 instance
                                     .as_deref()
                                     .expect("session readers use project-environment scope"),
-                                tenant,
+                                env_key,
                                 &credential_url,
                             )?;
                             render_workload_secret_manifest(
@@ -659,7 +659,7 @@ pub async fn run_org_workload_action(
             org: &args.org,
             database: &database,
         },
-        control_tenant: None,
+        control_env_key: None,
     };
     let mut passwords = GenerationPasswords::connect(&admin_config).await?;
     match verb {
@@ -853,25 +853,25 @@ where
         .with_context(|| format!("prepare {} credential generation", lifecycle.label()))?;
     passwords.record(&role, &password).await?;
     if let (
-        Some(tenant),
+        Some(env_key),
         WorkloadRoleScope::Control {
             org,
             project,
             environment,
             ..
         },
-    ) = (lifecycle.control_tenant, lifecycle.scope)
+    ) = (lifecycle.control_env_key, lifecycle.scope)
     {
         let mapped: Option<String> = transaction
             .query_opt(
-                sql::upsert_control_author_tenant_mapping_sql(),
-                &[&role, &tenant, &org, &project, &environment],
+                sql::upsert_control_author_env_key_mapping_sql(),
+                &[&role, &env_key, &org, &project, &environment],
             )
             .await
             .context("record control-author login tenant mapping")?
-            .map(|row| row.get("tenant_id"));
+            .map(|row| row.get("env_key"));
         anyhow::ensure!(
-            mapped.as_deref() == Some(tenant),
+            mapped.as_deref() == Some(env_key),
             "control-author login identity already maps to a different tenant"
         );
     }

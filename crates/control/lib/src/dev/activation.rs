@@ -67,9 +67,9 @@ pub struct DevActivationIdentity {
 }
 
 impl DevActivationIdentity {
-    /// The database tenant derived from the environment coordinate.
-    pub fn tenant(&self) -> String {
-        wamn_control_registry::project_env_tenant(&self.org, &self.project, &self.environment)
+    /// The composed environment key derived from the environment coordinate.
+    pub fn env_key(&self) -> String {
+        wamn_control_registry::project_env_key(&self.org, &self.project, &self.environment)
     }
 }
 
@@ -660,7 +660,7 @@ fn materializer_request(
             workload: format!("{}-materializer", identity.project),
             namespace: host_namespace(identity).to_owned(),
             image: digest.to_owned(),
-            tenant: identity.tenant(),
+            env_key: identity.env_key(),
             event: EventIdentity {
                 org: identity.org.clone(),
                 project: identity.project.clone(),
@@ -1127,7 +1127,7 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
 /// here rather than in a cluster.
 pub fn flow_http_identity_claims(identity: &DevActivationIdentity) -> [(&'static str, String); 5] {
     [
-        ("wamn.tenant", identity.tenant()),
+        ("wamn.env_key", identity.env_key()),
         ("wamn.catalog", identity.catalog.clone()),
         ("wamn.environment", identity.environment.clone()),
         ("wamn.project", identity.project.clone()),
@@ -1972,7 +1972,7 @@ mod tests {
                 .expect("every claim is namespaced");
             assert_eq!(
                 value,
-                if field == "tenant" {
+                if field == "env_key" {
                     "org-value--project-value--environment-value".to_owned()
                 } else {
                     format!("{field}-value")
@@ -2114,7 +2114,7 @@ mod tests {
                 statements: Vec::new(),
                 name: release_chart::RoleName::Http,
                 config: serde_yaml::Mapping::from_iter([(
-                    "wamn.tenant".into(),
+                    "wamn.env_key".into(),
                     "parity-test".into(),
                 )]),
                 environment: None,
@@ -2446,7 +2446,7 @@ mod tests {
             .unwrap()
             .config;
         assert_eq!(
-            claims["wamn.tenant"].as_bytes(),
+            claims["wamn.env_key"].as_bytes(),
             b"example--fixture--fixture-dev"
         );
         let staged_materializer: v2::WorkloadStartRequest =
@@ -2477,7 +2477,7 @@ mod tests {
             "event-materializer"
         );
         assert_eq!(
-            resources.config["wamn.tenant"].as_bytes(),
+            resources.config["wamn.env_key"].as_bytes(),
             b"example--fixture--fixture-dev"
         );
         assert_eq!(resources.environment["WAMN_MAT_MAX_DELIVER"], "5");

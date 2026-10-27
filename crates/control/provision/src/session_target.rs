@@ -6,7 +6,7 @@
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
-use wamn_control_registry::{Triple, identifiers::valid_tenant};
+use wamn_control_registry::{Triple, identifiers::valid_env_key};
 
 use crate::name::{project_env_database_name, validate_instance_suffix, validate_project_env};
 use crate::session_role_reader::{SessionRoleReaderConnection, parse_session_role_reader_url};
@@ -33,8 +33,8 @@ fn refused(context: &'static str) -> SessionTargetError {
 }
 
 /// Apply the existing tenant-claim spelling, without creating another identity format.
-pub fn validate_session_tenant_id(tenant: &str) -> Result<(), SessionTargetError> {
-    if !valid_tenant(tenant) {
+pub fn validate_session_env_key(env_key: &str) -> Result<(), SessionTargetError> {
+    if !valid_env_key(env_key) {
         return Err(refused("session target tenant refused"));
     }
     Ok(())
@@ -63,7 +63,7 @@ struct TargetDocument {
     project: String,
     env: String,
     instance_suffix: String,
-    tenant_id: String,
+    env_key: String,
     database: String,
     database_url: String,
 }
@@ -91,11 +91,11 @@ impl SessionTarget {
     pub fn new(
         triple: &Triple,
         instance_suffix: &str,
-        tenant_id: &str,
+        env_key: &str,
         database_url: &str,
     ) -> Result<Self, SessionTargetError> {
         let audience = session_audience(triple, instance_suffix)?;
-        validate_session_tenant_id(tenant_id)?;
+        validate_session_env_key(env_key)?;
         let database = project_env_database_name(
             &triple.org,
             &triple.project,
@@ -117,7 +117,7 @@ impl SessionTarget {
                 project: triple.project.clone(),
                 env: triple.env.to_string(),
                 instance_suffix: instance_suffix.to_owned(),
-                tenant_id: tenant_id.to_owned(),
+                env_key: env_key.to_owned(),
                 database,
                 database_url: database_url.to_owned(),
             },
@@ -138,7 +138,7 @@ impl SessionTarget {
         let target = Self::new(
             &triple,
             &document.instance_suffix,
-            &document.tenant_id,
+            &document.env_key,
             &document.database_url,
         )?;
         if target.document.audience != document.audience
@@ -167,8 +167,8 @@ impl SessionTarget {
         &self.document.instance_suffix
     }
     /// Borrow the trusted tenant claim used in every role predicate.
-    pub fn tenant_id(&self) -> &str {
-        &self.document.tenant_id
+    pub fn env_key(&self) -> &str {
+        &self.document.env_key
     }
     /// Borrow the validated reader capability for the database driver only.
     pub fn connection(&self) -> &SessionRoleReaderConnection {

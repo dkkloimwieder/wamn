@@ -57,7 +57,7 @@ async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
             "project_pg_url":route.database_url,"route_endpoint":endpoint,
             "auth_nats":auth_nats,
             "route_host":cluster.inputs.route_host,"operator_secret":cluster.inputs.operator_secret_output,
-            "tenant":super::super::identity().tenant().as_str(),"caller_role":"admin","evidence_file":path,
+            "env_key":super::super::identity().env_key().as_str(),"caller_role":"admin","evidence_file":path,
             "component_digests":digests,
             "packages":packages,"record_receipt_operation":record_receipt_operation,
             "seed":7701,"cases":16,"history":null,

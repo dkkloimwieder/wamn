@@ -87,7 +87,7 @@ impl WamnPostgres {
             "composed entry reference differs from the release"
         );
         anyhow::ensure!(
-            claims.tenant == release.scope().tenant_id
+            claims.env_key == release.scope().env_key
                 && claims.release.as_ref() == Some(&ReleaseIdentity::from_loaded(&release)),
             "operation release mismatch"
         );
@@ -634,7 +634,7 @@ fn entry_invocation_span(
     let release = facts.release.scope();
     let span = wamn_engine::invocation_trace::invocation_span(
         &wamn_engine::invocation_trace::InvocationSite {
-            tenant_id: &release.tenant_id,
+            env_key: &release.env_key,
             project: facts.claims.project.as_deref().unwrap_or_default(),
             environment: &release.environment,
             wiring_id: "",

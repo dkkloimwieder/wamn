@@ -20,7 +20,7 @@ use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, ClassCredentials, ProjectConfig, StaticCredentialProvider, WamnPostgres,
 };
 
-const TENANT: &str = "rest--publication--test";
+const ENV_KEY: &str = "rest--publication--test";
 const OPERATION: &str = "rest-consumer-fixture:item/record@0.1.0";
 const PASSWORD: &str = "rest-consumer-live-test";
 /// The execution role of the rest_connector item: exactly the operation its
@@ -106,12 +106,12 @@ pub async fn workflow_host(
                 .to_string()],
         )
         .await?;
-    admin.execute("INSERT INTO wamn_run.environment_policies (tenant_id,expected_environment,durability_class) VALUES ($1,'test','standard')", &[&TENANT]).await?;
+    admin.execute("INSERT INTO wamn_run.environment_policies (env_key,expected_environment,durability_class) VALUES ($1,'test','standard')", &[&ENV_KEY]).await?;
     let (_, digest) =
         wamn_catalog::ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?;
     wamn_control::environment::stage::write_release(
         database.url(),
-        TENANT,
+        ENV_KEY,
         digest.as_str(),
         manifest,
     )
@@ -130,7 +130,7 @@ pub async fn workflow_host(
         let role = workload_generation_role(
             family,
             WorkloadRoleScope::ProjectEnvironment {
-                org: TENANT,
+                org: ENV_KEY,
                 project: "test",
                 environment: "test",
                 database: database.name(),
@@ -225,14 +225,14 @@ pub async fn schedule_run(
     let (gate, connection) = tokio_postgres::connect(control.url(), tokio_postgres::NoTls).await?;
     tokio::spawn(connection);
     gate.execute(
-        "SELECT set_config('app.tenant', $1, false), set_config('app.user_id', $2, false)",
-        &[&TENANT, &ENABLER],
+        "SELECT set_config('app.env_key', $1, false), set_config('app.user_id', $2, false)",
+        &[&ENV_KEY, &ENABLER],
     )
     .await?;
     gate.execute(
-        "INSERT INTO wamn_run.gate_reports (tenant_id, wiring_hash, passed, summary) \
+        "INSERT INTO wamn_run.gate_reports (env_key, wiring_hash, passed, summary) \
          VALUES ($1, $2, true, '{}'::jsonb)",
-        &[&TENANT, &document.wiring_hash().as_str()],
+        &[&ENV_KEY, &document.wiring_hash().as_str()],
     )
     .await?;
     let declared = declared(application, manifest);
@@ -274,7 +274,7 @@ pub async fn schedule_run(
     match host
         .admit_schedule_run(
             "test",
-            TENANT,
+            ENV_KEY,
             &ScheduleRunAdmission {
                 environment: "test",
                 application,
@@ -312,7 +312,7 @@ pub async fn run_caller(
         principal == wamn_project_state::workflow_user_id().to_string() && execution_role == role,
         "the schedule run executes as {principal} with {execution_role}, not the workflow user with {role}"
     );
-    host.workflow_node_caller("test", TENANT, &principal, &execution_role)
+    host.workflow_node_caller("test", ENV_KEY, &principal, &execution_role)
         .await?
         .ok_or_else(|| anyhow::anyhow!("the workflow user does not hold {execution_role}"))
 }
@@ -367,8 +367,8 @@ pub async fn install(
     .await?;
     let role = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::Tenant {
-            tenant: TENANT,
+        WorkloadRoleScope::EnvKey {
+            env_key: ENV_KEY,
             database: database.name(),
         },
         CredentialGeneration::A,
@@ -407,7 +407,7 @@ pub async fn install(
     wamn_control::environment::stage::materialize_application_principals(
         system.url(),
         database.url(),
-        TENANT,
+        ENV_KEY,
         manifest,
         &manifests,
         &wamn_platform_identity::auth_changes::AuthChanges::default(),
@@ -480,7 +480,7 @@ pub async fn invoke(
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &manifest.canonical_bytes(),
         "consumer live",
-        ReleaseScope::new(TENANT, "test").with_applications(declared("rest_connector", manifest)),
+        ReleaseScope::new(ENV_KEY, "test").with_applications(declared("rest_connector", manifest)),
     )?);
     let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(
         StaticCredentialProvider::new(
@@ -640,7 +640,7 @@ pub async fn invoke(
             deadline_ms: 10000,
             facts: NativeFacts::entry(
                 NodeAcquisition {
-                    claims: host.claims(TENANT, Some(host.release_identity())),
+                    claims: host.claims(ENV_KEY, Some(host.release_identity())),
                     invocation: wamn_execution_host::component_invocation(
                         component,
                         operation,

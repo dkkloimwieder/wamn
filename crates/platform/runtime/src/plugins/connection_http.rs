@@ -183,7 +183,7 @@ impl std::fmt::Debug for ConnectionHttp {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ConnectionHttp")
-            .field("tenant", &self.tenant)
+            .field("env_key", &self.env_key)
             .field("project", &self.project)
             .finish_non_exhaustive()
     }
@@ -194,7 +194,7 @@ pub struct ConnectionHttp {
     postgres: Arc<WamnPostgres>,
     transport: Arc<HttpTransport>,
     vault: Arc<WamnCredentials>,
-    tenant: Box<str>,
+    env_key: Box<str>,
     project: Box<str>,
     allowed_hosts: Arc<[AllowedHost]>,
     /// Reader 2 of the four the loaded release enumerates (`wamn-0h0g.15.100`): the ONE
@@ -218,7 +218,7 @@ impl ConnectionHttp {
         postgres: Arc<WamnPostgres>,
         transport: Arc<HttpTransport>,
         vault: Arc<WamnCredentials>,
-        tenant: impl Into<Box<str>>,
+        env_key: impl Into<Box<str>>,
         project: impl Into<Box<str>>,
         allowed_hosts: Arc<[AllowedHost]>,
         release: Option<Arc<LoadedRelease>>,
@@ -229,7 +229,7 @@ impl ConnectionHttp {
             postgres,
             transport,
             vault,
-            tenant: tenant.into(),
+            env_key: env_key.into(),
             project,
             allowed_hosts,
             release,
@@ -375,7 +375,7 @@ impl ConnectionHttp {
         {
             (ConnectionExecutionClosure::Released, Some(release)) => {
                 let manifest = release.manifest();
-                if release.scope().tenant_id != self.tenant.as_ref()
+                if release.scope().env_key != self.env_key.as_ref()
                     || !manifest
                         .release
                         .packages
@@ -415,7 +415,7 @@ impl ConnectionHttp {
             .connection_effect_snapshot(
                 component_id,
                 &self.project,
-                &self.tenant,
+                &self.env_key,
                 &ConnectionEffectLookup {
                     package_id: &invocation.package_id,
                     entry,
@@ -500,7 +500,7 @@ impl ConnectionHttp {
             .ok_or(ConnectionError::CredentialUnavailable)?;
         let scope = ClientScope {
             connection: ConnectionScope {
-                tenant: self.tenant.clone(),
+                env_key: self.env_key.clone(),
                 project: self.project.clone(),
                 environment: environment.into(),
                 instance: snapshot
@@ -1452,7 +1452,7 @@ fn http_span(plugin: &ConnectionHttp, component_id: &str) -> tracing::Span {
     let span = effect_span!(
         "wamn.connection_http",
         EffectIdentity {
-            tenant: &plugin.tenant,
+            env_key: &plugin.env_key,
             project: &plugin.project,
             component: component_id,
         },
@@ -2401,7 +2401,7 @@ mod tests {
             harness.attributes("wamn.connection_http"),
             expected_attributes(&[
                 ("effect.operation", "send"),
-                ("wamn.tenant", "tenant-a"),
+                ("wamn.env_key", "tenant-a"),
                 ("wamn.project", "project-a"),
                 ("wamn.component", component_id),
                 ("wamn.package_id", "package_a"),
@@ -2440,7 +2440,7 @@ mod tests {
         let shared = |package: &str, occurrence: &str| {
             expected_attributes(&[
                 ("effect.operation", "send"),
-                ("wamn.tenant", "tenant-a"),
+                ("wamn.env_key", "tenant-a"),
                 ("wamn.project", "project-a"),
                 ("wamn.component", component_id),
                 ("wamn.package_id", package),
@@ -2490,7 +2490,7 @@ mod tests {
             harness.attributes("wamn.connection_http"),
             expected_attributes(&[
                 ("effect.operation", "send"),
-                ("wamn.tenant", "tenant-a"),
+                ("wamn.env_key", "tenant-a"),
                 ("wamn.project", "project-a"),
                 ("wamn.component", component_id),
                 ("wamn.package_id", ""),
@@ -2668,7 +2668,7 @@ mod tests {
             expected_attributes(&[
                 ("effect.operation", "send"),
                 ("effect.outcome", "timeout"),
-                ("wamn.tenant", "tenant-a"),
+                ("wamn.env_key", "tenant-a"),
                 ("wamn.project", "project-a"),
                 ("wamn.component", component_id),
                 ("wamn.package_id", "package_a"),
@@ -2707,7 +2707,7 @@ mod tests {
             attributes,
             expected_attributes(&[
                 ("effect.operation", "send"),
-                ("wamn.tenant", "tenant-a"),
+                ("wamn.env_key", "tenant-a"),
                 ("wamn.project", "project-a"),
                 ("wamn.component", component_id),
                 ("wamn.package_id", "package_a"),
@@ -2762,7 +2762,7 @@ mod tests {
         let shared = |operation: &str| {
             expected_attributes(&[
                 ("effect.operation", "send"),
-                ("wamn.tenant", "tenant-a"),
+                ("wamn.env_key", "tenant-a"),
                 ("wamn.project", "project-a"),
                 ("wamn.component", component_id),
                 ("wamn.package_id", "package_a"),

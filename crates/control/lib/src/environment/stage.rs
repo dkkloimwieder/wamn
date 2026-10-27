@@ -42,8 +42,8 @@ pub async fn stage(
     manifest: &wamn_catalog::ServingManifest,
     project_url: &str,
 ) -> anyhow::Result<Vec<PackageManifest>> {
-    let tenant =
-        wamn_control_provision::project_env_tenant(&document.org, &document.project, &document.env);
+    let env_key =
+        wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
 
     // 0. The platform schema the packages run on: the pending project
     // migrations of this binary, in one transaction. A drifted or failing file
@@ -135,12 +135,12 @@ pub async fn stage(
 
     // 2. The release cache row, once its package versions are installed: the
     // row seals the migrations of every version it names.
-    write_release(project_url, &tenant, digest, manifest).await?;
-    materialize_requirements(project_url, &tenant, manifest).await?;
+    write_release(project_url, &env_key, digest, manifest).await?;
+    materialize_requirements(project_url, &env_key, manifest).await?;
     materialize_application_principals(
         &platform.system_database_url,
         project_url,
-        &tenant,
+        &env_key,
         manifest,
         &packages
             .iter()
@@ -199,7 +199,7 @@ pub async fn stage(
 pub async fn materialize_application_principals(
     system_url: &str,
     project_url: &str,
-    tenant: &str,
+    env_key: &str,
     manifest: &wamn_catalog::ServingManifest,
     packages: &[PackageManifest],
     changes: &wamn_platform_identity::auth_changes::AuthChanges,
@@ -237,7 +237,7 @@ pub async fn materialize_application_principals(
         .await?;
     let mut drops = AuthDrops::default();
     for package in applications {
-        let subject = wamn_platform_identity::application_subject(tenant, &package.package.id)?;
+        let subject = wamn_platform_identity::application_subject(env_key, &package.package.id)?;
         let principal = crate::provision_project_env::resolve_or_create_service(
             &mut system,
             &subject,
@@ -261,17 +261,17 @@ pub async fn materialize_application_principals(
             )
             .await?;
         if written != 0 {
-            drops.principal(tenant, principal.id().as_str());
+            drops.principal(env_key, principal.id().as_str());
         }
         let role = format!("application-{}", package.package.id.replace('_', "-"));
-        crate::role_permission::create_role(&transaction, tenant, &role, &mut drops).await?;
+        crate::role_permission::create_role(&transaction, env_key, &role, &mut drops).await?;
         for permission in crate::publish_release::application_dependency_permissions(
             package,
             &dependency_manifests,
         )? {
             crate::role_permission::grant_permission(
                 &transaction,
-                tenant,
+                env_key,
                 &role,
                 &permission,
                 &mut drops,
@@ -280,7 +280,7 @@ pub async fn materialize_application_principals(
         }
         wamn_platform_identity::application::grant_user_role(
             &transaction,
-            tenant,
+            env_key,
             principal.id().as_str(),
             &role,
             &mut drops,
@@ -464,7 +464,7 @@ pub(super) async fn open(
 /// other bytes refuses.
 async fn materialize_requirements(
     project_url: &str,
-    tenant: &str,
+    env_key: &str,
     manifest: &wamn_catalog::ServingManifest,
 ) -> anyhow::Result<()> {
     let requirements = release_requirements(manifest);
@@ -483,7 +483,7 @@ async fn materialize_requirements(
         .await
         .context("bind wamn:provisioning as the actor and operation")?;
     transaction
-        .query_one("SELECT set_config('app.tenant', $1, true)", &[&tenant])
+        .query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
         .await
         .context("claim the tenant")?;
     for requirement in &requirements {
@@ -491,7 +491,7 @@ async fn materialize_requirements(
             .context("a connection requirement is not UTF-8")?;
         let hash = requirement.requirement_hash();
         let params: [&(dyn tokio_postgres::types::ToSql + Sync); 5] = [
-            &tenant,
+            &env_key,
             &requirement.component_digest(),
             &requirement.store_alias(),
             &json,
@@ -553,7 +553,7 @@ pub(super) fn release_requirements(
 /// When `manifest` does not hash to `digest`, or the write fails.
 pub async fn write_release(
     project_url: &str,
-    tenant: &str,
+    env_key: &str,
     digest: &str,
     manifest: &wamn_catalog::ServingManifest,
 ) -> anyhow::Result<()> {
@@ -575,14 +575,14 @@ pub async fn write_release(
         .await
         .context("bind wamn:provisioning as the actor and operation")?;
     transaction
-        .query_one("SELECT set_config('app.tenant', $1, true)", &[&tenant])
+        .query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
         .await
         .context("claim the tenant")?;
     transaction
         .execute(
-            "INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
+            "INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) \
              VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
-            &[&tenant, &digest, &bytes],
+            &[&env_key, &digest, &bytes],
         )
         .await
         .context("write the release cache row")?;

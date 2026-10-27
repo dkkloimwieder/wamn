@@ -184,7 +184,7 @@ fn validate_relation_classifications(
 
 pub(super) async fn validate_definition_ownership_before_apply(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     coordinate: &str,
     package_id: &str,
     manifest: &PackageManifest,
@@ -199,14 +199,14 @@ pub(super) async fn validate_definition_ownership_before_apply(
         let mutation = &planned.mutation;
         match mutation.action() {
             DefinitionAction::Create => {
-                preflight_create_relation(tx, tenant, coordinate, package_id, manifest, planned)
+                preflight_create_relation(tx, env_key, coordinate, package_id, manifest, planned)
                     .await?;
                 created.push((mutation.schema(), mutation.relation()));
             }
             DefinitionAction::Add => {
                 preflight_add_definition(
                     tx,
-                    tenant,
+                    env_key,
                     coordinate,
                     package_id,
                     manifest,
@@ -216,8 +216,10 @@ pub(super) async fn validate_definition_ownership_before_apply(
                 .await?;
             }
             DefinitionAction::Alter | DefinitionAction::Drop => {
-                preflight_existing_definition_mutation(tx, tenant, coordinate, package_id, planned)
-                    .await?;
+                preflight_existing_definition_mutation(
+                    tx, env_key, coordinate, package_id, planned,
+                )
+                .await?;
             }
         }
     }
@@ -259,7 +261,7 @@ fn validate_manifest_definition_owners(manifest: &PackageManifest) -> anyhow::Re
 
 async fn preflight_create_relation(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     coordinate: &str,
     package_id: &str,
     manifest: &PackageManifest,
@@ -268,7 +270,7 @@ async fn preflight_create_relation(
     let mutation = &planned.mutation;
     if let Some(owner) = load_definition_owner(
         tx,
-        tenant,
+        env_key,
         mutation.schema(),
         mutation.relation(),
         DefinitionType::Relation,
@@ -325,7 +327,7 @@ async fn preflight_create_relation(
 
 async fn preflight_add_definition(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     coordinate: &str,
     package_id: &str,
     manifest: &PackageManifest,
@@ -335,7 +337,7 @@ async fn preflight_add_definition(
     let mutation = &planned.mutation;
     let stored = load_definition_owner(
         tx,
-        tenant,
+        env_key,
         mutation.schema(),
         mutation.relation(),
         DefinitionType::Relation,
@@ -419,7 +421,7 @@ async fn preflight_add_definition(
 
     if let Some(owner) = load_definition_owner(
         tx,
-        tenant,
+        env_key,
         mutation.schema(),
         mutation.relation(),
         mutation.definition_type(),
@@ -464,7 +466,7 @@ async fn preflight_add_definition(
 
 async fn preflight_existing_definition_mutation(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     coordinate: &str,
     package_id: &str,
     planned: &PlannedDefinitionMutation,
@@ -472,7 +474,7 @@ async fn preflight_existing_definition_mutation(
     let mutation = &planned.mutation;
     if let Some(owner) = load_definition_owner(
         tx,
-        tenant,
+        env_key,
         mutation.schema(),
         mutation.relation(),
         mutation.definition_type(),

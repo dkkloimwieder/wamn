@@ -36,7 +36,7 @@
 //!
 //! # The vocabulary
 //!
-//! - `wamn.tenant` / `wamn.project` / `wamn.component` — the executing
+//! - `wamn.env_key` / `wamn.project` / `wamn.component` — the executing
 //!   component's identity, resolved HOST-side from bind-time claim maps and
 //!   frozen plugin config. The guest supplies none of them and cannot spoof
 //!   them. An empty string means the surface holds no such claim.
@@ -121,7 +121,7 @@ use wamn_execution_contract::EffectOutcome;
 /// no such claim", never "the guest declined to send one".
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct EffectIdentity<'a> {
-    pub tenant: &'a str,
+    pub env_key: &'a str,
     pub project: &'a str,
     pub component: &'a str,
 }
@@ -380,7 +380,7 @@ pub(crate) fn record_wiring(span: &tracing::Span, wiring: Option<EffectWiring<'_
 /// ```text
 /// effect_span!(
 ///     "wamn.postgres",
-///     EffectIdentity { tenant: &tenant, project: &project, component: component_id },
+///     EffectIdentity { env_key: &env_key, project: &project, component: component_id },
 ///     None,
 ///     db.system = "postgresql",
 ///     db.operation = op,      // <- the trailing comma is required
@@ -420,7 +420,7 @@ macro_rules! effect_span {
         let span = tracing::info_span!(
             $name,
             $($surface_field)*
-            wamn.tenant = %identity.tenant,
+            wamn.env_key = %identity.env_key,
             wamn.project = %identity.project,
             wamn.component = %identity.component,
             wamn.package_id = tracing::field::Empty,
@@ -616,7 +616,7 @@ mod tests {
             let span = effect_span!(
                 "wamn.outcome_test",
                 EffectIdentity {
-                    tenant: "tenant-a",
+                    env_key: "tenant-a",
                     project: "project-a",
                     component: "component-a",
                 },

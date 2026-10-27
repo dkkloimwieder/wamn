@@ -1,6 +1,6 @@
 {
   "scope": {
-    "tenant-id": "__TENANT_ID__",
+    "env_key": "__ENV_KEY__",
     "package-id": "client_acme_receiving"
   },
   "component": "client_acme_receiving",

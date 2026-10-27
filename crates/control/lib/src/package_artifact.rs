@@ -109,7 +109,7 @@ pub const PLATFORM_DIRECTORY: &str = "../platform";
 
 /// The tenant that admission writes into a component scope. A package
 /// artifact is tenant-free, and a descriptor drops the scope.
-const ADMISSION_TENANT: &str = "package-artifact";
+const ADMISSION_ENV_KEY: &str = "package-artifact";
 
 /// The platform packages a package-owned component is admitted with.
 const OWNED_PLATFORM_PACKAGES: [&str; 2] = ["wamn:node", "wamn:postgres"];
@@ -782,7 +782,7 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
 
     let base_digests = authored_base_digests(root).context("read the authored base digests")?;
     let scope = ComponentPackageScope::new(
-        ADMISSION_TENANT,
+        ADMISSION_ENV_KEY,
         manifest.package.id.clone(),
         manifest.package.version.clone(),
     )
@@ -793,7 +793,7 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
     for source in source_components(root, &manifest, &receipt)? {
         let (document, platform_packages) = match &source.template {
             ComponentTemplate::Owned(template) => (
-                render_declaration_document(template, ADMISSION_TENANT)?,
+                render_declaration_document(template, ADMISSION_ENV_KEY)?,
                 OWNED_PLATFORM_PACKAGES.map(str::to_owned).to_vec(),
             ),
             ComponentTemplate::Palette {

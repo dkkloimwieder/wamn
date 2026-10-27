@@ -175,7 +175,7 @@ END $$;
 /// already-executed blanket grant standing, and every assertion below would pass
 /// on new environments while production stayed wide open.
 #[test]
-fn cdc_role_reads_only_the_classification_maps_and_still_decodes_tenant_tables() {
+fn cdc_role_reads_only_the_classification_maps_and_still_decodes_env_key_tables() {
     let (_server, url) = logical_server();
 
     let (org, project, env) = ("acme", "narrowing", "dev");

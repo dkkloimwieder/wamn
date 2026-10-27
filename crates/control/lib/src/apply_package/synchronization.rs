@@ -49,7 +49,7 @@ pub(super) fn require_pending_phase(
 
 pub(super) async fn install(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     package: &str,
     manifest: &PackageManifest,
     planned: &PlannedSynchronization,
@@ -71,8 +71,8 @@ pub(super) async fn install(
             planned.relative_path
         )
     })?;
-    let relation = owned_relation(tx, tenant, package, declaration, mutations).await?;
-    let columns = writable_columns(tx, tenant, package, manifest, declaration, mutations).await?;
+    let relation = owned_relation(tx, env_key, package, declaration, mutations).await?;
+    let columns = writable_columns(tx, env_key, package, manifest, declaration, mutations).await?;
     let inspected = inspect_stage_synchronization(
         &planned.relative_path,
         statement.sql.as_bytes(),
@@ -83,7 +83,7 @@ pub(super) async fn install(
         inspected == *declaration,
         "synchronization declaration changed before execution"
     );
-    require_absent(tx, tenant, declaration).await?;
+    require_absent(tx, env_key, declaration).await?;
     let previous: String = tx.query_one("SHOW search_path", &[]).await?.try_get(0)?;
     let search_path = format!(
         "pg_catalog, {}, pg_temp",
@@ -113,10 +113,19 @@ pub(super) async fn install(
     ] {
         tx.execute(
             "INSERT INTO catalog.package_definition_owners \
-             (tenant_id,schema_name,relation_name,definition_type,definition_name,owner_package_id) \
+             (env_key,schema_name,relation_name,definition_type,definition_name,owner_package_id) \
              VALUES ($1,$2,$3,$4,$5,$6)",
-            &[&tenant, &declaration.schema, &declaration.relation, &section, name, &package],
-        ).await.context("record immutable synchronization definition ownership")?;
+            &[
+                &env_key,
+                &declaration.schema,
+                &declaration.relation,
+                &section,
+                name,
+                &package,
+            ],
+        )
+        .await
+        .context("record immutable synchronization definition ownership")?;
     }
     tx.query_one("SELECT set_config('search_path',$1,true)", &[&previous])
         .await?;
@@ -126,7 +135,7 @@ pub(super) async fn install(
 /// Recheck every inherited synchronization before package or batch SQL can fire it.
 pub(super) async fn verify_inherited(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     package: &str,
     manifest: &PackageManifest,
     declarations: &[PlannedSynchronization],
@@ -135,7 +144,7 @@ pub(super) async fn verify_inherited(
     if declarations.is_empty() && manifest.upgrade_stage.is_none() {
         return Ok(());
     }
-    require_known_triggers(tx, tenant, package, declarations, pending_paths).await?;
+    require_known_triggers(tx, env_key, package, declarations, pending_paths).await?;
     let mut expected = Vec::new();
     for planned in declarations {
         if pending_paths.contains(planned.relative_path.as_str()) {
@@ -149,10 +158,10 @@ pub(super) async fn verify_inherited(
             let owned: bool = tx
                 .query_one(
                     "SELECT EXISTS (SELECT 1 FROM catalog.package_definition_owners \
-                 WHERE tenant_id=$1 AND schema_name=$2 AND relation_name=$3 \
+                 WHERE env_key=$1 AND schema_name=$2 AND relation_name=$3 \
                    AND definition_type=$4 AND definition_name=$5 AND owner_package_id=$6)",
                     &[
-                        &tenant,
+                        &env_key,
                         &declaration.schema,
                         &declaration.relation,
                         &section,
@@ -168,8 +177,8 @@ pub(super) async fn verify_inherited(
                 declaration.schema
             );
         }
-        let relation = owned_relation(tx, tenant, package, declaration, &[]).await?;
-        let columns = writable_columns(tx, tenant, package, manifest, declaration, &[]).await?;
+        let relation = owned_relation(tx, env_key, package, declaration, &[]).await?;
+        let columns = writable_columns(tx, env_key, package, manifest, declaration, &[]).await?;
         validate_stage_trigger_body(
             &planned.relative_path,
             &declaration.body,
@@ -189,7 +198,7 @@ pub(super) async fn verify_inherited(
 /// Freeze trigger sets while preserving concurrent serving writes.
 async fn require_known_triggers(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     package: &str,
     declarations: &[PlannedSynchronization],
     pending_paths: &BTreeSet<&str>,
@@ -199,9 +208,9 @@ async fn require_known_triggers(
             "SELECT n.nspname,c.relname FROM catalog.package_definition_owners o \
          JOIN pg_catalog.pg_namespace n ON n.nspname=o.schema_name \
          JOIN pg_catalog.pg_class c ON c.relnamespace=n.oid AND c.relname=o.relation_name \
-         WHERE o.tenant_id=$1 AND o.owner_package_id=$2 AND o.definition_type='relation' \
+         WHERE o.env_key=$1 AND o.owner_package_id=$2 AND o.definition_type='relation' \
            AND c.relkind='r' ORDER BY n.nspname,c.relname",
-            &[&tenant, &package],
+            &[&env_key, &package],
         )
         .await
         .context("read owned relations before synchronization verification")?;
@@ -257,12 +266,12 @@ async fn require_known_triggers(
 
 async fn owned_relation(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     package: &str,
     declaration: &StageSynchronization,
     mutations: &[&PlannedDefinitionMutation],
 ) -> anyhow::Result<StageRelation> {
-    let mut relation = stage::owned_relations(tx, tenant, package, &declaration.schema)
+    let mut relation = stage::owned_relations(tx, env_key, package, &declaration.schema)
         .await?
         .into_iter()
         .find(|relation| relation.name == declaration.relation)
@@ -275,10 +284,10 @@ async fn owned_relation(
     let mut owned_fields = tx
         .query(
             "SELECT definition_name FROM catalog.package_definition_owners \
-         WHERE tenant_id=$1 AND schema_name=$2 AND relation_name=$3 \
+         WHERE env_key=$1 AND schema_name=$2 AND relation_name=$3 \
            AND definition_type='field' AND owner_package_id=$4",
             &[
-                &tenant,
+                &env_key,
                 &declaration.schema,
                 &declaration.relation,
                 &package,
@@ -306,7 +315,7 @@ async fn owned_relation(
 
 async fn require_absent(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     declaration: &StageSynchronization,
 ) -> anyhow::Result<()> {
     let exists: bool = tx.query_one(
@@ -318,10 +327,10 @@ async fn require_absent(
            JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace \
            WHERE n.nspname=$2 AND c.relname=$3 AND t.tgname=$5) \
          OR EXISTS (SELECT 1 FROM catalog.package_definition_owners \
-           WHERE tenant_id=$1 AND schema_name=$2 \
+           WHERE env_key=$1 AND schema_name=$2 \
              AND ((definition_type='synchronization_function' AND definition_name=$4) \
                OR (definition_type='synchronization_trigger' AND relation_name=$3 AND definition_name=$5)))",
-        &[&tenant, &declaration.schema, &declaration.relation, &declaration.function, &declaration.trigger],
+        &[&env_key, &declaration.schema, &declaration.relation, &declaration.function, &declaration.trigger],
     ).await?.try_get(0)?;
     ensure!(
         !exists,
@@ -335,7 +344,7 @@ async fn require_absent(
 
 async fn writable_columns(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     package: &str,
     manifest: &PackageManifest,
     declaration: &StageSynchronization,
@@ -352,7 +361,7 @@ async fn writable_columns(
                 .then(|| mutation.definition().to_owned())
         })
         .collect::<Vec<_>>();
-    let mut excluded = ["id", "tenant_id", "row_version"]
+    let mut excluded = ["id", "env_key", "row_version"]
         .into_iter()
         .map(str::to_owned)
         .collect::<Vec<_>>();
@@ -378,10 +387,10 @@ async fn writable_columns(
            AND NOT a.attname=ANY($6::text[]) \
            AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_index i WHERE i.indrelid=c.oid AND i.indisprimary AND a.attnum=ANY(i.indkey)) \
            AND (a.attname=ANY($5::text[]) OR EXISTS (SELECT 1 FROM catalog.package_definition_owners o \
-             WHERE o.tenant_id=$1 AND o.schema_name=n.nspname AND o.relation_name=c.relname \
+             WHERE o.env_key=$1 AND o.schema_name=n.nspname AND o.relation_name=c.relname \
                AND o.definition_type='field' AND o.definition_name=a.attname AND o.owner_package_id=$4)) \
          ORDER BY a.attnum",
-        &[&tenant, &declaration.schema, &declaration.relation, &package, &added, &excluded],
+        &[&env_key, &declaration.schema, &declaration.relation, &package, &added, &excluded],
     ).await.context("read synchronization writable package fields")?;
     rows.iter()
         .map(|row| row.try_get(0).map_err(Into::into))

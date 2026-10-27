@@ -44,7 +44,7 @@ pub const WAMN_BLOBSTORE_ID: &str = "wamn-blobstore";
 pub struct WamnBlobstore {
     postgres: Arc<WamnPostgres>,
     vault: Arc<WamnCredentials>,
-    pub(super) tenant: Box<str>,
+    pub(super) env_key: Box<str>,
     pub(super) project: Box<str>,
     /// The mounted, digest-verified serving manifest, when this host serves a
     /// release. A CANDIDATE closure carries its effective release and
@@ -75,7 +75,7 @@ pub struct WamnBlobstore {
 fn release_coordinates(
     invocation: &ConnectionInvocation,
     release: Option<(&ServingManifest, &str, &ReleaseScope)>,
-    tenant: &str,
+    env_key: &str,
 ) -> Result<(String, String), BindingError> {
     match (&invocation.closure, release) {
         (
@@ -87,7 +87,7 @@ fn release_coordinates(
             None,
         ) => Ok((manifest_digest.clone(), environment.clone())),
         (ConnectionExecutionClosure::Released, Some((manifest, manifest_digest, scope))) => {
-            if scope.tenant_id != tenant
+            if scope.env_key != env_key
                 || !manifest
                     .release
                     .packages
@@ -144,7 +144,7 @@ impl std::fmt::Debug for WamnBlobstore {
         // The vault is never rendered.
         formatter
             .debug_struct("WamnBlobstore")
-            .field("tenant", &self.tenant)
+            .field("env_key", &self.env_key)
             .field("project", &self.project)
             .finish_non_exhaustive()
     }
@@ -155,7 +155,7 @@ impl WamnBlobstore {
     pub fn new(
         postgres: Arc<WamnPostgres>,
         vault: Arc<WamnCredentials>,
-        tenant: impl Into<Box<str>>,
+        env_key: impl Into<Box<str>>,
         project: impl Into<Box<str>>,
         release: Option<Arc<LoadedRelease>>,
     ) -> Self {
@@ -164,7 +164,7 @@ impl WamnBlobstore {
         Self {
             postgres,
             vault,
-            tenant: tenant.into(),
+            env_key: env_key.into(),
             project,
             release,
             invocations: RwLock::new(HashMap::new()),
@@ -384,7 +384,7 @@ impl WamnBlobstore {
                     release.scope(),
                 )
             }),
-            &self.tenant,
+            &self.env_key,
         )
         .map_err(|_| {
             refused(
@@ -396,7 +396,7 @@ impl WamnBlobstore {
             .connection_effect_snapshot(
                 component_id,
                 &self.project,
-                &self.tenant,
+                &self.env_key,
                 &ConnectionEffectLookup {
                     package_id: &invocation.package_id,
                     entry,
@@ -552,7 +552,7 @@ pub(super) fn blobstore_span(
     let span = effect_span!(
         "wamn.blobstore",
         EffectIdentity {
-            tenant: &plugin.tenant,
+            env_key: &plugin.env_key,
             project: &plugin.project,
             component: component_id,
         },
@@ -681,7 +681,7 @@ mod tests {
     const MOUNTED_RELEASE: &str =
         "sha256:4444444444444444444444444444444444444444444444444444444444444444";
 
-    fn manifest(tenant: &str, package: &str) -> (ServingManifest, ReleaseScope) {
+    fn manifest(env_key: &str, package: &str) -> (ServingManifest, ReleaseScope) {
         let manifest = ServingManifest {
             composed_entry: None,
             format_version: SERVING_MANIFEST_FORMAT_VERSION,
@@ -698,7 +698,7 @@ mod tests {
         };
         (
             manifest,
-            ReleaseScope::new(tenant, "warehouse-eu-3").with_applications(
+            ReleaseScope::new(env_key, "warehouse-eu-3").with_applications(
                 [(
                     "warehouse".to_owned(),
                     wamn_catalog::ApplicationDefinition {
@@ -749,7 +749,7 @@ mod tests {
     /// hand this guest an effective release under which some other tenant's
     /// binding authorizes — a cross-tenant reach wearing a mounted file.
     #[test]
-    fn a_manifest_for_another_tenant_refuses() {
+    fn a_manifest_for_another_env_key_refuses() {
         let (manifest, scope) = manifest("tenant-b", "package_a");
         assert_eq!(
             release_coordinates(
@@ -1086,7 +1086,7 @@ mod tests {
             harness.attributes("wamn.blobstore"),
             expected_attributes(&[
                 ("effect.operation", "get-data"),
-                ("wamn.tenant", "tenant-a"),
+                ("wamn.env_key", "tenant-a"),
                 ("wamn.project", "project-a"),
                 ("wamn.component", component_id),
                 ("wamn.package_id", "package_a"),

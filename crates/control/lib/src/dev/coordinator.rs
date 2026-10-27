@@ -401,7 +401,7 @@ impl ProductionDevStageRunner {
             self.config.target_database_url(),
             &run_schema,
             &self.config.activation_identity().org,
-            &self.config.activation_identity().tenant(),
+            &self.config.activation_identity().env_key(),
             &self.config.activation_identity().environment,
         )
         .await
@@ -452,7 +452,7 @@ impl ProductionDevStageRunner {
             &identity.org,
             &identity.project,
             &identity.environment,
-            &identity.tenant(),
+            &identity.env_key(),
             self.config.platform_domain(),
         )
         .await
@@ -621,7 +621,7 @@ impl ProductionDevStageRunner {
             base_digests.extend(self.built_base_digests());
             let declaration = render_component_declaration(
                 &template,
-                &self.config.activation_identity().tenant(),
+                &self.config.activation_identity().env_key(),
             )?;
             let admission = admit_component(AdmitComponentRequest {
                 package: package.root,
@@ -646,7 +646,7 @@ impl ProductionDevStageRunner {
             let artifact = palette.artifact;
             let package = self.package_input(&artifact.package_id)?;
             let scope = wamn_catalog::ComponentPackageScope {
-                tenant_id: self.config.activation_identity().tenant(),
+                env_key: self.config.activation_identity().env_key(),
                 package_id: artifact.package_id.to_string(),
                 package_version: artifact.package_version.to_string(),
             };
@@ -742,7 +742,7 @@ impl ProductionDevStageRunner {
         reconcile_package_data_access::reconcile_local(
             &prepared.data_access,
             self.config.target_database_url(),
-            &self.config.activation_identity().tenant(),
+            &self.config.activation_identity().env_key(),
             &self.config.activation_identity().environment,
             apply,
             &wamn_platform_identity::auth_changes::AuthChanges::new(
@@ -853,7 +853,7 @@ impl ProductionDevStageRunner {
         // foreign key needs the release row, which apply's stage writes.
         crate::environment::stage::write_release(
             self.config.target_database_url(),
-            &identity.tenant(),
+            &identity.env_key(),
             published.digest.as_str(),
             &published.manifest,
         )
@@ -899,7 +899,7 @@ impl ProductionDevStageRunner {
         wamn_runtime::local_application::validate_local_facts(
             &local_facts,
             &published.manifest,
-            &identity.tenant(),
+            &identity.env_key(),
         )
         .map_err(|source| {
             ProductionDevStageError::owner("validate complete local application", source)
@@ -1414,7 +1414,7 @@ impl DevStageRunner for ProductionDevStageRunner {
                         .collect::<Vec<_>>();
                     let reason = apply_package::local_target_recreate_reason(
                         self.config.target_database_url(),
-                        &self.config.activation_identity().tenant(),
+                        &self.config.activation_identity().env_key(),
                         &roots,
                     )
                     .await
@@ -1448,7 +1448,7 @@ impl DevStageRunner for ProductionDevStageRunner {
             };
             claim_environment_instance(
                 self.config.system_database_url(),
-                &self.config.activation_identity().tenant(),
+                &self.config.activation_identity().env_key(),
                 &instance,
             )
             .await?;
@@ -1667,7 +1667,7 @@ async fn resolve_local_bindings(
 ) -> anyhow::Result<Vec<wamn_runtime::local_application::LocalBindingFacts>> {
     wamn_runtime::local_application::require_local_target(
         config.target_database_url(),
-        &config.activation_identity().tenant(),
+        &config.activation_identity().env_key(),
         &config.activation_identity().environment,
     )
     .await?;
@@ -1705,8 +1705,8 @@ async fn resolve_local_bindings(
             .await?;
         client
             .query_one(
-                "SELECT set_config('app.tenant', $1, true)",
-                &[&config.activation_identity().tenant()],
+                "SELECT set_config('app.env_key', $1, true)",
+                &[&config.activation_identity().env_key()],
             )
             .await?;
         let mut bindings = Vec::new();
@@ -1714,7 +1714,7 @@ async fn resolve_local_bindings(
             if let Some(input) = &binding.instance {
                 crate::bind_connection::prepare_local_instance(
                     &client,
-                    &config.activation_identity().tenant(),
+                    &config.activation_identity().env_key(),
                     &config.activation_identity().environment,
                     &binding.instance_id,
                     input,
@@ -1723,7 +1723,7 @@ async fn resolve_local_bindings(
             }
             let mut selection = wamn_runtime::local_application::read_local_binding(
                 &client,
-                &config.activation_identity().tenant(),
+                &config.activation_identity().env_key(),
                 &config.activation_identity().environment,
                 &binding.requirement,
                 &binding.instance_id,
@@ -1846,7 +1846,7 @@ fn require_admitted_identity(
 /// absence means durable, and a durable environment is never recreated.
 pub(crate) async fn claim_environment_instance(
     system_database_url: &str,
-    tenant: &str,
+    env_key: &str,
     instance: &str,
 ) -> Result<(), ProductionDevStageError> {
     let (mut client, connection) = tokio_postgres::connect(system_database_url, NoTls)
@@ -1859,7 +1859,7 @@ pub(crate) async fn claim_environment_instance(
         })?;
     let connection_task = tokio::spawn(connection);
     let claimed =
-        crate::provision_project_env::claim_environment_instance(&mut client, tenant, instance)
+        crate::provision_project_env::claim_environment_instance(&mut client, env_key, instance)
             .await;
     drop(client);
     connection_task.abort();
@@ -1899,10 +1899,10 @@ fn declaration_stage_error(source: ComponentDeclarationError) -> ProductionDevSt
 
 fn render_component_declaration(
     template: &Path,
-    tenant: &str,
+    env_key: &str,
 ) -> Result<TemporaryFile, ProductionDevStageError> {
     let document =
-        render_declaration_document(template, tenant).map_err(declaration_stage_error)?;
+        render_declaration_document(template, env_key).map_err(declaration_stage_error)?;
     let rendered = serde_json::to_vec(&document).map_err(|source| {
         ProductionDevStageError::owner("serialize component declaration", source.into())
     })?;

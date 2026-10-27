@@ -150,8 +150,8 @@ pub fn operator_subject(
 }
 
 /// The service subject of one scheduled application in one environment tenant.
-pub fn application_subject(tenant: &str, package: &str) -> Result<String, IdentityError> {
-    canonical_subject(&format!("wamn-app-{tenant}--{package}"))
+pub fn application_subject(env_key: &str, package: &str) -> Result<String, IdentityError> {
+    canonical_subject(&format!("wamn-app-{env_key}--{package}"))
 }
 
 /// Random bytes behind the non-secret lookup half of a token.
@@ -1259,7 +1259,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn application_subject_is_scoped_to_tenant_and_package() {
+    fn application_subject_is_scoped_to_env_key_and_package() {
         assert_eq!(
             application_subject("acme--erp--prod", "integration").unwrap(),
             "wamn-app-acme--erp--prod--integration"

@@ -94,11 +94,11 @@ fn retired_effect_frame_identity_complete(obs: &RunPlaneObservation) -> bool {
     [
         (
             "effect_attempts_tenant_id_attempt_id_run_id_node_id_occurrence_key",
-            "(tenant_id, attempt_id, run_id, frame_id, local_node_id, occurrence)",
+            "(env_key, attempt_id, run_id, frame_id, local_node_id, occurrence)",
         ),
         (
             "effect_attempts_tenant_id_run_id_node_id_occurrence_attempt_index_key",
-            "(tenant_id, run_id, frame_id, local_node_id, occurrence, attempt_index)",
+            "(env_key, run_id, frame_id, local_node_id, occurrence, attempt_index)",
         ),
     ]
     .iter()
@@ -260,9 +260,9 @@ ALTER TABLE {schema}.effect_attempts
     ADD CONSTRAINT effect_attempts_source_artifact_check CHECK (source_artifact_hash ~ '^sha256:[0-9a-f]{{64}}$'),
     ADD CONSTRAINT effect_attempts_requirement_check CHECK (requirement_name <> ''),
     ADD CONSTRAINT effect_attempts_occurrence_key
-        UNIQUE (tenant_id, run_id, frame_id, local_node_id, occurrence),
+        UNIQUE (env_key, run_id, frame_id, local_node_id, occurrence),
     ADD CONSTRAINT effect_attempts_dispatch_identity_key
-        UNIQUE (tenant_id, attempt_id, attempt_started_at,
+        UNIQUE (env_key, attempt_id, attempt_started_at,
                 run_id, frame_id, local_node_id, occurrence);"
         )
         .expect("writing to a String cannot fail");
@@ -390,7 +390,7 @@ DROP INDEX IF EXISTS {schema}.effect_attempts_dispatch_identity_key;",
             "ALTER TABLE {schema}.effect_attempts \
              ALTER COLUMN attempt_started_at SET DEFAULT now(), \
              ADD CONSTRAINT effect_attempts_dispatch_identity_key \
-             UNIQUE (tenant_id,attempt_id,attempt_started_at,run_id,frame_id,local_node_id,occurrence);"
+             UNIQUE (env_key,attempt_id,attempt_started_at,run_id,frame_id,local_node_id,occurrence);"
         )
         .expect("writing to a String cannot fail");
     }
@@ -418,7 +418,7 @@ ALTER TABLE {schema}.effect_attempt_dispatches
     ADD CONSTRAINT effect_attempt_dispatches_local_node_check CHECK (local_node_id ~ '^[a-z0-9-]+$'),
     ADD CONSTRAINT effect_attempt_dispatches_occurrence_check CHECK (occurrence >= 0),
     ADD CONSTRAINT effect_attempt_dispatches_occurrence_key
-        UNIQUE (tenant_id,run_id,frame_id,local_node_id,occurrence);",
+        UNIQUE (env_key,run_id,frame_id,local_node_id,occurrence);",
         )
         .expect("writing to a String cannot fail");
         if obs.tables.contains_key("effect_attempts") {
@@ -519,7 +519,7 @@ pub(super) const RETIRED_AUTHORED_ORDERING_REFUSAL: &str =
 pub(super) const RETIRED_DEAD_LETTER_REFUSAL: &str =
     "retired-run-dead-letter-history-requires-archive-or-environment-reprovision";
 const RUN_QUEUE_CLAIMABLE_COLUMNS: [&str; 5] = [
-    "tenant_id",
+    "env_key",
     "available_at",
     "stream_seq",
     "run_id",
@@ -737,7 +737,7 @@ pub(super) fn partition_plane_cutover_sql(
             statements.push(format!("DROP INDEX IF EXISTS {target}.run_queue_claimable"));
             statements.push(format!(
                 "CREATE INDEX run_queue_claimable ON {target}.run_queue \
-                   (tenant_id, available_at, stream_seq, run_id, lease_expires_at)"
+                   (env_key, available_at, stream_seq, run_id, lease_expires_at)"
             ));
         }
     }

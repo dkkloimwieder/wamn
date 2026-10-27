@@ -7,7 +7,7 @@ use std::sync::Arc;
 use serde_json::Value;
 use wamn_router::{CacheInsert, VersionKey, Wiring, WiringCache, WiringNode};
 
-const TENANT: &str = "t1";
+const ENV_KEY: &str = "t1";
 const PACKAGE: &str = "shop";
 const ENV: &str = "prod";
 const RELEASE: &str = "sha256:release";
@@ -53,7 +53,7 @@ fn resolve(
 ) -> Arc<Wiring> {
     match cache.insert_version(
         VersionKey {
-            tenant_id: TENANT,
+            env_key: ENV_KEY,
             package_id: PACKAGE,
             environment,
             manifest_digest,
@@ -80,7 +80,7 @@ fn a_resolved_wiring_is_served_from_memory_on_every_later_delivery() {
 
     for _ in 0..3 {
         let hit = cache
-            .get_version(TENANT, PACKAGE, ENV, RELEASE, "orders", 7)
+            .get_version(ENV_KEY, PACKAGE, ENV, RELEASE, "orders", 7)
             .expect("resident after insert");
         assert_eq!(hit.version, 7);
         assert!(
@@ -96,7 +96,7 @@ fn an_unresolved_wiring_misses() {
     let cache = cache(8);
     assert!(
         cache
-            .get_version(TENANT, PACKAGE, ENV, RELEASE, "orders", 7)
+            .get_version(ENV_KEY, PACKAGE, ENV, RELEASE, "orders", 7)
             .is_none()
     );
     assert!(cache.is_empty());
@@ -110,12 +110,12 @@ fn environments_do_not_share_an_entry() {
 
     assert!(
         cache
-            .get_version(TENANT, PACKAGE, "staging", RELEASE, "orders", 7)
+            .get_version(ENV_KEY, PACKAGE, "staging", RELEASE, "orders", 7)
             .is_none()
     );
     assert_eq!(
         cache
-            .get_version(TENANT, PACKAGE, ENV, RELEASE, "orders", 7)
+            .get_version(ENV_KEY, PACKAGE, ENV, RELEASE, "orders", 7)
             .expect("prod resident")
             .version,
         7
@@ -145,7 +145,7 @@ fn distinct_versions_remain_resident() {
     resolve(&cache, ENV, RELEASE, "orders", 8, wiring("v8"));
 
     let hit = cache
-        .get_version(TENANT, PACKAGE, ENV, RELEASE, "orders", 8)
+        .get_version(ENV_KEY, PACKAGE, ENV, RELEASE, "orders", 8)
         .expect("the new version resolves");
     assert_eq!(hit.version, 8);
     assert_eq!(hit.wiring.entry(), "v8");
@@ -153,7 +153,7 @@ fn distinct_versions_remain_resident() {
     assert!(!Arc::ptr_eq(&hit.wiring, &seven));
     assert!(Arc::ptr_eq(
         &cache
-            .get_version(TENANT, PACKAGE, ENV, RELEASE, "orders", 7)
+            .get_version(ENV_KEY, PACKAGE, ENV, RELEASE, "orders", 7)
             .expect("the old version remains resident")
             .wiring,
         &seven
@@ -169,7 +169,7 @@ fn eviction_is_bounded_and_least_recently_used() {
     resolve(&cache, ENV, RELEASE, "b", 1, wiring("b"));
     // Touch `a`, making `b` the least recently used.
     cache
-        .get_version(TENANT, PACKAGE, ENV, RELEASE, "a", 1)
+        .get_version(ENV_KEY, PACKAGE, ENV, RELEASE, "a", 1)
         .expect("a is resident");
 
     resolve(&cache, ENV, RELEASE, "c", 1, wiring("c"));
@@ -177,18 +177,18 @@ fn eviction_is_bounded_and_least_recently_used() {
     assert_eq!(cache.len(), 2, "the entry bound holds");
     assert!(
         cache
-            .get_version(TENANT, PACKAGE, ENV, RELEASE, "a", 1)
+            .get_version(ENV_KEY, PACKAGE, ENV, RELEASE, "a", 1)
             .is_some(),
         "the touched entry survived"
     );
     assert!(
         cache
-            .get_version(TENANT, PACKAGE, ENV, RELEASE, "c", 1)
+            .get_version(ENV_KEY, PACKAGE, ENV, RELEASE, "c", 1)
             .is_some()
     );
     assert!(
         cache
-            .get_version(TENANT, PACKAGE, ENV, RELEASE, "b", 1)
+            .get_version(ENV_KEY, PACKAGE, ENV, RELEASE, "b", 1)
             .is_none(),
         "the least recently used entry was the one evicted"
     );
@@ -204,12 +204,12 @@ fn an_evicted_version_misses() {
     assert_eq!(cache.len(), 1);
     assert!(
         cache
-            .get_version(TENANT, PACKAGE, ENV, RELEASE, "a", 1)
+            .get_version(ENV_KEY, PACKAGE, ENV, RELEASE, "a", 1)
             .is_none()
     );
     assert!(
         cache
-            .get_version(TENANT, PACKAGE, ENV, RELEASE, "b", 1)
+            .get_version(ENV_KEY, PACKAGE, ENV, RELEASE, "b", 1)
             .is_some()
     );
 }

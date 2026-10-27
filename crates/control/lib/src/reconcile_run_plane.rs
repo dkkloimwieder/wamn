@@ -157,9 +157,9 @@ pub struct ReconcileRunPlaneRequest {
 }
 
 impl ReconcileRunPlaneRequest {
-    /// The database tenant derived from the environment coordinate.
-    pub fn tenant(&self) -> String {
-        wamn_control_registry::project_env_tenant(&self.org, &self.project, &self.env)
+    /// The composed environment key derived from the environment coordinate.
+    pub fn env_key(&self) -> String {
+        wamn_control_registry::project_env_key(&self.org, &self.project, &self.env)
     }
 }
 
@@ -173,7 +173,7 @@ pub struct ReconcileRunPlaneOutcome {
     /// Durability class of the source environment policy.
     pub durability_class: DurabilityClass,
     /// What the tenant's `platform` schema and identity rows needed.
-    pub tenant_identity: TenantIdentityOutcome,
+    pub env_key_identity: EnvKeyIdentityOutcome,
 }
 
 /// Stable class for a run-plane target-identity refusal.
@@ -353,7 +353,7 @@ pub async fn reconcile_run_plane(
         let policy_changed = converge_environment_policy(
             &mut client,
             &schema,
-            &args.tenant(),
+            &args.env_key(),
             &args.env,
             &source_policy,
             !args.dry_run,
@@ -361,32 +361,32 @@ pub async fn reconcile_run_plane(
         .await?;
         // After the catalog schema, because app-schema.sql's stamp triggers
         // call the record-history function that composition installs.
-        let identity_source = read_tenant_identity_source(
+        let identity_source = read_env_key_identity_source(
             &args.system_database_url,
             &args.org,
             &args.project,
             &args.env,
         )
         .await?;
-        let tenant_identity = converge_tenant_identity(
+        let env_key_identity = converge_env_key_identity(
             &mut client,
-            &args.tenant(),
+            &args.env_key(),
             &identity_source,
             !args.dry_run,
             &args.changes,
         )
         .await?;
-        Ok::<_, anyhow::Error>((plan, policy_changed, durability_class, tenant_identity))
+        Ok::<_, anyhow::Error>((plan, policy_changed, durability_class, env_key_identity))
     }
     .await;
     drop(client);
     let _ = conn_task.await;
-    let (plan, policy_changed, durability_class, tenant_identity) = result?;
+    let (plan, policy_changed, durability_class, env_key_identity) = result?;
     Ok(ReconcileRunPlaneOutcome {
         plan,
         policy_changed,
         durability_class,
-        tenant_identity,
+        env_key_identity,
     })
 }
 
@@ -416,7 +416,7 @@ struct UserPrincipal {
 /// so a tenant cannot name its own platform rows, invent a service principal,
 /// or admit a user who was never granted a membership.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct TenantIdentitySource {
+struct EnvKeyIdentitySource {
     /// `registry.meta.platform_domain`, absent until the bootstrap sets it.
     platform_domain: Option<String>,
     services: Vec<ServicePrincipal>,
@@ -429,7 +429,7 @@ struct TenantIdentitySource {
 
 /// Every service principal holding a role in one project, with the deployment
 /// platform domain that names the platform rows.
-const TENANT_IDENTITY_SOURCE_SQL: &str = "SELECT p.id::text, p.subject, p.display_name \
+const ENV_KEY_IDENTITY_SOURCE_SQL: &str = "SELECT p.id::text, p.subject, p.display_name \
      FROM identity.project_roles AS r \
      JOIN identity.principals AS p ON p.id = r.principal_id \
      WHERE r.org = $1 AND r.project = $2 \
@@ -444,7 +444,7 @@ const TENANT_IDENTITY_SOURCE_SQL: &str = "SELECT p.id::text, p.subject, p.displa
 /// itself, so the tenant needs no join beyond the principal that names the
 /// user. The env narrows the read: one tenant database serves one project
 /// environment, and a member of `dev` gets no row in the `prod` tenant.
-const TENANT_IDENTITY_USERS_SQL: &str = "SELECT p.id::text, p.email, p.display_name \
+const ENV_KEY_IDENTITY_USERS_SQL: &str = "SELECT p.id::text, p.email, p.display_name \
      FROM identity.project_env_memberships AS m \
      JOIN identity.principals AS p ON p.id = m.principal_id \
      WHERE m.org = $1 AND m.project = $2 AND m.env = $3 \
@@ -453,7 +453,7 @@ const TENANT_IDENTITY_USERS_SQL: &str = "SELECT p.id::text, p.email, p.display_n
 
 /// Every user member of ONE project environment who holds `project-admin` in
 /// its project.
-const TENANT_IDENTITY_ADMINS_SQL: &str = "SELECT p.id::text \
+const ENV_KEY_IDENTITY_ADMINS_SQL: &str = "SELECT p.id::text \
      FROM identity.project_roles AS r \
      JOIN identity.principals AS p ON p.id = r.principal_id \
      JOIN identity.project_env_memberships AS m \
@@ -461,12 +461,12 @@ const TENANT_IDENTITY_ADMINS_SQL: &str = "SELECT p.id::text \
      WHERE r.org = $1 AND r.project = $2 AND m.env = $3 AND r.role = $4 \
        AND p.type = 'user' AND p.status = 'active'";
 
-async fn read_tenant_identity_source(
+async fn read_env_key_identity_source(
     system_database_url: &str,
     org: &str,
     project: &str,
     env: &str,
-) -> anyhow::Result<TenantIdentitySource> {
+) -> anyhow::Result<EnvKeyIdentitySource> {
     let (client, connection) = tokio_postgres::connect(system_database_url, NoTls)
         .await
         .context("connect to the system registry for tenant identity")?;
@@ -482,7 +482,7 @@ async fn read_tenant_identity_source(
             .context("read the deployment platform domain")?
             .get(0);
         let services = client
-            .query(TENANT_IDENTITY_SOURCE_SQL, &[&org, &project])
+            .query(ENV_KEY_IDENTITY_SOURCE_SQL, &[&org, &project])
             .await
             .context("read the project's service principals")?
             .into_iter()
@@ -493,7 +493,7 @@ async fn read_tenant_identity_source(
             })
             .collect();
         let users = client
-            .query(TENANT_IDENTITY_USERS_SQL, &[&org, &project, &env])
+            .query(ENV_KEY_IDENTITY_USERS_SQL, &[&org, &project, &env])
             .await
             .context("read the project environment's user members")?
             .into_iter()
@@ -505,7 +505,7 @@ async fn read_tenant_identity_source(
             .collect();
         let admins = client
             .query(
-                TENANT_IDENTITY_ADMINS_SQL,
+                ENV_KEY_IDENTITY_ADMINS_SQL,
                 &[
                     &org,
                     &project,
@@ -518,7 +518,7 @@ async fn read_tenant_identity_source(
             .into_iter()
             .map(|row| row.get(0))
             .collect();
-        Ok::<_, anyhow::Error>(TenantIdentitySource {
+        Ok::<_, anyhow::Error>(EnvKeyIdentitySource {
             platform_domain,
             services,
             users,
@@ -531,9 +531,9 @@ async fn read_tenant_identity_source(
     read
 }
 
-/// What one tenant-identity convergence did, or would do under a dry run.
+/// What one env_keyentity convergence did, or would do under a dry run.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct TenantIdentityOutcome {
+pub struct EnvKeyIdentityOutcome {
     /// `deploy/sql/app-schema.sql` was absent and was installed.
     pub app_schema_installed: bool,
     /// Platform rows written, out of the closed component list.
@@ -580,15 +580,15 @@ pub struct TenantIdentityOutcome {
 /// Service and platform rows keep their own sources, so this removes neither.
 ///
 /// `apply=false` observes only and writes nothing.
-async fn converge_tenant_identity(
+async fn converge_env_key_identity(
     client: &mut tokio_postgres::Client,
-    tenant_id: &str,
-    source: &TenantIdentitySource,
+    env_key: &str,
+    source: &EnvKeyIdentitySource,
     apply: bool,
     changes: &wamn_platform_identity::auth_changes::AuthChanges,
-) -> anyhow::Result<TenantIdentityOutcome> {
-    anyhow::ensure!(!tenant_id.is_empty(), "tenant must not be empty");
-    let mut outcome = TenantIdentityOutcome::default();
+) -> anyhow::Result<EnvKeyIdentityOutcome> {
+    anyhow::ensure!(!env_key.is_empty(), "tenant must not be empty");
+    let mut outcome = EnvKeyIdentityOutcome::default();
     // A database installed before project migration 0024 holds the platform
     // schema under its old name. The rename runs first, or app-schema.sql
     // would install a second, empty platform schema beside it.
@@ -772,7 +772,7 @@ async fn converge_tenant_identity(
             let principal_id: wamn_platform_identity::PrincipalId = id.parse()?;
             wamn_platform_identity::application::remove_user(
                 &transaction,
-                tenant_id,
+                env_key,
                 &principal_id,
                 &mut drops,
             )
@@ -783,7 +783,7 @@ async fn converge_tenant_identity(
             let principal_id: wamn_platform_identity::PrincipalId = service.id.parse()?;
             wamn_platform_identity::application::write_service(
                 &transaction,
-                tenant_id,
+                env_key,
                 wamn_platform_identity::application::ApplicationUser {
                     principal_id: &principal_id,
                     email: &format!("{}@{platform_domain}", service.subject),
@@ -798,7 +798,7 @@ async fn converge_tenant_identity(
             let principal_id: wamn_platform_identity::PrincipalId = user.id.parse()?;
             wamn_platform_identity::application::write_user(
                 &transaction,
-                tenant_id,
+                env_key,
                 wamn_platform_identity::application::ApplicationUser {
                     principal_id: &principal_id,
                     email: &user.email,
@@ -813,7 +813,7 @@ async fn converge_tenant_identity(
             let principal_id: wamn_platform_identity::PrincipalId = user.id.parse()?;
             wamn_platform_identity::application::write_admin(
                 &transaction,
-                tenant_id,
+                env_key,
                 wamn_platform_identity::application::ApplicationUser {
                     principal_id: &principal_id,
                     email: &user.email,
@@ -845,12 +845,12 @@ async fn converge_tenant_identity(
 pub(crate) async fn converge_environment_policy(
     client: &mut tokio_postgres::Client,
     schema: &BareSchemaName,
-    tenant_id: &str,
+    env_key: &str,
     environment: &str,
     source: &crate::verification_policy::AuthoritativeEnvironmentPolicy,
     apply: bool,
 ) -> anyhow::Result<bool> {
-    anyhow::ensure!(!tenant_id.is_empty(), "tenant must not be empty");
+    anyhow::ensure!(!env_key.is_empty(), "tenant must not be empty");
     let table_present: bool = client
         .query_one(
             "SELECT pg_catalog.to_regclass(pg_catalog.format('%I.environment_policies', $1::text)) IS NOT NULL",
@@ -881,10 +881,10 @@ pub(crate) async fn converge_environment_policy(
                 &format!(
                     "SELECT expected_environment, durability_class, \
                             source_policy_org, source_policy_hash \
-                       FROM {}.environment_policies WHERE tenant_id = $1",
+                       FROM {}.environment_policies WHERE env_key = $1",
                     schema.quoted()
                 ),
-                &[&tenant_id],
+                &[&env_key],
             )
             .await
             .context("observe project-local environment policy")?
@@ -923,10 +923,10 @@ pub(crate) async fn converge_environment_policy(
             .execute(
                 &format!(
                     "INSERT INTO {}.environment_policies \
-                       (tenant_id, expected_environment, durability_class, \
+                       (env_key, expected_environment, durability_class, \
                         source_policy_org, source_policy_hash) \
                      VALUES ($1, $2, $3, $4, $5) \
-                     ON CONFLICT (tenant_id) DO UPDATE SET \
+                     ON CONFLICT (env_key) DO UPDATE SET \
                        expected_environment = EXCLUDED.expected_environment, \
                        durability_class = EXCLUDED.durability_class, \
                        source_policy_org = EXCLUDED.source_policy_org, \
@@ -941,7 +941,7 @@ pub(crate) async fn converge_environment_policy(
                     schema.quoted()
                 ),
                 &[
-                    &tenant_id,
+                    &env_key,
                     &environment,
                     &wanted_class,
                     &source.source_policy_org.as_ref(),

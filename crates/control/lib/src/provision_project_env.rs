@@ -71,7 +71,7 @@ use tokio_postgres::{Client, Config as PgConfig, GenericClient, NoTls, Transacti
 use url::Url;
 
 use wamn_control_provision::SystemReader;
-use wamn_control_provision::session_target::{SessionTarget, validate_session_tenant_id};
+use wamn_control_provision::session_target::{SessionTarget, validate_session_env_key};
 use wamn_control_provision::tenant_key::tenant_key;
 use wamn_control_provision::{
     APP_ROLE, CredentialGeneration, INSTANCE_SUFFIX_LEN, PLATFORM_GROUP_ROLE, PlatformComponent,
@@ -116,7 +116,7 @@ pub use pat_secrets::{
     IssuedPatSecret, mint_management_author_pat, parse_pat_prefix, revoke_provisioning_pat,
 };
 pub use registry::{
-    claim_environment_instance, project_tenant_environment, read_project_env_instance,
+    claim_environment_instance, project_env_key_environment, read_project_env_instance,
     read_project_env_policy, resolve_cluster,
 };
 pub use workload::{run_org_workload_action, run_workload_action};
@@ -148,7 +148,7 @@ pub struct ProvisionProjectEnvRequest {
     /// policy whose name is the env. A recorded row keeps its policy: the
     /// environment document owns it
     /// (docs/architecture/overview.md#environment-lifecycle). The tenant is
-    /// derived from the coordinate (`project_env_tenant`).
+    /// derived from the coordinate (`project_env_key`).
     pub policy: Option<String>,
 
     /// Mark this environment DISPOSABLE: its admitted component facts may be

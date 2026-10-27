@@ -44,7 +44,7 @@ pub fn request_trace(headers: &[(String, String)]) -> InvocationTrace {
 /// and the empty node, the same as its effect spans.
 #[derive(Debug)]
 pub struct InvocationSite<'a> {
-    pub tenant_id: &'a str,
+    pub env_key: &'a str,
     pub project: &'a str,
     pub environment: &'a str,
     pub wiring_id: &'a str,
@@ -65,7 +65,7 @@ pub fn invocation_span(
     let span = tracing::info_span!(
         target: "wamn::router",
         "wamn.component.invoke",
-        wamn.tenant = %site.tenant_id,
+        wamn.env_key = %site.env_key,
         wamn.project = %site.project,
         wamn.environment = %site.environment,
         wamn.wiring_id = %site.wiring_id,

@@ -17,11 +17,11 @@ use std::time::Duration;
 /// One auth fact that a committed write changed.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AuthChange {
-    /// The user row or the user roles of `principal` in `tenant`.
-    Principal { tenant: String, principal: String },
-    /// A role or a permission of `tenant`, which every principal holding the
-    /// role reads, or the environment status of `tenant`.
-    Tenant(String),
+    /// The user row or the user roles of `principal` in `env_key`.
+    Principal { env_key: String, principal: String },
+    /// A role or a permission of `env_key`, which every principal holding the
+    /// role reads, or the environment status of `env_key`.
+    EnvKey(String),
     /// A PAT, a login, a membership or the status of `principal`. These are
     /// facts of the organization, so they change the principal in every
     /// tenant.
@@ -34,15 +34,15 @@ pub enum AuthChange {
 pub struct AuthDrops(BTreeSet<AuthChange>);
 
 impl AuthDrops {
-    pub fn principal(&mut self, tenant: &str, principal: &str) {
+    pub fn principal(&mut self, env_key: &str, principal: &str) {
         self.0.insert(AuthChange::Principal {
-            tenant: tenant.to_owned(),
+            env_key: env_key.to_owned(),
             principal: principal.to_owned(),
         });
     }
 
-    pub fn tenant(&mut self, tenant: &str) {
-        self.0.insert(AuthChange::Tenant(tenant.to_owned()));
+    pub fn env_key(&mut self, env_key: &str) {
+        self.0.insert(AuthChange::EnvKey(env_key.to_owned()));
     }
 
     pub fn identity(&mut self, principal: &str) {
@@ -71,16 +71,16 @@ pub const BUCKET: &str = "wamn-auth";
 /// a lost delete.
 pub const AUTH_TTL: Duration = Duration::from_secs(60);
 
-/// The key of the grants of `principal` in the environment named `tenant`.
+/// The key of the grants of `principal` in the environment named `env_key`.
 /// This shared cache key stays scoped after the table tenant columns leave.
-pub fn principal_key(tenant: &str, principal: &str) -> String {
-    format!("{tenant}.{principal}")
+pub fn principal_key(env_key: &str, principal: &str) -> String {
+    format!("{env_key}.{principal}")
 }
 
-/// The key of the environment status of `tenant`. A principal id is a UUID,
+/// The key of the environment status of `env_key`. A principal id is a UUID,
 /// so it is never `environment`.
-pub fn environment_key(tenant: &str) -> String {
-    format!("{tenant}.environment")
+pub fn env_key(env_key: &str) -> String {
+    format!("{env_key}.environment")
 }
 
 /// The first token of the key of an identity fact. A tenant name holds only
@@ -165,14 +165,14 @@ async fn delete(
 ) -> anyhow::Result<()> {
     use futures_util::TryStreamExt as _;
     let keys = match change {
-        AuthChange::Principal { tenant, principal } => vec![principal_key(tenant, principal)],
+        AuthChange::Principal { env_key, principal } => vec![principal_key(env_key, principal)],
         AuthChange::Identity(principal) => vec![identity_key(principal)],
-        // Every key of the tenant: the grants of each principal, which hold
+        // Every key of the environment: the grants of each principal, which hold
         // the role, and the environment status.
-        AuthChange::Tenant(tenant) => {
+        AuthChange::EnvKey(env_key) => {
             let mut subjects = store
                 .stream
-                .info_with_subjects(format!("{}{tenant}.*", store.prefix))
+                .info_with_subjects(format!("{}{env_key}.*", store.prefix))
                 .await?;
             let mut keys = Vec::new();
             while let Some((subject, _)) = subjects.try_next().await? {

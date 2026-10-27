@@ -182,22 +182,22 @@ pub async fn prune_record_history(args: PruneRecordHistoryArgs) -> anyhow::Resul
     .await?;
     print_pruned_record_history(
         &pruned,
-        &wamn_control_registry::project_env_tenant(&args.org, &args.project, &args.environment),
+        &wamn_control_registry::project_env_key(&args.org, &args.project, &args.environment),
     );
     Ok(())
 }
 
-fn print_pruned_record_history(pruned: &[PrunedHistory], tenant: &str) {
+fn print_pruned_record_history(pruned: &[PrunedHistory], env_key: &str) {
     for history in pruned {
         println!(
             "prune-record-history: removed {} entries from {}.{} (retention P{}D, tenant {})",
-            history.removed, history.schema, history.history, history.days, tenant
+            history.removed, history.schema, history.history, history.days, env_key
         );
     }
     println!(
-        "prune-record-history: pruned {} history table(s) for tenant {}",
+        "prune-record-history: pruned {} history table(s) for env_key {}",
         pruned.len(),
-        tenant
+        env_key
     );
 }
 
@@ -217,18 +217,18 @@ pub async fn prune_run_history(args: PruneRunHistoryArgs) -> anyhow::Result<()> 
     if args.dry_run {
         println!(
             "prune-run-history (dry-run): {pruned} terminal run(s) older than {} day(s) WOULD be \
-             pruned in schema {} (tenant {})",
+             pruned in schema {} (env_key {})",
             args.retention_days,
             args.schema,
-            wamn_control_registry::project_env_tenant(&args.org, &args.project, &args.environment)
+            wamn_control_registry::project_env_key(&args.org, &args.project, &args.environment)
         );
     } else {
         println!(
             "prune-run-history: pruned {pruned} terminal run(s) older than {} day(s) in schema {} \
-             (tenant {})",
+             (env_key {})",
             args.retention_days,
             args.schema,
-            wamn_control_registry::project_env_tenant(&args.org, &args.project, &args.environment)
+            wamn_control_registry::project_env_key(&args.org, &args.project, &args.environment)
         );
     }
     Ok(())

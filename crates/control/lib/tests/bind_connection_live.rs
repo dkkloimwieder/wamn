@@ -37,7 +37,7 @@ use wamn_schema_control::connections::{
 };
 use wamn_test_infrastructure::record_history::assert_stamp;
 
-const TENANT: &str = "bind-connection-tenant--fixture--dev";
+const ENV_KEY: &str = "bind-connection-tenant--fixture--dev";
 const ENVIRONMENT: &str = "dev";
 const PACKAGE: &str = "bind_connection_fixture";
 const PACKAGE_VERSION: &str = "1.0.0";
@@ -123,7 +123,7 @@ async fn admit_component(
 ) -> AdmittedComponent {
     let admitted = AdmittedComponent {
         scope: ComponentPackageScope {
-            tenant_id: TENANT.to_owned(),
+            env_key: ENV_KEY.to_owned(),
             package_id: package_id.to_owned(),
             package_version: PACKAGE_VERSION.to_owned(),
         },
@@ -153,7 +153,7 @@ async fn admit_component(
         .execute(
             insert_component_connection_requirement_sql(),
             &[
-                &TENANT,
+                &ENV_KEY,
                 &requirement.component_digest(),
                 &requirement.store_alias(),
                 &canonical,
@@ -228,7 +228,7 @@ async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedC
     .await
     .expect("apply the bind-connection package fixture");
     project
-        .execute("SELECT set_config('app.tenant', $1, false)", &[&TENANT])
+        .execute("SELECT set_config('app.env_key', $1, false)", &[&ENV_KEY])
         .await
         .expect("scope the project seed session");
     let blob_put = admit_component(
@@ -254,10 +254,10 @@ async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedC
     .await;
     project
         .execute(
-            "INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
+            "INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) \
              VALUES ($1, $2, $3)",
             &[
-                &TENANT,
+                &ENV_KEY,
                 &digest_of(RELEASE_BYTES),
                 &RELEASE_BYTES.as_bytes(),
             ],
@@ -290,9 +290,9 @@ async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedC
         ),
     ] {
         project.execute("INSERT INTO catalog.workflows
-            (tenant_id, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, execution_type, created_by)
+            (env_key, environment, application, workflow_id, version, graph_json, wiring_hash, trigger, execution_type, created_by)
             VALUES ($1, $2, $3, $4, 1, $5::text::jsonb, $6, 'manual', 'invoker', $7::text::uuid)",
-            &[&TENANT, &ENVIRONMENT, &application, &document.wiring_id, &serde_json::to_string(&document).unwrap(),
+            &[&ENV_KEY, &ENVIRONMENT, &application, &document.wiring_id, &serde_json::to_string(&document).unwrap(),
               &document.wiring_hash().as_str(), &wamn_project_state::workflow_user_id().to_string()]
         ).await.expect("seed the workflow connection lookup");
     }
@@ -331,15 +331,15 @@ fn args(
 async fn rows(project: &Client) -> (i64, i64, i64) {
     let count = |sql: &'static str| async move {
         project
-            .query_one(sql, &[&TENANT])
+            .query_one(sql, &[&ENV_KEY])
             .await
             .expect("count rows")
             .get::<_, i64>(0)
     };
     (
-        count("SELECT count(*) FROM catalog.connection_instances WHERE tenant_id = $1").await,
-        count("SELECT count(*) FROM catalog.connection_generations WHERE tenant_id = $1").await,
-        count("SELECT count(*) FROM catalog.connection_bindings WHERE tenant_id = $1").await,
+        count("SELECT count(*) FROM catalog.connection_instances WHERE env_key = $1").await,
+        count("SELECT count(*) FROM catalog.connection_generations WHERE env_key = $1").await,
+        count("SELECT count(*) FROM catalog.connection_bindings WHERE env_key = $1").await,
     )
 }
 
@@ -356,9 +356,9 @@ async fn assert_nested_effect_snapshot(
         project
             .execute(
                 "INSERT INTO catalog.packages \
-                   (tenant_id, package_id, package_version, artifact_digest) \
+                   (env_key, package_id, package_version, artifact_digest) \
                  VALUES ($1, $2, $3, $4)",
-                &[&TENANT, &package_id, &PACKAGE_VERSION, &FACT_FINGERPRINT],
+                &[&ENV_KEY, &package_id, &PACKAGE_VERSION, &FACT_FINGERPRINT],
             )
             .await
             .expect("seed a separate package coordinate for the snapshot test");
@@ -388,7 +388,7 @@ async fn assert_nested_effect_snapshot(
         ..direct
     };
     let snapshot = postgres
-        .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, TENANT, &nested)
+        .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, ENV_KEY, &nested)
         .await
         .expect("load the nested snapshot")
         .expect("the released wiring exists");
@@ -478,7 +478,7 @@ async fn assert_nested_effect_snapshot(
         ),
     ] {
         let snapshot = postgres
-            .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, TENANT, &refused)
+            .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, ENV_KEY, &refused)
             .await
             .expect("load the mismatched snapshot");
         assert!(
@@ -516,7 +516,7 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
         .expect("construct the postgres plugin"),
     );
     postgres
-        .set_tenant(COMPONENT_ID, TENANT)
+        .set_env_key(COMPONENT_ID, ENV_KEY)
         .expect("register the component's tenant");
     let release: &'static str = Box::leak(digest_of(RELEASE_BYTES).into_boxed_str());
     let lookup = ConnectionEffectLookup {
@@ -545,7 +545,7 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
         postgres
             // WamnPostgres::new registers its one pool under DEFAULT_PROJECT;
             // the host names the project it serves, a fixture has only this.
-            .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, TENANT, &lookup)
+            .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, ENV_KEY, &lookup)
             .await
             .expect("the plugin loads a snapshot for a declared alias")
             .expect("the declared alias has a snapshot, bound or not")
@@ -615,7 +615,7 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
         assert_stamp(
             &project,
             relation,
-            &format!("tenant_id = '{TENANT}'"),
+            &format!("env_key = '{ENV_KEY}'"),
             &wamn_control_provision::PlatformComponent::Provisioning
                 .principal_id()
                 .to_string(),
@@ -657,7 +657,7 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
         let postgres = Arc::clone(&postgres);
         async move {
             postgres
-                .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, TENANT, &lookup)
+                .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, ENV_KEY, &lookup)
                 .await
                 .expect("the plugin loads a route snapshot")
         }
@@ -716,7 +716,7 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
         assert_stamp(
             &project,
             relation,
-            &format!("tenant_id = '{TENANT}'"),
+            &format!("env_key = '{ENV_KEY}'"),
             &wamn_control_provision::PlatformComponent::Provisioning
                 .principal_id()
                 .to_string(),
@@ -735,8 +735,8 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
             .query_one(
                 "SELECT active_generation, revision, row_to_json(instance)::text \
                    FROM catalog.connection_instances AS instance \
-                  WHERE tenant_id = $1 AND environment = $2 AND instance_id = $3",
-                &[&TENANT, &ENVIRONMENT, &"labels-store"],
+                  WHERE env_key = $1 AND environment = $2 AND instance_id = $3",
+                &[&ENV_KEY, &ENVIRONMENT, &"labels-store"],
             )
             .await
             .map(|row| {
@@ -757,7 +757,7 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
             .execute(
                 activate_connection_generation_sql(),
                 &[
-                    &TENANT,
+                    &ENV_KEY,
                     &ENVIRONMENT,
                     &"labels-store",
                     &1_i64,
@@ -787,7 +787,7 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
         assert_stamp(
             &project,
             relation,
-            &format!("tenant_id = '{TENANT}'"),
+            &format!("env_key = '{ENV_KEY}'"),
             &wamn_control_provision::PlatformComponent::Provisioning
                 .principal_id()
                 .to_string(),
@@ -800,10 +800,10 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
 
     project
         .execute(
-            "INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
+            "INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) \
              VALUES ($1, $2, $3)",
             &[
-                &TENANT,
+                &ENV_KEY,
                 &digest_of(OTHER_RELEASE_BYTES),
                 &OTHER_RELEASE_BYTES.as_bytes(),
             ],
@@ -824,7 +824,7 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
         assert_stamp(
             &project,
             relation,
-            &format!("tenant_id = '{TENANT}'"),
+            &format!("env_key = '{ENV_KEY}'"),
             &wamn_control_provision::PlatformComponent::Provisioning
                 .principal_id()
                 .to_string(),
@@ -869,7 +869,7 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
         assert_stamp(
             &project,
             relation,
-            &format!("tenant_id = '{TENANT}'"),
+            &format!("env_key = '{ENV_KEY}'"),
             &wamn_control_provision::PlatformComponent::Provisioning
                 .principal_id()
                 .to_string(),
@@ -892,7 +892,7 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
         .connection_effect_snapshot(
             COMPONENT_ID,
             DEFAULT_PROJECT,
-            TENANT,
+            ENV_KEY,
             &ConnectionEffectLookup {
                 candidate_binding: Some(&pinned),
                 ..lookup
@@ -916,7 +916,7 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
     // Hold the row after the competing bind reads it, then advance its revision.
     let (mut blocker, blocker_task) = connect(&project_url).await;
     let transaction = blocker.transaction().await.unwrap();
-    transaction.query_one("SELECT instance_id FROM catalog.connection_instances WHERE tenant_id=$1 AND instance_id='labels-store' FOR UPDATE", &[&TENANT]).await.unwrap();
+    transaction.query_one("SELECT instance_id FROM catalog.connection_instances WHERE env_key=$1 AND instance_id='labels-store' FOR UPDATE", &[&ENV_KEY]).await.unwrap();
     let stale_args = args(&project_url, good, "labels", BLOB_PUT);
     let stale_bind = tokio::spawn(async move { bind_connection::bind(&stale_args).await });
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -928,7 +928,7 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
     }).await.expect("the competing activation reaches its row lock");
-    transaction.execute("UPDATE catalog.connection_instances SET revision=revision+1 WHERE tenant_id=$1 AND instance_id='labels-store'", &[&TENANT]).await.unwrap();
+    transaction.execute("UPDATE catalog.connection_instances SET revision=revision+1 WHERE env_key=$1 AND instance_id='labels-store'", &[&ENV_KEY]).await.unwrap();
     transaction.commit().await.unwrap();
     let error = stale_bind
         .await
@@ -946,7 +946,7 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
         assert_stamp(
             &project,
             relation,
-            &format!("tenant_id = '{TENANT}'"),
+            &format!("env_key = '{ENV_KEY}'"),
             &wamn_control_provision::PlatformComponent::Provisioning
                 .principal_id()
                 .to_string(),
@@ -1032,7 +1032,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
         Vec::new(),
     )
     .unwrap();
-    project.execute("INSERT INTO catalog.workflows (tenant_id,environment,application,workflow_id,version,graph_json,wiring_hash,trigger,execution_type,created_by) VALUES ($1,$2,$3,'http_read',1,$4::text::jsonb,$5,'manual','invoker',$6::text::uuid)", &[&TENANT,&ENVIRONMENT,&PACKAGE,&serde_json::to_string(&document).unwrap(),&document.wiring_hash().as_str(),&wamn_project_state::workflow_user_id().to_string()]).await.unwrap();
+    project.execute("INSERT INTO catalog.workflows (env_key,environment,application,workflow_id,version,graph_json,wiring_hash,trigger,execution_type,created_by) VALUES ($1,$2,$3,'http_read',1,$4::text::jsonb,$5,'manual','invoker',$6::text::uuid)", &[&ENV_KEY,&ENVIRONMENT,&PACKAGE,&serde_json::to_string(&document).unwrap(),&document.wiring_hash().as_str(),&wamn_project_state::workflow_user_id().to_string()]).await.unwrap();
     let components = provision_project_components_for_http_manifest();
     let manifest = wamn_catalog::ServingManifest::new(
         wamn_catalog::ServingRelease {
@@ -1045,7 +1045,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
     )
     .unwrap();
     let manifest_digest = manifest.digest().as_str().to_owned();
-    project.execute("INSERT INTO catalog.releases(tenant_id,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)", &[&TENANT,&manifest_digest,&manifest.canonical_bytes()]).await.unwrap();
+    project.execute("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)", &[&ENV_KEY,&manifest_digest,&manifest.canonical_bytes()]).await.unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let request = BindConnectionRequest {
         database_url: database.url().to_owned(),
@@ -1079,12 +1079,12 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
         })
         .unwrap(),
     );
-    postgres.set_tenant(COMPONENT_ID, TENANT).unwrap();
+    postgres.set_env_key(COMPONENT_ID, ENV_KEY).unwrap();
     let release = Arc::new(
         wamn_engine::release_manifest::LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "read binding fixture",
-            wamn_engine::release_manifest::ReleaseScope::new(TENANT, ENVIRONMENT),
+            wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, ENVIRONMENT),
         )
         .unwrap(),
     );
@@ -1115,7 +1115,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
         Arc::clone(&postgres),
         Arc::new(HttpTransport::new().unwrap()),
         Arc::new(WamnCredentials::empty()),
-        TENANT,
+        ENV_KEY,
         DEFAULT_PROJECT,
         vec![
             format!("http://{}", listener.local_addr().unwrap())
@@ -1160,7 +1160,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
         .connection_effect_snapshot(
             COMPONENT_ID,
             DEFAULT_PROJECT,
-            TENANT,
+            ENV_KEY,
             &ConnectionEffectLookup {
                 entry,
                 origin_package_id: PACKAGE,
@@ -1212,7 +1212,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
         postgres,
         Arc::new(HttpTransport::new().unwrap()),
         Arc::new(WamnCredentials::empty()),
-        TENANT,
+        ENV_KEY,
         DEFAULT_PROJECT,
         vec![
             format!("http://{}", listener.local_addr().unwrap())

@@ -164,7 +164,7 @@ pub fn render_host_group(
     suffix: &str,
 ) -> anyhow::Result<serde_json::Value> {
     let mut group: serde_json::Value = serde_yaml::from_str(yaml)?;
-    let tenant = wamn_control_registry::project_env_tenant(
+    let env_key = wamn_control_registry::project_env_key(
         &environment.org,
         &environment.project,
         &environment.env,
@@ -186,7 +186,7 @@ pub fn render_host_group(
         }
         if variable["name"] == "WAMN_EVT_NATS_USERNAME" {
             variable["valueFrom"]["secretKeyRef"]["name"] =
-                format!("evt-nats-{tenant}-runtime").into();
+                format!("evt-nats-{env_key}-runtime").into();
         }
     }
     for volume in group["volumes"]
@@ -195,10 +195,10 @@ pub fn render_host_group(
     {
         match volume["name"].as_str().unwrap_or_default() {
             "event-nats" => {
-                volume["secret"]["secretName"] = format!("evt-nats-{tenant}-runtime").into();
+                volume["secret"]["secretName"] = format!("evt-nats-{env_key}-runtime").into();
             }
             "materializer-nats" => {
-                volume["secret"]["secretName"] = format!("evt-nats-{tenant}-materializer").into();
+                volume["secret"]["secretName"] = format!("evt-nats-{env_key}-materializer").into();
             }
             _ => {}
         }
@@ -225,7 +225,7 @@ async fn release_inputs(
         super::packages::artifact_base(registry, "releases")?,
     );
     chart_files(&directory.join("release-chart"), Path::new(""), request)?;
-    let tenant = wamn_control_registry::project_env_tenant(
+    let env_key = wamn_control_registry::project_env_key(
         &environment.org,
         &environment.project,
         &environment.env,
@@ -235,7 +235,7 @@ async fn release_inputs(
         &target.context,
         "platform",
         "secret",
-        &format!("evt-nats-{tenant}-provisioning"),
+        &format!("evt-nats-{env_key}-provisioning"),
     )
     .await?
     .context("missing event provisioning Secret")?;
@@ -377,7 +377,7 @@ pub(super) fn request(
     initial: bool,
     auth: &SecretData,
 ) -> anyhow::Result<JobRequest> {
-    let tenant = wamn_control_registry::project_env_tenant(
+    let env_key = wamn_control_registry::project_env_key(
         &environment.org,
         &environment.project,
         &environment.env,
@@ -385,7 +385,7 @@ pub(super) fn request(
 
     let mut request = JobRequest {
         name: format!(
-            "platform-{}apply-{tenant}",
+            "platform-{}apply-{env_key}",
             if initial { "first-" } else { "" }
         ),
         image: image.into(),

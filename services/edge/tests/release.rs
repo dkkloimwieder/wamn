@@ -16,7 +16,7 @@ use wamn_catalog::{
 use wamn_edge::release::{EdgeRelease, EdgeReleaseErrorType};
 use wamn_engine::release_manifest::ReleaseScope;
 
-const TENANT: &str = "t1";
+const ENV_KEY: &str = "t1";
 const PACKAGE: &str = "scale";
 const VERSION: &str = "1.0.0";
 const COMPONENT: &str = "device";
@@ -55,7 +55,7 @@ fn manifest() -> ServingManifest {
 fn fact() -> AdmittedComponent {
     AdmittedComponent {
         scope: ComponentPackageScope {
-            tenant_id: TENANT.into(),
+            env_key: ENV_KEY.into(),
             package_id: PACKAGE.into(),
             package_version: VERSION.into(),
         },
@@ -135,7 +135,7 @@ fn write(directory: &Path, name: &str, bytes: &[u8]) {
 }
 
 fn scope() -> ReleaseScope {
-    ReleaseScope::new(TENANT, "edge").with_applications(
+    ReleaseScope::new(ENV_KEY, "edge").with_applications(
         [(
             "weighing".to_owned(),
             wamn_catalog::ApplicationDefinition {

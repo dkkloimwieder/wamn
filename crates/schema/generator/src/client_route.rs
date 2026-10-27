@@ -246,7 +246,7 @@ mod tests {
         );
         let fixture = Publication::new();
         fixture.write("components/fixture.json.in", &json!({
-            "scope": {"tenant-id": "tenant-a", "package-id": "platform_fixture"},
+            "scope": {"env_key": "tenant-a", "package-id": "platform_fixture"},
             "component": "fixture", "interface-version": "1.0.0",
             "operations": {"platform-fixture:widget/archive@1.0.0": {
                 "registered-operation": "platform-fixture:widget/archive@1.0.0",

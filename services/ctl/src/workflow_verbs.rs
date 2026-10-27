@@ -21,12 +21,12 @@ use wamn_workflow::{PostgresWorkflows, Workflows as _};
 
 use crate::env_verbs::parse_coordinate;
 
-/// Params: `$1` tenant, `$2` environment.
+/// Params: `$1` `env_key`, `$2` environment.
 const LIST_WORKFLOWS_SQL: &str = "\
 SELECT application, workflow_id, version, wiring_hash, trigger, execution_type, \
        execution_role, enabled, created_by::text, created_at::text, schedule, source_package, entity, ops, condition, enable_sequence \
   FROM catalog.workflows \
- WHERE tenant_id = $1 AND environment = $2 \
+ WHERE env_key = $1 AND environment = $2 \
  ORDER BY application, workflow_id, version";
 
 /// One workflow verb.
@@ -76,8 +76,8 @@ pub struct WorkflowTarget {
 }
 
 impl WorkflowTarget {
-    fn tenant(&self) -> String {
-        wamn_control_registry::project_env_tenant(&self.org, &self.project, &self.scope.environment)
+    fn env_key(&self) -> String {
+        wamn_control_registry::project_env_key(&self.org, &self.project, &self.scope.environment)
     }
 }
 
@@ -224,7 +224,7 @@ async fn workflows(scope: &WorkflowTarget) -> anyhow::Result<PostgresWorkflows> 
     Ok(PostgresWorkflows::new(
         client,
         &scope.scope.schema,
-        scope.tenant(),
+        scope.env_key(),
         &scope.scope.environment,
     ))
 }
@@ -351,14 +351,14 @@ pub async fn run(command: WorkflowCommand) -> anyhow::Result<()> {
         }
         WorkflowCommand::List(scope) => {
             let mut client = project(&scope.scope).await?;
-            let tenant = scope.tenant();
+            let env_key = scope.env_key();
             let transaction = client.transaction().await?;
             transaction
-                .query_one("SELECT set_config('app.tenant', $1, true)", &[&tenant])
+                .query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
                 .await
                 .context("claim the workflow tenant")?;
             for row in transaction
-                .query(LIST_WORKFLOWS_SQL, &[&tenant, &scope.scope.environment])
+                .query(LIST_WORKFLOWS_SQL, &[&env_key, &scope.scope.environment])
                 .await
                 .context("read the workflow versions")?
             {

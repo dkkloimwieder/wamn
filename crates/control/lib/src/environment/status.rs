@@ -120,12 +120,9 @@ async fn stranded_runs(
     if connect(&url).await.is_err() {
         return Ok(Vec::new());
     }
-    let tenant = wamn_control_provision::project_env_tenant(
-        &triple.org,
-        &triple.project,
-        triple.env.as_str(),
-    );
-    stranded(&url, &tenant, triple.env.as_str(), live).await
+    let env_key =
+        wamn_control_provision::project_env_key(&triple.org, &triple.project, triple.env.as_str());
+    stranded(&url, &env_key, triple.env.as_str(), live).await
 }
 
 /// Release digest to the count of host pods with a deletion timestamp that

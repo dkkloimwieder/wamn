@@ -2,8 +2,8 @@
 //!
 //! `wamn-0h0g.22.6.3` established the guest tenant floor across four artifacts;
 //! the current package-era relation set contains 22 governed relations, all off
-//! the settable `app.tenant` claim and onto
-//! `wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()`,
+//! the settable `app.env_key` claim and onto
+//! `wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key()`,
 //! each with the expression index that keeps the predicate sargable.
 //!
 //! `wamn-0h0g.22.17` gave every governed relation a SECOND arm. The floor is the GUEST
@@ -64,8 +64,8 @@ const CATALOG_INSTALLER: &str = "wamn_floor_installer";
 fn platform_probe_retention() -> String {
     workload_generation_role(
         WorkloadRoleFamily::Retention,
-        WorkloadRoleScope::Tenant {
-            tenant: "t1",
+        WorkloadRoleScope::EnvKey {
+            env_key: "t1",
             database: "wamn",
         },
         CredentialGeneration::A,
@@ -321,7 +321,7 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
            SELECT n.nspname||'.'||c.relname AS rel \
              FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid \
              JOIN pg_namespace n ON n.oid = c.relnamespace \
-            WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%app.tenant%' \
+            WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%app.env_key%' \
               AND has_table_privilege('wamn_app', c.oid, 'SELECT')) t",
     );
     assert_eq!(
@@ -339,7 +339,7 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
            SELECT n.nspname||'.'||c.relname AS rel \
              FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid \
              JOIN pg_namespace n ON n.oid = c.relnamespace \
-            WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%app.tenant%') t",
+            WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%app.env_key%') t",
     );
     assert_eq!(
         kept,
@@ -387,8 +387,8 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
     //    provisioner would issue matches the key the predicate computes.
     let guest = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::Tenant {
-            tenant: "t1",
+        WorkloadRoleScope::EnvKey {
+            env_key: "t1",
             database: "wamn",
         },
         CredentialGeneration::A,
@@ -415,17 +415,17 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
         &format!(
             "SELECT set_config('app.user_id', '770df186-ac15-579e-b46b-c297cae2011b', false), set_config('app.operation', 'admin:seed-catalog-fixture', false); \
              INSERT INTO catalog.packages \
-               (tenant_id, package_id, package_version, artifact_digest) \
+               (env_key, package_id, package_version, artifact_digest) \
              VALUES \
                ('t1', 'platform_fixture', '1.0.0', 'sha256:' || repeat('a', 64)), \
                ('t2', 'platform_fixture', '1.0.0', 'sha256:' || repeat('b', 64));\n\
              BEGIN;\n\
              SET LOCAL ROLE \"{guest}\";\n\
-             SET LOCAL app.tenant = 't2';\n\
+             SET LOCAL app.env_key = 't2';\n\
              DO $$ BEGIN\n\
                  ASSERT (SELECT count(*) FROM catalog.packages) = 1, \
                         'the guest sees exactly its own tenant';\n\
-                 ASSERT (SELECT count(*) FROM catalog.packages WHERE tenant_id = 't2') = 0, \
+                 ASSERT (SELECT count(*) FROM catalog.packages WHERE env_key = 't2') = 0, \
                         'CROSS-TENANT READ';\n\
              END $$;\n\
              COMMIT;\n"
@@ -621,14 +621,14 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
         &format!(
             "SELECT set_config('app.user_id', '{}', false), set_config('app.operation', 'admin:authority-fixture', false); \
              INSERT INTO catalog.packages \
-               (tenant_id, package_id, package_version, artifact_digest) \
+               (env_key, package_id, package_version, artifact_digest) \
              SELECT t, 'platform_fixture', '1.0.0', {hash} \
                FROM unnest(ARRAY['t1', 't2']) AS t;\n\
              INSERT INTO wamn_run.environment_policies \
-               (tenant_id, expected_environment, durability_class) \
+               (env_key, expected_environment, durability_class) \
              SELECT t, 'dev', 'standard' FROM unnest(ARRAY['t1', 't2']) AS t;\n\
              INSERT INTO wamn_run.runs \
-               (tenant_id, run_id, package_id, environment, \
+               (env_key, run_id, package_id, environment, \
                 flow_id, flow_version) \
              SELECT t, 'r', 'platform_fixture', 'dev', 'f', 1 \
                FROM unnest(ARRAY['t1', 't2']) AS t;\n",
@@ -652,7 +652,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
         &db_url,
         &format!(
             "GRANT USAGE ON SCHEMA wamn_run TO {PLATFORM_PROBE_OUTSIDER};\n\
-             GRANT SELECT (tenant_id, status, created_at) \
+             GRANT SELECT (env_key, status, created_at) \
                ON wamn_run.runs TO {PLATFORM_PROBE_OUTSIDER};\n"
         ),
     );
@@ -691,7 +691,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
             "BEGIN;\n\
              SET LOCAL ROLE \"{retention}\";\n\
              DO $$ BEGIN\n\
-                 ASSERT (SELECT count(tenant_id) FROM wamn_run.runs) = 2, \
+                 ASSERT (SELECT count(env_key) FROM wamn_run.runs) = 2, \
                         'THE PLATFORM ARM DOES NOT ADMIT: the retention family is \
                          platform grain and reads wamn_run.runs short';\n\
              END $$;\n\
@@ -699,7 +699,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
              BEGIN;\n\
              SET LOCAL ROLE {PLATFORM_PROBE_OUTSIDER};\n\
              DO $$ BEGIN\n\
-                 ASSERT (SELECT count(tenant_id) FROM wamn_run.runs) = 0, \
+                 ASSERT (SELECT count(env_key) FROM wamn_run.runs) = 0, \
                         'THE FLOOR LEAKS: a login in neither wamn_app nor \
                          wamn_platform read wamn_run.runs';\n\
              END $$;\n\
@@ -986,8 +986,8 @@ fn the_catalog_and_app_schemas_install_under_a_superuser_not_named_postgres() {
 fn record_history_guest() -> String {
     workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::Tenant {
-            tenant: "t1",
+        WorkloadRoleScope::EnvKey {
+            env_key: "t1",
             database: "wamn",
         },
         CredentialGeneration::A,

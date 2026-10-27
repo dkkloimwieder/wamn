@@ -17,7 +17,7 @@ use crate::wiring::Wiring;
 /// The tenant, package, environment, release, and wiring that own an entry.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct Pointer {
-    tenant_id: Arc<str>,
+    env_key: Arc<str>,
     package_id: Arc<str>,
     environment: Arc<str>,
     manifest_digest: Arc<str>,
@@ -34,7 +34,7 @@ struct EntryKey {
 /// The exact release identity a caller files or reads one wiring version under.
 #[derive(Debug, Clone, Copy)]
 pub struct VersionKey<'a> {
-    pub tenant_id: &'a str,
+    pub env_key: &'a str,
     pub package_id: &'a str,
     pub environment: &'a str,
     /// The release, as its manifest digest.
@@ -47,7 +47,7 @@ impl VersionKey<'_> {
     fn to_entry_key(self) -> EntryKey {
         EntryKey {
             pointer: Pointer {
-                tenant_id: Arc::from(self.tenant_id),
+                env_key: Arc::from(self.env_key),
                 package_id: Arc::from(self.package_id),
                 environment: Arc::from(self.environment),
                 manifest_digest: Arc::from(self.manifest_digest),
@@ -168,7 +168,7 @@ where
     /// Read one immutable wiring version by its exact release identity.
     pub fn get_version(
         &self,
-        tenant_id: &str,
+        env_key: &str,
         package_id: &str,
         environment: &str,
         manifest_digest: &str,
@@ -176,7 +176,7 @@ where
         version: u32,
     ) -> Option<ActiveWiring<T>> {
         let key = VersionKey {
-            tenant_id,
+            env_key,
             package_id,
             environment,
             manifest_digest,
@@ -327,7 +327,7 @@ mod tests {
 
     #[test]
     fn releases_do_not_share_resolved_facts() {
-        const TENANT: &str = "tenant-a";
+        const ENV_KEY: &str = "tenant-a";
         const PACKAGE: &str = "orders";
         const ENVIRONMENT: &str = "prod";
         const WIRING: &str = "create-order";
@@ -336,13 +336,13 @@ mod tests {
         for (release_id, facts) in [("sha256:seven", "release-7"), ("sha256:eight", "release-8")] {
             assert!(
                 cache
-                    .get_version(TENANT, PACKAGE, ENVIRONMENT, release_id, WIRING, 1)
+                    .get_version(ENV_KEY, PACKAGE, ENVIRONMENT, release_id, WIRING, 1)
                     .is_none(),
                 "another release cannot satisfy this lookup"
             );
             let inserted = cache.insert_version(
                 VersionKey {
-                    tenant_id: TENANT,
+                    env_key: ENV_KEY,
                     package_id: PACKAGE,
                     environment: ENVIRONMENT,
                     manifest_digest: release_id,
@@ -357,10 +357,10 @@ mod tests {
         }
 
         let release_7 = cache
-            .get_version(TENANT, PACKAGE, ENVIRONMENT, "sha256:seven", WIRING, 1)
+            .get_version(ENV_KEY, PACKAGE, ENVIRONMENT, "sha256:seven", WIRING, 1)
             .expect("release 7 remains resident");
         let release_8 = cache
-            .get_version(TENANT, PACKAGE, ENVIRONMENT, "sha256:eight", WIRING, 1)
+            .get_version(ENV_KEY, PACKAGE, ENVIRONMENT, "sha256:eight", WIRING, 1)
             .expect("release 8 remains resident");
         assert_eq!(*release_7.facts, "release-7");
         assert_eq!(*release_8.facts, "release-8");

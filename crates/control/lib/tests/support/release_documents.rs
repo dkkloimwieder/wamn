@@ -47,7 +47,7 @@ pub fn release(
         let fact = device
             .clone()
             .into_admitted(wamn_catalog::ComponentPackageScope {
-                tenant_id: String::new(),
+                env_key: String::new(),
                 package_id: PACKAGE.to_owned(),
                 package_version: version.to_owned(),
             })

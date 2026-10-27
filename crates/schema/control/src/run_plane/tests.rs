@@ -179,7 +179,7 @@ fn observation_at_record() -> RunPlaneObservation {
     }
     obs.indexes.insert(
         "effect_attempts_occurrence_key".to_string(),
-        "CREATE UNIQUE INDEX effect_attempts_occurrence_key ON wamn_run.effect_attempts USING btree (tenant_id, run_id, frame_id, local_node_id, occurrence)".to_string(),
+        "CREATE UNIQUE INDEX effect_attempts_occurrence_key ON wamn_run.effect_attempts USING btree (env_key, run_id, frame_id, local_node_id, occurrence)".to_string(),
     );
     obs.indexes.insert(
         "effect_attempts_dispatch_identity_key".to_string(),
@@ -254,7 +254,7 @@ fn add_legacy_partition_plane(obs: &mut RunPlaneObservation) {
     obs.tables.insert(
         "partition_owner".to_string(),
         BTreeSet::from([
-            "tenant_id".to_string(),
+            "env_key".to_string(),
             "partition_key".to_string(),
             "lease_owner".to_string(),
             "lease_expires_at".to_string(),
@@ -264,7 +264,7 @@ fn add_legacy_partition_plane(obs: &mut RunPlaneObservation) {
     obs.tables.insert(
         "run_dead_letters".to_string(),
         BTreeSet::from([
-            "tenant_id".to_string(),
+            "env_key".to_string(),
             "run_id".to_string(),
             "partition_key".to_string(),
             "flow_id".to_string(),
@@ -279,13 +279,13 @@ fn add_legacy_partition_plane(obs: &mut RunPlaneObservation) {
     obs.indexes.insert(
         RETIRED_PARTITION_INDEX.to_string(),
         "CREATE INDEX run_queue_partition ON demo.run_queue USING btree \
-             (tenant_id, partition_key) WHERE (partition_key IS NOT NULL)"
+             (env_key, partition_key) WHERE (partition_key IS NOT NULL)"
             .to_string(),
     );
     obs.indexes.insert(
         "run_queue_claimable".to_string(),
         "CREATE INDEX run_queue_claimable ON demo.run_queue USING btree \
-             (tenant_id, available_at, stream_seq, lease_expires_at)"
+             (env_key, available_at, stream_seq, lease_expires_at)"
             .to_string(),
     );
     add_legacy_flow_registry(obs);
@@ -301,7 +301,7 @@ fn add_legacy_flow_registry(obs: &mut RunPlaneObservation) {
     obs.tables.insert(
         "flows".to_string(),
         BTreeSet::from([
-            "tenant_id".to_string(),
+            "env_key".to_string(),
             "flow_id".to_string(),
             "version".to_string(),
             "active".to_string(),
@@ -358,7 +358,7 @@ fn run_queue_record_columns_pin_the_global_fifo_shape() {
             "created_by",
             "updated_at",
             "updated_by",
-            "tenant_id",
+            "env_key",
             "run_id",
             "priority",
             "available_at",
@@ -382,7 +382,7 @@ fn run_queue_record_columns_pin_the_global_fifo_shape() {
             "created_by uuid NOT NULL",
             "updated_at timestamptz NOT NULL",
             "updated_by uuid NOT NULL",
-            "tenant_id text NOT NULL CHECK (tenant_id <> '')",
+            "env_key text NOT NULL CHECK (env_key <> '')",
             "run_id text NOT NULL",
             "priority int NOT NULL DEFAULT 0",
             "available_at timestamptz NOT NULL DEFAULT now()",
@@ -961,7 +961,7 @@ fn rerun_lineage_cutover_is_row_preserving_exact_and_idempotent() {
             .starts_with("LOCK TABLE \"demo\".runs IN ACCESS EXCLUSIVE MODE;")
     );
     assert!(cutover.sql.contains(
-        "expected_definition constant text := 'CREATE INDEX runs_root ON demo.runs USING btree (tenant_id, root_run_id) WHERE (root_run_id IS NOT NULL)'"
+        "expected_definition constant text := 'CREATE INDEX runs_root ON demo.runs USING btree (env_key, root_run_id) WHERE (root_run_id IS NOT NULL)'"
     ));
     assert!(cutover.sql.contains(
         "observed_definition IS NOT NULL\n       AND observed_definition <> expected_definition"
@@ -999,7 +999,7 @@ fn rerun_lineage_cutover_refuses_an_unknown_same_name_index_before_ddl() {
     let mut legacy = observation_at_record();
     legacy.indexes.insert(
         "runs_root".to_string(),
-        "CREATE INDEX runs_root ON demo.runs USING btree (tenant_id, flow_id)".to_string(),
+        "CREATE INDEX runs_root ON demo.runs USING btree (env_key, flow_id)".to_string(),
     );
 
     let plan = plan_run_plane(&schema("demo"), &legacy);
@@ -1175,7 +1175,7 @@ fn retired_legacy_admission_surface_is_dropped_exactly_once() {
     legacy.tables.insert(
         "invocation_admissions".to_string(),
         BTreeSet::from([
-            "tenant_id".to_string(),
+            "env_key".to_string(),
             "run_id".to_string(),
             "client_key_digest".to_string(),
         ]),
@@ -1351,7 +1351,7 @@ fn unforced_environment_policy_rls_mutant_plans_repair() {
 }
 
 #[test]
-fn missing_environment_policy_tenant_policy_mutant_plans_repair() {
+fn missing_environment_policy_env_key_policy_mutant_plans_repair() {
     let mut obs = observation_at_record();
     obs.environment_policy_row_security
         .as_mut()
@@ -1363,12 +1363,12 @@ fn missing_environment_policy_tenant_policy_mutant_plans_repair() {
     assert!(
         repair
             .sql
-            .contains("CREATE POLICY environment_policies_tenant")
+            .contains("CREATE POLICY environment_policies_env_key")
     );
 }
 
 #[test]
-fn widened_environment_policy_tenant_policy_mutant_plans_exact_replacement() {
+fn widened_environment_policy_env_key_policy_mutant_plans_exact_replacement() {
     let mut obs = observation_at_record();
     let row_security = obs
         .environment_policy_row_security
@@ -1376,7 +1376,7 @@ fn widened_environment_policy_tenant_policy_mutant_plans_exact_replacement() {
         .expect("record relation");
     let policy = row_security
         .policies
-        .get_mut("environment_policies_tenant")
+        .get_mut("environment_policies_env_key")
         .expect("record policy");
     policy.command = "all".to_string();
     policy.roles.insert("PUBLIC".to_string());
@@ -1532,7 +1532,7 @@ fn legacy_partition_plane_plans_one_leading_cutover() {
     assert!(!cutover.sql.contains("CASCADE"));
     assert!(cutover.sql.contains(
         "CREATE INDEX run_queue_claimable ON \"demo\".run_queue \
-             (tenant_id, available_at, stream_seq, run_id, lease_expires_at)"
+             (env_key, available_at, stream_seq, run_id, lease_expires_at)"
     ));
     assert_eq!(
         kinds
@@ -1633,7 +1633,7 @@ fn partial_partition_plane_defers_claim_index_until_columns_exist() {
         .expect("claimable index repair follows the retained column add");
     assert!(recreate.sql.contains(
         "CREATE INDEX run_queue_claimable ON demo.run_queue \
-             (tenant_id, available_at, stream_seq, run_id, lease_expires_at)"
+             (env_key, available_at, stream_seq, run_id, lease_expires_at)"
     ));
 }
 
@@ -1677,11 +1677,11 @@ fn retired_effect_disposition_cutover_is_locked_empty_only_and_idempotent() {
     let mut obs = observation_at_record();
     obs.tables.insert(
         "effect_disposition_requests".into(),
-        ["tenant_id".into(), "request_id".into()].into(),
+        ["env_key".into(), "request_id".into()].into(),
     );
     obs.tables.insert(
         "effect_dispositions".into(),
-        ["tenant_id".into(), "disposition_id".into()].into(),
+        ["env_key".into(), "disposition_id".into()].into(),
     );
     obs.helper_functions.insert(
         "guard_effect_disposition_append".into(),
@@ -1751,7 +1751,7 @@ fn empty_incompatible_effect_table_shape_is_physically_retired() {
     }
     obs.indexes.insert(
         "effect_attempts_occurrence".to_string(),
-        "CREATE INDEX effect_attempts_occurrence ON wamn_run.effect_attempts USING btree (tenant_id, run_id, frame_id, local_node_id, occurrence, attempt_index)".to_string(),
+        "CREATE INDEX effect_attempts_occurrence ON wamn_run.effect_attempts USING btree (env_key, run_id, frame_id, local_node_id, occurrence, attempt_index)".to_string(),
     );
     obs.indexes.remove("effect_attempts_occurrence_key");
     obs.indexes.insert(
@@ -1759,14 +1759,14 @@ fn empty_incompatible_effect_table_shape_is_physically_retired() {
             "effect_attempts_tenant_id_attempt_id_run_id_node_id_occurrence_key",
         )
         .to_string(),
-        "CREATE UNIQUE INDEX effect_attempts_tenant_id_attempt_id_run_id_node_id_occurrence_key ON wamn_run.effect_attempts USING btree (tenant_id, attempt_id, run_id, frame_id, local_node_id, occurrence)".to_string(),
+        "CREATE UNIQUE INDEX effect_attempts_tenant_id_attempt_id_run_id_node_id_occurrence_key ON wamn_run.effect_attempts USING btree (env_key, attempt_id, run_id, frame_id, local_node_id, occurrence)".to_string(),
     );
     obs.indexes.insert(
         postgres_visible_identifier(
             "effect_attempts_tenant_id_run_id_node_id_occurrence_attempt_index_key",
         )
         .to_string(),
-        "CREATE UNIQUE INDEX effect_attempts_tenant_id_run_id_node_id_occurrence_attempt_index_key ON wamn_run.effect_attempts USING btree (tenant_id, run_id, frame_id, local_node_id, occurrence, attempt_index)".to_string(),
+        "CREATE UNIQUE INDEX effect_attempts_tenant_id_run_id_node_id_occurrence_attempt_index_key ON wamn_run.effect_attempts USING btree (env_key, run_id, frame_id, local_node_id, occurrence, attempt_index)".to_string(),
     );
     obs.foreign_keys.insert(
         (
@@ -1822,11 +1822,11 @@ fn dispatch_type_and_index_drift_is_replaced_by_empty_cutover() {
     );
     obs.indexes.insert(
         "effect_attempt_dispatches_occurrence_key".to_string(),
-        "CREATE INDEX effect_attempt_dispatches_occurrence_key ON demo.effect_attempt_dispatches USING btree (tenant_id, attempt_id)".to_string(),
+        "CREATE INDEX effect_attempt_dispatches_occurrence_key ON demo.effect_attempt_dispatches USING btree (env_key, attempt_id)".to_string(),
     );
     obs.indexes.insert(
         "effect_attempts_dispatch_identity_key".to_string(),
-        "CREATE INDEX effect_attempts_dispatch_identity_key ON demo.effect_attempts USING btree (tenant_id, attempt_id)".to_string(),
+        "CREATE INDEX effect_attempts_dispatch_identity_key ON demo.effect_attempts USING btree (env_key, attempt_id)".to_string(),
     );
 
     let action = plan_run_plane(&schema("demo"), &obs)
@@ -1894,7 +1894,7 @@ fn drifted_occurrence_key_is_replaced_by_frame_identity_cutover() {
     let mut obs = observation_at_record();
     obs.indexes.insert(
         "effect_attempts_occurrence_key".to_string(),
-        "CREATE INDEX effect_attempts_occurrence_key ON demo.effect_attempts USING btree (tenant_id, run_id, node_id, occurrence)".to_string(),
+        "CREATE INDEX effect_attempts_occurrence_key ON demo.effect_attempts USING btree (env_key, run_id, node_id, occurrence)".to_string(),
     );
 
     let action = plan_run_plane(&schema("demo"), &obs)
@@ -1908,7 +1908,7 @@ fn drifted_occurrence_key_is_replaced_by_frame_identity_cutover() {
             .contains("DROP INDEX IF EXISTS \"demo\".effect_attempts_occurrence_key")
     );
     assert!(action.sql.contains(
-        "ADD CONSTRAINT effect_attempts_occurrence_key\n        UNIQUE (tenant_id, run_id, frame_id, local_node_id, occurrence)"
+        "ADD CONSTRAINT effect_attempts_occurrence_key\n        UNIQUE (env_key, run_id, frame_id, local_node_id, occurrence)"
     ));
 }
 
@@ -1923,7 +1923,7 @@ fn frame_identity_cutover_is_empty_only_and_precedes_ddl() {
     }
     obs.indexes.insert(
         "effect_attempts_occurrence_key".to_string(),
-        "CREATE INDEX effect_attempts_occurrence_key ON demo.effect_attempts USING btree (tenant_id, run_id, node_id, occurrence)".to_string(),
+        "CREATE INDEX effect_attempts_occurrence_key ON demo.effect_attempts USING btree (env_key, run_id, node_id, occurrence)".to_string(),
     );
 
     let plan = plan_run_plane(&schema("demo"), &obs);
@@ -1964,7 +1964,7 @@ fn frame_identity_cutover_is_empty_only_and_precedes_ddl() {
     assert!(
         action
             .sql
-            .contains("UNIQUE (tenant_id, run_id, frame_id, local_node_id, occurrence)")
+            .contains("UNIQUE (env_key, run_id, frame_id, local_node_id, occurrence)")
     );
     assert!(
         action
@@ -2458,7 +2458,7 @@ fn broad_app_run_grants_are_removed_without_regranting_writes() {
             .contains("REVOKE ALL PRIVILEGES ON TABLE \"demo\".runs")
     );
     assert!(repair.sql.contains("REVOKE SELECT ("));
-    assert!(repair.sql.contains("tenant_id"));
+    assert!(repair.sql.contains("env_key"));
     assert!(repair.sql.contains("capture_mode"));
     assert!(!repair.sql.contains("GRANT INSERT"));
     assert!(!repair.sql.contains("GRANT UPDATE"));

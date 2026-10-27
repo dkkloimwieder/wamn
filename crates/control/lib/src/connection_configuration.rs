@@ -134,10 +134,10 @@ pub async fn import_with_bindings(
         let mut environment = connect_environment(url.trim()).await?;
         let environment_tx = environment.transaction().await?;
         use_role(&environment_tx, WorkloadRoleFamily::Administration).await?;
-        let tenant = wamn_control_provision::project_env_tenant(org, &project, &env);
+        let env_key = wamn_control_provision::project_env_key(org, &project, &env);
         let rows = environment_tx.query(
             "SELECT connection_name, integration FROM catalog.connection_upgrade_bindings($1,$2)",
-            &[&tenant, &env],
+            &[&env_key, &env],
         ).await.with_context(|| format!("read retained bindings in {project}/{env}"))?;
         for row in rows {
             let name: String = row.get(0);

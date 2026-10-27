@@ -145,7 +145,7 @@ const SET_SQL: &str = "SELECT platform.set_counter($1::text::uuid, $2, $3, $4)";
 impl WamnPostgres {
     /// Set one counter of a sequence of `set.application` for the caller
     /// `user_id`, in one operation transaction of the guest authority of
-    /// `tenant` in `project`, logged in the write log under `operation` and
+    /// `env_key` in `project`, logged in the write log under `operation` and
     /// `request_id`. Returns the value the counter renders next. A retry of a
     /// committed set answers its stored value.
     ///
@@ -157,7 +157,7 @@ impl WamnPostgres {
     pub async fn set_number_counter(
         &self,
         project: &str,
-        tenant: &str,
+        env_key: &str,
         user_id: &str,
         operation: &str,
         request_id: &str,
@@ -181,7 +181,7 @@ impl WamnPostgres {
         }
         let scope = format!("wamn:number-counter-set:{}", uuid::Uuid::new_v4());
         let claims = SessionClaims {
-            tenant: tenant.to_owned(),
+            env_key: env_key.to_owned(),
             project: Some(project.to_owned()),
             user_id: Some(user_id.to_owned()),
             operation: Some(operation.to_owned()),

@@ -14,7 +14,7 @@ use wamn_test_infrastructure::locked_database;
 
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
-const TENANT: &str = "package-data-access-live--fixture--dev";
+const ENV_KEY: &str = "package-data-access-live--fixture--dev";
 const PASSWORD: &str = "package-data-access-live-password";
 /// The relation maps apply-package writes beside the application tables.
 const APPLIER_OWNED_RELATIONS: [&str; 2] = ["wamn_entities", "wamn_cdc_exclusions"];
@@ -161,8 +161,8 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
         .get(0);
     let generation = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::Tenant {
-            tenant: TENANT,
+        WorkloadRoleScope::EnvKey {
+            env_key: ENV_KEY,
             database: &database,
         },
         CredentialGeneration::A,
@@ -602,8 +602,8 @@ async fn an_author_recovers_from_a_failed_version_bump_in_either_direction() {
         admin
             .query_one(
                 "SELECT count(*) FROM catalog.packages \
-                  WHERE tenant_id = $1 AND package_id = 'platform_fixture'",
-                &[&TENANT],
+                  WHERE env_key = $1 AND package_id = 'platform_fixture'",
+                &[&ENV_KEY],
             )
             .await
             .expect("count the applied fixture coordinates")
@@ -680,7 +680,7 @@ async fn reconciliation_leaves_every_platform_schema_grant_on_the_app_role_stand
     // two schema files install stand outside every package declaration, and so
     // does this seeded grant.
     admin
-        .batch_execute("GRANT UPDATE (tenant_id) ON TABLE catalog.packages TO wamn_app;")
+        .batch_execute("GRANT UPDATE (env_key) ON TABLE catalog.packages TO wamn_app;")
         .await
         .expect("seed App authority inside the platform schemas");
     reconcile_package_data_access::reconcile_package_data_access(reconcile_args(
@@ -711,7 +711,7 @@ async fn reconciliation_leaves_every_platform_schema_grant_on_the_app_role_stand
         admin
             .query_one(
                 "SELECT pg_catalog.has_column_privilege( \
-                   'wamn_app', 'catalog.packages', 'tenant_id', 'UPDATE')",
+                   'wamn_app', 'catalog.packages', 'env_key', 'UPDATE')",
                 &[],
             )
             .await
@@ -751,8 +751,8 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
     apply(&url, package.clone()).await;
     let generation = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::Tenant {
-            tenant: TENANT,
+        WorkloadRoleScope::EnvKey {
+            env_key: ENV_KEY,
             database: &database,
         },
         CredentialGeneration::A,
@@ -975,7 +975,7 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
         .expect("read the database instance")
         .get(0);
     let marker =
-        wamn_runtime::local_application::local_target_marker(TENANT, ENVIRONMENT, instance);
+        wamn_runtime::local_application::local_target_marker(ENV_KEY, ENVIRONMENT, instance);
     admin
         .batch_execute(&format!(
             "DO $comment$ BEGIN \
@@ -995,7 +995,7 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
             reconcile_package_data_access::reconcile_local(
                 &prepared,
                 &url,
-                TENANT,
+                ENV_KEY,
                 ENVIRONMENT,
                 apply,
                 &wamn_platform_identity::auth_changes::AuthChanges::default(),
@@ -1040,9 +1040,9 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
         admin
             .query_one(
                 "SELECT artifact_digest FROM catalog.packages \
-                  WHERE tenant_id = $1 AND package_id = 'platform_fixture' \
+                  WHERE env_key = $1 AND package_id = 'platform_fixture' \
                     AND package_version = '2.1.0'",
-                &[&TENANT],
+                &[&ENV_KEY],
             )
             .await
             .expect("read the immutable package row")

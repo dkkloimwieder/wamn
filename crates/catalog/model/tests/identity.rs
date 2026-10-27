@@ -5,9 +5,9 @@ use wamn_catalog::{
     SourceKind,
 };
 
-fn artifact_identity(tenant: &str, flow_version: u32, digit: char) -> ArtifactIdentity {
+fn artifact_identity(env_key: &str, flow_version: u32, digit: char) -> ArtifactIdentity {
     ArtifactIdentity::new(
-        ArtifactId::new(tenant, "receive-order", flow_version).expect("fixture artifact id"),
+        ArtifactId::new(env_key, "receive-order", flow_version).expect("fixture artifact id"),
         ArtifactHash::parse(format!("sha256:{}", digit.to_string().repeat(64)))
             .expect("fixture artifact hash"),
     )
@@ -153,7 +153,7 @@ fn definition_hash_pins_attachment_artifact_and_complete_resolved_sources() {
     }
 
     assert_eq!(
-        baseline_hash, "sha256:973b4709ba0ad6eda6c7e65e930015b33e5398e92d80de7ed0bd1c1c17164cf0",
+        baseline_hash, "sha256:53ef0a45410e4fd593a08f4ef2f9c49510d99b1a75012aafcfb23483eec92322",
         "definition frame sequence changed"
     );
 }

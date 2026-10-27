@@ -27,7 +27,7 @@ use wamn_control::package_artifact::{
 use wamn_control::provision_org::{OrgRecord, ProvisionOrgRequest, provision_org};
 use wamn_control::publish_release::{PublishReleaseRequest, publish_release};
 use wamn_control::verification_policy::project_environment_policy;
-use wamn_control_registry::{Template, project_env_tenant};
+use wamn_control_registry::{Template, project_env_key};
 use wamn_schema_control::BareSchemaName;
 
 #[path = "support/local_registry.rs"]
@@ -115,12 +115,12 @@ fn one_release_published_for_two_environments_has_one_digest() {
     assert!(
         dev_facts
             .iter()
-            .all(|fact| fact.scope.tenant_id == "acme--plant--dev")
+            .all(|fact| fact.scope.env_key == "acme--plant--dev")
     );
     assert!(
         prod_facts
             .iter()
-            .all(|fact| fact.scope.tenant_id == "acme--plant--prod")
+            .all(|fact| fact.scope.env_key == "acme--plant--prod")
     );
 
     let (dev_manifest, dev_digest) =
@@ -137,12 +137,7 @@ fn one_release_published_for_two_environments_has_one_digest() {
     );
 
     let text = String::from_utf8(dev).expect("canonical JSON is UTF-8");
-    for absent in [
-        "acme--plant",
-        "\"tenant-id\"",
-        "\"environment\"",
-        "\"host\"",
-    ] {
+    for absent in ["acme--plant", "\"env_key\"", "\"environment\"", "\"host\""] {
         assert!(!text.contains(absent), "the release names {absent}");
     }
     let _ = std::fs::remove_dir_all(&root);
@@ -165,7 +160,7 @@ async fn publish_through_publish_release(
 ) -> anyhow::Result<wamn_catalog::ManifestDigest> {
     let package = repository().join("apps/edge_device");
     wamn_schema_generator::receipt::check_current(&package)?;
-    let tenant = project_env_tenant(ORG, PROJECT, environment);
+    let env_key = project_env_key(ORG, PROJECT, environment);
     let manifest = wamn_schema_generator::PackageManifest::from_slice(
         &std::fs::read(wamn_schema_generator::package_manifest_path(&package))
             .expect("read the package manifest"),
@@ -191,7 +186,7 @@ async fn publish_through_publish_release(
         project,
         &BareSchemaName::new(RUN_SCHEMA.to_owned()).expect("the run schema name"),
         ORG,
-        &tenant,
+        &env_key,
         environment,
     )
     .await
@@ -379,7 +374,7 @@ async fn one_release_through_publish_release_for_two_environments_has_one_digest
     for environment in ["dev", "prod"] {
         write_release(
             project.url(),
-            &project_env_tenant(ORG, PROJECT, environment),
+            &project_env_key(ORG, PROJECT, environment),
             &dev,
             &manifest,
         )

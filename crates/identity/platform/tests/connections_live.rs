@@ -458,10 +458,10 @@ async fn package_binding_backfill_preserves_each_release_owner_and_refuses_confl
         {"package-id":"second","descriptor":{"component-digest":component}},
     ]})
     .to_string();
-    let manifest: String = tx.query_one("INSERT INTO catalog.releases(tenant_id,manifest_digest,canonical_bytes) VALUES ('t1','sha256:' || encode(sha256(convert_to($1,'UTF8')),'hex'),convert_to($1,'UTF8')) RETURNING manifest_digest", &[&release]).await.unwrap().get(0);
-    tx.execute("INSERT INTO catalog.connection_requirements(tenant_id,component_digest,store_alias,requirement_json,requirement_hash) VALUES ('t1',$1,'upstream','{}',$1)", &[&component]).await.unwrap();
-    tx.batch_execute("INSERT INTO catalog.connection_instances(tenant_id,environment,instance_id,requirement_type,contract) VALUES ('t1','dev','chosen','http','http'),('t1','dev','conflict','http','http')").await.unwrap();
-    tx.execute("INSERT INTO catalog.connection_bindings(tenant_id,manifest_digest,component_digest,store_alias,environment,instance_id,mode,binding_status,validation_status,validation_hash) VALUES ('t1',$1,$2,'upstream','dev','chosen','read','active','valid',$2)", &[&manifest,&component]).await.unwrap();
+    let manifest: String = tx.query_one("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES ('t1','sha256:' || encode(sha256(convert_to($1,'UTF8')),'hex'),convert_to($1,'UTF8')) RETURNING manifest_digest", &[&release]).await.unwrap().get(0);
+    tx.execute("INSERT INTO catalog.connection_requirements(env_key,component_digest,store_alias,requirement_json,requirement_hash) VALUES ('t1',$1,'upstream','{}',$1)", &[&component]).await.unwrap();
+    tx.batch_execute("INSERT INTO catalog.connection_instances(env_key,environment,instance_id,requirement_type,contract) VALUES ('t1','dev','chosen','http','http'),('t1','dev','conflict','http','http')").await.unwrap();
+    tx.execute("INSERT INTO catalog.connection_bindings(env_key,manifest_digest,component_digest,store_alias,environment,instance_id,mode,binding_status,validation_status,validation_hash) VALUES ('t1',$1,$2,'upstream','dev','chosen','read','active','valid',$2)", &[&manifest,&component]).await.unwrap();
     let migration = wamn_control_provision::schema_migrations::PROJECT_MIGRATIONS
         .iter()
         .find(|migration| {
@@ -470,11 +470,16 @@ async fn package_binding_backfill_preserves_each_release_owner_and_refuses_confl
                 .ends_with("_c35_connection_bindings.sql")
         })
         .expect("the package binding migration exists");
+    let migration_sql = migration
+        .sql
+        .replace("tenant_id", "env_key")
+        .replace("(tenant text,", "(env_key text,")
+        .replace("= tenant AND", "= $1 AND");
     // A scoped row with a different selection must refuse the whole backfill.
     tx.batch_execute("SAVEPOINT conflict").await.unwrap();
-    tx.execute("INSERT INTO catalog.connection_bindings(tenant_id,manifest_digest,component_digest,store_alias,environment,instance_id,package_id,mode,binding_status,validation_status,validation_hash) VALUES ('t1',$1,$2,'upstream','dev','conflict','second','read','active','valid',$2)", &[&manifest,&component]).await.unwrap();
+    tx.execute("INSERT INTO catalog.connection_bindings(env_key,manifest_digest,component_digest,store_alias,environment,instance_id,package_id,mode,binding_status,validation_status,validation_hash) VALUES ('t1',$1,$2,'upstream','dev','conflict','second','read','active','valid',$2)", &[&manifest,&component]).await.unwrap();
     assert_eq!(
-        tx.batch_execute(migration.sql).await.unwrap_err().code(),
+        tx.batch_execute(&migration_sql).await.unwrap_err().code(),
         Some(&tokio_postgres::error::SqlState::OBJECT_NOT_IN_PREREQUISITE_STATE)
     );
     tx.batch_execute("ROLLBACK TO SAVEPOINT conflict")
@@ -483,16 +488,16 @@ async fn package_binding_backfill_preserves_each_release_owner_and_refuses_confl
     // A release with no matching component owner must also refuse atomically.
     tx.batch_execute("SAVEPOINT missing_owner").await.unwrap();
     let other_release = json!({"components":[{"package-id":"unrelated","descriptor":{"component-digest":format!("sha256:{}", "b".repeat(64))}}]}).to_string();
-    let other_manifest: String = tx.query_one("INSERT INTO catalog.releases(tenant_id,manifest_digest,canonical_bytes) VALUES ('t1','sha256:' || encode(sha256(convert_to($1,'UTF8')),'hex'),convert_to($1,'UTF8')) RETURNING manifest_digest", &[&other_release]).await.unwrap().get(0);
-    tx.execute("INSERT INTO catalog.connection_bindings(tenant_id,manifest_digest,component_digest,store_alias,environment,instance_id,mode,binding_status,validation_status,validation_hash) VALUES ('t1',$1,$2,'upstream','dev','chosen','read','active','valid',$2)", &[&other_manifest,&component]).await.unwrap();
+    let other_manifest: String = tx.query_one("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES ('t1','sha256:' || encode(sha256(convert_to($1,'UTF8')),'hex'),convert_to($1,'UTF8')) RETURNING manifest_digest", &[&other_release]).await.unwrap().get(0);
+    tx.execute("INSERT INTO catalog.connection_bindings(env_key,manifest_digest,component_digest,store_alias,environment,instance_id,mode,binding_status,validation_status,validation_hash) VALUES ('t1',$1,$2,'upstream','dev','chosen','read','active','valid',$2)", &[&other_manifest,&component]).await.unwrap();
     assert_eq!(
-        tx.batch_execute(migration.sql).await.unwrap_err().code(),
+        tx.batch_execute(&migration_sql).await.unwrap_err().code(),
         Some(&tokio_postgres::error::SqlState::OBJECT_NOT_IN_PREREQUISITE_STATE)
     );
     tx.batch_execute("ROLLBACK TO SAVEPOINT missing_owner")
         .await
         .unwrap();
-    tx.batch_execute(migration.sql).await.unwrap();
+    tx.batch_execute(&migration_sql).await.unwrap();
     let rows = tx.query("SELECT package_id,instance_id,mode,manifest_digest FROM catalog.connection_bindings ORDER BY package_id", &[]).await.unwrap();
     assert_eq!(rows.len(), 2);
     for (row, package) in rows.iter().zip(["first", "second"]) {
@@ -502,7 +507,7 @@ async fn package_binding_backfill_preserves_each_release_owner_and_refuses_confl
         assert_eq!(row.get::<_, String>(3), manifest);
     }
     tx.batch_execute("SAVEPOINT unscoped_write").await.unwrap();
-    assert!(tx.execute("INSERT INTO catalog.connection_bindings(tenant_id,manifest_digest,component_digest,store_alias,environment,instance_id,mode,binding_status,validation_status,validation_hash) VALUES ('t1',$1,$2,'upstream','dev','chosen','read','active','valid',$2)", &[&manifest,&component]).await.is_err());
+    assert!(tx.execute("INSERT INTO catalog.connection_bindings(env_key,manifest_digest,component_digest,store_alias,environment,instance_id,mode,binding_status,validation_status,validation_hash) VALUES ('t1',$1,$2,'upstream','dev','chosen','read','active','valid',$2)", &[&manifest,&component]).await.is_err());
     tx.batch_execute("ROLLBACK TO SAVEPOINT unscoped_write")
         .await
         .unwrap();

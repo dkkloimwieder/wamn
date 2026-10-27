@@ -33,7 +33,7 @@ async fn credential_secrets(
     system_url: &str,
     scope: &Triple,
 ) -> anyhow::Result<Vec<Value>> {
-    let tenant = wamn_control_registry::project_env_tenant(ORG, PROJECT, "http");
+    let env_key = wamn_control_registry::project_env_key(ORG, PROJECT, "http");
     let mut secrets = wamn_gate_harness::render_check::credential_secrets(scope, NAMESPACE);
     for credential in wamn_control_provision::host_credentials::HOST_CREDENTIALS {
         let (client, url) = match credential.database {
@@ -62,8 +62,8 @@ async fn credential_secrets(
             CredentialDatabase::Project => workload_generation_role(
                 credential.family,
                 if credential.family == WorkloadRoleFamily::App {
-                    WorkloadRoleScope::Tenant {
-                        tenant: &tenant,
+                    WorkloadRoleScope::EnvKey {
+                        env_key: &env_key,
                         database: &database,
                     }
                 } else {
@@ -91,12 +91,12 @@ async fn credential_secrets(
             tx.batch_execute("SET LOCAL ROLE wamn_system").await?;
             let mapped: String = tx
                 .query_one(
-                    sql::upsert_control_author_tenant_mapping_sql(),
-                    &[&role, &tenant, &ORG, &PROJECT, &"http"],
+                    sql::upsert_control_author_env_key_mapping_sql(),
+                    &[&role, &env_key, &ORG, &PROJECT, &"http"],
                 )
                 .await?
-                .get("tenant_id");
-            ensure!(mapped == tenant, "host reader maps to a different tenant");
+                .get("env_key");
+            ensure!(mapped == env_key, "host reader maps to a different tenant");
             tx.commit().await?;
         }
         let name =
@@ -347,7 +347,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     let work = ScratchRoot::create()?;
     let directory = work.path();
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let tenant = wamn_control_registry::project_env_tenant(ORG, PROJECT, "http");
+    let env_key = wamn_control_registry::project_env_key(ORG, PROJECT, "http");
     let scope = Triple::new(ORG, PROJECT, "http");
     let database = wamn_test_postgres::database();
     let control = wamn_control_provision::test_database::system();
@@ -375,12 +375,12 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     .await?;
     project.execute("SELECT set_config('app.user_id',$1,false), set_config('app.operation','admin:prekind',false)", &[&wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()]).await?;
     project
-        .execute("SELECT set_config('app.tenant',$1,false)", &[&tenant])
+        .execute("SELECT set_config('app.env_key',$1,false)", &[&env_key])
         .await?;
     project
         .batch_execute("INSERT INTO platform.environment(status) VALUES ('active')")
         .await?;
-    project.execute("INSERT INTO wamn_run.environment_policies(tenant_id,expected_environment,durability_class) VALUES ($1,'http','standard')", &[&tenant]).await?;
+    project.execute("INSERT INTO wamn_run.environment_policies(env_key,expected_environment,durability_class) VALUES ($1,'http','standard')", &[&env_key]).await?;
     let instance: u32 = project
         .query_one(
             "SELECT oid FROM pg_database WHERE datname=current_database()",
@@ -388,7 +388,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         )
         .await?
         .get(0);
-    let marker = wamn_runtime::local_application::local_target_marker(&tenant, "http", instance);
+    let marker = wamn_runtime::local_application::local_target_marker(&env_key, "http", instance);
     project
         .batch_execute(&format!(
             "COMMENT ON DATABASE \"{}\" IS '{marker}'",
@@ -599,9 +599,9 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         directory.join(wamn_catalog::RELEASE_MANIFEST_FILE_NAME),
         &published.canonical_bytes,
     )?;
-    project.execute("INSERT INTO catalog.releases(tenant_id,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)", &[&tenant,&digest,&published.canonical_bytes]).await?;
+    project.execute("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)", &[&env_key,&digest,&published.canonical_bytes]).await?;
     for package in &published.manifest.release.packages {
-        project.execute("INSERT INTO catalog.packages(tenant_id,package_id,package_version,artifact_digest) VALUES ($1,$2,$3,$4)", &[&tenant,&package.package_id(),&package.package_version(),&format!("sha256:{}","a".repeat(64))]).await?;
+        project.execute("INSERT INTO catalog.packages(env_key,package_id,package_version,artifact_digest) VALUES ($1,$2,$3,$4)", &[&env_key,&package.package_id(),&package.package_version(),&format!("sha256:{}","a".repeat(64))]).await?;
     }
     let mut document = fixture_document("http", "http.orders.example", digest);
     document
@@ -643,7 +643,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
             let id = format!("{}/{}", component.package_id, connection.store_alias);
             wamn_control::bind_connection::prepare_local_instance(
                 project.as_ref(),
-                &tenant,
+                &env_key,
                 "http",
                 &id,
                 &input,
@@ -651,7 +651,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
             .await?;
             let selection = wamn_runtime::local_application::read_local_binding(
                 &project,
-                &tenant,
+                &env_key,
                 "http",
                 &requirement,
                 &id,
@@ -730,7 +730,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         system_url: control.url(),
         project_url: database.url(),
         scope: &scope,
-        tenant: &tenant,
+        env_key: &env_key,
         digest,
         applications: &document.applications,
         auth: &auth,

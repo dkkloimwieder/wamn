@@ -16,7 +16,7 @@ const DIGEST_B: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 
 fn scope(environment: &'static str) -> WiringScope<'static> {
     WiringScope {
-        tenant_id: "tenant-a",
+        env_key: "tenant-a",
         package_id: "package_a",
         environment,
     }

@@ -42,7 +42,7 @@ use wamn_control_provision::host_credentials::HOST_CREDENTIALS;
 /// How long CloudNativePG may take to finalize the `Database` CR.
 const DATABASE_DELETE_TIMEOUT: &str = "--timeout=600s";
 
-/// The control tables that key rows by `tenant_id`, each with its
+/// The control tables that key rows by `env_key`, each with its
 /// immutability trigger.
 pub const CONTROL_TABLES: [(&str, Option<&str>); 2] = [
     (
@@ -54,10 +54,10 @@ pub const CONTROL_TABLES: [(&str, Option<&str>); 2] = [
 
 /// The statements that delete one tenant's rows of one control table. An
 /// immutable table gets its trigger off for the one delete only.
-pub fn delete_control_rows_sql(table: &str, trigger: Option<&str>, tenant: &str) -> Vec<String> {
+pub fn delete_control_rows_sql(table: &str, trigger: Option<&str>, env_key: &str) -> Vec<String> {
     let delete = format!(
-        "DELETE FROM {table} WHERE tenant_id = {}",
-        quote_literal(tenant)
+        "DELETE FROM {table} WHERE env_key = {}",
+        quote_literal(env_key)
     );
     match trigger {
         Some(trigger) => vec![
@@ -82,7 +82,7 @@ pub fn instance_families() -> impl Iterator<Item = WorkloadRoleFamily> {
     WorkloadRoleFamily::ALL.into_iter().filter(|family| {
         matches!(
             family.scope_kind(),
-            WorkloadRoleScopeKind::Tenant | WorkloadRoleScopeKind::ProjectEnvironment
+            WorkloadRoleScopeKind::EnvKey | WorkloadRoleScopeKind::ProjectEnvironment
         )
     })
 }
@@ -96,7 +96,7 @@ pub fn instance_families() -> impl Iterator<Item = WorkloadRoleFamily> {
 pub fn instance_roles(
     triple: &Triple,
     instance: &str,
-    tenant: &str,
+    env_key: &str,
 ) -> anyhow::Result<Vec<String>> {
     let (org, project, env) = (
         triple.org.as_str(),
@@ -107,8 +107,8 @@ pub fn instance_roles(
     let mut roles = vec![cdc_object_name(org, project, env, instance)];
     for family in instance_families() {
         let scope = match family.scope_kind() {
-            WorkloadRoleScopeKind::Tenant => WorkloadRoleScope::Tenant {
-                tenant,
+            WorkloadRoleScopeKind::EnvKey => WorkloadRoleScope::EnvKey {
+                env_key,
                 database: &database,
             },
             _ => WorkloadRoleScope::ProjectEnvironment {
@@ -199,7 +199,7 @@ async fn delete_locked(
     };
     let instance: String = row.get(0);
     let database = project_env_database_name(org, project, env, &instance);
-    let tenant = wamn_control_provision::project_env_tenant(org, project, env);
+    let env_key = wamn_control_provision::project_env_key(org, project, env);
 
     // A run pinned to a release with no pod.
     let cr_present = !kubectl(
@@ -219,7 +219,7 @@ async fn delete_locked(
     .is_empty();
     if cr_present {
         let url = project_url(platform, triple).await?;
-        match super::drain::stranded(&url, &tenant, env, &live).await {
+        match super::drain::stranded(&url, &env_key, env, &live).await {
             Ok(stranded) if !stranded.is_empty() && !data => bail!(
                 "{}; apply a document that names their release to recover them, or delete \
                  with --data; nothing else was deleted",
@@ -420,7 +420,7 @@ async fn delete_locked(
     // The roles, only with the database: a retained database keeps its
     // owner roles for manual recovery.
     if data {
-        let roles = instance_roles(triple, &instance, &tenant)?;
+        let roles = instance_roles(triple, &instance, &env_key)?;
         for role in &roles {
             admin
                 .batch_execute(&format!("DROP ROLE IF EXISTS {}", quote_ident(role)))
@@ -435,11 +435,11 @@ async fn delete_locked(
         .await
         .context("begin the row delete")?;
     transaction
-        .query_one("SELECT set_config('app.tenant', $1, true)", &[&tenant])
+        .query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
         .await
         .context("claim the tenant")?;
     for (table, trigger) in CONTROL_TABLES {
-        for statement in delete_control_rows_sql(table, trigger, &tenant) {
+        for statement in delete_control_rows_sql(table, trigger, &env_key) {
             transaction
                 .execute(statement.as_str(), &[])
                 .await
@@ -453,7 +453,7 @@ async fn delete_locked(
         )
         .await
         .context("delete the registry.project_envs row")?;
-    let tenant_table: bool = transaction
+    let env_key_table: bool = transaction
         .query_one(
             "SELECT to_regclass('catalog.tenant_environments') IS NOT NULL",
             &[],
@@ -461,7 +461,7 @@ async fn delete_locked(
         .await
         .context("probe catalog.tenant_environments")?
         .get(0);
-    if tenant_table {
+    if env_key_table {
         transaction
             .execute(
                 "DELETE FROM catalog.tenant_environments \
@@ -476,7 +476,7 @@ async fn delete_locked(
         .await
         .context("commit the row delete")?;
     lines.push(format!(
-        "deleted the control rows of tenant {tenant} and the environment row of {triple}"
+        "deleted the control rows of tenant {env_key} and the environment row of {triple}"
     ));
     Ok(lines)
 }
@@ -523,13 +523,13 @@ mod tests {
             ),
             [
                 "ALTER TABLE catalog.authoring_command_audit DISABLE TRIGGER \"authoring_command_audit_immutable\"",
-                "DELETE FROM catalog.authoring_command_audit WHERE tenant_id = 'dev'",
+                "DELETE FROM catalog.authoring_command_audit WHERE env_key = 'dev'",
                 "ALTER TABLE catalog.authoring_command_audit ENABLE TRIGGER \"authoring_command_audit_immutable\"",
             ]
         );
         assert_eq!(
             delete_control_rows_sql("catalog.authoring_command_audit", None, "dev"),
-            ["DELETE FROM catalog.authoring_command_audit WHERE tenant_id = 'dev'"]
+            ["DELETE FROM catalog.authoring_command_audit WHERE env_key = 'dev'"]
         );
     }
 }

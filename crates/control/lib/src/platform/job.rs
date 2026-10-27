@@ -1070,7 +1070,7 @@ pub fn install_job_requests(
         "tls.key": STANDARD.encode("test-key")
     }}))?;
     let image = "registry/runner@sha256:abc";
-    let tenant = "test--receiving--dev";
+    let env_key = "test--receiving--dev";
     let mut requests = Vec::new();
     for request in install::provisioning_jobs(&document, image) {
         let verb = match request.name.as_str() {
@@ -1095,7 +1095,7 @@ pub fn install_job_requests(
         (
             "apply-package",
             packages::package_request(
-                tenant,
+                env_key,
                 "fixture-1".into(),
                 &environment,
                 image,
@@ -1106,17 +1106,17 @@ pub fn install_job_requests(
         ),
         (
             "reconcile-package-data-access",
-            packages::access_request(tenant, &environment, image, registry),
+            packages::access_request(env_key, &environment, image, registry),
             vec!["WAMN_SYSTEM_ADMIN_URL", "WAMN_PG_ADMIN_URL"],
         ),
         (
             "reconcile-replica-identity",
-            packages::replica_request(tenant, "fixture", image),
+            packages::replica_request(env_key, "fixture", image),
             vec!["WAMN_SYSTEM_ADMIN_URL", "WAMN_PG_ADMIN_URL"],
         ),
         (
             "publish-release",
-            releases::request(tenant, "", image, registry)?,
+            releases::request(env_key, "", image, registry)?,
             vec!["WAMN_SYSTEM_ADMIN_URL", "WAMN_PG_ADMIN_URL"],
         ),
         (

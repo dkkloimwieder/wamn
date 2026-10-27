@@ -203,10 +203,10 @@ pub fn workload_name(release_name: &str, role: RoleName) -> String {
 /// has an HTTP route attachment, materializer in every environment.
 /// Each role's configuration derives from the coordinate.
 pub fn roles(manifest: &ServingManifest, org: &str, project: &str, env: &str) -> Vec<Role> {
-    let tenant = wamn_control_provision::project_env_tenant(org, project, env);
+    let env_key = wamn_control_provision::project_env_key(org, project, env);
     let scope = |extra: &[(&str, &str)]| -> Mapping {
         [
-            ("wamn.tenant", tenant.as_str()),
+            ("wamn.env_key", env_key.as_str()),
             ("wamn.project", project),
             ("wamn.environment", env),
         ]
@@ -246,7 +246,7 @@ pub fn roles(manifest: &ServingManifest, org: &str, project: &str, env: &str) ->
             ("WAMN_MAT_ORG", org),
             ("WAMN_MAT_PROJECT", project),
             ("WAMN_MAT_ENV", env),
-            ("WAMN_MAT_TENANT", tenant.as_str()),
+            ("WAMN_MAT_ENV_KEY", env_key.as_str()),
         ]
         .iter()
         .map(|(key, value)| ((*key).into(), (*value).into()))

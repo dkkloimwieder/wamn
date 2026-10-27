@@ -5,7 +5,7 @@
 #   kubectl -n wamn-system apply -f deploy/platform/scenario-worker.yaml
 #   kubectl -n wamn-system rollout status deploy/scenario-worker --timeout=120s
 #
-# PER-PROJECT INSTANTIATION: --org / --project / --environment / --tenant and
+# PER-PROJECT INSTANTIATION: --org / --project / --environment / --env-key and
 # the authoring Secret name below are per-(org, project, env) config. One
 # surface serves exactly one (org, project, environment) triple: a token
 # whose principal holds no role in THAT project is refused, and a request naming
@@ -153,7 +153,7 @@ spec:
             - --org=acme
             - --project=receiving
             - --environment=dev
-            - --tenant=receiving
+            - --env-key=receiving
             - --source-schema=wamn_run
           env:
             - name: WAMN_MANAGEMENT_BIND

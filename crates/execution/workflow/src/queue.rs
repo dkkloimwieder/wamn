@@ -30,7 +30,7 @@ const IDLE_POLL_MS: u64 = 250;
 
 #[derive(Debug, Clone)]
 struct QueueScope {
-    tenant_id: String,
+    env_key: String,
     project: String,
     package_ids: Vec<String>,
     environment: String,
@@ -74,7 +74,7 @@ impl QueueService {
             .filter(|ttl| *ttl > 0)
             .context("queue lease TTL must be a positive signed 64-bit integer")?;
         let scope = QueueScope {
-            tenant_id: release.scope().tenant_id.clone(),
+            env_key: release.scope().env_key.clone(),
             project: config.project.clone(),
             // Released runs carry a package of the release, and workflow runs
             // the name of a declared application.
@@ -94,7 +94,7 @@ impl QueueService {
             .bind_session_claims(
                 QUEUE_CLAIM_SCOPE,
                 &SessionClaims {
-                    tenant: scope.tenant_id.clone(),
+                    env_key: scope.env_key.clone(),
                     project: Some(config.project.clone()),
                     // Queue state belongs to the run plane, never the application schema.
                     schema: Some("wamn_run".to_owned()),
@@ -110,7 +110,7 @@ impl QueueService {
             .await?;
         jetstream.bind_derived_scope(
             QUEUE_CLAIM_SCOPE,
-            &scope.tenant_id,
+            &scope.env_key,
             &config.project,
             &scope.environment,
         )?;
@@ -174,7 +174,7 @@ fn queue_delivery_span(
 ) -> tracing::Span {
     tracing::info_span!(
         target: "wamn::router", parent: None, "wamn.queue.delivery",
-        wamn.tenant = %scope.tenant_id, wamn.project = %scope.project,
+        wamn.env_key = %scope.env_key, wamn.project = %scope.project,
         wamn.package_id = %package_id, wamn.environment = %scope.environment,
         wamn.run_id = %run_id, wamn.wiring_id = %wiring_id,
         wamn.wiring_version = wiring_version,
@@ -388,14 +388,14 @@ async fn drain_one(
                 postgres
                     .queued_run_caller(
                         &scope.project,
-                        &scope.tenant_id,
+                        &scope.env_key,
                         &workflow.execution_principal_id,
                         Some(&workflow.execution_role),
                     )
                     .await?,
             );
             let run = RouterDriverRequest {
-                tenant_id: scope.tenant_id.clone(),
+                env_key: scope.env_key.clone(),
                 package_id: package_id.clone(),
                 environment: scope.environment.clone(),
                 wiring_id: wiring_id.clone(),

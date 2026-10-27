@@ -71,7 +71,7 @@ mod tests {
     fn component() -> AdmittedComponent {
         normalize_component_fact(
             serde_json::from_value(json!({
-                "scope": {"tenant-id": "tenant-a", "package-id": "orders", "package-version": "1.0.0"},
+                "scope": {"env_key": "tenant-a", "package-id": "orders", "package-version": "1.0.0"},
                 "component": "transform", "interface-version": "0.1.0",
                 "operations": {"run": {
                     "registered-operation": null, "committed-result-schema": null,

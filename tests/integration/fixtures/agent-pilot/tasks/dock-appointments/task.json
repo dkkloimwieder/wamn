@@ -5,7 +5,7 @@
     "project": "receiving",
     "env": "dev",
     "schema": "receiving",
-    "tenant": "acme--receiving--dev",
+    "env_key": "acme--receiving--dev",
     "route_host": "receiving.localhost"
   },
   "package_sources": [

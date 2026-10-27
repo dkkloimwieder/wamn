@@ -63,7 +63,7 @@ use wamn_session::PAT_TOKEN_PREFIX;
 const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
     include_str!("../../../test-support/fixtures/sql/current-database-public-connect.sql");
 
-const TENANT: &str = "management-live-tenant";
+const ENV_KEY: &str = "management-live-tenant";
 /// Fixed by the control store (wamn-0h0g.8.18): both the identity registry this
 /// gate authenticates against and the authoring store it writes to live in the
 /// one control database, so there is no schema to rewrite.
@@ -622,7 +622,7 @@ async fn start_management_surface(
             org: ORG.to_owned(),
             project: PROJECT.to_owned(),
             environment: ENVIRONMENT.to_owned(),
-            tenant: TENANT.to_owned(),
+            env_key: ENV_KEY.to_owned(),
             source_schema: SOURCE_SCHEMA.to_owned(),
         },
         readiness_tx,
@@ -716,15 +716,15 @@ async fn seed_candidate(project: &Client) -> anyhow::Result<()> {
     project
         .batch_execute(&format!(
             "INSERT INTO catalog.packages \
-               (tenant_id, package_id, package_version, artifact_digest) \
-             VALUES ('{TENANT}', '{CANDIDATE_PACKAGE}', '{CANDIDATE_PACKAGE_VERSION}', \
+               (env_key, package_id, package_version, artifact_digest) \
+             VALUES ('{ENV_KEY}', '{CANDIDATE_PACKAGE}', '{CANDIDATE_PACKAGE_VERSION}', \
                      '{CANDIDATE_MANIFEST_SHA256}'); \
-             INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
-             SELECT '{TENANT}', 'sha256:' || encode(sha256(bytes), 'hex'), bytes \
+             INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) \
+             SELECT '{ENV_KEY}', 'sha256:' || encode(sha256(bytes), 'hex'), bytes \
                FROM (SELECT convert_to('{CANDIDATE_RELEASE_BYTES}', 'UTF8') AS bytes) AS release; \
              INSERT INTO wamn_run.environment_policies \
-               (tenant_id, expected_environment, durability_class) \
-             VALUES ('{TENANT}', '{ENVIRONMENT}', 'standard');"
+               (env_key, expected_environment, durability_class) \
+             VALUES ('{ENV_KEY}', '{ENVIRONMENT}', 'standard');"
         ))
         .await
         .context("seed the applied package, effective release, and environment policy")?;
@@ -757,10 +757,10 @@ async fn seed_effectful_unreleased_candidate(project: &Client) -> anyhow::Result
     project
         .execute(
             "INSERT INTO catalog.packages \
-               (tenant_id, package_id, package_version, artifact_digest) \
+               (env_key, package_id, package_version, artifact_digest) \
              VALUES ($1, $2, $3, $4)",
             &[
-                &TENANT,
+                &ENV_KEY,
                 &EFFECTFUL_PACKAGE,
                 &CANDIDATE_PACKAGE_VERSION,
                 &EFFECTFUL_MANIFEST_SHA256,
@@ -775,7 +775,7 @@ async fn seed_effectful_unreleased_candidate(project: &Client) -> anyhow::Result
         .execute(
             wamn_schema_control::connections::insert_component_connection_requirement_sql(),
             &[
-                &TENANT,
+                &ENV_KEY,
                 &requirement.component_digest(),
                 &requirement.store_alias(),
                 &requirement_json,
@@ -893,8 +893,8 @@ async fn project_case_runs(project: &Client) -> Vec<(String, String, String, Sys
     project
         .query(
             "SELECT run_id, idempotency_key, status, created_at FROM wamn_run.runs \
-              WHERE tenant_id = $1 AND trigger_source = 'test-case' ORDER BY created_at, run_id",
-            &[&TENANT],
+              WHERE env_key = $1 AND trigger_source = 'test-case' ORDER BY created_at, run_id",
+            &[&ENV_KEY],
         )
         .await
         .expect("read the admitted test-case runs")
@@ -907,9 +907,9 @@ async fn project_queue_count(project: &Client) -> i64 {
     project
         .query_one(
             "SELECT count(*) FROM wamn_run.run_queue AS queue \
-               JOIN wamn_run.runs AS run USING (tenant_id, run_id) \
-              WHERE run.tenant_id = $1 AND run.trigger_source = 'test-case'",
-            &[&TENANT],
+               JOIN wamn_run.runs AS run USING (env_key, run_id) \
+              WHERE run.env_key = $1 AND run.trigger_source = 'test-case'",
+            &[&ENV_KEY],
         )
         .await
         .expect("count the admitted queue rows")
@@ -1015,9 +1015,9 @@ async fn provision(admin: &mut Client, admin_url: &str) -> anyhow::Result<()> {
     admin
         .execute(
             "INSERT INTO wamn_authority.author_login_tenants \
-               (login_identity, tenant_id, org_id, project_id, environment) \
+               (login_identity, env_key, org_id, project_id, environment) \
              VALUES ($1, $2, $3, $4, $5)",
-            &[&role, &TENANT, &ORG, &PROJECT, &ENVIRONMENT],
+            &[&role, &ENV_KEY, &ORG, &PROJECT, &ENVIRONMENT],
         )
         .await
         .context("map the control-author login to its one tenant")?;
@@ -1110,8 +1110,8 @@ async fn stored_gate_report(
     admin
         .query_opt(
             "SELECT passed, summary FROM wamn_run.gate_reports \
-              WHERE tenant_id = $1 AND wiring_hash = $2",
-            &[&TENANT, &wiring_hash],
+              WHERE env_key = $1 AND wiring_hash = $2",
+            &[&ENV_KEY, &wiring_hash],
         )
         .await
         .expect("read the stored gate report")
@@ -1123,19 +1123,19 @@ async fn effectful_candidate_runtime_state(project: &Client) -> (bool, bool, boo
         .query_one(
             "SELECT \
                EXISTS (SELECT 1 FROM catalog.connection_requirements \
-                        WHERE tenant_id = $1 AND component_digest = $2) AS has_requirement, \
+                        WHERE env_key = $1 AND component_digest = $2) AS has_requirement, \
                EXISTS (SELECT 1 FROM catalog.releases AS release \
                         CROSS JOIN LATERAL jsonb_array_elements( \
                               convert_from(release.canonical_bytes, 'UTF8')::jsonb \
                                 #> '{release,packages}') AS member(value) \
-                        WHERE release.tenant_id = $1 \
+                        WHERE release.env_key = $1 \
                           AND member.value ->> 'package-id' = $3 \
                           AND member.value ->> 'package-version' = $4) \
                  AS has_release_scope, \
                EXISTS (SELECT 1 FROM catalog.connection_bindings \
-                        WHERE tenant_id = $1 AND component_digest = $2) AS has_binding",
+                        WHERE env_key = $1 AND component_digest = $2) AS has_binding",
             &[
-                &TENANT,
+                &ENV_KEY,
                 &EFFECTFUL_COMPONENT_DIGEST,
                 &EFFECTFUL_PACKAGE,
                 &CANDIDATE_PACKAGE_VERSION,

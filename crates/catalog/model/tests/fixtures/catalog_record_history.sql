@@ -4,43 +4,43 @@ SELECT set_config('app.user_id', '00000000-0000-4000-8000-0000000000f1', true),
 INSERT INTO platform."user" (id, type, email, display_name) VALUES
     ('00000000-0000-4000-8000-0000000000f1', 'user', 'creator@example.invalid', 'creator'),
     ('00000000-0000-4000-8000-0000000000f2', 'user', 'editor@example.invalid', 'editor');
-INSERT INTO catalog.packages (tenant_id, package_id, package_version, predecessor_version)
+INSERT INTO catalog.packages (env_key, package_id, package_version, predecessor_version)
 VALUES ('history', 'fixture', '1', NULL), ('history', 'fixture', '2', '1');
 INSERT INTO catalog.package_migrations
-    (tenant_id, package_id, package_version, ordinal, relative_path, sha256)
+    (env_key, package_id, package_version, ordinal, relative_path, sha256)
 VALUES ('history', 'fixture', '1', 1, 'migrations/0001_initial.sql', 'sha256:' || repeat('a', 64));
 INSERT INTO catalog.package_definition_owners
-    (tenant_id, schema_name, relation_name, definition_type, definition_name, owner_package_id)
+    (env_key, schema_name, relation_name, definition_type, definition_name, owner_package_id)
 VALUES ('history', 'fixture', 'item', 'relation', 'item', 'fixture');
-INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes)
+INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes)
 VALUES ('history', 'sha256:' || encode(sha256('{}'::bytea), 'hex'), '{}'::bytea);
 INSERT INTO catalog.connection_requirements
-    (tenant_id, component_digest, store_alias, requirement_json, requirement_hash)
+    (env_key, component_digest, store_alias, requirement_json, requirement_hash)
 VALUES ('history', 'sha256:' || repeat('a', 64), 'store', '{}', 'sha256:' || repeat('b', 64));
 INSERT INTO catalog.connection_instances
-    (tenant_id, environment, instance_id, requirement_type, contract)
+    (env_key, environment, instance_id, requirement_type, contract)
 VALUES ('history', 'dev', 'store', 'http', 'wamn:connection/http@0.1.0');
 INSERT INTO catalog.connection_generations
-    (tenant_id, environment, instance_id, generation, definition_json, definition_hash)
+    (env_key, environment, instance_id, generation, definition_json, definition_hash)
 VALUES ('history', 'dev', 'store', 1, '{}', 'sha256:' || repeat('b', 64));
 INSERT INTO catalog.connection_bindings
-    (tenant_id, manifest_digest, component_digest, store_alias, environment, instance_id,
+    (env_key, manifest_digest, component_digest, store_alias, environment, instance_id,
      package_id, binding_status, validation_status, validation_hash)
 VALUES ('history', 'sha256:' || encode(sha256('{}'::bytea), 'hex'), 'sha256:' || repeat('a', 64),
         'store', 'dev', 'store', 'fixture', 'active', 'valid', 'sha256:' || repeat('b', 64));
-INSERT INTO catalog.wiring_tombstones (tenant_id, package_id, environment, wiring_id, reason)
+INSERT INTO catalog.wiring_tombstones (env_key, package_id, environment, wiring_id, reason)
 VALUES ('history', 'fixture', 'dev', 'retired', 'fixture');
 INSERT INTO catalog.package_upgrade_qualifications
-    (tenant_id, package_id, candidate_package_version, canonical_bytes, result_sha256,
+    (env_key, package_id, candidate_package_version, canonical_bytes, result_sha256,
      predecessor_manifest_digest, package_artifact_digest)
 VALUES ('history', 'fixture', '2', '{}'::bytea, 'sha256:' || encode(sha256('{}'::bytea), 'hex'),
         'sha256:' || encode(sha256('{}'::bytea), 'hex'), 'sha256:' || repeat('a', 64));
 INSERT INTO catalog.package_upgrade_stages
-    (tenant_id, package_id, package_version, predecessor_version, status, cursor,
+    (env_key, package_id, package_version, predecessor_version, status, cursor,
      package_artifact_digest, predecessor_release_digest, evidence_digest)
 VALUES ('history', 'fixture', '2', '1', 'in_progress', 'null',
         'sha256:' || repeat('a', 64), 'sha256:' || repeat('b', 64), 'sha256:' || repeat('c', 64));
-INSERT INTO catalog.package_floors (tenant_id, package_id, version) VALUES ('history', 'fixture', '1');
+INSERT INTO catalog.package_floors (env_key, package_id, version) VALUES ('history', 'fixture', '1');
 
 DO $assert_inserts$
 DECLARE

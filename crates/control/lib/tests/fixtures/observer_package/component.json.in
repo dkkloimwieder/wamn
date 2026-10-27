@@ -1,6 +1,6 @@
 {
   "scope": {
-    "tenant-id": "__TENANT_ID__",
+    "env_key": "__ENV_KEY__",
     "package-id": "observer_fixture"
   },
   "component": "observer_fixture",

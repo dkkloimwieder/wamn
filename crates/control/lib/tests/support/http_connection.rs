@@ -285,8 +285,8 @@ pub fn admit_guest(
     let declaration = serde_json::from_value(declaration(
         &template
             .replace(
-                "__TENANT_ID__",
-                &wamn_control_registry::project_env_tenant(ORG, PROJECT, "http"),
+                "__ENV_KEY__",
+                &wamn_control_registry::project_env_key(ORG, PROJECT, "http"),
             )
             .replace("__PACKAGE_ID__", package)
             .replace("__PACKAGE_VERSION__", version),
@@ -388,7 +388,7 @@ pub fn release(
     components: Vec<ComponentDescriptor>,
 ) -> anyhow::Result<Vec<u8>> {
     let scope = ComponentPackageScope {
-        tenant_id: wamn_control_registry::project_env_tenant(ORG, PROJECT, "http"),
+        env_key: wamn_control_registry::project_env_key(ORG, PROJECT, "http"),
         package_id: PACKAGE.to_owned(),
         package_version: version.to_owned(),
     };
@@ -637,7 +637,7 @@ async fn assert_triggers_inner(
     let document = scheduled_wiring()?;
     super::integration::enable_schedule(environment, PACKAGE, &document, SCHEDULE, &[]).await?;
     let first_due = super::integration::next_minute(Utc::now());
-    let result = scheduled_runs(&run.work, database, environment.tenant, first_due).await;
+    let result = scheduled_runs(&run.work, database, environment.env_key, first_due).await;
     run.pass("an enabled schedule workflow starts exactly one run per due key as the workflow user with its role",
         "author and enable the schedule workflow; SELECT schedule runs from wamn_run.runs",
         json!({"rows": result.as_ref().ok(), "error": result.as_ref().err().map(ToString::to_string)}),
@@ -683,8 +683,8 @@ async fn run_manual_inner(
         let row = database
             .query_one(
                 "SELECT status, result_json, fail_type FROM wamn_run.runs \
-                 WHERE tenant_id=$1 AND run_id=$2",
-                &[&environment.tenant, &id],
+                 WHERE env_key=$1 AND run_id=$2",
+                &[&environment.env_key, &id],
             )
             .await?;
         let status: String = row.get(0);
@@ -713,13 +713,13 @@ async fn run_manual_inner(
 async fn scheduled_runs(
     work: &std::path::Path,
     database: &tokio_postgres::Client,
-    tenant: &str,
+    env_key: &str,
     first_due: chrono::DateTime<Utc>,
 ) -> anyhow::Result<Value> {
     wamn_gate_harness::run_check::check(work, "scheduled_runs", database, async {
         tokio::time::timeout(
             Duration::from_secs(240),
-            scheduled_runs_inner(database, tenant, first_due),
+            scheduled_runs_inner(database, env_key, first_due),
         )
         .await
         .context("schedule did not complete two due moments within 240 seconds")?
@@ -729,7 +729,7 @@ async fn scheduled_runs(
 
 async fn scheduled_runs_inner(
     database: &tokio_postgres::Client,
-    tenant: &str,
+    env_key: &str,
     first_due: chrono::DateTime<Utc>,
 ) -> anyhow::Result<Value> {
     let workflow_user = wamn_project_state::workflow_user_id().to_string();
@@ -747,8 +747,8 @@ async fn scheduled_runs_inner(
                 'package_id', package_id, 'wiring_id', wiring_id, 'wiring_version', wiring_version, \
                 'fail_type', fail_type, 'result_json', result_json) \
                 ORDER BY idempotency_key), '[]'::jsonb) FROM wamn_run.runs \
-                WHERE tenant_id = $1 AND idempotency_key = ANY($2)",
-            &[&tenant, &keys.as_slice()],
+                WHERE env_key = $1 AND idempotency_key = ANY($2)",
+            &[&env_key, &keys.as_slice()],
         ).await?.get(0);
         let runs = rows.as_array().context("schedule run rows")?;
         for (key, due) in keys.iter().zip(&dues) {

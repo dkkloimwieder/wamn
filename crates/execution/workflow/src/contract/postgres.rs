@@ -26,7 +26,7 @@ pub struct PostgresWorkflows {
     client: Mutex<Client>,
     /// The run plane schema, for example `wamn_run`.
     schema: String,
-    tenant: String,
+    env_key: String,
     environment: String,
 }
 
@@ -34,30 +34,30 @@ impl std::fmt::Debug for PostgresWorkflows {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PostgresWorkflows")
             .field("schema", &self.schema)
-            .field("tenant", &self.tenant)
+            .field("env_key", &self.env_key)
             .field("environment", &self.environment)
             .finish_non_exhaustive()
     }
 }
 
 impl PostgresWorkflows {
-    /// Serve the runs of `tenant` and `environment` in `schema`.
+    /// Serve the runs of `env_key` and `environment` in `schema`.
     pub fn new(
         client: Client,
         schema: impl Into<String>,
-        tenant: impl Into<String>,
+        env_key: impl Into<String>,
         environment: impl Into<String>,
     ) -> Self {
         Self {
             client: Mutex::new(client),
             schema: schema.into(),
-            tenant: tenant.into(),
+            env_key: env_key.into(),
             environment: environment.into(),
         }
     }
 
-    fn tenant(&self) -> &str {
-        &self.tenant
+    fn env_key(&self) -> &str {
+        &self.env_key
     }
 
     fn environment(&self) -> &str {
@@ -69,11 +69,11 @@ impl PostgresWorkflows {
         let executor = PlatformComponent::Executor;
         transaction
             .query_one(
-                "SELECT set_config('search_path', $1, true), set_config('app.tenant', $2, true), \
+                "SELECT set_config('search_path', $1, true), set_config('app.env_key', $2, true), \
                  set_config('app.user_id', $3, true), set_config('app.operation', $4, true)",
                 &[
                     &self.schema,
-                    &self.tenant(),
+                    &self.env_key(),
                     &executor.principal_id().to_string(),
                     &executor.principal_name(),
                 ],

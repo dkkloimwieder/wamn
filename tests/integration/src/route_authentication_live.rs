@@ -31,7 +31,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 };
 
 use wamn_control::dev::environment::{
-    ENVIRONMENT, JourneyScope, ORG, PROJECT, TENANT, connect, generation_args, provision_route,
+    ENV_KEY, ENVIRONMENT, JourneyScope, ORG, PROJECT, connect, generation_args, provision_route,
     reset_control_store,
 };
 use wamn_test_infrastructure::scratch::ScratchRoot;
@@ -291,7 +291,7 @@ fn load_serving_release() -> anyhow::Result<Arc<LoadedRelease>> {
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &bytes,
         "route-authentication-live fixture",
-        wamn_engine::release_manifest::ReleaseScope::new(TENANT, ENVIRONMENT).with_applications(
+        wamn_engine::release_manifest::ReleaseScope::new(ENV_KEY, ENVIRONMENT).with_applications(
             [(
                 "inventory".to_owned(),
                 wamn_catalog::ApplicationDefinition {

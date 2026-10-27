@@ -4,7 +4,7 @@
 //! `TracingLogger` (which only tags the workload/component identity and routes
 //! to `tracing`) this plugin is the **capture path** the S5 gates measure:
 //!
-//!   * **Enrichment (100%).** Every record carries `tenant`/`project`
+//!   * **Enrichment (100%).** Every record carries `env_key`/`project`
 //!     (host-injected from a component→claim map — a guest can *not* spoof its
 //!     tenant) plus `flow`/`run`/`node` parsed from the guest's `context`
 //!     string (the runner legitimately knows these). All five land as
@@ -82,7 +82,7 @@ pub const WAMN_LOGGING_ID: &str = "wamn-logging";
 /// Per-workload config keys carrying the host-trusted identity (plumbed from the
 /// WorkloadDeployment CRD's `localResources.config`, i.e. set by the platform,
 /// not the guest).
-pub const TENANT_CONFIG_KEY: &str = "wamn.tenant";
+pub const ENV_KEY_CONFIG_KEY: &str = "wamn.env_key";
 pub const PROJECT_CONFIG_KEY: &str = "wamn.project";
 
 // ---------------------------------------------------------------------------
@@ -161,14 +161,14 @@ struct Counters {
 
 #[derive(Clone, Debug)]
 struct Claim {
-    tenant: String,
+    env_key: String,
     project: String,
 }
 
 /// One enriched record queued for async OTLP export.
 struct Rec {
     severity: Severity,
-    tenant: String,
+    env_key: String,
     project: String,
     flow: String,
     run: String,
@@ -196,7 +196,7 @@ struct Rec {
 #[derive(Clone, Debug)]
 pub struct CapturedRec {
     pub severity: Severity,
-    pub tenant: String,
+    pub env_key: String,
     pub project: String,
     pub flow: String,
     pub run: String,
@@ -319,11 +319,11 @@ impl WamnLogging {
 
     /// Register the host-trusted claim for a component id. The bench calls this
     /// directly; the host path feeds it from workload bind.
-    pub fn set_claim(&self, component_id: &str, tenant: &str, project: &str) {
+    pub fn set_claim(&self, component_id: &str, env_key: &str, project: &str) {
         self.claims.write().expect("claims lock poisoned").insert(
             component_id.to_string(),
             Claim {
-                tenant: tenant.to_string(),
+                env_key: env_key.to_string(),
                 project: project.to_string(),
             },
         );
@@ -363,15 +363,15 @@ impl WamnLogging {
         self.counters
             .scope_registrations
             .fetch_add(1, Ordering::Relaxed);
-        let tenant = config.get(TENANT_CONFIG_KEY).cloned().unwrap_or_default();
+        let env_key = config.get(ENV_KEY_CONFIG_KEY).cloned().unwrap_or_default();
         let project = config.get(PROJECT_CONFIG_KEY).cloned().unwrap_or_default();
-        if tenant.is_empty() {
+        if env_key.is_empty() {
             tracing::warn!(
                 component = scope,
-                "component imports wasi:logging but sets no {TENANT_CONFIG_KEY}; logs enrich as 'unregistered'"
+                "component imports wasi:logging but sets no {ENV_KEY_CONFIG_KEY}; logs enrich as 'unregistered'"
             );
         }
-        self.set_claim(scope, &tenant, &project);
+        self.set_claim(scope, &env_key, &project);
     }
 
     /// The per-DIGEST half: the wasi:logging host definitions on `linker`.
@@ -410,7 +410,7 @@ impl WamnLogging {
             .read()
             .expect("claims lock poisoned")
             .get(component_id)
-            .map(|c| (c.tenant.clone(), c.project.clone()))
+            .map(|c| (c.env_key.clone(), c.project.clone()))
     }
 
     fn claim_for(&self, component_id: &str) -> Claim {
@@ -423,7 +423,7 @@ impl WamnLogging {
                 // A guest that imports wasi:logging without a registered claim
                 // still logs, but with a visible sentinel so the enrichment gate
                 // catches the misconfiguration rather than hiding it.
-                tenant: "unregistered".to_string(),
+                env_key: "unregistered".to_string(),
                 project: "unregistered".to_string(),
             })
     }
@@ -434,7 +434,7 @@ impl WamnLogging {
         let ctx = ParsedContext::parse(context);
         let rec = Rec {
             severity: map_level(level),
-            tenant: claim.tenant,
+            env_key: claim.env_key,
             project: claim.project,
             flow: ctx.flow,
             run: ctx.run,
@@ -607,7 +607,7 @@ async fn drain_loop(
         if let Some(cap) = &capture {
             cap.push(CapturedRec {
                 severity: rec.severity,
-                tenant: rec.tenant.clone(),
+                env_key: rec.env_key.clone(),
                 project: rec.project.clone(),
                 flow: rec.flow.clone(),
                 run: rec.run.clone(),
@@ -619,7 +619,7 @@ async fn drain_loop(
             });
         }
         lr.set_body(AnyValue::from(rec.message));
-        lr.add_attribute("tenant", rec.tenant);
+        lr.add_attribute("env_key", rec.env_key);
         lr.add_attribute("project", rec.project);
         lr.add_attribute("flow", rec.flow);
         lr.add_attribute("run", rec.run);
@@ -750,7 +750,7 @@ mod tests {
     }
 
     /// Enrichment is HOST-injected: the registered claim's tenant/project win
-    /// over any guest-supplied `tenant` in the context, while flow/run/node come
+    /// over any guest-supplied `env_key` in the context, while flow/run/node come
     /// from the (guest-legitimate) context. Kills a mutant that reads the tenant
     /// from the guest context (spoofable) or drops the claim enrichment.
     #[tokio::test]
@@ -760,7 +760,7 @@ mod tests {
         plugin.set_claim("comp-1", "tenant-a", "fixture");
         // The context carries a SPOOFED tenant the guest must not be able to set.
         let ctx = format!(
-            r#"{{"flow":"widget-flow","run":"run-9","node":"log-node","seq":7,"tenant":"evil-tenant","traceparent":"{VALID_TP}"}}"#
+            r#"{{"flow":"widget-flow","run":"run-9","node":"log-node","seq":7,"env_key":"evil-tenant","traceparent":"{VALID_TP}"}}"#
         );
         plugin.ingest("comp-1", Level::Info, &ctx, "hello".into());
         wait_drained(&plugin).await;
@@ -769,7 +769,7 @@ mod tests {
         assert_eq!(recs.len(), 1, "one emitted record");
         let r = &recs[0];
         assert_eq!(
-            r.tenant, "tenant-a",
+            r.env_key, "tenant-a",
             "tenant is the host claim, NOT the guest's"
         );
         assert_eq!(r.project, "fixture");
@@ -809,7 +809,7 @@ mod tests {
         let recs = capture.snapshot();
         assert_eq!(recs.len(), 1, "one emitted record");
         assert_eq!(
-            recs[0].tenant, "unregistered",
+            recs[0].env_key, "unregistered",
             "a revoked scope must not still enrich with the tenant it last served"
         );
         assert_eq!(recs[0].project, "unregistered");

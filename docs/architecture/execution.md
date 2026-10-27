@@ -275,7 +275,8 @@ The router driver and the edge pass that context for each write operation.
 Composed base routes claim through `begin-operation`, with the same item keys and canonical request hashes.
 In the cloud the store is the [write log](data-access.md#the-write-log).
 On the edge it is the SQLite intent store of `wamn-run-state-sqlite`, one file with one writer.
-Its `intents` table holds one row for each operation call, unique by tenant and idempotency key.
+Its `intents` table holds one row for each operation call, unique by `tenant` and idempotency key.
+Here, `tenant` holds the edge organization ID.
 A begin with a known key and another input hash is a conflict.
 A begin with a finished key answers the stored outcome, and an open intent with no outcome is uncertain until an operator resolves it.
 A retry that the write log answers commits nothing, so change capture publishes no event for it and no post-commit work runs a second time.
@@ -623,8 +624,8 @@ Already admitted work retains its caller. Revocation does not cancel that work o
 
 The host answers the auth facts of a repeated caller from its memory, so they cost no Postgres round-trip.
 The [memory](../../crates/platform/runtime/src/auth_cache.rs) is the local replica of the NATS KV bucket `wamn-auth` on the scheduler NATS.
-The key `<tenant>.<principal>` holds the grants of a principal and whether the tenant has its user row.
-The key `<tenant>.environment` holds the environment status.
+The key `<env_key>.<principal>` holds the grants of a principal and whether the tenant has its user row.
+The key `<env_key>.environment` holds the environment status.
 One read of `platform."user"`, `platform.user_role` and `platform.permission` answers the permission check and the user-row check of the invocation bind.
 A host that reads a fact puts it with the revision of the key from before the read, so a delete during the read refuses the put.
 Each host watches the keys of its tenant and keeps each value it sees, so a fact one host reads serves every host of the tenant.
@@ -634,7 +635,7 @@ The bucket keeps a value for at most 60 seconds, and so does the replica.
 An admitted PAT and an active session stay in the host that read them, because a token answer never leaves the host.
 The host keeps only a positive identity answer, so a new PAT or a new login works on its first request.
 A delete of the key `=identity.<principal>` drops the PATs and sessions of the principal on every host.
-A tenant name holds only `[A-Za-z0-9_-]`, so that key never meets a tenant key.
+An `env_key` holds only `[A-Za-z0-9_-]`, so that key never meets an environment cache key.
 A host does not keep a token answer when any identity key changed during its read.
 While the watch is broken, the host keeps no fact and opens the bucket again.
 A host without the bucket keeps no fact either, and reads every request from Postgres.

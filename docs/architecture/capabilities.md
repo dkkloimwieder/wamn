@@ -259,26 +259,26 @@ The unauthenticated NATS HTTP monitor binds loopback and has no Service exposure
 Administrator process access remains separate from environment observation.
 
 Derived events use the host's admitted terminal, logical deduplication input, and bound causation.
-The guest cannot supply tenant, project, or environment authority.
+The guest cannot supply `env_key`, project, or environment authority.
 Causation depth bounds recursion. The current materializer limit is 16.
 These delivery rules do not create exactly-once application effects.
 
 ## Session role reader
 
 `POST /session` exchanges a current user PAT for a bounded session token.
-The request supplies the audience and cannot supply roles, tenant identity, or a database URL.
-A mounted target declaration selects the exact audience, tenant, database, and dedicated `SessionRoleReader` credential.
+The request supplies the audience and cannot supply roles, an `env_key`, or a database URL.
+A mounted target declaration selects the exact audience, `env_key`, database, and dedicated `SessionRoleReader` credential.
 
 That role reads active users and their role assignments within the selected tenant.
 It cannot write application data, read permission tables, or use catalog and execution authority.
-The query binds both tenant and principal explicitly.
+The query binds the principal explicitly. The target selects its environment database.
 The service reads roles afresh for every exchange.
 An inactive user or empty role set refuses exchange.
 The request permits five seconds and a 1,024-byte body.
 
 Connections are lazy and retained only for active configured targets.
 An unused target opens no connection.
-A retained connection never transfers to another audience or tenant.
+A retained connection never transfers to another audience or `env_key`.
 The [execution page](execution.md#caller-authentication) owns token acceptance and revocation bounds.
 
 ## PAT issuance

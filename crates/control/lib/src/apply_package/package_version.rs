@@ -13,18 +13,18 @@ pub const LOCK_PACKAGE_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextende
      'wamn.package.lineage:' || $1 || ':' || $2, 0))";
 const SELECT_PACKAGE_SQL: &str = "\
 SELECT artifact_digest, predecessor_version FROM catalog.packages \
- WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
+ WHERE env_key = $1 AND package_id = $2 AND package_version = $3 \
  FOR UPDATE";
 const SELECT_MIGRATIONS_SQL: &str = "\
 SELECT ordinal, relative_path, sha256 FROM catalog.package_migrations \
- WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
+ WHERE env_key = $1 AND package_id = $2 AND package_version = $3 \
  ORDER BY ordinal";
 pub const SELECT_CURRENT_PACKAGE_VERSION_SQL: &str = "\
 SELECT package.package_version FROM catalog.packages AS package \
- WHERE package.tenant_id = $1 AND package.package_id = $2 \
+ WHERE package.env_key = $1 AND package.package_id = $2 \
    AND NOT EXISTS (\
        SELECT 1 FROM catalog.packages AS successor \
-        WHERE successor.tenant_id = package.tenant_id \
+        WHERE successor.env_key = package.env_key \
           AND successor.package_id = package.package_id \
           AND successor.predecessor_version = package.package_version\
    )";
@@ -32,19 +32,19 @@ SELECT package.package_version FROM catalog.packages AS package \
 /// Register a package while retaining its lineage lock through the caller's transaction.
 pub async fn register_package(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     coordinate: &wamn_catalog::PackageCoordinate,
     artifact_digest: Option<&str>,
     predecessor_version: Option<&str>,
 ) -> anyhow::Result<bool> {
     let package_id = coordinate.package_id();
-    tx.query_one(LOCK_PACKAGE_SQL, &[&tenant, &package_id])
+    tx.query_one(LOCK_PACKAGE_SQL, &[&env_key, &package_id])
         .await
         .context("lock package lineage before registration")?;
     let recorded = tx
         .query_opt(
             SELECT_PACKAGE_SQL,
-            &[&tenant, &package_id, &coordinate.package_version()],
+            &[&env_key, &package_id, &coordinate.package_version()],
         )
         .await
         .context("read package coordinate before registration")?;
@@ -54,7 +54,7 @@ pub async fn register_package(
             row.get::<_, Option<String>>(1),
         )
     });
-    let current = current_package_version(tx, tenant, package_id).await?;
+    let current = current_package_version(tx, env_key, package_id).await?;
     let insert = plan_package_registration(
         coordinate,
         artifact_digest,
@@ -67,10 +67,10 @@ pub async fn register_package(
     if insert {
         tx.execute(
             "INSERT INTO catalog.packages \
-             (tenant_id, package_id, package_version, artifact_digest, predecessor_version) \
+             (env_key, package_id, package_version, artifact_digest, predecessor_version) \
              VALUES ($1, $2, $3, $4, $5)",
             &[
-                &tenant,
+                &env_key,
                 &package_id,
                 &coordinate.package_version(),
                 &artifact_digest,
@@ -85,10 +85,10 @@ pub async fn register_package(
 
 pub(super) async fn current_package_version(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     package_id: &str,
 ) -> anyhow::Result<Option<String>> {
-    tx.query_opt(SELECT_CURRENT_PACKAGE_VERSION_SQL, &[&tenant, &package_id])
+    tx.query_opt(SELECT_CURRENT_PACKAGE_VERSION_SQL, &[&env_key, &package_id])
         .await
         .context("read current package-family leaf")
         .map(|row| row.map(|row| row.get(0)))
@@ -151,14 +151,14 @@ pub(super) fn predecessor_prefix_error(
 
 pub async fn load_applied_package(
     tx: &Transaction<'_>,
-    tenant: &str,
+    env_key: &str,
     package_id: &str,
     package_version: &str,
 ) -> anyhow::Result<Option<AppliedPackage>> {
     let Some(package) = tx
         .query_opt(
             SELECT_PACKAGE_SQL,
-            &[&tenant, &package_id, &package_version],
+            &[&env_key, &package_id, &package_version],
         )
         .await
         .context("read immutable package root")?
@@ -168,7 +168,7 @@ pub async fn load_applied_package(
     let migrations = tx
         .query(
             SELECT_MIGRATIONS_SQL,
-            &[&tenant, &package_id, &package_version],
+            &[&env_key, &package_id, &package_version],
         )
         .await
         .context("read immutable package migration prefix")?

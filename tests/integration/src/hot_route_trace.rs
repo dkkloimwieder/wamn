@@ -35,7 +35,7 @@ mod tests {
     use wamn_workflow::RouterDriverRequest;
 
     use crate::trusted_http_route::{
-        self, ENVIRONMENT, PACKAGE, RouteOptions, TENANT, WIRING_ID, WIRING_VERSION,
+        self, ENV_KEY, ENVIRONMENT, PACKAGE, RouteOptions, WIRING_ID, WIRING_VERSION,
     };
 
     const TRACE_ID: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
@@ -197,7 +197,7 @@ mod tests {
 
         let delivery = route
             .execute(RouterDriverRequest {
-                tenant_id: TENANT.to_owned(),
+                env_key: ENV_KEY.to_owned(),
                 package_id: PACKAGE.to_owned(),
                 environment: ENVIRONMENT.to_owned(),
                 wiring_id: WIRING_ID.to_owned(),

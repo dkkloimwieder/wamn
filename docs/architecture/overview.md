@@ -70,13 +70,13 @@ It makes sure that the recorded files match the files of the binary.
 Then it applies the pending files in order and records them.
 Without `--confirm`, it prints the pending files and rolls back.
 
-The provisioning owner locks and compares environment identity before refreshing its tenant projection.
+The provisioning owner locks and compares environment identity before refreshing its `env_key` projection.
 That refresh clears the instance claim even when the suffix stays unchanged.
 The developer coordinator claims an instance with one update and refuses a missing projection.
 
 Authoring cases judge a wiring document and permit no effects.
 The case runner refuses a reachable component with admitted effects, including the effects of each base composed into it.
-Reports are immutable and keyed by the wiring hash within the tenant.
+Reports are immutable and keyed by the wiring hash within the `env_key`.
 Concurrent attempts return the stored winner for that hash.
 The service keeps no durable table for resuming individual cases.
 Effectful application tests remain separate from this authoring contract.
@@ -231,7 +231,7 @@ The workflow crate owns durable queue claims and settlement through `RunStore`.
 The [capability owners](capabilities.md) supply database, HTTP, object storage, and event access without guest credentials.
 
 The developer host also loads unpublished components and admitted facts from local files.
-It requires the expected file digests and a database marker tied to the tenant, environment, and physical database creation.
+It requires the expected file digests and a database marker tied to the `env_key`, environment, and physical database creation.
 Local facts supply released wiring, connection requirements, and binding selections without changing the frozen catalog records.
 The normal runtime still owns tenant authority, run claims, credential generations, and effects.
 

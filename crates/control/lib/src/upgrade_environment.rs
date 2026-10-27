@@ -65,7 +65,7 @@ pub async fn upgrade_environment(request: &UpgradeEnvironmentRequest) -> anyhow:
     let arguments = &request.arguments;
     let path = work.join("runs").join(format!(
         "{}.json",
-        wamn_control_registry::project_env_tenant(
+        wamn_control_registry::project_env_key(
             &arguments.org,
             &arguments.project,
             &arguments.environment
@@ -494,7 +494,7 @@ impl Run {
         self.broker(&kubectl).await?;
 
         let databases = Databases::open(&environment, &kubectl, &self.arguments).await?;
-        outputs.insert("tenant".to_owned(), databases.tenant.clone());
+        outputs.insert("env_key".to_owned(), databases.env_key.clone());
         outputs.insert("database".to_owned(), databases.database.clone());
         Ok((StepResult::Done, outputs))
     }
@@ -502,7 +502,7 @@ impl Run {
     fn release_files(&self) -> PathBuf {
         self.work
             .join("releases")
-            .join(wamn_control_registry::project_env_tenant(
+            .join(wamn_control_registry::project_env_key(
                 &self.arguments.org,
                 &self.arguments.project,
                 &self.arguments.environment,
@@ -514,7 +514,7 @@ impl Run {
     fn secrets(&self) -> PathBuf {
         self.work
             .join("secrets")
-            .join(wamn_control_registry::project_env_tenant(
+            .join(wamn_control_registry::project_env_key(
                 &self.arguments.org,
                 &self.arguments.project,
                 &self.arguments.environment,
@@ -583,7 +583,7 @@ impl Run {
         let evidence_path = self.release_files().join("package-upgrade.json");
         let mut client = databases.project().await?;
         let tx = client.build_transaction().read_only(true).start().await?;
-        let installed = read_current_packages(&tx, &databases.tenant).await?;
+        let installed = read_current_packages(&tx, &databases.env_key).await?;
         tx.commit().await?;
 
         if !evidence_path.exists() {
@@ -873,7 +873,7 @@ impl Run {
                 environment: self.arguments.environment.clone(),
                 verified_publisher_principal: format!(
                     "wamn-management-author-{}",
-                    wamn_control_registry::project_env_tenant(
+                    wamn_control_registry::project_env_key(
                         &self.arguments.org,
                         &self.arguments.project,
                         &self.arguments.environment
@@ -1159,7 +1159,7 @@ impl Run {
             .to_owned();
         let subject = format!(
             "wamn-management-author-{}",
-            wamn_control_registry::project_env_tenant(
+            wamn_control_registry::project_env_key(
                 &self.arguments.org,
                 &self.arguments.project,
                 &self.arguments.environment
@@ -1208,7 +1208,7 @@ impl Run {
             .unwrap_or_default();
         let file = self.work.join("runs").join(format!(
             "{}.json",
-            wamn_control_registry::project_env_tenant(
+            wamn_control_registry::project_env_key(
                 &self.arguments.org,
                 &self.arguments.project,
                 &self.arguments.environment
@@ -1634,8 +1634,8 @@ impl GateService {
             .env("WAMN_MANAGEMENT_PROJECT", &arguments.project)
             .env("WAMN_MANAGEMENT_ENVIRONMENT", &arguments.environment)
             .env(
-                "WAMN_MANAGEMENT_TENANT",
-                wamn_control_registry::project_env_tenant(
+                "WAMN_MANAGEMENT_ENV_KEY",
+                wamn_control_registry::project_env_key(
                     &arguments.org,
                     &arguments.project,
                     &arguments.environment,
@@ -1716,7 +1716,7 @@ pub(crate) async fn apply_environment_package_qualification(
     presented.sort_by(|left, right| left.package_id.cmp(&right.package_id));
     let (evidence, _, _) = crate::qualify_upgrade::read_qualification(evidence_path)?;
     ensure!(
-        evidence.tenant == request.tenant()
+        evidence.env_key == request.env_key()
             && evidence.environment == environment
             && evidence.presented_packages == presented,
         "retained package qualification differs from this exact environment and complete successor root set"
@@ -2242,7 +2242,7 @@ struct Databases {
     /// The in-cluster host that an emitted credential names.
     cluster_host: String,
     database: String,
-    tenant: String,
+    env_key: String,
     /// `registry.project_envs.secret_namespace`, where the credential Secrets live.
     secret_namespace: String,
 }
@@ -2305,9 +2305,9 @@ impl Databases {
         );
         // The control store copy of the tenant lives in the system database
         // (deploy/sql/control-portable-store.sql), not in the project database.
-        let tenant: String = client
+        let env_key: String = client
             .query_one(
-                "SELECT tenant_id FROM catalog.tenant_environments
+                "SELECT env_key FROM catalog.tenant_environments
                   WHERE org = $1 AND project = $2 AND env = $3",
                 &[&arguments.org, &arguments.project, &arguments.environment],
             )
@@ -2322,7 +2322,7 @@ impl Databases {
                 system.cluster, system.namespace
             ),
             database,
-            tenant,
+            env_key,
             secret_namespace,
             forward,
         })

@@ -9,7 +9,7 @@ use wamn_schema_introspection::{
 };
 
 use super::{
-    ApplicationMode, ApplyOutcome, CLAIM_TENANT_SQL, LOCK_PACKAGE_SQL, PreparedPackage,
+    ApplicationMode, ApplyOutcome, CLAIM_ENV_KEY_SQL, LOCK_PACKAGE_SQL, PreparedPackage,
     apply_prepared, bind_apply_package_principal, current_package_version, load_applied_package,
     roles, stage, synchronization,
 };
@@ -17,7 +17,7 @@ use crate::package_upgrade::progress::{self, StageIdentity, StageStatus};
 
 pub(super) async fn apply(
     client: &mut Client,
-    tenant: &str,
+    env_key: &str,
     package: &PreparedPackage,
     mode: ApplicationMode<'_>,
 ) -> anyhow::Result<ApplyOutcome> {
@@ -61,29 +61,29 @@ pub(super) async fn apply(
             "SET LOCAL lock_timeout = '5s'; SET LOCAL standard_conforming_strings = on",
         )
         .await?;
-        tx.query_one(CLAIM_TENANT_SQL, &[&tenant]).await?;
+        tx.query_one(CLAIM_ENV_KEY_SQL, &[&env_key]).await?;
         bind_apply_package_principal(&tx).await?;
         tx.query_one(crate::reconcile_package_data_access::LOCK_SQL, &[])
             .await?;
-        tx.query_one(LOCK_PACKAGE_SQL, &[&tenant, &package_id])
+        tx.query_one(LOCK_PACKAGE_SQL, &[&env_key, &package_id])
             .await?;
 
-        if load_applied_package(&tx, tenant, package_id, version)
+        if load_applied_package(&tx, env_key, package_id, version)
             .await?
             .is_some()
         {
-            let outcome = apply_prepared(&tx, tenant, package, mode).await?;
+            let outcome = apply_prepared(&tx, env_key, package, mode).await?;
             tx.commit().await?;
             return Ok(outcome);
         }
         ensure!(
-            current_package_version(&tx, tenant, package_id)
+            current_package_version(&tx, env_key, package_id)
                 .await?
                 .as_deref()
                 == Some(predecessor_version),
             "backfill requires installed predecessor {package_id}@{predecessor_version}"
         );
-        let predecessor = load_applied_package(&tx, tenant, package_id, predecessor_version)
+        let predecessor = load_applied_package(&tx, env_key, package_id, predecessor_version)
             .await?
             .context("backfill predecessor records are missing")?;
         let plan = plan_package_migrations(&package.directory, Some(&predecessor))?;
@@ -93,7 +93,7 @@ pub(super) async fn apply(
         );
         synchronization::verify_inherited(
             &tx,
-            tenant,
+            env_key,
             package_id,
             &package.manifest,
             &package.migration_policy.synchronizations,
@@ -104,7 +104,7 @@ pub(super) async fn apply(
             ApplicationMode::Production(supplied) => {
                 crate::package_upgrade::require_application(
                     &tx,
-                    tenant,
+                    env_key,
                     &package.root,
                     &package.directory,
                     &plan,
@@ -137,8 +137,8 @@ pub(super) async fn apply(
                 |accepted| accepted.evidence_digest().to_owned(),
             ),
         };
-        progress::require_no_other_stage(&tx, tenant, package_id, version, &artifact).await?;
-        let recorded = progress::open(&tx, tenant, &identity, &batch.initial_cursor).await?;
+        progress::require_no_other_stage(&tx, env_key, package_id, version, &artifact).await?;
+        let recorded = progress::open(&tx, env_key, &identity, &batch.initial_cursor).await?;
         ensure!(
             recorded.status == StageStatus::InProgress,
             "backfill progress is complete but the package version is absent"
@@ -146,7 +146,7 @@ pub(super) async fn apply(
         if recorded.completed_batches == 0 {
             stage::conditions(
                 &tx,
-                tenant,
+                env_key,
                 package_id,
                 schema,
                 "preconditions",
@@ -154,7 +154,7 @@ pub(super) async fn apply(
             )
             .await?;
         }
-        let relations = stage::owned_relations(&tx, tenant, package_id, schema).await?;
+        let relations = stage::owned_relations(&tx, env_key, package_id, schema).await?;
         let mut keys = Vec::new();
         for row in tx
             .query(
@@ -213,14 +213,14 @@ pub(super) async fn apply(
         );
         let cursor: serde_json::Value = rows[0].try_get("next_cursor")?;
         let complete: bool = rows[0].try_get("complete")?;
-        progress::advance(&tx, tenant, &identity, &cursor).await?;
+        progress::advance(&tx, env_key, &identity, &cursor).await?;
         if complete {
             let outcome =
-                apply_prepared(&tx, tenant, package, ApplicationMode::BackfillCompletion).await?;
+                apply_prepared(&tx, env_key, package, ApplicationMode::BackfillCompletion).await?;
             if let Some(accepted) = accepted {
                 crate::package_upgrade::persist(&tx, &accepted, &artifact).await?;
             }
-            progress::complete(&tx, tenant, &identity).await?;
+            progress::complete(&tx, env_key, &identity).await?;
             tx.commit()
                 .await
                 .context("commit completed backfill and installed version")?;

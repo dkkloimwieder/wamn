@@ -121,7 +121,7 @@ pub(super) async fn apply(
     let mut changed = false;
     let mut targets = Vec::new();
     for (_, environment) in super::broker::documents(environments)? {
-        let tenant = wamn_control_provision::project_env_tenant(
+        let env_key = wamn_control_provision::project_env_key(
             &environment.org,
             &environment.project,
             &environment.env,
@@ -170,7 +170,7 @@ pub(super) async fn apply(
             &secrets,
         )
         .await?;
-        targets.push(format!("wamn-session-role-reader-{tenant}"));
+        targets.push(format!("wamn-session-role-reader-{env_key}"));
     }
     let chart: Value =
         serde_yaml::from_slice(&std::fs::read(directory.join("release-chart/values.yaml"))?)?;
@@ -434,14 +434,14 @@ pub(super) fn session_request(
     environment: &crate::environment::document::EnvironmentDocument,
     runner: &str,
 ) -> JobRequest {
-    let tenant = wamn_control_registry::project_env_tenant(
+    let env_key = wamn_control_registry::project_env_key(
         &environment.org,
         &environment.project,
         &environment.env,
     );
 
     JobRequest {
-        name: format!("platform-session-{tenant}"),
+        name: format!("platform-session-{env_key}"),
         image: runner.into(),
         arguments: [
             "provision-project-env",

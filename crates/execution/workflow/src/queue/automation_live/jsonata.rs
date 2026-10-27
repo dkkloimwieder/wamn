@@ -9,7 +9,7 @@ use wash_runtime::host::probes::Liveness;
 
 use wamn_runtime::plugins::wamn_postgres::EventBatchAdmission;
 
-use super::{Node, QueueScope, RouterDriver, TENANT, WamnJetstream, WamnPostgres, drain_one};
+use super::{ENV_KEY, Node, QueueScope, RouterDriver, WamnJetstream, WamnPostgres, drain_one};
 use crate::{WorkflowErrorType, Workflows as _};
 
 /// The node's declaration template, as publish renders it.
@@ -26,7 +26,7 @@ const SHAPE: &str = r#"event = "insert" and new.kind = "move"
 
 pub(super) fn node(bytes: Vec<u8>) -> Node {
     let declaration = DECLARATION
-        .replace("__TENANT_ID__", TENANT)
+        .replace("__ENV_KEY__", ENV_KEY)
         .replace("__PACKAGE_ID__", "automation")
         .replace("__PACKAGE_VERSION__", "1.0.0");
     Node {

@@ -59,7 +59,7 @@ use crate::authoring::{ControlAuthoringScope, GetReportResult, InternalAuthoring
 /// `wamn_run.operator_run_actions` carries the same shape for the same
 /// reason.
 const INSERT_COMMAND_AUDIT_SQL: &str = "INSERT INTO catalog.authoring_command_audit \
-    (tenant_id, command_id, command_type, principal_id, principal_type, \
+    (env_key, command_id, command_type, principal_id, principal_type, \
      principal_subject, effective_role, org, project, environment, target_ref, \
      request_hash, outcome_bytes, provenance_commit, provenance_ref, provenance_dirty) \
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)";
@@ -73,10 +73,10 @@ const INSERT_COMMAND_AUDIT_SQL: &str = "INSERT INTO catalog.authoring_command_au
 /// one this pass would have written. An `UPDATE` would be refused by the
 /// relation's immutability trigger, and would be wrong if it were not.
 ///
-/// Params: `$1` tenant, `$2` wiring hash, `$3` passed, `$4` summary.
+/// Params: `$1` env_key, `$2` wiring hash, `$3` passed, `$4` summary.
 const INSERT_GATE_REPORT_SQL: &str = "INSERT INTO wamn_run.gate_reports \
-    (tenant_id, wiring_hash, passed, summary) VALUES ($1, $2, $3, $4) \
-    ON CONFLICT (tenant_id, wiring_hash) DO NOTHING";
+    (env_key, wiring_hash, passed, summary) VALUES ($1, $2, $3, $4) \
+    ON CONFLICT (env_key, wiring_hash) DO NOTHING";
 
 /// Serialize one principal-scoped retry identity before reading or executing.
 /// Hash collisions only over-serialize unrelated commands; the exact primary
@@ -88,7 +88,7 @@ const LOCK_COMMAND_RETRY_SQL: &str = "SELECT pg_catalog.set_config('app.user_id'
 
 const SELECT_COMMAND_RETRY_SQL: &str = "SELECT request_hash, outcome_bytes \
     FROM catalog.authoring_command_audit \
-    WHERE tenant_id = $1 AND principal_id = $2 AND command_id = $3";
+    WHERE env_key = $1 AND principal_id = $2 AND command_id = $3";
 
 /// Bearer scheme this surface accepts, including its single trailing space.
 const BEARER_SCHEME: &str = "Bearer ";
@@ -200,7 +200,7 @@ impl AuthorizedAuthor {
 /// scope the adapter was started for.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommandScope {
-    tenant_id: Box<str>,
+    env_key: Box<str>,
     org: Box<str>,
     project: Box<str>,
     environment: Box<str>,
@@ -211,9 +211,9 @@ impl CommandScope {
     ///
     /// The HTTP surface derives its scope from the fixed configuration instead;
     /// this constructor exists for callers that already hold trusted scope.
-    pub fn new(tenant_id: &str, org: &str, project: &str, environment: &str) -> Self {
+    pub fn new(env_key: &str, org: &str, project: &str, environment: &str) -> Self {
         Self {
-            tenant_id: tenant_id.into(),
+            env_key: env_key.into(),
             org: org.into(),
             project: project.into(),
             environment: environment.into(),
@@ -261,9 +261,9 @@ fn classify_retry(existing: Option<&StoredCommandOutcome>, request_hash: &str) -
 }
 
 impl CommandAudit {
-    /// Return the tenant whose command table this row belongs to.
-    pub fn tenant_id(&self) -> &str {
-        &self.scope.tenant_id
+    /// Return the environment key whose command table owns this row.
+    pub fn env_key(&self) -> &str {
+        &self.scope.env_key
     }
 }
 
@@ -329,14 +329,14 @@ fn author_from_authenticated(
 /// judgment's hash.
 pub(crate) async fn insert_gate_report(
     client: &(impl GenericClient + Sync),
-    tenant_id: &str,
+    env_key: &str,
     report: &crate::store::admission::GateReport,
 ) -> anyhow::Result<()> {
     client
         .execute(
             INSERT_GATE_REPORT_SQL,
             &[
-                &tenant_id,
+                &env_key,
                 &report.wiring_hash,
                 &report.passed,
                 &report.summary,
@@ -358,7 +358,7 @@ pub(crate) async fn insert_command_audit(
         .execute(
             INSERT_COMMAND_AUDIT_SQL,
             &[
-                &audit.scope.tenant_id.as_ref(),
+                &audit.scope.env_key.as_ref(),
                 &audit.command_id.as_ref(),
                 &audit.command.as_str(),
                 &audit.author.principal_id.as_ref(),
@@ -525,9 +525,9 @@ pub struct ManagementServeArgs {
     #[arg(long, env = "WAMN_MANAGEMENT_ENVIRONMENT")]
     pub environment: String,
 
-    /// Fixed authoring tenant the adapter is scoped to.
-    #[arg(long, env = "WAMN_MANAGEMENT_TENANT")]
-    pub tenant: String,
+    /// Fixed authoring environment key that scopes the adapter.
+    #[arg(long, env = "WAMN_MANAGEMENT_ENV_KEY")]
+    pub env_key: String,
 
     /// Control-store schema containing the reservation, case-map, and report
     /// relations. Unchanged by the residency move.
@@ -542,7 +542,7 @@ impl ManagementServeArgs {
             org: self.org.clone(),
             project: self.project.clone(),
             environment: self.environment.clone(),
-            tenant_id: self.tenant.clone(),
+            env_key: self.env_key.clone(),
             source_schema: self.source_schema.clone(),
         }
     }
@@ -560,7 +560,7 @@ struct Surface {
     org: Box<str>,
     project: Box<str>,
     environment: Box<str>,
-    tenant: Box<str>,
+    env_key: Box<str>,
 }
 
 impl Surface {
@@ -575,7 +575,7 @@ impl Surface {
     /// holds no credential for.
     fn command_scope(&self, project_id: &str, environment: &str) -> Option<CommandScope> {
         reconcile_command_scope(
-            &self.tenant,
+            &self.env_key,
             &self.org,
             &self.project,
             &self.environment,
@@ -588,7 +588,7 @@ impl Surface {
 /// The scope reconciliation, free of the live connections a [`Surface`] owns so
 /// it can be exercised without one.
 fn reconcile_command_scope(
-    tenant: &str,
+    env_key: &str,
     org: &str,
     project: &str,
     environment: &str,
@@ -599,7 +599,7 @@ fn reconcile_command_scope(
         return None;
     }
     Some(CommandScope {
-        tenant_id: tenant.into(),
+        env_key: env_key.into(),
         org: org.into(),
         project: project.into(),
         environment: environment.into(),
@@ -688,7 +688,7 @@ async fn serve_inner(
         &scope.org,
         &scope.project,
         &scope.environment,
-        &scope.tenant_id,
+        &scope.env_key,
         wamn_package_artifact::PackageRegistry {
             artifact_base: args.package_artifact_base.clone(),
             registry_auth_file: args.registry_auth_file.clone(),
@@ -705,7 +705,7 @@ async fn serve_inner(
         org: args.org.into_boxed_str(),
         project: args.project.into_boxed_str(),
         environment: args.environment.into_boxed_str(),
-        tenant: args.tenant.into_boxed_str(),
+        env_key: args.env_key.into_boxed_str(),
     });
     let listener = TcpListener::bind(address)
         .await
@@ -857,9 +857,7 @@ async fn get_report(
     }
 
     let backend = surface.backend.lock().await;
-    let result = backend
-        .get_report(&scope.tenant_id, &input.report_id)
-        .await?;
+    let result = backend.get_report(&scope.env_key, &input.report_id).await?;
     drop(backend);
     let outcome = match result {
         GetReportResult::NotFound => AuthoringQueryOutcome::Refused(QueryRefusal::GetReport(
@@ -979,7 +977,7 @@ async fn publish(
         target_ref,
         provenance: input.provenance.clone(),
     };
-    let (_, transaction) = backend.begin_command_transaction(audit.tenant_id()).await?;
+    let (_, transaction) = backend.begin_command_transaction(audit.env_key()).await?;
     lock_retry_identity(&transaction, &audit).await?;
     if let Some(existing) = read_retry_outcome(&transaction, &audit).await? {
         let settled = match classify_retry(Some(&existing), &request_hash) {
@@ -1133,7 +1131,7 @@ async fn gate(
     };
     let outcome_bytes = command_response_bytes(&command.command_id, outcome)?;
 
-    let (_, transaction) = backend.begin_command_transaction(audit.tenant_id()).await?;
+    let (_, transaction) = backend.begin_command_transaction(audit.env_key()).await?;
     lock_retry_identity(&transaction, &audit).await?;
     // Re-read under the lock: a concurrent pass may have finished the identical
     // composition while this one ran, and its stored outcome is the one answer.
@@ -1146,7 +1144,7 @@ async fn gate(
         return Ok(settled);
     }
     if let Some(report) = &report {
-        insert_gate_report(&transaction, audit.tenant_id(), report).await?;
+        insert_gate_report(&transaction, audit.env_key(), report).await?;
     }
     insert_command_audit(&transaction, &audit, &request_hash, &outcome_bytes).await?;
     transaction
@@ -1165,7 +1163,7 @@ async fn lock_retry_identity(
         .query_one(
             LOCK_COMMAND_RETRY_SQL,
             &[
-                &audit.scope.tenant_id.as_ref(),
+                &audit.scope.env_key.as_ref(),
                 &audit.author.principal_id.as_ref(),
                 &audit.command_id.as_ref(),
             ],
@@ -1184,7 +1182,7 @@ async fn read_retry_outcome(
         .query_opt(
             SELECT_COMMAND_RETRY_SQL,
             &[
-                &audit.scope.tenant_id.as_ref(),
+                &audit.scope.env_key.as_ref(),
                 &audit.author.principal_id.as_ref(),
                 &audit.command_id.as_ref(),
             ],
@@ -1209,7 +1207,7 @@ async fn settle_retry(
     audit: &CommandAudit,
     request_hash: &str,
 ) -> anyhow::Result<Option<Vec<u8>>> {
-    let (_, transaction) = backend.begin_command_transaction(audit.tenant_id()).await?;
+    let (_, transaction) = backend.begin_command_transaction(audit.env_key()).await?;
     lock_retry_identity(&transaction, audit).await?;
     let existing = read_retry_outcome(&transaction, audit).await?;
     let settled = match classify_retry(existing.as_ref(), request_hash) {
@@ -1407,7 +1405,7 @@ mod tests {
             org: SCOPE_ORG.to_owned(),
             project: SCOPE_PROJECT.to_owned(),
             environment: SCOPE_ENVIRONMENT.to_owned(),
-            tenant: "tenant-a".to_owned(),
+            env_key: "tenant-a".to_owned(),
             source_schema: "wamn_run".to_owned(),
         }
     }
@@ -1589,7 +1587,7 @@ mod tests {
         let admitted =
             reconcile_command_scope("tenant-a", "fixture", "widgets", "dev", "widgets", "dev")
                 .expect("the fixed scope is admitted");
-        assert_eq!(admitted.tenant_id.as_ref(), "tenant-a");
+        assert_eq!(admitted.env_key.as_ref(), "tenant-a");
         assert_eq!(admitted.org.as_ref(), "fixture");
         assert_eq!(admitted.project.as_ref(), "widgets");
         assert_eq!(admitted.environment.as_ref(), "dev");
@@ -1682,7 +1680,7 @@ mod tests {
     #[test]
     fn the_audit_statement_writes_every_attribution_column() {
         for column in [
-            "tenant_id",
+            "env_key",
             "command_id",
             "command_type",
             "principal_id",
@@ -1717,7 +1715,7 @@ mod tests {
         assert_eq!(SELECT_COMMAND_RETRY_SQL.matches('$').count(), 3);
         assert!(
             SELECT_COMMAND_RETRY_SQL
-                .contains("WHERE tenant_id = $1 AND principal_id = $2 AND command_id = $3")
+                .contains("WHERE env_key = $1 AND principal_id = $2 AND command_id = $3")
         );
         assert!(SELECT_COMMAND_RETRY_SQL.contains("request_hash, outcome_bytes"));
         assert!(

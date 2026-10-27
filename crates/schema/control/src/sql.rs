@@ -3,13 +3,13 @@
 /// Read the immutable package root at one exact coordinate.
 pub fn select_package_sql() -> &'static str {
     "SELECT artifact_digest, predecessor_version FROM catalog.packages \
-     WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3"
+     WHERE env_key = $1 AND package_id = $2 AND package_version = $3"
 }
 
 /// Read the complete immutable migration records in authored order.
 pub fn select_package_migrations_sql() -> &'static str {
     "SELECT ordinal, relative_path, sha256 FROM catalog.package_migrations \
-     WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
+     WHERE env_key = $1 AND package_id = $2 AND package_version = $3 \
      ORDER BY ordinal"
 }
 

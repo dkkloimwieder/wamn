@@ -22,7 +22,7 @@ use wamn_runtime::plugins::wamn_postgres::{
     ClassCredentials, ProductionClaimResult, ReleaseIdentity, WamnPostgres, WamnPostgresConfig,
 };
 
-pub const TENANT: &str = "claim-live";
+pub const ENV_KEY: &str = "claim-live";
 pub const COMPONENT: &str = "claim-live-runner";
 pub const PACKAGE_ID: &str = "cat_main";
 pub const ENVIRONMENT: &str = "test";
@@ -71,13 +71,13 @@ pub async fn insert_effect_attempt(
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.effect_attempts \
-                   (tenant_id,run_id,root_plan_hash,current_plan_hash,frame_id, \
+                   (env_key,run_id,root_plan_hash,current_plan_hash,frame_id, \
                     local_node_id,source_artifact_hash,requirement_name,occurrence,seq, \
                     generation_fact_type,attempt_deadline_at,attempt_input_ref) \
                  VALUES ($1,$2,$3,$3,0,$4,$3,'manager',0,1, \
                          'not-required','2099-01-01T00:00:00Z','sha256:claim-live-effect-input')"
             ),
-            &[&TENANT, &run_id, &EMPTY_HASH, &local_node_id],
+            &[&ENV_KEY, &run_id, &EMPTY_HASH, &local_node_id],
         )
         .await?;
     Ok(())
@@ -96,9 +96,9 @@ pub async fn install_schema(client: &Client) -> anyhow::Result<()> {
         .await?;
     client
         .batch_execute(&format!(
-            "INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
-             VALUES ('{TENANT}', '{POD_MANIFEST_DIGEST}', '{POD_MANIFEST_BYTES}'), \
-                    ('{TENANT}', '{ROLLED_MANIFEST_DIGEST}', '{ROLLED_MANIFEST_BYTES}');"
+            "INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) \
+             VALUES ('{ENV_KEY}', '{POD_MANIFEST_DIGEST}', '{POD_MANIFEST_BYTES}'), \
+                    ('{ENV_KEY}', '{ROLLED_MANIFEST_DIGEST}', '{ROLLED_MANIFEST_BYTES}');"
         ))
         .await?;
     Ok(())
@@ -224,14 +224,14 @@ async fn seed_run_of_class(
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (tenant_id,run_id,flow_id,flow_version,status,package_id,manifest_digest, \
+                   (env_key,run_id,flow_id,flow_version,status,package_id,manifest_digest, \
                     environment,wiring_id,wiring_version,input_json,trigger_source, \
                     durability_class) \
                  VALUES ($1,$2,'root',1,'dispatched',$3,'{POD_MANIFEST_DIGEST}','test',$4,$5, \
                          '{{\"input\":true}}','http',$6)"
             ),
             &[
-                &TENANT,
+                &ENV_KEY,
                 &run_id,
                 &package_id,
                 &WIRING_ID,
@@ -244,10 +244,10 @@ async fn seed_run_of_class(
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.run_queue \
-                   (tenant_id,run_id,available_at,stream_seq) \
+                   (env_key,run_id,available_at,stream_seq) \
                  VALUES ($1,$2,'2000-01-01 00:00:00+00',$3)"
             ),
-            &[&TENANT, &run_id, &stream_seq],
+            &[&ENV_KEY, &run_id, &stream_seq],
         )
         .await?;
     Ok(())
@@ -272,14 +272,14 @@ pub async fn seed_live_effect_run(
             &format!(
                 "WITH running AS ( \
                     UPDATE {SCHEMA}.runs SET status='running' \
-                     WHERE tenant_id=$1 AND run_id=$2 \
-                     RETURNING tenant_id,run_id) \
+                     WHERE env_key=$1 AND run_id=$2 \
+                     RETURNING env_key,run_id) \
                  UPDATE {SCHEMA}.run_queue AS q \
                     SET lease_owner='runner-a', lease_expires_at='2099-01-01' \
                    FROM running \
-                  WHERE q.tenant_id=running.tenant_id AND q.run_id=running.run_id"
+                  WHERE q.env_key=running.env_key AND q.run_id=running.run_id"
             ),
-            &[&TENANT, &run_id],
+            &[&ENV_KEY, &run_id],
         )
         .await?;
     Ok(())
@@ -290,9 +290,9 @@ pub async fn expire_effect_run(client: &Client, run_id: &str) -> anyhow::Result<
         .execute(
             &format!(
                 "UPDATE {SCHEMA}.run_queue SET lease_expires_at='2000-01-01' \
-                  WHERE tenant_id=$1 AND run_id=$2"
+                  WHERE env_key=$1 AND run_id=$2"
             ),
-            &[&TENANT, &run_id],
+            &[&ENV_KEY, &run_id],
         )
         .await?;
     Ok(())
@@ -310,9 +310,9 @@ pub async fn seed_exhausted_run(
                 "UPDATE {SCHEMA}.run_queue \
                     SET lease_owner='dead', lease_expires_at='2000-01-01', \
                         attempts=max_attempts \
-                  WHERE tenant_id=$1 AND run_id=$2"
+                  WHERE env_key=$1 AND run_id=$2"
             ),
-            &[&TENANT, &run_id],
+            &[&ENV_KEY, &run_id],
         )
         .await?;
     Ok(())
@@ -323,9 +323,9 @@ pub async fn make_callerless(client: &Client, run_id: &str) -> anyhow::Result<()
         .execute(
             &format!(
                 "UPDATE {SCHEMA}.runs SET trigger_source=NULL \
-                  WHERE tenant_id=$1 AND run_id=$2"
+                  WHERE env_key=$1 AND run_id=$2"
             ),
-            &[&TENANT, &run_id],
+            &[&ENV_KEY, &run_id],
         )
         .await?;
     Ok(())
@@ -341,9 +341,9 @@ pub async fn install_prior_caller_winner(client: &Client, run_id: &str) -> anyho
                         caller_http_status=207, caller_release_node_id='prior-node', \
                         caller_outcome_hash=$3, \
                         caller_released_at='2025-01-02T03:04:05.123456Z' \
-                  WHERE tenant_id=$1 AND run_id=$2"
+                  WHERE env_key=$1 AND run_id=$2"
             ),
-            &[&TENANT, &run_id, &PRIOR_WINNER_HASH],
+            &[&ENV_KEY, &run_id, &PRIOR_WINNER_HASH],
         )
         .await?;
     caller_fields(client, run_id).await
@@ -353,8 +353,8 @@ pub async fn install_prior_caller_winner(client: &Client, run_id: &str) -> anyho
 pub async fn queue_attempts(client: &Client, run_id: &str) -> anyhow::Result<i32> {
     Ok(client
         .query_one(
-            &format!("SELECT attempts FROM {SCHEMA}.run_queue WHERE tenant_id=$1 AND run_id=$2"),
-            &[&TENANT, &run_id],
+            &format!("SELECT attempts FROM {SCHEMA}.run_queue WHERE env_key=$1 AND run_id=$2"),
+            &[&ENV_KEY, &run_id],
         )
         .await?
         .get(0))
@@ -366,9 +366,9 @@ pub async fn release_record(client: &Client, run_id: &str) -> anyhow::Result<Opt
         .query_one(
             &format!(
                 "SELECT manifest_digest \
-                   FROM {SCHEMA}.runs WHERE tenant_id=$1 AND run_id=$2"
+                   FROM {SCHEMA}.runs WHERE env_key=$1 AND run_id=$2"
             ),
-            &[&TENANT, &run_id],
+            &[&ENV_KEY, &run_id],
         )
         .await?;
     Ok(row.get(0))
@@ -382,9 +382,9 @@ pub async fn caller_fields(client: &Client, run_id: &str) -> anyhow::Result<Valu
                     'kind',caller_outcome_type, 'body',caller_outcome_json, \
                     'status',caller_http_status, 'node',caller_release_node_id, \
                     'hash',caller_outcome_hash, 'released-at',caller_released_at)::text \
-                   FROM {SCHEMA}.runs WHERE tenant_id=$1 AND run_id=$2"
+                   FROM {SCHEMA}.runs WHERE env_key=$1 AND run_id=$2"
             ),
-            &[&TENANT, &run_id],
+            &[&ENV_KEY, &run_id],
         )
         .await?
         .get(0);
@@ -436,10 +436,10 @@ pub async fn assert_terminal_status_dequeued(
             &format!(
                 "SELECT status, NOT EXISTS ( \
                     SELECT 1 FROM {SCHEMA}.run_queue q \
-                     WHERE q.tenant_id=r.tenant_id AND q.run_id=r.run_id) \
-                   FROM {SCHEMA}.runs r WHERE tenant_id=$1 AND run_id=$2"
+                     WHERE q.env_key=r.env_key AND q.run_id=r.run_id) \
+                   FROM {SCHEMA}.runs r WHERE env_key=$1 AND run_id=$2"
             ),
-            &[&TENANT, &run_id],
+            &[&ENV_KEY, &run_id],
         )
         .await?;
     assert_eq!(row.get::<_, String>(0), status);
@@ -492,14 +492,14 @@ pub async fn install_fixture(url: &str) -> anyhow::Result<LiveFixture> {
         plugin.set_user_id(component, &executor.principal_id().to_string())?;
         plugin.set_operation(component, executor.principal_name())?;
     }
-    plugin.set_tenant(COMPONENT, TENANT)?;
+    plugin.set_env_key(COMPONENT, ENV_KEY)?;
     plugin.set_schema(COMPONENT, SCHEMA)?;
     plugin.set_runner(COMPONENT, COMPONENT)?;
     plugin.set_release_identity(
         COMPONENT,
         ReleaseIdentity::for_test(wamn_catalog::ManifestDigest::parse(POD_MANIFEST_DIGEST)?),
     )?;
-    plugin.set_tenant(ROLLED_COMPONENT, TENANT)?;
+    plugin.set_env_key(ROLLED_COMPONENT, ENV_KEY)?;
     plugin.set_schema(ROLLED_COMPONENT, SCHEMA)?;
     plugin.set_runner(ROLLED_COMPONENT, ROLLED_COMPONENT)?;
     plugin.set_release_identity(

@@ -139,9 +139,9 @@ pub struct CarriedRelease {
 /// from here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReleaseScope {
-    /// The tenant of the project environment.
-    pub tenant_id: String,
-    /// The environment name.
+    /// The composed `org--project--env` key of the project environment.
+    pub env_key: String,
+    /// The short environment name, such as `dev`.
     pub environment: String,
     /// Application name to its packages
     /// (docs/architecture/execution.md#workflows).
@@ -150,9 +150,9 @@ pub struct ReleaseScope {
 
 impl ReleaseScope {
     /// A scope of one tenant and environment that declares no application.
-    pub fn new(tenant_id: impl Into<String>, environment: impl Into<String>) -> Self {
+    pub fn new(env_key: impl Into<String>, environment: impl Into<String>) -> Self {
         Self {
-            tenant_id: tenant_id.into(),
+            env_key: env_key.into(),
             environment: environment.into(),
             applications: wamn_catalog::EnvironmentApplications::new(),
         }
@@ -291,7 +291,7 @@ pub fn validate_component_in_release(
         .find(|package| package.package_id() == component.scope.package_id)
         .map(wamn_catalog::PackageCoordinate::package_version);
     anyhow::ensure!(
-        component.scope.tenant_id == release.scope().tenant_id
+        component.scope.env_key == release.scope().env_key
             && package_version == Some(component.scope.package_version.as_str()),
         "release-component-scope-mismatch"
     );
@@ -560,7 +560,7 @@ mod tests {
     fn carried_fact() -> AdmittedComponent {
         AdmittedComponent {
             scope: wamn_catalog::ComponentPackageScope {
-                tenant_id: "t1".into(),
+                env_key: "t1".into(),
                 package_id: "cat".into(),
                 package_version: "1.0.0".into(),
             },
@@ -596,7 +596,9 @@ mod tests {
         validate_component_in_release(&release, &carried_fact()).expect("the carried fact passes");
 
         let mutations: [(&str, Mutation); 5] = [
-            ("another tenant", |fact| fact.scope.tenant_id = "t2".into()),
+            ("another tenant", |fact| {
+                fact.scope.env_key = "t2".into();
+            }),
             ("another package version", |fact| {
                 fact.scope.package_version = "2.0.0".into();
             }),

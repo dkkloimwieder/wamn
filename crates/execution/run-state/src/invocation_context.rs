@@ -7,10 +7,9 @@ use serde_json::Value;
 pub const INVOCATION_CONTEXT_VERSION: &str = "0.1";
 
 /// Release and artifact identity decided by admission.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdmittedPrincipal {
-    tenant_id: String,
+    env_key: String,
     environment: String,
     package_id: String,
     /// The release, as its manifest digest.
@@ -21,6 +20,99 @@ pub struct AdmittedPrincipal {
     artifact_digest: String,
 }
 
+impl Serialize for AdmittedPrincipal {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct as _;
+        let mut principal = serializer.serialize_struct("AdmittedPrincipal", 8)?;
+        principal.serialize_field("env_key", &self.env_key)?;
+        principal.serialize_field("environment", &self.environment)?;
+        principal.serialize_field("package-id", &self.package_id)?;
+        principal.serialize_field("manifest-digest", &self.manifest_digest)?;
+        principal.serialize_field("run-id", &self.run_id)?;
+        principal.serialize_field("flow-id", &self.flow_id)?;
+        principal.serialize_field("flow-version", &self.flow_version)?;
+        principal.serialize_field("artifact-digest", &self.artifact_digest)?;
+        principal.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for AdmittedPrincipal {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct Fields;
+        impl<'input> serde::de::Visitor<'input> for Fields {
+            type Value = std::collections::BTreeMap<String, Value>;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("an admitted principal")
+            }
+
+            fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+            where
+                M: serde::de::MapAccess<'input>,
+            {
+                let mut fields = std::collections::BTreeMap::new();
+                while let Some((name, value)) = map.next_entry::<String, Value>()? {
+                    match fields.entry(name) {
+                        std::collections::btree_map::Entry::Vacant(entry) => {
+                            entry.insert(value);
+                        }
+                        std::collections::btree_map::Entry::Occupied(entry) => {
+                            return Err(serde::de::Error::custom(format!(
+                                "duplicate field `{}`",
+                                entry.key()
+                            )));
+                        }
+                    }
+                }
+                Ok(fields)
+            }
+        }
+        let mut fields = deserializer.deserialize_map(Fields)?;
+        let mut take = |name| {
+            fields
+                .remove(name)
+                .ok_or_else(|| serde::de::Error::missing_field(name))
+        };
+        let principal = Self {
+            env_key: serde_json::from_value(take("env_key")?).map_err(serde::de::Error::custom)?,
+            environment: serde_json::from_value(take("environment")?)
+                .map_err(serde::de::Error::custom)?,
+            package_id: serde_json::from_value(take("package-id")?)
+                .map_err(serde::de::Error::custom)?,
+            manifest_digest: serde_json::from_value(take("manifest-digest")?)
+                .map_err(serde::de::Error::custom)?,
+            run_id: serde_json::from_value(take("run-id")?).map_err(serde::de::Error::custom)?,
+            flow_id: serde_json::from_value(take("flow-id")?).map_err(serde::de::Error::custom)?,
+            flow_version: serde_json::from_value(take("flow-version")?)
+                .map_err(serde::de::Error::custom)?,
+            artifact_digest: serde_json::from_value(take("artifact-digest")?)
+                .map_err(serde::de::Error::custom)?,
+        };
+        if let Some(name) = fields.keys().next() {
+            return Err(serde::de::Error::unknown_field(
+                name,
+                &[
+                    "env_key",
+                    "environment",
+                    "package-id",
+                    "manifest-digest",
+                    "run-id",
+                    "flow-id",
+                    "flow-version",
+                    "artifact-digest",
+                ],
+            ));
+        }
+        Ok(principal)
+    }
+}
+
 impl AdmittedPrincipal {
     /// Construct the principal derived from one admitted release artifact.
     #[expect(
@@ -28,7 +120,7 @@ impl AdmittedPrincipal {
         reason = "the admission trust boundary must name every principal field explicitly"
     )]
     pub fn new(
-        tenant_id: impl Into<String>,
+        env_key: impl Into<String>,
         environment: impl Into<String>,
         package_id: impl Into<String>,
         manifest_digest: impl Into<String>,
@@ -38,7 +130,7 @@ impl AdmittedPrincipal {
         artifact_digest: impl Into<String>,
     ) -> Result<Self, InvocationContextError> {
         let principal = Self {
-            tenant_id: tenant_id.into(),
+            env_key: env_key.into(),
             environment: environment.into(),
             package_id: package_id.into(),
             manifest_digest: manifest_digest.into(),
@@ -51,8 +143,8 @@ impl AdmittedPrincipal {
         Ok(principal)
     }
 
-    pub fn tenant_id(&self) -> &str {
-        &self.tenant_id
+    pub fn env_key(&self) -> &str {
+        &self.env_key
     }
 
     pub fn environment(&self) -> &str {
@@ -84,7 +176,7 @@ impl AdmittedPrincipal {
     }
 
     fn validate(&self) -> Result<(), InvocationContextError> {
-        if self.tenant_id.is_empty()
+        if self.env_key.is_empty()
             || self.environment.is_empty()
             || self.package_id.is_empty()
             || self.run_id.is_empty()
@@ -315,6 +407,8 @@ mod tests {
         )
         .unwrap();
         let persisted = serde_json::to_string(&admitted).unwrap();
+        let duplicate = persisted.replacen("\"env_key\":", "\"env_key\":\"other\",\"env_key\":", 1);
+        assert!(TrustedInvocationContext::from_json(&duplicate).is_err());
         let decoded = TrustedInvocationContext::from_json(&persisted).unwrap();
         assert_eq!(decoded, admitted);
         assert!(decoded.http_effect().is_none());

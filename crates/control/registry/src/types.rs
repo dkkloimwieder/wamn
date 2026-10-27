@@ -398,7 +398,7 @@ impl Triple {
 /// ruling of 2026-10-09 on `wamn-snz0`). The first apply, the analysis of
 /// `env apply` and the host scope all derive it here, so neither the
 /// environment document nor the serving manifest carries a tenant.
-pub fn project_env_tenant(org: &str, project: &str, env: &str) -> String {
+pub fn project_env_key(org: &str, project: &str, env: &str) -> String {
     format!("{org}--{project}--{env}")
 }
 

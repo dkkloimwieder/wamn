@@ -71,7 +71,7 @@ async fn a_run_killed_during_application_sql_completes_after_the_host_restarts()
         scratch: scratch.path(),
         component_directory: &components,
         flow_http_wasm: &flow_http,
-        tenant: identity.tenant().as_str(),
+        env_key: identity.env_key().as_str(),
         org: identity.org.as_str(),
         project: identity.project.as_str(),
         environment: identity.environment.as_str(),
@@ -106,7 +106,7 @@ async fn recover(
     wiring: &wamn_catalog::WiringDocument,
 ) -> anyhow::Result<()> {
     let identity = super::identity();
-    let tenant = identity.tenant();
+    let env_key = identity.env_key();
     let (client, task) = super::connect(project_url).await?;
     let (lock, lock_task) = super::connect(project_url).await?;
     let result = async {
@@ -123,8 +123,8 @@ async fn recover(
         client
             .execute(
                 "INSERT INTO wamn_run.environment_policies \
-                   (tenant_id, expected_environment, durability_class) VALUES ($1, $2, 'standard')",
-                &[&tenant, &identity.environment.as_str()],
+                   (env_key, expected_environment, durability_class) VALUES ($1, $2, 'standard')",
+                &[&env_key, &identity.environment.as_str()],
             )
             .await
             .context("write the environment's run policy")?;
@@ -192,7 +192,7 @@ async fn recover(
         let dead = client
             .query_one(
                 "SELECT r.status, q.lease_generation FROM wamn_run.runs r \
-                   JOIN wamn_run.run_queue q USING (tenant_id, run_id) WHERE run_id = $1",
+                   JOIN wamn_run.run_queue q USING (env_key, run_id) WHERE run_id = $1",
                 &[&run],
             )
             .await?;
@@ -330,7 +330,7 @@ async fn blocked_attempt(
             if let Some(row) = client
                 .query_opt(
                     "SELECT q.lease_generation, a.pid FROM wamn_run.run_queue q \
-                       JOIN wamn_run.runs r USING (tenant_id, run_id) \
+                       JOIN wamn_run.runs r USING (env_key, run_id) \
                        CROSS JOIN pg_stat_activity a \
                      WHERE q.run_id = $1 AND r.status = 'running' AND q.lease_generation > $2 \
                        AND $3 = ANY(pg_blocking_pids(a.pid)) AND a.query LIKE '%purchase_order%'",

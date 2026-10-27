@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-const COMPONENT_DECLARATION_PLACEHOLDER: &str = "__TENANT_ID__";
+const COMPONENT_DECLARATION_PLACEHOLDER: &str = "__ENV_KEY__";
 /// File name of the package manifest at a package root.
 pub const PACKAGE_MANIFEST: &str = "wamn.json";
 
@@ -158,11 +158,11 @@ pub fn authored_base_digests(
 
 /// Renders one authored component declaration into the document admission reads.
 ///
-/// One placeholder, REQUIRED: `scope.tenant-id`, which the deployment fills.
+/// One placeholder, REQUIRED: `scope.env_key`, which the deployment fills.
 /// An unfilled or hand-written value is a refusal naming the file.
 pub fn render_declaration_document(
     template: &Path,
-    tenant: &str,
+    env_key: &str,
 ) -> Result<Value, ComponentDeclarationError> {
     let bytes =
         fs::read(template).map_err(|source| ComponentDeclarationError::read(template, source))?;
@@ -185,14 +185,14 @@ pub fn render_declaration_document(
     )
     .map_err(|error| invalid(error.context().to_owned()))?;
     let slot = document
-        .pointer_mut("/scope/tenant-id")
-        .ok_or_else(|| invalid("has no scope.tenant-id".to_owned()))?;
+        .pointer_mut("/scope/env_key")
+        .ok_or_else(|| invalid("has no scope.env_key".to_owned()))?;
     if slot.as_str() != Some(COMPONENT_DECLARATION_PLACEHOLDER) {
         return Err(invalid(
-            "must leave scope.tenant-id as the deployment placeholder".to_owned(),
+            "must leave scope.env_key as the deployment placeholder".to_owned(),
         ));
     }
-    *slot = Value::String(tenant.to_owned());
+    *slot = Value::String(env_key.to_owned());
     // An input port can name its package's generated route schema instead of
     // copying it (wamn-4omo). The template sits at
     // `publication/components/<component>.json.in` under its package root,
@@ -250,11 +250,7 @@ pub fn render_palette_declaration(
         )
     };
     for (field, placeholder, value) in [
-        (
-            "tenant-id",
-            COMPONENT_DECLARATION_PLACEHOLDER,
-            &scope.tenant_id,
-        ),
+        ("env_key", COMPONENT_DECLARATION_PLACEHOLDER, &scope.env_key),
         ("package-id", "__PACKAGE_ID__", &scope.package_id),
         (
             "package-version",
@@ -332,7 +328,7 @@ mod tests {
     fn a_palette_declaration_renders_its_scope_alias_and_imports() {
         let palette = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/platform");
         let scope = wamn_catalog::ComponentPackageScope {
-            tenant_id: "tenant-a".to_owned(),
+            env_key: "tenant-a".to_owned(),
             package_id: "wamn_wms".to_owned(),
             package_version: "1.0.0".to_owned(),
         };

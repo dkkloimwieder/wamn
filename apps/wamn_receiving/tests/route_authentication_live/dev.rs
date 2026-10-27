@@ -239,9 +239,9 @@ pub(super) async fn verify_dev_target_package_and_acl_state(
     let packages = project
         .query(
             "SELECT package_id, package_version, artifact_digest \
-             FROM catalog.packages WHERE tenant_id = $1 \
+             FROM catalog.packages WHERE env_key = $1 \
              ORDER BY package_id COLLATE \"C\", package_version COLLATE \"C\"",
-            &[&identity().tenant().as_str()],
+            &[&identity().env_key().as_str()],
         )
         .await
         .context("read product-command target package coordinates")?;
@@ -273,9 +273,9 @@ pub(super) async fn verify_dev_target_package_and_acl_state(
     let migrations = project
         .query(
             "SELECT package_id, package_version, ordinal, relative_path, sha256 \
-             FROM catalog.package_migrations WHERE tenant_id = $1 \
+             FROM catalog.package_migrations WHERE env_key = $1 \
              ORDER BY package_id COLLATE \"C\", package_version COLLATE \"C\", ordinal",
-            &[&identity().tenant().as_str()],
+            &[&identity().env_key().as_str()],
         )
         .await
         .context("read product-command target migration records")?;

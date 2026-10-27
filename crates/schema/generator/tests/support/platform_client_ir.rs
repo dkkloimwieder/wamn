@@ -309,7 +309,7 @@ fn parameterized_routes_survive_verbatim() {
     let mut changed_routes = routes(&baseline);
     let get_identity = operation(&baseline, "widget", "get").operation.clone();
     changed_routes.get_mut(&get_identity).unwrap().template =
-        "/tenant/{tenant}/widget/{id}".to_owned();
+        "/tenant/{env_key}/widget/{id}".to_owned();
     let changed =
         ClientContractIr::from_release_contracts("platform_fixture", &contracts, &changed_routes)
             .expect("parameterized route projects");
@@ -319,7 +319,7 @@ fn parameterized_routes_survive_verbatim() {
             .as_ref()
             .unwrap()
             .template,
-        "/tenant/{tenant}/widget/{id}"
+        "/tenant/{env_key}/widget/{id}"
     );
     assert_ne!(
         operation(&baseline, "widget", "get").route,

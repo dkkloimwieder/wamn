@@ -183,7 +183,7 @@ mod tests {
         assert_eq!(
             sql.matches("ON CONFLICT (id) DO NOTHING").count(),
             PlatformComponent::ALL.len() + 1,
-            "every insert keeps a row that is already there, so a tenant holding part of the \
+            "every insert keeps a row that is already there, so a env_key holding part of the \
              list converges to the whole list"
         );
     }

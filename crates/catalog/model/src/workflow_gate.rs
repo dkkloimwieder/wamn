@@ -61,7 +61,7 @@ impl std::error::Error for WorkflowGateError {
 /// two different digests there refuse as ambiguous. A declared package the
 /// release does not carry refuses.
 pub fn resolve_workflow_components(
-    tenant_id: &str,
+    env_key: &str,
     application_packages: &BTreeSet<String>,
     manifest: &ServingManifest,
     document: &WiringDocument,
@@ -118,7 +118,7 @@ pub fn resolve_workflow_components(
             _ => return Err(ambiguous(node_id)),
         };
         let scope = ComponentPackageScope {
-            tenant_id: tenant_id.to_owned(),
+            env_key: env_key.to_owned(),
             package_id: chosen.package_id.clone(),
             package_version: versions[chosen.package_id.as_str()].to_owned(),
         };
@@ -139,13 +139,13 @@ fn ambiguous(node_id: &str) -> WorkflowGateError {
 /// Gate `document` against the per-node facts of `manifest` and derive its
 /// hash. The hash is produced only on the far side of the gate.
 pub fn gate_workflow_document(
-    tenant_id: &str,
+    env_key: &str,
     application_packages: &BTreeSet<String>,
     manifest: &ServingManifest,
     document: &WiringDocument,
 ) -> Result<DefinitionHash, WorkflowGateError> {
     let components =
-        resolve_workflow_components(tenant_id, application_packages, manifest, document)?;
+        resolve_workflow_components(env_key, application_packages, manifest, document)?;
     validate_resolved_wiring_compatibility(document, &components).map_err(|error| {
         WorkflowGateError {
             detail: format!(
@@ -200,7 +200,7 @@ mod tests {
     ) -> ServingComponent {
         let fact = AdmittedComponent {
             scope: ComponentPackageScope {
-                tenant_id: "t1".to_owned(),
+                env_key: "t1".to_owned(),
                 package_id: package.to_owned(),
                 package_version: "1.0.0".to_owned(),
             },

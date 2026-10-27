@@ -656,7 +656,7 @@ mod tests {
         ComponentAdmissionRequest {
             declaration: ComponentDeclaration {
                 scope: ComponentPackageScope {
-                    tenant_id: "tenant-a".to_string(),
+                    env_key: "tenant-a".to_string(),
                     package_id: "orders".to_string(),
                     package_version: "1.0.0".to_string(),
                 },

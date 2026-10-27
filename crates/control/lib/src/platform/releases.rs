@@ -28,13 +28,13 @@ pub(super) async fn apply(
     let image = runner_image(directory)?;
     let mut prepared = Vec::new();
     for (path, environment) in super::broker::documents(environments)? {
-        let tenant = wamn_control_registry::project_env_tenant(
+        let env_key = wamn_control_registry::project_env_key(
             &environment.org,
             &environment.project,
             &environment.env,
         );
         let mut request = request(
-            &tenant,
+            &env_key,
             &std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?,
             &image,
             registry,
@@ -84,13 +84,13 @@ pub(super) async fn apply(
 }
 
 pub(super) fn request(
-    tenant: &str,
+    env_key: &str,
     document: &str,
     image: &str,
     registry: &wamn_package_artifact::PackageRegistry,
 ) -> anyhow::Result<JobRequest> {
     let mut request = JobRequest {
-        name: format!("platform-release-{tenant}"),
+        name: format!("platform-release-{env_key}"),
         image: image.into(),
         capture_output: true,
         arguments: vec![
@@ -101,7 +101,7 @@ pub(super) fn request(
             "--control-database-url".into(),
             "$(WAMN_SYSTEM_ADMIN_URL)".into(),
             "--verified-publisher-principal".into(),
-            format!("wamn-management-author-{tenant}"),
+            format!("wamn-management-author-{env_key}"),
             "--run-schema".into(),
             "wamn_run".into(),
             "--artifact-base".into(),

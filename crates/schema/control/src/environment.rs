@@ -8,17 +8,17 @@ pub const ENVIRONMENT_INSTANCE_WITHOUT_PROJECTION: &str =
 
 /// Update only the instance and timestamp of the selected tenant.
 pub fn claim_environment_instance_sql() -> &'static str {
-    "UPDATE catalog.tenant_environments SET environment_instance = $2, projected_at = now() WHERE tenant_id = $1"
+    "UPDATE catalog.tenant_environments SET environment_instance = $2, projected_at = now() WHERE env_key = $1"
 }
 
 /// Refuse a claim that did not update a projected tenant.
 pub fn check_environment_instance_claim(
-    tenant: &str,
+    env_key: &str,
     affected_rows: u64,
 ) -> Result<(), EnvironmentInstanceClaimError> {
     if affected_rows == 0 {
         Err(EnvironmentInstanceClaimError {
-            tenant: tenant.to_owned(),
+            env_key: env_key.to_owned(),
         })
     } else {
         Ok(())
@@ -28,15 +28,15 @@ pub fn check_environment_instance_claim(
 /// A refused claim with the tenant and the existing provisioning remedy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnvironmentInstanceClaimError {
-    tenant: String,
+    env_key: String,
 }
 
 impl fmt::Display for EnvironmentInstanceClaimError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{ENVIRONMENT_INSTANCE_WITHOUT_PROJECTION}: tenant={}: name the tenant when provisioning the project-env, so the control store carries its environment identity",
-            self.tenant
+            "{ENVIRONMENT_INSTANCE_WITHOUT_PROJECTION}: env_key={}: name the tenant when provisioning the project-env, so the control store carries its environment identity",
+            self.env_key
         )
     }
 }
@@ -57,7 +57,7 @@ mod tests {
         let error = check_environment_instance_claim("tenant-a", 0).unwrap_err();
         assert_eq!(
             error.to_string(),
-            "environment-instance-claim-without-projection: tenant=tenant-a: name the tenant when provisioning the project-env, so the control store carries its environment identity"
+            "environment-instance-claim-without-projection: env_key=tenant-a: name the tenant when provisioning the project-env, so the control store carries its environment identity"
         );
     }
 }

@@ -25,7 +25,7 @@ impl SourceEvent {
 
     pub fn identity(
         &self,
-        tenant: &str,
+        env_key: &str,
         project: &str,
         environment: &str,
         headers: &[&str],
@@ -35,7 +35,7 @@ impl SourceEvent {
                 crate::verified_source_event_id(project, environment, envelope, headers)
             }
             Self::Derived(event) => crate::verified_derived_source_event_id(
-                tenant,
+                env_key,
                 project,
                 environment,
                 event,
@@ -93,7 +93,7 @@ impl EventTrigger {
         event: &SourceEvent,
         sequence: u64,
         packages: &BTreeSet<String>,
-        tenant: &str,
+        env_key: &str,
     ) -> Result<Option<serde_json::Value>, TriggerMatchError> {
         if sequence <= self.enable_sequence {
             return Ok(None);
@@ -119,8 +119,8 @@ impl EventTrigger {
                 condition.as_ref(),
                 envelope,
                 packages,
-                tenant,
-                Some(tenant),
+                env_key,
+                Some(env_key),
                 MAX_CAUSATION_DEPTH,
             ),
             SourceEvent::Derived(event) => crate::decide_derived(
@@ -128,7 +128,7 @@ impl EventTrigger {
                 condition.as_ref(),
                 event,
                 packages,
-                tenant,
+                env_key,
                 MAX_CAUSATION_DEPTH,
             ),
         };

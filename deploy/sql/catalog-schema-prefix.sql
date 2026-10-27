@@ -47,7 +47,7 @@ BEGIN
     EXECUTE replace(replace($wamn_authority_derivations$CREATE SCHEMA IF NOT EXISTS "wamn_authority" AUTHORIZATION CURRENT_USER;
 REVOKE ALL ON SCHEMA "wamn_authority" FROM PUBLIC;
 GRANT USAGE ON SCHEMA "wamn_authority" TO "wamn_app";
-CREATE OR REPLACE FUNCTION "wamn_authority".tenant_key(tenant text)
+CREATE OR REPLACE FUNCTION "wamn_authority".tenant_key(env_key text)
 RETURNS text
 LANGUAGE sql
 IMMUTABLE
@@ -57,8 +57,8 @@ SET search_path = pg_catalog
 AS $$
     SELECT substr(encode(sha256(
            int8send(19::bigint) || convert_to('wamn.app.scope.v0.1', 'UTF8')
-        || int8send(6::bigint) || convert_to('tenant', 'UTF8')
-        || int8send(octet_length(convert_to(tenant, 'UTF8'))::bigint) || convert_to(tenant, 'UTF8')
+        || int8send(7::bigint) || convert_to('env_key', 'UTF8')
+        || int8send(octet_length(convert_to(env_key, 'UTF8'))::bigint) || convert_to(env_key, 'UTF8')
         || int8send(8::bigint) || convert_to('database', 'UTF8')
         || int8send(@wamn_database_octets@::bigint) || convert_to(@wamn_database_literal@, 'UTF8')
        ), 'hex'), 1, 40)

@@ -17,7 +17,7 @@ pub fn check<T>(
         Ok(project
             .query_one(
                 "SELECT COALESCE(jsonb_agg(jsonb_build_object(\
-                 'run_id', run_id, 'tenant_id', tenant_id, 'package_id', package_id, \
+                 'run_id', run_id, 'env_key', env_key, 'package_id', package_id, \
                  'wiring_id', wiring_id, 'status', status, 'fail_type', fail_type, \
                  'result_json', result_json) ORDER BY created_at, run_id), '[]'::jsonb) \
                  FROM wamn_run.runs",

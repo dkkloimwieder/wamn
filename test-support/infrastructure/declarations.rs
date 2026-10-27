@@ -23,7 +23,7 @@ pub fn render_component_declaration(
     store_alias: &str,
 ) -> anyhow::Result<ComponentDeclaration> {
     let scope =
-        ComponentPackageScope::new(&scope.tenant_id, &scope.package_id, &scope.package_version)
+        ComponentPackageScope::new(&scope.env_key, &scope.package_id, &scope.package_version)
             .context("component scope requires a tenant and a valid package coordinate")?;
     // The public scope parser requires a real package coordinate. Fill its
     // named template fields before parsing the complete public declaration.
@@ -34,7 +34,7 @@ pub fn render_component_declaration(
         .and_then(Value::as_object_mut)
         .context("component declaration template requires scope")?;
     for (field, placeholder, value) in [
-        ("tenant-id", "__TENANT_ID__", scope.tenant_id.as_str()),
+        ("env_key", "__ENV_KEY__", scope.env_key.as_str()),
         ("package-id", "__PACKAGE_ID__", scope.package_id.as_str()),
         (
             "package-version",
@@ -147,7 +147,7 @@ mod tests {
         let overlay = overlay();
         for template in [overlay.as_str(), LABEL, BLOB] {
             let declaration = render_component_declaration(template, &scope, "crate-9").unwrap();
-            assert_eq!(declaration.scope.tenant_id, scope.tenant_id);
+            assert_eq!(declaration.scope.env_key, scope.env_key);
             if declaration.component == "fixture_overlay" {
                 assert_eq!(declaration.scope.package_id, "platform_fixture_overlay");
                 assert_eq!(declaration.scope.package_version, "2.1.0");
@@ -235,24 +235,24 @@ mod tests {
     fn known_placeholders_outside_scope_and_connections_are_not_rewritten() {
         let mut template: Value = serde_json::from_str(LABEL).unwrap();
         template["operations"]["wamn:node/handler@0.1.0"]["input-ports"][0]["schema"]["description"] =
-            Value::from("__TENANT_ID__");
+            Value::from("__ENV_KEY__");
         let error =
             render_component_declaration(&serde_json::to_string(&template).unwrap(), &scope(), "")
                 .unwrap_err();
-        assert!(error.to_string().contains("__TENANT_ID__"));
+        assert!(error.to_string().contains("__ENV_KEY__"));
     }
 
     #[test]
     fn invalid_scope_and_json_are_refused_and_values_are_not_text_substitutions() {
         let mut invalid = scope();
-        invalid.tenant_id.clear();
+        invalid.env_key.clear();
         assert!(render_component_declaration(&overlay(), &invalid, "").is_err());
         assert!(render_component_declaration("not JSON", &scope(), "").is_err());
         let mut scope = scope();
-        scope.tenant_id = "tenant/with&characters".into();
+        scope.env_key = "tenant/with&characters".into();
         let alias = "store/with&characters";
         let declaration = render_component_declaration(BLOB, &scope, alias).unwrap();
-        assert_eq!(declaration.scope.tenant_id, scope.tenant_id);
+        assert_eq!(declaration.scope.env_key, scope.env_key);
         assert_eq!(declaration.connections[0].store_alias, alias);
     }
 

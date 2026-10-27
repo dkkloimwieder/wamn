@@ -63,7 +63,7 @@ pub(super) async fn expectations(
             "SELECT a.attname, pg_catalog.pg_get_userbyid(c.relowner) AS owner_role, \
              pg_catalog.format_type(a.atttypid,NULL) AS scalar_type, \
              a.attgenerated='' AND a.attidentity='' \
-               AND a.attname NOT IN ('id','tenant_id','row_version') \
+               AND a.attname NOT IN ('id','env_key','row_version') \
                AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_index i WHERE i.indrelid=c.oid AND i.indisprimary AND a.attnum=ANY(i.indkey)) AS writable \
              FROM pg_catalog.pg_class c \
              JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace \

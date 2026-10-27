@@ -30,15 +30,15 @@ use wamn_catalog::{DefinitionHash, ServingManifest, WiringDocument, parse_workfl
 
 use std::path::Path;
 
-const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
+const CLAIM_ENV_KEY_SQL: &str = "SELECT set_config('app.env_key', $1, true)";
 
-/// Params: `$1` tenant, `$2` environment, `$3` application, `$4` workflow id,
+/// Params: `$1` `env_key`, `$2` environment, `$3` application, `$4` workflow id,
 /// `$5` version, `$6` graph, `$7` hash, `$8` trigger, `$9` execution type,
 /// `$10` execution role, `$11` authoring principal, `$12` schedule,
 /// `$13` source package, `$14` entity, `$15` ops, `$16` condition.
 const INSERT_WORKFLOW_SQL: &str = "\
 INSERT INTO catalog.workflows (\
-       tenant_id, environment, application, workflow_id, version, graph_json, wiring_hash, \
+       env_key, environment, application, workflow_id, version, graph_json, wiring_hash, \
        trigger, execution_type, execution_role, created_by, schedule, source_package, entity, ops, condition\
      ) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, $8, $9, $10, $11::text::uuid, $12, $13, $14, $15, $16) \
 ON CONFLICT DO NOTHING";
@@ -48,7 +48,7 @@ ON CONFLICT DO NOTHING";
 const EXACT_WORKFLOW_SQL: &str = "\
 SELECT EXISTS (\
     SELECT 1 FROM catalog.workflows \
-     WHERE tenant_id = $1 AND environment = $2 AND application = $3 \
+     WHERE env_key = $1 AND environment = $2 AND application = $3 \
        AND workflow_id = $4 AND version = $5 AND graph_json = $6::text::jsonb \
        AND wiring_hash = $7 AND trigger = $8 AND execution_type = $9 \
        AND execution_role IS NOT DISTINCT FROM $10 \
@@ -59,7 +59,7 @@ SELECT EXISTS (\
 
 const SELECT_RELEASE_SQL: &str = "\
 SELECT canonical_bytes FROM catalog.releases \
- WHERE tenant_id = $1 AND manifest_digest = $2";
+ WHERE env_key = $1 AND manifest_digest = $2";
 
 /// Stable prefix every workflow-authorship refusal renders with.
 pub const WORKFLOW_AUTHORSHIP_REFUSAL: &str = "workflow-authorship-refused";
@@ -236,22 +236,22 @@ pub struct AuthorWorkflowRequest<'a> {
 }
 
 impl AuthorWorkflowRequest<'_> {
-    /// The database tenant derived from the environment coordinate.
-    pub fn tenant(&self) -> String {
-        wamn_control_registry::project_env_tenant(self.org, self.project, self.environment)
+    /// The composed environment key derived from the environment coordinate.
+    pub fn env_key(&self) -> String {
+        wamn_control_registry::project_env_key(self.org, self.project, self.environment)
     }
 }
 
 /// Read the installed release `manifest_digest` and gate `document` against it.
 pub(crate) async fn gate_against_release(
     transaction: &Transaction<'_>,
-    tenant_id: &str,
+    env_key: &str,
     application_packages: &std::collections::BTreeSet<String>,
     manifest_digest: &str,
     document: &WiringDocument,
 ) -> Result<DefinitionHash, AuthorWorkflowError> {
     let bytes: Vec<u8> = transaction
-        .query_opt(SELECT_RELEASE_SQL, &[&tenant_id, &manifest_digest])
+        .query_opt(SELECT_RELEASE_SQL, &[&env_key, &manifest_digest])
         .await
         .map_err(|error| storage("read the serving release", error))?
         .ok_or_else(|| {
@@ -268,7 +268,7 @@ pub(crate) async fn gate_against_release(
             error,
         )
     })?;
-    wamn_catalog::gate_workflow_document(tenant_id, application_packages, &manifest, document)
+    wamn_catalog::gate_workflow_document(env_key, application_packages, &manifest, document)
         .map_err(|error| {
             AuthorWorkflowError::with_source(
                 AuthorWorkflowErrorType::Gate,
@@ -356,7 +356,7 @@ pub async fn author_workflow(
     request: &AuthorWorkflowRequest<'_>,
 ) -> Result<DefinitionHash, AuthorWorkflowError> {
     transaction
-        .query_one(CLAIM_TENANT_SQL, &[&request.tenant()])
+        .query_one(CLAIM_ENV_KEY_SQL, &[&request.env_key()])
         .await
         .map_err(|error| storage("claim the authoring tenant", error))?;
     let Some(declared) = request.declared.get(request.application) else {
@@ -381,13 +381,13 @@ pub async fn author_workflow(
     let document = request.document;
     let hash = gate_against_release(
         transaction,
-        &request.tenant(),
+        &request.env_key(),
         &declared.packages,
         request.manifest_digest,
         document,
     )
     .await?;
-    let verdict = read_gate_verdict(control, &request.tenant(), &hash).await?;
+    let verdict = read_gate_verdict(control, &request.env_key(), &hash).await?;
     require_green_report(verdict, document, &hash)?;
 
     let version = i32::try_from(document.version).map_err(|error| {
@@ -421,7 +421,7 @@ pub async fn author_workflow(
         _ => (None, None, None, None),
     };
     let parameters: [&(dyn tokio_postgres::types::ToSql + Sync); 16] = [
-        &request.tenant(),
+        &request.env_key(),
         &request.environment,
         &request.application,
         &document.wiring_id,
@@ -524,18 +524,18 @@ pub fn read_wiring_document(path: &Path) -> Result<WiringDocument, AuthorWorkflo
 
 pub(crate) async fn read_gate_verdict(
     control: &Client,
-    tenant_id: &str,
+    env_key: &str,
     wiring_hash: &DefinitionHash,
 ) -> Result<Option<bool>, AuthorWorkflowError> {
     control
-        .query_one("SELECT set_config('app.tenant', $1, false)", &[&tenant_id])
+        .query_one("SELECT set_config('app.env_key', $1, false)", &[&env_key])
         .await
         .map_err(|error| storage("claim the gate-report tenant", error))?;
     let hash = wiring_hash.as_str();
     let report = control
         .query_opt(
-            "SELECT passed FROM wamn_run.gate_reports WHERE tenant_id = $1 AND wiring_hash = $2",
-            &[&tenant_id, &hash],
+            "SELECT passed FROM wamn_run.gate_reports WHERE env_key = $1 AND wiring_hash = $2",
+            &[&env_key, &hash],
         )
         .await
         .map_err(|error| storage("read the wiring's gate report", error))?;

@@ -29,8 +29,8 @@ use super::document::EnvironmentDocument;
 
 /// Record a floor, or advance it.
 const RECORD_FLOOR_SQL: &str = "\
-INSERT INTO catalog.package_floors (tenant_id, package_id, version) VALUES ($1, $2, $3) \
-ON CONFLICT (tenant_id, package_id) \
+INSERT INTO catalog.package_floors (env_key, package_id, version) VALUES ($1, $2, $3) \
+ON CONFLICT (env_key, package_id) \
 DO UPDATE SET version = EXCLUDED.version, recorded_at = now()";
 
 /// Step 9. Returns the plan lines of what it did.
@@ -46,8 +46,8 @@ pub async fn contract(
     live: &BTreeMap<String, usize>,
 ) -> anyhow::Result<Vec<String>> {
     let mut lines = Vec::new();
-    let tenant =
-        wamn_control_provision::project_env_tenant(&document.org, &document.project, &document.env);
+    let env_key =
+        wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
     let project_url = super::ensure::project_url(platform, &document.triple()).await?;
     let live_digests: Vec<String> = live.keys().cloned().collect();
     let declared: Vec<String> = analysis.authorities.connections.keys().cloned().collect();
@@ -58,20 +58,20 @@ pub async fn contract(
         .await
         .context("begin the connection contract")?;
     transaction
-        .query_one("SELECT set_config('app.tenant', $1, true)", &[&tenant])
+        .query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
         .await
         .context("claim the tenant")?;
     let removed = transaction
         .query(
             remove_connection_bindings_outside_live_set_sql(),
-            &[&tenant, &document.env, &live_digests],
+            &[&env_key, &document.env, &live_digests],
         )
         .await
         .context("remove the bindings of releases outside the live set")?;
     let disabled = transaction
         .query(
             disable_unbound_connection_instances_sql(),
-            &[&tenant, &document.env, &declared],
+            &[&env_key, &document.env, &declared],
         )
         .await
         .context("disable the instances the document no longer names")?;
@@ -120,7 +120,7 @@ pub async fn contract(
             .await?;
             lines.push(format!("applied the contract of {package}@{version}"));
         }
-        record_floor(&project_url, &tenant, package, version).await?;
+        record_floor(&project_url, &env_key, package, version).await?;
         lines.push(format!("recorded the floor {package}@{version}"));
     }
     if !waiting.is_empty() {
@@ -176,7 +176,7 @@ async fn apply_contract(
 
 async fn record_floor(
     project_url: &str,
-    tenant: &str,
+    env_key: &str,
     package: &str,
     version: &str,
 ) -> anyhow::Result<()> {
@@ -192,11 +192,11 @@ async fn record_floor(
         .await
         .context("bind wamn:provisioning as the actor and operation")?;
     transaction
-        .query_one("SELECT set_config('app.tenant', $1, true)", &[&tenant])
+        .query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
         .await
         .context("claim the tenant")?;
     transaction
-        .execute(RECORD_FLOOR_SQL, &[&tenant, &package, &version])
+        .execute(RECORD_FLOOR_SQL, &[&env_key, &package, &version])
         .await
         .with_context(|| format!("record the floor {package}@{version}"))?;
     transaction
@@ -212,7 +212,7 @@ mod tests {
         let _lock = wamn_test_postgres::lock();
         let database = wamn_project_state::test_database::tenant_platform();
         database.execute(&[&format!(
-            "BEGIN; {} INSERT INTO catalog.packages (tenant_id,package_id,package_version,predecessor_version) VALUES ('history','fixture','1',NULL),('history','fixture','2','1'); COMMIT;",
+            "BEGIN; {} INSERT INTO catalog.packages (env_key,package_id,package_version,predecessor_version) VALUES ('history','fixture','1',NULL),('history','fixture','2','1'); COMMIT;",
             wamn_control_provision::platform_principals_sql("example.invalid").unwrap()
         )]).unwrap();
         let actor = wamn_control_provision::PlatformComponent::Provisioning.principal_id();

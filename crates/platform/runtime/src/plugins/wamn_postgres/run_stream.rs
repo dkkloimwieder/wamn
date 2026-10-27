@@ -147,14 +147,14 @@ pub(super) async fn open_stream(
 ) -> Result<OpenedStream, StatementError> {
     // See run_verified_query: admission parses, and this text guard stays.
     reject_claim_mutation(&statement.exact_sql).map_err(StatementError::Postgres)?;
-    let tenant = plugin
-        .require_tenant(component_id)
+    let env_key = plugin
+        .require_env_key(component_id)
         .map_err(StatementError::Postgres)?;
     let schema = plugin.schema_for(component_id);
     let runner = plugin.runner_for(component_id);
     let role = plugin.role_for(component_id);
     let (connection, policy, authority) = plugin
-        .checkout_workload(component_id, project, &tenant)
+        .checkout_workload(component_id, project, &env_key)
         .await
         .map_err(StatementError::Postgres)?;
     let connection = StatementConnectionGuard::new(connection, Arc::clone(&plugin.destroyed));
@@ -168,7 +168,7 @@ pub(super) async fn open_stream(
                     connection.connection(),
                     authority,
                     plugin.active_read(component_id),
-                    &tenant,
+                    &env_key,
                     schema.as_deref(),
                     runner.as_deref(),
                     role.as_deref(),

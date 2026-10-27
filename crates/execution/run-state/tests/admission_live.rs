@@ -217,19 +217,19 @@ fn surviving_authority_matrix_live() {
              {executor_surface} \
              GRANT USAGE ON SCHEMA wamn_run TO wamn_control_author; \
              INSERT INTO catalog.packages \
-               (tenant_id,package_id,package_version,artifact_digest) \
+               (env_key,package_id,package_version,artifact_digest) \
              VALUES ('t1','cat','1.0.0','sha256:{manifest_hash}'); \
-             INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) \
+             INSERT INTO catalog.releases (env_key,manifest_digest,canonical_bytes) \
              VALUES ('t1','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}'); \
              INSERT INTO wamn_run.environment_policies \
-               (tenant_id,expected_environment,durability_class) \
+               (env_key,expected_environment,durability_class) \
              VALUES ('t1','dev','standard'); \
              INSERT INTO wamn_run.runs \
-               (tenant_id,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
+               (env_key,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
                 wiring_id,wiring_version,status,trigger_source,input_json,service_principal_id) \
              VALUES ('t1','run-1','legacy-flow',1,'cat','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','dev','legacy-wiring',1, \
                      'dispatched','automation','{{}}','00000000-0000-0000-0000-000000000001'); \
-             INSERT INTO wamn_run.run_queue (tenant_id,run_id) VALUES ('t1','run-1');",
+             INSERT INTO wamn_run.run_queue (env_key,run_id) VALUES ('t1','run-1');",
             manifest_hash = "a".repeat(64),
         ),
     );
@@ -301,9 +301,9 @@ result_json,state_json,status,terminal_reason,updated_at', \
               AND pg_catalog.has_column_privilege( \
                     'wamn_executor_platform', a.attrelid, a.attnum, 'INSERT'); \
            ASSERT actual = \
-             'durability_class,environment,event_depth,event_root_run_id,event_source_run_id,execution_principal_id,execution_role,\
+             'durability_class,env_key,environment,event_depth,event_root_run_id,event_source_run_id,execution_principal_id,execution_role,\
 idempotency_key,input_json,invoked_by,invoked_by_user_id,manifest_digest,node_digests_json,\
-package_id,registration_id,service_principal_id,status,tenant_id,trigger_source,wiring_hash,wiring_id,wiring_version', \
+package_id,registration_id,service_principal_id,status,trigger_source,wiring_hash,wiring_id,wiring_version', \
                   'runs INSERT columns (the event and manual run grains) drifted: ' || coalesce(actual, '<none>'); \
            SELECT string_agg(a.attname, ',' ORDER BY a.attname) INTO actual \
              FROM pg_catalog.pg_attribute AS a \
@@ -311,7 +311,7 @@ package_id,registration_id,service_principal_id,status,tenant_id,trigger_source,
               AND NOT a.attisdropped \
               AND pg_catalog.has_column_privilege( \
                     'wamn_executor_platform', a.attrelid, a.attnum, 'INSERT'); \
-           ASSERT actual = 'run_id,tenant_id', \
+           ASSERT actual = 'env_key,run_id', \
                   'run_queue INSERT columns drifted: ' || coalesce(actual, '<none>'); \
            ASSERT pg_catalog.has_schema_privilege( \
                     'wamn_executor_platform', 'wamn_run', 'USAGE'); \
@@ -334,7 +334,7 @@ package_id,registration_id,service_principal_id,status,tenant_id,trigger_source,
     let claimed = success(
         &url,
         &format!(
-            "BEGIN; SET LOCAL ROLE {EXECUTOR_LOGIN}; SET LOCAL app.tenant='t1'; \
+            "BEGIN; SET LOCAL ROLE {EXECUTOR_LOGIN}; SET LOCAL app.env_key='t1'; \
              SET LOCAL search_path=wamn_run,catalog,public; \
              SELECT current_user; PREPARE matrix_claim(text[],text,text) AS {claim}; \
              EXECUTE matrix_claim(ARRAY['cat'],'dev','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'); ROLLBACK;"
@@ -348,7 +348,7 @@ package_id,registration_id,service_principal_id,status,tenant_id,trigger_source,
     assert_sqlstate(
         &url,
         "INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,package_id,environment, \
+           (env_key,run_id,package_id,environment, \
             wiring_id,wiring_version,status,trigger_source,input_json) \
          VALUES ('t1','half-run','cat','dev','candidate',1, \
                  'dispatched','test-case','{}');",
@@ -358,7 +358,7 @@ package_id,registration_id,service_principal_id,status,tenant_id,trigger_source,
     assert_sqlstate(
         &url,
         "UPDATE wamn_run.runs SET binding_world_json='[]' \
-          WHERE tenant_id='t1' AND run_id='run-1';",
+          WHERE env_key='t1' AND run_id='run-1';",
         "55000",
         "run-admission-pin-immutable",
     );
@@ -430,22 +430,22 @@ fn release_scoped_queue_claim_skips_another_releases_head_live() {
              END $$; \
              BEGIN; {catalog} {run_state} {run_queue} {app_schema} COMMIT; \
              INSERT INTO catalog.packages \
-               (tenant_id,package_id,package_version,artifact_digest) \
+               (env_key,package_id,package_version,artifact_digest) \
              VALUES ('t1','cat','1.0.0','sha256:{manifest_hash}'); \
-             INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) \
+             INSERT INTO catalog.releases (env_key,manifest_digest,canonical_bytes) \
              VALUES ('t1','sha256:21621f6bd9bc2769154aa2938726e891ecbc7929cd7be941b60ec776703ed394','{{\"release\":1}}'), \
                     ('t1','sha256:89437c2ddcb5d585633413604661041fe6b5ee9d49ae96153fe24812f1a8c5c0','{{\"release\":2}}'); \
              INSERT INTO wamn_run.environment_policies \
-               (tenant_id,expected_environment,durability_class) \
+               (env_key,expected_environment,durability_class) \
              VALUES ('t1','dev','standard'); \
              INSERT INTO wamn_run.runs \
-               (tenant_id,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
+               (env_key,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
                 wiring_id,wiring_version,status,trigger_source,input_json,service_principal_id) \
              VALUES ('t1','run-b','legacy-flow',1,'cat',{release_2},'dev','legacy-wiring',1, \
                      'dispatched','automation','{{}}','00000000-0000-0000-0000-000000000001'), \
                     ('t1','run-a','legacy-flow',1,'cat',{release_1},'dev','legacy-wiring',1, \
                      'dispatched','automation','{{}}','00000000-0000-0000-0000-000000000001'); \
-             INSERT INTO wamn_run.run_queue (tenant_id,run_id,available_at) \
+             INSERT INTO wamn_run.run_queue (env_key,run_id,available_at) \
              VALUES ('t1','run-b',now() - interval '2 minutes'), \
                     ('t1','run-a',now() - interval '1 minute');",
             manifest_hash = "a".repeat(64),
@@ -458,7 +458,7 @@ fn release_scoped_queue_claim_skips_another_releases_head_live() {
         let selected = success(
             &url,
             &format!(
-                "BEGIN; SET LOCAL app.tenant='t1'; \
+                "BEGIN; SET LOCAL app.env_key='t1'; \
                  SET LOCAL search_path=wamn_run,catalog,public; \
                  PREPARE release_claim(text[],text,text) AS {claim}; \
                  EXECUTE release_claim(ARRAY['cat'],'dev',{release}); ROLLBACK;"

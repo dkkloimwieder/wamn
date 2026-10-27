@@ -27,12 +27,12 @@ pub async fn author_and_enable(
         ).await?;
         // The graph still passes the release gate in author_workflow.
         control.execute(
-            "SELECT set_config('app.tenant', $1, false), set_config('app.user_id', $2, false)",
-            &[&request.tenant(), &request.created_by],
+            "SELECT set_config('app.env_key', $1, false), set_config('app.user_id', $2, false)",
+            &[&request.env_key(), &request.created_by],
         ).await?;
         control.execute(
-            "INSERT INTO wamn_run.gate_reports (tenant_id, wiring_hash, passed, summary) VALUES ($1, $2, true, '{}'::jsonb) ON CONFLICT DO NOTHING",
-            &[&request.tenant(), &request.document.wiring_hash().as_str()],
+            "INSERT INTO wamn_run.gate_reports (env_key, wiring_hash, passed, summary) VALUES ($1, $2, true, '{}'::jsonb) ON CONFLICT DO NOTHING",
+            &[&request.env_key(), &request.document.wiring_hash().as_str()],
         ).await?;
         let transaction = project.transaction().await?;
         author_workflow(&control, &transaction, request).await?;

@@ -15,7 +15,7 @@ use super::{
 };
 use crate::apply_package::{self, ApplyPackageRequest};
 
-const TENANT: &str = "effective-release-poc--fixture--dev";
+const ENV_KEY: &str = "effective-release-poc--fixture--dev";
 const ENVIRONMENT: &str = "dev";
 const PUBLISHER: &str = "effective-release-poc-publisher";
 const BASE_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM";
@@ -161,7 +161,7 @@ async fn provision_control(control: &Client) {
             .expect("install the production control bootstrap");
     }
     control
-        .query_one("SELECT set_config('app.tenant', $1, false)", &[&TENANT])
+        .query_one("SELECT set_config('app.env_key', $1, false)", &[&ENV_KEY])
         .await
         .expect("scope the control test session");
 }
@@ -193,7 +193,7 @@ fn admit_components(inputs: &[PackageInput]) -> (BTreeMap<String, String>, Relea
             });
         let declaration = crate::component_declaration::render_declaration_document(
             &input.component_declaration,
-            TENANT,
+            ENV_KEY,
         )
         .unwrap_or_else(|error| {
             panic!("render {}: {error}", input.component_declaration.display())
@@ -428,8 +428,8 @@ async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
     // Composition writes no release row; apply's stage writes it (R1 (3)).
     let release_rows: i64 = project
         .query_one(
-            "SELECT count(*) FROM catalog.releases WHERE tenant_id = $1",
-            &[&TENANT],
+            "SELECT count(*) FROM catalog.releases WHERE env_key = $1",
+            &[&ENV_KEY],
         )
         .await
         .expect("count release rows")

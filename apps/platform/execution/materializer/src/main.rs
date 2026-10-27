@@ -51,7 +51,7 @@ struct Config {
     org: String,
     project: String,
     env: String,
-    tenant: String,
+    env_key: String,
     batch: u32,
     fetch_ms: u32,
     sweep_ms: u64,
@@ -99,7 +99,7 @@ impl Config {
             org: required("WAMN_MAT_ORG")?,
             project: required("WAMN_MAT_PROJECT")?,
             env: required("WAMN_MAT_ENV")?,
-            tenant: required("WAMN_MAT_TENANT")?,
+            env_key: required("WAMN_MAT_ENV_KEY")?,
             batch: batch(&env_or("WAMN_MAT_BATCH", "64"))?,
             fetch_ms: env_or("WAMN_MAT_FETCH_MS", "5000")
                 .parse()
@@ -196,7 +196,7 @@ struct Serving {
     registration: EventRegistration,
     enable_sequence: u64,
     condition: Option<wamn_materializer::CompiledCondition>,
-    resident_tenant: String,
+    resident_env_key: String,
 }
 
 struct LoadedServings {
@@ -255,7 +255,7 @@ async fn load_servings(counters: &mut Counters) -> Result<LoadedServings, String
         servings.push(Serving {
             registration,
             condition,
-            resident_tenant: required("WAMN_MAT_TENANT")?,
+            resident_env_key: required("WAMN_MAT_ENV_KEY")?,
             enable_sequence: row.enable_sequence,
         });
     }
@@ -403,17 +403,17 @@ fn prepare_message(
                 serving.condition.as_ref(),
                 envelope,
                 known_packages,
-                &config.tenant,
+                &config.env_key,
                 source_event_id
                     .as_ref()
-                    .map(|_| serving.resident_tenant.as_str()),
+                    .map(|_| serving.resident_env_key.as_str()),
                 config.max_depth,
             );
             (source_event_id, verdict)
         }
         SourceEvent::Derived(event) => (
             verified_derived_source_event_id(
-                &config.tenant,
+                &config.env_key,
                 &config.project,
                 &config.env,
                 event,
@@ -424,7 +424,7 @@ fn prepare_message(
                 serving.condition.as_ref(),
                 event,
                 known_packages,
-                &config.tenant,
+                &config.env_key,
                 config.max_depth,
             ),
         ),
@@ -581,7 +581,7 @@ async fn serve(
             let headers = contents.headers.clone().unwrap_or_default();
             source
                 .identity(
-                    &config.tenant,
+                    &config.env_key,
                     &config.project,
                     &config.env,
                     &nats_message_ids(&headers),
@@ -634,12 +634,12 @@ async fn run_service() {
         }
     };
     println!(
-        "wamn::materializer up: stream={} filter=evt.{}.{}.{}.*.* tenant={} batch={} fetch_ms={} max_deliver={} max_sweeps={}",
+        "wamn::materializer up: stream={} filter=evt.{}.{}.{}.*.* env_key={} batch={} fetch_ms={} max_deliver={} max_sweeps={}",
         config.stream,
         config.org,
         config.project,
         config.env,
-        config.tenant,
+        config.env_key,
         config.batch,
         config.fetch_ms,
         config.max_deliver,
@@ -720,7 +720,7 @@ mod tests {
                 condition: None,
             },
             condition: None,
-            resident_tenant: "tenant".into(),
+            resident_env_key: "tenant".into(),
             enable_sequence: 0,
         }
     }

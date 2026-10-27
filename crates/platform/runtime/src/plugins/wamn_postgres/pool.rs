@@ -249,7 +249,7 @@ pub trait CredentialProvider: Send + Sync {
     /// (`wamn-0h0g.22.16`): a project names one login per class, and a class it
     /// does not name resolves to an error rather than to another class's login.
     ///
-    /// `tenant` is `Some` for guest-SQL and `None` for host-owned platform
+    /// `env_key` is `Some` for guest-SQL and `None` for host-owned platform
     /// work. After `wamn-0h0g.22.6` the guest's tenant comes from
     /// `current_user`, so for that class THE CREDENTIAL IS THE TENANT
     /// AUTHORITY: resolution must refuse rather than hand back a credential
@@ -258,7 +258,7 @@ pub trait CredentialProvider: Send + Sync {
         &self,
         project: &str,
         class: AuthorityClass,
-        tenant: Option<&str>,
+        env_key: Option<&str>,
     ) -> anyhow::Result<Option<ResolvedCredential>>;
 }
 
@@ -417,7 +417,7 @@ impl CredentialProvider for StaticCredentialProvider {
         &self,
         project: &str,
         class: AuthorityClass,
-        tenant: Option<&str>,
+        env_key: Option<&str>,
     ) -> anyhow::Result<Option<ResolvedCredential>> {
         let Some(cfg) = self.projects.get(project) else {
             return Ok(None);
@@ -429,13 +429,13 @@ impl CredentialProvider for StaticCredentialProvider {
             )
         })?;
         if class == AuthorityClass::GuestSql {
-            let tenant = tenant.context(
+            let env_key = env_key.context(
                 "guest-SQL resolution requires the tenant: after wamn-0h0g.22.6 the \
                  credential IS the tenant authority",
             )?;
             let database = credential_database(&resolved.database_url)?;
             let role = credential_generation_role(&resolved.database_url)?;
-            let key = app_scope_hash(tenant, &database);
+            let key = app_scope_hash(env_key, &database);
             anyhow::ensure!(
                 role.contains(&key),
                 "the credential for project {project:?} authenticates as {role:?}, which \
@@ -462,7 +462,7 @@ impl CredentialProvider for K8sSecretProvider {
         &self,
         _project: &str,
         _class: AuthorityClass,
-        _tenant: Option<&str>,
+        _env_key: Option<&str>,
     ) -> anyhow::Result<Option<ResolvedCredential>> {
         anyhow::bail!(
             "K8sSecretProvider (namespace {:?}) is not implemented yet — see wamn-5x0.1 [2.2b]; use StaticCredentialProvider",
@@ -608,8 +608,8 @@ impl PoolLifecycle {
 #[derive(Debug)]
 pub struct CheckoutProbe {
     pub backend_pid: i32,
-    /// `current_setting('app.tenant', true)` — must be NULL on a clean conn.
-    pub tenant_claim: Option<String>,
+    /// `current_setting('app.env_key', true)` — must be NULL on a clean conn.
+    pub env_key_claim: Option<String>,
     /// `pg_current_xact_id_if_assigned()` — non-NULL means a leaked open
     /// transaction that performed writes.
     pub xact_id: Option<String>,
@@ -936,7 +936,7 @@ mod tests {
     /// guest login carries `evil`'s, so a check that read the wrong credential
     /// would ADMIT a cross-tenant guest read. Both directions are asserted.
     #[test]
-    fn the_guest_tenant_check_reads_the_credential_the_guest_would_connect_with() {
+    fn the_guest_env_key_check_reads_the_credential_the_guest_would_connect_with() {
         let credentials = ClassCredentials::every_class(format!(
             "postgres://wamn_app_{}_a:pw@db/billing",
             app_scope_hash("acme", "billing")

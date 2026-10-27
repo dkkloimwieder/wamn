@@ -41,7 +41,7 @@ use crate::plugins::effect_span::{
     EFFECT_OPERATION, EffectIdentity, EffectWiring, JETSTREAM_DURATION_MS, effect_span,
     record_effect_ms, record_wiring,
 };
-use crate::plugins::wamn_postgres::{DEFAULT_PROJECT, PROJECT_CONFIG_KEY, TENANT_CONFIG_KEY};
+use crate::plugins::wamn_postgres::{DEFAULT_PROJECT, ENV_KEY_CONFIG_KEY, PROJECT_CONFIG_KEY};
 use wamn_engine::release_manifest::LoadedRelease;
 
 mod bindings {
@@ -226,7 +226,7 @@ pub struct WamnJetstream {
 /// One component's bind-time tenant/project claim.
 #[derive(Clone, Debug)]
 struct JetstreamClaim {
-    tenant: Box<str>,
+    env_key: Box<str>,
     project: Box<str>,
     environment: Box<str>,
 }
@@ -317,7 +317,7 @@ fn prepare_derived_publication(
     }
 
     let event = DerivedEvent::new(
-        claim.tenant.to_string(),
+        claim.env_key.to_string(),
         coordinates.project.to_string(),
         coordinates.environment.to_string(),
         request.package_id,
@@ -335,7 +335,7 @@ fn prepare_derived_publication(
         event.op,
     );
     let message_id = derived_msg_id(
-        &claim.tenant,
+        &claim.env_key,
         &coordinates.project,
         &coordinates.environment,
         &event.package_id,
@@ -398,7 +398,7 @@ fn js_span(
     let span = effect_span!(
         "wamn.jetstream",
         EffectIdentity {
-            tenant: &claim.tenant,
+            env_key: &claim.env_key,
             project: &claim.project,
             component: component_id,
         },
@@ -503,7 +503,7 @@ impl WamnJetstream {
     fn set_claim(
         &self,
         component_id: &str,
-        tenant: Option<&str>,
+        env_key: Option<&str>,
         project: Option<&str>,
         environment: Option<&str>,
     ) {
@@ -513,7 +513,7 @@ impl WamnJetstream {
             .insert(
                 component_id.to_string(),
                 JetstreamClaim {
-                    tenant: tenant.unwrap_or_default().into(),
+                    env_key: env_key.unwrap_or_default().into(),
                     project: project.unwrap_or(DEFAULT_PROJECT).into(),
                     environment: environment.unwrap_or_default().into(),
                 },
@@ -528,12 +528,12 @@ impl WamnJetstream {
     pub fn bind_derived_scope(
         &self,
         component_id: &str,
-        tenant: &str,
+        env_key: &str,
         project: &str,
         environment: &str,
     ) -> Result<(), DerivedPublishError> {
         for (field, value) in [
-            ("tenant", tenant),
+            ("env_key", env_key),
             ("project", project),
             ("environment", environment),
         ] {
@@ -544,7 +544,12 @@ impl WamnJetstream {
                 ));
             }
         }
-        self.set_claim(component_id, Some(tenant), Some(project), Some(environment));
+        self.set_claim(
+            component_id,
+            Some(env_key),
+            Some(project),
+            Some(environment),
+        );
         Ok(())
     }
 
@@ -566,7 +571,7 @@ impl WamnJetstream {
             .get(component_id)
             .cloned()
             .unwrap_or_else(|| JetstreamClaim {
-                tenant: Box::default(),
+                env_key: Box::default(),
                 project: DEFAULT_PROJECT.into(),
                 environment: Box::default(),
             })
@@ -589,7 +594,7 @@ impl WamnJetstream {
                 )
             })?;
         for value in [
-            claim.tenant.as_ref(),
+            claim.env_key.as_ref(),
             claim.project.as_ref(),
             claim.environment.as_ref(),
         ] {
@@ -761,17 +766,17 @@ impl HostPlugin for WamnJetstream {
         if !interfaces.contains("wamn", "jetstream", &["registration"]) {
             return Ok(());
         }
-        let (tenant, project, environment) = {
+        let (env_key, project, environment) = {
             let config = &item.local_resources().config;
             (
-                config.get(TENANT_CONFIG_KEY).cloned(),
+                config.get(ENV_KEY_CONFIG_KEY).cloned(),
                 config.get(PROJECT_CONFIG_KEY).cloned(),
                 config.get(ENVIRONMENT_CONFIG_KEY).cloned(),
             )
         };
         self.set_claim(
             item.id(),
-            tenant.as_deref(),
+            env_key.as_deref(),
             project.as_deref(),
             environment.as_deref(),
         );
@@ -1182,7 +1187,7 @@ mod tests {
             harness.attributes("wamn.jetstream"),
             expected_attributes(&[
                 ("effect.operation", "publish-derived"),
-                ("wamn.tenant", "fixture-route-auth"),
+                ("wamn.env_key", "fixture-route-auth"),
                 ("wamn.project", "database-project"),
                 ("wamn.component", "component-1"),
                 ("wamn.package_id", "platform_fixture"),
@@ -1239,7 +1244,7 @@ mod tests {
         let dangerous_author_id = "author\r\nNats-Msg-Id: forged";
         let publication = prepare_derived_publication(
             JetstreamClaim {
-                tenant: "fixture-route-auth".into(),
+                env_key: "fixture-route-auth".into(),
                 project: "database-project".into(),
                 environment: "dev".into(),
             },
@@ -1270,7 +1275,7 @@ mod tests {
         assert!(!publication.message_id.contains("\r\n"));
 
         let event = DerivedEvent::from_slice(&publication.body).expect("derived wire decodes");
-        assert_eq!(event.tenant, "fixture-route-auth");
+        assert_eq!(event.env_key, "fixture-route-auth");
         assert_eq!(event.project, "widgets");
         assert_eq!(event.environment, "dev");
         assert_eq!(event.package_id, "platform_fixture");
@@ -1286,7 +1291,7 @@ mod tests {
     #[test]
     fn derived_publication_refuses_a_noncanonical_package_identity() {
         let claim = JetstreamClaim {
-            tenant: "fixture".into(),
+            env_key: "fixture".into(),
             project: "app".into(),
             environment: "dev".into(),
         };

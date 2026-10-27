@@ -118,7 +118,7 @@ impl std::error::Error for CredentialProbeError {}
 #[derive(Clone)]
 pub struct ExplicitCredentialSource {
     config: Config,
-    tenant_binding: Box<str>,
+    env_key_binding: Box<str>,
 }
 
 impl Debug for ExplicitCredentialSource {
@@ -126,7 +126,7 @@ impl Debug for ExplicitCredentialSource {
         formatter
             .debug_struct("ExplicitCredentialSource")
             .field("credential", &"[REDACTED]")
-            .field("tenant_binding", &"[REDACTED]")
+            .field("env_key_binding", &"[REDACTED]")
             .finish()
     }
 }
@@ -138,7 +138,7 @@ impl Debug for ExplicitCredentialSource {
 /// always refuses, including when it happens to name the same database.
 pub fn explicit_credential_source(
     database_url: &str,
-    tenant_binding: impl Into<Box<str>>,
+    env_key_binding: impl Into<Box<str>>,
     ambient: AmbientCredentialState,
 ) -> Result<ExplicitCredentialSource, CredentialProbeError> {
     if ambient == AmbientCredentialState::Present {
@@ -147,8 +147,8 @@ pub fn explicit_credential_source(
             CredentialProbePredicate::CredentialSource,
         ));
     }
-    let tenant_binding = tenant_binding.into();
-    if tenant_binding.is_empty() {
+    let env_key_binding = env_key_binding.into();
+    if env_key_binding.is_empty() {
         return Err(CredentialProbeError::source(
             CredentialProbeErrorType::InvalidSource,
             CredentialProbePredicate::TenantBinding,
@@ -168,7 +168,7 @@ pub fn explicit_credential_source(
     }
     Ok(ExplicitCredentialSource {
         config,
-        tenant_binding,
+        env_key_binding,
     })
 }
 
@@ -248,7 +248,7 @@ pub struct ExpectedCredentialIdentity {
     session_user: Box<str>,
     current_user: Box<str>,
     database: Box<str>,
-    tenant_binding: Box<str>,
+    env_key_binding: Box<str>,
     memberships: Vec<MembershipExpectation>,
     acl: Vec<AclExpectation>,
 }
@@ -258,7 +258,7 @@ impl ExpectedCredentialIdentity {
         session_user: impl Into<Box<str>>,
         current_user: impl Into<Box<str>>,
         database: impl Into<Box<str>>,
-        tenant_binding: impl Into<Box<str>>,
+        env_key_binding: impl Into<Box<str>>,
         memberships: Vec<MembershipExpectation>,
         acl: Vec<AclExpectation>,
     ) -> Self {
@@ -266,7 +266,7 @@ impl ExpectedCredentialIdentity {
             session_user: session_user.into(),
             current_user: current_user.into(),
             database: database.into(),
-            tenant_binding: tenant_binding.into(),
+            env_key_binding: env_key_binding.into(),
             memberships,
             acl,
         }
@@ -319,7 +319,7 @@ pub fn credential_exactness_probe(
             CredentialProbePredicate::Database,
         ));
     }
-    if source.tenant_binding != expected.tenant_binding {
+    if source.env_key_binding != expected.env_key_binding {
         return Err(CredentialProbeError::source(
             CredentialProbeErrorType::PredicateMismatch,
             CredentialProbePredicate::TenantBinding,
@@ -581,16 +581,16 @@ mod tests {
 
     const URL: &str = "postgresql://exact-user:do-not-print@localhost/exact_db";
 
-    fn source(tenant: &str) -> ExplicitCredentialSource {
-        explicit_credential_source(URL, tenant, AmbientCredentialState::Absent).unwrap()
+    fn source(env_key: &str) -> ExplicitCredentialSource {
+        explicit_credential_source(URL, env_key, AmbientCredentialState::Absent).unwrap()
     }
 
-    fn expected(tenant: &str) -> ExpectedCredentialIdentity {
+    fn expected(env_key: &str) -> ExpectedCredentialIdentity {
         ExpectedCredentialIdentity::new(
             "exact-user",
             "exact-user",
             "exact_db",
-            tenant,
+            env_key,
             vec![MembershipExpectation::new(
                 "wamn_app",
                 MembershipMode::Member,
@@ -696,7 +696,7 @@ mod tests {
         let source = source("tenant-a");
         assert_eq!(
             format!("{source:?}"),
-            "ExplicitCredentialSource { credential: \"[REDACTED]\", tenant_binding: \"[REDACTED]\" }"
+            "ExplicitCredentialSource { credential: \"[REDACTED]\", env_key_binding: \"[REDACTED]\" }"
         );
         let probe = credential_exactness_probe(source, expected("tenant-a")).unwrap();
         let rendered = format!("{probe:?}");
@@ -706,7 +706,7 @@ mod tests {
     }
 
     #[test]
-    fn source_user_database_and_tenant_swaps_refuse() {
+    fn source_user_database_and_env_key_swaps_refuse() {
         let wrong_user = ExpectedCredentialIdentity::new(
             "other-user",
             "other-user",

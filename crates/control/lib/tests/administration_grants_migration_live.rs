@@ -150,6 +150,12 @@ async fn the_migration_grants_the_provisioned_administration_surface() {
             include_str!(
                 "../../../../deploy/sql/migrations/project/0042_c35_connection_bindings.sql"
             )
+            .replace("tenant_id", "env_key")
+            .replace(
+                "connection_upgrade_bindings(tenant text",
+                "connection_upgrade_bindings(env_key text"
+            )
+            .replace("binding.env_key = tenant ", "binding.env_key = $1 ")
         ))
         .await
         .expect("apply the connection administration surface");

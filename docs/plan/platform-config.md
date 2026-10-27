@@ -425,8 +425,8 @@ The test budget, the stops and the closeout are the same as for C2.
 
 Owner rulings of 2026-10-25 on the C3 scoping questions. They replace the text below where they differ:
 
-1. C3.1 removes `tenant_id` only from `role`, `user_role`, `permission`, `api_key` and `environment`, with their history tables, policies and indexes. The shared control, catalog and run tables keep the environment key (`org--project--env`). The rename of that key to "environment" outside frozen wire contracts is `wamn-8yflb`, outside C3.
-2. The event `tenant` field and the credential hashes that frame `"tenant"` do not change, because they are frozen wire contracts.
+1. C3.1 removes `tenant_id` only from `role`, `user_role`, `permission`, `api_key` and `environment`, with their history tables, policies and indexes. The shared control, catalog and run tables keep the environment key (`org--project--env`). `wamn-8yflb` renames that key to `env_key`, including its wire fields. The separate `environment` field keeps the short name.
+2. The event field is `env_key`, and credential hashes frame `"env_key"`. No format number changes.
 3. The system database owns org-wide `external_system` and `connection` tables, grown from `registry.org_connections`. The `platform.*` tables become read-only projections that the control host writes, and they hold only what the project enabled.
 4. Connection generations and immutable bindings stay. The connection row points to its current generation.
 5. The connection row has a unique `service_principal_id` column.

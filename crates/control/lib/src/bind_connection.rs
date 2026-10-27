@@ -42,25 +42,25 @@ use wamn_schema_control::connections::{
     lock_connection_selection_sql, select_connection_instance_sql, set_org_connection_source_sql,
 };
 
-const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
+const CLAIM_ENV_KEY_SQL: &str = "SELECT set_config('app.env_key', $1, true)";
 const SELECT_REQUIREMENT_SQL: &str = "\
 SELECT requirement.requirement_json::text, requirement.requirement_hash \
   FROM catalog.connection_requirements AS requirement \
- WHERE requirement.tenant_id = $1 AND requirement.component_digest = $2 \
+ WHERE requirement.env_key = $1 AND requirement.component_digest = $2 \
    AND requirement.store_alias = $3 \
    AND EXISTS ( \
        SELECT 1 FROM catalog.releases AS release \
        CROSS JOIN LATERAL jsonb_array_elements( \
              convert_from(release.canonical_bytes, 'UTF8')::jsonb -> 'components' \
          ) AS component(value) \
-      WHERE release.tenant_id = $1 AND release.manifest_digest = $4 \
+      WHERE release.env_key = $1 AND release.manifest_digest = $4 \
         AND component.value -> 'descriptor' ->> 'component-digest' = $2 AND component.value ->> 'package-id' = $5)";
 const FIRST_GENERATION: i64 = 1;
 /// Enable a disabled instance again, at the revision the caller read.
 const ENABLE_INSTANCE_SQL: &str = "\
 UPDATE catalog.connection_instances \
    SET lifecycle_status = 'enabled', revision = revision + 1, updated_at = now() \
- WHERE tenant_id = $1 AND environment = $2 AND instance_id = $3 \
+ WHERE env_key = $1 AND environment = $2 AND instance_id = $3 \
    AND lifecycle_status = 'disabled' AND revision = $4";
 
 #[derive(Debug)]
@@ -100,9 +100,9 @@ pub struct BindConnectionRequest {
 }
 
 impl BindConnectionRequest {
-    /// The database tenant derived from the environment coordinate.
-    pub fn tenant(&self) -> String {
-        wamn_control_registry::project_env_tenant(&self.org, &self.project, &self.environment)
+    /// The composed environment key derived from the environment coordinate.
+    pub fn env_key(&self) -> String {
+        wamn_control_registry::project_env_key(&self.org, &self.project, &self.environment)
     }
 }
 
@@ -125,9 +125,9 @@ pub struct ConnectionInstance {
 }
 
 impl ConnectionInstance {
-    /// The database tenant derived from the environment coordinate.
-    pub fn tenant(&self) -> String {
-        wamn_control_registry::project_env_tenant(&self.org, &self.project, &self.environment)
+    /// The composed environment key derived from the environment coordinate.
+    pub fn env_key(&self) -> String {
+        wamn_control_registry::project_env_key(&self.org, &self.project, &self.environment)
     }
 }
 
@@ -165,7 +165,7 @@ pub async fn ensure_instance(instance: &ConnectionInstance) -> anyhow::Result<(O
             .await
             .context("open the connection instance transaction")?;
         transaction
-            .execute(CLAIM_TENANT_SQL, &[&instance.tenant()])
+            .execute(CLAIM_ENV_KEY_SQL, &[&instance.env_key()])
             .await
             .context("claim the tenant for the connection instance transaction")?;
         transaction
@@ -266,7 +266,7 @@ async fn bind_in(
         .await
         .context("open the bind-connection transaction")?;
     transaction
-        .execute(CLAIM_TENANT_SQL, &[&args.tenant()])
+        .execute(CLAIM_ENV_KEY_SQL, &[&args.env_key()])
         .await
         .context("claim the tenant for the bind-connection transaction")?;
     transaction
@@ -277,7 +277,7 @@ async fn bind_in(
         .context("bind wamn:provisioning as the actor and operation")?;
 
     let package_id = if package_id.is_empty() {
-        let rows = transaction.query("SELECT component.value ->> 'package-id' FROM catalog.releases release CROSS JOIN LATERAL jsonb_array_elements(convert_from(release.canonical_bytes,'UTF8')::jsonb -> 'components') component(value) WHERE release.tenant_id=$1 AND release.manifest_digest=$2 AND component.value -> 'descriptor' ->> 'component-digest'=$3", &[&args.tenant(), &args.manifest_digest, &args.component_digest]).await?;
+        let rows = transaction.query("SELECT component.value ->> 'package-id' FROM catalog.releases release CROSS JOIN LATERAL jsonb_array_elements(convert_from(release.canonical_bytes,'UTF8')::jsonb -> 'components') component(value) WHERE release.env_key=$1 AND release.manifest_digest=$2 AND component.value -> 'descriptor' ->> 'component-digest'=$3", &[&args.env_key(), &args.manifest_digest, &args.component_digest]).await?;
         ensure!(
             rows.len() == 1,
             "connection binding requires one exact package"
@@ -300,7 +300,7 @@ async fn bind_in(
         .query_opt(
             SELECT_REQUIREMENT_SQL,
             &[
-                &args.tenant(),
+                &args.env_key(),
                 &args.component_digest,
                 &args.store_alias,
                 &args.manifest_digest,
@@ -346,10 +346,10 @@ async fn bind_in(
     let existing_binding = transaction
         .query_opt(
             "SELECT environment, instance_id, binding_status, validation_status, mode \
-           FROM catalog.connection_bindings WHERE tenant_id = $1 \
+           FROM catalog.connection_bindings WHERE env_key = $1 \
             AND manifest_digest = $2 AND component_digest = $3 AND store_alias = $4 AND package_id = $5",
             &[
-                &args.tenant(),
+                &args.env_key(),
                 &args.manifest_digest,
                 &args.component_digest,
                 &args.store_alias,
@@ -379,7 +379,7 @@ async fn bind_in(
             .execute(
                 insert_component_connection_binding_with_mode_sql(),
                 &[
-                    &args.tenant(),
+                    &args.env_key(),
                     &args.manifest_digest,
                     &args.component_digest,
                     &args.store_alias,
@@ -421,7 +421,7 @@ async fn bind_generation(
         .execute(
             set_org_connection_source_sql(),
             &[
-                &args.tenant(),
+                &args.env_key(),
                 &args.environment,
                 &args.instance_id,
                 &args.org_connection_name,
@@ -472,7 +472,7 @@ async fn bind_generation_inputs(
     definition: &Value,
 ) -> anyhow::Result<(Option<i64>, i64)> {
     let coordinate: [&(dyn tokio_postgres::types::ToSql + Sync); 3] =
-        [&args.tenant(), &args.environment, &args.instance_id];
+        [&args.env_key(), &args.environment, &args.instance_id];
     let mut current = transaction
         .query_opt(select_connection_instance_sql(), &coordinate)
         .await?;
@@ -486,7 +486,7 @@ async fn bind_generation_inputs(
             .execute(
                 ENABLE_INSTANCE_SQL,
                 &[
-                    &args.tenant(),
+                    &args.env_key(),
                     &args.environment,
                     &args.instance_id,
                     &revision,
@@ -505,7 +505,7 @@ async fn bind_generation_inputs(
     let Some(current) = current else {
         insert_instance_generation(
             transaction,
-            &args.tenant(),
+            &args.env_key(),
             &args.environment,
             &args.instance_id,
             descriptor,
@@ -534,7 +534,7 @@ async fn bind_generation_inputs(
                 .query_opt(
                     lock_connection_selection_sql(),
                     &[
-                        &args.tenant(),
+                        &args.env_key(),
                         &args.environment,
                         &args.instance_id,
                         &previous,
@@ -558,7 +558,7 @@ async fn bind_generation_inputs(
         .execute(
             activate_connection_generation_sql(),
             &[
-                &args.tenant(),
+                &args.env_key(),
                 &args.environment,
                 &args.instance_id,
                 &generation,
@@ -576,7 +576,7 @@ async fn bind_generation_inputs(
         .execute(
             insert_connection_generation_sql(),
             &[
-                &args.tenant(),
+                &args.env_key(),
                 &args.environment,
                 &args.instance_id,
                 &generation,
@@ -789,7 +789,7 @@ pub fn read_local_instance(input: &LocalInstanceInput) -> anyhow::Result<Prepare
 /// Insert only absent local instances; never replace live generation authority.
 pub async fn prepare_local_instance(
     client: &impl tokio_postgres::GenericClient,
-    tenant: &str,
+    env_key: &str,
     environment: &str,
     instance_id: &str,
     input: &PreparedLocalInstance,
@@ -805,10 +805,10 @@ pub async fn prepare_local_instance(
                 generation.definition_json::text, generation.definition_hash, generation.credential_set_handle
          FROM catalog.connection_instances AS instance
          LEFT JOIN catalog.connection_generations AS generation
-           ON generation.tenant_id = instance.tenant_id AND generation.environment = instance.environment
+           ON generation.env_key = instance.env_key AND generation.environment = instance.environment
           AND generation.instance_id = instance.instance_id AND generation.generation = instance.active_generation
-         WHERE instance.tenant_id = $1 AND instance.environment = $2 AND instance.instance_id = $3",
-        &[&tenant, &environment, &instance_id],
+         WHERE instance.env_key = $1 AND instance.environment = $2 AND instance.instance_id = $3",
+        &[&env_key, &environment, &instance_id],
     ).await?;
     if let Some(row) = current {
         let text: Option<String> = row.try_get(4)?;
@@ -829,7 +829,7 @@ pub async fn prepare_local_instance(
     }
     insert_instance_generation(
         client,
-        tenant,
+        env_key,
         environment,
         instance_id,
         &descriptor,
@@ -841,7 +841,7 @@ pub async fn prepare_local_instance(
 
 async fn insert_instance_generation(
     client: &impl tokio_postgres::GenericClient,
-    tenant: &str,
+    env_key: &str,
     environment: &str,
     instance_id: &str,
     descriptor: &ConnectionTypeDescriptor,
@@ -854,7 +854,7 @@ async fn insert_instance_generation(
         .execute(
             insert_connection_instance_sql(),
             &[
-                &tenant,
+                &env_key,
                 &environment,
                 &instance_id,
                 &descriptor.requirement_type,
@@ -867,7 +867,7 @@ async fn insert_instance_generation(
         .execute(
             insert_connection_generation_sql(),
             &[
-                &tenant,
+                &env_key,
                 &environment,
                 &instance_id,
                 &FIRST_GENERATION,
@@ -888,7 +888,7 @@ async fn insert_instance_generation(
         .execute(
             activate_connection_generation_sql(),
             &[
-                &tenant,
+                &env_key,
                 &environment,
                 &instance_id,
                 &FIRST_GENERATION,

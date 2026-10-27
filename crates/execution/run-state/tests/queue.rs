@@ -266,7 +266,7 @@ fn effect_attempt_escape_is_classified_before_any_plan_read() {
     let fence = serialize_effect_intent_sql();
     assert!(fence.contains("pg_advisory_xact_lock"));
     assert!(fence.contains("hashtextextended"));
-    assert!(fence.contains("current_setting('app.tenant', true)"));
+    assert!(fence.contains("current_setting('app.env_key', true)"));
     assert!(fence.contains("$1::text"));
 }
 
@@ -433,7 +433,7 @@ fn lease_arithmetic_remains_stable() {
 fn queue_entry_round_trips_without_partition_plane() {
     let entry = QueueEntry::ready("tenant", "run", 42, 5).with_stream_seq(17);
     let value = serde_json::to_value(&entry).unwrap();
-    assert_eq!(value["tenant-id"], json!("tenant"));
+    assert_eq!(value["env_key"], json!("tenant"));
     assert_eq!(value["stream-seq"], json!(17));
     assert!(value.get("partition-key").is_none());
     assert!(value.get("partition-policy").is_none());

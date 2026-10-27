@@ -29,12 +29,12 @@ use wamn_project_state::{ADMIN_ROLE, workflow_user_id};
 use crate::author_workflow::{AuthorWorkflowError, AuthorWorkflowErrorType, gate_against_release};
 use crate::environment::lock::{DEPLOYMENT_IN_PROGRESS, LifecycleLock};
 
-const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
+const CLAIM_ENV_KEY_SQL: &str = "SELECT set_config('app.env_key', $1, true)";
 
 /// Params `$1` to `$5`: the version's key.
 const SELECT_VERSION_SQL: &str = "\
 SELECT graph_json::text, wiring_hash, execution_role, trigger, source_package, entity, ops, condition FROM catalog.workflows \
- WHERE tenant_id = $1 AND environment = $2 AND application = $3 \
+ WHERE env_key = $1 AND environment = $2 AND application = $3 \
    AND workflow_id = $4 AND version = $5 \
    FOR UPDATE";
 
@@ -48,17 +48,17 @@ SELECT EXISTS (\
 /// Params `$1` to `$5`: the version that stays or becomes enabled.
 const DISABLE_OTHERS_SQL: &str = "\
 UPDATE catalog.workflows SET enabled = false \
- WHERE tenant_id = $1 AND environment = $2 AND application = $3 \
+ WHERE env_key = $1 AND environment = $2 AND application = $3 \
    AND workflow_id = $4 AND version <> $5 AND enabled";
 
 const ENABLE_SQL: &str = "\
 UPDATE catalog.workflows SET enabled = true, enable_sequence = $6 \
- WHERE tenant_id = $1 AND environment = $2 AND application = $3 \
+ WHERE env_key = $1 AND environment = $2 AND application = $3 \
    AND workflow_id = $4 AND version = $5";
 
 const DISABLE_SQL: &str = "\
 UPDATE catalog.workflows SET enabled = false \
- WHERE tenant_id = $1 AND environment = $2 AND application = $3 \
+ WHERE env_key = $1 AND environment = $2 AND application = $3 \
    AND workflow_id = $4 AND version = $5";
 
 /// The start of the refusal while another verb holds the lifecycle lock.
@@ -177,9 +177,9 @@ pub struct WorkflowVersion<'a> {
 }
 
 impl WorkflowVersion<'_> {
-    /// The database tenant derived from the environment coordinate.
-    pub fn tenant(&self) -> String {
-        wamn_control_registry::project_env_tenant(self.org, self.project, self.environment)
+    /// The composed environment key derived from the environment coordinate.
+    pub fn env_key(&self) -> String {
+        wamn_control_registry::project_env_key(self.org, self.project, self.environment)
     }
 }
 
@@ -238,7 +238,7 @@ pub async fn enable_workflow(
         .map(|application| application.packages.clone())
         .unwrap_or_default();
     under_lock(system_url, triple, async || {
-        let transaction = begin(project, &workflow.tenant()).await?;
+        let transaction = begin(project, &workflow.env_key()).await?;
         enable_in(
             &transaction,
             workflow,
@@ -269,11 +269,11 @@ pub async fn disable_workflow(
     workflow: &WorkflowVersion<'_>,
 ) -> Result<(), WorkflowLifecycleError> {
     under_lock(system_url, triple, async || {
-        let transaction = begin(project, &workflow.tenant()).await?;
+        let transaction = begin(project, &workflow.env_key()).await?;
         let changed = transaction
             .execute(
                 DISABLE_SQL,
-                &key(workflow, &workflow.version()?, &workflow.tenant()),
+                &key(workflow, &workflow.version()?, &workflow.env_key()),
             )
             .await
             .map_err(|error| storage("disable the workflow version", error))?;
@@ -312,14 +312,14 @@ async fn under_lock(
 
 async fn begin<'a>(
     project: &'a mut Client,
-    tenant_id: &str,
+    env_key: &str,
 ) -> Result<Transaction<'a>, WorkflowLifecycleError> {
     let transaction = project
         .transaction()
         .await
         .map_err(|error| storage("begin the workflow transaction", error))?;
     transaction
-        .query_one(CLAIM_TENANT_SQL, &[&tenant_id])
+        .query_one(CLAIM_ENV_KEY_SQL, &[&env_key])
         .await
         .map_err(|error| storage("claim the workflow tenant", error))?;
     Ok(transaction)
@@ -335,10 +335,10 @@ async fn commit(transaction: Transaction<'_>) -> Result<(), WorkflowLifecycleErr
 fn key<'a>(
     workflow: &'a WorkflowVersion<'_>,
     version: &'a i32,
-    tenant: &'a String,
+    env_key: &'a String,
 ) -> [&'a (dyn tokio_postgres::types::ToSql + Sync); 5] {
     [
-        tenant,
+        env_key,
         &workflow.environment,
         &workflow.application,
         &workflow.workflow_id,
@@ -361,8 +361,8 @@ async fn enable_in(
     events: Option<&crate::environment::EventBroker>,
 ) -> Result<(), WorkflowLifecycleError> {
     let version = workflow.version()?;
-    let tenant = workflow.tenant();
-    let key = key(workflow, &version, &tenant);
+    let env_key = workflow.env_key();
+    let key = key(workflow, &version, &env_key);
     let row = transaction
         .query_opt(SELECT_VERSION_SQL, &key)
         .await
@@ -378,7 +378,7 @@ async fn enable_in(
         .and_then(|value| WiringDocument::parse(&value).map_err(WorkflowLifecycleError::stored))?;
     let hash = gate_against_release(
         transaction,
-        &workflow.tenant(),
+        &workflow.env_key(),
         packages,
         manifest_digest,
         &graph,

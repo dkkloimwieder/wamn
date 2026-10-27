@@ -68,7 +68,7 @@ impl fmt::Debug for EdgeRelease {
 impl EdgeRelease {
     /// Load the bundle in `directory` whose `edge-release.json` has
     /// `bundle_digest`, and read every component body once. `scope` is the
-    /// tenant and environment of the box, from its configuration.
+    /// env_key and environment of the box, from its configuration.
     pub async fn load(
         directory: &Path,
         bundle_digest: &str,

@@ -51,13 +51,13 @@ use crate::{RunStatus, sql as run_sql};
 pub fn select_production_claim_sql() -> String {
     format!(
         "WITH candidate AS MATERIALIZED ( \
-             SELECT q.tenant_id, q.run_id, \
+             SELECT q.env_key, q.run_id, \
                     q.lease_expires_at IS NOT NULL AS had_prior_lease \
                FROM run_queue AS q \
                JOIN runs AS selected_run \
-                 ON selected_run.tenant_id = q.tenant_id \
+                 ON selected_run.env_key = q.env_key \
                 AND selected_run.run_id = q.run_id \
-              WHERE q.tenant_id = current_setting('app.tenant', true) \
+              WHERE q.env_key = current_setting('app.env_key', true) \
                 AND selected_run.package_id = ANY($1::text[]) \
                 AND selected_run.environment = $2 \
                 AND selected_run.manifest_digest IS NOT DISTINCT FROM $3::text \
@@ -68,7 +68,7 @@ pub fn select_production_claim_sql() -> String {
                     OR q.lease_expires_at IS NULL \
                     OR EXISTS ( \
                         SELECT 1 FROM effect_attempts AS effect \
-                         WHERE effect.tenant_id = q.tenant_id \
+                         WHERE effect.env_key = q.env_key \
                            AND effect.run_id = q.run_id \
                            AND selected_run.{durable} \
                     ) \
@@ -94,7 +94,7 @@ pub fn select_production_claim_sql() -> String {
                 r.node_digests_json::text, r.event_root_run_id, r.event_depth \
            FROM candidate \
            JOIN runs AS r \
-             ON r.tenant_id = candidate.tenant_id AND r.run_id = candidate.run_id",
+             ON r.env_key = candidate.env_key AND r.run_id = candidate.run_id",
         execution_input = run_sql::execution_input_sql("r"),
         durable = DURABLE_CLASS_SQL_PREDICATE,
     )
@@ -110,7 +110,7 @@ pub fn select_production_claim_sql() -> String {
 pub fn select_claim_effect_attempt_sql() -> String {
     "SELECT EXISTS ( \
          SELECT 1 FROM effect_attempts AS effect \
-          WHERE effect.tenant_id = current_setting('app.tenant', true) \
+          WHERE effect.env_key = current_setting('app.env_key', true) \
             AND effect.run_id = $1 \
      )"
     .to_string()
@@ -118,14 +118,14 @@ pub fn select_claim_effect_attempt_sql() -> String {
 
 /// Serialize effect-attempt creation against claim-time classification.
 ///
-/// `$1` is the run id. The tenant claim and run id form one transaction-scoped
+/// `$1` is the run id. The `env_key` claim and run id form one transaction-scoped
 /// advisory-lock key. Hash collisions can only add harmless contention. This
 /// must be its own statement: the following effect-evidence query needs a fresh
 /// READ COMMITTED snapshot after any wait on a concurrent writer.
 pub fn serialize_effect_intent_sql() -> String {
     "SELECT pg_catalog.pg_advisory_xact_lock( \
          pg_catalog.hashtextextended( \
-             pg_catalog.current_setting('app.tenant', true) \
+             pg_catalog.current_setting('app.env_key', true) \
                  || E'\\x1f' || $1::text, \
              0::bigint))"
         .to_string()
@@ -140,7 +140,7 @@ pub fn serialize_effect_intent_sql() -> String {
 pub fn clear_pre_effect_state_sql() -> String {
     "UPDATE runs \
         SET state_json = NULL \
-      WHERE tenant_id = current_setting('app.tenant', true) AND run_id = $1 \
+      WHERE env_key = current_setting('app.env_key', true) AND run_id = $1 \
       RETURNING run_id"
         .to_string()
 }
@@ -162,7 +162,7 @@ pub fn advance_claim_attempts_sql() -> String {
     "UPDATE run_queue AS q \
         SET attempts = q.attempts \
             + CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END \
-      WHERE q.tenant_id = current_setting('app.tenant', true) \
+      WHERE q.env_key = current_setting('app.env_key', true) \
         AND q.run_id = $1 \
       RETURNING q.attempts"
         .to_string()
@@ -188,15 +188,15 @@ pub fn grant_production_claim_sql() -> String {
                     lease_expires_at = statement_timestamp() \
                         + ($3::bigint * interval '1 millisecond'), \
                     lease_generation = q.lease_generation + 1 \
-              WHERE q.tenant_id = current_setting('app.tenant', true) \
+              WHERE q.env_key = current_setting('app.env_key', true) \
                 AND q.run_id = $1 \
-              RETURNING q.tenant_id, q.run_id, q.lease_generation \
+              RETURNING q.env_key, q.run_id, q.lease_generation \
          ), \
          marked AS ( \
              UPDATE runs AS r \
                 SET status = '{running}' \
                FROM leased \
-              WHERE r.tenant_id = leased.tenant_id AND r.run_id = leased.run_id \
+              WHERE r.env_key = leased.env_key AND r.run_id = leased.run_id \
                 AND r.status IN ('{dispatched}', '{running}') \
                 AND ($4::text IS NULL OR r.manifest_digest = $4) \
               RETURNING r.run_id \
@@ -217,7 +217,7 @@ pub fn renew_production_lease_sql() -> String {
     "UPDATE run_queue AS q \
         SET lease_expires_at = statement_timestamp() \
             + ($4::bigint * interval '1 millisecond') \
-      WHERE q.tenant_id = current_setting('app.tenant', true) \
+      WHERE q.env_key = current_setting('app.env_key', true) \
         AND q.run_id = $1 \
         AND q.lease_owner = $2 \
         AND q.lease_generation = $3 \
@@ -260,13 +260,13 @@ pub fn terminalize_effect_uncertain_claim_sql() -> String {
                         WHEN {unreleased_attached} THEN $4::timestamptz \
                         ELSE r.caller_released_at END, \
                     updated_at = $4::timestamptz \
-              WHERE r.tenant_id = current_setting('app.tenant', true) \
+              WHERE r.env_key = current_setting('app.env_key', true) \
                 AND r.run_id = $1 \
-              RETURNING r.tenant_id, r.run_id, r.status \
+              RETURNING r.env_key, r.run_id, r.status \
          ), \
          dequeued AS ( \
              DELETE FROM run_queue AS q USING updated \
-              WHERE q.tenant_id = updated.tenant_id AND q.run_id = updated.run_id \
+              WHERE q.env_key = updated.env_key AND q.run_id = updated.run_id \
               RETURNING q.run_id \
          ) \
          SELECT updated.status FROM updated \
@@ -289,15 +289,15 @@ pub fn terminalize_effect_uncertain_claim_sql() -> String {
 /// already joined and locked here.
 pub fn select_exhausted_production_sql() -> String {
     format!(
-        "SELECT q.tenant_id, q.run_id, selected_run.status, \
+        "SELECT q.env_key, q.run_id, selected_run.status, \
                 selected_run.flow_id, selected_run.flow_version, \
                 selected_run.durability_class, selected_run.wiring_id, \
                 selected_run.wiring_version \
            FROM run_queue AS q \
            JOIN runs AS selected_run \
-             ON selected_run.tenant_id = q.tenant_id \
+             ON selected_run.env_key = q.env_key \
             AND selected_run.run_id = q.run_id \
-          WHERE q.tenant_id = current_setting('app.tenant', true) \
+          WHERE q.env_key = current_setting('app.env_key', true) \
             AND selected_run.package_id = ANY($2::text[]) \
             AND selected_run.environment = $3 \
                 AND q.lease_expires_at IS NOT NULL \
@@ -352,14 +352,14 @@ pub fn terminalize_exhausted_production_sql() -> String {
                     WHEN {unreleased_attached} THEN $4::timestamptz \
                     ELSE r.caller_released_at END, \
                 updated_at = $4::timestamptz \
-           WHERE r.tenant_id = current_setting('app.tenant', true) \
+           WHERE r.env_key = current_setting('app.env_key', true) \
              AND r.run_id = $1 \
              AND r.status IN ('{dispatched}', '{running}') \
-           RETURNING r.tenant_id, r.run_id, r.status \
+           RETURNING r.env_key, r.run_id, r.status \
          ), \
          dequeued AS ( \
              DELETE FROM run_queue AS q USING updated \
-              WHERE q.tenant_id = updated.tenant_id AND q.run_id = updated.run_id \
+              WHERE q.env_key = updated.env_key AND q.run_id = updated.run_id \
               RETURNING q.run_id \
          ) \
          SELECT updated.status FROM updated \

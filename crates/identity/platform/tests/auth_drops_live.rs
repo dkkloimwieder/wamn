@@ -250,7 +250,7 @@ async fn every_identity_writer_records_a_drop_of_its_principal() {
 }
 
 #[tokio::test]
-async fn every_application_writer_records_a_drop_of_its_tenant_or_principal() {
+async fn every_application_writer_records_a_drop_of_its_env_key_or_principal() {
     let database = wamn_project_state::test_database::tenant_platform();
     let client = connect(database.url(), None).await;
     client
@@ -274,11 +274,11 @@ async fn every_application_writer_records_a_drop_of_its_tenant_or_principal() {
     };
     let principal = |id: &PrincipalId| {
         vec![AuthChange::Principal {
-            tenant: "t1".to_owned(),
+            env_key: "t1".to_owned(),
             principal: id.as_str().to_owned(),
         }]
     };
-    let tenant = vec![AuthChange::Tenant("t1".to_owned())];
+    let env_key = vec![AuthChange::EnvKey("t1".to_owned())];
 
     let mut drops = AuthDrops::default();
     write_user(&client, "t1", user(&bob), &mut drops)
@@ -315,19 +315,19 @@ async fn every_application_writer_records_a_drop_of_its_tenant_or_principal() {
     create_role(&client, "t1", "clerk", &mut drops)
         .await
         .unwrap();
-    assert_eq!(changes(&drops), tenant, "create_role");
+    assert_eq!(changes(&drops), env_key, "create_role");
 
     let mut drops = AuthDrops::default();
     grant_permission(&client, "t1", "clerk", "acme:receipts/create", &mut drops)
         .await
         .unwrap();
-    assert_eq!(changes(&drops), tenant, "grant_permission");
+    assert_eq!(changes(&drops), env_key, "grant_permission");
 
     let mut drops = AuthDrops::default();
     revoke_permission(&client, "t1", "clerk", "acme:receipts/create", &mut drops)
         .await
         .unwrap();
-    assert_eq!(changes(&drops), tenant, "revoke_permission");
+    assert_eq!(changes(&drops), env_key, "revoke_permission");
 
     let mut drops = AuthDrops::default();
     grant_user_role(&client, "t1", bob.as_str(), "clerk", &mut drops)
@@ -345,7 +345,7 @@ async fn every_application_writer_records_a_drop_of_its_tenant_or_principal() {
     delete_role(&client, "t1", "clerk", &mut drops)
         .await
         .unwrap();
-    assert_eq!(changes(&drops), tenant, "delete_role");
+    assert_eq!(changes(&drops), env_key, "delete_role");
 
     let mut drops = AuthDrops::default();
     remove_user(&client, "t1", &bob, &mut drops).await.unwrap();
@@ -355,7 +355,7 @@ async fn every_application_writer_records_a_drop_of_its_tenant_or_principal() {
     write_environment_status(&client, "t1", EnvironmentStatus::Inactive, &mut drops)
         .await
         .unwrap();
-    assert_eq!(changes(&drops), tenant, "write_environment_status");
+    assert_eq!(changes(&drops), env_key, "write_environment_status");
 }
 
 /// The broker must be private to this test run.

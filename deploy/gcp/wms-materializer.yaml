@@ -42,7 +42,7 @@ spec:
         image: us-central1-docker.pkg.dev/wamn-dev/wamn/components@sha256:f98dbc816d281b815f4e5d57f1ac92548b478802c1e62198dac92607fb0b296c
         localResources:
           config:
-            wamn.tenant: wms
+            wamn.env_key: wms
             wamn.project: wms
             wamn.environment: dev
             wamn.postgres.authority: event-materializer
@@ -52,7 +52,7 @@ spec:
               WAMN_MAT_ORG: dkk
               WAMN_MAT_PROJECT: wms
               WAMN_MAT_ENV: dev
-              WAMN_MAT_TENANT: wms
+              WAMN_MAT_ENV_KEY: wms
               WAMN_MAT_MAX_DELIVER: '5'
               WAMN_MAT_FETCH_MS: '1000'
               WAMN_MAT_SWEEP_MS: '5000'

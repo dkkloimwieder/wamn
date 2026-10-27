@@ -36,7 +36,7 @@ use wamn_control_provision::{
 };
 
 /// The tenant every probe runs under, and the user its seeded rows belong to.
-const TENANT: &str = "t1";
+const ENV_KEY: &str = "t1";
 const U1: &str = "11111111-1111-1111-1111-111111111111";
 /// An unused user id for the refused inserts.
 const U2: &str = "22222222-2222-2222-2222-222222222222";
@@ -98,8 +98,8 @@ fn prelude(url: &str) -> (String, String) {
     let database = current_database(url);
     let app_generation = workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::Tenant {
-            tenant: TENANT,
+        WorkloadRoleScope::EnvKey {
+            env_key: ENV_KEY,
             database: &database,
         },
         CredentialGeneration::A,

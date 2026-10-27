@@ -7,7 +7,7 @@ use serde_json::Value;
 use wamn_catalog::{AttachmentTarget, AttachmentType, ComponentDeclaration, WiringDocument};
 use wamn_test_infrastructure::operations::{package_version, sealed};
 
-const TENANT: &str = "acme-overlay-publication-test";
+const ENV_KEY: &str = "acme-overlay-publication-test";
 const PACKAGE_ID: &str = "client_acme_receiving";
 const COMPONENT: &str = "client_acme_receiving";
 const INTERFACE_VERSION: &str = "0.1.0";
@@ -72,7 +72,7 @@ fn declaration() -> ComponentDeclaration {
     let path = publication_root()
         .join("components")
         .join("client_acme_receiving.json.in");
-    let document = wamn_control::component_declaration::render_declaration_document(&path, TENANT)
+    let document = wamn_control::component_declaration::render_declaration_document(&path, ENV_KEY)
         .unwrap_or_else(|error| panic!("render {}: {error}", path.display()));
     serde_json::from_value(document)
         .unwrap_or_else(|error| panic!("decode {}: {error}", path.display()))
@@ -103,7 +103,7 @@ fn acme_direct_operations_and_private_handler_have_exact_publication_inputs() {
         wamn_schema_generator::route_schema::read_package_attachments(&package_root())
             .expect("the attachment map has the serving wire shape");
     assert_eq!(attachments.len(), DIRECT_OPERATIONS.len());
-    assert_eq!(declaration.scope.tenant_id, TENANT);
+    assert_eq!(declaration.scope.env_key, ENV_KEY);
     assert_eq!(declaration.scope.package_id, PACKAGE_ID);
     assert_eq!(
         declaration.scope.package_version,

@@ -244,7 +244,7 @@ fn duration(span: &Value) -> anyhow::Result<u64> {
 fn request_trace(
     document: &Value,
     trace_id: &str,
-    tenant: &str,
+    env_key: &str,
     project: &str,
     environment: &str,
 ) -> anyhow::Result<Value> {
@@ -278,7 +278,7 @@ fn request_trace(
         let route = !text("wamn.attachment_id").is_empty();
         let workflow = !text("wamn.wiring_id").is_empty() && !text("wamn.node_id").is_empty();
         ensure!(
-            text("wamn.tenant") == tenant
+            text("wamn.env_key") == env_key
                 && text("wamn.project") == project
                 && text("wamn.environment") == environment
                 && hex_identifier(digest, 32)
@@ -302,7 +302,7 @@ fn request_trace(
         let fields = attributes(span);
         let text = |key: &str| fields.get(key).and_then(Value::as_str).unwrap_or_default();
         ensure!(
-            text("wamn.tenant") == tenant
+            text("wamn.env_key") == env_key
                 && text("wamn.project") == project
                 && !text("wamn.component").is_empty()
                 && text("db.system") == "postgresql"
@@ -436,7 +436,7 @@ pub struct TelemetryInput<'a> {
     pub cluster: &'a str,
     pub work: &'a Path,
     pub namespace: &'a str,
-    pub tenant: &'a str,
+    pub env_key: &'a str,
     pub project: &'a str,
     pub environment: &'a str,
     pub requests: [(&'a str, &'a str); 2],
@@ -449,7 +449,7 @@ pub async fn collect(input: &TelemetryInput<'_>) -> anyhow::Result<()> {
         cluster,
         work,
         namespace,
-        tenant,
+        env_key,
         project,
         environment,
         requests,
@@ -491,10 +491,10 @@ pub async fn collect(input: &TelemetryInput<'_>) -> anyhow::Result<()> {
     let mut traces = BTreeMap::new();
     for (name, id) in requests {
         let document = read_trace(cluster, work, id, evidence, |document| {
-            request_trace(document, id, tenant, project, environment).is_ok()
+            request_trace(document, id, env_key, project, environment).is_ok()
         })
         .await?;
-        let parsed = request_trace(&document, id, tenant, project, environment)?;
+        let parsed = request_trace(&document, id, env_key, project, environment)?;
         let filename = format!("trace-{name}.json");
         std::fs::write(
             evidence.join(&filename),

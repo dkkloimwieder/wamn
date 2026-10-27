@@ -30,8 +30,8 @@ use wamn_runtime::plugins::wamn_postgres::{ProductionClaimResult, ProductionReap
 mod common;
 
 use common::{
-    COMPONENT, EMPTY_HASH, ENVIRONMENT, PACKAGE_ID, POD_MANIFEST_DIGEST, RUNTIME_APPLICATION_NAME,
-    SCHEMA, TENANT, WIRING_ID, WIRING_VERSION, assert_callerless_terminal,
+    COMPONENT, EMPTY_HASH, ENV_KEY, ENVIRONMENT, PACKAGE_ID, POD_MANIFEST_DIGEST,
+    RUNTIME_APPLICATION_NAME, SCHEMA, WIRING_ID, WIRING_VERSION, assert_callerless_terminal,
     assert_prior_winner_terminal, connect, expire_effect_run, insert_effect_attempt,
     install_fixture, install_prior_caller_winner, make_callerless, ready_run, release_record,
     seed_durable_run, seed_live_effect_run, teardown, wait_for_advisory_wait,
@@ -62,31 +62,31 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.runs \
-                   (tenant_id,run_id,flow_id,flow_version,status,package_id,manifest_digest, \
+                   (env_key,run_id,flow_id,flow_version,status,package_id,manifest_digest, \
                     environment,wiring_id,wiring_version,input_json,trigger_source, \
                     durability_class) \
                  VALUES ($1,'effect-race','root',1,'running',$2,'{POD_MANIFEST_DIGEST}', \
                          'test',$3,$4, \
                          '{{\"input\":true}}','http','durable')"
             ),
-            &[&TENANT, &PACKAGE_ID, &WIRING_ID, &WIRING_VERSION],
+            &[&ENV_KEY, &PACKAGE_ID, &WIRING_ID, &WIRING_VERSION],
         )
         .await?;
     admin
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.run_queue \
-                   (tenant_id,run_id,available_at,stream_seq,lease_owner,lease_expires_at, \
+                   (env_key,run_id,available_at,stream_seq,lease_owner,lease_expires_at, \
                     attempts,max_attempts) \
                  VALUES ($1,'effect-race','2000-01-01',50,'runner-a','2099-01-01',2,3)"
             ),
-            &[&TENANT],
+            &[&ENV_KEY],
         )
         .await?;
     let mut writer = connect(database.url()).await?;
     let intent = writer.transaction().await?;
     intent
-        .query_one("SELECT set_config('app.tenant', $1, true)", &[&TENANT])
+        .query_one("SELECT set_config('app.env_key', $1, true)", &[&ENV_KEY])
         .await?;
     intent
         .query_one(&serialize_effect_intent_sql(), &[&"effect-race"])
@@ -97,9 +97,9 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
             &format!(
                 "UPDATE {SCHEMA}.run_queue \
                     SET lease_expires_at='2000-01-01', attempts=max_attempts \
-                  WHERE tenant_id=$1 AND run_id='effect-race'"
+                  WHERE env_key=$1 AND run_id='effect-race'"
             ),
-            &[&TENANT],
+            &[&ENV_KEY],
         )
         .await?;
     let reaper = {
@@ -135,10 +135,10 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
             &format!(
                 "SELECT caller_outcome_json::text,caller_http_status,caller_outcome_hash, \
                         EXISTS (SELECT 1 FROM {SCHEMA}.run_queue q \
-                                 WHERE q.tenant_id=r.tenant_id AND q.run_id=r.run_id) \
-                   FROM {SCHEMA}.runs r WHERE tenant_id=$1 AND run_id='effect-race'"
+                                 WHERE q.env_key=r.env_key AND q.run_id=r.run_id) \
+                   FROM {SCHEMA}.runs r WHERE env_key=$1 AND run_id='effect-race'"
             ),
-            &[&TENANT],
+            &[&ENV_KEY],
         )
         .await?;
     let effect_body = json!({"code": "effect-uncertain", "run_id": "effect-race"});
@@ -211,22 +211,22 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.effect_attempts \
-                   (tenant_id,run_id,root_plan_hash,current_plan_hash,frame_id, \
+                   (env_key,run_id,root_plan_hash,current_plan_hash,frame_id, \
                     local_node_id,source_artifact_hash,requirement_name,occurrence,seq, \
                     generation_fact_type,attempt_deadline_at,attempt_input_ref) \
                  VALUES ($1,'effect-pin',$2,$2,0,'a-node',$2,'manager',0,1, \
                          'not-required','2099-01-01T00:00:00Z','sha256:claim-live-effect-input')"
             ),
-            &[&TENANT, &EMPTY_HASH],
+            &[&ENV_KEY, &EMPTY_HASH],
         )
         .await?;
     let mid_effect = admin
         .execute(
             &format!(
                 "UPDATE {SCHEMA}.runs SET manifest_digest=NULL \
-                  WHERE tenant_id=$1 AND run_id='effect-pin'"
+                  WHERE env_key=$1 AND run_id='effect-pin'"
             ),
-            &[&TENANT],
+            &[&ENV_KEY],
         )
         .await
         .expect_err("an attributed effect pins the release that fired it");

@@ -182,7 +182,7 @@ pub async fn read_project_env_policy(system_url: &str, triple: &Triple) -> anyho
 ///
 /// Returns the environment's STORED instance suffix, which is `minted` only on a
 /// first provision — see [`do_record_project_env`]. The tenant derives from
-/// the coordinate (`project_env_tenant`).
+/// the coordinate (`project_env_key`).
 #[expect(clippy::too_many_arguments)]
 pub(super) async fn record_project_env(
     system_url: &str,
@@ -198,15 +198,12 @@ pub(super) async fn record_project_env(
         .await
         .context("system db connect")?;
     let conn_task = tokio::spawn(conn);
-    let tenant = wamn_control_registry::project_env_tenant(
-        &triple.org,
-        &triple.project,
-        triple.env.as_str(),
-    );
+    let env_key =
+        wamn_control_registry::project_env_key(&triple.org, &triple.project, triple.env.as_str());
     let result = do_record_project_env(
         &mut client,
         triple,
-        Some(&tenant),
+        Some(&env_key),
         policy,
         secret_name,
         secret_namespace,
@@ -224,7 +221,7 @@ pub(super) async fn record_project_env(
 pub(super) async fn do_record_project_env(
     client: &mut tokio_postgres::Client,
     triple: &Triple,
-    tenant: Option<&str>,
+    env_key: Option<&str>,
     policy: Option<&str>,
     secret_name: &str,
     secret_namespace: Option<&str>,
@@ -297,7 +294,7 @@ pub(super) async fn do_record_project_env(
     let stored_disposable: bool = row.get(1);
     validate_instance_suffix(&stored)
         .map_err(|error| anyhow::anyhow!("registry instance suffix: {error}"))?;
-    project_tenant_environment(client, triple, tenant, &stored, stored_disposable).await?;
+    project_env_key_environment(client, triple, env_key, &stored, stored_disposable).await?;
     Ok(stored)
 }
 
@@ -306,7 +303,7 @@ const CONTROL_PROJECTION_INSTALLED_SQL: &str =
     "SELECT to_regclass('catalog.tenant_environments') IS NOT NULL";
 
 /// Claim the projected tenant for the transaction's RLS policy.
-const CLAIM_PROJECTED_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
+const CLAIM_PROJECTED_ENV_KEY_SQL: &str = "SELECT set_config('app.env_key', $1, true)";
 
 /// Project the recorded project-env into the control store, beside the facts its
 /// `disposable` marker governs (wamn-10yt.38).
@@ -321,10 +318,10 @@ const CLAIM_PROJECTED_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, tr
 /// it always did. Only a DISPOSABLE environment insists, because for it the
 /// missing projection would be the difference between an author's edit landing
 /// and an author's edit being refused.
-pub async fn project_tenant_environment(
+pub async fn project_env_key_environment(
     client: &mut tokio_postgres::Client,
     triple: &Triple,
-    tenant: Option<&str>,
+    env_key: Option<&str>,
     instance_suffix: &str,
     disposable: bool,
 ) -> anyhow::Result<()> {
@@ -341,11 +338,11 @@ pub async fn project_tenant_environment(
         );
         return Ok(());
     }
-    let Some(tenant) = tenant else {
+    let Some(env_key) = env_key else {
         anyhow::ensure!(
             !disposable,
-            "a disposable project-env needs its derived tenant: the admit path resolves the \
-             marker by the tenant its component facts are keyed on"
+            "a disposable project-env needs its derived env_key: the admit path resolves the \
+             marker by the env_key its component facts are keyed on"
         );
         return Ok(());
     };
@@ -354,14 +351,14 @@ pub async fn project_tenant_environment(
         .await
         .context("begin the project-env control projection")?;
     transaction
-        .query_one(CLAIM_PROJECTED_TENANT_SQL, &[&tenant])
+        .query_one(CLAIM_PROJECTED_ENV_KEY_SQL, &[&env_key])
         .await
         .context("claim the projected tenant")?;
     transaction
         .execute(
-            sql::insert_tenant_environment_sql(),
+            sql::insert_env_key_environment_sql(),
             &[
-                &tenant,
+                &env_key,
                 &triple.org,
                 &triple.project,
                 &env,
@@ -373,7 +370,7 @@ pub async fn project_tenant_environment(
         .context("project the project-env into the control store")?;
     // A losing insert waits, then this read locks the committed winner.
     let row = transaction
-        .query_one(sql::read_tenant_environment_sql(), &[&tenant])
+        .query_one(sql::read_env_key_environment_sql(), &[&env_key])
         .await
         .context("read the projected environment identity")?;
     let recorded = Triple::new(
@@ -381,11 +378,11 @@ pub async fn project_tenant_environment(
         row.try_get::<_, String>(1)?,
         row.try_get::<_, String>(2)?,
     );
-    wamn_control_provision::check_tenant_environment_identity(tenant, &recorded, triple)?;
+    wamn_control_provision::check_env_key_environment_identity(env_key, &recorded, triple)?;
     transaction
         .execute(
-            sql::refresh_tenant_environment_sql(),
-            &[&tenant, &instance_suffix, &disposable],
+            sql::refresh_env_key_environment_sql(),
+            &[&env_key, &instance_suffix, &disposable],
         )
         .await
         .context("refresh the projected environment")?;
@@ -404,17 +401,17 @@ pub async fn project_tenant_environment(
 /// means durable, and a durable environment is never recreated.
 pub async fn claim_environment_instance(
     client: &mut tokio_postgres::Client,
-    tenant: &str,
+    env_key: &str,
     instance: &str,
 ) -> anyhow::Result<()> {
     let transaction = super::provisioning_transaction(client).await?;
     let affected_rows = transaction
         .execute(
             wamn_schema_control::claim_environment_instance_sql(),
-            &[&tenant, &instance],
+            &[&env_key, &instance],
         )
         .await?;
-    wamn_schema_control::check_environment_instance_claim(tenant, affected_rows)?;
+    wamn_schema_control::check_environment_instance_claim(env_key, affected_rows)?;
     transaction.commit().await?;
     Ok(())
 }

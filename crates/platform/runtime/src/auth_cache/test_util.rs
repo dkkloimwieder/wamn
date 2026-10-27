@@ -70,10 +70,10 @@ pub async fn nats() -> (Server, async_nats::Client) {
 /// wait until the watch runs.
 pub async fn watched<H: AsRef<AuthCache> + Send + Sync + 'static>(
     client: &async_nats::Client,
-    tenant: Option<&str>,
+    env_key: Option<&str>,
     holder: Arc<H>,
 ) -> AuthChanges {
-    let writer = replicate(client, tenant, Arc::clone(&holder));
+    let writer = replicate(client, env_key, Arc::clone(&holder));
     until("the watch runs", || (*holder).as_ref().bucket().is_some()).await;
     writer
 }

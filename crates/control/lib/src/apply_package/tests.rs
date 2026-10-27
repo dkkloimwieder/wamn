@@ -5,7 +5,7 @@ use super::*;
 /// installed migrations create gets the refusal of apply.
 #[tokio::test]
 async fn local_configuration_refuses_a_removed_model_with_the_apply_refusal() {
-    const TENANT: &str = "local-configuration--fixture--dev";
+    const ENV_KEY: &str = "local-configuration--fixture--dev";
     let _lock = wamn_test_postgres::lock();
     let database = wamn_project_state::test_database::tenant_platform();
     let url = database.url().to_owned();
@@ -74,10 +74,10 @@ async fn local_configuration_refuses_a_removed_model_with_the_apply_refusal() {
     );
 
     let tx = client.transaction().await.unwrap();
-    tx.query_one(CLAIM_TENANT_SQL, &[&TENANT]).await.unwrap();
+    tx.query_one(CLAIM_ENV_KEY_SQL, &[&ENV_KEY]).await.unwrap();
     let local = reconcile_local_package_configuration(
         &tx,
-        TENANT,
+        ENV_KEY,
         &directory,
         &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
     )

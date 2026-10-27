@@ -99,7 +99,7 @@ impl fmt::Display for OperatorTerminalizeResult {
 pub fn lock_operator_actions_sql() -> &'static str {
     "SELECT correlation_id, run_id, basis, evidence_ref, principal \
        FROM operator_run_actions \
-      WHERE tenant_id = $1 AND (correlation_id = $2 OR run_id = $3) \
+      WHERE env_key = $1 AND (correlation_id = $2 OR run_id = $3) \
       ORDER BY created_at, action_id \
       FOR UPDATE"
 }
@@ -107,20 +107,20 @@ pub fn lock_operator_actions_sql() -> &'static str {
 /// Lock the exact run before reading any mutable projections.
 pub fn lock_operator_run_sql() -> &'static str {
     "SELECT status, fail_type FROM runs \
-      WHERE tenant_id = $1 AND run_id = $2 FOR UPDATE"
+      WHERE env_key = $1 AND run_id = $2 FOR UPDATE"
 }
 
 /// Lock every immutable effect attempt belonging to the run.
 pub fn lock_operator_effect_attempts_sql() -> &'static str {
     "SELECT frame_id, local_node_id, occurrence \
-       FROM effect_attempts WHERE tenant_id = $1 AND run_id = $2 \
+       FROM effect_attempts WHERE env_key = $1 AND run_id = $2 \
       ORDER BY frame_id, local_node_id, occurrence FOR UPDATE"
 }
 
 /// Lock any queue eligibility fact belonging to the run.
 pub fn lock_operator_queue_fact_sql() -> &'static str {
     "SELECT run_id FROM run_queue \
-      WHERE tenant_id = $1 AND run_id = $2 FOR UPDATE"
+      WHERE env_key = $1 AND run_id = $2 FOR UPDATE"
 }
 
 /// Append the immutable action before the terminal run projection is changed.
@@ -132,7 +132,7 @@ pub fn lock_operator_queue_fact_sql() -> &'static str {
 /// admits this shape.
 pub fn insert_operator_action_sql() -> &'static str {
     "INSERT INTO operator_run_actions (\
-         tenant_id, correlation_id, run_id, action_type, basis, evidence_ref, \
+         env_key, correlation_id, run_id, action_type, basis, evidence_ref, \
          principal, principal_type, prior_run_status, prior_started_node_frame_id, \
          prior_started_node_local_node_id, prior_started_node_occurrence, \
          prior_started_node_status) \
@@ -143,7 +143,7 @@ pub fn insert_operator_action_sql() -> &'static str {
 
 /// Terminalize the run without rewriting its evidence or caller outcome.
 ///
-/// Params: tenant id, run id, terminal instant. The caller supplies the instant
+/// Params: environment key, run id, terminal instant. The caller supplies the instant
 /// (D2b). The two tests beside the stamp compare status literals, so no
 /// comparison leaves the server.
 pub fn terminalize_operator_run_sql() -> &'static str {
@@ -151,7 +151,7 @@ pub fn terminalize_operator_run_sql() -> &'static str {
         SET status = 'failed', \
             terminal_reason = 'operator-terminalized-effect-uncertain', \
             updated_at = $3::timestamptz \
-      WHERE tenant_id = $1 AND run_id = $2 \
+      WHERE env_key = $1 AND run_id = $2 \
         AND status = 'effect-uncertain' AND fail_type = 'effect-uncertain'"
 }
 

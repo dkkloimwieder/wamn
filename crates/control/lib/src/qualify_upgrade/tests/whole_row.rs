@@ -198,8 +198,8 @@ async fn whole_row_exception_commits_schema_grants_and_evidence_together() {
     assert_eq!(retained_whole_row_data(&fixture.source).await, retained);
     assert_eq!(state(&mut fixture.source).await.1, evidence.post_privileges);
     let persisted = fixture.source.query_one(
-        "SELECT canonical_bytes,result_sha256 FROM catalog.package_upgrade_qualifications WHERE tenant_id=$1 AND package_id='platform_fixture' AND candidate_package_version=$2",
-        &[&TENANT, &CANDIDATE_VERSION],
+        "SELECT canonical_bytes,result_sha256 FROM catalog.package_upgrade_qualifications WHERE env_key=$1 AND package_id='platform_fixture' AND candidate_package_version=$2",
+        &[&ENV_KEY, &CANDIDATE_VERSION],
     ).await.unwrap();
     assert_eq!(persisted.get::<_, Vec<u8>>(0), canonical);
     assert_eq!(persisted.get::<_, String>(1), qualified.sha256);
@@ -280,9 +280,9 @@ async fn whole_row_postcondition_failure_rolls_back_schema_grants_and_evidence()
     assert_eq!(retained_whole_row_data(&fixture.source).await, retained);
     let absent = fixture.source.query_one(
         "SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='inventory' AND table_name='widget' AND column_name='upgrade_note'), \
-         NOT EXISTS (SELECT 1 FROM catalog.package_upgrade_qualifications WHERE tenant_id=$1 AND package_id='platform_fixture' AND candidate_package_version=$2), \
-         NOT EXISTS (SELECT 1 FROM catalog.package_upgrade_stages WHERE tenant_id=$1 AND package_id='platform_fixture' AND package_version=$2)",
-        &[&TENANT, &CANDIDATE_VERSION],
+         NOT EXISTS (SELECT 1 FROM catalog.package_upgrade_qualifications WHERE env_key=$1 AND package_id='platform_fixture' AND candidate_package_version=$2), \
+         NOT EXISTS (SELECT 1 FROM catalog.package_upgrade_stages WHERE env_key=$1 AND package_id='platform_fixture' AND package_version=$2)",
+        &[&ENV_KEY, &CANDIDATE_VERSION],
     ).await.unwrap();
     assert!(absent.get::<_, bool>(0) && absent.get::<_, bool>(1) && absent.get::<_, bool>(2));
     plan_predecessor(&mut fixture.source, &fixture.manifest, &runtime())

@@ -23,7 +23,7 @@ use wamn_control_provision::{
     workload_generation_role,
 };
 
-const TENANT: &str = "numbering";
+const ENV_KEY: &str = "numbering";
 const APPLICATION: &str = "receiving";
 const OTHER_APPLICATION: &str = "shipping";
 const ADMINISTRATION_PASSWORD: &str = "numbering-administration";
@@ -102,7 +102,7 @@ impl Live {
         let live = Self {
             plugin: WamnPostgres::new(WamnPostgresConfig {
                 credentials: Some(ClassCredentials::every_class(
-                    live_guest_url(database.url(), TENANT).await,
+                    live_guest_url(database.url(), ENV_KEY).await,
                 )),
                 guest_pool_max_size: 8,
                 platform_pool_max_size: 1,
@@ -161,7 +161,7 @@ impl Live {
             .bind_session_claims(
                 &scope,
                 &SessionClaims {
-                    tenant: TENANT.to_owned(),
+                    env_key: ENV_KEY.to_owned(),
                     user_id: Some(LIVE_PRINCIPAL.to_owned()),
                     application: Some(application.to_owned()),
                     ..SessionClaims::default()
@@ -441,7 +441,7 @@ async fn live_a_rewritten_application_claim_reaches_no_other_sequence() {
         .bind_session_claims(
             scope,
             &SessionClaims {
-                tenant: TENANT.to_owned(),
+                env_key: ENV_KEY.to_owned(),
                 user_id: Some(LIVE_PRINCIPAL.to_owned()),
                 application: Some(APPLICATION.to_owned()),
                 ..SessionClaims::default()
@@ -500,7 +500,7 @@ async fn live_a_call_with_no_application_in_host_state_is_refused() {
         .bind_session_claims(
             scope,
             &SessionClaims {
-                tenant: TENANT.to_owned(),
+                env_key: ENV_KEY.to_owned(),
                 user_id: Some(LIVE_PRINCIPAL.to_owned()),
                 ..SessionClaims::default()
             },
@@ -677,7 +677,7 @@ async fn live_an_invalid_timezone_setting_is_refused() {
             .bind_session_claims(
                 &scope,
                 &SessionClaims {
-                    tenant: TENANT.to_owned(),
+                    env_key: ENV_KEY.to_owned(),
                     user_id: Some(LIVE_PRINCIPAL.to_owned()),
                     application: Some(application.to_owned()),
                     ..SessionClaims::default()
@@ -797,7 +797,7 @@ impl Live {
         self.plugin
             .set_number_counter(
                 crate::plugins::wamn_postgres::DEFAULT_PROJECT,
-                TENANT,
+                ENV_KEY,
                 LIVE_PRINCIPAL,
                 SET_OPERATION,
                 request_id,
@@ -981,7 +981,7 @@ async fn live_set_counter_serializes_with_a_concurrent_next_number() {
         .bind_session_claims(
             scope,
             &SessionClaims {
-                tenant: TENANT.to_owned(),
+                env_key: ENV_KEY.to_owned(),
                 user_id: Some(LIVE_PRINCIPAL.to_owned()),
                 application: Some(APPLICATION.to_owned()),
                 ..SessionClaims::default()

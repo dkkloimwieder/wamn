@@ -1,6 +1,6 @@
 {
   "scope": {
-    "tenant-id": "__TENANT_ID__",
+    "env_key": "__ENV_KEY__",
     "package-id": "__PACKAGE_ID__",
     "package-version": "__PACKAGE_VERSION__"
   },

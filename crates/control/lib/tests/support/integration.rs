@@ -47,7 +47,7 @@ pub struct WorkflowEnvironment<'a> {
     pub system_url: &'a str,
     pub project_url: &'a str,
     pub scope: &'a wamn_control_registry::Triple,
-    pub tenant: &'a str,
+    pub env_key: &'a str,
     /// The release the environment serves.
     pub digest: &'a str,
     /// The applications the environment declares, as the serving Helm
@@ -200,16 +200,19 @@ async fn start_workflow_inner(
         "INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'admin') ON CONFLICT DO NOTHING",
         &[&ENABLER],
     ).await?;
-    let bytes: Vec<u8> = project.query_one(
-        "SELECT canonical_bytes FROM catalog.releases WHERE tenant_id=$1 AND manifest_digest=$2",
-        &[&environment.tenant, &environment.digest],
-    ).await?.get(0);
+    let bytes: Vec<u8> = project
+        .query_one(
+            "SELECT canonical_bytes FROM catalog.releases WHERE env_key=$1 AND manifest_digest=$2",
+            &[&environment.env_key, &environment.digest],
+        )
+        .await?
+        .get(0);
     let release = Arc::new(
         wamn_engine::release_manifest::LoadedRelease::load_canonical_bytes(
             &bytes,
             "manual fixture workflow",
             wamn_engine::release_manifest::ReleaseScope::new(
-                environment.tenant,
+                environment.env_key,
                 environment.scope.env.as_str(),
             )
             .with_applications(environment.applications.clone()),
@@ -240,7 +243,7 @@ async fn start_workflow_inner(
     let held = postgres
         .session_operation_permissions(
             "default",
-            environment.tenant,
+            environment.env_key,
             &["admin".to_owned()],
             &ENABLER.parse()?,
         )
@@ -323,10 +326,13 @@ async fn admit_workflow_inner(
         WamnPostgresConfig,
     };
 
-    let bytes: Vec<u8> = project.query_one(
-        "SELECT canonical_bytes FROM catalog.releases WHERE tenant_id=$1 AND manifest_digest=$2",
-        &[&environment.tenant, &environment.digest],
-    ).await?.get(0);
+    let bytes: Vec<u8> = project
+        .query_one(
+            "SELECT canonical_bytes FROM catalog.releases WHERE env_key=$1 AND manifest_digest=$2",
+            &[&environment.env_key, &environment.digest],
+        )
+        .await?
+        .get(0);
     let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
     let postgres = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::default().with_class(
@@ -342,7 +348,7 @@ async fn admit_workflow_inner(
     let workflow = postgres
         .enabled_workflow(
             "default",
-            environment.tenant,
+            environment.env_key,
             environment.scope.env.as_str(),
             application,
             workflow_id,
@@ -359,7 +365,7 @@ async fn admit_workflow_inner(
         .context("the environment declares the application")?
         .packages;
     let node_digests: serde_json::Map<String, Value> = wamn_catalog::resolve_workflow_components(
-        environment.tenant,
+        environment.env_key,
         packages,
         &manifest,
         &workflow.graph,
@@ -371,7 +377,7 @@ async fn admit_workflow_inner(
     let admitted = postgres
         .admit_manual_run(
             "default",
-            environment.tenant,
+            environment.env_key,
             &ManualRunAdmission {
                 package_id: application,
                 manifest_digest: environment.digest,
@@ -436,7 +442,7 @@ pub async fn enable_trigger(
     trigger: WorkflowTrigger<'_>,
     events: Option<&environment::EventBroker>,
 ) -> anyhow::Result<()> {
-    let tenant = environment.tenant;
+    let env_key = environment.env_key;
     let (mut project, project_task) = connect_owned(environment.project_url).await?;
     project
         .execute(
@@ -473,20 +479,20 @@ pub async fn enable_trigger(
         format!("schedule-enabler@{}", super::PLATFORM_DOMAIN),
         format!("workflow@{}", super::PLATFORM_DOMAIN),
     ] {
-        grant_role_on(&mut project, tenant, &user, role, environment.auth).await?;
+        grant_role_on(&mut project, env_key, &user, role, environment.auth).await?;
     }
     let (control, control_task) = connect_owned(environment.system_url).await?;
     control
         .execute(
-            "SELECT set_config('app.tenant', $1, false), set_config('app.user_id', $2, false)",
-            &[&tenant, &ENABLER],
+            "SELECT set_config('app.env_key', $1, false), set_config('app.user_id', $2, false)",
+            &[&env_key, &ENABLER],
         )
         .await?;
     control
         .execute(
-            "INSERT INTO wamn_run.gate_reports (tenant_id, wiring_hash, passed, summary) \
+            "INSERT INTO wamn_run.gate_reports (env_key, wiring_hash, passed, summary) \
              VALUES ($1, $2, true, '{}'::jsonb) ON CONFLICT DO NOTHING",
-            &[&tenant, &document.wiring_hash().as_str()],
+            &[&env_key, &document.wiring_hash().as_str()],
         )
         .await?;
     control_task.abort();
@@ -551,7 +557,7 @@ pub async fn exercise(
     connector: &str,
 ) -> anyhow::Result<()> {
     let scope = wamn_control_registry::Triple::new(ORG, PROJECT, ENVIRONMENT);
-    let tenant = wamn_control_registry::project_env_tenant(ORG, PROJECT, ENVIRONMENT);
+    let env_key = wamn_control_registry::project_env_key(ORG, PROJECT, ENVIRONMENT);
     let roots = [
         "apps/platform/wamn_integration",
         "apps/rest_consumer_fixture",
@@ -576,7 +582,7 @@ pub async fn exercise(
     let broker = event_broker::prepare(
         &broker_work,
         &scope,
-        &tenant,
+        &env_key,
         &source,
         &advisory_stream_config(&scope, 1),
         &consumers,
@@ -656,7 +662,7 @@ pub async fn exercise(
         wamn_control_provision::project_env_database_name(ORG, PROJECT, ENVIRONMENT, &suffix)
     ));
     let bytes = publish(
-        run, repository, registry, &roots, &manifests, &tenant, connector,
+        run, repository, registry, &roots, &manifests, &env_key, connector,
     )
     .await?;
     let pushed = wamn_control::publish_release::push_manifest_bytes(
@@ -786,7 +792,7 @@ pub async fn exercise(
         system_url: &platform.system_database_url,
         project_url: project_url.as_str(),
         scope: &scope,
-        tenant: &tenant,
+        env_key: &env_key,
         digest: &digest,
         applications: &environment::show::serving_applications(&platform, &scope).await?,
         auth: &auth,
@@ -843,7 +849,7 @@ pub async fn exercise(
         if connector == "netsuite" {
             super::netsuite::assertions(run, &project, &workflows).await
         } else {
-            let observed = assertions(run, &project, &tenant, &digest, &mut reader).await?;
+            let observed = assertions(run, &project, &env_key, &digest, &mut reader).await?;
             disable_schedule(&workflows, connector, &pull.wiring_id).await?;
             assert_schema_triggers(run, &project, &workflows, &events, &broker, &mut reader)
                 .await?;
@@ -890,7 +896,7 @@ async fn publish(
     registry: &PackageRegistry,
     roots: &[PathBuf],
     manifests: &[wamn_schema_generator::PackageManifest],
-    tenant: &str,
+    env_key: &str,
     connector: &str,
 ) -> anyhow::Result<Vec<u8>> {
     let mut admissions = Vec::new();
@@ -908,7 +914,7 @@ async fn publish(
         })
         .await?;
         let scope = ComponentPackageScope {
-            tenant_id: tenant.into(),
+            env_key: env_key.into(),
             package_id: manifest.package.id.clone(),
             package_version: manifest.package.version.clone(),
         };
@@ -936,7 +942,7 @@ async fn publish(
                 )?,
                 _ => render_declaration_document(
                     &root.join(format!("publication/components/{name}.json.in")),
-                    tenant,
+                    env_key,
                 )?,
             };
             let file = run.work.join(format!("declaration-{name}.json"));
@@ -1369,8 +1375,8 @@ async fn assert_schema_triggers_inner(
             "SELECT COALESCE(jsonb_agg(jsonb_build_object('workflow', wiring_id, 'delivery', invoked_by, \
              'status', status, 'trigger', trigger_source, 'fail_type', fail_type, \
              'result', result_json) ORDER BY wiring_id), '[]') \
-             FROM wamn_run.runs WHERE tenant_id = $1 AND package_id = 'rest_connector' AND wiring_id = ANY($2)",
-            &[&workflows.tenant, &&ids[..]],
+             FROM wamn_run.runs WHERE env_key = $1 AND package_id = 'rest_connector' AND wiring_id = ANY($2)",
+            &[&workflows.env_key, &&ids[..]],
         ).await?.get(0);
         let runs = rows.as_array().context("capture trigger runs")?;
         ensure!(runs.len() <= 2, "duplicate or cross-schema runs: {rows}");
@@ -1423,7 +1429,7 @@ async fn assert_schema_triggers_inner(
 async fn assertions(
     run: &Run,
     project: &tokio_postgres::Client,
-    tenant: &str,
+    env_key: &str,
     digest: &str,
     reader: &mut Child,
 ) -> anyhow::Result<Value> {
@@ -1431,7 +1437,7 @@ async fn assertions(
         &run.work,
         "integration_assertions",
         project,
-        assertions_inner(run, project, tenant, digest, reader),
+        assertions_inner(run, project, env_key, digest, reader),
     )
     .await
 }
@@ -1439,7 +1445,7 @@ async fn assertions(
 async fn assertions_inner(
     run: &Run,
     project: &tokio_postgres::Client,
-    tenant: &str,
+    env_key: &str,
     digest: &str,
     reader: &mut Child,
 ) -> anyhow::Result<Value> {
@@ -1452,10 +1458,10 @@ async fn assertions_inner(
         );
         let rows: Value = project.query_one(
             "SELECT jsonb_build_object(\
-            'runs', (SELECT COALESCE(jsonb_agg(to_jsonb(r) ORDER BY created_at), '[]') FROM wamn_run.runs r WHERE tenant_id=$1 AND package_id='rest_connector' AND wiring_id='rest_item'),\
+            'runs', (SELECT COALESCE(jsonb_agg(to_jsonb(r) ORDER BY created_at), '[]') FROM wamn_run.runs r WHERE env_key=$1 AND package_id='rest_connector' AND wiring_id='rest_item'),\
             'items', (SELECT COALESCE(jsonb_agg(jsonb_build_object('key',key,'name',name) ORDER BY key), '[]') FROM rest_consumer_fixture.item i),\
             'last_synced_at', (SELECT value FROM wamn_integration.setting WHERE key='last_synced_at'),\
-            'logs', (SELECT COALESCE(jsonb_agg(to_jsonb(l) ORDER BY record_id), '[]') FROM wamn_integration.log l))", &[&tenant],
+            'logs', (SELECT COALESCE(jsonb_agg(to_jsonb(l) ORDER BY record_id), '[]') FROM wamn_integration.log l))", &[&env_key],
         ).await?.get(0);
         let runs = rows["runs"].as_array().context("schedule runs")?;
         ensure!(
@@ -1515,7 +1521,7 @@ async fn assertions_inner(
                 "wrong retry sequence: {pages:?}"
             );
             // All event runs must finish before checking that delivery wrote once.
-            let pushed: Value = project.query_one("SELECT COALESCE(jsonb_agg(jsonb_build_object('status', status, 'trigger_source', trigger_source)), '[]') FROM wamn_run.runs WHERE tenant_id=$1 AND wiring_id='rest_item_pushed'", &[&tenant]).await?.get(0);
+            let pushed: Value = project.query_one("SELECT COALESCE(jsonb_agg(jsonb_build_object('status', status, 'trigger_source', trigger_source)), '[]') FROM wamn_run.runs WHERE env_key=$1 AND wiring_id='rest_item_pushed'", &[&env_key]).await?.get(0);
             let pushed = pushed.as_array().context("push runs")?;
             if pushed.len() == 5 && pushed.iter().all(|r| r["status"] == "completed") {
                 return Ok(json!({"database":rows,"pages":pages,"principal":principal}));

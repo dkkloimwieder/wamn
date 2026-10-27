@@ -12,7 +12,7 @@ mod synchronization;
 mod views;
 mod whole_row;
 
-const TENANT: &str = "upgrade-proof--fixture--dev";
+const ENV_KEY: &str = "upgrade-proof--fixture--dev";
 const ENVIRONMENT: &str = "dev";
 const PREDECESSOR_VERSION: &str = "2.1.0";
 const CANDIDATE_VERSION: &str = "2.2.0";
@@ -118,7 +118,7 @@ async fn fixture(name: &str, whole_row: bool) -> Fixture {
     let manifest = predecessor_manifest(&predecessor);
     let bytes = manifest.canonical_bytes();
     let (_, digest) = ServingManifest::from_canonical_bytes(&bytes).unwrap();
-    source.execute("INSERT INTO catalog.releases (tenant_id,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)", &[&TENANT, &digest.as_str(), &bytes]).await.unwrap();
+    source.execute("INSERT INTO catalog.releases (env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)", &[&ENV_KEY, &digest.as_str(), &bytes]).await.unwrap();
 
     let root = std::env::temp_dir().join(format!("wamn-qualify-{name}-{}", std::process::id()));
     fs::create_dir(&root).unwrap();
@@ -405,8 +405,8 @@ async fn qualification_preserves_source_and_apply_requires_unchanged_evidence() 
     assert_eq!(retained_rows(&fixture.source).await, before_rows);
     let persisted = fixture.source.query_one(
         "SELECT canonical_bytes, result_sha256 FROM catalog.package_upgrade_qualifications \
-          WHERE tenant_id = $1 AND package_id = 'platform_fixture' AND candidate_package_version = $2",
-        &[&TENANT, &CANDIDATE_VERSION],
+          WHERE env_key = $1 AND package_id = 'platform_fixture' AND candidate_package_version = $2",
+        &[&ENV_KEY, &CANDIDATE_VERSION],
     ).await.unwrap();
     assert_eq!(persisted.get::<_, Vec<u8>>(0), canonical);
     assert_eq!(persisted.get::<_, String>(1), result.sha256);

@@ -21,8 +21,8 @@ use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 
 /// Lock the environment's roles and permissions, refuse a filtered view, and bind
 /// `wamn:provisioning` as the actor of the writes.
-async fn prepare(tx: &Transaction<'_>, environment_key: &str) -> anyhow::Result<()> {
-    tx.query_one(OPERATION_GRANT_LOCK_SQL, &[&environment_key])
+async fn prepare(tx: &Transaction<'_>, env_key: &str) -> anyhow::Result<()> {
+    tx.query_one(OPERATION_GRANT_LOCK_SQL, &[&env_key])
         .await
         .context("lock the environment roles and permissions")?;
     tx.batch_execute(OPERATION_GRANT_TRANSACTION_PRELUDE_SQL)
@@ -41,49 +41,49 @@ async fn prepare(tx: &Transaction<'_>, environment_key: &str) -> anyhow::Result<
 /// Grant `reference` to the authored `role`.
 pub async fn grant_permission(
     tx: &Transaction<'_>,
-    environment_key: &str,
+    env_key: &str,
     role: &str,
     reference: &str,
     drops: &mut AuthDrops,
 ) -> anyhow::Result<PermissionGrantOutcome> {
-    prepare(tx, environment_key).await?;
-    Ok(application::grant_permission(tx, environment_key, role, reference, drops).await?)
+    prepare(tx, env_key).await?;
+    Ok(application::grant_permission(tx, env_key, role, reference, drops).await?)
 }
 
 /// Remove the permission `reference` from `role`. A reference the role does
 /// not hold refuses.
 pub async fn revoke_permission(
     tx: &Transaction<'_>,
-    environment_key: &str,
+    env_key: &str,
     role: &str,
     reference: &str,
     drops: &mut AuthDrops,
 ) -> anyhow::Result<()> {
-    prepare(tx, environment_key).await?;
-    Ok(application::revoke_permission(tx, environment_key, role, reference, drops).await?)
+    prepare(tx, env_key).await?;
+    Ok(application::revoke_permission(tx, env_key, role, reference, drops).await?)
 }
 
 /// Create the empty authored role `role`. A second create changes nothing.
 pub async fn create_role(
     tx: &Transaction<'_>,
-    environment_key: &str,
+    env_key: &str,
     role: &str,
     drops: &mut AuthDrops,
 ) -> anyhow::Result<bool> {
-    prepare(tx, environment_key).await?;
-    Ok(application::create_role(tx, environment_key, role, drops).await?)
+    prepare(tx, env_key).await?;
+    Ok(application::create_role(tx, env_key, role, drops).await?)
 }
 
 /// Delete the authored role `role` with its assignments and permissions. A
 /// delete of an absent role changes nothing.
 pub async fn delete_role(
     tx: &Transaction<'_>,
-    environment_key: &str,
+    env_key: &str,
     role: &str,
     drops: &mut AuthDrops,
 ) -> anyhow::Result<bool> {
-    prepare(tx, environment_key).await?;
-    Ok(application::delete_role(tx, environment_key, role, drops).await?)
+    prepare(tx, env_key).await?;
+    Ok(application::delete_role(tx, env_key, role, drops).await?)
 }
 
 /// Run `change` in one transaction on the registry-checked database of
@@ -118,7 +118,7 @@ pub async fn create_role_in(
     changes: &AuthChanges,
 ) -> anyhow::Result<bool> {
     in_environment(target, changes, async |tx, drops| {
-        create_role(tx, &target.environment_key(), role, drops).await
+        create_role(tx, &target.env_key(), role, drops).await
     })
     .await
 }
@@ -131,7 +131,7 @@ pub async fn delete_role_in(
     changes: &AuthChanges,
 ) -> anyhow::Result<bool> {
     in_environment(target, changes, async |tx, drops| {
-        delete_role(tx, &target.environment_key(), role, drops).await
+        delete_role(tx, &target.env_key(), role, drops).await
     })
     .await
 }
@@ -144,7 +144,7 @@ pub async fn grant_permission_in(
     changes: &AuthChanges,
 ) -> anyhow::Result<PermissionGrantOutcome> {
     in_environment(target, changes, async |tx, drops| {
-        grant_permission(tx, &target.environment_key(), role, reference, drops).await
+        grant_permission(tx, &target.env_key(), role, reference, drops).await
     })
     .await
 }
@@ -157,7 +157,7 @@ pub async fn revoke_permission_in(
     changes: &AuthChanges,
 ) -> anyhow::Result<()> {
     in_environment(target, changes, async |tx, drops| {
-        revoke_permission(tx, &target.environment_key(), role, reference, drops).await
+        revoke_permission(tx, &target.env_key(), role, reference, drops).await
     })
     .await
 }

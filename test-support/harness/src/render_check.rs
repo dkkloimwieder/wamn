@@ -356,8 +356,8 @@ pub fn credential_secrets(triple: &wamn_control_registry::Triple, namespace: &st
         .map(|credential| credential.family)
         .map(|family| {
             let body = if family == WorkloadRoleFamily::App {
-                WorkloadSecretBody::TenantUrl {
-                    tenant: "render",
+                WorkloadSecretBody::EnvKeyUrl {
+                    env_key: "render",
                     tenant_key: "render",
                     url: "postgresql://render:render@database:5432/render",
                 }

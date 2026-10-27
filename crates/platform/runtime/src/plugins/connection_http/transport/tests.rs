@@ -407,7 +407,7 @@ async fn the_host_signature_reaches_the_peer_without_changing_the_guest_request(
 fn scope(generation: i64) -> ClientScope {
     ClientScope {
         connection: ConnectionScope {
-            tenant: "tenant".into(),
+            env_key: "tenant".into(),
             project: "project".into(),
             environment: "environment".into(),
             instance: "connection".into(),
@@ -664,7 +664,7 @@ async fn every_client_identity_field_and_peer_separates_pools() {
     changed.connection.instance = "other".into();
     variants.push(changed);
     let mut changed = initial.clone();
-    changed.connection.tenant = "other".into();
+    changed.connection.env_key = "other".into();
     variants.push(changed);
     let mut changed = initial.clone();
     changed.connection.project = "other".into();

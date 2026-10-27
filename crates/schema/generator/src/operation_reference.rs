@@ -297,7 +297,7 @@ mod tests {
         );
 
         let mut declaration = json!({
-            "scope": {"tenant-id": "t", "package-id": "acme"},
+            "scope": {"env_key": "t", "package-id": "acme"},
             "operations": {"acme:order/record": {
                 "registered-operation": "acme:order/record"
             }}

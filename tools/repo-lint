@@ -226,7 +226,7 @@ for declaration in declarations:
     structs[name] = (attributes, compact(body))
 
 expected = {
-    "ConnectionScope": "tenant:Box<str>,project:Box<str>,environment:Box<str>,instance:Box<str>,",
+    "ConnectionScope": "env_key:Box<str>,project:Box<str>,environment:Box<str>,instance:Box<str>,",
     "ClientScope": "connection:ConnectionScope,package:Box<str>,component_digest:Box<str>,"
                    "requirement:Box<str>,binding_hash:Box<str>,definition_hash:Box<str>,generation:i64,",
     "ClientKey": "scope:ClientScope,target:Target,",
@@ -269,7 +269,7 @@ for declaration in re.findall(r"\b(?:struct|enum)\s+\w+[^;{]*\{[^}]*\}", without
         refuse("unsupported HTTP client retention declaration")
 acquisitions = re.findall(r"let scope = ClientScope \{(.*?)\n        \};", parent, re.S)
 expected_acquisition = """
-connection:ConnectionScope{tenant:self.tenant.clone(),project:self.project.clone(),
+connection:ConnectionScope{env_key:self.env_key.clone(),project:self.project.clone(),
 environment:environment.into(),instance:snapshot.instance_id.as_deref().ok_or(ConnectionError::Unbound)?.into(),},
 package:invocation.package_id.clone().into(),component_digest:invocation.component_digest.clone().into(),
 requirement:request.requirement.clone().into(),
@@ -278,7 +278,7 @@ definition_hash:snapshot.definition_hash.as_deref().ok_or(ConnectionError::Crede
 generation:snapshot.generation.ok_or(ConnectionError::CredentialUnavailable)?,
 """
 if len(acquisitions) != 1 or compact(acquisitions[0]) != compact(expected_acquisition):
-    refuse("ClientScope acquisition must use the attested tenant/project/environment/binding/generation values")
+    refuse("ClientScope acquisition must use the attested env_key/project/environment/binding/generation values")
 if compact(transport).count("letkey=ClientKey{scope,target};") != 1:
     refuse("ClientKey acquisition must retain both supplied scope and approved target")
 PY

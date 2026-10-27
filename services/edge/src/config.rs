@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use serde::Deserialize;
-use wamn_control_registry::project_env_tenant;
+use wamn_control_registry::project_env_key;
 use wamn_engine::release_manifest::ReleaseScope;
 
 /// The variable that names the configuration file.
@@ -120,7 +120,7 @@ pub struct EdgeConfig {
     pub forward: Option<ForwardConfig>,
 }
 
-/// The environment coordinate of the box. The release names no tenant or
+/// The environment coordinate of the box. The release names no env_key or
 /// environment (R1), so the edge takes both from here, as the cloud host does.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -131,11 +131,11 @@ pub struct ScopeConfig {
 }
 
 impl ScopeConfig {
-    /// The tenant and environment of the release, with the tenant derived
+    /// The env_key and environment of the release, with env_key derived
     /// from the coordinate.
     pub fn release_scope(&self) -> ReleaseScope {
         ReleaseScope::new(
-            project_env_tenant(&self.org, &self.project, &self.environment),
+            project_env_key(&self.org, &self.project, &self.environment),
             self.environment.clone(),
         )
     }

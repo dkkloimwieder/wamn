@@ -880,7 +880,7 @@ Cutover record (2026-10-02): qualify-release failed four times before it passed.
    url() { jq -r '.stringData.url // (.data.url | @base64d)' "$1"; }
    WAMN_SYSTEM_URL="$(url $P/identity-reader.json)" WAMN_CONTROL_AUTHORING_PG_URL="$(url $G/control-author.json)" \
    WAMN_MANAGEMENT_ADMISSION_PG_URL="$(url $G/management-admitter.json)" WAMN_MANAGEMENT_ORG=dkk \
-   WAMN_MANAGEMENT_PROJECT=wms WAMN_MANAGEMENT_ENVIRONMENT=dev WAMN_MANAGEMENT_TENANT=wms \
+   WAMN_MANAGEMENT_PROJECT=wms WAMN_MANAGEMENT_ENVIRONMENT=dev WAMN_MANAGEMENT_ENV_KEY=wms \
      target/debug/wamn-scenario-worker serve --bind 127.0.0.1:18090 > $P/gate.log 2>&1 &
    GATE=$!
    until grep -q listening $P/gate.log; do sleep 1; done

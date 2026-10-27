@@ -271,7 +271,7 @@ async fn main() -> anyhow::Result<()> {
     let advisory = advisory_stream_config(&scope, 1);
     // The broker admits the materializer consumers of the packages that the
     // timing command gives `wamn dev up`, which provisions those consumers.
-    let tenant = wamn_control::dev::environment::TENANT;
+    let env_key = wamn_control::dev::environment::ENV_KEY;
     let packages: &[&str] = if wms {
         &WMS_PACKAGES
     } else {
@@ -279,7 +279,8 @@ async fn main() -> anyhow::Result<()> {
     };
     let manifests = application_manifests(&repository, packages)?;
     let consumers = wamn_control_provision::events::entity_consumers(&scope, &manifests);
-    let broker = event_broker::prepare(&directory, &scope, tenant, &source, &advisory, &consumers)?;
+    let broker =
+        event_broker::prepare(&directory, &scope, env_key, &source, &advisory, &consumers)?;
     private(
         &directory.join("compose.json"),
         &serde_json::to_vec(&json!({"services":{"delivery-events":{

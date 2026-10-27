@@ -54,7 +54,7 @@ use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_catalog::{HostAttachment, HostHandler, HostRouteAuthority};
 use wamn_control_provision::control_administration_key;
 use wamn_control_registry::identifiers::valid_project;
-use wamn_control_registry::project_env_tenant;
+use wamn_control_registry::project_env_key;
 use wamn_engine::router_delivery::{DeliveryError, PermissionDenial};
 use wamn_identity_client::{PatIssuerConfig, UserRefused, create_user, send_invitation};
 use wamn_platform_identity::application::{
@@ -848,8 +848,8 @@ impl ControlRoutes<'_> {
         let logins = self.logins(environments)?;
         let mut completed: Vec<String> = Vec::new();
         for ((project, env), url) in environments.iter().zip(logins) {
-            let tenant = project_env_tenant(self.org, project, env);
-            match write_status(&url, &tenant, attachment, caller, status).await {
+            let env_key = project_env_key(self.org, project, env);
+            match write_status(&url, &env_key, attachment, caller, status).await {
                 Ok(drops) => self.changes.publish(drops).await,
                 Err(error) => {
                     tracing::warn!(
@@ -941,8 +941,8 @@ impl ControlRoutes<'_> {
                     email,
                     display_name,
                 });
-            let tenant = project_env_tenant(self.org, project, env);
-            match write_application(&url, &tenant, attachment, caller, principal, user, *write)
+            let env_key = project_env_key(self.org, project, env);
+            match write_application(&url, &env_key, attachment, caller, principal, user, *write)
                 .await
             {
                 Ok(drops) => self.changes.publish(drops).await,
@@ -1094,7 +1094,7 @@ async fn status_with_counts(
 /// database holds no platform rows.
 async fn write_application(
     url: &str,
-    tenant: &str,
+    env_key: &str,
     attachment: &HostAttachment,
     caller: &PrincipalId,
     principal: &PrincipalId,
@@ -1128,16 +1128,16 @@ async fn write_application(
         let mut drops = AuthDrops::default();
         match (write, user) {
             (ApplicationWrite::User, Some(user)) => {
-                write_user(&transaction, tenant, user, &mut drops).await?;
+                write_user(&transaction, env_key, user, &mut drops).await?;
             }
             (ApplicationWrite::Admin, Some(user)) => {
-                write_admin(&transaction, tenant, user, &mut drops).await?;
+                write_admin(&transaction, env_key, user, &mut drops).await?;
             }
             (ApplicationWrite::RemoveAdmin, _) => {
-                remove_admin(&transaction, tenant, principal, &mut drops).await?;
+                remove_admin(&transaction, env_key, principal, &mut drops).await?;
             }
             (ApplicationWrite::RemoveUser, _) => {
-                remove_user(&transaction, tenant, principal, &mut drops).await?;
+                remove_user(&transaction, env_key, principal, &mut drops).await?;
             }
             (write, None) => anyhow::bail!("{write:?} needs the user's email and display name"),
         }
@@ -1262,7 +1262,7 @@ async fn release_profile(
 /// administration login. It returns the drops of the write.
 async fn write_status(
     url: &str,
-    tenant: &str,
+    env_key: &str,
     attachment: &HostAttachment,
     caller: &PrincipalId,
     status: EnvironmentStatus,
@@ -1282,7 +1282,7 @@ async fn write_status(
             .await?;
         require_platform_rows(&transaction).await?;
         let mut drops = AuthDrops::default();
-        write_environment_status(&transaction, tenant, status, &mut drops).await?;
+        write_environment_status(&transaction, env_key, status, &mut drops).await?;
         transaction.commit().await?;
         anyhow::Ok(drops)
     }

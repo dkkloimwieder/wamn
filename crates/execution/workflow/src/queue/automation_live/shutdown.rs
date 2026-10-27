@@ -115,7 +115,7 @@ pub(super) async fn run(
     assert!(execution.logging.claim_snapshot(scope).is_some());
     let before = admin
         .query_one(
-            "SELECT r.status,q.lease_generation FROM wamn_run.runs r JOIN wamn_run.run_queue q USING (tenant_id,run_id) WHERE run_id=$1",
+            "SELECT r.status,q.lease_generation FROM wamn_run.runs r JOIN wamn_run.run_queue q USING (env_key,run_id) WHERE run_id=$1",
             &[&run],
         )
         .await?;
@@ -153,7 +153,7 @@ pub(super) async fn run(
     assert!(execution.logging.claim_snapshot(scope).is_none());
     let after = admin
         .query_one(
-            "SELECT r.status,q.lease_generation,r.result_json::text FROM wamn_run.runs r JOIN wamn_run.run_queue q USING (tenant_id,run_id) WHERE run_id=$1",
+            "SELECT r.status,q.lease_generation,r.result_json::text FROM wamn_run.runs r JOIN wamn_run.run_queue q USING (env_key,run_id) WHERE run_id=$1",
             &[&run],
         )
         .await?;

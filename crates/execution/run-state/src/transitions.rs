@@ -13,20 +13,20 @@ use crate::RunStatus;
 
 pub(crate) const FENCED_PREFIX: &str = "\
 WITH input AS ( \
-    SELECT NULLIF(current_setting('app.tenant', true), '')::text AS tenant_id, \
+    SELECT NULLIF(current_setting('app.env_key', true), '')::text AS env_key, \
            $1::text AS target_run_id, $2::text AS authority_run_id, \
            $3::text AS lease_owner, $4::bigint AS lease_generation \
 ), \
 locked_run AS MATERIALIZED ( \
     SELECT r.* FROM runs AS r, input AS i \
      WHERE i.target_run_id = i.authority_run_id \
-       AND r.tenant_id = i.tenant_id AND r.run_id = i.target_run_id \
+       AND r.env_key = i.env_key AND r.run_id = i.target_run_id \
      FOR UPDATE OF r \
 ), \
 locked_queue AS MATERIALIZED ( \
     SELECT q.* FROM run_queue AS q \
       JOIN locked_run AS r \
-        ON r.tenant_id = q.tenant_id AND r.run_id = q.run_id \
+        ON r.env_key = q.env_key AND r.run_id = q.run_id \
      FOR UPDATE OF q \
 ), \
 authority AS ( \
@@ -41,7 +41,7 @@ authority AS ( \
                THEN 'fence-lost' \
              ELSE 'ready' \
            END AS result_code, \
-           r.tenant_id, r.run_id, r.status, \
+           r.env_key, r.run_id, r.status, \
            r.caller_outcome_type, r.caller_outcome_json, \
            r.caller_http_status, r.caller_release_node_id, \
            r.caller_outcome_hash, r.caller_released_at, r.run_deadline_at \
@@ -151,7 +151,7 @@ pub fn release_caller_sql() -> String {
                       WHEN a.caller_released_at IS NOT NULL THEN 'already-released' \
                       ELSE 'ready' \
                     END AS result_code, \
-                    a.tenant_id, a.run_id, a.status, \
+                    a.env_key, a.run_id, a.status, \
                     a.caller_outcome_type, a.caller_outcome_json, \
                     a.caller_http_status, a.caller_release_node_id, \
                     a.caller_outcome_hash, a.caller_released_at \
@@ -168,7 +168,7 @@ pub fn release_caller_sql() -> String {
                     updated_at = $10::timestamptz \
                FROM classified AS c \
               WHERE c.result_code = 'ready' \
-                AND r.tenant_id = c.tenant_id AND r.run_id = c.run_id \
+                AND r.env_key = c.env_key AND r.run_id = c.run_id \
              RETURNING r.status, r.caller_outcome_type, r.caller_outcome_json, \
                        r.caller_http_status, r.caller_release_node_id, \
                        r.caller_outcome_hash \
@@ -226,7 +226,7 @@ pub fn record_deadline_adjustments_sql() -> String {
         "{FENCED_PREFIX}, recorded AS ( \
              UPDATE runs AS r SET deadline_adjustments_json = $5::text::jsonb \
                FROM authority AS a WHERE a.result_code = 'ready' \
-                AND r.tenant_id = a.tenant_id AND r.run_id = a.run_id \
+                AND r.env_key = a.env_key AND r.run_id = a.run_id \
              RETURNING r.run_id \
          ) SELECT EXISTS (SELECT 1 FROM recorded)"
     )
@@ -254,7 +254,7 @@ pub fn terminalize_sql() -> String {
                         THEN 'caller-unreleased' \
                       ELSE 'ready' \
                     END AS result_code, \
-                    a.tenant_id, a.run_id, a.status, a.caller_released_at \
+                    a.env_key, a.run_id, a.status, a.caller_released_at \
                FROM authority AS a \
          ), \
          terminalized AS ( \
@@ -264,12 +264,12 @@ pub fn terminalize_sql() -> String {
                     updated_at = $9::timestamptz \
                FROM classified AS c \
               WHERE c.result_code = 'ready' \
-                AND r.tenant_id = c.tenant_id AND r.run_id = c.run_id \
-             RETURNING r.tenant_id, r.run_id, r.status \
+                AND r.env_key = c.env_key AND r.run_id = c.run_id \
+             RETURNING r.env_key, r.run_id, r.status \
          ), \
          dequeued AS ( \
              DELETE FROM run_queue AS q USING terminalized AS t \
-              WHERE q.tenant_id = t.tenant_id AND q.run_id = t.run_id \
+              WHERE q.env_key = t.env_key AND q.run_id = t.run_id \
              RETURNING q.run_id \
          ) \
          SELECT CASE WHEN t.run_id IS NOT NULL THEN 'terminalized' ELSE c.result_code END \
@@ -476,9 +476,7 @@ mod tests {
             .and_then(|(_, tail)| tail.split_once("\n);"))
             .map(|(table, _)| table)
             .expect("effect_attempts table");
-        assert!(
-            attempts.contains("UNIQUE (tenant_id, run_id, frame_id, local_node_id, occurrence)")
-        );
+        assert!(attempts.contains("UNIQUE (env_key, run_id, frame_id, local_node_id, occurrence)"));
         for frame_fact in [
             "root_plan_hash",
             "current_plan_hash",
@@ -519,10 +517,10 @@ mod tests {
             );
         }
         assert!(
-            dispatches.contains("UNIQUE (tenant_id, run_id, frame_id, local_node_id, occurrence)")
+            dispatches.contains("UNIQUE (env_key, run_id, frame_id, local_node_id, occurrence)")
         );
         assert!(dispatches.contains(
-            "FOREIGN KEY (tenant_id, attempt_id, attempt_started_at,\n                     run_id, frame_id, local_node_id, occurrence)"
+            "FOREIGN KEY (env_key, attempt_id, attempt_started_at,\n                     run_id, frame_id, local_node_id, occurrence)"
         ));
     }
 

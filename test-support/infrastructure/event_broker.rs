@@ -64,7 +64,7 @@ struct Subjects {
 pub fn prepare(
     work: &Path,
     scope: &Triple,
-    tenant: &str,
+    env_key: &str,
     source: &stream::Config,
     advisory: &stream::Config,
     consumers: &[pull::Config],
@@ -73,7 +73,7 @@ pub fn prepare(
         scope.org.as_str(),
         scope.project.as_str(),
         scope.env.as_str(),
-        tenant,
+        env_key,
         source.name.as_str(),
         advisory.name.as_str(),
     ] {

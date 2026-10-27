@@ -182,7 +182,7 @@ impl ApplicationRoutes<'_> {
         }
         let manifest = self.release.manifest();
         let scope = self.release.scope();
-        let tenant = scope.tenant_id.as_str();
+        let env_key = scope.env_key.as_str();
         let Some(declared) = scope.applications.get(&request.application) else {
             return Err(start_refusal("application_not_declared", "application"));
         };
@@ -192,7 +192,7 @@ impl ApplicationRoutes<'_> {
             .postgres
             .enabled_workflow(
                 self.project,
-                tenant,
+                env_key,
                 &scope.environment,
                 application,
                 &request.workflow_id,
@@ -200,13 +200,13 @@ impl ApplicationRoutes<'_> {
             .await?
             .ok_or_else(|| start_refusal("workflow_not_enabled", "workflow_id"))?;
         let not_served = |_| start_refusal("workflow_not_served", "workflow_id");
-        let hash = gate_workflow_document(tenant, packages, manifest, &workflow.graph)
+        let hash = gate_workflow_document(env_key, packages, manifest, &workflow.graph)
             .map_err(not_served)?;
         if hash.as_str() != workflow.wiring_hash {
             return Err(start_refusal("workflow_not_served", "workflow_id"));
         }
         let node_digests: serde_json::Map<String, Value> =
-            resolve_workflow_components(tenant, packages, manifest, &workflow.graph)
+            resolve_workflow_components(env_key, packages, manifest, &workflow.graph)
                 .map_err(not_served)?
                 .into_iter()
                 .map(|(node, component)| (node, Value::String(component.component_digest)))
@@ -241,7 +241,7 @@ impl ApplicationRoutes<'_> {
             .postgres
             .admit_manual_run(
                 self.project,
-                tenant,
+                env_key,
                 &ManualRunAdmission {
                     package_id: application,
                     manifest_digest: self.release.release().manifest_digest.as_str(),
@@ -282,10 +282,10 @@ impl ApplicationRoutes<'_> {
                 .set_counter(attachment, principal, request_id, request)
                 .await;
         }
-        let tenant = self.release.scope().tenant_id.as_str();
+        let env_key = self.release.scope().env_key.as_str();
         let mut drops = AuthDrops::default();
         let result = self
-            .serve(attachment, principal, payload, tenant, &mut drops)
+            .serve(attachment, principal, payload, env_key, &mut drops)
             .await;
         // The host drops its own memory at once, and the message reaches the
         // other hosts of the tenant.
@@ -301,7 +301,7 @@ impl ApplicationRoutes<'_> {
         attachment: &HostAttachment,
         principal: &PrincipalId,
         payload: &str,
-        tenant: &str,
+        env_key: &str,
         drops: &mut AuthDrops,
     ) -> Result<Value, Refusal> {
         match attachment.route.handler {
@@ -335,7 +335,7 @@ impl ApplicationRoutes<'_> {
             HostHandler::RoleCreate => {
                 let request: RoleRequest = parse(payload)?;
                 self.run(attachment, principal, true, async |client| {
-                    let created = create_role(client, tenant, &request.role, drops).await?;
+                    let created = create_role(client, env_key, &request.role, drops).await?;
                     Ok(json!({ "created": created }))
                 })
                 .await
@@ -343,7 +343,7 @@ impl ApplicationRoutes<'_> {
             HostHandler::RoleDelete => {
                 let request: RoleRequest = parse(payload)?;
                 self.run(attachment, principal, true, async |client| {
-                    let deleted = delete_role(client, tenant, &request.role, drops).await?;
+                    let deleted = delete_role(client, env_key, &request.role, drops).await?;
                     Ok(json!({ "deleted": deleted }))
                 })
                 .await
@@ -374,7 +374,7 @@ impl ApplicationRoutes<'_> {
                 }
                 self.run(attachment, principal, true, async |client| {
                     let outcome =
-                        grant_permission(client, tenant, &request.role, &request.operation, drops)
+                        grant_permission(client, env_key, &request.role, &request.operation, drops)
                             .await?;
                     Ok(json!({ "rows_added": outcome.rows_added }))
                 })
@@ -383,7 +383,7 @@ impl ApplicationRoutes<'_> {
             HostHandler::PermissionRevoke => {
                 let request: PermissionRequest = parse(payload)?;
                 self.run(attachment, principal, true, async |client| {
-                    revoke_permission(client, tenant, &request.role, &request.operation, drops)
+                    revoke_permission(client, env_key, &request.role, &request.operation, drops)
                         .await?;
                     Ok(json!({}))
                 })
@@ -396,7 +396,7 @@ impl ApplicationRoutes<'_> {
                 self.run(attachment, principal, false, async |client| {
                     require_user(client, user_id).await?;
                     let granted =
-                        grant_user_role(client, tenant, user_id, &request.role, drops).await?;
+                        grant_user_role(client, env_key, user_id, &request.role, drops).await?;
                     Ok(json!({ "granted": granted }))
                 })
                 .await
@@ -419,7 +419,7 @@ impl ApplicationRoutes<'_> {
                 self.run(attachment, principal, false, async |client| {
                     require_user(client, user_id).await?;
                     let revoked =
-                        revoke_user_role(client, tenant, user_id, &request.role, drops).await?;
+                        revoke_user_role(client, env_key, user_id, &request.role, drops).await?;
                     Ok(json!({ "revoked": revoked }))
                 })
                 .await
@@ -455,7 +455,7 @@ impl ApplicationRoutes<'_> {
             .postgres
             .set_number_counter(
                 self.project,
-                self.release.scope().tenant_id.as_str(),
+                self.release.scope().env_key.as_str(),
                 principal.as_str(),
                 &attachment.operation,
                 request_id.unwrap_or_default(),
@@ -488,17 +488,17 @@ impl ApplicationRoutes<'_> {
         lock: bool,
         work: impl AsyncFnOnce(&Client) -> Result<Value, Refusal>,
     ) -> Result<Value, Refusal> {
-        let tenant = self.release.scope().tenant_id.as_str();
+        let env_key = self.release.scope().env_key.as_str();
         self.postgres
             .administration_transaction(
                 self.project,
-                tenant,
+                env_key,
                 principal,
                 &attachment.operation,
                 async |client| {
                     if lock {
                         client
-                            .query_one(OPERATION_GRANT_LOCK_SQL, &[&tenant])
+                            .query_one(OPERATION_GRANT_LOCK_SQL, &[&env_key])
                             .await?;
                     }
                     work(client).await

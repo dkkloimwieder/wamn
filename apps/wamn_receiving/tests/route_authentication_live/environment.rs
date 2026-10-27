@@ -158,7 +158,7 @@ pub(super) fn render_component_declarations(
             }
             let declaration = wamn_control::component_declaration::render_declaration_document(
                 &source,
-                identity().tenant().as_str(),
+                identity().env_key().as_str(),
             )
             .with_context(|| format!("render {}", source.display()))?;
             let destination = output.join(format!("{}.json", package.component));
@@ -410,8 +410,8 @@ pub(super) async fn verify_zero_case_gate_reports(
         let row = control
             .query_one(
                 "SELECT passed, summary FROM wamn_run.gate_reports \
-                 WHERE tenant_id = $1 AND wiring_hash = $2",
-                &[&identity().tenant().as_str(), report_id],
+                 WHERE env_key = $1 AND wiring_hash = $2",
+                &[&identity().env_key().as_str(), report_id],
             )
             .await
             .with_context(|| format!("read production Gate report {report_id}"))?;
@@ -532,7 +532,7 @@ pub(super) async fn publish_journey_release(
     let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
     wamn_control::environment::stage::write_release(
         project_url,
-        identity().tenant().as_str(),
+        identity().env_key().as_str(),
         &digest,
         &manifest,
     )
@@ -645,8 +645,8 @@ pub(super) async fn author_materializer_workflow(
     let (project, task) = connect(&route.database_url).await?;
     let digest: String = project
         .query_one(
-            "SELECT manifest_digest FROM catalog.releases WHERE tenant_id = $1",
-            &[&identity().tenant().as_str()],
+            "SELECT manifest_digest FROM catalog.releases WHERE env_key = $1",
+            &[&identity().env_key().as_str()],
         )
         .await?
         .get(0);

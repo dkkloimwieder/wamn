@@ -15,15 +15,16 @@ const RUNS_EXECUTION_GRAIN_CHECK_DEF: &str = "CHECK (flow_id IS NOT NULL AND flo
 /// invoker and frozen node digests.
 const RUNS_EXECUTION_IDENTITY_CHECK_DEF: &str = "CHECK (NOT trigger_source IS DISTINCT FROM 'manual'::text OR NOT trigger_source IS DISTINCT FROM 'schedule'::text OR NOT trigger_source IS DISTINCT FROM 'event'::text OR execution_principal_id IS NULL AND execution_role IS NULL AND invoked_by IS NULL AND invoked_by_user_id IS NULL AND node_digests_json IS NULL)";
 #[cfg(test)]
-pub(super) const RUNS_RELEASE_FK_DEF: &str = "FOREIGN KEY (tenant_id, manifest_digest) REFERENCES catalog.releases(tenant_id, manifest_digest)";
-pub(super) const RUNS_ROOT_INDEX_DEF: &str = "CREATE INDEX runs_root ON wamn_run.runs USING btree (tenant_id, root_run_id) WHERE (root_run_id IS NOT NULL)";
+pub(super) const RUNS_RELEASE_FK_DEF: &str =
+    "FOREIGN KEY (env_key, manifest_digest) REFERENCES catalog.releases(env_key, manifest_digest)";
+pub(super) const RUNS_ROOT_INDEX_DEF: &str = "CREATE INDEX runs_root ON wamn_run.runs USING btree (env_key, root_run_id) WHERE (root_run_id IS NOT NULL)";
 pub(super) const RUNS_ADMISSION_PINS_TRIGGER_DEF: &str = "CREATE TRIGGER runs_admission_pins_immutable BEFORE UPDATE OF flow_id, flow_version, package_id, environment, capture_mode, durability_class, wiring_id, wiring_version, wiring_hash, binding_world_json, manifest_digest, service_principal_id, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable()";
 /// The qual `wamn_run.environment_policies` must carry, as `pg_policy` renders
 /// it. Re-keyed onto `current_user` with the rest of the guest-reachable floor
 /// (`wamn-0h0g.22.6.3`); if this drifts from `deploy/sql/run-state.sql` the
 /// reconciler REVERTS the sweep on every existing run-plane database.
-pub(super) const ENVIRONMENT_POLICY_TENANT_QUAL: &str =
-    "wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()";
+pub(super) const ENVIRONMENT_POLICY_ENV_KEY_QUAL: &str =
+    "wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key()";
 
 #[derive(Clone, Copy)]
 pub(super) enum CheckOrigin {
@@ -46,9 +47,9 @@ pub(super) struct CheckSpec {
 pub(super) const CHECK_SPECS: &[CheckSpec] = &[
     CheckSpec {
         table: "environment_policies",
-        name: "environment_policies_tenant_id_check",
-        definition: "CHECK (tenant_id <> ''::text)",
-        origin: CheckOrigin::Inline("tenant_id"),
+        name: "environment_policies_env_key_check",
+        definition: "CHECK (env_key <> ''::text)",
+        origin: CheckOrigin::Inline("env_key"),
     },
     CheckSpec {
         table: "environment_policies",
@@ -64,9 +65,9 @@ pub(super) const CHECK_SPECS: &[CheckSpec] = &[
     },
     CheckSpec {
         table: "runs",
-        name: "runs_tenant_id_check",
-        definition: "CHECK (tenant_id <> ''::text)",
-        origin: CheckOrigin::Inline("tenant_id"),
+        name: "runs_env_key_check",
+        definition: "CHECK (env_key <> ''::text)",
+        origin: CheckOrigin::Inline("env_key"),
     },
     CheckSpec {
         table: "runs",
@@ -217,8 +218,8 @@ pub(super) const CHECK_SPECS: &[CheckSpec] = &[
     },
     CheckSpec {
         table: "effect_attempts",
-        name: "effect_attempts_tenant_check",
-        definition: "CHECK (tenant_id <> ''::text)",
+        name: "effect_attempts_env_key_check",
+        definition: "CHECK (env_key <> ''::text)",
         origin: CheckOrigin::Table,
     },
     CheckSpec {
@@ -313,8 +314,8 @@ pub(super) const CHECK_SPECS: &[CheckSpec] = &[
     },
     CheckSpec {
         table: "effect_attempt_dispatches",
-        name: "effect_attempt_dispatches_tenant_check",
-        definition: "CHECK (tenant_id <> ''::text)",
+        name: "effect_attempt_dispatches_env_key_check",
+        definition: "CHECK (env_key <> ''::text)",
         origin: CheckOrigin::Table,
     },
     CheckSpec {
@@ -343,8 +344,8 @@ pub(super) const CHECK_SPECS: &[CheckSpec] = &[
     },
     CheckSpec {
         table: "effect_attempt_outcomes",
-        name: "effect_attempt_outcomes_tenant_check",
-        definition: "CHECK (tenant_id <> ''::text)",
+        name: "effect_attempt_outcomes_env_key_check",
+        definition: "CHECK (env_key <> ''::text)",
         origin: CheckOrigin::Table,
     },
     CheckSpec {
@@ -361,8 +362,8 @@ pub(super) const CHECK_SPECS: &[CheckSpec] = &[
     },
     CheckSpec {
         table: "operator_run_actions",
-        name: "operator_run_actions_tenant_check",
-        definition: "CHECK (tenant_id <> ''::text)",
+        name: "operator_run_actions_env_key_check",
+        definition: "CHECK (env_key <> ''::text)",
         origin: CheckOrigin::Table,
     },
     CheckSpec {
@@ -421,9 +422,9 @@ pub(super) const CHECK_SPECS: &[CheckSpec] = &[
     },
     CheckSpec {
         table: "run_queue",
-        name: "run_queue_tenant_id_check",
-        definition: "CHECK (tenant_id <> ''::text)",
-        origin: CheckOrigin::Inline("tenant_id"),
+        name: "run_queue_env_key_check",
+        definition: "CHECK (env_key <> ''::text)",
+        origin: CheckOrigin::Inline("env_key"),
     },
     CheckSpec {
         table: "run_queue",
@@ -695,21 +696,21 @@ pub(super) fn trigger_specs() -> Vec<TriggerSpec> {
 }
 
 pub(super) const EFFECT_DISPATCH_ATTEMPT_FK_NAME: &str = "effect_attempt_dispatches_attempt_fk";
-pub(super) const EFFECT_DISPATCH_ATTEMPT_FK_DEF: &str = "FOREIGN KEY (tenant_id, attempt_id, attempt_started_at, run_id, frame_id, local_node_id, occurrence) REFERENCES wamn_run.effect_attempts(tenant_id, attempt_id, attempt_started_at, run_id, frame_id, local_node_id, occurrence)";
+pub(super) const EFFECT_DISPATCH_ATTEMPT_FK_DEF: &str = "FOREIGN KEY (env_key, attempt_id, attempt_started_at, run_id, frame_id, local_node_id, occurrence) REFERENCES wamn_run.effect_attempts(env_key, attempt_id, attempt_started_at, run_id, frame_id, local_node_id, occurrence)";
 pub(super) const EFFECT_DISPATCH_ATTEMPT_FK_SQL: &str = "ALTER TABLE wamn_run.effect_attempt_dispatches \
      ADD CONSTRAINT effect_attempt_dispatches_attempt_fk \
-     FOREIGN KEY (tenant_id, attempt_id, attempt_started_at, \
+     FOREIGN KEY (env_key, attempt_id, attempt_started_at, \
                   run_id, frame_id, local_node_id, occurrence) \
      REFERENCES wamn_run.effect_attempts \
-         (tenant_id, attempt_id, attempt_started_at, \
+         (env_key, attempt_id, attempt_started_at, \
           run_id, frame_id, local_node_id, occurrence)";
 pub(super) const EFFECT_OUTCOME_DISPATCH_FK_NAME: &str = "effect_attempt_outcomes_dispatch_fk";
-pub(super) const EFFECT_OUTCOME_DISPATCH_FK_DEF: &str = "FOREIGN KEY (tenant_id, attempt_id, dispatched_at) REFERENCES wamn_run.effect_attempt_dispatches(tenant_id, attempt_id, dispatched_at)";
+pub(super) const EFFECT_OUTCOME_DISPATCH_FK_DEF: &str = "FOREIGN KEY (env_key, attempt_id, dispatched_at) REFERENCES wamn_run.effect_attempt_dispatches(env_key, attempt_id, dispatched_at)";
 pub(super) const EFFECT_OUTCOME_DISPATCH_FK_SQL: &str = "ALTER TABLE wamn_run.effect_attempt_outcomes \
      ADD CONSTRAINT effect_attempt_outcomes_dispatch_fk \
-     FOREIGN KEY (tenant_id, attempt_id, dispatched_at) \
+     FOREIGN KEY (env_key, attempt_id, dispatched_at) \
      REFERENCES wamn_run.effect_attempt_dispatches \
-         (tenant_id, attempt_id, dispatched_at)";
+         (env_key, attempt_id, dispatched_at)";
 pub(super) const RETIRED_EFFECT_ATTEMPT_COLUMNS: &[&str] = &[
     "attempt_key",
     "attempt_index",
@@ -732,13 +733,13 @@ pub(super) const EFFECT_FRAME_COLUMNS: &[&str] = &[
 
 pub(super) const EFFECT_ATTEMPTS_OCCURRENCE_KEY_DEF: &str = "CREATE UNIQUE INDEX \
 effect_attempts_occurrence_key ON wamn_run.effect_attempts USING btree \
-(tenant_id, run_id, frame_id, local_node_id, occurrence)";
+(env_key, run_id, frame_id, local_node_id, occurrence)";
 pub(super) const EFFECT_ATTEMPTS_DISPATCH_IDENTITY_KEY_DEF: &str = "CREATE UNIQUE INDEX \
 effect_attempts_dispatch_identity_key ON wamn_run.effect_attempts USING btree \
-(tenant_id, attempt_id, attempt_started_at, run_id, frame_id, local_node_id, occurrence)";
+(env_key, attempt_id, attempt_started_at, run_id, frame_id, local_node_id, occurrence)";
 pub(super) const EFFECT_DISPATCHES_OCCURRENCE_KEY_DEF: &str = "CREATE UNIQUE INDEX \
 effect_attempt_dispatches_occurrence_key ON wamn_run.effect_attempt_dispatches USING btree \
-(tenant_id, run_id, frame_id, local_node_id, occurrence)";
+(env_key, run_id, frame_id, local_node_id, occurrence)";
 pub(super) const EFFECT_FRAME_CHECKS: &[&str] = &[
     "effect_attempts_root_plan_hash_check",
     "effect_attempts_current_plan_hash_check",

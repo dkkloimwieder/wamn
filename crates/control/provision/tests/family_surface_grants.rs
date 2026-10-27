@@ -272,7 +272,7 @@ fn the_event_materializer_role_holds_exactly_its_two_catalog_reads() {
         &admin,
         "seed materializer registration inputs",
         "INSERT INTO catalog.packages \
-           (tenant_id, package_id, package_version, artifact_digest) VALUES \
+           (env_key, package_id, package_version, artifact_digest) VALUES \
            ('t1', 'widgets', '1.0.0', \
             'sha256:0000000000000000000000000000000000000000000000000000000000000000'), \
            ('t2', 'foreign', '1.0.0', \
@@ -282,10 +282,10 @@ fn the_event_materializer_role_holds_exactly_its_two_catalog_reads() {
     assert_eq!(
         query(
             &as_materializer,
-            "SET app.tenant = 't1'; \
+            "SET app.env_key = 't1'; \
              SELECT string_agg(package_id || '@' || package_version, ',' ORDER BY package_id) \
                FROM catalog.packages \
-              WHERE tenant_id = current_setting('app.tenant', true)"
+              WHERE env_key = current_setting('app.env_key', true)"
         ),
         "widgets@1.0.0"
     );
@@ -400,7 +400,7 @@ fn expected_executor_grants() -> Vec<String> {
         "registration_id",
         "service_principal_id",
         "status",
-        "tenant_id",
+        "env_key",
         "trigger_source",
         "wiring_hash",
         "wiring_id",
@@ -408,7 +408,7 @@ fn expected_executor_grants() -> Vec<String> {
     ] {
         rows.push(format!("column|wamn_run|runs.{column}|INSERT"));
     }
-    for column in ["run_id", "tenant_id"] {
+    for column in ["run_id", "env_key"] {
         rows.push(format!("column|wamn_run|run_queue.{column}|INSERT"));
     }
     rows.push("relation|wamn_run|environment_policies|SELECT".to_owned());
@@ -618,7 +618,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
         "package_id",
         "manifest_digest",
         "environment",
-        "tenant_id",
+        "env_key",
         "run_id",
         "capture_mode",
         "idempotency_key",
@@ -670,13 +670,13 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
         "seed one run the executor may claim",
         &format!(
             "INSERT INTO catalog.packages \
-               (tenant_id, package_id, package_version, artifact_digest) \
+               (env_key, package_id, package_version, artifact_digest) \
              VALUES ('t1', 'widgets', '1.0.0', 'sha256:{package_hash}');\n\
              INSERT INTO wamn_run.environment_policies \
-               (tenant_id, expected_environment, durability_class) \
+               (env_key, expected_environment, durability_class) \
              VALUES ('t1', 'dev', 'standard');\n\
              INSERT INTO wamn_run.runs \
-               (tenant_id, run_id, package_id, environment, status, \
+               (env_key, run_id, package_id, environment, status, \
                 trigger_source, wiring_id, wiring_version, wiring_hash, \
                 binding_world_json, input_json) \
              VALUES ('t1', 'r1', 'widgets', 'dev', 'dispatched', 'internal', \
@@ -689,7 +689,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
     assert_eq!(
         sqlstate(
             &as_login,
-            "BEGIN; SET LOCAL app.tenant = 't1'; \
+            "BEGIN; SET LOCAL app.env_key = 't1'; \
              UPDATE wamn_run.runs SET status = 'running' WHERE run_id = 'r1'; COMMIT;\n",
         ),
         None,
@@ -707,7 +707,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
     assert_eq!(
         sqlstate(
             &as_login,
-            "BEGIN; SET LOCAL app.tenant = 't1'; \
+            "BEGIN; SET LOCAL app.env_key = 't1'; \
              UPDATE wamn_run.runs SET input_json = '{\"b\":2}' WHERE run_id = 'r1'; COMMIT;\n",
         )
         .as_deref(),
@@ -902,33 +902,33 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
             // transaction rather than with an UPDATE the schema forbids.
             "BEGIN;\nSET CONSTRAINTS ALL DEFERRED;\n\
              INSERT INTO catalog.packages \
-               (tenant_id, package_id, package_version, artifact_digest) \
+               (env_key, package_id, package_version, artifact_digest) \
              VALUES ('tenant-a', 'orders', '1.0.0', '{digest}');\n\
              INSERT INTO catalog.releases \
-               (tenant_id, manifest_digest, canonical_bytes) \
+               (env_key, manifest_digest, canonical_bytes) \
              VALUES ('tenant-a', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', '{{}}');\n\
              INSERT INTO catalog.connection_instances \
-               (tenant_id, environment, instance_id, requirement_type, contract, \
+               (env_key, environment, instance_id, requirement_type, contract, \
                 lifecycle_status, active_generation, revision, created_at, updated_at) \
              VALUES ('tenant-a', 'prod', 'upstream', 'http', \
                      'wamn:connection/http@0.1.0', 'enabled', 1, 1, now(), now());\n\
              INSERT INTO catalog.connection_generations \
-               (tenant_id, environment, instance_id, generation, definition_json, \
+               (env_key, environment, instance_id, generation, definition_json, \
                 definition_hash, credential_set_handle, created_at) \
              VALUES ('tenant-a', 'prod', 'upstream', 1, '{{}}', '{digest}', \
                      'upstream-v1', now());\n\
              INSERT INTO catalog.connection_requirements \
-               (tenant_id, component_digest, store_alias, requirement_json, \
+               (env_key, component_digest, store_alias, requirement_json, \
                 requirement_hash) \
              VALUES ('tenant-a', '{digest}', 'upstream', '{{}}', '{digest}');\n\
              INSERT INTO catalog.connection_bindings \
-               (tenant_id, manifest_digest, component_digest, store_alias, \
+               (env_key, manifest_digest, component_digest, store_alias, \
                 environment, instance_id, binding_status, validation_status, \
                 validation_hash, package_id) \
              VALUES ('tenant-a', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', '{digest}', 'upstream', 'prod', 'upstream', \
                      'active', 'valid', '{digest}', 'orders');\n\
              INSERT INTO catalog.workflows \
-               (tenant_id, environment, application, workflow_id, version, graph_json, \
+               (env_key, environment, application, workflow_id, version, graph_json, \
                 wiring_hash, trigger, execution_type, execution_role, created_by) \
              VALUES ('tenant-a', 'prod', 'orders', 'send', 1, '{{}}', '{digest}', \
                      'manual', 'role', 'widget-reader', \
@@ -975,7 +975,7 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
         query(
             &as_login,
             "SELECT count(graph_json) FROM catalog.workflows \
-              WHERE tenant_id = 'tenant-a' AND environment = 'prod' \
+              WHERE env_key = 'tenant-a' AND environment = 'prod' \
                 AND application = 'orders' AND workflow_id = 'send' AND version = 1"
         ),
         "1",

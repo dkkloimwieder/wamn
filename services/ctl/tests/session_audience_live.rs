@@ -38,7 +38,7 @@ const PROJECT: &str = "widgets";
 const ENVIRONMENT: &str = "dev";
 const INSTANCE: &str = "k3m9x2p7";
 const OTHER_INSTANCE: &str = "p7x2m9k3";
-const TENANT: &str = "sessioncli--widgets--dev";
+const ENV_KEY: &str = "sessioncli--widgets--dev";
 
 fn database(instance: &str) -> String {
     project_env_database_name(ORG, PROJECT, ENVIRONMENT, instance)
@@ -179,7 +179,7 @@ fn read_target(path: &Path, generation: CredentialGeneration) -> anyhow::Result<
             && target.triple().project == PROJECT
             && target.triple().env.as_str() == ENVIRONMENT
             && target.instance_suffix() == INSTANCE
-            && target.tenant_id() == TENANT
+            && target.env_key() == ENV_KEY
             && target.connection().database() == database(INSTANCE)
             && target.connection().generation() == generation,
         "emitted target changed a trusted binding"
@@ -425,7 +425,7 @@ async fn journey(admin: &Client, system_url: &str, directory: &Path) -> anyhow::
     )?;
     let b_target = read_target(&b_path, CredentialGeneration::B)?;
     anyhow::ensure!(
-        a_target.audience() == b_target.audience() && a_target.tenant_id() == b_target.tenant_id(),
+        a_target.audience() == b_target.audience() && a_target.env_key() == b_target.env_key(),
         "generation rotation changed the audience binding"
     );
     let b = connect(b_target.connection().url()).await?;

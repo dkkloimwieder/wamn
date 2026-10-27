@@ -68,8 +68,8 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
         ),
         (
             WorkloadRoleFamily::App,
-            WorkloadRoleScope::Tenant {
-                tenant: "files",
+            WorkloadRoleScope::EnvKey {
+                env_key: "files",
                 database: name,
             },
         ),
@@ -326,11 +326,18 @@ pub async fn registry(
             ))
             .await?;
         if mapped {
-            owner.execute(
-                "INSERT INTO wamn_authority.author_login_tenants \
-                 (login_identity,tenant_id,org_id,project_id,environment) VALUES ($1,$2,$3,$4,'dev')",
-                &[&role, &format!("{org}--{scope_project}--dev"), &org, &scope_project],
-            ).await?;
+            owner
+                .execute(
+                    "INSERT INTO wamn_authority.author_login_tenants \
+                 (login_identity,env_key,org_id,project_id,environment) VALUES ($1,$2,$3,$4,'dev')",
+                    &[
+                        &role,
+                        &format!("{org}--{scope_project}--dev"),
+                        &org,
+                        &scope_project,
+                    ],
+                )
+                .await?;
         }
         clients.push(connect(&login(database.url(), &role)?).await?);
     }

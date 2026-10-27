@@ -13,7 +13,7 @@
 --
 -- PLATFORM-GLOBAL, NOT TENANT-SCOPED — the sharpest difference from
 -- catalog-schema.sql: the system DB is the platform's own single-tenant
--- control-plane state. There is NO `app.tenant` claim, NO per-tenant RLS floor,
+-- control-plane state. There is NO `app.env_key` claim, NO per-tenant RLS floor,
 -- NO NULLIF/CHECK(tenant_id <> '') pattern here. The top-level key is `org_id`;
 -- access is the `wamn_system` owner role (from wamn-q3n.2). The control-plane
 -- families get their grants from `stable_surface_sql` in wamn-control-provision.

@@ -61,8 +61,8 @@ pub async fn load_local_application(
     scope: ReleaseScope,
     database_url: &str,
 ) -> anyhow::Result<LocalApplication> {
-    let instance = read_local_target(database_url, &scope.tenant_id, &scope.environment).await?;
-    let facts = load_local_facts(directory, manifest, &scope.tenant_id)?;
+    let instance = read_local_target(database_url, &scope.env_key, &scope.environment).await?;
+    let facts = load_local_facts(directory, manifest, &scope.env_key)?;
     Ok(LocalApplication {
         manifest: manifest.clone(),
         scope,
@@ -143,7 +143,7 @@ impl LocalApplication {
             }
             let mut current = read_local_binding(
                 client,
-                &self.scope.tenant_id,
+                &self.scope.env_key,
                 &self.scope.environment,
                 &binding.requirement,
                 &binding.selection.instance_id,
@@ -160,12 +160,12 @@ impl LocalApplication {
     pub(crate) async fn effect_snapshot(
         &self,
         client: &tokio_postgres::Client,
-        tenant: &str,
+        env_key: &str,
         lookup: &crate::plugins::wamn_postgres::ConnectionEffectLookup<'_>,
     ) -> anyhow::Result<Option<crate::plugins::wamn_postgres::ConnectionEffectSnapshot>> {
         self.require_instance(client).await?;
         anyhow::ensure!(
-            tenant == self.scope.tenant_id
+            env_key == self.scope.env_key
                 && lookup.environment == self.scope.environment
                 && lookup.manifest_digest == self.facts.manifest_digest.as_str(),
             "local connection release scope mismatch"
@@ -190,7 +190,7 @@ impl LocalApplication {
         };
         let (mut current, definition, active_generation) = read_binding(
             client,
-            tenant,
+            env_key,
             lookup.environment,
             &binding.requirement,
             &binding.selection.instance_id,
@@ -207,7 +207,7 @@ impl LocalApplication {
             crate::plugins::wamn_postgres::ConnectionEffectSnapshot {
                 connection_name: read_local_connection_name(
                     client,
-                    tenant,
+                    env_key,
                     lookup.environment,
                     &current.instance_id,
                 )
@@ -276,8 +276,8 @@ async fn entry_facts(
         }
         Some(position) => {
             let Some(row) = client.query_opt(
-                "SELECT graph_json::text FROM catalog.workflows WHERE tenant_id = $1 AND environment = $2 AND application = $3 AND workflow_id = $4 AND version = $5",
-                &[&scope.tenant_id, &scope.environment, &lookup.entry.package_id, &position.wiring_id, &position.wiring_version],
+                "SELECT graph_json::text FROM catalog.workflows WHERE env_key = $1 AND environment = $2 AND application = $3 AND workflow_id = $4 AND version = $5",
+                &[&scope.env_key, &scope.environment, &lookup.entry.package_id, &position.wiring_id, &position.wiring_version],
             ).await? else { return Ok(None); };
             let value: serde_json::Value = serde_json::from_str(&row.get::<_, String>(0))?;
             let document = WiringDocument::parse(&value)?;
@@ -285,7 +285,7 @@ async fn entry_facts(
                 return Ok(None);
             };
             let components = wamn_catalog::resolve_workflow_components(
-                &scope.tenant_id,
+                &scope.env_key,
                 &application.packages,
                 manifest,
                 &document,
@@ -304,36 +304,36 @@ async fn entry_facts(
 
 async fn read_local_connection_name(
     client: &tokio_postgres::Client,
-    tenant: &str,
+    env_key: &str,
     environment: &str,
     instance: &str,
 ) -> anyhow::Result<Option<String>> {
-    Ok(client.query_one("SELECT org_connection_name FROM catalog.connection_instances WHERE tenant_id=$1 AND environment=$2 AND instance_id=$3", &[&tenant,&environment,&instance]).await?.get(0))
+    Ok(client.query_one("SELECT org_connection_name FROM catalog.connection_instances WHERE env_key=$1 AND environment=$2 AND instance_id=$3", &[&env_key,&environment,&instance]).await?.get(0))
 }
 
 /// Resolve an explicit local selection through the live instance and generation.
 pub async fn read_local_binding(
     client: &tokio_postgres::Client,
-    tenant: &str,
+    env_key: &str,
     environment: &str,
     requirement: &ComponentConnectionRequirement,
     instance_id: &str,
 ) -> anyhow::Result<CandidateConnectionBinding> {
-    read_binding(client, tenant, environment, requirement, instance_id, None)
+    read_binding(client, env_key, environment, requirement, instance_id, None)
         .await
         .map(|(binding, _, _)| binding)
 }
 
 async fn read_binding(
     client: &tokio_postgres::Client,
-    tenant: &str,
+    env_key: &str,
     environment: &str,
     requirement: &ComponentConnectionRequirement,
     instance_id: &str,
     pin: Option<&CandidateConnectionBinding>,
 ) -> anyhow::Result<(CandidateConnectionBinding, serde_json::Value, Option<i64>)> {
     let generation = pin.map(|binding| binding.generation);
-    let row = client.query_opt("SELECT instance.revision, instance.requirement_type, instance.contract, generation.generation, generation.definition_json::text, generation.definition_hash, generation.credential_set_handle, instance.active_generation FROM catalog.connection_instances AS instance JOIN catalog.connection_generations AS generation ON generation.tenant_id = instance.tenant_id AND generation.environment = instance.environment AND generation.instance_id = instance.instance_id AND generation.generation = COALESCE($4::bigint, instance.active_generation) WHERE instance.tenant_id = $1 AND instance.environment = $2 AND instance.instance_id = $3 AND instance.lifecycle_status = 'enabled'", &[&tenant, &environment, &instance_id, &generation]).await?.context("local connection selection has no enabled instance and active generation")?;
+    let row = client.query_opt("SELECT instance.revision, instance.requirement_type, instance.contract, generation.generation, generation.definition_json::text, generation.definition_hash, generation.credential_set_handle, instance.active_generation FROM catalog.connection_instances AS instance JOIN catalog.connection_generations AS generation ON generation.env_key = instance.env_key AND generation.environment = instance.environment AND generation.instance_id = instance.instance_id AND generation.generation = COALESCE($4::bigint, instance.active_generation) WHERE instance.env_key = $1 AND instance.environment = $2 AND instance.instance_id = $3 AND instance.lifecycle_status = 'enabled'", &[&env_key, &environment, &instance_id, &generation]).await?.context("local connection selection has no enabled instance and active generation")?;
     if let Some(pin) = pin {
         anyhow::ensure!(
             row.try_get::<_, i64>(0)? >= pin.instance_revision,
@@ -415,23 +415,23 @@ pub fn read_local_release(directory: &Path) -> anyhow::Result<LocalRelease> {
 pub fn load_local_facts(
     directory: &Path,
     manifest: &ServingManifest,
-    tenant_id: &str,
+    env_key: &str,
 ) -> anyhow::Result<LocalApplicationFacts> {
     let bytes =
         std::fs::read(directory.join(LOCAL_FACTS_FILE)).context("read local admission facts")?;
     let facts: LocalApplicationFacts =
         serde_json::from_slice(&bytes).context("parse local admission facts")?;
-    validate_local_facts(&facts, manifest, tenant_id)?;
+    validate_local_facts(&facts, manifest, env_key)?;
     Ok(facts)
 }
 
 /// Refuse missing, additional, or mismatched facts before a native host starts.
 ///
-/// `tenant_id` is the tenant of the host scope: the manifest names none.
+/// `env_key` is the tenant of the host scope: the manifest names none.
 pub fn validate_local_facts(
     facts: &LocalApplicationFacts,
     manifest: &ServingManifest,
-    tenant_id: &str,
+    env_key: &str,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
         facts.manifest_digest == manifest.digest(),
@@ -452,7 +452,7 @@ pub fn validate_local_facts(
             "local component is repeated"
         );
         anyhow::ensure!(
-            fact.scope.tenant_id == tenant_id
+            fact.scope.env_key == env_key
                 && manifest
                     .release
                     .packages
@@ -553,9 +553,9 @@ pub fn validate_local_facts(
 }
 
 /// Mark one physical database creation as belonging to a local tenant session.
-pub fn local_target_marker(tenant: &str, environment: &str, instance: u32) -> String {
+pub fn local_target_marker(env_key: &str, environment: &str, instance: u32) -> String {
     let digest = wamn_execution_contract::canonical_json_sha256(&serde_json::json!({
-        "tenant": tenant, "environment": environment, "database-instance": instance,
+        "env_key": env_key, "environment": environment, "database-instance": instance,
     }));
     format!("wamn-local-target:{digest}")
 }
@@ -608,10 +608,10 @@ pub fn parse_local_target_comment(comment: &str) -> anyhow::Result<LocalTargetCo
 /// The normal runtime credential and capability checks remain mandatory.
 pub async fn require_local_target(
     database_url: &str,
-    tenant: &str,
+    env_key: &str,
     environment: &str,
 ) -> anyhow::Result<()> {
-    read_local_target(database_url, tenant, environment)
+    read_local_target(database_url, env_key, environment)
         .await
         .map(|_| ())
 }
@@ -619,17 +619,17 @@ pub async fn require_local_target(
 /// Read the comment of the connected local target after checking its marker.
 pub async fn read_local_target_comment(
     client: &impl tokio_postgres::GenericClient,
-    tenant: &str,
+    env_key: &str,
     environment: &str,
 ) -> anyhow::Result<LocalTargetComment> {
-    read_target_comment(client, tenant, environment)
+    read_target_comment(client, env_key, environment)
         .await
         .map(|(_, comment)| comment)
 }
 
 async fn read_local_target(
     database_url: &str,
-    tenant: &str,
+    env_key: &str,
     environment: &str,
 ) -> anyhow::Result<u32> {
     let (client, connection) = tokio_postgres::connect(database_url, tokio_postgres::NoTls)
@@ -638,7 +638,7 @@ async fn read_local_target(
     let connection = tokio::spawn(async move {
         let _ = connection.await;
     });
-    let result = read_target_comment(&client, tenant, environment)
+    let result = read_target_comment(&client, env_key, environment)
         .await
         .map(|(instance, _)| instance);
     drop(client);
@@ -648,7 +648,7 @@ async fn read_local_target(
 
 async fn read_target_comment(
     client: &impl tokio_postgres::GenericClient,
-    tenant: &str,
+    env_key: &str,
     environment: &str,
 ) -> anyhow::Result<(u32, LocalTargetComment)> {
     let row = client
@@ -664,7 +664,7 @@ async fn read_target_comment(
     let comment = comment
         .as_deref()
         .and_then(|comment| parse_local_target_comment(comment).ok())
-        .filter(|comment| comment.marker == local_target_marker(tenant, environment, instance));
+        .filter(|comment| comment.marker == local_target_marker(env_key, environment, instance));
     let Some(comment) = comment else {
         anyhow::bail!("local application requires an owned disposable target created by wamn dev");
     };
@@ -682,7 +682,7 @@ mod tests {
             ServingRelease,
         };
         let component = wamn_catalog::normalize_component_fact(serde_json::from_value(serde_json::json!({
-            "scope": {"tenant-id": "tenant-a", "package-id": "orders", "package-version": "1.0.0"}, "component": "transform", "interface-version": "0.1.0", "operations": {"run": {"registered-operation": null, "committed-result-schema": null, "input-ports": [{"name": "input", "schema": {}}], "output-ports": [], "parameters": []}}, "connections": []
+            "scope": {"env_key": "tenant-a", "package-id": "orders", "package-version": "1.0.0"}, "component": "transform", "interface-version": "0.1.0", "operations": {"run": {"registered-operation": null, "committed-result-schema": null, "input-ports": [{"name": "input", "schema": {}}], "output-ports": [], "parameters": []}}, "connections": []
         })).unwrap(), format!("sha256:{}", "7".repeat(64)), Vec::new(), Vec::new()).unwrap().component;
         let manifest = ServingManifest::new(
             ServingRelease {
@@ -871,7 +871,7 @@ mod tests {
         );
         let definition = serde_json::json!({"primary-authority":"https://example.invalid","tls-verification":"verify-authority"});
         let definition_hash = crate::connection_generation::definition_hash(&definition);
-        client.batch_execute("BEGIN; SELECT set_config('app.tenant','tenant-a',true), set_config('app.user_id','770df186-ac15-579e-b46b-c297cae2011b',true), set_config('app.operation','admin:seed-local-binding',true); INSERT INTO catalog.connection_instances(tenant_id,environment,instance_id,requirement_type,contract,org_connection_name) VALUES ('tenant-a','dev','erp','http','wamn:connection/http@0.1.0','erp')").await.unwrap();
+        client.batch_execute("BEGIN; SELECT set_config('app.env_key','tenant-a',true), set_config('app.user_id','770df186-ac15-579e-b46b-c297cae2011b',true), set_config('app.operation','admin:seed-local-binding',true); INSERT INTO catalog.connection_instances(env_key,environment,instance_id,requirement_type,contract,org_connection_name) VALUES ('tenant-a','dev','erp','http','wamn:connection/http@0.1.0','erp')").await.unwrap();
         client
             .execute(
                 wamn_schema_control::connections::insert_connection_generation_sql(),
@@ -887,7 +887,7 @@ mod tests {
             )
             .await
             .unwrap();
-        client.batch_execute("UPDATE catalog.connection_instances SET active_generation=1,revision=revision+1 WHERE tenant_id='tenant-a' AND environment='dev' AND instance_id='erp'; COMMIT").await.unwrap();
+        client.batch_execute("UPDATE catalog.connection_instances SET active_generation=1,revision=revision+1 WHERE env_key='tenant-a' AND environment='dev' AND instance_id='erp'; COMMIT").await.unwrap();
         let mut selection =
             super::read_local_binding(&client, "tenant-a", "dev", &requirement, "erp")
                 .await
@@ -1021,7 +1021,7 @@ mod tests {
     }
 
     #[test]
-    fn local_ownership_is_bound_to_tenant_environment_and_database_creation() {
+    fn local_ownership_is_bound_to_env_key_environment_and_database_creation() {
         let marker = local_target_marker("tenant-a", "dev", 17);
         assert_ne!(marker, local_target_marker("tenant-b", "dev", 17));
         assert_ne!(marker, local_target_marker("tenant-a", "other", 17));

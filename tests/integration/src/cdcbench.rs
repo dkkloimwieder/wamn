@@ -133,7 +133,7 @@ const ORG: &str = "ccdc";
 const PROJECT: &str = "app";
 const ENV: &str = "dev";
 const INSTANCE: &str = "k3m9x2p7";
-const TENANT: &str = "ccdc-tenant";
+const ENV_KEY: &str = "ccdc-tenant";
 const CDC_PW: &str = "wamn_cdc_pw";
 const APP_PW: &str = "ccdc-app-generation";
 const APP_EXPIRES_AT: &str = "2099-01-01T00:00:00Z";
@@ -174,8 +174,8 @@ async fn connect(url: &str) -> anyhow::Result<Client> {
 fn app_generation_role() -> anyhow::Result<String> {
     workload_generation_role(
         WorkloadRoleFamily::App,
-        WorkloadRoleScope::Tenant {
-            tenant: TENANT,
+        WorkloadRoleScope::EnvKey {
+            env_key: ENV_KEY,
             database: DB,
         },
         CredentialGeneration::A,
@@ -706,7 +706,7 @@ async fn drain_mode(args: &CdcBenchArgs, admin_url: &str, pass: &mut bool) -> an
                     app.execute(
                         &ins_wide,
                         &[
-                            &TENANT,
+                            &ENV_KEY,
                             &format!("u{i}@example.test"),
                             &Some(crate::walbench::wide_blob(i, args.wide_bytes)),
                             &Some("L1"),
@@ -717,7 +717,7 @@ async fn drain_mode(args: &CdcBenchArgs, admin_url: &str, pass: &mut bool) -> an
                     app.execute(
                         &ins_narrow,
                         &[
-                            &TENANT,
+                            &ENV_KEY,
                             &format!("sup-{i}"),
                             &Some(format!("s{i}@example.test")),
                             &"12.50",
@@ -874,7 +874,7 @@ async fn lag_mode(args: &CdcBenchArgs, admin_url: &str, pass: &mut bool) -> anyh
     app.execute(
         "INSERT INTO \"suppliers\" (tenant_id, name) \
          VALUES ($1, 'lag-warm')",
-        &[&TENANT],
+        &[&ENV_KEY],
     )
     .await?;
     let warm_deadline = Instant::now() + Duration::from_secs(60);
@@ -914,7 +914,7 @@ async fn lag_mode(args: &CdcBenchArgs, admin_url: &str, pass: &mut bool) -> anyh
                     let due =
                         crate::measure::whole_count(start.elapsed().as_secs_f64() * per_writer) + 1;
                     while sent < due {
-                        app.execute(&ins, &[&TENANT, &format!("lag-{rate}-{w}-{sent}")])
+                        app.execute(&ins, &[&ENV_KEY, &format!("lag-{rate}-{w}-{sent}")])
                             .await?;
                         sent += 1;
                     }
@@ -1099,7 +1099,7 @@ async fn ri_leg(
             .query_one(
                 &s_ins,
                 &[
-                    &TENANT,
+                    &ENV_KEY,
                     &format!("sup-{regime}-{i}"),
                     &Some(format!("s{i}@example.test")),
                     &"12.50",
@@ -1150,7 +1150,7 @@ async fn ri_leg(
             .query_one(
                 &u_ins,
                 &[
-                    &TENANT,
+                    &ENV_KEY,
                     &format!("u-{regime}-{i}@example.test"),
                     &Some(crate::walbench::wide_blob(i, wide_bytes)),
                     &Some("L1"),

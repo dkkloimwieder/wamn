@@ -118,7 +118,7 @@ Add one application `netsuite` to the environment document of the wamn-dev NetSu
 
 `env apply` refuses a release package that no application lists, a package that two applications list, and a listed package that the release does not carry.
 Do these steps once, after that apply, as an environment admin.
-Set `WAMN_SYSTEM_ADMIN_URL`, `WAMN_PG_ADMIN_URL`, the coordinate `<org>/<project>/<env>`, its tenant, and your `platform."user"` id as `$ADMIN_ID`.
+Set `WAMN_SYSTEM_ADMIN_URL`, `WAMN_PG_ADMIN_URL`, the coordinate `<org>/<project>/<env>`, its composed environment key, and your `platform."user"` id as `$ADMIN_ID`.
 
 1. Create the role the pull executes with. It holds exactly the consumer command that the pull's `record` node calls:
 

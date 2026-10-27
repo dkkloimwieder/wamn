@@ -139,7 +139,7 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     .await
     .unwrap();
     tx.execute(
-        sql::upsert_control_author_tenant_mapping_sql(),
+        sql::upsert_control_author_env_key_mapping_sql(),
         &[
             &credential_role,
             &"acme--host-project--prod",

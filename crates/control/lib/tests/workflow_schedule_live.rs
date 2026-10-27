@@ -55,7 +55,7 @@ use wamn_workflow::{QueueService, QueueServiceConfig, RouterDriver};
 #[path = "workflow_schedule_live/event_batch.rs"]
 mod event_batch;
 
-const TENANT: &str = "schedule-live--default--dev";
+const ENV_KEY: &str = "schedule-live--default--dev";
 const PROJECT: &str = "default";
 const ENVIRONMENT: &str = "dev";
 const APPLICATION: &str = "orders";
@@ -140,7 +140,7 @@ fn read_component() -> Vec<u8> {
 
 fn read_declaration() -> Value {
     json!({
-        "scope": {"tenant-id": TENANT, "package-id": APPLICATION, "package-version": "1.0.0"},
+        "scope": {"env_key": ENV_KEY, "package-id": APPLICATION, "package-version": "1.0.0"},
         "component": "orders_data", "interface-version": "0.1.0",
         "operations": {(READ): {"registered-operation": READ,
             "input-ports": [{"name": "input", "schema": {}}],
@@ -237,10 +237,10 @@ async fn fixture() -> Fixture {
              INSERT INTO platform.permission (role_name, permission) VALUES \
                ('reader', '{READ_REFERENCE}');
              INSERT INTO platform.environment (status) VALUES ('active');
-             INSERT INTO wamn_run.environment_policies (tenant_id, expected_environment, durability_class) \
-               VALUES ('{TENANT}', '{ENVIRONMENT}', 'standard');
-             INSERT INTO catalog.packages (tenant_id, package_id, package_version, artifact_digest) \
-               VALUES ('{TENANT}', '{APPLICATION}', '1.0.0', '{ARTIFACT_DIGEST}');"
+             INSERT INTO wamn_run.environment_policies (env_key, expected_environment, durability_class) \
+               VALUES ('{ENV_KEY}', '{ENVIRONMENT}', 'standard');
+             INSERT INTO catalog.packages (env_key, package_id, package_version, artifact_digest) \
+               VALUES ('{ENV_KEY}', '{APPLICATION}', '1.0.0', '{ARTIFACT_DIGEST}');"
         ))
         .await
         .expect("seed the users, roles, permissions and the environment");
@@ -280,16 +280,16 @@ async fn fixture() -> Fixture {
         LoadedRelease::load_canonical_bytes(
             &served.canonical_bytes(),
             "schedule-live",
-            ReleaseScope::new(TENANT, ENVIRONMENT).with_applications(declared()),
+            ReleaseScope::new(ENV_KEY, ENVIRONMENT).with_applications(declared()),
         )
         .expect("the fixture release loads"),
     );
     let digest = release.release().manifest_digest.as_str().to_owned();
     admin
         .execute(
-            "INSERT INTO catalog.releases (tenant_id, manifest_digest, canonical_bytes) \
+            "INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) \
              VALUES ($1, $2, $3)",
-            &[&TENANT, &digest, &served.canonical_bytes()],
+            &[&ENV_KEY, &digest, &served.canonical_bytes()],
         )
         .await
         .expect("install the serving release");
@@ -299,8 +299,8 @@ async fn fixture() -> Fixture {
     let control = connect(control_database.url()).await;
     control
         .execute(
-            "SELECT set_config('app.tenant', $1, false), set_config('app.user_id', $2, false)",
-            &[&TENANT, &READER],
+            "SELECT set_config('app.env_key', $1, false), set_config('app.user_id', $2, false)",
+            &[&ENV_KEY, &READER],
         )
         .await
         .unwrap();
@@ -345,13 +345,13 @@ async fn scoped_postgres(admin: &Client, url: &str) -> (Arc<WamnPostgres>, Strin
         ),
     ] {
         let scope = if family == WorkloadRoleFamily::App {
-            WorkloadRoleScope::Tenant {
-                tenant: TENANT,
+            WorkloadRoleScope::EnvKey {
+                env_key: ENV_KEY,
                 database: &database,
             }
         } else {
             WorkloadRoleScope::ProjectEnvironment {
-                org: TENANT,
+                org: ENV_KEY,
                 project: PROJECT,
                 environment: ENVIRONMENT,
                 database: &database,
@@ -432,9 +432,9 @@ impl Fixture {
         let document = workflow(id);
         self.control
             .execute(
-                "INSERT INTO wamn_run.gate_reports (tenant_id, wiring_hash, passed, summary) \
+                "INSERT INTO wamn_run.gate_reports (env_key, wiring_hash, passed, summary) \
                  VALUES ($1, $2, true, '{}'::jsonb) ON CONFLICT DO NOTHING",
-                &[&TENANT, &document.wiring_hash().as_str()],
+                &[&ENV_KEY, &document.wiring_hash().as_str()],
             )
             .await
             .expect("record a green gate report");
@@ -526,7 +526,7 @@ impl Fixture {
         self.postgres
             .admit_schedule_run(
                 PROJECT,
-                TENANT,
+                ENV_KEY,
                 &ScheduleRunAdmission {
                     environment: ENVIRONMENT,
                     application: APP,
@@ -979,7 +979,7 @@ async fn the_schedule_task_fires_a_row_enabled_after_start_and_stops_after_disab
         connect(&fixture.executor_url).await,
         Arc::clone(&fixture.postgres),
         PROJECT,
-        TENANT,
+        ENV_KEY,
         ENVIRONMENT,
         declared(),
         &fixture.digest,
@@ -1097,7 +1097,7 @@ async fn schedules_run_from_rows_and_a_missed_tick_is_skipped() {
         connect(&fixture.executor_url).await,
         Arc::clone(&fixture.postgres),
         PROJECT,
-        TENANT,
+        ENV_KEY,
         ENVIRONMENT,
         declared(),
         &fixture.digest,

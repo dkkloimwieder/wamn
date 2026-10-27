@@ -534,8 +534,8 @@ pub trait RouteAuthenticator: Send + Sync + std::fmt::Debug {
 /// `authentication-unavailable`.
 #[async_trait::async_trait]
 pub trait EnvironmentStatus: Send + Sync + std::fmt::Debug {
-    /// Whether the environment of `tenant` is inactive.
-    async fn inactive(&self, tenant: &str) -> anyhow::Result<bool>;
+    /// Whether the environment of `env_key` is inactive.
+    async fn inactive(&self, env_key: &str) -> anyhow::Result<bool>;
 }
 
 /// One request to a protected route, as the route plugin resolved it.
@@ -749,7 +749,7 @@ impl FlowHttpRouting {
         let manifest = loaded_release.manifest();
         if let Some(environment) = &self.environment {
             let inactive = environment
-                .inactive(&loaded_release.scope().tenant_id)
+                .inactive(&loaded_release.scope().env_key)
                 .await
                 .map_err(|error| {
                     tracing::warn!(error = %error, "environment status unavailable");

@@ -12,7 +12,7 @@ use serde_json::Value;
 use wamn_catalog::{AttachmentTarget, AttachmentType, ComponentDeclaration};
 use wamn_test_infrastructure::operations::sealed;
 
-const TENANT: &str = "wms-publication-test";
+const ENV_KEY: &str = "wms-publication-test";
 const PACKAGE_ID: &str = "wamn_wms";
 const COMPONENT: &str = "wms";
 const INTERFACE_VERSION: &str = "0.1.0";
@@ -204,7 +204,7 @@ fn declaration() -> ComponentDeclaration {
         )),
     )
     .expect("the generated operations join the authored ones");
-    document["scope"]["tenant-id"] = Value::String(TENANT.to_owned());
+    document["scope"]["env_key"] = Value::String(ENV_KEY.to_owned());
     serde_json::from_value(document)
         .unwrap_or_else(|error| panic!("decode {}: {error}", path.display()))
 }

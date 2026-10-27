@@ -20,7 +20,7 @@ fn file_fixture_declares_each_binding_mode_and_the_file_migration_is_registered(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/support/file_package/publication/components/blob-put.json.in"),
         &wamn_catalog::ComponentPackageScope {
-            tenant_id: "file-fixture".into(),
+            env_key: "file-fixture".into(),
             package_id: "file_fixture".into(),
             package_version: "0.1.0".into(),
         },
@@ -229,7 +229,7 @@ async fn file_connection_lookup_refuses_wrong_login_and_forged_scope() -> anyhow
     .await?;
     assert_eq!(allowed.len(), 1);
     assert_eq!(allowed[0].get::<_, String>(0), registry.connection_id);
-    registry.unmapped.batch_execute("SET app.org='file-org'; SET app.project='project'; SET app.tenant='file-org--project--dev'").await?;
+    registry.unmapped.batch_execute("SET app.org='file-org'; SET app.project='project'; SET app.env_key='file-org--project--dev'").await?;
     for (client, org, project) in [
         (&registry.unmapped, "file-org", "project"),
         (registry.reader.as_ref(), "other-org", "project"),

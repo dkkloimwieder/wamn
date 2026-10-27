@@ -452,6 +452,12 @@ async fn administration_boundary_retains_rows_history_and_real_role_access() {
     let url = locked_database::database(wamn_test_postgres::database);
     let mut client = install(&url, include_str!("fixtures/app-schema-before-0038.sql")).await;
     client
+        .batch_execute(include_str!(
+            "../../../../crates/catalog/model/tests/fixtures/catalog-before-env-key.sql"
+        ))
+        .await
+        .expect("restore the historical catalog key");
+    client
         .batch_execute(
             "ALTER TABLE catalog.connection_bindings DROP CONSTRAINT connection_bindings_pkey;
              ALTER TABLE catalog.connection_bindings DROP COLUMN mode, DROP COLUMN package_id;

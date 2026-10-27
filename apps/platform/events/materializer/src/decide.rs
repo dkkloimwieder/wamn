@@ -39,17 +39,17 @@ pub fn verified_source_event_id(
 /// Scope equality is checked before identity derivation, so bytes claiming a
 /// foreign tenant/project/environment cannot borrow the local header identity.
 pub fn verified_derived_source_event_id(
-    tenant: &str,
+    env_key: &str,
     project: &str,
     environment: &str,
     event: &DerivedEvent,
     message_ids: &[&str],
 ) -> Option<VerifiedSourceEventId> {
-    if event.tenant != tenant || event.project != project || event.environment != environment {
+    if event.env_key != env_key || event.project != project || event.environment != environment {
         return None;
     }
     let expected = wamn_event_wire::derived_msg_id(
-        tenant,
+        env_key,
         project,
         environment,
         &event.package_id,
@@ -111,8 +111,8 @@ pub fn serviceable(
 
 /// Decide whether one envelope reaches the registration's wiring.
 ///
-/// `resident_tenant` is the tenant read through the tenant-scoped catalog
-/// credential after the event's stream identity has verified. Package rows
+/// `resident_env_key` comes from the scoped catalog credential after
+/// the event's stream identity has verified. Package rows
 /// without a `tenant_id` use that trusted database-residency scope; a missing
 /// or disagreeing scope remains unserviceable.
 pub fn decide(
@@ -120,8 +120,8 @@ pub fn decide(
     condition: Option<&CompiledCondition>,
     envelope: &Envelope,
     known_packages: &BTreeSet<String>,
-    tenant: &str,
-    resident_tenant: Option<&str>,
+    env_key: &str,
+    resident_env_key: Option<&str>,
     max_depth: u32,
 ) -> Verdict {
     match envelope.package_id.as_str() {
@@ -141,11 +141,11 @@ pub fn decide(
     if !registration.ops.contains(&envelope.op) {
         return Verdict::Skip(SkipReason::OpMismatch);
     }
-    if resident_tenant != Some(tenant) {
+    if resident_env_key != Some(env_key) {
         return Verdict::Refuse(RefuseReason::TenantUnscopable);
     }
     match row_tenant(envelope) {
-        RowTenant::Tenant(event_tenant) if event_tenant != tenant => {
+        RowTenant::Tenant(event_tenant) if event_tenant != env_key => {
             return Verdict::Skip(SkipReason::ForeignTenant);
         }
         RowTenant::Absent | RowTenant::Tenant(_) => {}
@@ -182,7 +182,7 @@ pub fn decide_derived(
     condition: Option<&CompiledCondition>,
     event: &DerivedEvent,
     known_packages: &BTreeSet<String>,
-    tenant: &str,
+    env_key: &str,
     max_depth: u32,
 ) -> Verdict {
     match event.package_id.as_str() {
@@ -202,7 +202,7 @@ pub fn decide_derived(
     if !registration.ops.contains(&event.op) {
         return Verdict::Skip(SkipReason::OpMismatch);
     }
-    if event.tenant != tenant {
+    if event.env_key != env_key {
         return Verdict::Skip(SkipReason::ForeignTenant);
     }
     if registration.condition.is_some() {
@@ -337,7 +337,7 @@ mod tests {
             .as_mut()
             .expect("insert carries a new image")
             .remove("tenant_id");
-        for resident_tenant in [None, Some("other")] {
+        for resident_env_key in [None, Some("other")] {
             assert_eq!(
                 decide(
                     &registration(None),
@@ -345,7 +345,7 @@ mod tests {
                     &tenantless,
                     &known_packages(),
                     "t1",
-                    resident_tenant,
+                    resident_env_key,
                     16,
                 ),
                 Verdict::Refuse(RefuseReason::TenantUnscopable)

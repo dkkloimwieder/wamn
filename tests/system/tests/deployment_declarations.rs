@@ -335,8 +335,8 @@ fn render_release(root: &Path) -> Output {
 environment: acme/wms/dev
 routeHost: wms.example.invalid
 roles:
-  - {{name: http, entry: '{component_base}/entries@sha256:{four}', config: {{wamn.tenant: acme}}}}
-  - {{name: materializer, config: {{wamn.tenant: acme}}, environment: {{WAMN_MAT_ORG: acme}}}}
+  - {{name: http, entry: '{component_base}/entries@sha256:{four}', config: {{wamn.env_key: acme}}}}
+  - {{name: materializer, config: {{wamn.env_key: acme}}, environment: {{WAMN_MAT_ORG: acme}}}}
 platform:
   roles:
     http: {{image: 'registry.example/wamn/flow-http@sha256:{two}'}}

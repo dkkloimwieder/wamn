@@ -140,7 +140,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
             let broker = event_broker::prepare(
                 work.path(),
                 &scope,
-                crate::environment::identity().tenant().as_str(),
+                crate::environment::identity().env_key().as_str(),
                 &source,
                 &advisory,
                 &consumers,

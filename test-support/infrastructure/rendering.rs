@@ -195,8 +195,8 @@ pub fn object_store_overlay(overlay: &str, secret_name: &str) -> anyhow::Result<
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HttpClaims {
-    #[serde(rename = "wamn.tenant")]
-    pub tenant: String,
+    #[serde(rename = "wamn.env_key")]
+    pub env_key: String,
     #[serde(rename = "wamn.catalog")]
     pub catalog: String,
     #[serde(rename = "wamn.environment")]

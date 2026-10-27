@@ -23,7 +23,7 @@ use wamn_catalog::edge_bundle::{
     GRANTS_FILE_NAME, INGRESS_FILE_NAME, file_digest,
 };
 use wamn_catalog::{PackageCoordinate, RELEASE_MANIFEST_FILE_NAME, ServingManifest};
-use wamn_control_registry::project_env_tenant;
+use wamn_control_registry::project_env_key;
 use wamn_engine::artifact_source::local_component_path;
 use wamn_project_state::ADMIN_ROLE;
 use wamn_runtime::local_application::{LOCAL_FACTS_FILE, LocalApplicationFacts};
@@ -37,7 +37,7 @@ use crate::publish_release::{
 };
 
 /// The environment coordinate of the box: the edge configuration's `[scope]`.
-/// The tenant of the release is [`project_env_tenant`] of the three.
+/// The `env_key` of the release is [`project_env_key`] of the three.
 #[derive(Debug, Clone, Copy)]
 pub struct EdgeScope<'a> {
     pub org: &'a str,
@@ -46,8 +46,8 @@ pub struct EdgeScope<'a> {
 }
 
 impl EdgeScope<'_> {
-    fn tenant(&self) -> String {
-        project_env_tenant(self.org, self.project, self.environment)
+    fn env_key(&self) -> String {
+        project_env_key(self.org, self.project, self.environment)
     }
 }
 
@@ -80,7 +80,7 @@ pub fn write(
     write_bundle(
         &manifest_bytes,
         &facts,
-        &scope.tenant(),
+        &scope.env_key(),
         application,
         |digest| {
             fs::read(local_component_path(release, digest)?)
@@ -116,8 +116,8 @@ pub fn write_package(
     let template = package
         .join(PACKAGE_COMPONENTS)
         .join(format!("{component}.json.in"));
-    let tenant = release.scope.tenant();
-    let document = render_declaration_document(&template, &tenant)?;
+    let env_key = release.scope.env_key();
+    let document = render_declaration_document(&template, &env_key)?;
     let declaration = TemporaryFile::write(&serde_json::to_vec(&document)?)?;
     let admission = admit_component(AdmitComponentRequest {
         package: package.to_owned(),
@@ -169,7 +169,7 @@ pub fn write_package(
     write_bundle(
         &assembled.published.canonical_bytes,
         &assembled.facts,
-        &tenant,
+        &env_key,
         entry.application(),
         |digest| {
             ensure!(
@@ -186,7 +186,7 @@ pub fn write_package(
 fn write_bundle(
     manifest_bytes: &[u8],
     facts: &LocalApplicationFacts,
-    tenant: &str,
+    env_key: &str,
     application: &wamn_catalog::ServingEntryMember,
     read_component: impl Fn(&str) -> anyhow::Result<Vec<u8>>,
     ingress: &Path,
@@ -194,7 +194,7 @@ fn write_bundle(
 ) -> anyhow::Result<String> {
     let (manifest, _) = ServingManifest::from_canonical_bytes(manifest_bytes)
         .context("the local release manifest is not canonical")?;
-    wamn_runtime::local_application::validate_local_facts(facts, &manifest, tenant)?;
+    wamn_runtime::local_application::validate_local_facts(facts, &manifest, env_key)?;
 
     let mut permissions = BTreeSet::new();
     for (id, attachment) in &manifest.attachments {

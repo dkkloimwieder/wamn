@@ -38,10 +38,10 @@ fn write_log_sql() -> &'static str {
     &schema[start..end]
 }
 
-/// A plugin over a fresh database of `tenant`, with the write log installed.
-async fn tenant_database(tenant: &str) -> (wamn_test_postgres::Database, Arc<WamnPostgres>) {
+/// A plugin over a fresh database of `env_key`, with the write log installed.
+async fn env_key_database(env_key: &str) -> (wamn_test_postgres::Database, Arc<WamnPostgres>) {
     let database = wamn_test_postgres::database();
-    let guest_url = live_guest_url(database.url(), tenant).await;
+    let guest_url = live_guest_url(database.url(), env_key).await;
     ensure_live_user_rows(database.url(), &[LIVE_PRINCIPAL]).await;
     database
         .execute(&[write_log_sql()])
@@ -67,8 +67,8 @@ struct Databases(Mutex<Vec<wamn_test_postgres::Database>>);
 #[async_trait]
 impl IntentStoreFixture for Databases {
     async fn stores(&self, _case: &'static str) -> CaseStores {
-        let (database, postgres) = tenant_database("writeloga").await;
-        let (other_database, other_postgres) = tenant_database("writelogb").await;
+        let (database, postgres) = env_key_database("writeloga").await;
+        let (other_database, other_postgres) = env_key_database("writelogb").await;
         self.0
             .lock()
             .expect("databases lock poisoned")
@@ -123,12 +123,12 @@ fn intent<'a>(key: &'a str, input_hash: &'a str) -> Intent<'a> {
 #[tokio::test]
 async fn the_claim_of_an_item_commits_with_its_transaction() {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres) = tenant_database("writelogtx").await;
+    let (database, postgres) = env_key_database("writelogtx").await;
     postgres
         .bind_session_claims(
             SCOPE,
             &SessionClaims {
-                tenant: "writelogtx".into(),
+                env_key: "writelogtx".into(),
                 user_id: Some(LIVE_PRINCIPAL.into()),
                 operation: Some("base:widget/create@1.0.0".into()),
                 ..SessionClaims::default()
@@ -248,12 +248,12 @@ async fn the_claim_of_an_item_commits_with_its_transaction() {
 #[tokio::test]
 async fn a_missing_finish_rolls_back_the_pipelined_commit() {
     let _lock = wamn_test_postgres::lock();
-    let (database, postgres) = tenant_database("writelogtx").await;
+    let (database, postgres) = env_key_database("writelogtx").await;
     postgres
         .bind_session_claims(
             SCOPE,
             &SessionClaims {
-                tenant: "writelogtx".into(),
+                env_key: "writelogtx".into(),
                 user_id: Some(LIVE_PRINCIPAL.into()),
                 operation: Some("base:widget/create@1.0.0".into()),
                 ..SessionClaims::default()

@@ -34,7 +34,7 @@ mod tests {
     use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
 
     use crate::trusted_http_route::{
-        self, ENVIRONMENT, PACKAGE, PROJECT, ROUTE_AUTHORITY, ROUTE_PATH, RouteOptions, TENANT,
+        self, ENV_KEY, ENVIRONMENT, PACKAGE, PROJECT, ROUTE_AUTHORITY, ROUTE_PATH, RouteOptions,
         WIRING_ID, WIRING_VERSION,
     };
 
@@ -648,7 +648,7 @@ mod tests {
 
         let delivery = route
             .execute(RouterDriverRequest {
-                tenant_id: TENANT.to_owned(),
+                env_key: ENV_KEY.to_owned(),
                 package_id: PACKAGE.to_owned(),
                 environment: ENVIRONMENT.to_owned(),
                 wiring_id: WIRING_ID.to_owned(),
@@ -673,7 +673,7 @@ mod tests {
 
         let connection = route
             .execute(RouterDriverRequest {
-                tenant_id: TENANT.to_owned(),
+                env_key: ENV_KEY.to_owned(),
                 package_id: PACKAGE.to_owned(),
                 environment: ENVIRONMENT.to_owned(),
                 wiring_id: WIRING_ID.to_owned(),

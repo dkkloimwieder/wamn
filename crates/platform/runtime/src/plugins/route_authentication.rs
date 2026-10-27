@@ -193,9 +193,9 @@ impl EnvironmentStatusReader {
 
 #[async_trait::async_trait]
 impl wamn_engine::flow_http_routing::EnvironmentStatus for EnvironmentStatusReader {
-    async fn inactive(&self, tenant: &str) -> anyhow::Result<bool> {
+    async fn inactive(&self, env_key: &str) -> anyhow::Result<bool> {
         self.postgres
-            .environment_inactive(&self.project, tenant)
+            .environment_inactive(&self.project, env_key)
             .await
     }
 }
@@ -330,7 +330,7 @@ impl PlatformRouteAuthenticator {
         attachment_id: &str,
         token: &str,
         cookie_headers: Option<(&[Header], bool)>,
-        tenant: &str,
+        env_key: &str,
         environment: &str,
     ) -> Result<AuthenticatedCaller, AuthRejection> {
         let authentication = self
@@ -350,7 +350,7 @@ impl PlatformRouteAuthenticator {
             .postgres
             .session_operation_permissions(
                 &authentication.project,
-                tenant,
+                env_key,
                 &session.claims().roles,
                 &principal,
             )
@@ -451,7 +451,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                 .ok_or_else(authentication_unavailable)?;
             let grants = authentication
                 .postgres
-                .principal_grants(project, &request.scope.tenant_id, &principal)
+                .principal_grants(project, &request.scope.env_key, &principal)
                 .await
                 .map_err(|_| authentication_unavailable())?;
             if !grants.active || grants.user != Some(false) {
@@ -459,7 +459,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
             }
             let permissions = authentication
                 .postgres
-                .user_operation_permissions(project, &request.scope.tenant_id, &principal)
+                .user_operation_permissions(project, &request.scope.env_key, &principal)
                 .await
                 .map_err(|_| authentication_unavailable())?;
             return Ok(Some(AuthenticatedCaller::new(
@@ -483,7 +483,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                     attachment_id,
                     token,
                     csrf.map(|required| (headers, required)),
-                    &scope.tenant_id,
+                    &scope.env_key,
                     &scope.environment,
                 )
                 .await
@@ -559,11 +559,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
             // `wamn-ctl grant-role`.
             let permissions = authentication
                 .postgres
-                .user_operation_permissions(
-                    &authentication.project,
-                    &scope.tenant_id,
-                    principal.id(),
-                )
+                .user_operation_permissions(&authentication.project, &scope.env_key, principal.id())
                 .instrument(tracing::info_span!("wamn.auth.permissions"))
                 .await
                 .map_err(|error| {
