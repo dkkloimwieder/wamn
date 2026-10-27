@@ -44,3 +44,4 @@ scratchpad/
 # Generated clients inside their consuming package
 /web/sync-bench/src/generated/
 /apps/wamn_receiving/web/src/generated/
+/apps/platform_ui/src/generated/

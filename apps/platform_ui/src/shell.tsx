@@ -1,8 +1,17 @@
 import { createSignal, lazy, onCleanup, Show, Loading, type Component } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import { DashboardPanel, type DashboardShellProps } from "@wfe/components/layout";
-import { permission } from "@wamn/control-client";
-import { control, environment, member, orgAdmin, project, projectAdmin, release, user } from "@wamn/control-org-client";
+import { permission } from "./generated/wamn_control/index.js";
+import {
+  control,
+  environment,
+  member,
+  orgAdmin,
+  project,
+  projectAdmin,
+  release,
+  user,
+} from "./generated/wamn_control_org/index.js";
 import {
   createTransport,
   keepSession,

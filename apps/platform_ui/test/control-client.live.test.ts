@@ -10,7 +10,7 @@
 import { describe, expect, test } from "vitest";
 
 import { createTransport } from "@wamn/web-runtime";
-import { permission, role, user, userRole } from "@wamn/control-client";
+import { permission, role, user, userRole } from "../src/generated/wamn_control/index.js";
 
 // The package has no Node types, and the test reads only its environment.
 declare const process: { readonly env: { readonly [name: string]: string | undefined } };

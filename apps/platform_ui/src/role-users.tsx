@@ -2,7 +2,7 @@ import { createSignal, onCleanup, Show, untrack } from "solid-js";
 import { FieldError } from "@wfe/components/fields";
 import { createForm } from "@wfe/form";
 import { FormView } from "@wfe/generator";
-import { role, user, userRole } from "@wamn/control-client";
+import { role, user, userRole } from "./generated/wamn_control/index.js";
 import { ConfirmAction } from "./confirm-action";
 import { MissingPage, Page, RecordLink } from "./page";
 import { Records } from "./records";

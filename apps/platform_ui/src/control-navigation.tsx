@@ -6,7 +6,7 @@ import {
   type DashboardShellProps,
 } from "@wfe/components/layout";
 import { FieldError } from "@wfe/components/fields";
-import { control, environment, member, user } from "@wamn/control-org-client";
+import { control, environment, member, user } from "./generated/wamn_control_org/index.js";
 import type { Transport } from "@wamn/web-runtime";
 import type { Address } from "./address";
 import type { ScreenProps } from "./shell";

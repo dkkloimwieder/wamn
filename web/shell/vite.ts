@@ -122,27 +122,20 @@ function scopePlugin(dev: DevConfiguration): DevPlugin {
 export function applicationConfig(options: ApplicationOptions): ApplicationConfig {
   const at = (path: string) => fileURLToPath(new URL(path, options.root));
   const web = fileURLToPath(new URL("..", import.meta.url));
-  // The clients of the host-run application and control routes.
-  const control = fileURLToPath(new URL("../../apps/target/wamn/wamn_control/client-ts/", import.meta.url));
-  const controlOrg = fileURLToPath(new URL("../../apps/target/wamn/wamn_control/control/client-ts/", import.meta.url));
   const store = fileURLToPath(new URL("../../node_modules", import.meta.url));
   const dev = options.command === "serve" ? devConfiguration() : undefined;
   return {
     plugins: dev === undefined ? [] : [scopePlugin(dev)],
-    // The runtime and generated clients live outside the application.
+    // The runtime lives outside the application.
     resolve: {
-      alias: [
-        { find: "@wamn/web-runtime", replacement: `${web}runtime/src/index.ts` },
-        { find: /^@wamn\/control-client$/, replacement: `${control}index.ts` },
-        { find: /^@wamn\/control-org-client$/, replacement: `${controlOrg}index.ts` },
-      ],
+      alias: [{ find: "@wamn/web-runtime", replacement: `${web}runtime/src/index.ts` }],
       dedupe: [],
     },
     server: {
       port: options.port,
       ...(dev === undefined ? {} : { proxy: proxy(dev) }),
       // Allow shared sources and pnpm packages outside the application.
-      fs: { allow: [at("."), web, control, controlOrg, store] },
+      fs: { allow: [at("."), web, store] },
     },
     build: { outDir: at(options.outDir), emptyOutDir: true },
   };

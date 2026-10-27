@@ -1,6 +1,6 @@
 import { createMemo } from "solid-js";
 import { StatusTile, TileRow } from "@wfe/components";
-import type { environment } from "@wamn/control-org-client";
+import type { environment } from "./generated/wamn_control_org/index.js";
 
 export function EnvironmentTiles(props: { status?: environment.EnvironmentStatusResult; error?: string }) {
   const complete = () => {

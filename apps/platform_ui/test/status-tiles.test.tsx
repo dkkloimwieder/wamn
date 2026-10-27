@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from "@solidjs/testing-library";
 import { describe, expect, it } from "vitest";
-import type { environment } from "@wamn/control-org-client";
+import type { environment } from "../src/generated/wamn_control_org/index.js";
 import { createTransport } from "@wamn/web-runtime";
 import { EnvironmentTiles } from "../src/status-tiles";
 import { ControlHome } from "../src/control-home";

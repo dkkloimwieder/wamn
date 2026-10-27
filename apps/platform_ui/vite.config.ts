@@ -27,10 +27,6 @@ export default defineConfig({
     dedupe: ["solid-js", "@solidjs/web", "@solidjs/signals"],
     alias: {
       "@wamn/web-runtime": fileURLToPath(new URL("../../web/runtime/src/index.ts", import.meta.url)),
-      "@wamn/control-client": fileURLToPath(new URL("../target/wamn/wamn_control/client-ts/index.ts", import.meta.url)),
-      "@wamn/control-org-client": fileURLToPath(
-        new URL("../target/wamn/wamn_control/control/client-ts/index.ts", import.meta.url),
-      ),
     },
   },
   test: { environment: "jsdom", testTimeout: 15_000, server: { deps: { inline: true } } },

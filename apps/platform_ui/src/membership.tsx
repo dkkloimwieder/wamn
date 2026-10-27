@@ -2,7 +2,7 @@ import { createSignal, onCleanup, Show, untrack } from "solid-js";
 import { FieldError } from "@wfe/components/fields";
 import { createForm } from "@wfe/form";
 import { FormView, type FormDescription } from "@wfe/generator";
-import { environment, member, project } from "@wamn/control-org-client";
+import { environment, member, project } from "./generated/wamn_control_org/index.js";
 import { Page } from "./page";
 import { value } from "./outcome";
 import type { ScreenProps } from "./shell";

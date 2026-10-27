@@ -6,7 +6,7 @@ import { FormView, type CustomFieldProps, type FormDescription } from "@wfe/gene
 import { createServerPage, Records } from "./records";
 import { emailError } from "./email";
 import { createForm } from "@wfe/form";
-import { environment, member, orgAdmin, project, projectAdmin, user } from "@wamn/control-org-client";
+import { environment, member, orgAdmin, project, projectAdmin, user } from "./generated/wamn_control_org/index.js";
 import type { Outcome } from "@wamn/web-runtime";
 import { MissingPage, Page, RecordLink } from "./page";
 import { GrantMembership } from "./membership";

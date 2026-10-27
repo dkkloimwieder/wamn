@@ -5,7 +5,7 @@ import { Button, FieldError } from "@wfe/components/fields";
 import { FormView, type FormDescription } from "@wfe/generator";
 import { createServerPage, Records } from "./records";
 import { createForm } from "@wfe/form";
-import { control, environment, member, project, projectAdmin, release } from "@wamn/control-org-client";
+import { control, environment, member, project, projectAdmin, release } from "./generated/wamn_control_org/index.js";
 import type { Outcome } from "@wamn/web-runtime";
 import { MissingPage, Page, RecordLink } from "./page";
 import { GrantMembership } from "./membership";

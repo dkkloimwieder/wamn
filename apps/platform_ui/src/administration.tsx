@@ -1,4 +1,4 @@
-import { permission, role, user, userRole } from "@wamn/control-client";
+import { permission, role, user, userRole } from "./generated/wamn_control/index.js";
 import { screen, type ShellSection } from "./shell";
 
 export const administrationSections: readonly ShellSection[] = [

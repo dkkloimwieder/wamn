@@ -867,6 +867,7 @@ The clients of the host routes are build output, and Git does not hold them.
 The generator writes the client of the application host routes, `@wamn/control-client`, to `apps/target/wamn/wamn_control/client-ts`.
 It writes the client of the control routes, `@wamn/control-org-client`, to `apps/target/wamn/wamn_control/control/client-ts`.
 It makes them from the contracts in `crates/catalog/model/src/host_route/contracts` and `host_route/control/contracts`.
+It copies them into `src/generated/wamn_control` and `src/generated/wamn_control_org` of each package that names them in `package.json` `"wamn": { "clients": [...] }`.
 Every web script that reads the clients writes them first through `web/host-route-clients.mjs`, so you do not need to write them yourself.
 To write them without a web script, run:
 

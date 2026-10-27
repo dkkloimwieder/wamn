@@ -1,7 +1,15 @@
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { flush } from "solid-js";
 import { describe, expect, it } from "vitest";
-import { control, environment, member, project, projectAdmin, release, user } from "@wamn/control-org-client";
+import {
+  control,
+  environment,
+  member,
+  project,
+  projectAdmin,
+  release,
+  user,
+} from "../src/generated/wamn_control_org/index.js";
 import { createTransport } from "@wamn/web-runtime";
 import { controlHolds, Shell } from "../src/shell";
 import { GrantMembership } from "../src/membership";

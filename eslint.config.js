@@ -15,6 +15,7 @@ export default tseslint.config(
       "web/wfe/**",
       "target/**",
       "apps/target/**",
+      "**/src/generated/**",
     ],
   },
   {

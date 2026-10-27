@@ -36,9 +36,7 @@ export default defineConfig(({ command, mode }) => {
       conditions: ["wfe-source", "browser", "development|production"],
       dedupe: ["solid-js", "@solidjs/web", "@solidjs/signals"],
       alias: [
-        ...application.resolve.alias.filter(
-          ({ find }) => String(find).includes("client") || find === "@wamn/web-runtime",
-        ),
+        ...application.resolve.alias,
         {
           find: "@wamn/platform-ui",
           replacement: fileURLToPath(new URL("../../platform_ui/src/index.ts", import.meta.url)),

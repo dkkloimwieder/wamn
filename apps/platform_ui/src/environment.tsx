@@ -1,7 +1,7 @@
 import { createSignal, onCleanup, Show, untrack } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import { Button, FieldError } from "@wfe/components/fields";
-import { environment, release } from "@wamn/control-org-client";
+import { environment, release } from "./generated/wamn_control_org/index.js";
 import { MissingPage, Page } from "./page";
 import { DashboardPanel } from "@wfe/components/layout";
 import { EnvironmentTiles } from "./status-tiles";

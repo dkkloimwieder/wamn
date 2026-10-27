@@ -449,6 +449,9 @@ They take the registry flags of `wamn-ctl apply-package`: `--artifact-base`, `--
 The TypeScript clients of the host routes, `@wamn/control-client` and `@wamn/control-org-client`, are build output, and Git does not hold them.
 The generator makes them from the contracts in `crates/catalog/model/src/host_route`.
 It writes them to `apps/target/wamn/wamn_control/client-ts` and `apps/target/wamn/wamn_control/control/client-ts`, below the output root of `wamn build`.
+It then copies them into each workspace package that names them in `package.json` `"wamn": { "clients": [...] }`, as `wamn build` does for an application client.
+The name `wamn_control` selects the application route client, and `wamn_control_org` selects the control route client.
+A consuming package imports the copy from `src/generated/<name>`, which Git ignores.
 
 The web scripts write the clients before they read them.
 `pnpm -r build`, `pnpm run check`, `pnpm test` and `pnpm run dev` each run `web/host-route-clients.mjs` first, which runs this command from the repository root:

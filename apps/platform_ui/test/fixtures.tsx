@@ -10,8 +10,8 @@
 import { cleanup, fireEvent, render, screen } from "@solidjs/testing-library";
 import { afterEach, beforeEach } from "vitest";
 
-import { member, user } from "@wamn/control-org-client";
-import { permission } from "@wamn/control-client";
+import { member, user } from "../src/generated/wamn_control_org/index.js";
+import { permission } from "../src/generated/wamn_control/index.js";
 
 import { createSignal, flush, For } from "solid-js";
 

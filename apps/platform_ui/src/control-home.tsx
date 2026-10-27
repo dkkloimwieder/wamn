@@ -1,6 +1,6 @@
 import { createSignal, For, onCleanup, Show, untrack } from "solid-js";
 import { FieldError } from "@wfe/components/fields";
-import { environment, project } from "@wamn/control-org-client";
+import { environment, project } from "./generated/wamn_control_org/index.js";
 import { Page, RecordLink } from "./page";
 import { value } from "./outcome";
 import { EnvironmentTiles } from "./status-tiles";

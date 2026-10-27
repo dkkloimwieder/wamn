@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@solidjs/testing-library";
 import { describe, expect, it } from "vitest";
 import { flush } from "solid-js";
-import { orgAdmin, user } from "@wamn/control-org-client";
+import { orgAdmin, user } from "../src/generated/wamn_control_org/index.js";
 import { createTransport } from "@wamn/web-runtime";
 import { controlHolds, Shell } from "../src/shell";
 // The shell loads its layout lazily. Loading it here keeps module transform

@@ -17,8 +17,6 @@
     "paths": {
       "d3-shape": ["./node_modules/@types/d3-shape"],
       "@wamn/web-runtime": ["../../web/runtime/src/index.ts"],
-      "@wamn/control-client": ["../target/wamn/wamn_control/client-ts/index.ts"],
-      "@wamn/control-org-client": ["../target/wamn/wamn_control/control/client-ts/index.ts"],
       "solid-js": ["./node_modules/solid-js"],
       "@solidjs/web": ["./node_modules/@solidjs/web"],
       "@solidjs/web/*": ["./node_modules/@solidjs/web/*"]

@@ -8,6 +8,12 @@
     "test": "pnpm --workspace-root run wfe:build && node ../../web/host-route-clients.mjs && vitest run",
     "build": "pnpm --workspace-root run wfe:build && node ../../web/host-route-clients.mjs && vite build"
   },
+  "wamn": {
+    "clients": [
+      "wamn_control",
+      "wamn_control_org"
+    ]
+  },
   "dependencies": {
     "@wfe/components": "workspace:*",
     "@wfe/form": "workspace:*",
