@@ -20,6 +20,8 @@ use wamn_schema_control::{
     AppliedPackage, PackageDirectory, RecordedMigration, plan_package_migrations,
 };
 use wamn_schema_generator::PackageManifest;
+use wamn_schema_introspection::ir::View;
+use wamn_schema_introspection::postgres::read_views;
 
 use crate::apply_package::{
     ApplyPackageRequest, PackageRoot, apply_qualification_package, read_package_root,
@@ -595,6 +597,14 @@ async fn prove_connected_copy(
         .await
         .context("commit exact predecessor scratch privileges")?;
     require_predecessor_statement_facts(predecessors, manifest)?;
+    let schemas = evidence
+        .schemas
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let predecessor_views = read_views(client, &schemas)
+        .await
+        .context("read predecessor views on the owned copy")?;
     if evidence.overlay.is_some() || stage::whole_row_grants(evidence.upgrade_stage.as_ref()) {
         let mut roots = vec![candidate.root.clone()];
         for transition in evidence
@@ -636,6 +646,10 @@ async fn prove_connected_copy(
         .await
         .context("apply candidate suffix on the owned predecessor copy")?;
     }
+    let successor_views = read_views(client, &schemas)
+        .await
+        .context("read successor views on the upgraded copy")?;
+    require_predecessor_views(&predecessor_views, &successor_views)?;
     plan_predecessor(client, manifest, runtime)
         .await
         .context("predecessor statements fail before candidate grant reconciliation")?;
@@ -667,6 +681,34 @@ async fn prove_connected_copy(
         "candidate privileges changed during qualification checks"
     );
     tx.rollback().await?;
+    Ok(())
+}
+
+fn require_predecessor_views(predecessor: &[View], successor: &[View]) -> anyhow::Result<()> {
+    for view in predecessor {
+        let schema = view.schema();
+        let name = view.name();
+        let successor = successor
+            .iter()
+            .find(|candidate| candidate.schema() == schema && candidate.name() == name)
+            .with_context(|| format!("predecessor view {schema}.{name}: missing view"))?;
+        for column in view.columns() {
+            let column_name = column.name();
+            let successor_column = successor
+                .columns()
+                .iter()
+                .find(|candidate| candidate.name() == column_name)
+                .with_context(|| {
+                    format!("predecessor view {schema}.{name}: missing column {column_name}")
+                })?;
+            ensure!(
+                column.column_type() == successor_column.column_type(),
+                "predecessor view {schema}.{name}: column {column_name} changed type from {} to {}",
+                column.column_type().as_str(),
+                successor_column.column_type().as_str(),
+            );
+        }
+    }
     Ok(())
 }
 

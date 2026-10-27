@@ -352,30 +352,83 @@ fn refuses_view_forms_outside_the_admitted_header() {
 }
 
 #[test]
-fn predecessor_upgrade_refuses_views_with_an_explicit_upgrade_reason() {
+fn retyping_a_column_under_a_view_stays_refused() {
+    let sql = b"CREATE TABLE inventory.widget (value int4); \
+                CREATE VIEW inventory.v AS SELECT value FROM inventory.widget; \
+                DROP VIEW inventory.v; \
+                ALTER TABLE inventory.widget ALTER COLUMN value TYPE int8; \
+                CREATE VIEW inventory.v AS SELECT value FROM inventory.widget;";
+    for error in [
+        validate_migration_bytes("initial.sql", sql, "inventory").unwrap_err(),
+        validate_predecessor_compatible_migration_bytes_for_schemas(
+            "successor.sql",
+            sql,
+            &["inventory"],
+        )
+        .unwrap_err(),
+    ] {
+        assert_eq!(
+            error.error_type(),
+            MigrationPolicyErrorType::UnsupportedStatement
+        );
+        assert_eq!(error.statement_index(), Some(4));
+    }
+}
+
+#[test]
+fn predecessor_upgrade_admits_views() {
     for sql in [
         "CREATE VIEW inventory.v AS SELECT 1;",
         "CREATE OR REPLACE VIEW inventory.v AS SELECT 1;",
         "DROP VIEW inventory.v;",
         "DROP VIEW IF EXISTS inventory.v RESTRICT;",
+        "DROP VIEW inventory.v; ALTER TABLE inventory.widget ADD COLUMN note text; CREATE VIEW inventory.v AS SELECT note FROM inventory.widget;",
     ] {
-        let sql = format!("CREATE TABLE inventory.new_table (id uuid); {sql}");
+        validate_predecessor_compatible_migration_bytes_for_schemas(
+            "upgrade.sql",
+            sql.as_bytes(),
+            &["inventory"],
+        )
+        .unwrap_or_else(|error| panic!("{sql}: {error}"));
+    }
+}
+
+#[test]
+fn predecessor_upgrade_refuses_drop_view_cascade() {
+    for sql in [
+        "DROP VIEW inventory.v CASCADE;",
+        "DROP VIEW IF EXISTS inventory.v CASCADE;",
+    ] {
         let error = validate_predecessor_compatible_migration_bytes_for_schemas(
             "upgrade.sql",
             sql.as_bytes(),
             &["inventory"],
         )
-        .expect_err("successor view rules belong to the upgrade implementation");
+        .expect_err("a successor cannot cascade a view drop");
         assert_eq!(
             error.error_type(),
-            MigrationPolicyErrorType::UnsupportedStatement,
-            "{sql}"
+            MigrationPolicyErrorType::UnsupportedStatement
         );
-        assert_eq!(error.statement_index(), Some(2));
-        assert!(
-            error
-                .to_string()
-                .contains("views in a successor migration need the upgrade rule")
+        assert_eq!(error.statement_index(), Some(1));
+    }
+}
+
+#[test]
+fn predecessor_upgrade_refuses_views_outside_configured_schemas() {
+    for sql in [
+        "CREATE VIEW other.v AS SELECT 1;",
+        "CREATE OR REPLACE VIEW other.v AS SELECT 1;",
+        "DROP VIEW other.v;",
+    ] {
+        let error = validate_predecessor_compatible_migration_bytes_for_schemas(
+            "upgrade.sql",
+            sql.as_bytes(),
+            &["inventory"],
+        )
+        .expect_err("a successor cannot change another schema's view");
+        assert_eq!(
+            error.error_type(),
+            MigrationPolicyErrorType::CrossSchemaMutation
         );
     }
 }

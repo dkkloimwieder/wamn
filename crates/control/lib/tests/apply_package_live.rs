@@ -262,6 +262,93 @@ async fn migrated_view_uses_owner_rights_and_operation_grants() {
     std::fs::remove_dir_all(package).unwrap();
 }
 
+#[tokio::test]
+async fn successor_view_rebuild_applies_atomically_and_rolls_back_failure() {
+    use wamn_schema_introspection::postgres::read_views;
+
+    let url = locked_database::database(wamn_test_postgres::database);
+    let client = connect(&url).await;
+    for fail in [false, true] {
+        install(&client).await;
+        let package =
+            fixture_root().with_file_name(format!("view-rebuild-{fail}-{}", std::process::id()));
+        copy_base_fixture(&package);
+        let initial = package.join("migrations/0001_initial.sql");
+        let mut migration = std::fs::read_to_string(&initial).unwrap();
+        migration.push_str(
+            "CREATE VIEW inventory.dock_report AS SELECT id, dock_code FROM inventory.dock;",
+        );
+        std::fs::write(initial, migration).unwrap();
+        write_receipt(&package);
+        apply(&url, &package)
+            .await
+            .expect("apply the table and its view");
+        let predecessor = read_views(&client, &["inventory"]).await.unwrap();
+        let predecessor = predecessor
+            .iter()
+            .find(|view| view.name() == "dock_report")
+            .unwrap();
+        let installed =
+            wamn_test_infrastructure::fixture_digest::fixture_artifact_digest(&package).unwrap();
+        let failure = if fail {
+            "ALTER TABLE inventory.dock ADD COLUMN report_note text;"
+        } else {
+            ""
+        };
+        std::fs::write(
+            package.join("migrations/0002_rebuild_view.sql"),
+            format!(
+                "DROP VIEW inventory.dock_report;
+                 ALTER TABLE inventory.dock ADD COLUMN report_note text;
+                 {failure}
+                 CREATE VIEW inventory.dock_report AS SELECT id, dock_code, report_note FROM inventory.dock;"
+            ),
+        ).unwrap();
+        write_receipt(&package);
+        // As in the suffix rollback test, keep the unsealed coordinate's digest
+        // so the migration runner can apply its appended file.
+        let outcome = apply_as(&url, &package, &installed).await;
+        if fail {
+            let error = outcome.expect_err("the duplicate column fails after the view drop");
+            assert!(
+                error.chain().any(|error| error
+                    .downcast_ref::<tokio_postgres::Error>()
+                    .and_then(tokio_postgres::Error::code)
+                    == Some(&tokio_postgres::error::SqlState::DUPLICATE_COLUMN)),
+                "{error:#}"
+            );
+        } else {
+            assert_eq!(
+                outcome.expect("apply the view rebuild").migrations_applied,
+                1
+            );
+        }
+        let successor = read_views(&client, &["inventory"]).await.unwrap();
+        let successor = successor
+            .iter()
+            .find(|view| view.name() == "dock_report")
+            .unwrap();
+        assert!(successor.columns().starts_with(predecessor.columns()));
+        if fail {
+            assert_eq!(successor.columns(), predecessor.columns());
+        } else {
+            let column = successor.columns().last().unwrap();
+            assert_eq!(column.name(), "report_note");
+            assert_eq!(column.column_type().as_str(), "text");
+        }
+        let row = client.query_one(
+            "SELECT EXISTS (SELECT FROM information_schema.columns \
+                WHERE table_schema='inventory' AND table_name='dock' AND column_name='report_note'), \
+             (SELECT count(*) FROM catalog.package_migrations \
+                WHERE tenant_id=$1 AND package_id='wamn_inventory' AND package_version='1.0.0')",
+            &[&TENANT],
+        ).await.unwrap();
+        assert_eq!(row.get::<_, bool>(0), !fail);
+        assert_eq!(row.get::<_, i64>(1), if fail { 1 } else { 2 });
+        std::fs::remove_dir_all(package).unwrap();
+    }
+}
+
 fn package_fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/apply_package")

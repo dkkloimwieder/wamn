@@ -232,8 +232,9 @@ pub fn validate_migration_bytes_for_schemas(
 /// Validate an additive upgrade while its immediate predecessor can still serve.
 ///
 /// The ordinary migration validator owns SQL admission. This narrower policy
-/// permits its new tables and added columns, but refuses added constraints on
+/// permits views, new tables and added columns, but refuses added constraints on
 /// existing relations because planning cannot prove their runtime compatibility.
+/// Qualification compares predecessor view columns after applying the successor.
 /// Qualification and production application must use this same predicate.
 pub fn validate_predecessor_compatible_migration_bytes_for_schemas(
     path: impl AsRef<Path>,
@@ -253,6 +254,12 @@ pub fn validate_predecessor_compatible_migration_bytes_for_schemas(
             path,
             statement_index,
         )?;
+        if words(tokens, 0, &["create", "view"])
+            || words(tokens, 0, &["create", "or", "replace", "view"])
+            || words(tokens, 0, &["drop", "view"])
+        {
+            continue;
+        }
         let mutation = definition_mutation(tokens, configured_schemas, path, statement_index)?;
         if !matches!(
             mutation
@@ -263,19 +270,11 @@ pub fn validate_predecessor_compatible_migration_bytes_for_schemas(
                     | (DefinitionAction::Add, DefinitionType::Field)
             )
         ) {
-            let detail = if words(tokens, 0, &["create", "view"])
-                || words(tokens, 0, &["create", "or", "replace", "view"])
-                || words(tokens, 0, &["drop", "view"])
-            {
-                "views in a successor migration need the upgrade rule"
-            } else {
-                "predecessor-compatible upgrades admit only new ordinary tables and added columns; constraints on existing relations require an exceptional migration procedure"
-            };
             return refuse_statement(
                 MigrationPolicyErrorType::UnsupportedStatement,
                 path,
                 statement_index,
-                detail,
+                "predecessor-compatible upgrades admit only view DDL, new ordinary tables and added columns; constraints on existing relations require an exceptional migration procedure",
             );
         }
     }

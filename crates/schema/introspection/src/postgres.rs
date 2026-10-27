@@ -829,6 +829,14 @@ async fn validate_schemas(
     Ok(())
 }
 
+/// Read the catalog's views without imposing table or synchronization policy.
+pub async fn read_views(
+    client: &Client,
+    application_schemas: &[&str],
+) -> Result<Vec<View>, PostgresIntrospectionError> {
+    load_views(client, &configured_schemas(application_schemas), &[]).await
+}
+
 async fn load_views(
     client: &Client,
     schemas: &[String],

@@ -9,6 +9,7 @@ use crate::apply_package::read_package_directory;
 mod overlay;
 mod stage;
 mod synchronization;
+mod views;
 mod whole_row;
 
 const TENANT: &str = "upgrade-proof--fixture--dev";
