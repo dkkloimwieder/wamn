@@ -126,10 +126,14 @@ pub(crate) fn retire_acl_generation_sql(acl_role: &str, database: &str, role: &s
 }
 
 /// Terminate sessions only after a workload generation is retired.
+///
+/// Wait at most five seconds per backend, as in [`super::drain_app_role_sessions_sql`].
+/// A zero timeout only acknowledges the signal. Callers must still require the
+/// inactive state to reject termination failures.
 pub fn terminate_workload_generation_sessions_sql(role: &str) -> String {
     let role_lit = quote_literal(role);
     format!(
-        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
+        "SELECT pg_terminate_backend(pid, 5000) FROM pg_stat_activity \
            WHERE usename = {role_lit} AND pid <> pg_backend_pid();"
     )
 }
