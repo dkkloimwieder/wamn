@@ -126,6 +126,7 @@ pub(super) fn host_secrets(
             role_families: vec![
                 WorkloadRoleFamily::ExecutorPlatform,
                 WorkloadRoleFamily::IdentityReader,
+                WorkloadRoleFamily::ConnectionReader,
                 WorkloadRoleFamily::HttpAdmitter,
                 WorkloadRoleFamily::EventMaterializer,
                 WorkloadRoleFamily::Administration,

@@ -1220,7 +1220,9 @@ pub async fn provision_org(args: ProvisionOrgArgs) -> anyhow::Result<()> {
         (None, Some(_)) => anyhow::bail!("--admin needs --system-database-url"),
         (Some(_), None) => anyhow::bail!("--system-database-url needs --admin"),
     };
-    let changes = if record.is_some() {
+    // The platform install provisions the org before auth NATS and any host
+    // exist, so it sets no WAMN_AUTH_NATS_URL and there is no cache to drop.
+    let changes = if record.is_some() && std::env::var_os("WAMN_AUTH_NATS_URL").is_some() {
         wamn_platform_identity::auth_changes::AuthChanges::connect(
             &wamn_platform_identity::auth_changes::AuthNats::from_env()?,
         )

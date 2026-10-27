@@ -231,6 +231,7 @@ async fn run(repository: &Path, kept: &KeptCluster, evidence: &Path) -> anyhow::
             role_families: vec![
                 WorkloadRoleFamily::ExecutorPlatform,
                 WorkloadRoleFamily::IdentityReader,
+                WorkloadRoleFamily::ConnectionReader,
                 WorkloadRoleFamily::HttpAdmitter,
                 WorkloadRoleFamily::EventMaterializer,
                 WorkloadRoleFamily::Administration,

@@ -45,12 +45,13 @@ const APPLIED_TIMEOUT: &str = "--timeout=120s";
 /// release chart reads, and the registry reader of the environment's CDC
 /// reader. Every Secret is named from the coordinate (`workload_secret_name`,
 /// §9.1).
-pub(super) const CREDENTIAL_FAMILIES: [(WorkloadRoleFamily, bool); 7] = [
+pub(super) const CREDENTIAL_FAMILIES: [(WorkloadRoleFamily, bool); 8] = [
     (WorkloadRoleFamily::App, true),
     (WorkloadRoleFamily::ExecutorPlatform, true),
     (WorkloadRoleFamily::HttpAdmitter, true),
     (WorkloadRoleFamily::EventMaterializer, true),
     (WorkloadRoleFamily::IdentityReader, false),
+    (WorkloadRoleFamily::ConnectionReader, false),
     (WorkloadRoleFamily::Administration, true),
     (WorkloadRoleFamily::RegistryReader, false),
 ];

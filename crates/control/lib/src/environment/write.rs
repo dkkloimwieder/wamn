@@ -225,6 +225,19 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn apply_writes_every_secret_the_host_reads() {
+        for (family, variable) in CREDENTIAL_VARIABLES {
+            assert!(
+                super::super::ensure::CREDENTIAL_FAMILIES
+                    .iter()
+                    .any(|(written, _)| *written == family),
+                "{variable} reads the {} Secret, which apply never writes",
+                family.label()
+            );
+        }
+    }
+
+    #[test]
     fn audit_is_no_difference() {
         let written = json!({"release": {"manifestDigest": "sha256:a"}, "audit": {"actor": "a"}});
         let rendered = json!({"release": {"manifestDigest": "sha256:a"}, "audit": {"actor": "b"}});
