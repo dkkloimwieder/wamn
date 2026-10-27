@@ -141,6 +141,15 @@ pub enum RequirementType {
 }
 
 impl RequirementType {
+    /// Resolve the compiled connector implementation for a catalog integration.
+    pub fn for_integration(code: &str) -> Option<Self> {
+        match code {
+            "http" => Some(Self::Http),
+            "gcs" | "s3" => Some(Self::Blobstore),
+            _ => None,
+        }
+    }
+
     pub fn descriptor(self) -> ConnectionTypeDescriptor {
         match self {
             Self::Blobstore => ConnectionTypeDescriptor::blobstore_v1(),
@@ -363,6 +372,23 @@ fn ownership(field: ConnectionField, owner: ConnectionFieldOwner) -> ConnectionF
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn integration_dispatch_refuses_an_unimplemented_catalog_code() {
+        assert_eq!(
+            RequirementType::for_integration("http"),
+            Some(RequirementType::Http)
+        );
+        assert_eq!(
+            RequirementType::for_integration("gcs"),
+            Some(RequirementType::Blobstore)
+        );
+        assert_eq!(
+            RequirementType::for_integration("s3"),
+            Some(RequirementType::Blobstore)
+        );
+        assert_eq!(RequirementType::for_integration("unimplemented"), None);
+    }
 
     #[test]
     fn http_uses_the_existing_descriptor() {

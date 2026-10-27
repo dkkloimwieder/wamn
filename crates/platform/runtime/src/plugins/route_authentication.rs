@@ -7,8 +7,8 @@
 //! reads the caller's permissions through the existing callable-HTTP
 //! project pool. Each read answer stays in the host's
 //! [auth memory](crate::auth_cache), so a repeated caller costs no read.
-//! A signature policy verifies the raw body through the host's project
-//! credential store and returns no caller principal.
+//! A signature policy verifies the raw body with the bound connection's
+//! credential and returns its active service principal.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -431,46 +431,43 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
         if let AttachmentAuthPolicy::Signature { header, credential } = request.policy {
             self.authenticate_signature(header, credential, request.headers, request.body)
                 .await?;
-            if credential.starts_with("org:") {
-                let (credentials, project) = self
-                    .signature_authentication
-                    .as_ref()
-                    .ok_or_else(signature_unauthorized)?;
-                let id = credentials
-                    .inbound_principal(project, credential)
-                    .await
-                    .map_err(|_| signature_unauthorized())?
-                    .ok_or_else(signature_unauthorized)?;
-                let principal = id
-                    .parse::<wamn_platform_identity::PrincipalId>()
-                    .map_err(|_| signature_unauthorized())?;
-                let authentication = self
-                    .authentication
-                    .as_ref()
-                    .ok_or_else(authentication_unavailable)?;
-                let grants = authentication
-                    .postgres
-                    .principal_grants(project, &request.scope.tenant_id, &principal)
-                    .await
-                    .map_err(|_| authentication_unavailable())?;
-                if !grants.active || grants.user {
-                    return Err(signature_unauthorized());
-                }
-                let permissions = authentication
-                    .postgres
-                    .user_operation_permissions(project, &request.scope.tenant_id, &principal)
-                    .await
-                    .map_err(|_| authentication_unavailable())?;
-                return Ok(Some(AuthenticatedCaller::new(
-                    request.attachment_id,
-                    id,
-                    CredentialType::Connection,
-                    permissions.admin,
-                    permissions.references.into_iter().collect(),
-                    None,
-                )));
+            let (credentials, project) = self
+                .signature_authentication
+                .as_ref()
+                .ok_or_else(signature_unauthorized)?;
+            let id = credentials
+                .inbound_principal(project, credential)
+                .await
+                .map_err(|_| signature_unauthorized())?
+                .ok_or_else(signature_unauthorized)?;
+            let principal = id
+                .parse::<wamn_platform_identity::PrincipalId>()
+                .map_err(|_| signature_unauthorized())?;
+            let authentication = self
+                .authentication
+                .as_ref()
+                .ok_or_else(authentication_unavailable)?;
+            let grants = authentication
+                .postgres
+                .principal_grants(project, &request.scope.tenant_id, &principal)
+                .await
+                .map_err(|_| authentication_unavailable())?;
+            if !grants.active || grants.user != Some(false) {
+                return Err(signature_unauthorized());
             }
-            return Ok(None);
+            let permissions = authentication
+                .postgres
+                .user_operation_permissions(project, &request.scope.tenant_id, &principal)
+                .await
+                .map_err(|_| authentication_unavailable())?;
+            return Ok(Some(AuthenticatedCaller::new(
+                request.attachment_id,
+                id,
+                CredentialType::Connection,
+                permissions.admin,
+                permissions.references.into_iter().collect(),
+                None,
+            )));
         }
         let AuthenticationRequest {
             scope,
@@ -529,6 +526,26 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
             let principal = principal.principal();
             match principal.principal_type() {
                 PrincipalType::Platform => return Err(unauthorized()),
+                PrincipalType::Service if principal.subject().starts_with("connection-") => {
+                    let name = authentication
+                        .postgres
+                        .connection_principal_name(&authentication.project, principal.subject())
+                        .await
+                        .map_err(|_| authentication_unavailable())?
+                        .ok_or_else(unauthorized)?;
+                    let (credentials, project) = self
+                        .signature_authentication
+                        .as_ref()
+                        .ok_or_else(unauthorized)?;
+                    let handle = format!("org:{}:{name}", authentication.org);
+                    let active = credentials
+                        .inbound_principal(project, &handle)
+                        .await
+                        .map_err(|_| authentication_unavailable())?;
+                    if active.as_deref() != Some(principal.id().as_str()) {
+                        return Err(unauthorized());
+                    }
+                }
                 PrincipalType::Service
                     if principal.subject() != authentication.expected_subject.as_ref() =>
                 {

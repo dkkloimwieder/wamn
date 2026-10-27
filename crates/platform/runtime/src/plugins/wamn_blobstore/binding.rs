@@ -180,6 +180,7 @@ mod tests {
     fn authorized_snapshot() -> ConnectionEffectSnapshot {
         let descriptor = ConnectionTypeDescriptor::blobstore_v1();
         ConnectionEffectSnapshot {
+            connection_name: None,
             read_only: false,
             wiring_hash: Some("hash".to_owned()),
             component: Some("label-writer".to_owned()),

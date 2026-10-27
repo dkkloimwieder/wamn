@@ -159,11 +159,13 @@ impl WamnBlobstore {
         project: impl Into<Box<str>>,
         release: Option<Arc<LoadedRelease>>,
     ) -> Self {
+        let project: Box<str> = project.into();
+        postgres.set_connection_credentials(Arc::clone(&vault), &project);
         Self {
             postgres,
             vault,
             tenant: tenant.into(),
-            project: project.into(),
+            project,
             release,
             invocations: RwLock::new(HashMap::new()),
         }
@@ -321,6 +323,15 @@ impl WamnBlobstore {
             })?;
         authorize_closure(&invocation, released_manifest, candidate_binding, &snapshot)
             .map_err(refused)?;
+        if let Some(name) = &snapshot.connection_name
+            && !self
+                .vault
+                .connection_enabled(&self.project, name)
+                .await
+                .map_err(|_| BindingError::Unauthorized)?
+        {
+            return Err(BindingError::Unauthorized);
+        }
         let bound = binding::resolve(&snapshot).map_err(|error| {
             tracing::warn!(store_alias, component_id, error = %error, "blobstore binding refused: the binding does not resolve");
             error
@@ -353,8 +364,13 @@ impl WamnBlobstore {
             tracing::warn!(error = %error, "blobstore client construction failed");
             BindingError::Unauthorized
         })?;
-        Ok(BoundContainer::new(store, bound.container, bound.prefix)
-            .with_read_only(snapshot.read_only))
+        let mut container = BoundContainer::new(store, bound.container, bound.prefix)
+            .with_read_only(snapshot.read_only);
+        if let Some(name) = snapshot.connection_name {
+            container =
+                container.with_connection_authority(Arc::clone(&self.vault), &self.project, name);
+        }
+        Ok(container)
     }
 }
 
@@ -690,6 +706,7 @@ mod tests {
             "generation": 7,
             "definition-hash": format!("sha256:{}", "e".repeat(64)),
             "credential-set-handle": "cold-store-v7",
+            "read-only": false,
         }]))
         .expect("the frozen binding row is complete and canonical")
     }
@@ -706,6 +723,7 @@ mod tests {
     /// the frozen row in every field the frozen row names.
     fn matching_snapshot(binding: &CandidateConnectionBinding) -> ConnectionEffectSnapshot {
         ConnectionEffectSnapshot {
+            connection_name: None,
             read_only: false,
             wiring_hash: Some(fixture_wiring_hash()),
             component: Some("archiver".to_string()),

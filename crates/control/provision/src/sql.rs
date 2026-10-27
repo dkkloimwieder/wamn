@@ -606,7 +606,8 @@ pub fn grant_administration_surface_sql(schema: &str) -> String {
          REVOKE EXECUTE ON FUNCTION wamn_authority.tenant_key(text) FROM {role}; \
          GRANT USAGE ON SCHEMA catalog, platform, wamn_history TO {role}; \
          GRANT EXECUTE ON FUNCTION wamn_history.row_image(record) TO {role}; \
-         GRANT SELECT ON TABLE catalog.releases TO {role};",
+         GRANT SELECT ON TABLE catalog.releases TO {role}; \
+         GRANT EXECUTE ON FUNCTION catalog.connection_upgrade_bindings(text, text) TO {role};",
         ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::Administration),
     );
     for relation in ADMINISTRATION_RELATIONS {
@@ -621,7 +622,6 @@ pub fn grant_administration_surface_sql(schema: &str) -> String {
         .expect("writing to a String cannot fail");
     }
 
-    sql.push_str(" DO $connection_acl$ BEGIN IF to_regprocedure('catalog.connection_is_referenced(text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION catalog.connection_is_referenced(text) TO wamn_administration; END IF; END $connection_acl$;");
     sql
 }
 
@@ -931,23 +931,12 @@ pub fn grant_identity_reader_surface_sql() -> String {
     )
 }
 
-/// The host connection reader reads connection authority and its identity credentials.
-pub const CONNECTION_READER_RELATIONS: [&str; 4] = [
-    "connection",
-    "connection_generation",
-    "identity.credential",
-    "project_connection",
-];
-
-/// Grant the dedicated credential reader its read-only system surface.
+/// Grant only the lookup that derives scope from the authenticated login.
 pub fn grant_connection_reader_surface_sql() -> String {
-    let mut sql = grant_system_reader_surface_sql(
-        WorkloadRoleFamily::ConnectionReader,
-        "registry",
-        &["connection", "connection_generation", "project_connection"],
-    );
+    let mut sql =
+        grant_system_reader_surface_sql(WorkloadRoleFamily::ConnectionReader, "registry", &[]);
     let role = quote_ident(WorkloadRoleFamily::ConnectionReader.acl_role());
-    write!(sql, " GRANT USAGE ON SCHEMA identity TO {role}; GRANT SELECT ON TABLE identity.credential TO {role};")
+    write!(sql, " REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA registry, identity FROM {role}; GRANT EXECUTE ON FUNCTION registry.lookup_connection_credential(text,text,text,bigint) TO {role}; GRANT EXECUTE ON FUNCTION registry.lookup_connection_binding_mode(text,text,text,text,text) TO {role};")
         .expect("writing to a String cannot fail");
     sql
 }
@@ -962,6 +951,12 @@ pub const CONTROL_CONNECTION_FUNCTIONS: &[&str] = &[
     "connection_allow_rows(text)",
     "connection_principal_rows(text,text)",
     "configure_connection(text,text,jsonb)",
+    "rotate_connection(text,text,text)",
+    "import_connection_credentials(text,jsonb)",
+    "connection_integrations()",
+    "connection_binding_rows(text,text,text)",
+    "analyse_connection_bindings(text,text,text,text,jsonb)",
+    "reserve_connection_bindings(text,text,text,text,jsonb)",
 ];
 
 /// The privileges the control host holds on a relation that it writes.
@@ -1299,7 +1294,7 @@ mod tests {
              GRANT SELECT ON TABLE platform.\"user_role\" TO \"wamn_http_admitter\"; \
              GRANT SELECT (\"tenant_id\", \"environment\", \"application\", \"workflow_id\", \
              \"version\", \"graph_json\") ON TABLE catalog.\"workflows\" TO \"wamn_http_admitter\";",
-            "the callable-HTTP admitter reads five catalog relations, the selected workflow columns and three permission relations, and holds nothing on the run plane, no write of any grain, and no EXECUTE"
+            "the callable-HTTP admitter reads five catalog relations, the selected workflow columns and three platform relations, and holds nothing on the run plane, no write of any grain, and no EXECUTE"
         );
         // The schema is an identifier position and is quoted, not interpolated.
         assert!(grant_http_admitter_surface_sql("we\"ird").contains("\"we\"\"ird\""));

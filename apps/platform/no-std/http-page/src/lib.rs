@@ -56,14 +56,14 @@ impl Guest for Component {
         if let Some(tracestate) = context.tracestate {
             push_header_unless_present(&mut headers, "tracestate", tracestate.into_bytes());
         }
-        let items = collect_pages(&config, &input, headers, async |request| {
+        let pages = collect_pages(&config, &input, headers, async |request| {
             bindings::wamn::connection::http::send(request)
                 .await
                 .map_err(classify_connection_error)
         })
         .await?;
         Ok(Emission {
-            payload: page_output(items, carry).to_string(),
+            payload: page_output(pages, carry).to_string(),
             port: None,
         })
     }
@@ -90,14 +90,21 @@ fn carried_input(
     })
 }
 
-fn page_output(
+#[derive(Debug)]
+struct Pages {
     items: Vec<serde_json::Value>,
-    carry: Option<serde_json::Value>,
-) -> serde_json::Value {
-    match carry {
-        Some(carry) => serde_json::json!({"items": items, "carry": carry}),
-        None => serde_json::Value::Array(items),
+    external_system_id: Option<String>,
+}
+
+fn page_output(pages: Pages, carry: Option<serde_json::Value>) -> serde_json::Value {
+    let mut output = serde_json::json!({
+        "external_system_id": pages.external_system_id,
+    });
+    output["items"] = serde_json::Value::Array(pages.items);
+    if let Some(carry) = carry {
+        output["carry"] = carry;
     }
+    output
 }
 
 fn required_string(config: &serde_json::Value, field: &str) -> Result<String, NodeError> {
@@ -206,7 +213,7 @@ async fn collect_pages<F, Fut>(
     input: &serde_json::Value,
     mut headers: Vec<Header>,
     mut send: F,
-) -> Result<Vec<serde_json::Value>, NodeError>
+) -> Result<Pages, NodeError>
 where
     F: FnMut(Request) -> Fut,
     Fut: core::future::Future<Output = Result<Response, NodeError>>,
@@ -280,6 +287,8 @@ where
         _ => return Err(terminal("invalid-config", "unknown page style")),
     }
     let mut collected = Vec::new();
+    let mut external_system_id = None;
+    let mut first_page = true;
     loop {
         let response = send(Request {
             requirement: requirement.clone(),
@@ -300,6 +309,15 @@ where
             500..=599 => return Err(NodeError::Retryable(response_error(&response))),
             400..=499 => return Err(NodeError::Terminal(response_error(&response))),
             _ => {}
+        }
+        if first_page {
+            external_system_id = response.external_system;
+            first_page = false;
+        } else if external_system_id != response.external_system {
+            return Err(terminal(
+                "invalid-page",
+                "external system changed between pages",
+            ));
         }
         let body: serde_json::Value = serde_json::from_slice(&response.body)
             .map_err(|error| terminal("invalid-page", format!("page is not JSON: {error}")))?;
@@ -350,7 +368,10 @@ where
             _ => unreachable!(),
         }
     }
-    Ok(collected)
+    Ok(Pages {
+        items: collected,
+        external_system_id,
+    })
 }
 
 fn query_value<'a>(path: &'a str, name: &str) -> Option<&'a str> {

@@ -126,7 +126,7 @@ fn principal_grants_from_rows(
     };
     for row in rows {
         grants.active = row.try_get(0)?;
-        grants.user = row.try_get(3)?;
+        grants.user = Some(row.try_get(3)?);
         if let Some(role) = row.try_get::<_, Option<String>>(1)? {
             let permissions = grants.roles.entry(role).or_default();
             permissions.extend(row.try_get::<_, Option<String>>(2)?);
@@ -155,7 +155,7 @@ fn session_grants(
     grants: &crate::auth_cache::PrincipalGrants,
     roles: &[String],
 ) -> anyhow::Result<HeldOperationGrants> {
-    if !grants.active || !grants.user {
+    if !grants.active || grants.user != Some(true) {
         return Err(SessionGrantRefusal {
             kind: "session principal is not an active user",
         }
@@ -175,10 +175,10 @@ fn held_grants(
     signed: Option<&[String]>,
 ) -> HeldOperationGrants {
     let mut held = HeldOperationGrants {
-        user: grants.user,
+        user: grants.user == Some(true),
         ..HeldOperationGrants::default()
     };
-    if !grants.active {
+    if !grants.active || grants.user.is_none() {
         return held;
     }
     for (role, permissions) in &grants.roles {
@@ -476,7 +476,6 @@ pub struct ConnectionEffectLookup<'a> {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct CandidateConnectionBinding {
-    #[serde(default)]
     pub read_only: bool,
     pub component_digest: String,
     pub store_alias: String,
@@ -573,6 +572,7 @@ impl CandidateBindingWorld {
               of the row is what makes the authorization auditable"
 )]
 pub struct ConnectionEffectSnapshot {
+    pub connection_name: Option<String>,
     pub read_only: bool,
     /// `None` for a route, which has no wiring.
     pub wiring_hash: Option<String>,
@@ -671,7 +671,7 @@ SELECT wiring.graph_json::text, component.component, component.interface_version
        instance.requirement_type, instance.contract, \
        instance.lifecycle_status = 'enabled', instance.active_generation, instance.revision, \
        generation.generation, generation.definition_json::text, generation.definition_hash, \
-       generation.credential_set_handle, binding.mode \
+       generation.credential_set_handle, binding.mode, instance.org_connection_name \
   FROM member \
   LEFT JOIN selected_wiring AS wiring ON true \
   LEFT JOIN release_member AS origin_member \
@@ -703,10 +703,7 @@ SELECT wiring.graph_json::text, component.component, component.interface_version
    AND binding.component_digest = $8 \
    AND binding.store_alias = $9 \
    AND binding.environment = $4 \
-   AND (binding.package_id = $2 OR (binding.package_id = '' AND NOT EXISTS ( \
-       SELECT FROM catalog.connection_bindings scoped WHERE scoped.tenant_id = $1 \
-       AND scoped.manifest_digest = $3 AND scoped.component_digest = $8 \
-       AND scoped.store_alias = $9 AND scoped.package_id = $2))) \
+   AND binding.package_id = $2 \
    AND ($10::text IS NULL OR binding.instance_id = $10) \
   LEFT JOIN catalog.connection_instances AS instance \
     ON instance.tenant_id = binding.tenant_id \
@@ -1933,6 +1930,17 @@ impl WamnPostgres {
         self.clear_statement_bindings(workload_id);
     }
 
+    /// Share the host reader with local binding readiness and dispatch.
+    pub(crate) fn set_connection_credentials(
+        &self,
+        credentials: Arc<crate::plugins::wamn_credentials::WamnCredentials>,
+        project: &str,
+    ) {
+        if let Some(local) = &self.local_application {
+            local.set_connection_credentials(credentials, project);
+        }
+    }
+
     /// Load every host-derived HTTP authorization input in one read-only
     /// transaction under the component's injected tenant.
     ///
@@ -2057,10 +2065,8 @@ impl WamnPostgres {
                     .transpose()
             };
             let snapshot = ConnectionEffectSnapshot {
-                read_only: lookup.candidate_binding.map_or(
-                    row.try_get::<_, Option<String>>(21)?.as_deref() == Some("read"),
-                    |binding| binding.read_only,
-                ),
+                read_only: row.try_get::<_, Option<String>>(21)?.as_deref() != Some("write"),
+                connection_name: row.try_get(22)?,
                 wiring_hash: json(0)?
                     .map(|graph| {
                         wamn_catalog::WiringDocument::parse(&graph)
@@ -2198,6 +2204,32 @@ impl WamnPostgres {
             .keep_grants(tenant, principal.as_str(), ticket, grants.clone())
             .await;
         Ok(grants)
+    }
+
+    /// Resolve the projected name of a connection principal from its identity subject.
+    pub async fn connection_principal_name(
+        &self,
+        project: &str,
+        subject: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let Some(id) = subject.strip_prefix("connection-") else {
+            return Ok(None);
+        };
+        let id = id
+            .parse::<uuid::Uuid>()
+            .context("invalid connection principal subject")?
+            .to_string();
+        let (client, _) = self
+            .checkout_platform(project, AuthorityClass::CallableHttp)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        Ok(client
+            .query_opt(
+                "SELECT name FROM platform.connection WHERE id=$1::text::uuid",
+                &[&id],
+            )
+            .await?
+            .map(|row| row.get(0)))
     }
 
     /// The application roles and stored permissions a caller holds, read by

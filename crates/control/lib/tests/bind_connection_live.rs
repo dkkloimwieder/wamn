@@ -846,3 +846,275 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
     project_task.abort();
     let _ = std::fs::remove_dir_all(&scratch_dir);
 }
+
+fn provision_project_components_for_http_manifest()
+-> std::collections::BTreeSet<wamn_catalog::ServingComponent> {
+    let operation = "wamn:node/handler@0.1.0";
+    let mut descriptor =
+        wamn_catalog::ComponentDescriptor::named("http-sidecar", "0.1.0", HTTP_SIDECAR);
+    descriptor.operations.insert(
+        operation.into(),
+        AdmittedComponentOperation {
+            committed_result_schema: None,
+            registered_operation: None,
+            host_transaction: false,
+            input_ports: Vec::new(),
+            output_ports: Vec::new(),
+            parameters: Vec::new(),
+            statements: BTreeMap::new(),
+        },
+    );
+    [wamn_catalog::ServingComponent {
+        package_id: PACKAGE.into(),
+        runtime_schema: None,
+        descriptor,
+        operations: BTreeMap::from([(
+            operation.into(),
+            wamn_catalog::ServingComponentOperation {
+                registered_operation: None,
+                permissions: std::collections::BTreeSet::new(),
+                statements: BTreeMap::new(),
+                committed_result_schema: None,
+            },
+        )]),
+        statement_instances: BTreeMap::new(),
+    }]
+    .into()
+}
+
+#[tokio::test]
+async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
+    use wamn_runtime::plugins::connection_http::{
+        ConnectionExecutionClosure, ConnectionHttp, ConnectionInvocation, ConnectionOrigin,
+        InvocationEntry, WiringPosition, transport::HttpTransport,
+    };
+    use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_project_state::test_database::tenant_platform();
+    let (project, task) = connect(database.url()).await;
+    provision_project(&project, database.url()).await;
+    let document = WiringDocument::new(
+        "http_read",
+        1,
+        "read",
+        BTreeMap::from([(
+            "read".into(),
+            WiringNode {
+                component: "http-sidecar".into(),
+                interface_version: "0.1.0".into(),
+                operation: "wamn:node/handler@0.1.0".into(),
+                operation_dependency: None,
+                params: BTreeMap::new(),
+                terminal: Some(WiringTerminal::Respond),
+            },
+        )]),
+        Vec::new(),
+        Vec::new(),
+    )
+    .unwrap();
+    project.execute("INSERT INTO catalog.workflows (tenant_id,environment,application,workflow_id,version,graph_json,wiring_hash,trigger,execution_type,created_by) VALUES ($1,$2,$3,'http_read',1,$4::text::jsonb,$5,'manual','invoker',$6::text::uuid)", &[&TENANT,&ENVIRONMENT,&PACKAGE,&serde_json::to_string(&document).unwrap(),&document.wiring_hash().as_str(),&wamn_project_state::workflow_user_id().to_string()]).await.unwrap();
+    let components = provision_project_components_for_http_manifest();
+    let manifest = wamn_catalog::ServingManifest::new(
+        wamn_catalog::ServingRelease {
+            packages: [wamn_catalog::PackageCoordinate::new(PACKAGE, PACKAGE_VERSION).unwrap()]
+                .into(),
+        },
+        components,
+        std::collections::BTreeSet::new(),
+        BTreeMap::new(),
+    )
+    .unwrap();
+    let manifest_digest = manifest.digest().as_str().to_owned();
+    project.execute("INSERT INTO catalog.releases(tenant_id,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)", &[&TENANT,&manifest_digest,&manifest.canonical_bytes()]).await.unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let request = BindConnectionRequest {
+        database_url: database.url().to_owned(),
+        org: "bind-connection-tenant".into(),
+        project: "fixture".into(),
+        environment: ENVIRONMENT.into(),
+        instance_id: "http-read".into(),
+        requirement_type: RequirementType::Http,
+        definition: serde_json::json!({"primary-authority":format!("http://{}",listener.local_addr().unwrap()), "tls-verification":"disabled"}),
+        credential_handle: Some("unused".into()),
+        org_connection_name: None,
+        manifest_digest: manifest_digest.clone(),
+        component_digest: HTTP_SIDECAR.into(),
+        store_alias: "erp".into(),
+    };
+    bind_connection::bind_with_mode(
+        &request,
+        wamn_schema_generator::ConnectionMode::Read,
+        PACKAGE,
+    )
+    .await
+    .unwrap();
+    let postgres = Arc::new(
+        WamnPostgres::new(WamnPostgresConfig {
+            credentials: Some(ClassCredentials::every_class(database.url().to_owned())),
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
+            wait_timeout_ms: 2000,
+            statement_timeout_ms: 5000,
+            row_limit: 100,
+        })
+        .unwrap(),
+    );
+    postgres.set_tenant(COMPONENT_ID, TENANT).unwrap();
+    let release = Arc::new(
+        wamn_engine::release_manifest::LoadedRelease::load_canonical_bytes(
+            &manifest.canonical_bytes(),
+            "read binding fixture",
+            wamn_engine::release_manifest::ReleaseScope::new(TENANT, ENVIRONMENT),
+        )
+        .unwrap(),
+    );
+    let mut invocation = ConnectionInvocation {
+        origin: ConnectionOrigin {
+            package_id: PACKAGE.into(),
+            component_digest: HTTP_SIDECAR.into(),
+            component: "http-sidecar".into(),
+            interface_version: "0.1.0".into(),
+            operation: "wamn:node/handler@0.1.0".into(),
+        },
+        entry: InvocationEntry::Wiring(WiringPosition {
+            package_id: PACKAGE.into(),
+            wiring_id: "http_read".into(),
+            wiring_version: 1,
+            node_id: "read".into(),
+            occurrence: 0,
+            wiring_hash: document.wiring_hash().as_str().into(),
+        }),
+        package_id: PACKAGE.into(),
+        component_digest: HTTP_SIDECAR.into(),
+        component: "http-sidecar".into(),
+        operation: "wamn:node/handler@0.1.0".into(),
+        closure: ConnectionExecutionClosure::Released,
+        effects: None,
+    };
+    let plugin = ConnectionHttp::new(
+        Arc::clone(&postgres),
+        Arc::new(HttpTransport::new().unwrap()),
+        Arc::new(WamnCredentials::empty()),
+        TENANT,
+        DEFAULT_PROJECT,
+        vec![
+            format!("http://{}", listener.local_addr().unwrap())
+                .parse()
+                .unwrap(),
+        ]
+        .into(),
+        Some(release),
+    );
+    plugin
+        .bind_invocation(COMPONENT_ID, invocation.clone())
+        .unwrap();
+    assert_eq!(
+        plugin
+            .send_for_test(COMPONENT_ID, "erp", "POST")
+            .await
+            .unwrap_err(),
+        "ConnectionError::AuthorityDenied"
+    );
+    assert_eq!(
+        plugin
+            .send_for_test(COMPONENT_ID, "erp", "GET")
+            .await
+            .unwrap_err(),
+        "ConnectionError::CredentialUnavailable"
+    );
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(20), listener.accept())
+            .await
+            .is_err()
+    );
+    plugin.revoke_invocation(COMPONENT_ID);
+    let entry = wamn_runtime::plugins::wamn_postgres::ConnectionEntryLookup {
+        package_id: PACKAGE,
+        wiring: Some(wamn_runtime::plugins::wamn_postgres::WiringLookup {
+            wiring_id: "http_read",
+            wiring_version: 1,
+            node_id: "read",
+        }),
+    };
+    let snapshot = postgres
+        .connection_effect_snapshot(
+            COMPONENT_ID,
+            DEFAULT_PROJECT,
+            TENANT,
+            &ConnectionEffectLookup {
+                entry,
+                origin_package_id: PACKAGE,
+                origin_component_digest: HTTP_SIDECAR,
+                origin_component: "http-sidecar",
+                origin_interface_version: "0.1.0",
+                origin_operation: "wamn:node/handler@0.1.0",
+                package_id: PACKAGE,
+                operation: "wamn:node/handler@0.1.0",
+                manifest_digest: &request.manifest_digest,
+                environment: ENVIRONMENT,
+                component_digest: HTTP_SIDECAR,
+                store_alias: "erp",
+                candidate_binding: None,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(snapshot.read_only);
+    let forged = CandidateConnectionBinding {
+        read_only: false,
+        component_digest: HTTP_SIDECAR.into(),
+        store_alias: "erp".into(),
+        requirement_hash: snapshot.requirement_hash.unwrap(),
+        instance_id: snapshot.instance_id.unwrap(),
+        instance_revision: snapshot.instance_revision.unwrap(),
+        requirement_type: snapshot.requirement_type.unwrap(),
+        contract: snapshot.contract.unwrap(),
+        validation_hash: snapshot.validation_hash.unwrap(),
+        generation: snapshot.generation.unwrap(),
+        definition_hash: snapshot.definition_hash.unwrap(),
+        credential_set_handle: snapshot.credential_handle,
+    };
+    invocation.closure = ConnectionExecutionClosure::Candidate {
+        manifest_digest: request.manifest_digest,
+        environment: ENVIRONMENT.into(),
+        wiring_hash: document.wiring_hash().as_str().into(),
+        component: "http-sidecar".into(),
+        interface_version: "0.1.0".into(),
+        binding_world: Arc::new(
+            wamn_runtime::plugins::wamn_postgres::CandidateBindingWorld::from_json(
+                serde_json::to_value([forged]).unwrap(),
+            )
+            .unwrap(),
+        ),
+    };
+    let plugin = ConnectionHttp::new(
+        postgres,
+        Arc::new(HttpTransport::new().unwrap()),
+        Arc::new(WamnCredentials::empty()),
+        TENANT,
+        DEFAULT_PROJECT,
+        vec![
+            format!("http://{}", listener.local_addr().unwrap())
+                .parse()
+                .unwrap(),
+        ]
+        .into(),
+        None,
+    );
+    plugin.bind_invocation(COMPONENT_ID, invocation).unwrap();
+    assert_eq!(
+        plugin
+            .send_for_test(COMPONENT_ID, "erp", "POST")
+            .await
+            .unwrap_err(),
+        "ConnectionError::AttestationInvalid"
+    );
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(20), listener.accept())
+            .await
+            .is_err()
+    );
+    drop(project);
+    task.abort();
+}

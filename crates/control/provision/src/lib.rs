@@ -148,10 +148,6 @@ pub use workload_role::{
 pub const SYSTEM_SCHEMA_SQL: &str = concat!(
     include_str!("../../../../deploy/sql/record-history.sql"),
     include_str!("../../../../deploy/sql/system-schema.sql"),
-    include_str!("../../../../deploy/sql/migrations/system/0030_org_connection_authority.sql"),
-    include_str!(
-        "../../../../deploy/sql/migrations/system/0031_environment_connection_bindings.sql"
-    ),
     include_str!("../../../../deploy/sql/system-schema-migrations.sql"),
 );
 

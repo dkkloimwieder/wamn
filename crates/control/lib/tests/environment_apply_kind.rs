@@ -890,6 +890,25 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         )
         .await?;
 
+    // Use the deployment inputs before an environment enables either connection.
+    for (operation, file) in [
+        ("external_system.write", "rest-fixture.external-system.json"),
+        ("connection.write", "rest-fixture.json"),
+        ("connection.write", "wms-labels.json"),
+    ] {
+        let payload =
+            std::fs::read_to_string(repository.join("deploy/gcp/connections").join(file))?;
+        wamn_control::connection_configuration::write(
+            &system_url,
+            ORG,
+            operation,
+            &payload,
+            &wamn_platform_identity::auth_changes::AuthChanges::default(),
+            None,
+        )
+        .await?;
+    }
+
     // The package and the release, pushed from this machine.
     let package = repository.join("apps").join(PACKAGE);
     let built: Value = serde_json::from_slice(

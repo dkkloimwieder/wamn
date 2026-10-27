@@ -140,10 +140,24 @@ async fn the_migration_grants_the_provisioned_administration_surface() {
         ))
         .await
         .expect("remove the remaining tenant columns");
+    client
+        .batch_execute("ALTER TABLE catalog.connection_bindings DROP CONSTRAINT connection_bindings_package_id_nonempty")
+        .await
+        .expect("restore the catalog before migration 0042");
+    client
+        .batch_execute(&format!(
+            "BEGIN; {} COMMIT;",
+            include_str!(
+                "../../../../deploy/sql/migrations/project/0042_c35_connection_bindings.sql"
+            )
+        ))
+        .await
+        .expect("apply the connection administration surface");
     let migrated = surface(&client).await;
     for expected in [
         "column platform.role_history.operation INSERT",
         "routine wamn_history.row_image(record) EXECUTE",
+        "routine catalog.connection_upgrade_bindings(text,text) EXECUTE",
         "schema platform USAGE",
         "schema catalog USAGE",
         "table platform.environment UPDATE",

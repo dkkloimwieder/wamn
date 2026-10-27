@@ -874,25 +874,28 @@ impl ProductionDevStageRunner {
         .map_err(|source| {
             ProductionDevStageError::owner("create local number sequences", source)
         })?;
-        let binding_inputs = prepare_local_bindings(
+        let packages = self
+            .package_inputs()?
+            .iter()
+            .map(|package| package.manifest.clone())
+            .collect::<Vec<_>>();
+        let binding_inputs =
+            prepare_local_bindings(&self.config, &self.admissions, &self.environment, &packages)
+                .await
+                .map_err(|source| {
+                    ProductionDevStageError::owner("prepare local connection selections", source)
+                })?;
+        local_facts.bindings = resolve_local_bindings(
             &self.config,
-            &self.admissions,
             &self.environment,
-            &self
-                .package_inputs()?
-                .iter()
-                .map(|package| package.manifest.clone())
-                .collect::<Vec<_>>(),
+            &packages,
+            &binding_inputs,
+            None,
         )
         .await
         .map_err(|source| {
-            ProductionDevStageError::owner("prepare local connection selections", source)
+            ProductionDevStageError::owner("validate local connection selections", source)
         })?;
-        local_facts.bindings = resolve_local_bindings(&self.config, &binding_inputs, None)
-            .await
-            .map_err(|source| {
-                ProductionDevStageError::owner("validate local connection selections", source)
-            })?;
         wamn_runtime::local_application::validate_local_facts(
             &local_facts,
             &published.manifest,
@@ -1015,6 +1018,8 @@ impl ProductionDevStageRunner {
         }
         resolve_local_bindings(
             &self.config,
+            &self.environment,
+            &packages,
             &self.local_binding_inputs,
             Some(&self.local_bindings),
         )
@@ -1565,7 +1570,7 @@ async fn prepare_local_bindings(
     packages: &[wamn_schema_generator::PackageManifest],
 ) -> anyhow::Result<Vec<PreparedLocalBinding>> {
     let system = crate::environment::analyse::connect(config.system_database_url()).await?;
-    system.batch_execute("SET ROLE wamn_system").await?;
+    system.batch_execute("SET ROLE wamn_control").await?;
     let bindings = crate::environment::bindings::analyse(&system, environment, packages).await?;
     let drops = crate::environment::bindings::project_authority(
         config.system_database_url(),
@@ -1625,7 +1630,7 @@ async fn reserve_local_bindings(
 ) -> anyhow::Result<()> {
     let mut system = crate::environment::analyse::connect(config.system_database_url()).await?;
     let tx = system.transaction().await?;
-    tx.batch_execute("SET LOCAL ROLE wamn_system").await?;
+    tx.batch_execute("SET LOCAL ROLE wamn_control").await?;
     let bindings = crate::environment::bindings::reserve(&tx, environment, packages).await?;
     for input in prepared {
         let application =
@@ -1649,6 +1654,8 @@ async fn reserve_local_bindings(
 
 async fn resolve_local_bindings(
     config: &DevConfig,
+    environment: &crate::environment::document::EnvironmentDocument,
+    packages: &[wamn_schema_generator::PackageManifest],
     prepared: &[PreparedLocalBinding],
     apply: Option<&[wamn_runtime::local_application::LocalBindingFacts]>,
 ) -> anyhow::Result<Vec<wamn_runtime::local_application::LocalBindingFacts>> {
@@ -1663,6 +1670,21 @@ async fn resolve_local_bindings(
     }
     let (client, connection) = tokio_postgres::connect(config.target_database_url(), NoTls).await?;
     let driver = tokio::spawn(connection);
+    let mut system = crate::environment::analyse::connect(config.system_database_url()).await?;
+    let authority = system.transaction().await?;
+    authority
+        .batch_execute("SET LOCAL ROLE wamn_control")
+        .await?;
+    if apply.is_none() {
+        crate::environment::bindings::reserve(&authority, environment, packages).await?;
+    }
+    let identity = config.activation_identity();
+    let modes = authority
+        .query(
+            "SELECT application, alias, mode FROM registry.connection_binding_rows($1,$2,$3)",
+            &[&identity.org, &identity.project, &identity.environment],
+        )
+        .await?;
     let result = async {
         client.batch_execute("BEGIN").await?;
         client
@@ -1691,7 +1713,25 @@ async fn resolve_local_bindings(
                 &binding.instance_id,
             )
             .await?;
-            selection.read_only = binding.read_only;
+            let application = wamn_catalog::application_for_package(
+                &environment.applications,
+                &binding.package_id,
+            )
+            .context("local binding has no application")?
+            .to_owned();
+            let mode = modes
+                .iter()
+                .find(|row| {
+                    row.get::<_, String>(0) == application
+                        && row.get::<_, String>(1) == binding.requirement.store_alias()
+                })
+                .context("local connection binding mode unavailable")?
+                .get::<_, String>(2);
+            selection.read_only = match mode.as_str() {
+                "read" => true,
+                "write" => false,
+                _ => anyhow::bail!("local connection binding mode unavailable"),
+            };
             bindings.push(wamn_runtime::local_application::LocalBindingFacts {
                 package_id: binding.package_id.clone(),
                 requirement: binding.requirement.clone(),
@@ -1716,6 +1756,7 @@ async fn resolve_local_bindings(
     .await;
     drop(client);
     driver.abort();
+    authority.rollback().await?;
     result
 }
 

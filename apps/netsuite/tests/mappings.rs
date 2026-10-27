@@ -63,8 +63,8 @@ fn pull_rows_become_one_consumer_batch_and_retain_due() {
     let rows = mapping(
         "netsuite_pull",
         "rows",
-        &json!({"carry": due, "items": [{"id": "42", "name": "Acme"}]}),
-        Some(&json!({"external_system_id":"00000000-0000-4000-8000-00000000e001"})),
+        &json!({"carry": due, "external_system_id":"00000000-0000-4000-8000-00000000e001", "items": [{"id": "42", "name": "Acme"}]}),
+        None,
     );
     assert_eq!(
         rows,
@@ -73,8 +73,8 @@ fn pull_rows_become_one_consumer_batch_and_retain_due() {
     let empty = mapping(
         "netsuite_pull",
         "rows",
-        &json!({"carry": due, "items": []}),
-        Some(&json!({"external_system_id":"00000000-0000-4000-8000-00000000e001"})),
+        &json!({"carry": due, "external_system_id":"00000000-0000-4000-8000-00000000e001", "items": []}),
+        None,
     );
     assert_eq!(empty[0]["value"]["items"], json!([]));
     let finish = mapping(
@@ -167,4 +167,36 @@ fn record_and_restlet_parameters_build_relative_paths() {
         output,
         json!({"path":"/app/site/hosting/restlet.nl?script=a%26b&deploy=1","body":{"ok":true}})
     );
+}
+
+#[test]
+fn a_false_workflow_parameter_cannot_select_consumer_provenance() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    for path in [
+        "../publication/wirings/netsuite_pull.json",
+        "../../rest_connector/publication/wirings/rest_item.json",
+    ] {
+        let wiring: Value =
+            serde_json::from_slice(&std::fs::read(root.join(path)).unwrap()).unwrap();
+        let expression = wiring["nodes"]["rows"]["params"]["expression"]
+            .as_str()
+            .unwrap();
+        for items in [json!([]), json!([{"id":"42","name":"Acme"}])] {
+            let input = json!({"carry":"2026-10-27T12:00:00Z", "external_system_id":"00000000-0000-4000-8000-00000000e001", "items":items});
+            let mapped: Value = serde_json::from_str(
+                &jsonata_expression::evaluate_with_parameters(
+                    expression,
+                    &input,
+                    &json!({"external_system_id":"00000000-0000-4000-8000-00000000bad1"}),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                mapped[0]["value"]["external_system_id"],
+                input["external_system_id"]
+            );
+            assert_eq!(mapped[0]["request_id"], input["carry"]);
+        }
+    }
 }

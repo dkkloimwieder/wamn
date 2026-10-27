@@ -86,8 +86,12 @@ pub fn lock_connection_selection_sql() -> &'static str {
 pub fn insert_component_connection_binding_sql() -> &'static str {
     "INSERT INTO catalog.connection_bindings \
        (tenant_id, manifest_digest, component_digest, store_alias, \
-        environment, instance_id, binding_status, validation_status, validation_hash) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+        environment, instance_id, binding_status, validation_status, validation_hash, package_id) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, \
+       (SELECT component.value ->> 'package-id' FROM catalog.releases release \
+        CROSS JOIN LATERAL jsonb_array_elements(convert_from(release.canonical_bytes,'UTF8')::jsonb -> 'components') component(value) \
+        WHERE release.tenant_id=$1 AND release.manifest_digest=$2 \
+          AND component.value -> 'descriptor' ->> 'component-digest'=$3))"
 }
 
 /// Insert an immutable binding with its declared access mode.

@@ -120,11 +120,9 @@ pub struct ConnectionArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum ConnectionCommand {
-    /// Declare a non-secret HTTP connection shared by an org.
-    Declare(DeclareConnectionArgs),
     /// Create or update a connection from non-secret JSON.
     Write(ConfigurationArgs),
-    /// Load the legacy credential maps once.
+    /// Import credential maps once.
     ImportCredentials(ConfigurationArgs),
     /// Append a credential generation from a private file.
     Rotate(RotateConnectionArgs),
@@ -148,8 +146,9 @@ pub struct ConfigurationArgs {
 pub struct RotateConnectionArgs {
     #[command(flatten)]
     pub input: ConfigurationArgs,
+    /// The org connection name whose credential changes.
     #[arg(long)]
-    pub connection_id: String,
+    pub connection: String,
 }
 
 pub async fn configuration(args: ConfigurationArgs, operation: &str) -> anyhow::Result<()> {
@@ -171,30 +170,19 @@ pub async fn configuration(args: ConfigurationArgs, operation: &str) -> anyhow::
     Ok(())
 }
 
-#[derive(Debug, Args)]
-pub struct DeclareConnectionArgs {
-    #[arg(long, env = "WAMN_CONTROL_DATABASE_URL")]
-    pub system_database_url: String,
-    #[arg(long)]
-    pub org: String,
-    #[arg(long)]
-    pub name: String,
-    #[arg(long, value_enum)]
-    pub requirement_type: RequirementTypeArg,
-    #[arg(long, value_name = "PATH")]
-    pub definition: PathBuf,
-}
-
 pub async fn connection(args: ConnectionArgs) -> anyhow::Result<()> {
     match args.command {
         ConnectionCommand::Write(args) => configuration(args, "connection.write").await,
         ConnectionCommand::ImportCredentials(args) => {
             let text =
                 std::fs::read_to_string(&args.file).context("read credential import file")?;
-            wamn_control::connection_configuration::import(
+            wamn_control::connection_configuration::import_with_bindings(
                 &args.system_database_url,
                 &args.org,
                 &text,
+                args.administration.as_deref().context(
+                    "credential import requires the administration credential directory",
+                )?,
             )
             .await?;
             println!("credentials imported");
@@ -206,38 +194,11 @@ pub async fn connection(args: ConnectionArgs) -> anyhow::Result<()> {
             let generation = wamn_control::connection_configuration::rotate(
                 &args.input.system_database_url,
                 &args.input.org,
-                &args.connection_id,
+                &args.connection,
                 &text,
             )
             .await?;
             println!("generation {generation}");
-            Ok(())
-        }
-        ConnectionCommand::Declare(args) => {
-            let definition =
-                serde_json::from_slice(&std::fs::read(&args.definition).with_context(|| {
-                    format!("read connection definition {}", args.definition.display())
-                })?)?;
-            let changed = wamn_control::org_connection::declare(
-                &wamn_control::org_connection::DeclareConnectionRequest {
-                    system_database_url: args.system_database_url,
-                    org: args.org.clone(),
-                    name: args.name.clone(),
-                    requirement_type: args.requirement_type.requirement_type(),
-                    definition,
-                },
-                &wamn_platform_identity::auth_changes::AuthChanges::connect(
-                    &wamn_platform_identity::auth_changes::AuthNats::from_env()?,
-                )
-                .await?,
-            )
-            .await?;
-            println!(
-                "org connection {}:{} {}",
-                args.org,
-                args.name,
-                if changed { "declared" } else { "unchanged" }
-            );
             Ok(())
         }
     }
@@ -251,5 +212,33 @@ mod tests {
     fn the_http_argument_selects_the_http_requirement() {
         let argument = RequirementTypeArg::from_str("http", false).unwrap();
         assert_eq!(argument.requirement_type(), RequirementType::Http);
+    }
+
+    #[test]
+    fn configuration_files_select_names_and_refuse_id_fields() {
+        use wamn_platform_identity::connections::{ConnectionWrite, ExternalSystemWrite};
+        let connection = serde_json::json!({
+            "name":"erp", "external_system":"erp-system", "integration":"http",
+            "transport":"http", "exchange":"request", "status":"active",
+            "parameters":{"primary-authority":"https://erp.example", "tls-verification":"verify-authority"}
+        });
+        let parsed: ConnectionWrite = serde_json::from_value(connection.clone()).unwrap();
+        assert_eq!(parsed.name, "erp");
+        assert_eq!(parsed.external_system.as_deref(), Some("erp-system"));
+        for field in ["id", "connection_id", "external_system_id"] {
+            let mut input = connection.clone();
+            input[field] = "00000000-0000-4000-8000-000000000001".into();
+            assert!(serde_json::from_value::<ConnectionWrite>(input).is_err());
+        }
+        let system = serde_json::json!({"name":"erp-system", "integration":"http", "parameters":{}, "status":"active"});
+        assert_eq!(
+            serde_json::from_value::<ExternalSystemWrite>(system.clone())
+                .unwrap()
+                .name,
+            "erp-system"
+        );
+        let mut input = system;
+        input["id"] = "00000000-0000-4000-8000-000000000001".into();
+        assert!(serde_json::from_value::<ExternalSystemWrite>(input).is_err());
     }
 }

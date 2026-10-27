@@ -2,7 +2,7 @@
   "class": "one",
   "fields": [
     {
-      "path": "connection_id",
+      "path": "connection",
       "type": "text",
       "nullable": false,
       "values": []

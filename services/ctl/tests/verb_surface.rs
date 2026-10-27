@@ -225,3 +225,58 @@ fn ops_binary_exposes_only_ops_verbs() {
         assert!(!output.contains(verb), "ops help exposed {verb}");
     }
 }
+
+#[test]
+fn connection_declare_is_refused() {
+    let output = Command::new(env!("CARGO_BIN_EXE_wamn-ctl"))
+        .args(["connection", "declare", "--help"])
+        .output()
+        .expect("run removed connection declaration");
+    assert!(!output.status.success());
+}
+
+#[test]
+fn dev_up_refuses_a_credentials_file() {
+    let output = Command::new(env!("CARGO_BIN_EXE_wamn"))
+        .args(["dev", "up", "--credentials-file", "/tmp/credentials.json"])
+        .output()
+        .expect("run dev up with a removed credentials argument");
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("unexpected argument '--credentials-file'")
+    );
+}
+
+#[test]
+fn connection_rotation_exposes_only_a_name_selector() {
+    let output = Command::new(env!("CARGO_BIN_EXE_wamn-ctl"))
+        .args(["connection", "rotate", "--help"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let help = String::from_utf8(output.stdout).unwrap();
+    assert!(help.contains("--connection <CONNECTION>"));
+    assert!(!help.contains("--connection-id"));
+    let old = Command::new(env!("CARGO_BIN_EXE_wamn-ctl"))
+        .args([
+            "connection",
+            "rotate",
+            "--connection-id",
+            "00000000-0000-4000-8000-000000000001",
+        ])
+        .output()
+        .unwrap();
+    assert!(!old.status.success());
+    assert!(
+        String::from_utf8(old.stderr)
+            .unwrap()
+            .contains("unexpected argument '--connection-id'")
+    );
+    let rename = Command::new(env!("CARGO_BIN_EXE_wamn-ctl"))
+        .args(["connection", "rename", "--help"])
+        .output()
+        .unwrap();
+    assert!(!rename.status.success());
+}

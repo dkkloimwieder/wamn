@@ -113,23 +113,62 @@ pub async fn deploy(run: &Run, repository: &Path, system_url: &str) -> anyhow::R
     )?;
     let mut manifest: Value = serde_json::from_slice(&std::fs::read(&file)?)?;
     let secret = manifest["items"].as_array_mut().unwrap().remove(0);
-    wamn_control::org_connection::declare(
-        &wamn_control::org_connection::DeclareConnectionRequest {
-            system_database_url: system_url.to_owned(),
-            org: ORG.into(),
-            name: "netsuite".into(),
-            requirement_type: wamn_catalog::RequirementType::Http,
-            definition: json!({"primary-authority":ORIGIN, "tls-verification":"disabled"}),
-        },
-        &wamn_platform_identity::auth_changes::AuthChanges::default(),
-    )
+    let source: Value =
+        serde_json::from_str(secret["stringData"]["credentials.json"].as_str().unwrap())?;
+    let mut credentials = source["orgs"][ORG]
+        .as_object()
+        .context("org credential map")?
+        .clone();
+    for (name, material) in source["projects"][PROJECT]
+        .as_object()
+        .context("project credential map")?
+    {
+        credentials.insert(name.clone(), material.clone());
+    }
+    credentials.insert("rest-fixture".into(), credentials["upstream"].clone());
+    let (mut system, connection) =
+        tokio_postgres::connect(system_url, tokio_postgres::NoTls).await?;
+    let driver = tokio::spawn(connection);
+    let tx = system.transaction().await?;
+    tx.batch_execute("SET LOCAL ROLE wamn_control").await?;
+    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+        wamn_control_provision::PlatformComponent::Provisioning,
+    ))
     .await?;
-    wamn_control::connection_configuration::import(
-        system_url,
+    for name in credentials.keys() {
+        let origin = if name == OAUTH2_HANDLE {
+            format!("{ORIGIN}/oauth/")
+        } else if name == "netsuite" || name == "rest-fixture" {
+            ORIGIN.to_owned()
+        } else {
+            format!("{ORIGIN}/")
+        };
+        wamn_platform_identity::connections::write_connection(
+            &tx,
+            ORG,
+            &wamn_platform_identity::connections::ConnectionWrite {
+                integration: "http".into(),
+                external_system: (name == "rest-fixture").then(|| "rest-fixture".into()),
+                name: name.clone(),
+                transport: "http".into(),
+                exchange: "request".into(),
+                status: "active".into(),
+                parameters: json!({"primary-authority":origin,"tls-verification":"disabled"}),
+            },
+            &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        )
+        .await?;
+        wamn_platform_identity::connections::enable_connection(&tx, ORG, PROJECT, name).await?;
+    }
+    wamn_platform_identity::connections::import_credentials(
+        &tx,
         ORG,
-        secret["stringData"]["credentials.json"].as_str().unwrap(),
+        &json!({"orgs":{ORG:credentials},"projects":{}}).to_string(),
     )
     .await?;
+    tx.commit().await?;
+    drop(system);
+    driver.await??;
     std::fs::write(&file, serde_json::to_vec(&manifest)?)?;
     run.run("kubectl", &["apply", "-f", &file.to_string_lossy()])
         .await?;
@@ -865,7 +904,7 @@ async fn assert_paged_inner(
         })
         .collect();
     let passed = status == 200
-        && items
+        && items["items"]
             == json!([
                 {"id":"one","name":"First"}, {"id":"two","name":"Second"},
                 {"id":"three","name":"Third"}, {"id":"four","name":"Fourth"},

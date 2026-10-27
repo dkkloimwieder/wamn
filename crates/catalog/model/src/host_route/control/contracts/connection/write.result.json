@@ -2,7 +2,7 @@
   "class": "one",
   "fields": [
     {
-      "path": "id",
+      "path": "name",
       "type": "text",
       "nullable": false,
       "values": []

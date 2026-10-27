@@ -921,9 +921,9 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
              INSERT INTO catalog.connection_bindings \
                (tenant_id, manifest_digest, component_digest, store_alias, \
                 environment, instance_id, binding_status, validation_status, \
-                validation_hash) \
+                validation_hash, package_id) \
              VALUES ('tenant-a', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', '{digest}', 'upstream', 'prod', 'upstream', \
-                     'active', 'valid', '{digest}');\n\
+                     'active', 'valid', '{digest}', 'orders');\n\
              INSERT INTO catalog.workflows \
                (tenant_id, environment, application, workflow_id, version, graph_json, \
                 wiring_hash, trigger, execution_type, execution_role, created_by) \

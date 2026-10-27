@@ -9,6 +9,7 @@ use tokio_postgres::NoTls;
 
 fn candidate_binding(component: &str, alias: &str) -> serde_json::Value {
     serde_json::json!({
+        "read-only": false,
         "component-digest": component,
         "store-alias": alias,
         "requirement-hash": "sha256:req",
@@ -31,6 +32,9 @@ fn candidate_binding_world_requires_complete_canonical_unique_rows() {
         CandidateBindingWorld::from_json(serde_json::json!([first.clone(), second.clone()]))
             .expect("ordered complete world");
     assert!(world.binding("sha256:a", "primary").is_some());
+    let mut missing_mode = candidate_binding("sha256:a", "primary");
+    missing_mode.as_object_mut().unwrap().remove("read-only");
+    assert!(CandidateBindingWorld::from_json(serde_json::json!([missing_mode])).is_err());
     assert!(CandidateBindingWorld::from_json(serde_json::json!([second, first])).is_err());
     let mut incomplete = candidate_binding("sha256:a", "primary");
     incomplete
@@ -3592,7 +3596,7 @@ fn session_and_pat_callers_act_with_their_single_role() {
     let grants = |roles: &[&str]| crate::auth_cache::PrincipalGrants {
         present: true,
         active: true,
-        user: true,
+        user: Some(true),
         roles: roles
             .iter()
             .map(|role| {
@@ -3609,6 +3613,12 @@ fn session_and_pat_callers_act_with_their_single_role() {
             .map(|role| (*role).to_owned())
             .collect::<Vec<_>>()
     };
+
+    let mut unknown_type = grants(&["admin"]);
+    unknown_type.user = None;
+    assert!(!held_grants(&unknown_type, None).admin);
+    assert!(held_grants(&unknown_type, None).references.is_empty());
+    assert!(session_grants(&unknown_type, &signed(&["admin"])).is_err());
 
     // A PAT: every held role.
     assert_eq!(

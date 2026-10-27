@@ -47,19 +47,19 @@ pub async fn bind(
         result?;
     }
     let tx = system.transaction().await?;
+    tx.batch_execute("SET LOCAL ROLE wamn_control").await?;
     tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
         wamn_control_provision::PlatformComponent::Provisioning,
     ))
     .await?;
-    let old = tx.query_opt("SELECT id::text, external_system_id::text FROM registry.connection WHERE org=$1 AND name=$2",&[&document.org,&name]).await?;
-    let external_system_id = match old.as_ref().and_then(|row| row.get::<_, Option<String>>(1)) {
-        Some(id) => Some(id),
+    let old = tx.query_opt("SELECT c.id::text, s.name FROM registry.connection_rows($1) c LEFT JOIN registry.connection_system_rows($1) s ON s.id=c.external_system_id WHERE c.name=$2",&[&document.org,&name]).await?;
+    let external_system = match old.as_ref().and_then(|row| row.get::<_, Option<String>>(1)) {
+        Some(name) => Some(name),
         None if integration == "http" => Some(
             connections::write_external_system(
                 &tx,
                 &document.org,
                 &connections::ExternalSystemWrite {
-                    id: None,
                     integration: integration.into(),
                     name: name.into(),
                     parameters: serde_json::json!({}),
@@ -71,12 +71,11 @@ pub async fn bind(
         None => None,
     };
     let mut drops = AuthDrops::default();
-    let id = connections::write_connection(
+    let connection_name = connections::write_connection(
         &tx,
         &document.org,
         &ConnectionWrite {
-            id: old.as_ref().map(|row| row.get(0)),
-            external_system_id,
+            external_system,
             integration: integration.into(),
             name: name.into(),
             transport: "http".into(),
@@ -87,7 +86,7 @@ pub async fn bind(
         &mut drops,
     )
     .await?;
-    connections::enable_connection(&tx, &document.org, &document.project, &id).await?;
+    connections::enable_connection(&tx, &document.org, &document.project, &connection_name).await?;
     for (scope, id) in [
         ("org", document.org.clone()),
         ("project", document.project.clone()),
@@ -97,10 +96,6 @@ pub async fn bind(
         ),
     ] {
         connections::allow_integration(&tx, &document.org, scope, &id, integration).await?;
-    }
-    if old.is_none()
-        && let Some(secret) = tx.query_opt("SELECT secret FROM identity.credential WHERE org=$1 AND project=$2 AND handle=$3 AND connection_id IS NULL",&[&document.org,&document.project,&name]).await? {
-        connections::rotate(&tx,&document.org,&id,&secret.get::<_,String>(0)).await?;
     }
     tx.commit().await?;
     platform.auth_changes().await?.publish(drops).await;

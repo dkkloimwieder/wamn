@@ -167,6 +167,10 @@ fn role_grants_sql(role: &str) -> String {
              FROM pg_catalog.pg_namespace n CROSS JOIN LATERAL aclexplode(n.nspacl) x \
             WHERE x.grantee = '{role}'::regrole \
            UNION ALL \
+           SELECT 'routine', n.nspname::text, p.proname::text, x.privilege_type::text, x.is_grantable \
+             FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace \
+             CROSS JOIN LATERAL aclexplode(p.proacl) x WHERE x.grantee='{role}'::regrole \
+           UNION ALL \
            SELECT 'database', '', d.datname::text, x.privilege_type::text, x.is_grantable \
              FROM pg_catalog.pg_database d CROSS JOIN LATERAL aclexplode(d.datacl) x \
             WHERE x.grantee = '{role}'::regrole \
@@ -475,11 +479,8 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
     assert_eq!(
         load_role_grants(&admin_url, WorkloadRoleFamily::ConnectionReader.acl_role()),
         vec![
-            "relation|identity|credential|SELECT|false".to_owned(),
-            "relation|registry|connection_generation|SELECT|false".to_owned(),
-            "relation|registry|connection|SELECT|false".to_owned(),
-            "relation|registry|project_connection|SELECT|false".to_owned(),
-            "schema|identity|identity|USAGE|false".to_owned(),
+            "routine|registry|lookup_connection_binding_mode|EXECUTE|false".to_owned(),
+            "routine|registry|lookup_connection_credential|EXECUTE|false".to_owned(),
             "schema|registry|registry|USAGE|false".to_owned(),
         ],
         "the connection reader holds exactly its credential and connection read surface"
@@ -489,8 +490,8 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
             &reader_url[2].1,
             "SELECT connection_id FROM registry.project_connection"
         ),
-        None,
-        "the connection reader can test project enablement"
+        Some("42501".to_owned()),
+        "the connection reader cannot directly read project enablement"
     );
     assert_eq!(
         reader_sqlstate(&reader_url[2].1, "DELETE FROM registry.project_connection"),
@@ -641,4 +642,156 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
             "the identity reader was able to {what}"
         );
     }
+}
+
+#[cfg(feature = "test-util")]
+#[test]
+fn credential_lookup_uses_the_login_scope_and_current_generation() {
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_control_provision::test_database::system();
+    let admin_url = test_database.url();
+    let database = test_database.name();
+    reset_roles(admin_url, database);
+    run_admin(
+        admin_url,
+        "grant only the credential lookup",
+        &wamn_control_provision::sql::grant_connection_reader_surface_sql(),
+    );
+    let mut setup = String::from("BEGIN; SET LOCAL ROLE wamn_system;");
+    setup.push_str(&wamn_control_provision::bind_platform_principal_sql(
+        wamn_control_provision::PlatformComponent::Provisioning,
+    ));
+    for (org, project) in [(ORG, PROJECT), (ORG, "unenabled"), ("other", PROJECT)] {
+        setup.push_str(
+            &wamn_control_provision::test_database::seed_org_project_env_sql(org, project, ENV),
+        );
+    }
+    setup.push_str("SET LOCAL ROLE wamn_control;");
+    for org in [ORG, "other"] {
+        write!(setup, "SELECT registry.configure_connection('{org}','external_system.write', '{{\"name\":\"erp-system\",\"integration\":\"http\",\"parameters\":{{}},\"status\":\"active\"}}'); SELECT registry.configure_connection('{org}','connection.write', '{{\"name\":\"erp\",\"external_system\":\"erp-system\",\"integration\":\"http\",\"transport\":\"http\",\"exchange\":\"request\",\"parameters\":{{\"primary-authority\":\"https://example.invalid\",\"tls-verification\":\"verify-authority\"}},\"status\":\"active\"}}'); SELECT registry.configure_connection('{org}','project_connection.enable','{{\"project\":\"{PROJECT}\",\"connection\":\"erp\"}}'); SELECT registry.rotate_connection('{org}','erp','first'); SELECT registry.rotate_connection('{org}','erp','second');").unwrap();
+    }
+    setup.push_str("COMMIT;");
+    run_admin(admin_url, "seed credential authority as control", &setup);
+    let mapped = generation_role(SystemReader::Connection, CredentialGeneration::A, database);
+    let unmapped = generation_role(SystemReader::Connection, CredentialGeneration::B, database);
+    let unenabled = system_reader_generation_role(
+        SystemReader::Connection,
+        ORG,
+        "unenabled",
+        ENV,
+        database,
+        CredentialGeneration::A,
+    );
+    for role in [&mapped, &unmapped, &unenabled] {
+        run_admin(
+            admin_url,
+            "mint a real reader login",
+            &prepare_workload_generation_sql(
+                WorkloadRoleFamily::ConnectionReader,
+                database,
+                role,
+                READER_PW,
+                "2099-01-01T00:00:00Z",
+            ),
+        );
+    }
+    run_admin(
+        admin_url,
+        "map only the authenticated reader logins",
+        &format!(
+            "SET ROLE wamn_system; INSERT INTO wamn_authority.author_login_tenants(login_identity,tenant_id,org_id,project_id,environment) VALUES ('{mapped}','acme--widgets--dev','{ORG}','{PROJECT}','{ENV}'),('{unenabled}','acme--unenabled--dev','{ORG}','unenabled','{ENV}');"
+        ),
+    );
+    let reader = role_url(admin_url, &mapped, READER_PW);
+    run_admin(
+        &reader,
+        "assert the login and role are unprivileged",
+        "DO $$ BEGIN ASSERT NOT (SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname=current_user); END $$;",
+    );
+    for relation in [
+        "identity.credential",
+        "registry.connection",
+        "registry.external_system",
+        "registry.connection_generation",
+        "registry.project_connection",
+    ] {
+        assert_eq!(
+            reader_sqlstate(&reader, &format!("SELECT * FROM {relation}")),
+            Some("42501".into()),
+            "direct SELECT on {relation} refuses"
+        );
+    }
+    let (ok, expected_system_id, error) = psql_tuples(
+        admin_url,
+        &format!(
+            "SELECT id::text FROM registry.external_system WHERE org='{ORG}' AND name='erp-system'"
+        ),
+    );
+    assert!(ok, "{error}");
+    assert!(
+        !expected_system_id.trim().is_empty(),
+        "the seed has a system id"
+    );
+    let (ok, external_system, error) = psql_tuples(
+        &reader,
+        &format!(
+            "SELECT external_system FROM registry.lookup_connection_credential('{ORG}','{PROJECT}','erp',NULL)"
+        ),
+    );
+    assert!(ok, "{error}");
+    assert_eq!(
+        external_system.trim(),
+        expected_system_id.trim(),
+        "the scoped lookup returns the projected system id without a table grant"
+    );
+    for (generation, expected) in [("NULL", "second"), ("2", "first"), ("3", "second")] {
+        let (ok, out, err) = psql_tuples(
+            &reader,
+            &format!(
+                "SELECT secret FROM registry.lookup_connection_credential('{ORG}','{PROJECT}','erp',{generation})"
+            ),
+        );
+        assert!(ok, "{err}");
+        assert_eq!(out.trim(), expected);
+    }
+    for (url, org, project) in [
+        (reader.clone(), "other", PROJECT),
+        (reader.clone(), ORG, "unenabled"),
+        (role_url(admin_url, &unmapped, READER_PW), ORG, PROJECT),
+        (role_url(admin_url, &unenabled, READER_PW), ORG, "unenabled"),
+    ] {
+        for generation in ["NULL", "2"] {
+            let (ok, out, err) = psql_tuples(
+                &url,
+                &format!(
+                    "SET app.org='other'; SET app.project='{PROJECT}'; SELECT count(*) FROM registry.lookup_connection_credential('{org}','{project}','erp',{generation})"
+                ),
+            );
+            assert!(ok, "{err}");
+            assert_eq!(
+                out.trim(),
+                "0",
+                "claims, requested scope and pinned generations cannot widen a login"
+            );
+        }
+    }
+    run_admin(
+        admin_url,
+        "disable the enabled connection as control",
+        &format!(
+            "SET ROLE wamn_control; SELECT registry.configure_connection('{ORG}','connection.write','{{\"name\":\"erp\",\"external_system\":\"erp-system\",\"integration\":\"http\",\"transport\":\"http\",\"exchange\":\"request\",\"parameters\":{{}},\"status\":\"disabled\"}}');"
+        ),
+    );
+    let (ok, out, err) = psql_tuples(
+        &reader,
+        &format!(
+            "SELECT count(*) FROM registry.lookup_connection_credential('{ORG}','{PROJECT}','erp',2)"
+        ),
+    );
+    assert!(ok, "{err}");
+    assert_eq!(
+        out.trim(),
+        "0",
+        "disabled connections refuse pinned secrets and principals"
+    );
 }

@@ -46,15 +46,6 @@
       }
     },
     {
-      "literal": "referenced",
-      "from": "transaction_invariant",
-      "detail": {
-        "required": [
-          "field"
-        ]
-      }
-    },
-    {
       "literal": "permission_denied",
       "from": "permission_denied",
       "detail": {

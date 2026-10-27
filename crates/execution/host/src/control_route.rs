@@ -259,37 +259,27 @@ impl ControlRoutes<'_> {
         match attachment.route.handler {
             HostHandler::ExternalSystemWrite
             | HostHandler::ConnectionWrite
+            | HostHandler::ProjectConnectionDisable
             | HostHandler::ProjectConnectionEnable
             | HostHandler::IntegrationAllow => {
                 let mut writer = self.writer.lock().await;
                 let transaction = self.begin(&mut writer, attachment, caller).await?;
-                let mut drops = AuthDrops::default();
-                let environments = org_environments(&transaction, self.org, None).await?;
-                let logins = self.logins(&environments)?;
-                let mut targets = Vec::new();
-                for ((project, env), url) in environments.iter().zip(logins) {
-                    let (client, connection) = tokio_postgres::connect(&url, NoTls).await?;
-                    let driver = tokio::spawn(connection);
-                    wamn_platform_identity::connections::check_applied_rename(
-                        &transaction,
-                        &client,
-                        self.org,
-                        attachment.route.operation,
-                        payload,
+                transaction
+                    .query_one(
+                        "SELECT pg_advisory_xact_lock(hashtextextended('connections:' || $1, 0))",
+                        &[&self.org],
                     )
-                    .await
-                    .map_err(|error| {
-                        if error.kind == "database_error" {
-                            Refusal::Failed(error.into())
-                        } else {
-                            Refusal::Declared {
-                                code: error.kind,
-                                detail: json!({"field":error.field}),
-                            }
-                        }
-                    })?;
-                    targets.push((project, env, client, driver));
-                }
+                    .await?;
+                let mut drops = AuthDrops::default();
+                let environments: Vec<(String, String)> = transaction
+                    .query(
+                        wamn_control_registry::sql::select_connection_projection_environments_sql(),
+                        &[&self.org, &attachment.route.operation, &payload],
+                    )
+                    .await?
+                    .into_iter()
+                    .map(|row| (row.get(0), row.get(1)))
+                    .collect();
                 let result = wamn_platform_identity::connections::write(
                     &transaction,
                     self.org,
@@ -299,11 +289,11 @@ impl ControlRoutes<'_> {
                 )
                 .await
                 .map_err(|error| {
-                    if error.kind == "database_error" {
+                    if error.code == "database_error" {
                         Refusal::Failed(error.into())
                     } else {
                         Refusal::Declared {
-                            code: error.kind,
+                            code: error.code,
                             detail: json!({"field": error.field}),
                         }
                     }
@@ -312,18 +302,27 @@ impl ControlRoutes<'_> {
                 self.changes.publish(drops).await;
                 let transaction = self.begin(&mut writer, attachment, caller).await?;
                 let mut completed = Vec::new();
-                for (project, env, mut client, driver) in targets {
+                for (project, env) in &environments {
                     let projected = async {
-                        let target = client.transaction().await?;
-                        target.execute("SELECT set_config('app.user_id', $1, true), set_config('app.operation', $2, true)", &[&caller.as_str(), &attachment.operation]).await?;
-                        let projected = wamn_platform_identity::connections::project(
-                            &transaction, &target, self.org, project, env,
-                        ).await?;
-                        target.commit().await?;
-                        Ok::<_, anyhow::Error>(projected)
+                        let url = self.logins(&[(project.clone(), env.clone())]).map_err(|error| anyhow::anyhow!("{error:?}"))?.remove(0);
+                        let (mut environment, connection) = tokio::time::timeout(
+                            std::time::Duration::from_secs(5),
+                            tokio_postgres::connect(&url, NoTls),
+                        ).await.map_err(|_| anyhow::anyhow!("environment connection timed out"))??;
+                        let driver = tokio::spawn(connection);
+                        let result = async {
+                            let environment_tx = environment.transaction().await?;
+                            environment_tx.execute("SELECT set_config('app.user_id', $1, true), set_config('app.operation', $2, true)", &[&caller.as_str(), &attachment.operation]).await?;
+                            let projected = wamn_platform_identity::connections::project(
+                                &transaction, &environment_tx, self.org, project, env,
+                            ).await?;
+                            environment_tx.commit().await?;
+                            Ok::<_, anyhow::Error>(projected)
+                        }.await;
+                        drop(environment);
+                        let _ = driver.await;
+                        result
                     }.await;
-                    drop(client);
-                    let _ = driver.await;
                     match projected {
                         Ok(drops) => self.changes.publish(drops).await,
                         Err(error) => {

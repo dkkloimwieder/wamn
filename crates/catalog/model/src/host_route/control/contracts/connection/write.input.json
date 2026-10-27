@@ -7,19 +7,13 @@
       "values": []
     },
     {
-      "path": "value.id",
-      "type": "text",
-      "nullable": true,
-      "values": []
-    },
-    {
       "path": "value.integration",
       "type": "text",
       "nullable": false,
       "values": []
     },
     {
-      "path": "value.external_system_id",
+      "path": "value.external_system",
       "type": "text",
       "nullable": true,
       "values": []

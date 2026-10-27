@@ -761,7 +761,7 @@ impl Fixture {
                 StaticCredentialProvider::new(HashMap::new(), None),
             )))
         });
-        let vault = Arc::new(WamnCredentials::from_projects(HashMap::new()));
+        let vault = Arc::new(WamnCredentials::empty());
         let policy = new_native_policy(
             &native,
             None,

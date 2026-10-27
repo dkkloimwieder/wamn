@@ -457,8 +457,8 @@ Each rule has one check that runs in the platform test set.
 | a binding names an enabled connection of the declared integration | apply with a name the project has not enabled, or whose integration differs → refused; disabling a connection while an applied environment binds it → refused |
 | a connector not allowed at the environment is refused | `integration_allow` lacks `modbus` for the environment; apply of a package binding a modbus connection → refused; allow it → applied |
 | every bound connection has a pinned connector | `environment.k` binds a modbus connection with no `connectors.modbus` line → apply refuses |
-| a connection name is stable while bound | rename while an applied environment binds it → route refuses |
-| a connection matches its external system | connection with `external_system_id` whose `integration` differs from the system's → route refuses; external system rename while a connection or a record references it → route refuses |
+| a connection's name never changes | a write that names an existing connection updates it and never renames it; a direct name change → refused by `connection_name_is_immutable`; no rename route exists |
+| a connection matches its external system | connection with `external_system_id` whose `integration` differs from the system's → route refuses; an external system's name never changes either |
 | a port has one owner | two applications on one target bind a serial connection → the second apply refuses |
 | no network call inside a database transaction | a command opens `begin-operation`, then calls `file.put` or any bound connection → host refusal; the same call before `begin-operation` → allowed |
 | a target runs only what was applied to it | a target's check-in reports a bundle with no `target_application` row → flagged, not served |

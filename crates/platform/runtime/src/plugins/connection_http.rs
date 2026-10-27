@@ -223,12 +223,14 @@ impl ConnectionHttp {
         allowed_hosts: Arc<[AllowedHost]>,
         release: Option<Arc<LoadedRelease>>,
     ) -> Self {
+        let project: Box<str> = project.into();
+        postgres.set_connection_credentials(Arc::clone(&vault), &project);
         Self {
             postgres,
             transport,
             vault,
             tenant: tenant.into(),
-            project: project.into(),
+            project,
             allowed_hosts,
             release,
             invocations: std::sync::RwLock::new(HashMap::new()),
@@ -316,6 +318,30 @@ impl ConnectionHttp {
 
     fn invocation(&self, component_id: &str) -> Option<ConnectionInvocation> {
         self.invocations.read().ok()?.get(component_id).cloned()
+    }
+
+    /// Exercise the host dispatch path without constructing a component store.
+    #[cfg(feature = "test-util")]
+    pub async fn send_for_test(
+        &self,
+        component_id: &str,
+        requirement: &str,
+        method: &str,
+    ) -> Result<u16, String> {
+        self.send(
+            component_id,
+            &Request {
+                requirement: requirement.to_owned(),
+                method: method.to_owned(),
+                path_and_query: "/probe".into(),
+                headers: Vec::new(),
+                body: None,
+                idempotency_key: None,
+            },
+        )
+        .await
+        .map(|response| response.status)
+        .map_err(|error| format!("{error:?}"))
     }
 
     async fn send(
@@ -500,8 +526,25 @@ impl ConnectionHttp {
                 .generation
                 .ok_or(ConnectionError::CredentialUnavailable)?,
         };
-        self.execute_authenticated(scope, &authority, decision, request, handle)
+        if let Some(name) = &snapshot.connection_name
+            && !self
+                .vault
+                .connection_enabled(&self.project, name)
+                .await
+                .map_err(|_| ConnectionError::CredentialUnavailable)?
+        {
+            return Err(ConnectionError::CredentialUnavailable);
+        }
+        let external_system_id = self
+            .vault
+            .external_system_id(&self.project, handle)
             .await
+            .map_err(|_| ConnectionError::CredentialUnavailable)?;
+        let mut response = self
+            .execute_authenticated(scope, &authority, decision, request, handle)
+            .await?;
+        response.external_system = external_system_id;
+        Ok(response)
     }
 
     async fn execute_authenticated(
@@ -1198,6 +1241,8 @@ fn reserved_header(name: &reqwest::header::HeaderName) -> bool {
             | "proxy-connection"
             | "proxy-authorization"
             | "idempotency-key"
+            | "x-http-method-override"
+            | "x-http-method"
     )
 }
 
@@ -1209,6 +1254,9 @@ fn outbound_headers(
     for header in &request.headers {
         let name = reqwest::header::HeaderName::from_bytes(header.name.as_bytes())
             .map_err(|_| ConnectionError::AuthorityDenied)?;
+        if matches!(name.as_str(), "x-http-method-override" | "x-http-method") {
+            continue;
+        }
         if reserved_header(&name) {
             return Err(ConnectionError::AuthorityDenied);
         }
@@ -1352,6 +1400,7 @@ async fn execute(
         .collect();
     let body = response.into_body().to_vec();
     Ok(Response {
+        external_system: None,
         status,
         headers,
         body,
@@ -1622,6 +1671,7 @@ mod tests {
 
     fn snapshot() -> ConnectionEffectSnapshot {
         ConnectionEffectSnapshot {
+            connection_name: None,
             read_only: false,
             wiring_hash: Some(fixture_wiring_hash()),
             component: Some("notifier".to_string()),
@@ -2755,6 +2805,37 @@ mod tests {
 
 #[cfg(test)]
 mod connection_mode_tests {
+    #[test]
+    fn method_override_headers_are_stripped_and_credentials_cannot_supply_them() {
+        use super::*;
+        let request = Request {
+            requirement: "erp".into(),
+            method: "GET".into(),
+            path_and_query: "/".into(),
+            headers: vec![
+                Header {
+                    name: "X-HTTP-Method-Override".into(),
+                    value: b"POST".to_vec(),
+                },
+                Header {
+                    name: "X-HTTP-Method".into(),
+                    value: b"DELETE".to_vec(),
+                },
+            ],
+            body: None,
+            idempotency_key: None,
+        };
+        let headers = outbound_headers(&request, HashMap::new()).unwrap();
+        assert!(!headers.contains_key("x-http-method-override"));
+        assert!(!headers.contains_key("x-http-method"));
+        for name in ["X-HTTP-Method-Override", "X-HTTP-Method"] {
+            let secret = serde_json::json!({"headers": {(name): "POST"}}).to_string();
+            assert!(
+                credential_headers(None, &secret, "GET", "https://example.test/", b"body").is_err()
+            );
+        }
+    }
+
     #[test]
     fn read_mode_refuses_every_mutating_http_method() {
         for method in ["GET", "HEAD"] {

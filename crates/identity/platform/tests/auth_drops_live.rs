@@ -30,14 +30,6 @@ use wamn_platform_identity::{
 
 const ISSUER: &str = "https://identity.example.invalid";
 const AUDIENCE: &str = "acme:billing:dev:a1b2c3d4";
-const SEED_SQL: &str = "\
-    INSERT INTO registry.orgs (id, placement_type, pool_cluster) VALUES ('acme', 'pooled', 'wamn-pg'); \
-    INSERT INTO registry.env_policies \
-      (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image) VALUES \
-      ('acme', 'dev', '\"own\"', 0, 1, '1Gi', '1', '1Gi', 'postgres:18'); \
-    INSERT INTO registry.projects (org, id) VALUES ('acme', 'billing'); \
-    INSERT INTO registry.project_envs (org, project, env, secret_name, instance_suffix, policy_name) VALUES \
-      ('acme', 'billing', 'dev', 's1', 'aaaaaaa1', 'dev');";
 
 fn actor() -> PrincipalId {
     PlatformComponent::Provisioning
@@ -94,7 +86,12 @@ async fn every_identity_writer_records_a_drop_of_its_principal() {
     let _lock = wamn_test_postgres::lock();
     let database = test_database::system();
     let mut client = connect(database.url(), Some("wamn_system")).await;
-    client.batch_execute(SEED_SQL).await.unwrap();
+    client
+        .batch_execute(&test_database::seed_org_project_env_sql(
+            "acme", "billing", "dev",
+        ))
+        .await
+        .unwrap();
     let alice = create_user(
         &client,
         "alice@example.invalid",
@@ -358,4 +355,105 @@ async fn every_application_writer_records_a_drop_of_its_tenant_or_principal() {
         .await
         .unwrap();
     assert_eq!(changes(&drops), tenant, "write_environment_status");
+}
+
+/// The broker must be private to this test run.
+#[tokio::test]
+#[ignore = "requires: WAMN_AUTH_NATS_URL (private JetStream)"]
+async fn every_application_grant_write_deletes_exactly_its_auth_keys() {
+    use wamn_platform_identity::auth_changes::{AuthChanges, auth_bucket};
+    wamn_test_postgres::require_prerequisites(&["WAMN_AUTH_NATS_URL"]);
+    let broker = async_nats::connect(std::env::var("WAMN_AUTH_NATS_URL").unwrap())
+        .await
+        .unwrap();
+    let bucket = auth_bucket(&broker).await.unwrap();
+    let publisher = AuthChanges::new(broker);
+    let database = wamn_project_state::test_database::tenant_platform();
+    let client = connect(database.url(), None).await;
+    client
+        .batch_execute(&platform_principals_sql("example.invalid").unwrap())
+        .await
+        .unwrap();
+    let bob: PrincipalId = "0b0b0b0b-0000-4000-8000-000000000001".parse().unwrap();
+    let robot: PrincipalId = "0b0b0b0b-0000-4000-8000-000000000002".parse().unwrap();
+    let mut seed_drops = AuthDrops::default();
+    for principal in [&bob, &robot] {
+        write_user(
+            &client,
+            "t1",
+            ApplicationUser {
+                principal_id: principal,
+                email: principal.as_str(),
+                display_name: "Fixture",
+            },
+            &mut seed_drops,
+        )
+        .await
+        .unwrap();
+    }
+    let keys = [
+        "t1.0b0b0b0b-0000-4000-8000-000000000001",
+        "t1.0b0b0b0b-0000-4000-8000-000000000002",
+        "t1.environment",
+        "t2.0b0b0b0b-0000-4000-8000-000000000001",
+    ];
+    for operation in [
+        "create_role",
+        "grant_permission",
+        "revoke_permission",
+        "grant_user_role",
+        "revoke_user_role",
+        "delete_role",
+    ] {
+        for key in keys {
+            bucket.put(key, "cached".into()).await.unwrap();
+        }
+        let mut drops = AuthDrops::default();
+        match operation {
+            "create_role" => {
+                create_role(&client, "t1", "clerk", &mut drops)
+                    .await
+                    .unwrap();
+            }
+            "grant_permission" => {
+                grant_permission(&client, "t1", "clerk", "acme:receipts/create", &mut drops)
+                    .await
+                    .unwrap();
+            }
+            "revoke_permission" => {
+                revoke_permission(&client, "t1", "clerk", "acme:receipts/create", &mut drops)
+                    .await
+                    .unwrap();
+            }
+            "grant_user_role" => {
+                grant_user_role(&client, "t1", bob.as_str(), "clerk", &mut drops)
+                    .await
+                    .unwrap();
+            }
+            "revoke_user_role" => {
+                revoke_user_role(&client, "t1", bob.as_str(), "clerk", &mut drops)
+                    .await
+                    .unwrap();
+            }
+            "delete_role" => {
+                delete_role(&client, "t1", "clerk", &mut drops)
+                    .await
+                    .unwrap();
+            }
+            _ => unreachable!(),
+        }
+        publisher.publish(drops).await;
+        let principal_only = matches!(operation, "grant_user_role" | "revoke_user_role");
+        for (index, key) in keys.into_iter().enumerate() {
+            let deleted = index == 0 || (!principal_only && index < 3);
+            assert_eq!(
+                bucket.get(key).await.unwrap().is_none(),
+                deleted,
+                "{operation}: {key}"
+            );
+        }
+    }
+    for key in keys {
+        bucket.delete(key).await.unwrap();
+    }
 }

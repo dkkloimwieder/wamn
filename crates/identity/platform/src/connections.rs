@@ -14,14 +14,14 @@ use crate::configuration::{
 /// A refused configuration write, or its database failure.
 #[derive(Debug)]
 pub struct ConnectionError {
-    pub kind: &'static str,
+    pub code: &'static str,
     pub field: &'static str,
     source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
 impl fmt::Display for ConnectionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.kind, self.field)
+        write!(f, "{}: {}", self.code, self.field)
     }
 }
 impl std::error::Error for ConnectionError {
@@ -32,7 +32,7 @@ impl std::error::Error for ConnectionError {
 impl From<tokio_postgres::Error> for ConnectionError {
     fn from(source: tokio_postgres::Error) -> Self {
         Self {
-            kind: "database_error",
+            code: "database_error",
             field: "connection",
             source: Some(Box::new(source)),
         }
@@ -40,7 +40,7 @@ impl From<tokio_postgres::Error> for ConnectionError {
 }
 fn refuse(kind: &'static str, field: &'static str) -> ConnectionError {
     ConnectionError {
-        kind,
+        code: kind,
         field,
         source: None,
     }
@@ -59,21 +59,22 @@ pub async fn write(
     }
     match operation {
         "external_system.write" => {
-            Ok(json!({"id": write_external_system(tx, org, &parse(payload)?).await?}))
+            Ok(json!({"name": write_external_system(tx, org, &parse(payload)?).await?}))
         }
         "connection.write" => {
-            Ok(json!({"id": write_connection(tx, org, &parse(payload)?, drops).await?}))
+            Ok(json!({"name": write_connection(tx, org, &parse(payload)?, drops).await?}))
         }
-        "project_connection.enable" => {
+        "project_connection.enable" | "project_connection.disable" => {
             #[derive(Deserialize)]
             #[serde(deny_unknown_fields)]
             struct Request {
                 project: String,
-                connection_id: String,
+                connection: String,
             }
             let request: Request = parse(payload)?;
-            enable_connection(tx, org, &request.project, &request.connection_id).await?;
-            Ok(json!({"connection_id": request.connection_id}))
+            set_project_connection(tx, org, &request.project, &request.connection, operation)
+                .await?;
+            Ok(json!({"connection": request.connection}))
         }
         "integration_allow.allow" => {
             #[derive(Deserialize)]
@@ -118,7 +119,8 @@ async fn configure(
             "integration_not_found" => "integration_not_found",
             "integration_mismatch" => "integration_mismatch",
             "integration_not_allowed" => "integration_not_allowed",
-            "referenced" => "referenced",
+            "already_imported" => "already_imported",
+            "integration_unavailable" => "integration_unavailable",
             "not_found" => "not_found",
             _ => "database_error",
         };
@@ -128,8 +130,7 @@ async fn configure(
             Some("name") => "name",
             Some("integration") => "integration",
             Some("parameters") => "parameters",
-            Some("external_system_id") => "external_system_id",
-            Some("connection_id") => "connection_id",
+            Some("external_system") => "external_system",
             Some("project") => "project",
             Some("scope_id") => "scope_id",
             Some("scope_type") => "scope_type",
@@ -140,24 +141,22 @@ async fn configure(
     Ok(result)
 }
 
-/// The complete non-secret external-system row. An absent id creates a row.
+/// The complete non-secret external-system row. The name selects or creates a row.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExternalSystemWrite {
-    pub id: Option<String>,
     pub integration: String,
     pub name: String,
     pub parameters: Value,
     pub status: String,
 }
 
-/// The complete non-secret connection row. An absent id creates a principal too.
+/// The complete non-secret connection row. A new name creates a principal too.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectionWrite {
-    pub id: Option<String>,
     pub integration: String,
-    pub external_system_id: Option<String>,
+    pub external_system: Option<String>,
     pub name: String,
     pub transport: String,
     pub exchange: String,
@@ -216,7 +215,7 @@ async fn check_row(
     Ok(())
 }
 
-/// Write a system, refusing an integration change or a referenced rename.
+/// Write a system by its immutable name, refusing an integration change.
 pub async fn write_external_system(
     tx: &Transaction<'_>,
     org: &str,
@@ -238,26 +237,10 @@ pub async fn write_external_system(
         &serde_json::to_value(row).expect("serializable row"),
     )
     .await?;
-    Ok(result["id"]
+    Ok(result["name"]
         .as_str()
-        .expect("database returns an id")
+        .expect("database returns a name")
         .to_owned())
-}
-
-/// Resolve the explicit system before creating a connection. The future peer
-/// creation step belongs here when wamn-ym204 adds the wamn integration.
-async fn connection_system(
-    tx: &Transaction<'_>,
-    org: &str,
-    row: &ConnectionWrite,
-) -> Result<Option<String>, ConnectionError> {
-    if let Some(id) = &row.external_system_id {
-        let system = tx.query_opt("SELECT integration FROM registry.connection_system_rows($1) WHERE id = $2::text::uuid", &[&org, id]).await?.ok_or_else(|| refuse("not_found", "external_system_id"))?;
-        if system.get::<_, String>(0) != row.integration {
-            return Err(refuse("integration_mismatch", "external_system_id"));
-        }
-    }
-    Ok(row.external_system_id.clone())
 }
 
 /// Write a connection and append a generation when its parameters change.
@@ -276,15 +259,12 @@ pub async fn write_connection(
         &row.status,
     )
     .await?;
-    let requirement = match row.integration.as_str() {
-        "http" => wamn_catalog::RequirementType::Http,
-        "gcs" | "s3" => wamn_catalog::RequirementType::Blobstore,
-        _ => return Err(refuse("integration_not_found", "integration")),
-    };
+    let requirement = wamn_catalog::RequirementType::for_integration(&row.integration)
+        .ok_or_else(|| refuse("integration_unavailable", "integration"))?;
     requirement
         .check_definition(&row.parameters)
         .map_err(|_| refuse("invalid_input", "parameters"))?;
-    if row.integration != "http"
+    if requirement == wamn_catalog::RequirementType::Blobstore
         && row
             .parameters
             .get("provider")
@@ -297,7 +277,6 @@ pub async fn write_connection(
     if !matches!(row.exchange.as_str(), "request" | "event") || row.transport.is_empty() {
         return Err(refuse("invalid_input", "transport"));
     }
-    connection_system(tx, org, row).await?;
     let result = configure(
         tx,
         org,
@@ -308,9 +287,9 @@ pub async fn write_connection(
     if let Some(principal) = result["principal_id"].as_str() {
         drops.identity(principal);
     }
-    Ok(result["id"]
+    Ok(result["name"]
         .as_str()
-        .expect("database returns an id")
+        .expect("database returns a name")
         .to_owned())
 }
 
@@ -319,14 +298,34 @@ pub async fn enable_connection(
     tx: &Transaction<'_>,
     org: &str,
     project: &str,
-    id: &str,
+    name: &str,
+) -> Result<(), ConnectionError> {
+    set_project_connection(tx, org, project, name, "project_connection.enable").await
+}
+
+/// Remove one project's connection enablement.
+pub async fn disable_connection(
+    tx: &Transaction<'_>,
+    org: &str,
+    project: &str,
+    name: &str,
+) -> Result<(), ConnectionError> {
+    set_project_connection(tx, org, project, name, "project_connection.disable").await
+}
+
+async fn set_project_connection(
+    tx: &Transaction<'_>,
+    org: &str,
+    project: &str,
+    name: &str,
+    operation: &str,
 ) -> Result<(), ConnectionError> {
     lock_org(tx, org).await?;
     configure(
         tx,
         org,
-        "project_connection.enable",
-        &json!({"project": project,"connection_id": id}),
+        operation,
+        &json!({"project": project, "connection": name}),
     )
     .await?;
     Ok(())
@@ -359,7 +358,7 @@ pub async fn projection(
     env: &str,
 ) -> Result<PlatformConfiguration, ConnectionError> {
     let mut result = PlatformConfiguration::default();
-    for row in tx.query("SELECT DISTINCT s.id::text, s.integration, s.name, s.parameters::text, s.status FROM registry.connection_system_rows($1) s JOIN registry.connection_rows($1) c ON c.external_system_id = s.id JOIN registry.connection_project_rows($1) p ON p.connection_id = c.id WHERE p.org = $1 AND p.project = $2 ORDER BY s.id::text", &[&org, &project]).await? {
+    for row in tx.query("SELECT DISTINCT s.id::text, s.integration, s.name, s.parameters::text, CASE WHEN s.status = 'active' AND EXISTS (SELECT FROM registry.connection_rows($1) enabled JOIN registry.connection_project_rows($1) ep ON ep.connection_id = enabled.id WHERE ep.project = $2 AND enabled.external_system_id = s.id AND enabled.status = 'active') THEN 'active' ELSE 'disabled' END FROM registry.connection_system_rows($1) s JOIN registry.connection_rows($1) c ON c.external_system_id = s.id JOIN registry.connection_project_rows($1) p ON p.connection_id = c.id WHERE p.org = $1 AND p.project = $2 ORDER BY s.id::text", &[&org, &project]).await? {
         result.external_systems.push(ExternalSystem { id: row.get(0), integration: row.get(1), name: row.get(2), parameters: serde_json::from_str(row.get(3)).expect("PostgreSQL JSON"), status: row.get(4) });
     }
     for row in tx.query("SELECT c.id::text, c.integration, c.external_system_id::text, c.name, c.transport, c.exchange, c.parameters::text, c.status FROM registry.connection_rows($1) c JOIN registry.connection_project_rows($1) p ON p.connection_id = c.id WHERE p.org = $1 AND p.project = $2 ORDER BY c.id", &[&org, &project]).await? {
@@ -373,7 +372,7 @@ pub async fn projection(
     Ok(result)
 }
 
-/// Replace the connection projections in an administration transaction.
+/// Reconcile the connection projections in an administration transaction.
 /// The caller binds its actor and publishes the returned auth drops after commit.
 pub async fn project(
     system: &Transaction<'_>,
@@ -393,6 +392,13 @@ pub async fn project(
         return Err(refuse("invalid_input", "database_role"));
     }
     let rows = projection(system, org, project, env).await?;
+    let enabled_ids: Vec<_> = rows
+        .connections
+        .iter()
+        .filter(|row| row.status == "active")
+        .map(|row| row.id.as_str())
+        .collect();
+    let disabled_ids: Vec<String> = target.query("SELECT id::text FROM platform.connection WHERE status='active' AND NOT (id::text=ANY($1::text[]))", &[&enabled_ids]).await?.into_iter().map(|row| row.get(0)).collect();
     let ids: Vec<String> = rows.connections.iter().map(|row| row.id.clone()).collect();
     let systems: Vec<String> = rows
         .external_systems
@@ -402,28 +408,44 @@ pub async fn project(
     target.execute("DELETE FROM platform.project_connection WHERE NOT (connection_id::text = ANY($1::text[])) OR project_id <> $2", &[&ids, &project]).await?;
     target
         .execute(
-            "DELETE FROM platform.connection WHERE NOT (id::text = ANY($1::text[]))",
+            "UPDATE platform.connection SET status = 'disabled' WHERE status <> 'disabled' AND NOT (id::text = ANY($1::text[]))",
             &[&ids],
         )
         .await?;
-    target
-        .execute("DELETE FROM platform.integration_allow", &[])
-        .await?;
+    let scopes: Vec<_> = rows
+        .integration_allows
+        .iter()
+        .map(|row| row.scope_type.as_str())
+        .collect();
+    let scope_ids: Vec<_> = rows
+        .integration_allows
+        .iter()
+        .map(|row| row.scope_id.as_str())
+        .collect();
+    let integrations: Vec<_> = rows
+        .integration_allows
+        .iter()
+        .map(|row| row.integration.as_str())
+        .collect();
+    target.execute("DELETE FROM platform.integration_allow a WHERE NOT EXISTS (SELECT FROM unnest($1::text[], $2::text[], $3::text[]) desired(scope_type,scope_id,integration) WHERE (a.scope_type,a.scope_id,a.integration) = (desired.scope_type,desired.scope_id,desired.integration))", &[&scopes, &scope_ids, &integrations]).await?;
     crate::configuration::write_configuration(target, &rows)
         .await
         .map_err(|source| ConnectionError {
-            kind: "database_error",
+            code: "database_error",
             field: "projection",
             source: Some(Box::new(source)),
         })?;
     target
         .execute(
-            "DELETE FROM platform.external_system WHERE NOT (id::text = ANY($1::text[]))",
+            "UPDATE platform.external_system SET status = 'disabled' WHERE status <> 'disabled' AND NOT (id::text = ANY($1::text[]))",
             &[&systems],
         )
         .await?;
     let mut drops = AuthDrops::default();
     let tenant = format!("{org}--{project}--{env}");
+    for row in system.query("SELECT service_principal_id::text FROM registry.connection_rows($1) WHERE id::text=ANY($2::text[])", &[&org, &disabled_ids]).await? {
+        drops.principal(&tenant, &row.get::<_,String>(0));
+    }
     for row in system.query("SELECT id::text, subject, display_name, status, platform_domain FROM registry.connection_principal_rows($1,$2)", &[&org, &project]).await? {
         let id: String = row.get(0);
         let domain: Option<String> = row.get(4);
@@ -439,107 +461,32 @@ pub async fn project(
 pub async fn rotate(
     tx: &Transaction<'_>,
     org: &str,
-    id: &str,
+    name: &str,
     secret: &str,
 ) -> Result<i64, ConnectionError> {
     lock_org(tx, org).await?;
-    let row = tx.query_opt("SELECT current_generation FROM registry.connection WHERE org = $1 AND id = $2::text::uuid FOR UPDATE", &[&org, &id]).await?.ok_or_else(|| refuse("not_found", "connection_id"))?;
-    let generation: i64 = row.get::<_, i64>(0) + 1;
-    let credential: String = tx.query_one("INSERT INTO identity.credential(connection_id, org, handle, secret) SELECT id, org, name, $2 FROM registry.connection WHERE id = $1::text::uuid RETURNING id::text", &[&id, &secret]).await?.get(0);
-    tx.execute("INSERT INTO registry.connection_generation(connection_id, generation, parameters, secret_id) SELECT id, $3, parameters, $4::text::uuid FROM registry.connection WHERE org = $1 AND id = $2::text::uuid", &[&org, &id, &generation, &credential]).await?;
-    tx.execute("UPDATE registry.connection SET current_generation = $3 WHERE org = $1 AND id = $2::text::uuid", &[&org, &id, &generation]).await?;
-    Ok(generation)
+    let result = configure(
+        tx,
+        org,
+        "connection.rotate",
+        &json!({"name": name, "secret": secret}),
+    )
+    .await?;
+    Ok(result["generation"]
+        .as_i64()
+        .expect("database returns a generation"))
 }
 
-/// Import one legacy file atomically. Project maps belong to the named org.
-/// The marker refuses another import, including an empty first import.
+/// Import credentials into explicitly named, enabled connections atomically.
+/// Project entries use {"connection": "name", "secret": "material"}.
 pub async fn import_credentials(
     tx: &Transaction<'_>,
     project_org: &str,
     text: &str,
 ) -> Result<(), ConnectionError> {
-    use std::collections::{BTreeMap, BTreeSet};
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct File {
-        projects: BTreeMap<String, BTreeMap<String, String>>,
-        orgs: BTreeMap<String, BTreeMap<String, String>>,
-    }
-    let file: File =
+    let file: Value =
         serde_json::from_str(text).map_err(|_| refuse("invalid_input", "credentials_file"))?;
-    let mut orgs: BTreeSet<&str> = file.orgs.keys().map(String::as_str).collect();
-    orgs.insert(project_org);
-    for org in orgs {
-        lock_org(tx, org).await?;
-        if tx
-            .query_opt(
-                "SELECT org FROM registry.credential_import WHERE org = $1",
-                &[&org],
-            )
-            .await?
-            .is_some()
-        {
-            return Err(refuse("already_imported", "org"));
-        }
-        tx.execute(
-            "INSERT INTO registry.credential_import(org) VALUES ($1)",
-            &[&org],
-        )
-        .await?;
-    }
-    for (org, values) in file.orgs {
-        for (name, secret) in values {
-            let row = tx
-                .query_opt(
-                    "SELECT id::text FROM registry.connection WHERE org = $1 AND name = $2",
-                    &[&org, &name],
-                )
-                .await?
-                .ok_or_else(|| refuse("not_found", "connection"))?;
-            rotate(tx, &org, row.get(0), &secret).await?;
-        }
-    }
-    for (project, values) in file.projects {
-        for (handle, secret) in values {
-            tx.execute("INSERT INTO identity.credential(org, project, handle, secret) VALUES ($1, $2, $3, $4)", &[&project_org, &project, &handle, &secret]).await?;
-        }
-    }
-    Ok(())
-}
-
-/// Refuse a rename when a published environment still binds the previous name.
-/// The caller holds the org lock until all project probes and the write commit.
-pub async fn check_applied_rename(
-    system: &Transaction<'_>,
-    target: &tokio_postgres::Client,
-    org: &str,
-    operation: &str,
-    payload: &str,
-) -> Result<(), ConnectionError> {
-    if operation != "connection.write" {
-        return Ok(());
-    }
-    let row: ConnectionWrite =
-        serde_json::from_str(payload).map_err(|_| refuse("invalid_input", "value"))?;
-    let Some(id) = row.id else {
-        return Ok(());
-    };
-    lock_org(system, org).await?;
-    let old = system
-        .query_opt(
-            "SELECT name FROM registry.connection_rows($1) WHERE id=$2::text::uuid",
-            &[&org, &id],
-        )
-        .await?
-        .ok_or_else(|| refuse("not_found", "id"))?;
-    let name: String = old.get(0);
-    if (name != row.name || row.status == "disabled")
-        && target
-            .query_one("SELECT catalog.connection_is_referenced($1)", &[&name])
-            .await?
-            .get::<_, bool>(0)
-    {
-        return Err(refuse("referenced", "name"));
-    }
+    lock_org(tx, project_org).await?;
+    configure(tx, project_org, "connection.import_credentials", &file).await?;
     Ok(())
 }

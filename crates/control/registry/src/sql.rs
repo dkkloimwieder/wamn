@@ -277,7 +277,25 @@ pub fn select_event_reader_sql() -> &'static str {
      WHERE org = $1 AND project = $2 AND env = $3"
 }
 
-/// Read an org's connection definitions in one statement.
-pub fn select_org_connections_sql() -> &'static str {
-    "SELECT c.name, c.integration, c.parameters::text, (SELECT min(g.generation) FROM registry.connection_generation g JOIN registry.connection_generation current ON current.connection_id = c.id AND current.generation = c.current_generation WHERE g.connection_id = c.id AND g.secret_id IS NOT DISTINCT FROM current.secret_id) FROM registry.connection c WHERE c.org = $1 AND c.status = 'active' "
+/// Read only environments affected by a connection operation, before its write.
+/// Parameters are the org, operation, and JSON payload.
+pub fn select_connection_projection_environments_sql() -> &'static str {
+    "SELECT e.project, e.env FROM registry.project_envs e \
+     WHERE e.org=$1 AND ( \
+       ($2 IN ('project_connection.enable','project_connection.disable') \
+         AND e.project=$3::text::jsonb->>'project') \
+       OR EXISTS (SELECT FROM registry.connection_project_rows($1) p \
+         JOIN registry.connection_rows($1) c ON c.id=p.connection_id \
+         WHERE p.project=e.project AND ( \
+           ($2='connection.write' AND c.name=$3::text::jsonb->>'name') \
+           OR ($2='external_system.write' AND c.external_system_id IN \
+             (SELECT s.id FROM registry.connection_system_rows($1) s \
+              WHERE s.name=$3::text::jsonb->>'name')) \
+           OR ($2='integration_allow.allow' AND c.integration=$3::text::jsonb->>'integration' AND ( \
+             ($3::text::jsonb->>'scope_type'='org') \
+             OR ($3::text::jsonb->>'scope_type'='project' AND e.project=$3::text::jsonb->>'scope_id') \
+             OR ($3::text::jsonb->>'scope_type'='environment' AND e.project || '/' || e.env=$3::text::jsonb->>'scope_id') \
+           )) \
+         )) \
+     ) ORDER BY e.project, e.env"
 }

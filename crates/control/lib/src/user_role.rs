@@ -5,7 +5,7 @@
 //! authored. This module writes only `platform.user_role`. The target is resolved in the
 //! registry the way `env apply` resolves it, because a role grant
 //! names an environment, not a database. The user is named by email and must
-//! already have its tenant `user` row, which `env apply` writes.
+//! already have its environment `user` row, which `env apply` writes.
 
 use anyhow::Context as _;
 use tokio_postgres::{Client, NoTls};
@@ -30,15 +30,15 @@ pub struct UserRoleRequest {
     pub project: String,
     /// Registry environment.
     pub env: String,
-    /// Email of the user or service in the tenant `user` table.
+    /// Email of the user or service in the environment `user` table.
     pub user: String,
-    /// A role that exists in the tenant, such as `admin`.
+    /// A role that exists in the environment, such as `admin`.
     pub role: String,
 }
 
 impl UserRoleRequest {
-    /// The database tenant derived from the environment coordinate.
-    pub fn tenant(&self) -> String {
+    /// The composite environment key derived from the environment coordinate.
+    pub fn environment_key(&self) -> String {
         wamn_control_registry::project_env_tenant(&self.org, &self.project, &self.env)
     }
 }
@@ -90,7 +90,7 @@ async fn change_role(
     .await?;
     let result = change_user_role(
         &mut client,
-        &request.tenant(),
+        &request.environment_key(),
         &request.user,
         &request.role,
         change,
@@ -102,46 +102,49 @@ async fn change_role(
     result
 }
 
-/// Give the role to the user of `tenant` with the email `user`, on a
+/// Give the role to the user of `environment_key` with the email `user`, on a
 /// connection the caller already checked. The development loop uses it on its
 /// cloned target database, which the registry does not name.
 pub async fn grant_role_on(
     client: &mut Client,
-    tenant: &str,
+    environment_key: &str,
     user: &str,
     role: &str,
     auth: &AuthChanges,
 ) -> anyhow::Result<UserRoleOutcome> {
-    change_user_role(client, tenant, user, role, Change::Grant, auth).await
+    change_user_role(client, environment_key, user, role, Change::Grant, auth).await
 }
 
 /// Take the role from the user by email on a connection the caller already checked.
 pub async fn revoke_role_on(
     client: &mut Client,
-    tenant: &str,
+    environment_key: &str,
     user: &str,
     role: &str,
     auth: &AuthChanges,
 ) -> anyhow::Result<UserRoleOutcome> {
-    change_user_role(client, tenant, user, role, Change::Revoke, auth).await
+    change_user_role(client, environment_key, user, role, Change::Revoke, auth).await
 }
 
 async fn change_user_role(
     client: &mut Client,
-    tenant: &str,
+    environment_key: &str,
     user: &str,
     role: &str,
     change: Change,
     auth: &AuthChanges,
 ) -> anyhow::Result<UserRoleOutcome> {
     anyhow::ensure!(!role.is_empty(), "--role must not be empty");
-    anyhow::ensure!(!tenant.is_empty(), "tenant must not be empty");
+    anyhow::ensure!(
+        !environment_key.is_empty(),
+        "environment key must not be empty"
+    );
     anyhow::ensure!(!user.is_empty(), "--user must not be empty");
     let transaction = client
         .transaction()
         .await
         .context("open the user role transaction")?;
-    let user_id = resolve_user(&transaction, tenant, user).await?;
+    let user_id = resolve_user(&transaction, environment_key, user).await?;
     transaction
         .batch_execute(&bind_platform_principal_sql(
             PlatformComponent::Provisioning,
@@ -151,10 +154,12 @@ async fn change_user_role(
     let mut drops = AuthDrops::default();
     let changed = match change {
         Change::Grant => {
-            application::grant_user_role(&transaction, tenant, &user_id, role, &mut drops).await?
+            application::grant_user_role(&transaction, environment_key, &user_id, role, &mut drops)
+                .await?
         }
         Change::Revoke => {
-            application::revoke_user_role(&transaction, tenant, &user_id, role, &mut drops).await?
+            application::revoke_user_role(&transaction, environment_key, &user_id, role, &mut drops)
+                .await?
         }
     };
     transaction
@@ -165,11 +170,11 @@ async fn change_user_role(
     Ok(UserRoleOutcome { user_id, changed })
 }
 
-/// Resolve the email to exactly one user of the tenant. Email matching ignores
+/// Resolve the email to exactly one user of the environment. Email matching ignores
 /// case, so two rows that differ only in case make the email ambiguous.
 async fn resolve_user(
     transaction: &tokio_postgres::Transaction<'_>,
-    tenant: &str,
+    environment_key: &str,
     user: &str,
 ) -> anyhow::Result<String> {
     let rows = transaction
@@ -182,12 +187,12 @@ async fn resolve_user(
         .context("resolve the user email")?;
     match rows.as_slice() {
         [] => anyhow::bail!(
-            "no user with email {user} in tenant {tenant}: the user row comes from \
+            "no user with email {user} in environment {environment_key}: the user row comes from \
              `wamn-ctl env apply`, so run it after the principal exists"
         ),
         [row] => Ok(row.get(0)),
         _ => anyhow::bail!(
-            "email {user} names {} users in tenant {tenant}; the grant needs exactly one",
+            "email {user} names {} users in environment {environment_key}; the grant needs exactly one",
             rows.len()
         ),
     }
@@ -211,8 +216,8 @@ pub struct EnvironmentTarget {
 }
 
 impl EnvironmentTarget {
-    /// The database tenant derived from the environment coordinate.
-    pub fn tenant(&self) -> String {
+    /// The composite environment key derived from the environment coordinate.
+    pub fn environment_key(&self) -> String {
         wamn_control_registry::project_env_tenant(&self.org, &self.project, &self.env)
     }
 }

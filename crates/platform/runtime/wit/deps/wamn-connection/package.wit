@@ -18,6 +18,7 @@ interface http {
   }
 
   record response {
+    external-system: option<string>,
     status: u16,
     headers: list<header>,
     body: list<u8>,

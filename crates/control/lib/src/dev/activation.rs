@@ -2187,7 +2187,6 @@ mod tests {
         document["session_identity"] = json!({
             "issuer": "https://127.0.0.1:8443", "ca": "/tmp/identity-ca.pem", "instance_suffix": "abc12345"
         });
-        document["credentials_file"] = "/tmp/credentials.json".into();
         let config = parse_config(&serde_json::to_vec(&document).unwrap()).unwrap();
         let identity = config.activation_identity();
         let release = release();
@@ -2330,7 +2329,6 @@ mod tests {
                 .any(|(key, _)| key == "WAMN_CREDENTIALS_FILE")
         );
         document["connection_database_url"] = "postgres://reader:password@localhost/system".into();
-        document["credentials_file"] = "/tmp/owned-root/credentials.json".into();
         let config = parse_config(&serde_json::to_vec(&document).unwrap()).unwrap();
         let request = DevActivationRequest {
             config: &config,
@@ -2343,8 +2341,10 @@ mod tests {
                 .any(|(key, value)| key == "WAMN_CONNECTION_STORE_URL"
                     && value == "postgres://reader:password@localhost/system")
         );
-        document["credentials_file"] = "credentials.json".into();
-        assert!(parse_config(&serde_json::to_vec(&document).unwrap()).is_err());
+        for path in ["/tmp/owned-root/credentials.json", "credentials.json"] {
+            document["credentials_file"] = path.into();
+            assert!(parse_config(&serde_json::to_vec(&document).unwrap()).is_err());
+        }
     }
 
     #[tokio::test]

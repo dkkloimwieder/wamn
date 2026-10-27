@@ -228,7 +228,7 @@ CREATE TABLE catalog.connection_bindings (
     store_alias          text        NOT NULL CHECK (store_alias <> ''),
     environment          text        NOT NULL CHECK (environment <> ''),
     instance_id          text        NOT NULL CHECK (instance_id <> ''),
-    package_id           text        NOT NULL DEFAULT '',
+    package_id           text        NOT NULL CONSTRAINT connection_bindings_package_id_nonempty CHECK (package_id <> ''),
     mode                 text        NOT NULL DEFAULT 'write' CHECK (mode IN ('read', 'write')),
     binding_status       text        NOT NULL CHECK (binding_status IN ('active', 'disabled')),
     validation_status    text        NOT NULL CHECK (validation_status IN ('valid', 'invalid')),
@@ -531,18 +531,61 @@ TO wamn_app;
 REVOKE ALL ON ALL TABLES IN SCHEMA catalog FROM PUBLIC;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA catalog FROM PUBLIC;
 
--- ---------------------------------------------------------------------------
--- CONNECTION REFERENCE (connection administration).
--- ---------------------------------------------------------------------------
-DO $connection_reference$ BEGIN
- IF to_regrole('wamn_system') IS NOT NULL THEN
-  EXECUTE $definition$CREATE OR REPLACE FUNCTION catalog.connection_is_referenced(connection_name text) RETURNS boolean
-  LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $body$
-   SELECT EXISTS (SELECT FROM catalog.connection_instances WHERE org_connection_name = connection_name)
-  $body$$definition$;
-  ALTER FUNCTION catalog.connection_is_referenced(text) OWNER TO wamn_system;
-  REVOKE ALL ON FUNCTION catalog.connection_is_referenced(text) FROM PUBLIC;
- END IF;
-END $connection_reference$;
+-- Read enabled bindings that survive the environment's release contraction.
+CREATE OR REPLACE FUNCTION catalog.connection_upgrade_bindings(tenant text, environment_name text)
+RETURNS TABLE(connection_name text, integration text)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+    SELECT DISTINCT instance.org_connection_name,
+           CASE WHEN instance.requirement_type = 'blobstore'
+                THEN coalesce(generation.definition_json->>'provider', 's3')
+                ELSE instance.requirement_type END
+      FROM catalog.connection_bindings AS binding
+      JOIN catalog.connection_instances AS instance
+        ON (instance.tenant_id, instance.environment, instance.instance_id)
+         = (binding.tenant_id, binding.environment, binding.instance_id)
+      JOIN catalog.connection_generations AS generation
+        ON (generation.tenant_id, generation.environment, generation.instance_id, generation.generation)
+         = (instance.tenant_id, instance.environment, instance.instance_id, instance.active_generation)
+      JOIN catalog.connection_requirements AS requirement
+        ON (requirement.tenant_id, requirement.component_digest, requirement.store_alias)
+         = (binding.tenant_id, binding.component_digest, binding.store_alias)
+      JOIN catalog.releases AS release
+        ON (release.tenant_id, release.manifest_digest) = (binding.tenant_id, binding.manifest_digest)
+     WHERE binding.tenant_id = tenant AND binding.environment = environment_name
+       AND binding.binding_status = 'active' AND binding.validation_status = 'valid'
+       AND instance.lifecycle_status = 'enabled' AND instance.org_connection_name IS NOT NULL
+     ORDER BY 1, 2
+$$;
+DO $upgrade_reader_owner$ BEGIN
+    EXECUTE format('ALTER FUNCTION catalog.connection_upgrade_bindings(text, text) OWNER TO %I',
+        (SELECT pg_get_userbyid(relowner) FROM pg_class
+          WHERE oid = 'catalog.connection_bindings'::regclass));
+END $upgrade_reader_owner$;
+DO $upgrade_reader_policies$
+DECLARE
+    function_owner name;
+    relation_name text;
+BEGIN
+    SELECT pg_get_userbyid(proowner) INTO function_owner FROM pg_proc
+     WHERE oid = 'catalog.connection_upgrade_bindings(text,text)'::regprocedure;
+    FOREACH relation_name IN ARRAY ARRAY[
+        'connection_bindings', 'connection_generations', 'connection_instances',
+        'connection_requirements', 'releases'
+    ] LOOP
+        EXECUTE format('DROP POLICY IF EXISTS connection_upgrade_reader_owner ON catalog.%I', relation_name);
+        EXECUTE format('CREATE POLICY connection_upgrade_reader_owner ON catalog.%I FOR SELECT TO %I USING (true)',
+                       relation_name, function_owner);
+    END LOOP;
+END $upgrade_reader_policies$;
+REVOKE ALL ON FUNCTION catalog.connection_upgrade_bindings(text, text) FROM PUBLIC;
+DO $upgrade_reader_grant$ BEGIN
+    IF to_regrole('wamn_administration') IS NOT NULL THEN
+        GRANT EXECUTE ON FUNCTION catalog.connection_upgrade_bindings(text, text) TO wamn_administration;
+    END IF;
+END $upgrade_reader_grant$;
 
 COMMIT;

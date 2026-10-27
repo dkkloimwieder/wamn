@@ -7,6 +7,37 @@ use wamn_gate_harness::render_check::{
 };
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
+#[test]
+fn prekind_deploy_connections_cover_the_wms_environment() -> anyhow::Result<()> {
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let document =
+        EnvironmentDocument::compile(&repository.join("deploy/gcp/environments/dkk--wms--dev.k"))?;
+    let directory = repository.join("deploy/gcp/connections");
+    for name in document
+        .applications
+        .values()
+        .flat_map(|app| app.connections.values())
+    {
+        let connection: wamn_platform_identity::connections::ConnectionWrite =
+            serde_json::from_slice(&std::fs::read(directory.join(format!("{name}.json")))?)?;
+        assert_eq!(&connection.name, name);
+        assert_eq!(connection.status, "active");
+        wamn_catalog::RequirementType::for_integration(&connection.integration)
+            .context("the deploy connection has a supported integration")?
+            .check_definition(&connection.parameters)
+            .map_err(anyhow::Error::msg)?;
+        if let Some(system) = &connection.external_system {
+            let external: wamn_platform_identity::connections::ExternalSystemWrite =
+                serde_json::from_slice(&std::fs::read(
+                    directory.join(format!("{system}.external-system.json")),
+                )?)?;
+            assert_eq!(&external.name, system);
+            assert_eq!(external.integration, connection.integration);
+        }
+    }
+    Ok(())
+}
+
 fn manifest(bytes: &[u8]) -> anyhow::Result<wamn_catalog::ServingManifest> {
     let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(bytes)?;
     Ok(manifest)

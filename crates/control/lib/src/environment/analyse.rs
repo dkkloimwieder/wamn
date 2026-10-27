@@ -174,7 +174,11 @@ pub async fn analyse(
         Some(release) => read_release_sequences(platform, &release.manifest).await?,
         None => Vec::new(),
     };
-    let bindings = super::bindings::analyse(&system, document, &packages).await?;
+    let binding_system = connect(&platform.system_database_url).await?;
+    binding_system
+        .batch_execute("SET ROLE wamn_control")
+        .await?;
+    let bindings = super::bindings::analyse(&binding_system, document, &packages).await?;
     let connections = bindings
         .iter()
         .map(|binding| {

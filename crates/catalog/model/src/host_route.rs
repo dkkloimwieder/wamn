@@ -119,6 +119,7 @@ pub enum HostHandler {
     ConnectionWrite,
     /// Enable an org connection for a project.
     ProjectConnectionEnable,
+    ProjectConnectionDisable,
     /// Allow an integration at one scope.
     IntegrationAllow,
     /// The caller's effective permission set in this application.
@@ -252,6 +253,13 @@ const ROUTES: &[HostRoute] = &[
         type_: OperationType::Command,
         authority: HostRouteAuthority::OrgAdmin,
         handler: HostHandler::ProjectConnectionEnable,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
+        operation: "project_connection.disable",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::OrgAdmin,
+        handler: HostHandler::ProjectConnectionDisable,
     },
     HostRoute {
         set: HostRouteSet::Control,

@@ -1,0 +1,6 @@
+{
+  "integration": "http",
+  "name": "rest-fixture",
+  "parameters": {},
+  "status": "active"
+}

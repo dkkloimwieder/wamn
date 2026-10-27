@@ -31,25 +31,28 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     ))
     .await
     .unwrap();
-    let id = connections::write_connection(&tx,"acme",&ConnectionWrite {
-        id:None, integration:"http".into(), external_system_id:None, name:"webhook".into(), transport:"http".into(), exchange:"request".into(),
+    tx.batch_execute("SET LOCAL ROLE wamn_control")
+        .await
+        .unwrap();
+    let name = connections::write_connection(&tx,"acme",&ConnectionWrite {
+        integration:"http".into(), external_system:None, name:"webhook".into(), transport:"http".into(), exchange:"request".into(),
         parameters: json!({"primary-authority":"https://source.example","tls-verification":"verify-authority"}),status:"active".into()
     },&mut AuthDrops::default()).await.unwrap();
-    connections::enable_connection(&tx, "acme", "host-project", &id)
+    connections::enable_connection(&tx, "acme", "host-project", &name)
         .await
         .unwrap();
     connections::rotate(
         &tx,
         "acme",
-        &id,
+        &name,
         r#"{"hmac":{"algorithm":"sha256","secret":"test-secret"}}"#,
     )
     .await
     .unwrap();
     let principal: String = tx
         .query_one(
-            "SELECT service_principal_id::text FROM registry.connection WHERE id=$1::text::uuid",
-            &[&id],
+            "SELECT service_principal_id::text FROM registry.connection_rows($1) WHERE name=$2",
+            &[&"acme", &name],
         )
         .await
         .unwrap()
@@ -114,15 +117,41 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
         .batch_execute(&sql::grant_connection_reader_surface_sql())
         .await
         .unwrap();
+    let credential_role = format!("c35_signature_{}", system.name());
     authority
-        .batch_execute("SET ROLE wamn_conn_reader")
+        .batch_execute(&sql::prepare_workload_generation_sql(
+            WorkloadRoleFamily::ConnectionReader,
+            system.name(),
+            &credential_role,
+            "fixture-password",
+            "2099-01-01T00:00:00Z",
+        ))
         .await
         .unwrap();
-    let authority = Arc::new(authority);
+    authority
+        .execute(
+            sql::upsert_control_author_tenant_mapping_sql(),
+            &[
+                &credential_role,
+                &"acme--host-project--prod",
+                &"acme",
+                &"host-project",
+                &"prod",
+            ],
+        )
+        .await
+        .unwrap();
+    let mut credential_url = url::Url::parse(system.url()).unwrap();
+    credential_url.set_username(&credential_role).unwrap();
+    credential_url
+        .set_password(Some("fixture-password"))
+        .unwrap();
+    let credential_reader = connect(credential_url.as_str()).await;
     let credentials = Arc::new(WamnCredentials::from_database(
-        Arc::clone(&authority),
+        Arc::new(credential_reader),
         "acme",
     ));
+    let authority = Arc::new(authority);
     let authentication = Arc::new(
         RouteAuthentication::new(
             authority,

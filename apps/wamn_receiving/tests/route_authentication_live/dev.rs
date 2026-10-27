@@ -71,7 +71,6 @@ impl DevJourneyInputs {
                         .canonicalize()
                         .context("resolve the base package root")?,
                 ],
-                credentials_file: None,
                 cdc_reader: None,
                 event_materializer_username: required_journey(
                     "WAMN_DEV_ENV_EVENT_MATERIALIZER_USERNAME",

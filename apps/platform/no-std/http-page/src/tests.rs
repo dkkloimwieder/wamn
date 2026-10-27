@@ -24,13 +24,14 @@ fn run(config: &Value, pages: Vec<Response>) -> (Result<Vec<Value>, NodeError>, 
         }
     };
     assert!(pages.next().is_none(), "unused response");
-    (result, paths)
+    (result.map(|pages| pages.items), paths)
 }
 fn config(page: &Value) -> Value {
     json!({"requirement":"upstream", "path-and-query":"/items?limit=2", "headers":{}, "page":page,"items":"/items"})
 }
 fn response(body: &Value) -> Response {
     Response {
+        external_system: None,
         status: 200,
         headers: Vec::new(),
         body: body.to_string().into_bytes(),
@@ -164,19 +165,19 @@ fn carry_preserves_the_selected_input_and_empty_pages() {
     let config = json!({"carry-input-pointer": "/due"});
     let carry = super::carried_input(&config, &input).unwrap();
     assert_eq!(
-        super::page_output(vec![json!({"id": "1"})], carry.clone()),
-        json!({"items": [{"id": "1"}], "carry": input["due"]})
+        super::page_output(collected(vec![json!({"id": "1"})]), carry.clone()),
+        json!({"items": [{"id": "1"}], "carry": input["due"], "external_system_id": null})
     );
     assert_eq!(
-        super::page_output(vec![], carry),
-        json!({"items": [], "carry": input["due"]})
+        super::page_output(collected(vec![]), carry),
+        json!({"items": [], "carry": input["due"], "external_system_id": null})
     );
     assert_eq!(
         super::page_output(
-            vec![json!(1)],
+            collected(vec![json!(1)]),
             super::carried_input(&json!({}), &input).unwrap()
         ),
-        json!([1])
+        json!({"items": [1], "external_system_id": null})
     );
     assert!(matches!(
         super::carried_input(&json!({"carry-input-pointer": "/absent"}), &input),
@@ -192,7 +193,7 @@ fn run_with_input(
     config: &Value,
     input: &Value,
     pages: Vec<Response>,
-) -> (Result<Vec<Value>, NodeError>, Vec<Request>) {
+) -> (Result<Pages, NodeError>, Vec<Request>) {
     let mut requests = Vec::new();
     let mut pages = pages.into_iter();
     let result = {
@@ -239,7 +240,7 @@ fn post_carries_json_and_query_parameters_until_has_more_is_false() {
         );
         assert_eq!(
             page_output(result.unwrap(), carried_input(&cfg, &input).unwrap()),
-            json!({"items":[1,2,3,4], "carry":input["due"]})
+            json!({"items":[1,2,3,4], "carry":input["due"], "external_system_id": null})
         );
         assert_eq!(requests.len(), 2);
         for (index, request) in requests.iter().enumerate() {
@@ -344,7 +345,7 @@ fn body_pointer_accepts_root_and_null_values() {
         cfg["method"] = json!("POST");
         cfg["body-input-pointer"] = json!(pointer);
         let (result, requests) = run_with_input(&cfg, &input, vec![response(&json!({"items":[]}))]);
-        assert!(result.unwrap().is_empty());
+        assert!(result.unwrap().items.is_empty());
         assert_eq!(
             serde_json::from_slice::<Value>(requests[0].body.as_ref().unwrap()).unwrap(),
             expected
@@ -368,5 +369,56 @@ fn nonstring_paging_parameters_are_invalid_configuration() {
         };
         assert_eq!(detail.code.as_deref(), Some("invalid-config"));
         assert!(requests.is_empty());
+    }
+}
+
+fn collected(items: Vec<Value>) -> Pages {
+    Pages {
+        items,
+        external_system_id: None,
+    }
+}
+
+#[test]
+fn provenance_comes_from_the_connection_even_with_forged_input() {
+    let cfg = config(&json!({"style":"link-header"}));
+    let input = json!({"external_system_id": "00000000-0000-4000-8000-00000000bad1"});
+    for source in [Some("00000000-0000-4000-8000-00000000e001"), None] {
+        let mut page = response(&json!({"items":[{"id":"1"}]}));
+        page.external_system = source.map(String::from);
+        let (result, _) = run_with_input(&cfg, &input, vec![page]);
+        let output = page_output(result.unwrap(), None);
+        assert_eq!(output["external_system_id"], json!(source));
+        assert_eq!(output["items"], json!([{"id":"1"}]));
+    }
+}
+
+#[test]
+fn empty_pages_keep_connection_provenance_and_due() {
+    let mut cfg = config(&json!({"style":"link-header"}));
+    cfg["carry-input-pointer"] = json!("/due");
+    let input = json!({"due":"2026-10-27T12:00:00Z"});
+    let mut page = response(&json!({"items":[]}));
+    page.external_system = Some("00000000-0000-4000-8000-00000000e001".into());
+    let (result, _) = run_with_input(&cfg, &input, vec![page]);
+    assert_eq!(
+        page_output(result.unwrap(), carried_input(&cfg, &input).unwrap()),
+        json!({"items":[], "external_system_id":"00000000-0000-4000-8000-00000000e001", "carry":input["due"]})
+    );
+}
+
+#[test]
+fn a_changed_source_between_pages_refuses_the_batch() {
+    for next in [Some("00000000-0000-4000-8000-00000000e002"), None] {
+        let mut first = response(&json!({"items":[1,2]}));
+        first.external_system = Some("00000000-0000-4000-8000-00000000e001".into());
+        let mut second = response(&json!({"items":[3]}));
+        second.external_system = next.map(String::from);
+        let (result, _) = run_with_input(
+            &config(&json!({"style":"offset","limit":"limit","offset":"offset"})),
+            &Value::Null,
+            vec![first, second],
+        );
+        assert!(matches!(result, Err(NodeError::Terminal(_))));
     }
 }

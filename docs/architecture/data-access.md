@@ -1135,9 +1135,10 @@ The system database owns `registry.external_system` and `registry.connection`.
 System migration 0030 copies every `registry.org_connections` row and preserves the source rows.
 Each connection names one `registry.integrations` entry: `http`, `gcs`, or `s3`.
 The writer refuses an integration change or an external system with a different integration.
-The writer refuses a rename when a project enables the connection or an applied binding names it.
+The name of a connection and the name of an external system are their identity, fixed at creation.
+A write with a new name creates a row. A write with an existing name updates its parameters, status or credential, never its name.
+No rename route exists. Triggers on both tables refuse a name change with `connection_name_is_immutable`.
 Project enablement also prevents connection disablement.
-Project migration 0039 supplies `catalog.connection_is_referenced(text)` for this refusal. The administration role cannot read the catalog table directly.
 
 A connection has one unique inbound service principal and a current generation.
 Creation grants that principal no roles. Administrators grant its roles explicitly.
@@ -1181,9 +1182,9 @@ A session with an unknown or unheld signed role, or a disabled principal, receiv
 
 The control role keeps its existing table grants. Connection administration uses `registry.configure_connection` and the scoped `registry.connection_*` read functions.
 These functions return only non-secret authority. The write function creates a service principal only with its connection and returns its id for `AuthDrops`.
-The administration role uses `catalog.connection_is_referenced(text)` to test a binding reference without reading the catalog table.
+The upgrade import reads retained bindings through `catalog.connection_upgrade_bindings(text,text)`, without reading the catalog tables.
 Catalog bootstrap installs this function after its tables. Application schema installation does not require the catalog schema.
-Provisioning grants execution to `wamn_administration`, matching project migration 0039.
+Provisioning grants execution to `wamn_administration`, matching project migration 0042.
 Each function is `SECURITY DEFINER`, is owned by `wamn_system`, and pins `search_path` to `pg_catalog`.
 PUBLIC holds no execute grant. Only the control or administration role receives the execute grant that it needs.
 Migration and provisioning install the same grants. Registry reads and writes remain unavailable through direct control table grants.

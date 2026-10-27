@@ -118,15 +118,9 @@ impl StableGrantSet {
                 required_database,
                 grants,
             ),
-            Self::ConnectionReader => verify_system_reader_grants(
-                SystemReader::Connection,
-                "registry",
-                &sql::CONNECTION_READER_RELATIONS,
-                role,
-                database,
-                required_database,
-                grants,
-            ),
+            Self::ConnectionReader => {
+                verify_connection_reader_grants(role, database, required_database, grants)
+            }
             Self::SessionRoleReader => {
                 verify_session_role_reader_grants(role, database, required_database, grants)
             }
@@ -841,8 +835,13 @@ pub(super) fn verify_administration_grants(
         tuple("schema", "platform", "platform", "USAGE"),
         tuple("schema", "wamn_history", "wamn_history", "USAGE"),
         tuple("routine", "wamn_history", "row_image", "EXECUTE"),
+        tuple(
+            "routine",
+            "catalog",
+            "connection_upgrade_bindings",
+            "EXECUTE",
+        ),
         tuple("relation", "catalog", "releases", "SELECT"),
-        tuple("routine", "catalog", "connection_is_referenced", "EXECUTE"),
     ]);
     for relation in sql::ADMINISTRATION_RELATIONS {
         for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
@@ -905,6 +904,53 @@ pub(super) fn verify_event_materializer_grants(
     anyhow::ensure!(
         actual == expected,
         "stable role {role:?} ACLs in database {database:?} are not the exact event-materializer grant set"
+    );
+    Ok(())
+}
+
+/// Require only the login-scoped credential lookup in the control database.
+fn verify_connection_reader_grants(
+    role: &str,
+    database: &str,
+    required_database: &str,
+    grants: &[RoleAcl],
+) -> anyhow::Result<()> {
+    if database != required_database {
+        anyhow::ensure!(
+            grants.is_empty(),
+            "connection reader {role:?} has grants outside the control database"
+        );
+        return Ok(());
+    }
+    let actual = grants
+        .iter()
+        .map(|acl| {
+            (
+                acl.object_type.as_str(),
+                acl.schema_name.as_str(),
+                acl.object_name.as_str(),
+                acl.privilege.as_str(),
+            )
+        })
+        .collect::<BTreeSet<_>>();
+    let expected = BTreeSet::from([
+        ("schema", "registry", "registry", "USAGE"),
+        (
+            "routine",
+            "registry",
+            "lookup_connection_binding_mode",
+            "EXECUTE",
+        ),
+        (
+            "routine",
+            "registry",
+            "lookup_connection_credential",
+            "EXECUTE",
+        ),
+    ]);
+    anyhow::ensure!(
+        actual == expected,
+        "stable role {role:?} does not hold the exact credential lookup grants"
     );
     Ok(())
 }

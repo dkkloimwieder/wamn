@@ -98,6 +98,14 @@ pub struct BoundContainer {
     container: String,
     prefix: String,
     read_only: bool,
+    authority: Option<ConnectionAuthority>,
+}
+
+#[derive(Clone)]
+struct ConnectionAuthority {
+    vault: Arc<crate::plugins::wamn_credentials::WamnCredentials>,
+    project: String,
+    name: String,
 }
 
 impl core::fmt::Debug for BoundContainer {
@@ -123,12 +131,43 @@ impl BoundContainer {
             container: container.into(),
             prefix: prefix.into(),
             read_only: false,
+            authority: None,
         }
     }
 
     pub(super) fn with_read_only(mut self, read_only: bool) -> Self {
         self.read_only = read_only;
         self
+    }
+
+    pub(super) fn with_connection_authority(
+        mut self,
+        vault: Arc<crate::plugins::wamn_credentials::WamnCredentials>,
+        project: &str,
+        name: String,
+    ) -> Self {
+        self.authority = Some(ConnectionAuthority {
+            vault,
+            project: project.to_owned(),
+            name,
+        });
+        self
+    }
+
+    async fn permit_connection(&self, verb: &'static str) -> Result<(), StoreError> {
+        if let Some(authority) = &self.authority
+            && !authority
+                .vault
+                .connection_enabled(&authority.project, &authority.name)
+                .await
+                .unwrap_or(false)
+        {
+            return Err(StoreError::Refused {
+                verb,
+                reason: "the connection is disabled, unavailable, or not enabled by this project",
+            });
+        }
+        Ok(())
     }
 
     fn permit_write(&self, verb: &'static str) -> Result<(), StoreError> {
@@ -164,6 +203,7 @@ impl BoundContainer {
     /// Confinement or backend failure. The drain checks that the body is
     /// complete before it reaches here.
     pub async fn put(&self, author_key: &str, body: Vec<u8>) -> Result<(), StoreError> {
+        self.permit_connection("put").await?;
         self.permit_write("put")?;
         let path = self.path(author_key)?;
         self.store
@@ -182,6 +222,7 @@ impl BoundContainer {
     /// is [`StoreError::ResponseLost`], not a backend failure: the store acted,
     /// and only the read of its answer failed.
     pub async fn get(&self, author_key: &str) -> Result<Vec<u8>, StoreError> {
+        self.permit_connection("get").await?;
         let path = self.path(author_key)?;
         match self.store.get(&path).await {
             Ok(result) => result
@@ -200,6 +241,7 @@ impl BoundContainer {
     ///
     /// Confinement or backend failure. Absence is `Ok(false)`, not an error.
     pub async fn has(&self, author_key: &str) -> Result<bool, StoreError> {
+        self.permit_connection("has").await?;
         let path = self.path(author_key)?;
         match self.store.head(&path).await {
             Ok(_) => Ok(true),
@@ -216,6 +258,7 @@ impl BoundContainer {
     ///
     /// Confinement or backend failure.
     pub async fn delete(&self, author_key: &str) -> Result<(), StoreError> {
+        self.permit_connection("delete").await?;
         self.permit_write("delete")?;
         let path = self.path(author_key)?;
         match self.store.delete(&path).await {
@@ -231,6 +274,7 @@ impl BoundContainer {
     /// [`StoreError::NoSuchObject`] when absent; confinement or backend
     /// failure otherwise.
     pub async fn head(&self, author_key: &str) -> Result<ObjectHead, StoreError> {
+        self.permit_connection("head").await?;
         let path = self.path(author_key)?;
         match self.store.head(&path).await {
             Ok(meta) => Ok(ObjectHead {
@@ -256,6 +300,7 @@ impl BoundContainer {
     ///
     /// Backend failure.
     pub async fn clear(&self) -> Result<(), StoreError> {
+        self.permit_connection("clear").await?;
         self.permit_write("clear")?;
         for key in self.list().await? {
             self.delete(&key).await?;
@@ -274,6 +319,8 @@ impl BoundContainer {
     /// Backend failure.
     pub async fn list(&self) -> Result<Vec<String>, StoreError> {
         use futures_util::TryStreamExt as _;
+
+        self.permit_connection("list").await?;
 
         let trimmed = self.prefix.trim_end_matches('/');
         let scope = (!trimmed.is_empty()).then(|| Path::from(trimmed));
@@ -317,6 +364,82 @@ mod tests {
             ),
             store,
         )
+    }
+
+    #[tokio::test]
+    async fn unavailable_connection_refuses_every_store_call() {
+        let (container, _) = bound("p");
+        let container = container.with_connection_authority(
+            Arc::new(crate::plugins::wamn_credentials::WamnCredentials::empty()),
+            "project-a",
+            "erp".into(),
+        );
+        assert!(matches!(
+            container.put("item", vec![]).await,
+            Err(StoreError::Refused { .. })
+        ));
+        assert!(matches!(
+            container.get("item").await,
+            Err(StoreError::Refused { .. })
+        ));
+        assert!(matches!(
+            container.has("item").await,
+            Err(StoreError::Refused { .. })
+        ));
+        assert!(matches!(
+            container.head("item").await,
+            Err(StoreError::Refused { .. })
+        ));
+        assert!(matches!(
+            container.delete("item").await,
+            Err(StoreError::Refused { .. })
+        ));
+        assert!(matches!(
+            container.clear().await,
+            Err(StoreError::Refused { .. })
+        ));
+        assert!(matches!(
+            container.list().await,
+            Err(StoreError::Refused { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_open_container_refuses_disabled_connections_and_project_enablement() {
+        use crate::plugins::wamn_credentials::test_util::Fixture;
+        let _lock = wamn_test_postgres::lock();
+        let mut fixture = Fixture::new().await;
+        fixture
+            .put("store", "secret", &["project-a", "project-b"])
+            .await;
+        let (container, _) = bound("p");
+        let container = container.with_connection_authority(
+            Arc::new(fixture.reader("project-a").await),
+            "project-a",
+            "store".into(),
+        );
+        let (other, _) = bound("p");
+        let other = other.with_connection_authority(
+            Arc::new(fixture.reader("project-b").await),
+            "project-b",
+            "store".into(),
+        );
+        container.put("item", vec![1]).await.unwrap();
+        fixture.admin.batch_execute("SET ROLE wamn_control; SELECT registry.configure_connection('acme','project_connection.disable','{\"project\":\"project-a\",\"connection\":\"store\"}'); RESET ROLE").await.unwrap();
+        assert!(matches!(
+            container.get("item").await,
+            Err(StoreError::Refused { .. })
+        ));
+        other.put("item", vec![2]).await.unwrap();
+        fixture.admin.batch_execute("SET ROLE wamn_system; UPDATE registry.connection SET status='disabled' WHERE org='acme' AND name='store'; RESET ROLE").await.unwrap();
+        assert!(matches!(
+            other.get("item").await,
+            Err(StoreError::Refused { .. })
+        ));
+        assert!(matches!(
+            other.put("new", vec![]).await,
+            Err(StoreError::Refused { .. })
+        ));
     }
 
     #[tokio::test]

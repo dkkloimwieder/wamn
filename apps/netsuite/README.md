@@ -34,6 +34,8 @@ Neither HTTP node takes its method from input.
 
 SuiteQL sends `{"q":...}`, `Prefer: transient`, and offset and limit query parameters.
 The page node reads `/items` and stops when `/hasMore` is false.
+Its output holds `items`, `carry`, and the bound connection’s `external_system_id`.
+The consumer mapping ignores any workflow parameter that claims another source.
 Queries must order by the unique `id` key.
 The standalone query mapping refuses text without `ORDER BY id`.
 The caller must keep that order as the query's actual final ordering clause.
@@ -76,20 +78,28 @@ The host signs requests. Guests receive neither endpoint authority nor credentia
 The connection requirement type is `http`. OAuth1 is its credential shape.
 
 Set `WAMN_CONTROL_DATABASE_URL` to the control database URL.
-Write this example definition to `netsuite-definition.json`:
+Write this non-secret connection to `netsuite-connection.json`:
 
 ```json
-{"primary-authority":"https://1234567-sb1.suitetalk.api.netsuite.com","tls-verification":"verify-authority"}
+{
+  "integration": "http",
+  "name": "netsuite",
+  "transport": "http",
+  "exchange": "request",
+  "parameters": {"primary-authority": "https://1234567-sb1.suitetalk.api.netsuite.com", "tls-verification": "verify-authority"},
+  "status": "active"
+}
 ```
 
-Declare the org connection:
+Write the org connection:
 
 ```sh
-wamn-ctl connection declare --org acme --name netsuite \
-  --requirement-type http --definition netsuite-definition.json
+wamn-ctl connection write --org acme --file netsuite-connection.json \
+  --administration /private/administration
 ```
 
-Use the actual account host in the definition and the actual account realm in the credential.
+The administration directory holds scoped URLs for projection into affected environments.
+Use the actual account host in the parameters and the actual account realm in the credential.
 For example, a sandbox host uses `1234567-sb1`, while its realm is `1234567_SB1`.
 The credential value has this JSON shape:
 
@@ -97,7 +107,7 @@ The credential value has this JSON shape:
 {"oauth1":{"consumer-key":"<consumer key>","consumer-secret":"<consumer secret>","token":"<token>","token-secret":"<token secret>","realm":"1234567_SB1"}}
 ```
 
-Place that JSON as a string in the mounted host credential file:
+Place that JSON as a string in the private import file `netsuite-credential-import.json`:
 
 ```json
 {
@@ -110,6 +120,14 @@ Place that JSON as a string in the mounted host credential file:
 }
 ```
 
+Import the credential explicitly:
+
+```sh
+wamn-ctl connection import-credentials --org acme --file netsuite-credential-import.json \
+  --administration /private/administration
+```
+
+The deployed host reads the credential from the system database.
 Bind each HTTP component's `upstream` requirement with `connections = { upstream = { org = "netsuite" } }` in the environment document.
 The pull runs as the `workflow` user with its execution role, so grant that role the consumer command.
 
@@ -172,10 +190,16 @@ chmod 600 /private/netsuite.json
 tools/netsuite/live.sh prepare /private/netsuite.json acme /private/netsuite-host
 ```
 
-Declare `netsuite` with the generated `definition.json` through the connection command above.
-Mount the generated `credentials.json` as the host credential file, or merge its org entry into the existing file.
-Set the deployed host's `WAMN_CREDENTIALS_FILE` to that mount.
-Bind `upstream` to `{ org = "netsuite" }`, then apply the environment and restart the host with that file.
+Write `netsuite` with the generated `connection.json` through the connection command above.
+Import the generated `credential-import.json` explicitly:
+
+```sh
+wamn-ctl connection import-credentials --org acme --file /private/netsuite-host/credential-import.json \
+  --administration /private/administration
+```
+
+The deployed host reads those credentials from the system database.
+Bind `upstream` to `{ org = "netsuite" }`, then apply the environment.
 Publish all seven wirings with the package.
 
 `wamn-ctl workflow start` starts a workflow through the host and prints its run id.

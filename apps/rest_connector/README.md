@@ -18,8 +18,9 @@ An absent checkpoint means that no sync completed.
 
 Bind `applications.<app>.connections.upstream` to an enabled org HTTP connection before deployment.
 Keep the endpoint and credentials in that connection row.
-Set the workflow’s `rows.params.parameters.external_system_id` to the external system ID from that connection.
-The consumer records that identity with each imported item.
+The HTTP host supplies the bound external system ID with every page.
+The page collector carries it into the consumer batch as `external_system_id`.
+Workflow parameters cannot select that source identity.
 The pull runs as the `workflow` user with its execution role. Grant that role the consumer's `item.record` permission.
 The fixture uses `/pages?limit=2`.
 

@@ -20,7 +20,7 @@
 //! back through the production OCI puller, and the effect leaves the process
 //! over a real socket.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -75,7 +75,7 @@ pub const ATTACHMENT_ID: &str = "orders-http";
 pub const ROUTE_AUTHORITY: &str = "trusted.example.test";
 pub const ROUTE_PATH: &str = "/deliver";
 const INSTANCE_ID: &str = "upstream-instance";
-const CREDENTIAL_HANDLE: &str = "upstream-v1";
+const CREDENTIAL_HANDLE: &str = "org:acme:upstream-v1";
 const GENERATION: i64 = 1;
 const CONTRACT: &str = "wamn:connection/http@0.1.0";
 const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
@@ -122,6 +122,7 @@ pub struct TrustedHttpRoute {
     pub component_digest: String,
     /// The immutable graph hash stored on the workflow row and frozen on each run.
     pub wiring_hash: String,
+    _credential_database: wamn_test_infrastructure::postgres::Database,
 }
 
 impl TrustedHttpRoute {
@@ -147,19 +148,80 @@ impl TrustedHttpRoute {
 
 /// Seed the closure and build the production driver over it.
 pub async fn build(options: &RouteOptions) -> anyhow::Result<TrustedHttpRoute> {
-    build_with_credentials(
-        options,
-        WamnCredentials::from_projects(HashMap::from([(
-            PROJECT.to_owned(),
-            HashMap::from([(CREDENTIAL_HANDLE.to_owned(), credential_secret())]),
-        )])),
-    )
-    .await
+    let (credentials, database) =
+        credential_fixture(&[(CREDENTIAL_HANDLE, credential_secret())]).await?;
+    build_with_credentials(options, credentials, database).await
+}
+
+async fn credential_fixture(
+    secrets: &[(&str, String)],
+) -> anyhow::Result<(
+    WamnCredentials,
+    wamn_test_infrastructure::postgres::Database,
+)> {
+    let database = wamn_control_provision::test_database::system();
+    let (mut admin, connection) = tokio_postgres::connect(database.url(), NoTls).await?;
+    tokio::spawn(connection);
+    admin.batch_execute("SET ROLE wamn_system").await?;
+    admin
+        .batch_execute(
+            &wamn_control_provision::test_database::seed_org_project_env_sql(
+                "acme",
+                PROJECT,
+                ENVIRONMENT,
+            ),
+        )
+        .await?;
+    let tx = admin.transaction().await?;
+    tx.batch_execute("SET LOCAL ROLE wamn_control").await?;
+    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+        wamn_control_provision::PlatformComponent::Provisioning,
+    ))
+    .await?;
+    for (handle, secret) in secrets {
+        let (_, name) =
+            wamn_catalog::parse_org_credential_handle(handle).map_err(anyhow::Error::msg)?;
+        wamn_platform_identity::connections::write_connection(&tx, "acme", &wamn_platform_identity::connections::ConnectionWrite {
+            integration: "http".into(), external_system: None, name: name.into(),
+            transport: "http".into(), exchange: "request".into(), status: "active".into(),
+            parameters: serde_json::json!({"primary-authority":"https://fixture.invalid", "tls-verification":"verify-authority"}),
+        }, &mut wamn_platform_identity::auth_changes::AuthDrops::default()).await?;
+        wamn_platform_identity::connections::enable_connection(&tx, "acme", PROJECT, name).await?;
+        wamn_platform_identity::connections::rotate(&tx, "acme", name, secret).await?;
+    }
+    tx.commit().await?;
+    admin.batch_execute("RESET ROLE").await?;
+    let role = format!("trusted_http_{}", database.name());
+    admin
+        .batch_execute(
+            &wamn_control_provision::sql::prepare_workload_generation_sql(
+                WorkloadRoleFamily::ConnectionReader,
+                database.name(),
+                &role,
+                GENERATION_PASSWORD,
+                GENERATION_VALID_UNTIL,
+            ),
+        )
+        .await?;
+    admin
+        .execute(
+            wamn_control_provision::sql::upsert_control_author_tenant_mapping_sql(),
+            &[&role, &TENANT, &"acme", &PROJECT, &ENVIRONMENT],
+        )
+        .await?;
+    let (reader, connection) =
+        tokio_postgres::connect(&generation_url(database.url(), &role)?, NoTls).await?;
+    tokio::spawn(connection);
+    Ok((
+        WamnCredentials::from_database(Arc::new(reader), "acme"),
+        database,
+    ))
 }
 
 async fn build_with_credentials(
     options: &RouteOptions,
     credentials: WamnCredentials,
+    credential_database: wamn_test_infrastructure::postgres::Database,
 ) -> anyhow::Result<TrustedHttpRoute> {
     let component_bytes = std::fs::read(&options.component_wasm).with_context(|| {
         format!(
@@ -266,6 +328,7 @@ async fn build_with_credentials(
         release,
         component_digest: admitted.component_digest.clone(),
         wiring_hash,
+        _credential_database: credential_database,
     })
 }
 
@@ -634,8 +697,8 @@ async fn seed_with_client(
         .execute(
             "INSERT INTO catalog.connection_bindings (\
                  tenant_id, manifest_digest, component_digest, store_alias, \
-                 environment, instance_id, binding_status, validation_status, validation_hash\
-             ) VALUES ($1, $2, $3, $4, $5, $6, 'active', 'valid', $7)",
+                 environment, instance_id, binding_status, validation_status, validation_hash, package_id\
+             ) VALUES ($1, $2, $3, $4, $5, $6, 'active', 'valid', $7, $8)",
             &[
                 &TENANT,
                 &manifest_digest,
@@ -644,6 +707,7 @@ async fn seed_with_client(
                 &ENVIRONMENT,
                 &INSTANCE_ID,
                 &format!("sha256:{}", "e".repeat(64)),
+                &PACKAGE,
             ],
         )
         .await
@@ -793,14 +857,12 @@ mod tests {
 
     use wamn_workflow::{RouterDelivery, RouterDriverRequest};
 
-    use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
-
     use super::{
-        CREDENTIAL_HANDLE, ENVIRONMENT, INSTANCE_ID, NODE_ID, PACKAGE, PROJECT, RouteOptions,
-        TENANT, WIRING_ID, WIRING_VERSION, build_with_credentials, credential_secret,
+        CREDENTIAL_HANDLE, ENVIRONMENT, INSTANCE_ID, NODE_ID, PACKAGE, RouteOptions, TENANT,
+        WIRING_ID, WIRING_VERSION, build_with_credentials, credential_fixture, credential_secret,
     };
 
-    const ROTATED_HANDLE: &str = "upstream-v2";
+    const ROTATED_HANDLE: &str = "org:acme:upstream-v2";
     const ROTATED_AUTHORIZATION: &str = "Bearer rotated-fixture-token";
 
     struct ObservedRequest {
@@ -1047,19 +1109,14 @@ mod tests {
             "test requires PostgreSQL 18"
         );
         let mut origin = origin().await?;
-        let credentials = WamnCredentials::from_projects(HashMap::from([(
-            PROJECT.to_owned(),
-            HashMap::from([
-                (CREDENTIAL_HANDLE.to_owned(), credential_secret()),
-                (
-                    ROTATED_HANDLE.to_owned(),
-                    serde_json::json!({
-                        "headers": {"authorization": ROTATED_AUTHORIZATION},
-                    })
-                    .to_string(),
-                ),
-            ]),
-        )]));
+        let (credentials, credential_database) = credential_fixture(&[
+            (CREDENTIAL_HANDLE, credential_secret()),
+            (
+                ROTATED_HANDLE,
+                serde_json::json!({"headers":{"authorization":ROTATED_AUTHORIZATION}}).to_string(),
+            ),
+        ])
+        .await?;
         let route = build_with_credentials(
             &RouteOptions {
                 database_url: database_url.clone(),
@@ -1069,6 +1126,7 @@ mod tests {
                 path_and_query: "/reuse".to_owned(),
             },
             credentials,
+            credential_database,
         )
         .await?;
         // RouterDriver instantiates and drops a distinct Store for each call.

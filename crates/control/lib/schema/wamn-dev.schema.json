@@ -114,11 +114,6 @@
       "default": null,
       "type": "string"
     },
-    "credentials_file": {
-      "default": null,
-      "description": "The legacy credentials file used by the one-time import.",
-      "type": "string"
-    },
     "dup_window_secs": {
       "format": "uint64",
       "minimum": 0.0,

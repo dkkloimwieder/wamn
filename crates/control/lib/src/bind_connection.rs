@@ -54,7 +54,7 @@ SELECT requirement.requirement_json::text, requirement.requirement_hash \
              convert_from(release.canonical_bytes, 'UTF8')::jsonb -> 'components' \
          ) AS component(value) \
       WHERE release.tenant_id = $1 AND release.manifest_digest = $4 \
-        AND component.value -> 'descriptor' ->> 'component-digest' = $2 AND ($5 = '' OR component.value ->> 'package-id' = $5))";
+        AND component.value -> 'descriptor' ->> 'component-digest' = $2 AND component.value ->> 'package-id' = $5)";
 const FIRST_GENERATION: i64 = 1;
 /// Enable a disabled instance again, at the revision the caller read.
 const ENABLE_INSTANCE_SQL: &str = "\
@@ -262,6 +262,21 @@ async fn bind_in(
         .execute(CLAIM_TENANT_SQL, &[&args.tenant()])
         .await
         .context("claim the tenant for the bind-connection transaction")?;
+
+    let package_id = if package_id.is_empty() {
+        let rows = transaction.query("SELECT component.value ->> 'package-id' FROM catalog.releases release CROSS JOIN LATERAL jsonb_array_elements(convert_from(release.canonical_bytes,'UTF8')::jsonb -> 'components') component(value) WHERE release.tenant_id=$1 AND release.manifest_digest=$2 AND component.value -> 'descriptor' ->> 'component-digest'=$3", &[&args.tenant(), &args.manifest_digest, &args.component_digest]).await?;
+        ensure!(
+            rows.len() == 1,
+            "connection binding requires one exact package"
+        );
+        rows[0].get::<_, String>(0)
+    } else {
+        package_id.to_owned()
+    };
+    ensure!(
+        !package_id.is_empty(),
+        "connection binding requires an exact package"
+    );
 
     // The requirement being bound must exist and must be of this type: a
     // binding is a claim about a component's declared alias, and the plugin

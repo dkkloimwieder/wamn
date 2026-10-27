@@ -28,6 +28,15 @@
       }
     },
     {
+      "literal": "integration_unavailable",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "field"
+        ]
+      }
+    },
+    {
       "literal": "integration_mismatch",
       "from": "transaction_invariant",
       "detail": {
@@ -38,15 +47,6 @@
     },
     {
       "literal": "integration_not_allowed",
-      "from": "transaction_invariant",
-      "detail": {
-        "required": [
-          "field"
-        ]
-      }
-    },
-    {
-      "literal": "referenced",
       "from": "transaction_invariant",
       "detail": {
         "required": [

@@ -60,7 +60,6 @@ const RUNNER: &str = "runner";
 const HOST_BINARY: &str = "host_binary";
 const WASMTIME_CACHE_DIR: &str = "wasmtime_cache_dir";
 const MATERIALIZER_NATS_BINDING_FILE: &str = "materializer_nats_binding_file";
-const CREDENTIALS_FILE: &str = "credentials_file";
 const CDC_READER: &str = "cdc_reader";
 #[cfg(test)]
 const PACKAGE_MANIFEST_FILE: &str = "wamn.json";
@@ -167,10 +166,6 @@ struct DevConfigDocument {
     /// The materializer's events binding in the environment's private root,
     /// as the cluster mounts its Secret.
     materializer_nats_binding_file: PathBuf,
-    /// The legacy credentials file used by the one-time import.
-    #[serde(default)]
-    #[schemars(with = "String")]
-    credentials_file: Option<PathBuf>,
     /// The CDC reader that `wamn dev up` enabled. Absent means no reader runs.
     #[serde(default)]
     cdc_reader: Option<CdcReader>,
@@ -589,7 +584,6 @@ pub struct DevConfig {
     host_binary: PathBuf,
     wasmtime_cache_dir: PathBuf,
     materializer_nats_binding_file: PathBuf,
-    credentials_file: Option<PathBuf>,
     cdc_reader: Option<CdcReader>,
     probes: Box<[ReachabilityProbe]>,
 }
@@ -658,7 +652,6 @@ impl fmt::Debug for DevConfig {
                 MATERIALIZER_NATS_BINDING_FILE,
                 &self.materializer_nats_binding_file,
             )
-            .field(CREDENTIALS_FILE, &self.credentials_file)
             .field(CDC_READER, &self.cdc_reader)
             .finish_non_exhaustive()
     }
@@ -838,11 +831,6 @@ impl DevConfig {
         &self.materializer_nats_binding_file
     }
 
-    /// The legacy credentials file used only for one-time import.
-    pub fn credentials_file(&self) -> Option<&Path> {
-        self.credentials_file.as_deref()
-    }
-
     /// The CDC reader the loop starts after each activation, when enabled.
     pub const fn cdc_reader(&self) -> Option<&CdcReader> {
         self.cdc_reader.as_ref()
@@ -925,7 +913,6 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         host_binary,
         wasmtime_cache_dir,
         materializer_nats_binding_file,
-        credentials_file,
         cdc_reader,
     } = input;
 
@@ -1043,16 +1030,6 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
             DevConfigErrorType::InvalidValue,
             MATERIALIZER_NATS_BINDING_FILE,
             "the materializer binding file path must be absolute",
-        ));
-    }
-    if credentials_file
-        .as_ref()
-        .is_some_and(|path| !path.is_absolute())
-    {
-        return Err(DevConfigError::new(
-            DevConfigErrorType::InvalidValue,
-            CREDENTIALS_FILE,
-            "the credentials file path must be absolute",
         ));
     }
     if let Some(reader) = &cdc_reader {
@@ -1195,7 +1172,6 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         host_binary,
         wasmtime_cache_dir,
         materializer_nats_binding_file,
-        credentials_file,
         cdc_reader,
         probes: probes.into_boxed_slice(),
     })

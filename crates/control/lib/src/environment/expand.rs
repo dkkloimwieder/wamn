@@ -62,6 +62,7 @@ pub async fn expand(
         .await
         .context("write the policy name and the route host")?;
     let tx = system.transaction().await?;
+    tx.batch_execute("SET LOCAL ROLE wamn_control").await?;
     let bindings = super::bindings::reserve(&tx, document, &analysis.packages).await?;
     tx.commit().await?;
     drop(system);

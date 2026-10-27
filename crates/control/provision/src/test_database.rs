@@ -36,9 +36,26 @@ pub fn system() -> wamn_test_postgres::Database {
             SYSTEM_SCHEMA_SQL,
             CONTROL_PORTABLE_STORE_SQL,
             "RESET ROLE",
+            &sql::grant_control_surface_sql(),
         ])
         .expect("install the system control store floor");
     database
+}
+
+/// Seed one named organization, project and environment for authority tests.
+pub fn seed_org_project_env_sql(org: &str, project: &str, env: &str) -> String {
+    use wamn_pg_core::quote_literal;
+    let org = quote_literal(org);
+    let project = quote_literal(project);
+    let env = quote_literal(env);
+    format!(
+        "INSERT INTO registry.orgs(id,placement_type) VALUES ({org},'dedicated') ON CONFLICT DO NOTHING; \
+         INSERT INTO registry.projects(org,id) VALUES ({org},{project}) ON CONFLICT DO NOTHING; \
+         INSERT INTO registry.env_policies(org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) \
+         VALUES ({org},{env},'\"own\"',0,1,'1Gi','1','1Gi','postgres:18') ON CONFLICT DO NOTHING; \
+         INSERT INTO registry.project_envs(org,project,env,secret_name,instance_suffix,policy_name) \
+         VALUES ({org},{project},{env},'s1','aaaaaaa1',{env}) ON CONFLICT DO NOTHING;"
+    )
 }
 
 #[cfg(test)]

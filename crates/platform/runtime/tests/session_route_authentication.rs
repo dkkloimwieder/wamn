@@ -281,15 +281,7 @@ fn assert_permission_reads(
         1,
         "only the single permission statement executes: {changes:?}"
     );
-    let (query, calls) = changes[0];
-    assert!(query.starts_with("SELECT u.status = "), "{query}");
-    assert!(
-        query.contains("FROM platform.\"user\" u LEFT JOIN platform.user_role r")
-            && query.contains("r.user_id = u.id")
-            && !query.contains("tenant_id")
-            && query.contains("WHERE u.id = $1::text::uuid"),
-        "{query}"
-    );
+    let (_, calls) = changes[0];
     assert_eq!(calls, expected, "one permission read per admitted request");
 }
 

@@ -1522,6 +1522,127 @@ async fn environment_status_counts_are_scoped_and_optional() -> anyhow::Result<(
     Ok(())
 }
 
+async fn assert_definer_grantees(client: &Client) -> anyhow::Result<()> {
+    const CONNECTION: &[&str] = &["wamn_control", "wamn_administration"];
+    const ALLOWED: &[(&str, &[&str])] = &[
+        ("identity.revoke_disabled_password_logins()", &[]),
+        (
+            "identity.lock_password_principal(uuid)",
+            &["wamn_identity_issuer"],
+        ),
+        (
+            "wamn_authority.session_author_tenant()",
+            &["wamn_control_author"],
+        ),
+        ("platform.bump_counter(uuid, text, text)", &["wamn_app"]),
+        ("platform.assign_counter(uuid, text, text)", &["wamn_app"]),
+        (
+            "platform.set_counter(uuid, text, text, bigint)",
+            &["wamn_app"],
+        ),
+        (
+            "registry.lookup_connection_credential(text, text, text, bigint)",
+            &["wamn_conn_reader"],
+        ),
+        (
+            "registry.lookup_connection_binding_mode(text, text, text, text, text)",
+            &["wamn_conn_reader"],
+        ),
+        (
+            "catalog.connection_upgrade_bindings(text, text)",
+            &["wamn_administration"],
+        ),
+        ("registry.connection_org_exists(text)", CONNECTION),
+        ("registry.connection_integration_exists(text)", CONNECTION),
+        ("registry.connection_system_rows(text)", CONNECTION),
+        ("registry.connection_rows(text)", CONNECTION),
+        ("registry.connection_project_rows(text)", CONNECTION),
+        ("registry.connection_allow_rows(text)", CONNECTION),
+        ("registry.connection_principal_rows(text, text)", CONNECTION),
+        (
+            "registry.configure_connection(text, text, jsonb)",
+            CONNECTION,
+        ),
+        ("registry.rotate_connection(text, text, text)", CONNECTION),
+        (
+            "registry.import_connection_credentials(text, jsonb)",
+            CONNECTION,
+        ),
+        ("registry.connection_integrations()", CONNECTION),
+        (
+            "registry.connection_binding_rows(text, text, text)",
+            CONNECTION,
+        ),
+        (
+            "registry.analyse_connection_bindings(text, text, text, text, jsonb)",
+            CONNECTION,
+        ),
+        (
+            "registry.reserve_connection_bindings(text, text, text, text, jsonb)",
+            CONNECTION,
+        ),
+    ];
+    let functions = client.query("SELECT n.nspname || '.' || p.proname || '(' || oidvectortypes(p.proargtypes) || ')', p.proconfig, pg_get_userbyid(p.proowner), ARRAY(SELECT CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee)::text END FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner ORDER BY 1) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE p.prosecdef ORDER BY 1", &[]).await?;
+    assert!(!functions.is_empty());
+    for function in functions {
+        let name: String = function.get(0);
+        let allowed = ALLOWED
+            .iter()
+            .find(|(signature, _)| *signature == name)
+            .unwrap_or_else(|| panic!("SECURITY DEFINER function absent from allow list: {name}"));
+        assert_eq!(function.get::<_, String>(2), "wamn_system", "{name} owner");
+        let configuration: Vec<String> = function.get(1);
+        let expected_path = if name == "wamn_authority.session_author_tenant()" {
+            "search_path=pg_catalog, wamn_authority"
+        } else {
+            "search_path=pg_catalog"
+        };
+        assert_eq!(configuration, [expected_path], "{name}");
+        for grantee in function.get::<_, Vec<String>>(3) {
+            assert!(
+                allowed.1.contains(&grantee.as_str()),
+                "unexpected EXECUTE grantee {grantee} on {name}"
+            );
+        }
+        let effective = client.query("SELECT r.rolname::text FROM pg_roles r WHERE NOT r.rolsuper AND has_function_privilege(r.oid,$1::text::regprocedure,'EXECUTE') AND NOT pg_has_role(r.oid,(SELECT proowner FROM pg_proc WHERE oid=$1::text::regprocedure),'USAGE') AND NOT EXISTS (SELECT FROM pg_roles a WHERE a.rolname=ANY($2::text[]) AND pg_has_role(r.oid,a.oid,'USAGE'))", &[&name, &allowed.1]).await?;
+        assert!(
+            effective.is_empty(),
+            "unexpected inherited EXECUTE privilege on {name}: {effective:?}"
+        );
+        let grantable: bool = client.query_one("SELECT EXISTS (SELECT FROM pg_proc p CROSS JOIN LATERAL aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE p.oid=$1::text::regprocedure AND a.grantee<>p.proowner AND a.is_grantable)", &[&name]).await?.get(0);
+        assert!(!grantable, "non-owner grant option on {name}");
+        if name == "catalog.connection_upgrade_bindings(text, text)" {
+            let policies = client.query("SELECT c.relname::text, p.polcmd::text, p.polroles=ARRAY[(SELECT proowner FROM pg_proc WHERE oid=$1::text::regprocedure)], pg_get_expr(p.polqual,p.polrelid), p.polwithcheck IS NULL FROM pg_policy p JOIN pg_class c ON c.oid=p.polrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='catalog' AND p.polname='connection_upgrade_reader_owner' ORDER BY c.relname", &[&name]).await?;
+            assert_eq!(
+                policies
+                    .iter()
+                    .map(|row| row.get::<_, String>(0))
+                    .collect::<Vec<_>>(),
+                [
+                    "connection_bindings",
+                    "connection_generations",
+                    "connection_instances",
+                    "connection_requirements",
+                    "releases"
+                ]
+            );
+            for policy in policies {
+                assert_eq!(policy.get::<_, String>(1), "r");
+                assert!(
+                    policy.get::<_, bool>(2),
+                    "only the function owner reads through this policy"
+                );
+                assert_eq!(policy.get::<_, String>(3), "true");
+                assert!(
+                    policy.get::<_, bool>(4),
+                    "the reader policy has no write condition"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> anyhow::Result<()> {
     let mut postgres = wamn_test_postgres::start(&[])?;
@@ -1529,33 +1650,29 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
     let admin = connect(database.url()).await?;
     let control_url = install(&admin, database.url()).await?;
     let (logins, billing, shop) = environments(&admin, database.url(), "connections").await?;
+    let writer = connect(&control_url).await?;
+    assert!(
+        writer.batch_execute("SET ROLE wamn_control").await.is_err(),
+        "the control generation inherits its grants without permission to assume the ACL role"
+    );
     admin
         .batch_execute(&format!(
             "SET app.user_id='{}'; UPDATE registry.meta SET platform_domain='example.test'",
             PlatformComponent::Provisioning.principal_id()
         ))
         .await?;
-    let functions = admin.query("SELECT p.proname, p.prosecdef, p.proconfig, p.proowner = 'wamn_system'::regrole, has_function_privilege('wamn_app',p.oid,'EXECUTE'), has_function_privilege('wamn_control',p.oid,'EXECUTE') FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='registry' AND p.proname IN ('connection_org_exists','connection_integration_exists','connection_system_rows','connection_rows','connection_project_rows','connection_allow_rows','connection_principal_rows','configure_connection')", &[]).await?;
-    assert_eq!(functions.len(), 8);
-    for function in functions {
-        assert!(function.get::<_, bool>(1));
-        assert_eq!(
-            function.get::<_, Vec<String>>(2),
-            ["search_path=pg_catalog"]
-        );
-        assert!(function.get::<_, bool>(3));
-        assert!(!function.get::<_, bool>(4));
-        assert!(function.get::<_, bool>(5));
-    }
-    let reference = billing.query_one("SELECT p.prosecdef, p.proconfig, p.proowner = 'wamn_system'::regrole, has_function_privilege('wamn_app',p.oid,'EXECUTE'), has_function_privilege('wamn_administration',p.oid,'EXECUTE') FROM pg_proc p WHERE p.oid='catalog.connection_is_referenced(text)'::regprocedure", &[]).await?;
-    assert!(reference.get::<_, bool>(0));
-    assert_eq!(
-        reference.get::<_, Vec<String>>(1),
-        ["search_path=pg_catalog"]
+    assert_definer_grantees(&admin).await?;
+    assert_definer_grantees(&billing).await?;
+    assert_definer_grantees(&shop).await?;
+    assert!(
+        billing
+            .query_one(
+                "SELECT to_regprocedure('catalog.connection_is_referenced(text)') IS NULL",
+                &[]
+            )
+            .await?
+            .get::<_, bool>(0)
     );
-    assert!(reference.get::<_, bool>(2));
-    assert!(!reference.get::<_, bool>(3));
-    assert!(reference.get::<_, bool>(4));
     let boss = create_or_reuse_user(&admin, "connection-admin@example.test", "Admin")
         .await?
         .principal_id;
@@ -1575,9 +1692,9 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         Arc::new(LoadedRelease::control_root()),
         HostRouteHandlers::Control {
             status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
-            administration: Some(logins),
+            administration: Some(logins.clone()),
             control: Arc::new(connect(&control_url).await?),
-            writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
+            writer: Arc::new(tokio::sync::Mutex::new(writer)),
             identity: None,
             org: ORG.to_owned(),
             changes: AuthChanges::new(nats),
@@ -1603,9 +1720,9 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         system.clone(),
     )
     .await
-    .unwrap()["id"]
+    .unwrap()["name"]
         .clone();
-    let connection = json!({"integration":"http","external_system_id":system_id,"name":"erp","transport":"http","exchange":"request","parameters":{"primary-authority":"https://example.invalid","tls-verification":"verify-authority"},"status":"active"});
+    let connection = json!({"integration":"http","external_system":system_id,"name":"erp","transport":"http","exchange":"request","parameters":{"primary-authority":"https://example.invalid","tls-verification":"verify-authority"},"status":"active"});
     let id = call(
         &delivery,
         "connection/write",
@@ -1613,11 +1730,54 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         connection.clone(),
     )
     .await
-    .unwrap()["id"]
+    .unwrap()["name"]
         .clone();
+    let first_uuid: String = admin
+        .query_one(
+            "SELECT id::text FROM registry.connection WHERE org=$1 AND name='erp'",
+            &[&ORG],
+        )
+        .await?
+        .get(0);
+    call(
+        &delivery,
+        "connection/write",
+        boss.as_str(),
+        connection.clone(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        admin
+            .query_one(
+                "SELECT id::text FROM registry.connection WHERE org=$1 AND name='erp'",
+                &[&ORG]
+            )
+            .await?
+            .get::<_, String>(0),
+        first_uuid
+    );
+    let mut new_name = connection.clone();
+    new_name["name"] = "separate".into();
+    assert_eq!(
+        call(&delivery, "connection/write", boss.as_str(), new_name)
+            .await
+            .unwrap()["name"],
+        "separate"
+    );
+    assert_ne!(
+        admin
+            .query_one(
+                "SELECT id::text FROM registry.connection WHERE org=$1 AND name='separate'",
+                &[&ORG]
+            )
+            .await?
+            .get::<_, String>(0),
+        first_uuid
+    );
     let principal: String = admin
         .query_one(
-            "SELECT service_principal_id::text FROM registry.connection WHERE id=$1::text::uuid",
+            "SELECT service_principal_id::text FROM registry.connection WHERE name=$1",
             &[&id.as_str().unwrap()],
         )
         .await?
@@ -1629,7 +1789,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         &delivery,
         "project-connection/enable",
         boss.as_str(),
-        json!({"project":"billing","connection_id":id}),
+        json!({"project":"billing","connection":id}),
     )
     .await
     .unwrap();
@@ -1644,7 +1804,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         call(&delivery, "connection/write", boss.as_str(), rename)
             .await
             .unwrap_err()
-            .starts_with("referenced ")
+            .starts_with("invalid_input ")
     );
     let mut rename = system;
     rename["id"] = system_id.clone();
@@ -1658,8 +1818,10 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         )
         .await
         .unwrap_err()
-        .starts_with("referenced ")
+        .starts_with("invalid_input ")
     );
+    rename.as_object_mut().unwrap().remove("id");
+    rename["name"] = "erp".into();
     rename["integration"] = "gcs".into();
     assert!(
         call(&delivery, "external-system/write", boss.as_str(), rename)
@@ -1667,7 +1829,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
             .unwrap_err()
             .starts_with("integration_mismatch ")
     );
-    let mismatch = json!({"integration":"gcs","external_system_id":system_id,"name":"blob","transport":"http","exchange":"request","parameters":{"provider":"gcs","container":"bucket","prefix":"test"},"status":"active"});
+    let mismatch = json!({"integration":"gcs","external_system":system_id,"name":"blob","transport":"http","exchange":"request","parameters":{"provider":"gcs","container":"bucket","prefix":"test"},"status":"active"});
     assert!(
         call(&delivery, "connection/write", boss.as_str(), mismatch)
             .await
@@ -1679,7 +1841,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
             &delivery,
             "project-connection/enable",
             boss.as_str(),
-            json!({"project":"missing","connection_id":id})
+            json!({"project":"missing","connection":id})
         )
         .await
         .unwrap_err()
@@ -1704,6 +1866,37 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
     )
     .await
     .unwrap();
+    for (scope, id) in [("project", "billing"), ("environment", "billing/dev")] {
+        call(
+            &delivery,
+            "integration-allow/allow",
+            boss.as_str(),
+            json!({"scope_type":scope,"scope_id":id,"integration":"http"}),
+        )
+        .await
+        .unwrap();
+    }
+    let applied_document = wamn_control::environment::document::EnvironmentDocument::from_json(
+        &serde_json::to_vec(&json!({
+            "org": ORG,"project":"billing","env":"dev","target":"cloud","release":"none","route_host":"billing.example","policy":"dev",
+            "applications":{"fixture":{"packages":["fixture"],"connections":{"upstream":"erp"}}}
+        }))?,
+    )?;
+    let package = wamn_schema_generator::PackageManifest::from_slice(&serde_json::to_vec(
+        &json!({
+            "package":{"id":"fixture","version":"0.1.0"},"required_platform_policy_contract":{"id":"fixture_data_access","state":"satisfied"},
+            "models":{},"components":{},"connections":{"upstream":{"integration":"http","mode":"read"}}
+        }),
+    )?)?;
+    let mut authority = connect(&control_url).await?;
+    let binding_tx = authority.transaction().await?;
+    wamn_control::environment::bindings::reserve(
+        &binding_tx,
+        &applied_document,
+        std::slice::from_ref(&package),
+    )
+    .await?;
+    binding_tx.commit().await?;
     let replacement = call(
         &delivery,
         "external-system/write",
@@ -1711,17 +1904,19 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         json!({"integration":"http","name":"replacement","parameters":{},"status":"active"}),
     )
     .await
-    .unwrap()["id"]
+    .unwrap()["name"]
         .clone();
     let mut moved = connection;
-    moved["id"] = id;
-    moved["external_system_id"] = replacement.clone();
+    moved["external_system"] = replacement.clone();
     call(&delivery, "connection/write", boss.as_str(), moved)
         .await
         .unwrap();
     assert_eq!(
         billing
-            .query_one("SELECT id::text FROM platform.external_system", &[])
+            .query_one(
+                "SELECT name FROM platform.external_system WHERE status='active'",
+                &[]
+            )
             .await?
             .get::<_, String>(0),
         replacement.as_str().unwrap()
@@ -1750,9 +1945,19 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
             assert!(!privilege, "wamn_app writes {table}");
         }
     }
-    shop.batch_execute("DROP TABLE platform.integration_allow")
-        .await?;
-    let mut changed = json!({"id": admin.query_one("SELECT id::text FROM registry.connection WHERE name='erp'", &[]).await?.get::<_, String>(0), "integration":"http","external_system_id":replacement,"name":"erp","transport":"http","exchange":"request","parameters":{"primary-authority":"https://changed.invalid","tls-verification":"verify-authority"},"status":"active"});
+    call(
+        &delivery,
+        "project-connection/enable",
+        boss.as_str(),
+        json!({"project":"shop","connection":"erp"}),
+    )
+    .await
+    .unwrap();
+    shop.batch_execute(
+        "ALTER TABLE platform.integration_allow RENAME TO integration_allow_unavailable",
+    )
+    .await?;
+    let mut changed = json!({"integration":"http","external_system":replacement,"name":"erp","transport":"http","exchange":"request","parameters":{"primary-authority":"https://changed.invalid","tls-verification":"verify-authority"},"status":"active"});
     assert!(
         call(
             &delivery,
@@ -1784,6 +1989,152 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
             .get::<_, String>(0),
         "https://changed.invalid"
     );
+    shop.batch_execute(
+        "ALTER TABLE platform.integration_allow_unavailable RENAME TO integration_allow",
+    )
+    .await?;
+    let document = wamn_control::environment::document::EnvironmentDocument::from_json(
+        &serde_json::to_vec(&json!({
+            "org": ORG, "project":"shop", "env":"dev", "target":"cloud", "release":"none", "route_host":"shop.example", "policy":"dev", "applications":{}
+        }))?,
+    )?;
+    let shop_url = std::fs::read_to_string(logins.join(
+        wamn_control_provision::control_administration_key("shop", "dev"),
+    ))?;
+    let _ = wamn_control::environment::bindings::project_authority(
+        database.url(),
+        shop_url.trim(),
+        &document,
+    )
+    .await?;
+    assert_eq!(
+        shop.query_one(
+            "SELECT parameters->>'primary-authority' FROM platform.connection WHERE name='erp'",
+            &[]
+        )
+        .await?
+        .get::<_, String>(0),
+        "https://changed.invalid"
+    );
+    let before: String = shop
+        .query_one(
+            "SELECT xmin::text FROM platform.connection WHERE name='erp'",
+            &[],
+        )
+        .await?
+        .get(0);
+    let _ = wamn_control::environment::bindings::project_authority(
+        database.url(),
+        shop_url.trim(),
+        &document,
+    )
+    .await?;
+    assert_eq!(
+        shop.query_one(
+            "SELECT xmin::text FROM platform.connection WHERE name='erp'",
+            &[]
+        )
+        .await?
+        .get::<_, String>(0),
+        before
+    );
+    let history_sql = "SELECT (SELECT count(*) FROM platform.connection_history)+(SELECT count(*) FROM platform.external_system_history)+(SELECT count(*) FROM platform.project_connection_history)";
+    let projection_history: i64 = shop.query_one(history_sql, &[]).await?.get(0);
+    let _ = wamn_control::environment::bindings::project_authority(
+        database.url(),
+        shop_url.trim(),
+        &document,
+    )
+    .await?;
+    assert_eq!(
+        shop.query_one(history_sql, &[]).await?.get::<_, i64>(0),
+        projection_history
+    );
+    // A project disable retains provenance references and does not disable another project.
+    billing.batch_execute("CREATE TABLE public.connection_reference (connection_id uuid REFERENCES platform.connection(id), external_system_id uuid REFERENCES platform.external_system(id)); INSERT INTO public.connection_reference SELECT id,external_system_id FROM platform.connection WHERE name='erp'").await?;
+    let shop_principal_key =
+        wamn_platform_identity::auth_changes::principal_key("org-a--shop--dev", &principal);
+    bucket.put(&key, "cached".into()).await?;
+    bucket.put(&shop_principal_key, "cached".into()).await?;
+    call(
+        &delivery,
+        "project-connection/disable",
+        boss.as_str(),
+        json!({"project":"billing","connection":"erp"}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(billing.query_one("SELECT c.status FROM platform.connection c JOIN public.connection_reference r ON r.connection_id=c.id", &[]).await?.get::<_,String>(0), "disabled");
+    assert_eq!(
+        shop.query_one(
+            "SELECT status FROM platform.connection WHERE name='erp'",
+            &[]
+        )
+        .await?
+        .get::<_, String>(0),
+        "active"
+    );
+    assert_eq!(
+        wamn_control::environment::bindings::analyse(&authority, &applied_document, &[package])
+            .await
+            .unwrap_err()
+            .code,
+        "connection_not_enabled"
+    );
+    assert!(
+        bucket.get(&key).await?.is_none(),
+        "disablement deletes the affected project's auth key"
+    );
+    assert!(
+        bucket.get(&shop_principal_key).await?.is_some(),
+        "disablement retains the other project's auth key"
+    );
+    let shop_key = logins.join(wamn_control_provision::control_administration_key(
+        "shop", "dev",
+    ));
+    let stalled = TcpListener::bind("127.0.0.1:0").await?;
+    let stalled_port = stalled.local_addr()?.port();
+    let stalled_connection = tokio::spawn(async move {
+        let (_stream, _) = stalled.accept().await.unwrap();
+        std::future::pending::<()>().await;
+    });
+    std::fs::write(
+        &shop_key,
+        format!("host=127.0.0.1 port={stalled_port} user=unreachable dbname=unreachable"),
+    )?;
+    // Only shop enables erp, so its unavailable environment reports a bounded incomplete write.
+    let failed = tokio::time::timeout(
+        std::time::Duration::from_secs(7),
+        call(
+            &delivery,
+            "connection/write",
+            boss.as_str(),
+            changed.clone(),
+        ),
+    )
+    .await?;
+    assert!(
+        failed
+            .unwrap_err()
+            .starts_with("application_write_incomplete ")
+    );
+    stalled_connection.abort();
+    std::fs::write(&shop_key, &shop_url)?;
+    // A disabled project's unavailable environment does not block a connection write.
+    std::fs::write(
+        logins.join(wamn_control_provision::control_administration_key(
+            "billing", "dev",
+        )),
+        "host=127.0.0.1 port=1 user=unreachable dbname=unreachable",
+    )?;
+    call(
+        &delivery,
+        "connection/write",
+        boss.as_str(),
+        changed.clone(),
+    )
+    .await
+    .unwrap();
     changed["integration"] = "wamn".into();
     assert!(
         call(&delivery, "connection/write", boss.as_str(), changed)
@@ -1791,5 +2142,6 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
             .unwrap_err()
             .starts_with("integration_not_found ")
     );
+    std::fs::remove_dir_all(logins)?;
     Ok(())
 }

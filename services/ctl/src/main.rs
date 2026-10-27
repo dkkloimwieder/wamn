@@ -197,18 +197,14 @@ mod tests {
     use super::{Cli, Command};
 
     #[test]
-    fn connection_declare_parses_without_a_secret_argument() {
+    fn connection_write_parses_without_a_secret_argument() {
         let args = [
             "wamn-ctl",
             "connection",
-            "declare",
+            "write",
             "--org",
             "acme",
-            "--name",
-            "erp",
-            "--requirement-type",
-            "http",
-            "--definition",
+            "--file",
             "/tmp/erp.json",
             "--system-database-url",
             "postgres://localhost/control",
@@ -217,18 +213,41 @@ mod tests {
         let Command::Connection(connection) = parsed.command else {
             panic!("connection verb")
         };
-        let wamn_ctl::component_verbs::ConnectionCommand::Declare(declare) = connection.command
-        else {
-            panic!("declare verb");
+        let wamn_ctl::component_verbs::ConnectionCommand::Write(write) = connection.command else {
+            panic!("write verb");
         };
-        assert_eq!(declare.org, "acme");
-        assert_eq!(declare.name, "erp");
-        assert_eq!(
-            declare.requirement_type,
-            wamn_ctl::component_verbs::RequirementTypeArg::Http
-        );
-        assert_eq!(declare.definition, std::path::Path::new("/tmp/erp.json"));
+        assert_eq!(write.org, "acme");
+        assert_eq!(write.file, std::path::Path::new("/tmp/erp.json"));
         assert!(Cli::try_parse_from(args.into_iter().chain(["--secret", "forbidden"])).is_err());
+    }
+
+    #[test]
+    fn connection_rotation_selects_a_name_and_refuses_rename() {
+        let cli = Cli::try_parse_from([
+            "wamn-ctl",
+            "connection",
+            "rotate",
+            "--org",
+            "acme",
+            "--connection",
+            "erp",
+            "--file",
+            "/private/erp-secret.json",
+            "--system-database-url",
+            "postgres://localhost/control",
+        ])
+        .unwrap();
+        let Command::Connection(connection) = cli.command else {
+            panic!("connection verb")
+        };
+        let wamn_ctl::component_verbs::ConnectionCommand::Rotate(rotation) = connection.command
+        else {
+            panic!("rotate verb")
+        };
+        assert_eq!(rotation.connection, "erp");
+        assert!(
+            Cli::try_parse_from(["wamn-ctl", "connection", "rename", "--org", "acme"]).is_err()
+        );
     }
 
     #[test]

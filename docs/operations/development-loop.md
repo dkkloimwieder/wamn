@@ -53,9 +53,11 @@ Supply `--materializer-component` with the absolute path to a `materializer.wasm
 The emitted `local_artifacts` configuration names the local output directory and these components.
 For declared connections, pass `--local-bindings` with an absolute path to the selection file.
 The emitted configuration stores that path in `local_artifacts.bindings`.
-If the host needs credentials, pass `--credentials-file` with a file of the form `{project: {handle: secret}}`.
-The command copies the file into the environment directory with mode 0600, and `credentials_file` names the copy.
-The loop passes that path to the host as `WAMN_CREDENTIALS_FILE`, as the cluster passes its mounted Secret.
+The host reads connection credentials from the system database through its scoped reader.
+Set `WAMN_CONTROL_DATABASE_URL` to the control database URL.
+Before activation, write connections with `wamn-ctl connection write`.
+Import credentials explicitly with `wamn-ctl connection import-credentials --org <org> --file <private-import.json>`.
+The `dev up` command neither copies nor imports a credential file.
 
 Supply `--platform-domain` with the domain of the platform principal emails, for example `example.invalid`.
 The emitted configuration stores it in `platform_domain`.

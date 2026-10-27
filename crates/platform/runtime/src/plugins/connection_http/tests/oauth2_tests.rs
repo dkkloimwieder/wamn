@@ -25,6 +25,7 @@ struct Fixture {
     base: String,
     observed: Arc<Mutex<Vec<Observed>>>,
     task: JoinHandle<()>,
+    credentials: crate::plugins::wamn_credentials::test_util::Fixture,
 }
 
 impl Fixture {
@@ -83,6 +84,7 @@ impl Fixture {
             }
         });
         Self {
+            credentials: crate::plugins::wamn_credentials::test_util::Fixture::new().await,
             base,
             observed,
             task,
@@ -98,23 +100,16 @@ impl Fixture {
         }})
     }
 
-    fn plugin(&self, secret: &serde_json::Value) -> ConnectionHttp {
+    async fn plugin(&mut self, secret: &serde_json::Value) -> ConnectionHttp {
         let mut plugin = offline_plugin();
         plugin.allowed_hosts =
             vec![self.base.strip_suffix("bound/").unwrap().parse().unwrap()].into();
-        plugin.vault = Arc::new(WamnCredentials::from_projects(HashMap::from([
-            (
-                "project-a".into(),
-                HashMap::from([
-                    ("handle".into(), secret.to_string()),
-                    ("other-handle".into(), secret.to_string()),
-                ]),
-            ),
-            (
-                "project-b".into(),
-                HashMap::from([("handle".into(), secret.to_string())]),
-            ),
-        ])));
+        for name in ["handle", "other-handle"] {
+            self.credentials
+                .put(name, &secret.to_string(), &["project-a", "project-b"])
+                .await;
+        }
+        plugin.vault = Arc::new(self.credentials.reader("project-a").await);
         plugin
     }
 
@@ -160,7 +155,13 @@ impl Fixture {
         };
         let before = format!("{request:?}");
         let result = plugin
-            .execute_authenticated(scope, &authority, decision, &request, handle)
+            .execute_authenticated(
+                scope,
+                &authority,
+                decision,
+                &request,
+                &format!("org:acme:{handle}"),
+            )
             .await;
         assert_eq!(
             format!("{request:?}"),
@@ -203,8 +204,9 @@ fn token(number: u8, expires_in: Option<u64>) -> (u16, String) {
 async fn fresh_and_cached_bearer_use_basic_form_authentication_without_guest_secrets() {
     use base64::Engine as _;
 
-    let fixture = Fixture::start(vec![token(1, Some(3600))], vec![200, 200]).await;
-    let plugin = fixture.plugin(&fixture.secret());
+    let _lock = wamn_test_postgres::lock();
+    let mut fixture = Fixture::start(vec![token(1, Some(3600))], vec![200, 200]).await;
+    let plugin = fixture.plugin(&fixture.secret()).await;
     for _ in 0..2 {
         assert_eq!(
             fixture.send(&plugin, 7, "handle").await.unwrap().status,
@@ -246,10 +248,11 @@ async fn fresh_and_cached_bearer_use_basic_form_authentication_without_guest_sec
 
 #[tokio::test]
 async fn token_endpoint_can_equal_the_bound_base_without_adding_a_query() {
-    let fixture = Fixture::start(vec![token(1, Some(3600))], vec![200]).await;
+    let _lock = wamn_test_postgres::lock();
+    let mut fixture = Fixture::start(vec![token(1, Some(3600))], vec![200]).await;
     let mut secret = fixture.secret();
     secret["oauth2"]["token-url"] = fixture.base.clone().into();
-    let plugin = fixture.plugin(&secret);
+    let plugin = fixture.plugin(&secret).await;
     assert_eq!(
         fixture.send(&plugin, 7, "handle").await.unwrap().status,
         200
@@ -265,12 +268,13 @@ async fn token_endpoint_can_equal_the_bound_base_without_adding_a_query() {
 
 #[tokio::test]
 async fn short_or_absent_expiry_never_caches_across_requests_and_scope_is_optional() {
+    let _lock = wamn_test_postgres::lock();
     for expiry in [None, Some(0), Some(59), Some(60)] {
-        let fixture =
+        let mut fixture =
             Fixture::start(vec![token(1, expiry), token(2, expiry)], vec![200, 200]).await;
         let mut secret = fixture.secret();
         secret["oauth2"].as_object_mut().unwrap().remove("scope");
-        let plugin = fixture.plugin(&secret);
+        let plugin = fixture.plugin(&secret).await;
         for _ in 0..2 {
             fixture.send(&plugin, 7, "handle").await.unwrap();
         }
@@ -284,12 +288,13 @@ async fn short_or_absent_expiry_never_caches_across_requests_and_scope_is_option
 
 #[tokio::test]
 async fn clock_seam_expires_cached_token_at_the_sixty_second_margin() {
-    let fixture = Fixture::start(
+    let _lock = wamn_test_postgres::lock();
+    let mut fixture = Fixture::start(
         vec![token(1, Some(3600)), token(2, Some(3600))],
         vec![200, 200],
     )
     .await;
-    let mut plugin = fixture.plugin(&fixture.secret());
+    let mut plugin = fixture.plugin(&fixture.secret()).await;
     fixture.send(&plugin, 7, "handle").await.unwrap();
     plugin.oauth2.now = || Instant::now() + Duration::from_mins(59);
     fixture.send(&plugin, 7, "handle").await.unwrap();
@@ -302,16 +307,18 @@ async fn clock_seam_expires_cached_token_at_the_sixty_second_margin() {
 
 #[tokio::test]
 async fn cache_separates_project_handle_and_selected_generation() {
-    let fixture = Fixture::start(
+    let _lock = wamn_test_postgres::lock();
+    let mut fixture = Fixture::start(
         (1..=4).map(|n| token(n, Some(3600))).collect(),
         vec![200; 4],
     )
     .await;
-    let mut plugin = fixture.plugin(&fixture.secret());
+    let mut plugin = fixture.plugin(&fixture.secret()).await;
     for (generation, handle) in [(7, "handle"), (8, "handle"), (8, "other-handle")] {
         fixture.send(&plugin, generation, handle).await.unwrap();
     }
     plugin.project = "project-b".into();
+    plugin.vault = Arc::new(fixture.credentials.reader("project-b").await);
     fixture.send(&plugin, 8, "handle").await.unwrap();
     assert_eq!(fixture.counts(), (4, 4));
 }
@@ -319,12 +326,13 @@ async fn cache_separates_project_handle_and_selected_generation() {
 #[tokio::test]
 async fn refused_token_never_dispatches_api_or_exposes_error_body() {
     for status in [400, 401, 302, 500] {
-        let fixture = Fixture::start(
+        let _lock = wamn_test_postgres::lock();
+        let mut fixture = Fixture::start(
             vec![(status, format!("{CLIENT_ID} {CLIENT_SECRET}"))],
             vec![],
         )
         .await;
-        let plugin = fixture.plugin(&fixture.secret());
+        let plugin = fixture.plugin(&fixture.secret()).await;
         assert!(matches!(
             fixture.send(&plugin, 7, "handle").await,
             Err(ConnectionError::CredentialUnavailable)
@@ -336,12 +344,13 @@ async fn refused_token_never_dispatches_api_or_exposes_error_body() {
 #[tokio::test]
 async fn api_401_fetches_once_more_and_returns_the_second_response() {
     for second in [200, 401] {
-        let fixture = Fixture::start(
+        let _lock = wamn_test_postgres::lock();
+        let mut fixture = Fixture::start(
             vec![token(1, Some(3600)), token(2, Some(3600))],
             vec![401, second],
         )
         .await;
-        let plugin = fixture.plugin(&fixture.secret());
+        let plugin = fixture.plugin(&fixture.secret()).await;
         assert_eq!(
             fixture.send(&plugin, 7, "handle").await.unwrap().status,
             second
@@ -365,7 +374,8 @@ async fn api_401_fetches_once_more_and_returns_the_second_response() {
 
 #[tokio::test]
 async fn failed_refresh_returns_the_first_api_401_without_another_api_request() {
-    let fixture = Fixture::start(
+    let _lock = wamn_test_postgres::lock();
+    let mut fixture = Fixture::start(
         vec![
             token(1, Some(3600)),
             (400, format!("{CLIENT_ID} {CLIENT_SECRET}")),
@@ -373,7 +383,7 @@ async fn failed_refresh_returns_the_first_api_401_without_another_api_request() 
         vec![401],
     )
     .await;
-    let plugin = fixture.plugin(&fixture.secret());
+    let plugin = fixture.plugin(&fixture.secret()).await;
     let response = fixture.send(&plugin, 7, "handle").await.unwrap();
     assert_eq!(response.status, 401);
     assert_eq!(response.body, b"api-401");
@@ -383,7 +393,8 @@ async fn failed_refresh_returns_the_first_api_401_without_another_api_request() 
 
 #[tokio::test]
 async fn token_url_outside_binding_or_ambiguous_path_refuses_before_dispatch() {
-    let fixture = Fixture::start(vec![], vec![]).await;
+    let _lock = wamn_test_postgres::lock();
+    let mut fixture = Fixture::start(vec![], vec![]).await;
     let origin = fixture.base.strip_suffix("bound/").unwrap();
     for endpoint in [
         "http://other.invalid/bound/token".into(),
@@ -396,7 +407,7 @@ async fn token_url_outside_binding_or_ambiguous_path_refuses_before_dispatch() {
     ] {
         let mut secret = fixture.secret();
         secret["oauth2"]["token-url"] = endpoint.into();
-        let plugin = fixture.plugin(&secret);
+        let plugin = fixture.plugin(&secret).await;
         assert!(matches!(
             fixture.send(&plugin, 7, "handle").await,
             Err(ConnectionError::CredentialUnavailable)
@@ -407,7 +418,8 @@ async fn token_url_outside_binding_or_ambiguous_path_refuses_before_dispatch() {
 
 #[tokio::test]
 async fn malformed_credentials_and_multiple_arms_refuse_before_dispatch() {
-    let fixture = Fixture::start(vec![], vec![]).await;
+    let _lock = wamn_test_postgres::lock();
+    let mut fixture = Fixture::start(vec![], vec![]).await;
     let valid = fixture.secret();
     let mut invalid = vec![serde_json::json!({"oauth2": null})];
     for field in ["token-url", "client-id", "client-secret"] {
@@ -427,7 +439,7 @@ async fn malformed_credentials_and_multiple_arms_refuse_before_dispatch() {
     unknown["oauth2"]["extra"] = true.into();
     invalid.push(unknown);
     for secret in invalid {
-        let plugin = fixture.plugin(&secret);
+        let plugin = fixture.plugin(&secret).await;
         assert!(matches!(
             fixture.send(&plugin, 7, "handle").await,
             Err(ConnectionError::CredentialUnavailable)
@@ -446,8 +458,9 @@ async fn malformed_token_response_refuses_without_leaking_its_body() {
         r#"{"access_token":"ok"}"#.into(),
         r#"{"access_token":"ok","token_type":"Bearer","expires_in":-1}"#.into(),
     ] {
-        let fixture = Fixture::start(vec![(200, body)], vec![]).await;
-        let plugin = fixture.plugin(&fixture.secret());
+        let _lock = wamn_test_postgres::lock();
+        let mut fixture = Fixture::start(vec![(200, body)], vec![]).await;
+        let plugin = fixture.plugin(&fixture.secret()).await;
         assert!(matches!(
             fixture.send(&plugin, 7, "handle").await,
             Err(ConnectionError::CredentialUnavailable)

@@ -242,6 +242,12 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/system/0031_environment_connection_bindings.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/system/0032_c35_connection_authority.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/system/0032_c35_connection_authority.sql"
+        ),
+    },
 ];
 
 /// Every file of `deploy/sql/migrations/project/`, in order.
@@ -456,6 +462,12 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/project/0041_history_pruning_watermarks.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/project/0042_c35_connection_bindings.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/project/0042_c35_connection_bindings.sql"
+        ),
+    },
 ];
 
 #[cfg(test)]
@@ -511,7 +523,7 @@ mod tests {
         }
     }
 
-    /// The connection reference migration carries the latest administration
+    /// The connection binding migration carries the latest administration
     /// surface. Earlier migrations retain the surfaces installed databases recorded.
     #[test]
     fn the_latest_administration_migration_is_the_rendered_administration_surface() {
@@ -524,9 +536,9 @@ mod tests {
             .find(|migration| {
                 migration
                     .relative_path
-                    .ends_with("_connection_reference_reader.sql")
+                    .ends_with("_c35_connection_bindings.sql")
             })
-            .expect("the connection reference reader migration exists");
+            .expect("the connection binding migration exists");
         assert!(
             migration.sql.ends_with(&rendered),
             "{} does not end with the rendered administration surface",
@@ -577,9 +589,9 @@ mod tests {
             .find(|migration| {
                 migration
                     .relative_path
-                    .ends_with("_org_connection_authority.sql")
+                    .ends_with("_c35_connection_authority.sql")
             })
-            .expect("the migration that drops catalog.package_artifacts exists");
+            .expect("the connection authority migration exists");
         let grants = format!(
             "\n    {}\n  END IF;",
             crate::sql::control_surface_grants_sql()

@@ -10,9 +10,10 @@ Usage:
   live.sh prepare CREDENTIALS_JSON ORG OUTPUT_DIRECTORY
   live.sh run CREDENTIALS_JSON ORG TENANT ENVIRONMENT RELEASE_DIGEST PRINCIPAL RECORD_ID QUERY_FILE
 
-prepare writes a connection definition and host credentials for the owner to deploy.
-run requires WAMN_PG_ADMIN_URL, WAMN_CONTROL_DATABASE_URL, and WAMN_CREDENTIALS_FILE.
-WAMN_CREDENTIALS_FILE must name the source of the deployed host credential mount.
+prepare writes a connection request and a private credential import file.
+Write the connection with connection write, then import the private file with connection import-credentials.
+run requires WAMN_PG_ADMIN_URL and WAMN_CONTROL_DATABASE_URL.
+The deployed host reads the imported credentials from the system database.
 Set WAMN_CTL to the CLI path if it is not target/debug/wamn-ctl.
 USAGE
   exit 2
@@ -42,31 +43,27 @@ if [[ $mode == prepare ]]; then
   mkdir -p "$output"
   # Refuse to replace an existing file that can hold another deployment's keys.
   set -o noclobber
-  render_credentials > "$output/credentials.json"
+  render_credentials > "$output/credential-import.json"
   jq -n --arg authority "https://$host" \
-    '{"primary-authority":$authority,"tls-verification":"verify-authority"}' > "$output/definition.json"
-  printf 'Prepared %s/credentials.json and %s/definition.json. Deploy them before run.\n' "$output" "$output"
+    '{integration:"http",name:"netsuite",transport:"http",exchange:"request",
+      parameters:{"primary-authority":$authority,"tls-verification":"verify-authority"},
+      status:"active"}' > "$output/connection.json"
+  printf 'Prepared %s/credential-import.json and %s/connection.json. Write the connection and import credentials before run.\n' "$output" "$output"
   exit 0
 fi
 [[ $mode == run && $# == 9 ]] || usage
 : "${WAMN_PG_ADMIN_URL:?Set the deployed project admin database URL}"
 : "${WAMN_CONTROL_DATABASE_URL:?Set the control database URL}"
-: "${WAMN_CREDENTIALS_FILE:?Set the source of the deployed host credential mount}"
 tenant=$4 environment=$5 digest=$6 principal=$7 record_id=$8 query_file=$9
 ctl=${WAMN_CTL:-target/debug/wamn-ctl}
 work=$(mktemp -d "${TMPDIR:-/var/tmp}/wamn-netsuite-live.XXXXXX")
 trap 'rm -rf -- "$work"' EXIT
-render_credentials > "$work/expected.json"
-jq -en --arg org "$org" --slurpfile expected "$work/expected.json" --slurpfile mounted "$WAMN_CREDENTIALS_FILE" \
-  '($expected[0].orgs[$org].netsuite|fromjson) == ($mounted[0].orgs[$org].netsuite|fromjson)' >/dev/null || {
-  echo 'The supplied keys differ from the deployed credential source.' >&2
-  exit 1
-}
-authority=$(psql -XAt "$WAMN_CONTROL_DATABASE_URL" -v ON_ERROR_STOP=1 -v org="$org" <<'SQL'
-SELECT definition->>'primary-authority' FROM registry.org_connections WHERE org=:'org' AND name='netsuite' AND type='http';
+authority=$(psql -XqAt "$WAMN_CONTROL_DATABASE_URL" -v ON_ERROR_STOP=1 -v org="$org" <<'SQL'
+SET ROLE wamn_control;
+SELECT parameters->>'primary-authority' FROM registry.connection_rows(:'org') WHERE name='netsuite' AND integration='http' AND status='active';
 SQL
 )
-[[ $authority == "https://$host" ]] || { echo 'The org connection differs from account_host. Declare and apply it first.' >&2; exit 1; }
+[[ $authority == "https://$host" ]] || { echo 'The org connection differs from account_host. Write and apply it first.' >&2; exit 1; }
 jq -n --arg id "$record_id" '{id:$id}' > "$work/record_get.json"
 jq -n --rawfile q "$query_file" '{q:$q}' > "$work/suiteql_query.json"
 for wiring in record_get suiteql_query; do

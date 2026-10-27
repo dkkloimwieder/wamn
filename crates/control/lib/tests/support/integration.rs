@@ -596,7 +596,7 @@ pub async fn exercise(
         if connector == "netsuite" {
             "netsuite"
         } else {
-            "upstream"
+            "rest-fixture"
         },
         "http",
         json!({"primary-authority":http_connection::ORIGIN, "tls-verification":"disabled"}),
@@ -787,26 +787,11 @@ pub async fn exercise(
         applications: &environment::show::serving_applications(&platform, &scope).await?,
         auth: &auth,
     };
-    let source_id: String = project
-        .query_one(
-            "SELECT external_system_id::text FROM platform.connection WHERE name=$1",
-            &[&if connector == "netsuite" {
-                "netsuite"
-            } else {
-                "upstream"
-            }],
-        )
-        .await?
-        .get(0);
     let read = |name: &str| -> anyhow::Result<WiringDocument> {
         let mut value = wamn_schema_generator::operation_reference::read_authored_document(
             &repository.join(format!("apps/{connector}/publication/wirings/{name}.json")),
             wamn_schema_generator::operation_reference::AuthoredDocument::Wiring,
         )?;
-        if name == pull_wiring(connector) {
-            value["nodes"]["rows"]["params"]["parameters"] =
-                json!({"external_system_id":source_id});
-        }
         if connector == "netsuite" && name == "netsuite_pull" {
             value["nodes"]["page"]["params"]["path-and-query"] =
                 json!("/services/rest/query/v1/suiteql?limit=2");
@@ -1500,7 +1485,7 @@ async fn assertions_inner(
             );
             let expected = json!([{"key":"five","name":"Fifth"},{"key":"four","name":"Fourth"},{"key":"one","name":"First"},{"key":"three","name":"Third"},{"key":"two","name":"Second"}]);
             ensure!(rows["items"] == expected, "consumer rows differ: {rows}");
-            let provenance: bool = project.query_one("SELECT count(*) = 5 AND bool_and(external_id = key AND external_system_id IS NOT NULL) FROM rest_consumer_fixture.item", &[]).await?.get(0);
+            let provenance: bool = project.query_one("SELECT count(*) = 5 AND bool_and(external_id = key AND external_system_id IS NOT NULL AND external_system_id = (SELECT external_system_id FROM platform.connection WHERE name = 'rest-fixture')) FROM rest_consumer_fixture.item", &[]).await?.get(0);
             ensure!(provenance, "consumer records must retain source provenance");
             let logs = rows["logs"].as_array().unwrap();
             ensure!(

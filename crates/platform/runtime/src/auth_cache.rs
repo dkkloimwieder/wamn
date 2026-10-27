@@ -52,8 +52,7 @@ pub struct PrincipalGrants {
     /// Whether that row is `active`. An inactive principal holds no role.
     pub active: bool,
     /// Only a user can select an active role for a session.
-    #[serde(default)]
-    pub user: bool,
+    pub user: Option<bool>,
     /// Each held role, with each permission of that role.
     pub roles: BTreeMap<String, BTreeSet<String>>,
 }
@@ -327,7 +326,7 @@ impl AuthCache {
             Ok(Answer::Principal {
                 grants: Some(grants),
                 ..
-            }) => Ok(grants),
+            }) if grants.user.is_some() => Ok(grants),
             Ok(_) => Err(self.ticket(&key)),
             Err(ticket) => Err(ticket),
         }
@@ -494,6 +493,40 @@ pub(crate) mod tests {
 
     pub(crate) use super::test_util::{nats, until, watched};
 
+    #[test]
+    fn grants_without_principal_type_are_a_cache_miss() {
+        let cache = AuthCache::default();
+        let missing: PrincipalGrants = serde_json::from_value(
+            serde_json::json!({"present":true,"active":true,"roles":{"admin":[]}}),
+        )
+        .unwrap();
+        assert_eq!(missing.user, None);
+        let key = principal_key("t", "p");
+        cache.replica().entries.insert(
+            key.clone(),
+            Entry {
+                revision: 7,
+                seen: Instant::now(),
+                answer: Some(Answer::Principal {
+                    grants: Some(missing.clone()),
+                    provisioned: true,
+                }),
+            },
+        );
+        assert_eq!(cache.grants("t", "p"), Err(Ticket(7)));
+        for user in [true, false] {
+            let grants = PrincipalGrants {
+                user: Some(user),
+                ..missing.clone()
+            };
+            cache.replica().entries.get_mut(&key).unwrap().answer = Some(Answer::Principal {
+                grants: Some(grants.clone()),
+                provisioned: true,
+            });
+            assert_eq!(cache.grants("t", "p"), Ok(grants));
+        }
+    }
+
     #[tokio::test]
     async fn a_host_without_the_bucket_keeps_no_fact() {
         let cache = AuthCache::default();
@@ -502,6 +535,7 @@ pub(crate) mod tests {
         let ticket = cache.grants("t", "p").unwrap_err();
         let present = PrincipalGrants {
             present: true,
+            user: Some(false),
             ..PrincipalGrants::default()
         };
         cache.keep_grants("t", "p", ticket, present).await;
@@ -559,6 +593,7 @@ pub(crate) mod tests {
         }
         let present = PrincipalGrants {
             present: true,
+            user: Some(false),
             ..PrincipalGrants::default()
         };
 
@@ -651,6 +686,7 @@ pub(crate) mod tests {
         let ticket = cache.grants("t", "b").unwrap_err();
         let present = PrincipalGrants {
             present: true,
+            user: Some(false),
             ..PrincipalGrants::default()
         };
         cache.keep_grants("t", "b", ticket, present).await;

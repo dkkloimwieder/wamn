@@ -29,9 +29,6 @@ pub struct DevUpRequest {
     /// The built platform UI directory served beside application bundles.
     pub platform_ui: PathBuf,
     pub packages: Vec<PathBuf>,
-    /// The host credentials file, `{project: {name: secret}}`. It is copied
-    /// into the private root, never referenced where it lies.
-    pub credentials_file: Option<PathBuf>,
     /// The built `wamn-cdc-reader` the loop runs beside the host.
     pub cdc_reader_binary: PathBuf,
     /// The event-broker credential the reader publishes change events with.
@@ -43,9 +40,6 @@ pub struct DevUpRequest {
     pub event_materializer_username: String,
     pub event_materializer_password_file: PathBuf,
 }
-
-/// The private copy of the host credentials file inside the root.
-const CREDENTIALS_FILE: &str = "credentials.json";
 
 /// Provision the environment and return the configuration file.
 pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<PathBuf> {
@@ -70,11 +64,6 @@ pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<Pat
                 .with_context(|| format!("resolve package source {}", package.display()))?,
         );
     }
-    let credentials_file = args
-        .credentials_file
-        .as_ref()
-        .map(|source| copy_private(source, &args.root.join(CREDENTIALS_FILE)))
-        .transpose()?;
     let local_artifacts = super::config::LocalArtifacts {
         directory: args.root.canonicalize()?.join("local-artifacts"),
         bindings: args
@@ -111,7 +100,6 @@ pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<Pat
         route_host: args.route_host.clone(),
         platform_domain: args.platform_domain.clone(),
         package_sources,
-        credentials_file,
         cdc_reader: None,
         event_materializer_username: args.event_materializer_username.clone(),
         event_materializer_password_file: args.event_materializer_password_file.clone(),
@@ -136,16 +124,6 @@ pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<Pat
         )
         .await?,
     );
-    if let Some(path) = &inputs.credentials_file {
-        let contents =
-            std::fs::read_to_string(path).context("read credentials for one-time import")?;
-        crate::connection_configuration::import(
-            &args.system_database_url,
-            &environment.identity.org,
-            &contents,
-        )
-        .await?;
-    }
     let config = write_dev_config(
         &args.root,
         &args.system_database_url,
@@ -164,14 +142,6 @@ pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<Pat
     environment.issuer.retain(&args.root.canonicalize()?)?;
     admin_task.abort();
     Ok(config)
-}
-
-/// Copy a secret-bearing file to `target` with mode 0600 and return `target`.
-fn copy_private(source: &std::path::Path, target: &std::path::Path) -> anyhow::Result<PathBuf> {
-    let bytes = std::fs::read(source)
-        .with_context(|| format!("read the credentials file {}", source.display()))?;
-    write_private(target, &bytes)?;
-    Ok(target.to_owned())
 }
 
 /// Write private runtime credentials into the environment directory.

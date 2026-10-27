@@ -118,7 +118,7 @@ pub async fn create_role_in(
     changes: &AuthChanges,
 ) -> anyhow::Result<bool> {
     in_environment(target, changes, async |tx, drops| {
-        create_role(tx, &target.tenant(), role, drops).await
+        create_role(tx, &target.environment_key(), role, drops).await
     })
     .await
 }
@@ -131,7 +131,7 @@ pub async fn delete_role_in(
     changes: &AuthChanges,
 ) -> anyhow::Result<bool> {
     in_environment(target, changes, async |tx, drops| {
-        delete_role(tx, &target.tenant(), role, drops).await
+        delete_role(tx, &target.environment_key(), role, drops).await
     })
     .await
 }
@@ -144,7 +144,7 @@ pub async fn grant_permission_in(
     changes: &AuthChanges,
 ) -> anyhow::Result<PermissionGrantOutcome> {
     in_environment(target, changes, async |tx, drops| {
-        grant_permission(tx, &target.tenant(), role, reference, drops).await
+        grant_permission(tx, &target.environment_key(), role, reference, drops).await
     })
     .await
 }
@@ -157,7 +157,7 @@ pub async fn revoke_permission_in(
     changes: &AuthChanges,
 ) -> anyhow::Result<()> {
     in_environment(target, changes, async |tx, drops| {
-        revoke_permission(tx, &target.tenant(), role, reference, drops).await
+        revoke_permission(tx, &target.environment_key(), role, reference, drops).await
     })
     .await
 }

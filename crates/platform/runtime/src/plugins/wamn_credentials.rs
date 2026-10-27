@@ -1,374 +1,504 @@
-//! Host-owned environment credential store.
+//! Host-owned connection credentials read through login-scoped database functions.
 //!
-//! Portable effects resolve a credential handle selected by the admitted
-//! connection generation. Secret material never enters the guest or run facts.
-//!
-//! - Ordinary handles use the host-owned project identity. Org handles use
-//!   the trusted host org and never fall back to project credentials.
-//! - The dedicated database reader accesses immutable credential generations.
-//! - No configured source is `unavailable`; a configured source missing the
-//!   selected handle is `not-found`.
+//! Secret material never enters guests or stored run facts. An absent reader
+//! is unavailable. A reader with no matching enabled connection returns none.
 
-use std::collections::HashMap;
+use std::sync::Arc;
 
 use anyhow::Context as _;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CredentialError {
-    NotFound,
-    Unavailable,
-}
-
-/// Project and org credentials read by the host.
+/// Connection credentials scoped by the authenticated reader login.
+#[derive(Clone)]
 pub struct WamnCredentials {
-    /// Whether ANY backing source was configured. Distinguishes `unavailable`
-    /// (no source — retryable) from `not-found` (source present, name absent —
-    /// config-shaped).
-    has_source: bool,
-    /// project → { credential name → secret material }.
-    projects: HashMap<String, HashMap<String, String>>,
-    orgs: HashMap<String, HashMap<String, String>>,
     org: Option<String>,
-    database: Option<std::sync::Arc<tokio_postgres::Client>>,
+    database: Option<Arc<tokio_postgres::Client>>,
 }
 
 impl std::fmt::Debug for WamnCredentials {
-    /// Names the shape only. The map holds secret material, so no key or value
-    /// of it reaches a log.
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("WamnCredentials")
-            .field("has_source", &self.has_source)
-            .field("projects", &self.projects.len())
+            .field("available", &self.database.is_some())
             .finish_non_exhaustive()
     }
 }
 
 impl WamnCredentials {
-    /// Read credentials through the dedicated system reader, scoped by the host org.
-    pub fn from_database(client: std::sync::Arc<tokio_postgres::Client>, org: &str) -> Self {
+    /// Use a dedicated system reader whose login fixes its org and project.
+    pub fn from_database(client: Arc<tokio_postgres::Client>, org: &str) -> Self {
         Self {
-            database: Some(client),
             org: Some(org.to_owned()),
-            has_source: true,
-            ..Self::empty()
+            database: Some(client),
         }
     }
 
-    /// Read the immutable generation selected by a connection handle.
+    /// Keep the explicit unavailable state for hosts without a credential reader.
+    pub fn empty() -> Self {
+        Self {
+            org: None,
+            database: None,
+        }
+    }
+
+    async fn connection(
+        &self,
+        project: &str,
+        name: &str,
+        generation: Option<i64>,
+    ) -> anyhow::Result<Option<tokio_postgres::Row>> {
+        let client = self
+            .database
+            .as_ref()
+            .context("connection credentials unavailable")?;
+        let org = self
+            .org
+            .as_deref()
+            .context("credential reader has no org")?;
+        client.query_opt(
+            "SELECT secret, principal_id, external_system FROM registry.lookup_connection_credential($1,$2,$3,$4)",
+            &[&org, &project, &name, &generation],
+        ).await.context("read connection credential authority")
+    }
+
+    /// Read the selected generation, or the current generation of an unpinned handle.
     pub async fn read_connection(
         &self,
         project: &str,
         handle: &str,
     ) -> anyhow::Result<Option<String>> {
-        let Some(client) = &self.database else {
-            return Ok(self.lookup_connection(project, handle));
-        };
-        let org = self
-            .org
-            .as_deref()
-            .context("credential reader has no org")?;
-        if handle.starts_with("org:") {
-            let (handle_org, name) =
-                wamn_catalog::parse_org_credential_handle(handle).map_err(anyhow::Error::msg)?;
-            anyhow::ensure!(handle_org == org, "credential org mismatch");
-            let generation = handle
-                .rsplit_once('@')
-                .map(|(_, generation)| generation.parse::<i64>())
-                .transpose()?;
-            let row = client.query_opt(
-                "SELECT k.secret FROM registry.connection c JOIN registry.connection_generation g ON g.connection_id = c.id JOIN identity.credential k ON k.id = g.secret_id WHERE c.org = $1 AND c.name = $2 AND c.status = 'active' AND ($3::bigint IS NULL OR g.generation = $3) ORDER BY g.generation LIMIT 1",
-                &[&org, &name, &generation],
-            ).await?;
-            return Ok(row.map(|row| row.get(0)));
-        }
-        self.read(project, handle).await
+        let (name, generation) = self.handle(handle)?;
+        Ok(self
+            .connection(project, name, generation)
+            .await?
+            .and_then(|row| row.get(0)))
     }
 
-    /// Resolve an enabled external connection's inbound principal in this host org.
+    /// Refuse disabled connections and connections that this project does not enable.
+    pub async fn connection_enabled(&self, project: &str, name: &str) -> anyhow::Result<bool> {
+        Ok(self.connection(project, name, None).await?.is_some())
+    }
+
+    /// Resolve a connection principal through the same authority as its credential.
     pub async fn inbound_principal(
         &self,
         project: &str,
         handle: &str,
     ) -> anyhow::Result<Option<String>> {
-        let Some(client) = &self.database else {
-            return Ok(None);
-        };
-        let org = self
-            .org
-            .as_deref()
-            .context("credential reader has no org")?;
-        let (handle_org, name) =
+        let (name, generation) = self.handle(handle)?;
+        Ok(self
+            .connection(project, name, generation)
+            .await?
+            .and_then(|row| row.get(1)))
+    }
+
+    /// Read the projected external system id through the same login-scoped authority.
+    pub(crate) async fn external_system_id(
+        &self,
+        project: &str,
+        handle: &str,
+    ) -> anyhow::Result<Option<String>> {
+        let (name, generation) = self.handle(handle)?;
+        Ok(self
+            .connection(project, name, generation)
+            .await?
+            .and_then(|row| row.get(2)))
+    }
+
+    fn handle<'a>(&self, handle: &'a str) -> anyhow::Result<(&'a str, Option<i64>)> {
+        let (org, name) =
             wamn_catalog::parse_org_credential_handle(handle).map_err(anyhow::Error::msg)?;
-        anyhow::ensure!(handle_org == org, "credential org mismatch");
-        Ok(client.query_opt(
-            "SELECT c.service_principal_id::text FROM registry.connection c JOIN registry.project_connection p ON p.connection_id = c.id AND p.org = c.org WHERE c.org = $1 AND c.name = $2 AND p.project = $3 AND c.status = 'active' AND c.integration <> 'wamn'",
-            &[&org, &name, &project],
-        ).await?.map(|row| row.get(0)))
+        let configured_org = self
+            .org
+            .as_deref()
+            .context("connection credentials unavailable")?;
+        anyhow::ensure!(configured_org == org, "credential org mismatch");
+        let generation = handle
+            .rsplit_once('@')
+            .map(|(_, value)| value.parse())
+            .transpose()?;
+        Ok((name, generation))
     }
 
-    /// Read an imported project credential. An org handle never falls back here.
-    pub async fn read(&self, project: &str, handle: &str) -> anyhow::Result<Option<String>> {
-        if handle.starts_with("org:") {
-            return Ok(None);
-        }
-        let Some(client) = &self.database else {
-            return Ok(self.lookup(project, handle));
-        };
+    /// Read a binding mode from the registry under the reader login's scope.
+    pub async fn binding_read_only(
+        &self,
+        project: &str,
+        environment: &str,
+        application: &str,
+        alias: &str,
+    ) -> anyhow::Result<bool> {
+        let client = self
+            .database
+            .as_ref()
+            .context("connection credentials unavailable")?;
         let org = self
             .org
             .as_deref()
             .context("credential reader has no org")?;
-        Ok(client.query_opt("SELECT secret FROM identity.credential WHERE org = $1 AND project = $2 AND handle = $3 AND connection_id IS NULL", &[&org, &project, &handle]).await?.map(|row| row.get(0)))
-    }
-
-    /// A vault with NO backing source: every lookup is unavailable.
-    /// Gates and credential-less deployments use this.
-    pub fn empty() -> Self {
-        Self {
-            has_source: false,
-            projects: HashMap::new(),
-            orgs: HashMap::new(),
-            org: None,
-            database: None,
+        let mode: Option<String> = client
+            .query_one(
+                "SELECT registry.lookup_connection_binding_mode($1,$2,$3,$4,$5)",
+                &[&org, &project, &environment, &application, &alias],
+            )
+            .await?
+            .get(0);
+        match mode.as_deref() {
+            Some("read") => Ok(true),
+            Some("write") => Ok(false),
+            _ => anyhow::bail!("connection binding mode unavailable"),
         }
     }
+}
 
-    /// A vault over an explicit per-project map (tests / the gate harness).
-    pub fn from_projects(projects: HashMap<String, HashMap<String, String>>) -> Self {
-        Self {
-            has_source: true,
-            projects,
-            orgs: HashMap::new(),
-            org: None,
-            database: None,
-        }
+#[cfg(test)]
+pub(crate) mod test_util {
+    use super::*;
+    use wamn_platform_identity::{
+        auth_changes::AuthDrops,
+        connections::{self, ConnectionWrite},
+    };
+
+    pub(crate) struct Fixture {
+        pub database: wamn_test_postgres::Database,
+        pub admin: tokio_postgres::Client,
     }
 
-    /// Parse in-memory credential maps for a test harness.
-    pub fn from_json(text: &str) -> anyhow::Result<Self> {
-        #[derive(serde::Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Envelope {
-            projects: HashMap<String, HashMap<String, String>>,
-            orgs: HashMap<String, HashMap<String, String>>,
-        }
-        let envelope: Envelope = serde_json::from_str(text).context("invalid credentials file")?;
-        Ok(Self {
-            has_source: true,
-            projects: envelope.projects,
-            orgs: envelope.orgs,
-            org: None,
-            database: None,
-        })
-    }
-
-    /// Bind the trusted host org before sharing this process-lifetime snapshot.
-    pub fn with_org(mut self, org: &str) -> Self {
-        self.org = Some(org.to_owned());
-        self
-    }
-
-    /// Resolve an org handle only within the host org, without project fallback.
-    pub fn lookup_connection(&self, project: &str, handle: &str) -> Option<String> {
-        if handle.starts_with("org:") {
-            let (org, name) = wamn_catalog::parse_org_credential_handle(handle).ok()?;
-            if self.org.as_deref() != Some(org) {
-                return None;
+    impl Fixture {
+        pub async fn new() -> Self {
+            let database = wamn_control_provision::test_database::system();
+            let (admin, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
+                .await
+                .unwrap();
+            tokio::spawn(driver);
+            admin.batch_execute("SET ROLE wamn_system").await.unwrap();
+            for project in ["project-a", "project-b", "host-project", "other-project"] {
+                admin
+                    .batch_execute(
+                        &wamn_control_provision::test_database::seed_org_project_env_sql(
+                            "acme", project, "dev",
+                        ),
+                    )
+                    .await
+                    .unwrap();
             }
-            return self.orgs.get(org)?.get(name).cloned();
+            admin.batch_execute("RESET ROLE").await.unwrap();
+            Self { database, admin }
         }
-        self.lookup(project, handle)
-    }
 
-    /// Resolve a `(project, name)` secret for the native effect adapter.
-    /// `None` if the name is absent or no source is configured.
-    pub fn lookup(&self, project: &str, name: &str) -> Option<String> {
-        self.resolve(project, name).ok()
-    }
-
-    /// Resolve `name` within `project`.
-    fn resolve(&self, project: &str, name: &str) -> Result<String, CredentialError> {
-        if !self.has_source {
-            return Err(CredentialError::Unavailable);
+        pub async fn put(&mut self, name: &str, secret: &str, projects: &[&str]) {
+            let tx = self.admin.transaction().await.unwrap();
+            tx.batch_execute("SET LOCAL ROLE wamn_control")
+                .await
+                .unwrap();
+            tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+                wamn_control_provision::PlatformComponent::Provisioning,
+            ))
+            .await
+            .unwrap();
+            connections::write_connection(&tx, "acme", &ConnectionWrite {
+                name: name.into(), integration: "http".into(), external_system: None,
+                transport: "http".into(), exchange: "request".into(), status: "active".into(),
+                parameters: serde_json::json!({"primary-authority":"https://example.invalid","tls-verification":"verify-authority"}),
+            }, &mut AuthDrops::default()).await.unwrap();
+            for project in projects {
+                connections::write(
+                    &tx,
+                    "acme",
+                    "project_connection.enable",
+                    &serde_json::json!({"project":project,"connection":name}).to_string(),
+                    &mut AuthDrops::default(),
+                )
+                .await
+                .unwrap();
+            }
+            connections::rotate(&tx, "acme", name, secret)
+                .await
+                .unwrap();
+            tx.commit().await.unwrap();
         }
-        self.projects
-            .get(project)
-            .and_then(|creds| creds.get(name))
-            .cloned()
-            .ok_or(CredentialError::NotFound)
+
+        pub async fn reader(&self, project: &str) -> WamnCredentials {
+            let role = format!("c35_{}_{}", self.database.name(), project.replace('-', "_"));
+            self.admin
+                .batch_execute(
+                    &wamn_control_provision::sql::prepare_workload_generation_sql(
+                        wamn_control_provision::WorkloadRoleFamily::ConnectionReader,
+                        self.database.name(),
+                        &role,
+                        "fixture-password",
+                        "2099-01-01T00:00:00Z",
+                    ),
+                )
+                .await
+                .unwrap();
+            self.admin.batch_execute("GRANT EXECUTE ON FUNCTION registry.lookup_connection_binding_mode(text,text,text,text,text) TO wamn_conn_reader").await.unwrap();
+            self.admin
+                .execute(
+                    wamn_control_provision::sql::upsert_control_author_tenant_mapping_sql(),
+                    &[
+                        &role,
+                        &format!("acme--{project}--dev"),
+                        &"acme",
+                        &project,
+                        &"dev",
+                    ],
+                )
+                .await
+                .unwrap();
+            let mut url = url::Url::parse(self.database.url()).unwrap();
+            url.set_username(&role).unwrap();
+            url.set_password(Some("fixture-password")).unwrap();
+            let (client, driver) = tokio_postgres::connect(url.as_str(), tokio_postgres::NoTls)
+                .await
+                .unwrap();
+            tokio::spawn(driver);
+            WamnCredentials::from_database(Arc::new(client), "acme")
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use test_util::Fixture;
 
-    fn one_project_vault() -> WamnCredentials {
-        WamnCredentials::from_projects(HashMap::from([(
-            "proj-a".to_string(),
-            HashMap::from([("notify-token".to_string(), "s3cr3t".to_string())]),
-        )]))
-    }
-
-    /// The unavailable/not-found split: no source at all is retryable
-    /// infrastructure; a present source lacking the name is config-shaped.
-    #[test]
-    fn resolve_distinguishes_no_source_from_unknown_name() {
-        let empty = WamnCredentials::empty();
-        assert!(matches!(
-            empty.resolve("proj-a", "notify-token"),
-            Err(CredentialError::Unavailable)
-        ));
-        let vault = one_project_vault();
-        assert_eq!(vault.resolve("proj-a", "notify-token").unwrap(), "s3cr3t");
-        assert!(matches!(
-            vault.resolve("proj-a", "unknown"),
-            Err(CredentialError::NotFound)
-        ));
-    }
-
-    /// PROJECT SCOPING is the host-enforced boundary: the same name in a
-    /// different project resolves that project's secret (or nothing) — a
-    /// component can never read across projects.
-    #[test]
-    fn resolution_is_project_scoped() {
-        let vault = WamnCredentials::from_projects(HashMap::from([
-            (
-                "proj-a".to_string(),
-                HashMap::from([("token".to_string(), "secret-a".to_string())]),
-            ),
-            (
-                "proj-b".to_string(),
-                HashMap::from([("token".to_string(), "secret-b".to_string())]),
-            ),
-        ]));
-        assert_eq!(vault.resolve("proj-a", "token").unwrap(), "secret-a");
-        assert_eq!(vault.resolve("proj-b", "token").unwrap(), "secret-b");
-        assert!(matches!(
-            vault.resolve("proj-c", "token"),
-            Err(CredentialError::NotFound)
-        ));
-    }
-
-    #[test]
-    fn credentials_file_parses_project_and_org_maps() {
-        let vault = WamnCredentials::from_json(
-            r#"{"projects":{"default":{"notify-token":"tok-1","other":"tok-2"},"p2":{}},"orgs":{}}"#,
-        ).unwrap();
-        assert_eq!(
-            vault.lookup("default", "notify-token").as_deref(),
-            Some("tok-1")
-        );
-        assert_eq!(vault.lookup("default", "other").as_deref(), Some("tok-2"));
-        for text in [
-            "[]",
-            r#"{"p":"flat"}"#,
-            r#"{"projects":{"p":{"n":7}},"orgs":{}}"#,
-        ] {
-            assert!(WamnCredentials::from_json(text).is_err());
-        }
-    }
-
-    #[test]
-    fn in_memory_material_preserves_the_selected_generation() {
-        let original = r#"{"projects":{"proj-a":{"token":"generation-1"}},"orgs":{}}"#;
-        let vault = WamnCredentials::from_json(original).unwrap();
-        let rotated = WamnCredentials::from_json(
-            r#"{"projects":{"proj-a":{"token":"generation-2"}},"orgs":{}}"#,
-        )
-        .unwrap();
-        assert_eq!(
-            vault.lookup("proj-a", "token").as_deref(),
-            Some("generation-1")
-        );
-        assert_eq!(
-            rotated.lookup("proj-a", "token").as_deref(),
-            Some("generation-2")
-        );
-    }
-}
-
-#[cfg(test)]
-mod org_tests {
-    use super::*;
-
-    #[test]
-    fn org_map_scopes_connections_and_keeps_route_lookup_project_only() {
-        let text = r#"{"projects":{"p":{"token":"project","org:other:erp":"fallback","org:acme:missing":"fallback"}},"orgs":{"acme":{"erp":"shared"},"other":{"erp":"other-secret"}}}"#;
-        let unscoped = WamnCredentials::from_json(text).unwrap();
-        assert!(unscoped.lookup_connection("p", "org:acme:erp").is_none());
-        let vault = unscoped.with_org("acme");
-        assert_eq!(
-            vault.lookup_connection("p", "org:acme:erp").as_deref(),
-            Some("shared")
-        );
-        assert_eq!(
-            vault
-                .lookup_connection("another-project", "org:acme:erp")
-                .as_deref(),
-            Some("shared")
-        );
-        assert_eq!(
-            vault.lookup_connection("p", "token").as_deref(),
-            Some("project")
-        );
-        assert!(vault.lookup_connection("p", "org:other:erp").is_none());
-        assert!(vault.lookup_connection("p", "org:acme:missing").is_none());
-        assert!(vault.lookup_connection("p", "org:acme:erp:extra").is_none());
-        assert!(vault.lookup("p", "org:acme:erp").is_none());
-    }
-
-    #[test]
-    fn invalid_envelopes_and_missing_files_have_distinct_results() {
-        for text in [
-            r#"{"version":3,"projects":{},"orgs":{}}"#,
-            r#"{"projects":{},"orgs":{"acme":{"erp":7}}}"#,
-            r#"{"projects":{},"orgs":{},"extra":true}"#,
-        ] {
-            assert!(WamnCredentials::from_json(text).is_err());
-        }
+    #[tokio::test]
+    async fn resolve_distinguishes_no_source_from_unknown_name() {
+        let _lock = wamn_test_postgres::lock();
+        let fixture = Fixture::new().await;
+        let vault = fixture.reader("project-a").await;
         assert!(
+            vault
+                .read_connection("project-a", "org:acme:unknown")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
             WamnCredentials::empty()
-                .lookup_connection("p", "org:acme:erp")
+                .read_connection("project-a", "org:acme:token")
+                .await
+                .unwrap_err()
+                .to_string(),
+            "connection credentials unavailable"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolution_is_project_scoped() {
+        let _lock = wamn_test_postgres::lock();
+        let mut fixture = Fixture::new().await;
+        fixture.put("token-a", "secret-a", &["project-a"]).await;
+        fixture.put("token-b", "secret-b", &["project-b"]).await;
+        let a = fixture.reader("project-a").await;
+        let b = fixture.reader("project-b").await;
+        assert_eq!(
+            a.read_connection("project-a", "org:acme:token-a")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("secret-a")
+        );
+        assert_eq!(
+            b.read_connection("project-b", "org:acme:token-b")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("secret-b")
+        );
+        assert!(
+            a.read_connection("project-a", "org:acme:token-b")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            a.read_connection("project-b", "org:acme:token-b")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            a.read_connection("project-c", "org:acme:token-a")
+                .await
+                .unwrap()
                 .is_none()
         );
     }
-}
 
-#[cfg(test)]
-mod database_tests {
-    use super::*;
-    use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops, auth_bucket, identity_key};
-    use wamn_platform_identity::connections::{
-        ConnectionWrite, import_credentials, rotate, write_connection,
-    };
+    #[tokio::test]
+    async fn invalid_handles_and_missing_sources_have_distinct_results() {
+        let _lock = wamn_test_postgres::lock();
+        let fixture = Fixture::new().await;
+        let vault = fixture.reader("project-a").await;
+        for handle in [
+            "token",
+            "org:acme:erp:extra",
+            "org:acme:erp@no",
+            "org:other:erp",
+        ] {
+            assert!(vault.read_connection("project-a", handle).await.is_err());
+        }
+        assert!(
+            vault
+                .read_connection("project-a", "org:acme:missing")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            WamnCredentials::empty()
+                .read_connection("project-a", "org:acme:missing")
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn credential_import_refuses_invalid_envelopes_and_unknown_connections() {
+        let _lock = wamn_test_postgres::lock();
+        let mut fixture = Fixture::new().await;
+        fixture.put("erp", "secret", &["project-a"]).await;
+        for text in [
+            "[]",
+            r#"{"p":"flat"}"#,
+            r#"{"projects":{"project-a":{"erp":7}},"orgs":{}}"#,
+            r#"{"version":3,"projects":{},"orgs":{}}"#,
+            r#"{"projects":{},"orgs":{"acme":{"erp":7}}}"#,
+            r#"{"projects":{},"orgs":{},"extra":true}"#,
+            r#"{"projects":{"project-a":{"missing":"secret"}},"orgs":{}}"#,
+        ] {
+            let tx = fixture.admin.transaction().await.unwrap();
+            tx.batch_execute("SET LOCAL ROLE wamn_control")
+                .await
+                .unwrap();
+            assert!(
+                wamn_platform_identity::connections::import_credentials(&tx, "acme", text)
+                    .await
+                    .is_err(),
+                "{text}"
+            );
+            tx.rollback().await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn no_source_is_unavailable() {
+        assert_eq!(
+            WamnCredentials::empty()
+                .read_connection("project-a", "org:acme:token")
+                .await
+                .unwrap_err()
+                .to_string(),
+            "connection credentials unavailable"
+        );
+        assert!(
+            WamnCredentials::empty()
+                .connection_enabled("project-a", "erp")
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn binding_modes_are_login_scoped_and_missing_rows_refuse() {
+        let _lock = wamn_test_postgres::lock();
+        let mut fixture = Fixture::new().await;
+        fixture.put("erp", "secret", &["project-a"]).await;
+        fixture.admin.batch_execute("SET ROLE wamn_system; INSERT INTO registry.environment_connection_binding(org,project,env,application,alias,target_id,connection_id,generation,mode,exclusive) SELECT 'acme','project-a','dev','app','erp',t.id,c.id,c.current_generation,'read',false FROM registry.target t,registry.connection c WHERE t.name='cloud' AND c.org='acme' AND c.name='erp'; RESET ROLE").await.unwrap();
+        let vault = fixture.reader("project-a").await;
+        assert!(
+            vault
+                .binding_read_only("project-a", "dev", "app", "erp")
+                .await
+                .unwrap()
+        );
+        for (project, environment, application, alias) in [
+            ("project-b", "dev", "app", "erp"),
+            ("project-a", "prod", "app", "erp"),
+            ("project-a", "dev", "other", "erp"),
+            ("project-a", "dev", "app", "missing"),
+        ] {
+            assert!(
+                vault
+                    .binding_read_only(project, environment, application, alias)
+                    .await
+                    .is_err()
+            );
+        }
+        assert!(
+            vault
+                .database
+                .as_ref()
+                .unwrap()
+                .simple_query("SELECT * FROM registry.environment_connection_binding")
+                .await
+                .is_err()
+        );
+        let login: String = vault
+            .database
+            .as_ref()
+            .unwrap()
+            .query_one("SELECT session_user::text", &[])
+            .await
+            .unwrap()
+            .get(0);
+        fixture
+            .admin
+            .execute(
+                "DELETE FROM wamn_authority.author_login_tenants WHERE login_identity=$1",
+                &[&login],
+            )
+            .await
+            .unwrap();
+        assert!(
+            vault
+                .read_connection("project-a", "org:acme:erp")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            vault
+                .binding_read_only("project-a", "dev", "app", "erp")
+                .await
+                .is_err()
+        );
+    }
 
     #[tokio::test]
     async fn live_import_rotation_and_principal_drops_use_the_store() {
+        use wamn_platform_identity::auth_changes::{
+            AuthChanges, AuthDrops, auth_bucket, identity_key,
+        };
+        use wamn_platform_identity::connections;
         let _lock = wamn_test_postgres::lock();
-        let database = wamn_control_provision::test_database::system();
-        let (mut client, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
+        let mut fixture = Fixture::new().await;
+        fixture.put("erp", "first", &["project-a"]).await;
+        fixture
+            .put("project-secret", "original", &["project-a"])
+            .await;
+        let tx = fixture.admin.transaction().await.unwrap();
+        tx.batch_execute("SET LOCAL ROLE wamn_control")
             .await
             .unwrap();
-        tokio::spawn(async move {
-            driver.await.unwrap();
-        });
-        client.batch_execute("SET ROLE wamn_system; INSERT INTO registry.orgs(id, placement_type) VALUES ('acme','dedicated'); INSERT INTO registry.projects(org,id) VALUES ('acme','project')").await.unwrap();
-        let tx = client.transaction().await.unwrap();
-        tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
-        ))
+        connections::import_credentials(
+            &tx,
+            "acme",
+            r#"{"orgs":{},"projects":{"project-a":{"project-secret":{"connection":"project-secret","secret":"project-secret"}}}}"#,
+        )
         .await
         .unwrap();
         let mut drops = AuthDrops::default();
-        let id = write_connection(&tx, "acme", &ConnectionWrite {
-            id: None, integration: "http".into(), external_system_id: None, name: "erp".into(), transport: "http".into(), exchange: "request".into(),
-            parameters: serde_json::json!({"primary-authority":"https://example.invalid","tls-verification":"verify-authority"}), status: "active".into(),
+        connections::write_connection(&tx, "acme", &connections::ConnectionWrite {
+            name: "erp".into(), integration: "http".into(), external_system: None,
+            transport: "http".into(), exchange: "request".into(), status: "active".into(),
+            parameters: serde_json::json!({"primary-authority":"https://example.invalid","tls-verification":"verify-authority"}),
         }, &mut drops).await.unwrap();
-        let principal: String = tx.query_one("SELECT service_principal_id::text FROM registry.connection WHERE id=$1::text::uuid", &[&id]).await.unwrap().get(0);
-        import_credentials(&tx, "acme", r#"{"orgs":{"acme":{"erp":"first"}},"projects":{"project":{"legacy":"project-secret"}}}"#).await.unwrap();
-        rotate(&tx, "acme", &id, "second").await.unwrap();
+        connections::rotate(&tx, "acme", "erp", "second")
+            .await
+            .unwrap();
+        let principal: String = tx.query_one("SELECT service_principal_id::text FROM registry.connection_rows('acme') WHERE name='erp'", &[]).await.unwrap().get(0);
         tx.commit().await.unwrap();
         let (_server, nats) = crate::auth_cache::test_util::nats().await;
         let bucket = auth_bucket(&nats).await.unwrap();
@@ -376,57 +506,98 @@ mod database_tests {
         bucket.put(&key, "cached".into()).await.unwrap();
         AuthChanges::new(nats).publish(drops).await;
         assert!(bucket.get(&key).await.unwrap().is_none());
-        client.batch_execute("RESET ROLE").await.unwrap();
-        client
-            .batch_execute(&wamn_control_provision::sql::grant_connection_reader_surface_sql())
-            .await
-            .unwrap();
-        client
-            .batch_execute("SET ROLE wamn_conn_reader")
-            .await
-            .unwrap();
-        let vault = WamnCredentials::from_database(std::sync::Arc::new(client), "acme");
+        let vault = fixture.reader("project-a").await;
         assert_eq!(
             vault
-                .read_connection("project", "org:acme:erp@2")
+                .read_connection("project-a", "org:acme:project-secret")
                 .await
                 .unwrap()
                 .as_deref(),
-            Some("first")
-        );
-        assert_eq!(
-            vault
-                .read_connection("project", "org:acme:erp@3")
-                .await
-                .unwrap()
-                .as_deref(),
-            Some("second")
-        );
-        assert_eq!(
-            vault
-                .read_connection("project", "org:acme:erp")
-                .await
-                .unwrap()
-                .as_deref(),
-            Some("first")
-        );
-        assert_eq!(
-            vault.read("project", "legacy").await.unwrap().as_deref(),
             Some("project-secret")
         );
+        for (handle, expected) in [
+            ("org:acme:erp@2", "first"),
+            ("org:acme:erp@3", "second"),
+            ("org:acme:erp", "second"),
+        ] {
+            assert_eq!(
+                vault
+                    .read_connection("project-a", handle)
+                    .await
+                    .unwrap()
+                    .as_deref(),
+                Some(expected)
+            );
+        }
         assert!(
             vault
-                .read_connection("project", "org:other:erp@2")
+                .read_connection("project-a", "org:other:erp@2")
                 .await
                 .is_err()
         );
         assert!(
             vault
-                .read_connection("project", "org:acme:missing@2")
+                .read_connection("project-a", "org:acme:missing@2")
                 .await
                 .unwrap()
                 .is_none()
         );
-        assert!(vault.read("other", "legacy").await.unwrap().is_none());
+        assert!(
+            vault
+                .read_connection("other-project", "org:acme:erp@2")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        for relation in [
+            "identity.credential",
+            "registry.connection",
+            "registry.connection_generation",
+            "registry.project_connection",
+        ] {
+            assert_eq!(
+                vault
+                    .database
+                    .as_ref()
+                    .unwrap()
+                    .simple_query(&format!("SELECT * FROM {relation}"))
+                    .await
+                    .unwrap_err()
+                    .code(),
+                Some(&tokio_postgres::error::SqlState::INSUFFICIENT_PRIVILEGE)
+            );
+        }
+        let other = fixture.reader("project-b").await;
+        assert!(
+            other
+                .read_connection("project-b", "org:acme:erp@2")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            vault
+                .inbound_principal("project-a", "org:acme:erp")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some(principal.as_str())
+        );
+        fixture.admin.batch_execute("SET ROLE wamn_control; SELECT registry.configure_connection('acme','project_connection.disable','{\"project\":\"project-a\",\"connection\":\"erp\"}'); RESET ROLE").await.unwrap();
+        assert!(
+            vault
+                .read_connection("project-a", "org:acme:erp@2")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(!vault.connection_enabled("project-a", "erp").await.unwrap());
+        assert!(
+            vault
+                .inbound_principal("project-a", "org:acme:erp")
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 }
