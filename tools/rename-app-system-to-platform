@@ -48,12 +48,6 @@ EXCLUDED = (
     ".beads/",
     # The submodule; its owner renames it.
     "web/wfe",
-    # The frozen app-schema.sql of 4495e0d20 and the tests of applied project
-    # migrations on a database installed before the rename.
-    "crates/control/lib/tests/fixtures/app-schema-before-authored-roles.sql",
-    "crates/control/lib/tests/authored_roles_migration_live.rs",
-    "crates/control/lib/tests/environment_table_migration_live.rs",
-    "crates/control/lib/tests/user_type_migration_live.rs",
     # This script.
     "tools/rename-app-system-to-platform",
 )
