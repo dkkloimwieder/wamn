@@ -92,11 +92,13 @@ const EXTERNAL_PREREQUISITES: [(&str, &str); 7] = [
 /// literals without pinning the demo triple into the test. What a prefix is
 /// allowed to absorb is [`absorbed_by_a_prerequisite_prefix`], not
 /// `starts_with`.
-const EXTERNAL_PREREQUISITE_PREFIXES: [&str; 7] = [
+const EXTERNAL_PREREQUISITE_PREFIXES: [&str; 8] = [
     // `wamn-a40n.2` adds the administration credential beside the other
     // `provision-project-env` outputs the host mounts.
     "wamn-administration-",
     "wamn-authoring-",
+    // `wamn-vzbx0.2` adds the connection-reader credential beside the identity reader.
+    "wamn-conn-reader-",
     // `values-host-receiving-pat.yaml` mounts all four `provision-project-env`
     // outputs with `optional: false`, but only two were listed here. The
     // overlay's own header has named the set as four since it was written; this
