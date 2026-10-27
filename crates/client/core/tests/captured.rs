@@ -151,7 +151,7 @@ async fn code_contract_preserves_absence_and_value_on_the_wire_and_blocks_null()
     const FIELDS: &[FieldSchema] = &[
         scalar("request_id", "string"),
         scalar("id", "uuid"),
-        scalar("expected_edit_version", "int64"),
+        scalar("expected_edit_version", "int32"),
         FieldSchema {
             children: &[
                 FieldSchema {
@@ -246,8 +246,8 @@ async fn code_contract_preserves_absence_and_value_on_the_wire_and_blocks_null()
         .lock()
         .expect("read actual outgoing requests");
     assert_eq!(requests.len(), 2);
-    assert_eq!(requests[0].body, br#"[{"change":{},"expected_edit_version":"4","id":"00000000-0000-0000-0000-000000000001","request_id":"code-absent"}]"#);
-    assert_eq!(requests[1].body, br#"[{"change":{"code":"priority","maker_id":"abcdef00-0000-0000-0000-000000000002"},"expected_edit_version":"4","id":"00000000-0000-0000-0000-000000000001","request_id":"code-value"}]"#);
+    assert_eq!(requests[0].body, br#"[{"change":{},"expected_edit_version":4,"id":"00000000-0000-0000-0000-000000000001","request_id":"code-absent"}]"#);
+    assert_eq!(requests[1].body, br#"[{"change":{"code":"priority","maker_id":"abcdef00-0000-0000-0000-000000000002"},"expected_edit_version":4,"id":"00000000-0000-0000-0000-000000000001","request_id":"code-value"}]"#);
     for request in requests.iter() {
         assert_eq!(request.url, "http://127.0.0.1:12345/widget/update");
         assert_eq!(request.method, "POST");

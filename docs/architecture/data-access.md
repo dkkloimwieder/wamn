@@ -208,11 +208,12 @@ Generated codecs handle JSON entry, typed input validation, primitive conversion
 Their `export_operation!` macro connects a typed application handler to `run` and `run-json`.
 Known component calls use typed values.
 HTTP and dynamic entry use the JSON adapter.
-Revision inputs, returned revisions, and conflict revisions use decimal strings in JSON.
+Revision inputs, returned revisions, and conflict revisions follow their declared integer type in JSON.
+An `int32` uses a JSON number, and an `int64` uses a decimal string.
 Database and WIT revision values remain numeric.
 The `minimum`, `maximum`, and `observed` refusal details are decimal strings in WIT and JSON, spelled as a numeric value is and never as a float.
 Custom fields declare `revision: true`; CRUD operations use their declared revision field.
-Other integer fields remain JSON numbers.
+Other integer fields follow the same rule.
 The common integer codec preserves exact values above JavaScript’s safe-integer limit.
 Application handlers of custom operations retain business rules, transaction sequencing, and deliberate result transformations.
 

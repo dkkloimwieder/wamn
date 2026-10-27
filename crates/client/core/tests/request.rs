@@ -63,7 +63,7 @@ fn code_omission_stays_absent_while_explicit_null_is_refused() {
     const FIELDS: &[FieldSchema] = &[
         scalar("request_id", "string", true, false),
         scalar("id", "uuid", true, false),
-        scalar("expected_edit_version", "int64", true, false),
+        scalar("expected_edit_version", "int32", true, false),
         FieldSchema {
             children: &[scalar("change.code", "text", false, false)],
             ..scalar("change", "object", true, false)
@@ -77,7 +77,7 @@ fn code_omission_stays_absent_while_explicit_null_is_refused() {
     let mut item = json!({"request_id":"r1", "id":"00000000-0000-0000-0000-000000000001",
         "expected_edit_version": 4, "change": {}});
     assert_eq!(build_request(FIELDS, &item, Some(schema)).expect("omit code without clearing it").body(),
-        br#"[{"change":{},"expected_edit_version":"4","id":"00000000-0000-0000-0000-000000000001","request_id":"r1"}]"#);
+        br#"[{"change":{},"expected_edit_version":4,"id":"00000000-0000-0000-0000-000000000001","request_id":"r1"}]"#);
     item["change"]["code"] = Value::Null;
     let error =
         build_request(FIELDS, &item, Some(schema)).expect_err("explicit null is invalid_input");
