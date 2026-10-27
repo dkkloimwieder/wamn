@@ -56,6 +56,7 @@ pub mod database;
 pub mod environment_state;
 mod error;
 pub mod events;
+pub mod host_credentials;
 pub mod identity_issuer;
 pub mod management_admitter;
 pub mod materializer_workload;

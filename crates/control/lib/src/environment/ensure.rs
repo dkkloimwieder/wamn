@@ -22,6 +22,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Context as _;
 use base64::Engine as _;
+use wamn_control_provision::host_credentials::{
+    CredentialDatabase, HOST_CREDENTIALS, HostCredential,
+};
 use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily};
 use wamn_control_registry::Triple;
 
@@ -39,22 +42,6 @@ pub(super) const RUN_SCHEMA: &str = "wamn_run";
 
 /// How long one CR may take to report `status.applied`.
 const APPLIED_TIMEOUT: &str = "--timeout=120s";
-
-/// The credential families whose Secrets the verb writes, and whether each
-/// credential reaches the project database: the families the host of the
-/// release chart reads, and the registry reader of the environment's CDC
-/// reader. Every Secret is named from the coordinate (`workload_secret_name`,
-/// §9.1).
-pub(super) const CREDENTIAL_FAMILIES: [(WorkloadRoleFamily, bool); 8] = [
-    (WorkloadRoleFamily::App, true),
-    (WorkloadRoleFamily::ExecutorPlatform, true),
-    (WorkloadRoleFamily::HttpAdmitter, true),
-    (WorkloadRoleFamily::EventMaterializer, true),
-    (WorkloadRoleFamily::IdentityReader, false),
-    (WorkloadRoleFamily::ConnectionReader, false),
-    (WorkloadRoleFamily::Administration, true),
-    (WorkloadRoleFamily::RegistryReader, false),
-];
 
 /// Ensure the substrate of the document's environment.
 ///
@@ -154,9 +141,9 @@ pub async fn ensure(
     .context("apply the pending project migrations before connections")?;
 
     // Generation a of each credential, only where its Secret is absent.
-    for (family, project_database) in CREDENTIAL_FAMILIES {
+    for credential in HOST_CREDENTIALS {
         let name = wamn_control_provision::workload_secret_name(
-            family,
+            credential.family,
             &document.org,
             &document.project,
             &document.env,
@@ -164,35 +151,24 @@ pub async fn ensure(
         if secret_exists(platform, namespace, &name).await? {
             continue;
         }
-        let secret = private.path(&format!("{}.json", family.label()));
-        let patch = (family == WorkloadRoleFamily::Administration)
-            .then(|| private.path("control-administration-patch.json"));
-        run_workload_action(&WorkloadActionRequest {
-            org: document.org.clone(),
-            project: document.project.clone(),
-            env: document.env.clone(),
-            system_database_url: Some(platform.system_database_url.clone()),
-            target_admin_database_url: project_database.then(|| project_url.clone()),
-            cluster: Some(cluster.clone()),
-            db_host: platform.database_host.clone(),
-            db_port: platform.database_port,
-            namespace: namespace.to_owned(),
-            action: WorkloadGenerationAction {
-                family,
-                verb: WorkloadActionVerb::Prepare,
-                generation: CredentialGeneration::A,
-            },
-            secret: Some(secret.clone()),
-            emit_role_sql: None,
-            control_administration_patch: patch.clone(),
-        })
-        .await
-        .with_context(|| format!("prepare generation a of {}", family.label()))?;
-        private.apply_and_shred(platform, &secret).await?;
+        let request = credential_request(
+            credential,
+            platform,
+            document,
+            &private,
+            &cluster,
+            &project_url,
+        );
+        run_workload_action(&request)
+            .await
+            .with_context(|| format!("prepare generation a of {}", credential.family.label()))?;
+        private
+            .apply_and_shred(platform, &private.path(credential.file_name))
+            .await?;
         // The org's control host holds every environment's administration
         // login. Where the platform runs no control host, there is nothing
         // to patch.
-        if let Some(patch) = patch {
+        if let Some(patch) = request.control_administration_patch {
             let control = wamn_control_provision::control_administration_secret_name(&document.org);
             if secret_exists(platform, namespace, &control).await? {
                 private
@@ -233,6 +209,38 @@ pub async fn ensure(
         .context("commit the administrator rows")?;
     platform.auth_changes().await?.publish(drops).await;
     Ok(())
+}
+
+/// Prepare the Secret and database selection of one environment credential.
+fn credential_request(
+    credential: HostCredential,
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    private: &PrivateDirectory,
+    cluster: &str,
+    project_url: &str,
+) -> WorkloadActionRequest {
+    WorkloadActionRequest {
+        org: document.org.clone(),
+        project: document.project.clone(),
+        env: document.env.clone(),
+        system_database_url: Some(platform.system_database_url.clone()),
+        target_admin_database_url: (credential.database == CredentialDatabase::Project)
+            .then(|| project_url.to_owned()),
+        cluster: Some(cluster.to_owned()),
+        db_host: platform.database_host.clone(),
+        db_port: platform.database_port,
+        namespace: platform.target.namespace.clone(),
+        action: WorkloadGenerationAction {
+            family: credential.family,
+            verb: WorkloadActionVerb::Prepare,
+            generation: CredentialGeneration::A,
+        },
+        secret: Some(private.path(credential.file_name)),
+        emit_role_sql: None,
+        control_administration_patch: (credential.family == WorkloadRoleFamily::Administration)
+            .then(|| private.path("control-administration-patch.json")),
+    }
 }
 
 /// Ensure capture of every model in the environment's installed applications.
@@ -716,8 +724,83 @@ mod tests {
     #[test]
     fn apply_writes_the_registry_reader_secret_of_the_cdc_reader() {
         assert!(
-            CREDENTIAL_FAMILIES.contains(&(WorkloadRoleFamily::RegistryReader, false)),
+            HOST_CREDENTIALS.iter().any(|credential| {
+                credential.family == WorkloadRoleFamily::RegistryReader
+                    && credential.database == CredentialDatabase::Control
+            }),
             "the registry reader addresses the control database, not the project database"
         );
+    }
+
+    #[test]
+    fn apply_prepares_a_secret_for_every_credential() {
+        let platform = Platform {
+            system_database_url: "postgresql://control".into(),
+            target: crate::release_chart::Target {
+                kubeconfig: PathBuf::new(),
+                context: String::new(),
+                namespace: "hosts".into(),
+            },
+            chart: PathBuf::new(),
+            release_artifact_base: String::new(),
+            registry_auth_file: PathBuf::new(),
+            oci_ca_paths: Vec::new(),
+            package_artifact_base: None,
+            database_namespace: String::new(),
+            database_host: Some("database".into()),
+            database_port: 5432,
+            host_group: None,
+            pat_issuer: crate::pat_client::PatIssuerConfig::default(),
+            events: None,
+            auth_nats: None,
+        };
+        let document: EnvironmentDocument = serde_json::from_value(serde_json::json!({
+            "org": "example", "project": "fixture", "env": "dev",
+            "target": "test", "release": "none", "route_host": "fixture.test",
+            "policy": "default", "applications": {}
+        }))
+        .unwrap();
+        let private = PrivateDirectory::create().unwrap();
+        let group = super::super::write::host_group(None, "example", "fixture", "dev").unwrap();
+        for credential in HOST_CREDENTIALS {
+            let request = credential_request(
+                credential,
+                &platform,
+                &document,
+                &private,
+                "cluster",
+                "postgresql://project",
+            );
+            assert_eq!(request.action.family, credential.family);
+            assert_eq!(request.action.verb, WorkloadActionVerb::Prepare);
+            assert_eq!(request.action.generation, CredentialGeneration::A);
+            assert_eq!(request.secret, Some(private.path(credential.file_name)));
+            assert_eq!(
+                request.system_database_url.as_deref(),
+                Some("postgresql://control")
+            );
+            assert_eq!(
+                request.target_admin_database_url.as_deref(),
+                (credential.database == CredentialDatabase::Project)
+                    .then_some("postgresql://project")
+            );
+            if let Some(variable) = credential.host_variable {
+                let reference = group["env"]
+                    .as_sequence()
+                    .unwrap()
+                    .iter()
+                    .find(|entry| entry["name"] == variable)
+                    .unwrap();
+                assert_eq!(
+                    reference["valueFrom"]["secretKeyRef"]["name"],
+                    wamn_control_provision::workload_secret_name(
+                        request.action.family,
+                        "example",
+                        "fixture",
+                        "dev"
+                    )
+                );
+            }
+        }
     }
 }

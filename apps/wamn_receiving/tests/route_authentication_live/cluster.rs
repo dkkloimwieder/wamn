@@ -33,7 +33,9 @@ use wamn_test_infrastructure::rendering::{
     EventIdentity, HostIdentity, HostRoleSecret, HostValuesInput, assert_rendered_identity,
     overlay_values, render_host_values,
 };
-use wamn_test_infrastructure::secrets::{HostSecret, HostSecretsInput, derive_host_secrets};
+use wamn_test_infrastructure::secrets::{
+    HostSecret, HostSecretsInput, derive_host_secrets, host_role_families,
+};
 
 use super::{connect, identity, repository_root, routes};
 use resources::{Resources, checked, write_private};
@@ -493,14 +495,7 @@ async fn prepare_host(
     let secrets = derive_host_secrets(
         &inputs.host_secret_directory,
         &HostSecretsInput {
-            role_families: vec![
-                WorkloadRoleFamily::ExecutorPlatform,
-                WorkloadRoleFamily::IdentityReader,
-                WorkloadRoleFamily::ConnectionReader,
-                WorkloadRoleFamily::HttpAdmitter,
-                WorkloadRoleFamily::EventMaterializer,
-                WorkloadRoleFamily::Administration,
-            ],
+            role_families: host_role_families(),
             guest_secret_file: PathBuf::from("guest-sql.json"),
             namespace: NAMESPACE.to_owned(),
             database_host,

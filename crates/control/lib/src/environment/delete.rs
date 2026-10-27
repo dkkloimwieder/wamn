@@ -34,9 +34,10 @@ use wamn_pg_core::{quote_ident, quote_literal};
 
 use super::Platform;
 use super::analyse::{connect, release_present};
-use super::ensure::{CREDENTIAL_FAMILIES, kubectl, management_author_pat_name, project_url};
+use super::ensure::{kubectl, management_author_pat_name, project_url};
 use super::lock::LifecycleLock;
 use crate::release_chart;
+use wamn_control_provision::host_credentials::HOST_CREDENTIALS;
 
 /// How long CloudNativePG may take to finalize the `Database` CR.
 const DATABASE_DELETE_TIMEOUT: &str = "--timeout=600s";
@@ -270,8 +271,8 @@ async fn delete_locked(
         wamn_control_provision::project_env_secret_name(org, project, env),
         wamn_control_provision::project_env_cdc_secret_name(org, project, env),
     ];
-    secrets.extend(CREDENTIAL_FAMILIES.iter().map(|(family, _)| {
-        wamn_control_provision::workload_secret_name(*family, org, project, env)
+    secrets.extend(HOST_CREDENTIALS.iter().map(|credential| {
+        wamn_control_provision::workload_secret_name(credential.family, org, project, env)
     }));
     secrets.extend(pat_secrets);
     let mut arguments = vec!["delete", "secret", "--ignore-not-found"];

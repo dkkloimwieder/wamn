@@ -38,6 +38,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context as _, ensure};
 use serde_yaml::{Mapping, Value};
+use wamn_control_provision::host_credentials::HOST_CREDENTIALS;
 use wamn_control_provision::{WorkloadRoleFamily, workload_secret_name};
 use wamn_test_infrastructure::rendering::{
     EventIdentity, HostRoleSecret, HostValuesInput, host_values, render_host_values,
@@ -89,13 +90,20 @@ const WMS: Application = Application {
     event_secret: "wamn-event-nats-wms",
     materializer_secret: "wamn-materializer-nats-wms",
 };
-const ROLE_FAMILIES: [WorkloadRoleFamily; 5] = [
-    WorkloadRoleFamily::ExecutorPlatform,
-    WorkloadRoleFamily::IdentityReader,
-    WorkloadRoleFamily::HttpAdmitter,
-    WorkloadRoleFamily::EventMaterializer,
-    WorkloadRoleFamily::Administration,
-];
+
+/// The production families bound by this overlay, with its guest handled separately.
+fn role_families(env: &[Value]) -> Vec<WorkloadRoleFamily> {
+    HOST_CREDENTIALS
+        .iter()
+        .filter(|credential| {
+            credential.family != WorkloadRoleFamily::App
+                && credential
+                    .host_variable
+                    .is_some_and(|variable| env.iter().any(|entry| entry["name"] == variable))
+        })
+        .map(|credential| credential.family)
+        .collect()
+}
 
 fn main() -> anyhow::Result<()> {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -152,6 +160,12 @@ fn render(
     } else {
         overlay
     };
+    let document: Value = serde_yaml::from_str(&overlay)?;
+    let families = role_families(
+        document["runtime"]["hostGroups"][0]["env"]
+            .as_sequence()
+            .context("the overlay host group has env")?,
+    );
     let rendered = render_host_values(
         &base,
         &overlay,
@@ -171,7 +185,7 @@ fn render(
                 environment: ENVIRONMENT.to_owned(),
             },
             guest_secret_name: application.guest_secret.to_owned(),
-            role_secrets: ROLE_FAMILIES
+            role_secrets: families
                 .into_iter()
                 .map(|family| HostRoleSecret {
                     family,
@@ -227,6 +241,7 @@ fn overlay_for_org(overlay: &str, project: &str) -> anyhow::Result<String> {
         .get_mut("env")
         .and_then(Value::as_sequence_mut)
         .context("the overlay host group has env")?;
+    let families = role_families(env);
     let mut renamed = 0;
     for entry in env.iter_mut() {
         if entry["name"] == "WAMN_ORG" {
@@ -241,7 +256,7 @@ fn overlay_for_org(overlay: &str, project: &str) -> anyhow::Result<String> {
             .and_then(|from| from.get_mut("secretKeyRef"))
             .and_then(|reference| reference.get_mut("name"))
         {
-            for family in ROLE_FAMILIES {
+            for &family in &families {
                 if name.as_str()
                     == Some(
                         workload_secret_name(family, OVERLAY_ORG, project, ENVIRONMENT).as_str(),
@@ -254,9 +269,9 @@ fn overlay_for_org(overlay: &str, project: &str) -> anyhow::Result<String> {
         }
     }
     ensure!(
-        renamed == ROLE_FAMILIES.len(),
+        renamed == families.len(),
         "the overlay names {renamed} of the {} role Secrets",
-        ROLE_FAMILIES.len()
+        families.len()
     );
     Ok(serde_yaml::to_string(&document)?)
 }

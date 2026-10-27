@@ -118,19 +118,13 @@ pub(super) fn host_secrets(
     inputs: &JourneyDocument,
     database_host: &str,
 ) -> anyhow::Result<Vec<wamn_test_infrastructure::secrets::HostSecret>> {
-    use wamn_control_provision::WorkloadRoleFamily;
-    use wamn_test_infrastructure::secrets::{HostSecretsInput, derive_host_secrets};
+    use wamn_test_infrastructure::secrets::{
+        HostSecretsInput, derive_host_secrets, host_role_families,
+    };
     derive_host_secrets(
         &inputs.host_secret_directory,
         &HostSecretsInput {
-            role_families: vec![
-                WorkloadRoleFamily::ExecutorPlatform,
-                WorkloadRoleFamily::IdentityReader,
-                WorkloadRoleFamily::ConnectionReader,
-                WorkloadRoleFamily::HttpAdmitter,
-                WorkloadRoleFamily::EventMaterializer,
-                WorkloadRoleFamily::Administration,
-            ],
+            role_families: host_role_families(),
             guest_secret_file: "guest-sql.json".into(),
             namespace: inputs.host_secret_namespace.clone(),
             database_host: database_host.to_owned(),

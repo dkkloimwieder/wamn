@@ -290,7 +290,13 @@ pub async fn prepare_project(
             inputs,
             route,
             WorkloadRoleFamily::ConnectionReader,
-            &inputs.host_secret_directory.join("connection-reader.json"),
+            &inputs.host_secret_directory.join(
+                wamn_control_provision::host_credentials::HOST_CREDENTIALS
+                    .iter()
+                    .find(|credential| credential.family == WorkloadRoleFamily::ConnectionReader)
+                    .expect("the connection reader is a host credential")
+                    .file_name,
+            ),
             &inputs.host_secret_namespace,
             false,
         )

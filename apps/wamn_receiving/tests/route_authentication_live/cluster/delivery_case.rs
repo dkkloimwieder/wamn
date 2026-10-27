@@ -22,7 +22,6 @@ use serde_json::{Value, json};
 use wamn_control::environment::EventBroker;
 
 use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
-use wamn_control_provision::workload_role::WorkloadRoleFamily;
 use wamn_control_registry::Triple;
 use wamn_gate_harness::delivery::{
     self, Application, Inputs, application_directory, coordinate_name, share_kubeconfig,
@@ -33,7 +32,9 @@ use wamn_test_infrastructure::delivery_cluster::{
     KeptCluster, NAMESPACE, ensure_database, start_container,
 };
 use wamn_test_infrastructure::event_broker;
-use wamn_test_infrastructure::secrets::{HostSecretsInput, derive_host_secrets};
+use wamn_test_infrastructure::secrets::{
+    HostSecretsInput, derive_host_secrets, host_role_families,
+};
 
 use super::super::{connect, identity, repository_root, routes};
 use super::{HostBinding, build, render_host, resources};
@@ -228,14 +229,7 @@ async fn run(repository: &Path, kept: &KeptCluster, evidence: &Path) -> anyhow::
     let secrets = derive_host_secrets(
         &inputs.host_secret_directory,
         &HostSecretsInput {
-            role_families: vec![
-                WorkloadRoleFamily::ExecutorPlatform,
-                WorkloadRoleFamily::IdentityReader,
-                WorkloadRoleFamily::ConnectionReader,
-                WorkloadRoleFamily::HttpAdmitter,
-                WorkloadRoleFamily::EventMaterializer,
-                WorkloadRoleFamily::Administration,
-            ],
+            role_families: host_role_families(),
             guest_secret_file: PathBuf::from("guest-sql.json"),
             namespace: NAMESPACE.to_owned(),
             database_host: database.host.clone(),

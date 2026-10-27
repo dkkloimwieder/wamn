@@ -22,34 +22,7 @@ use super::analyse::{Analysis, ReleaseFacts};
 use super::document::EnvironmentDocument;
 use super::ensure::PrivateDirectory;
 use crate::release_chart::{self, RoleName, ValuesInput};
-use wamn_control_provision::WorkloadRoleFamily;
-
-/// The host variable each environment credential Secret feeds, by family.
-/// The Secret names derive from the coordinate (§9.1).
-const CREDENTIAL_VARIABLES: [(WorkloadRoleFamily, &str); 7] = [
-    (WorkloadRoleFamily::App, "WAMN_PG_URL"),
-    (WorkloadRoleFamily::IdentityReader, "WAMN_SYSTEM_URL"),
-    (
-        WorkloadRoleFamily::ConnectionReader,
-        "WAMN_CONNECTION_STORE_URL",
-    ),
-    (
-        WorkloadRoleFamily::ExecutorPlatform,
-        "WAMN_EXECUTOR_PLATFORM_PG_URL",
-    ),
-    (
-        WorkloadRoleFamily::HttpAdmitter,
-        "WAMN_HTTP_ADMITTER_PG_URL",
-    ),
-    (
-        WorkloadRoleFamily::EventMaterializer,
-        "WAMN_EVENT_MATERIALIZER_PG_URL",
-    ),
-    (
-        WorkloadRoleFamily::Administration,
-        "WAMN_ADMINISTRATION_PG_URL",
-    ),
-];
+use wamn_control_provision::host_credentials::HOST_CREDENTIALS;
 
 /// What the write left for readiness.
 #[derive(Debug)]
@@ -181,14 +154,18 @@ pub(crate) fn host_group(
         .or_insert_with(|| Value::Sequence(Vec::new()))
         .as_sequence_mut()
         .context("the platform host group's `env` is not a list")?;
-    for (family, variable) in CREDENTIAL_VARIABLES {
+    for credential in HOST_CREDENTIALS {
+        let Some(variable) = credential.host_variable else {
+            continue;
+        };
         ensure!(
             !variables
                 .iter()
                 .any(|entry| entry["name"].as_str() == Some(variable)),
             "the platform host group sets {variable}, which apply derives from the coordinate"
         );
-        let secret = wamn_control_provision::workload_secret_name(family, org, project, env);
+        let secret =
+            wamn_control_provision::workload_secret_name(credential.family, org, project, env);
         variables.push(serde_yaml::from_str(&format!(
             "{{name: {variable}, valueFrom: {{secretKeyRef: {{name: {secret}, key: url, optional: false}}}}}}"
         ))?);
@@ -227,19 +204,6 @@ async fn helm_show_chart(chart: &std::path::Path) -> anyhow::Result<String> {
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn apply_writes_every_secret_the_host_reads() {
-        for (family, variable) in CREDENTIAL_VARIABLES {
-            assert!(
-                super::super::ensure::CREDENTIAL_FAMILIES
-                    .iter()
-                    .any(|(written, _)| *written == family),
-                "{variable} reads the {} Secret, which apply never writes",
-                family.label()
-            );
-        }
-    }
 
     #[test]
     fn audit_is_no_difference() {

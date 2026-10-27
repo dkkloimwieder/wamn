@@ -6,7 +6,19 @@ use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context as _, bail, ensure};
 use serde::Deserialize;
+use wamn_control_provision::host_credentials::HOST_CREDENTIALS;
 use wamn_control_provision::workload_role::WorkloadRoleFamily;
+
+/// Host families from production, with the guest file declared separately.
+pub fn host_role_families() -> Vec<WorkloadRoleFamily> {
+    HOST_CREDENTIALS
+        .iter()
+        .filter(|credential| {
+            credential.host_variable.is_some() && credential.family != WorkloadRoleFamily::App
+        })
+        .map(|credential| credential.family)
+        .collect()
+}
 
 /// Decode percent escapes in a database password for test-log redaction.
 pub fn decoded_password(value: &str) -> anyhow::Result<String> {
@@ -72,10 +84,14 @@ pub fn derive_host_secrets(
             *family != WorkloadRoleFamily::App,
             "the guest Secret is declared separately"
         );
-        selected.push((
-            *family,
-            PathBuf::from(format!("{}.json", family.cli_stem())),
-        ));
+        let file = HOST_CREDENTIALS
+            .iter()
+            .find(|credential| credential.family == *family)
+            .map_or_else(
+                || PathBuf::from(format!("{}.json", family.cli_stem())),
+                |credential| PathBuf::from(credential.file_name),
+            );
+        selected.push((*family, file));
     }
     let expected = selected
         .iter()
@@ -163,7 +179,7 @@ mod tests {
     use serde_json::json;
     use wamn_control_provision::workload_secret_name;
 
-    use super::{HostSecretsInput, WorkloadRoleFamily, derive_host_secrets};
+    use super::{HostSecretsInput, WorkloadRoleFamily, derive_host_secrets, host_role_families};
     use crate::scratch::ScratchRoot;
 
     fn directory() -> ScratchRoot {
@@ -218,6 +234,30 @@ mod tests {
                     "postgresql://user:test-password@{}:5432/database",
                     input.database_host
                 ),
+            );
+        }
+    }
+
+    #[test]
+    fn production_host_families_select_every_host_secret() {
+        let root = directory();
+        let mut input = input();
+        input.role_families = host_role_families();
+        seed(&root, &input);
+        let selected = derive_host_secrets(root.path(), &input).unwrap();
+        assert_eq!(
+            selected.len(),
+            super::HOST_CREDENTIALS
+                .iter()
+                .filter(|credential| credential.host_variable.is_some())
+                .count()
+        );
+        for credential in super::HOST_CREDENTIALS {
+            assert_eq!(
+                selected
+                    .iter()
+                    .any(|secret| secret.family == credential.family),
+                credential.host_variable.is_some()
             );
         }
     }
