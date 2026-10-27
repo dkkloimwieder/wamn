@@ -6491,6 +6491,7 @@ dependencies = [
  "wamn-project-state",
  "wamn-run-state",
  "wamn-runtime",
+ "wamn-schema-control",
  "wamn-session",
  "wamn-test-postgres",
  "wash-runtime",

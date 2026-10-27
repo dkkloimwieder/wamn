@@ -80,6 +80,7 @@ tower-service = { workspace = true }
 wasmtime-wasi = { workspace = true }
 
 [dev-dependencies]
+wamn-schema-control = { workspace = true }
 wamn-package-artifact = { workspace = true, features = ["test-util"] }
 http-route = { path = "../../../apps/platform/ingress/http-route" }
 # wamn-i87m: the helper test runs the lookup wash-runtime's pull runs, at the
