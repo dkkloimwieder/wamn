@@ -270,7 +270,7 @@ run_queue:DELETE,run_queue:SELECT,runs:SELECT', \
            ASSERT actual = \
              'connection_bindings:SELECT,\
 connection_generations:SELECT,connection_instances:SELECT,connection_requirements:SELECT,\
-releases:SELECT,wirings:SELECT,workflows:SELECT', \
+releases:SELECT,workflows:SELECT', \
                   'catalog TABLE grain drifted: ' || coalesce(actual, '<none>'); \
            SELECT string_agg(a.attname, ',' ORDER BY a.attname) INTO actual \
              FROM pg_catalog.pg_attribute AS a \
