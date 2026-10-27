@@ -2,7 +2,7 @@
 
 use std::path::Path;
 use std::process::Stdio;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, ensure};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -498,20 +498,7 @@ async fn certificates(
     .map_err(|error| wait_error(step, error))?;
     let edge = objects(repository, "deploy/gcp/letsencrypt.yaml", document)?;
     for object in &edge {
-        // A finished webhook rollout can still refuse connections until its
-        // Service endpoint is served, so the first apply retries that refusal.
-        let mut attempt = 1;
-        changed |= loop {
-            match apply_object(target, object).await {
-                Err(error)
-                    if attempt < 30 && format!("{error:#}").contains("failed calling webhook") =>
-                {
-                    attempt += 1;
-                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                }
-                result => break result?,
-            }
-        };
+        changed |= apply_object(target, object).await?;
     }
     let issuer = edge
         .iter()
@@ -813,10 +800,62 @@ pub(super) async fn apply_object(target: &Target, object: &Value) -> anyhow::Res
     {
         return Ok(false);
     }
-    kubectl::apply(&target.kubeconfig, &target.context, namespace, object)
-        .await
-        .with_context(|| format!("apply {resource} {namespace}/{name}"))?;
+    apply_with_webhook_retry(|| {
+        kubectl::apply(&target.kubeconfig, &target.context, namespace, object)
+    })
+    .await
+    .with_context(|| format!("apply {resource} {namespace}/{name}"))?;
     Ok(true)
+}
+
+fn webhook_unavailable(message: &str) -> bool {
+    message.lines().any(|line| {
+        let Some((_, failure)) = line.split_once("failed calling webhook") else {
+            return false;
+        };
+        [
+            "connection refused",
+            "no endpoints available for service",
+            "context deadline exceeded",
+            "i/o timeout",
+            "TLS handshake timeout",
+            "Client.Timeout exceeded",
+            "request timed out",
+        ]
+        .iter()
+        .any(|reason| failure.contains(reason))
+    })
+}
+
+async fn apply_with_webhook_retry<F>(mut apply: impl FnMut() -> F) -> anyhow::Result<()>
+where
+    F: std::future::Future<Output = anyhow::Result<()>>,
+{
+    // A finished rollout can precede a serving webhook endpoint. Allow one
+    // minute from the initial apply, with two seconds between retries.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    let mut result = apply().await;
+    let mut attempt = 1;
+    loop {
+        let error = match result {
+            Ok(()) => return Ok(()),
+            Err(error) => error,
+        };
+        let retry_at = tokio::time::Instant::now() + Duration::from_secs(2);
+        if !webhook_unavailable(&format!("{error:#}")) || retry_at >= deadline {
+            return Err(error);
+        }
+        attempt += 1;
+        tracing::warn!(attempt, error = %error, "Webhook is unavailable, retrying apply");
+        tokio::time::sleep_until(retry_at).await;
+        if tokio::time::Instant::now() >= deadline {
+            return Err(error);
+        }
+        result = match tokio::time::timeout_at(deadline, apply()).await {
+            Ok(result) => result,
+            Err(_) => return Err(error.context("webhook apply retry deadline expired after 60s")),
+        };
+    }
 }
 
 async fn ready(
@@ -1011,6 +1050,121 @@ pub(super) async fn helm(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // wamn-tcmtt, copied from its exported description.
+    const WEBHOOK_REFUSED: &str = "failed calling webhook \"webhook.cert-manager.io\" ... dial tcp 10.96.164.197:443: connect: connection refused";
+
+    #[test]
+    fn only_webhook_transport_failures_retry() {
+        for message in [
+            WEBHOOK_REFUSED,
+            // Train 0.1.121 excerpt supplied in the task.
+            "failed calling webhook webhook.cert-manager.io: connection refused",
+            "Error from server (InternalError): error when creating \"-\": Internal error occurred: failed calling webhook \"mcluster.cnpg.io\": failed to call webhook: Post \"https://cnpg-webhook-service.cnpg-system.svc:443/mutate-postgresql-cnpg-io-v1-cluster?timeout=10s\": no endpoints available for service \"cnpg-webhook-service\"",
+            "failed calling webhook \"webhook.cert-manager.io\": failed to call webhook: Post \"https://cert-manager-webhook.cert-manager.svc:443/validate?timeout=30s\": context deadline exceeded",
+            "failed calling webhook \"webhook.cert-manager.io\": dial tcp 10.96.164.197:443: i/o timeout",
+            "failed calling webhook \"webhook.cert-manager.io\": net/http: TLS handshake timeout",
+            "failed calling webhook \"webhook.cert-manager.io\": net/http: request canceled (Client.Timeout exceeded while awaiting headers)",
+            "failed calling webhook \"webhook.cert-manager.io\": request timed out",
+        ] {
+            assert!(webhook_unavailable(message), "{message}");
+        }
+        for message in [
+            "Unable to connect to the server: dial tcp 127.0.0.1:6443: connect: connection refused",
+            "Error from server (Forbidden): certificates.cert-manager.io is forbidden",
+            "admission webhook \"webhook.cert-manager.io\" denied the request: invalid Certificate",
+            "no matches for kind \"Cluster\" in version \"postgresql.cnpg.io/v1\"",
+            "failed calling webhook \"webhook.cert-manager.io\": Post \"https://cert-manager-webhook.cert-manager.svc:443/validate?timeout=30s\": x509: certificate signed by unknown authority",
+            "connection refused: failed calling webhook \"webhook.cert-manager.io\": EOF",
+            "failed calling webhook \"webhook.cert-manager.io\": EOF\nconnection refused",
+        ] {
+            assert!(!webhook_unavailable(message), "{message}");
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn webhook_apply_retries_then_succeeds() {
+        let started = tokio::time::Instant::now();
+        let mut attempts = 0;
+        apply_with_webhook_retry(|| {
+            attempts += 1;
+            std::future::ready(if attempts < 3 {
+                Err(anyhow::anyhow!(WEBHOOK_REFUSED).context("apply ClusterIssuer"))
+            } else {
+                Ok(())
+            })
+        })
+        .await
+        .unwrap();
+        assert_eq!(attempts, 3);
+        assert_eq!(started.elapsed(), Duration::from_secs(4));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn webhook_apply_returns_success_and_other_errors_immediately() {
+        let started = tokio::time::Instant::now();
+        let mut attempts = 0;
+        apply_with_webhook_retry(|| {
+            attempts += 1;
+            std::future::ready(Ok(()))
+        })
+        .await
+        .unwrap();
+        assert_eq!(attempts, 1);
+        for transient_first in [false, true] {
+            let mut attempts = 0;
+            let error = apply_with_webhook_retry(|| {
+                attempts += 1;
+                std::future::ready(Err(anyhow::anyhow!(if transient_first && attempts == 1 {
+                    WEBHOOK_REFUSED
+                } else {
+                    "Error from server (Forbidden): certificates.cert-manager.io is forbidden"
+                })))
+            })
+            .await
+            .unwrap_err();
+            assert!(error.to_string().contains("Forbidden"));
+            assert_eq!(attempts, if transient_first { 2 } else { 1 });
+        }
+        assert_eq!(started.elapsed(), Duration::from_secs(2));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn webhook_apply_stops_before_the_retry_deadline() {
+        let started = tokio::time::Instant::now();
+        let mut attempts = 0;
+        let error = apply_with_webhook_retry(|| {
+            attempts += 1;
+            std::future::ready(Err(anyhow::anyhow!(WEBHOOK_REFUSED)))
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(error.to_string(), WEBHOOK_REFUSED);
+        assert_eq!(attempts, 30);
+        assert_eq!(started.elapsed(), Duration::from_secs(58));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn webhook_apply_deadline_includes_command_time_and_cancels_a_stalled_retry() {
+        let started = tokio::time::Instant::now();
+        let mut attempts = 0;
+        let error = apply_with_webhook_retry(|| {
+            attempts += 1;
+            let attempt = attempts;
+            async move {
+                if attempt > 1 {
+                    std::future::pending::<()>().await;
+                }
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                Err(anyhow::anyhow!(WEBHOOK_REFUSED))
+            }
+        })
+        .await
+        .unwrap_err();
+        assert!(format!("{error:#}").contains(WEBHOOK_REFUSED));
+        assert_eq!(attempts, 2);
+        assert_eq!(started.elapsed(), Duration::from_secs(60));
+    }
 
     #[test]
     fn a_none_or_stale_committed_release_stops_at_4_16() {
