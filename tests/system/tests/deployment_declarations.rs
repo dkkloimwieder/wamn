@@ -321,12 +321,19 @@ fn render_release(root: &Path) -> Output {
         ))
         .expect("arguments"),
     );
+    let component_base = group["env"]
+        .as_sequence()
+        .expect("host environment variables")
+        .iter()
+        .find(|variable| variable["name"] == "WAMN_COMPONENT_ARTIFACT_BASE")
+        .and_then(|variable| variable["value"].as_str())
+        .expect("the host tier names the component artifact base");
     let mut values: serde_yaml::Value = serde_yaml::from_str(&format!(
         "release: {{manifestDigest: '{DIGEST}', artifactBase: registry.example/releases}}
 environment: acme/wms/dev
 routeHost: wms.example.invalid
 roles:
-  - {{name: http, config: {{wamn.tenant: acme}}}}
+  - {{name: http, entry: '{component_base}/entries@sha256:{four}', config: {{wamn.tenant: acme}}}}
   - {{name: materializer, config: {{wamn.tenant: acme}}, environment: {{WAMN_MAT_ORG: acme}}}}
 platform:
   roles:
@@ -342,6 +349,7 @@ runtime-operator:
         one = "1".repeat(64),
         two = "2".repeat(64),
         three = "3".repeat(64),
+        four = "4".repeat(64),
     ))
     .expect("release values");
     values["runtime-operator"]["runtime"]["hostGroups"] =
@@ -835,8 +843,11 @@ fn only_identity_receives_issuer_credentials_and_other_consumers_keep_their_clas
 /// The release-namespace files state no namespace: the install applies them
 /// with `-n <release namespace>`, `wamn-system` on kind and `hosts` on GKE
 /// (docs/plan/platform-deploy.md R6).
+/// Platform-namespace files state no namespace because the install supplies
+/// `-n platform` on both kind and GKE.
 const RELEASE_NAMESPACE_FILES: [&str; 2] =
     ["wamn-host-serviceaccount.yaml", "control-status-rbac.yaml"];
+const PLATFORM_NAMESPACE_FILES: [&str; 1] = ["otel-collector.yaml"];
 
 #[test]
 fn every_platform_object_is_namespaced_to_wamn_system_or_templated() {
@@ -848,7 +859,7 @@ fn every_platform_object_is_namespaced_to_wamn_system_or_templated() {
             let Some(object) = object(&document, file) else {
                 continue;
             };
-            if RELEASE_NAMESPACE_FILES.contains(&file) {
+            if RELEASE_NAMESPACE_FILES.contains(&file) || PLATFORM_NAMESPACE_FILES.contains(&file) {
                 assert!(
                     object.namespace.is_none(),
                     "{file}: {}/{} states a namespace",
