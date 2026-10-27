@@ -75,10 +75,10 @@ export function $PREFIXCollection(
   scope: $ROWScope,
   follow: { readonly pollMs?: number; readonly persistence?: Persistence } = {},
 ) {
-  return collection(feed, scope, { key: $PREFIXKey(scope), version: (row) => row.$REVISION, ...follow });
+  return collection(feed, scope, { key: $PREFIXKey(scope), $GET_KEYversion: (row) => row.$REVISION, ...follow });
 }
 
 /** Record a write for this model through the supplied outbox. */
-export function $PREFIXWrite(c: ReturnType<typeof $PREFIXCollection>, o: Outbox) {
-  return recordWrite(c, o, { model: "$MODEL" });
+export function $PREFIXWrite(c: ReturnType<typeof $PREFIXCollection>, o: Outbox$KEY_TYPE$TRANSPORT) {
+  $WRITE_BODY
 }

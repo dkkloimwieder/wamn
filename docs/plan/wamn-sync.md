@@ -674,11 +674,7 @@ A generated create requires a client id, unless the database generates the key.
 [`key.rs`](../../crates/schema/generator/src/key.rs), `database_generated`, names that case: an integer id with an identity or a DEFAULT.
 Integer keys (`int4` or `int8`) must be database-generated, and the build refuses a plain integer key.
 For such a key, create leaves the id out of the insert and returns the generated id.
-An integer-id model is a bridge table, never a primary transaction.
-It syncs reads and updates, keyed by its integer id through a wfe key accessor.
-Its create is not offline-capable: the generated write helper sends the create through the binding, never through the outbox.
-While the probe reports offline, the write helper refuses that create with a clear message.
-The generator wires integer-id models when the wfe pin carries the key accessor (wamn-qvj78).
+An integer-id model is a bridge table: it syncs reads, updates and deletes, and its creates are online only.
 [`call.ts`](../../web/runtime/src/sync/call.ts), `createCall`, generates UUIDv7 through [`ids.ts`](../../web/runtime/src/sync/ids.ts), `uuidv7`.
 [`generate/contracts.rs`](../../crates/schema/generator/src/generate/contracts.rs), `input_contract`, requires a client id.
 [`sql.rs`](../../crates/schema/generator/src/sql.rs), `create`, inserts the supplied id.

@@ -796,8 +796,8 @@ fn feed_opt_out_emits_no_sync_helpers() {
 }
 
 #[test]
-fn integer_feed_ids_emit_no_sync_helpers() {
-    for ty in ["int32", "int64"] {
+fn integer_feed_ids_emit_key_accessors_and_online_creates() {
+    for (ty, ts) in [("int32", "number"), ("int64", "Int64")] {
         let mut ir = release();
         let widget = &mut ir.models[fixture::widget_index(&release())];
         for operation in &mut widget.operations {
@@ -813,7 +813,57 @@ fn integer_feed_ids_emit_no_sync_helpers() {
         let text = source(&files, "generated/client-ts/widget.ts");
         assert!(text.contains("export async function changes("));
         for name in ["widgetFeed", "widgetCollection", "widgetWrite", "@wfe/sync"] {
-            assert!(!text.contains(name), "{ty} emitted {name}");
+            assert!(text.contains(name), "{ty} omitted {name}");
         }
+        assert!(text.contains("getKey: (row) => row.id"));
+        assert!(text.contains(&format!("o: Outbox<{ts}>, transport: Transport")));
+        assert!(text.contains("const record = recordWrite(c, o, { model: \"widget\" });"));
+        assert!(text.contains("async create(items: readonly WidgetCreateRequest[]"));
+        assert!(text.contains("await transport.probe?.(options?.signal) === false"));
+        assert!(text.contains("This record cannot be created offline."));
+        assert!(text.contains("return create(transport, items, options);"));
     }
+}
+
+#[test]
+fn uuid_feed_output_keeps_its_original_bytes() {
+    use sha2::{Digest as _, Sha256};
+
+    let files = emit_ts_client(&release()).unwrap();
+    assert_eq!(
+        hex::encode(Sha256::digest(widget(&files))),
+        "b859f3fab67c4e9339a04afb4f5be521c38e8c7b4b5c5da7a2565779d6fdf86e"
+    );
+}
+
+#[test]
+fn counter_feed_and_changes_preserve_int64_ids() {
+    let files = emit_ts_client(&release()).unwrap();
+    let text = source(&files, "generated/client-ts/counter.ts");
+    assert!(text.contains("interface CounterQueryChange {\n  readonly id: Int64;"));
+    assert!(text.contains("getKey: (row) => row.id"));
+    assert!(text.contains("o: Outbox<Int64>, transport: Transport"));
+    let package = fixture::generate_fixture();
+    let operation: serde_json::Value = serde_json::from_slice(
+        package
+            .files()
+            .iter()
+            .find(|file| file.path() == "generated/contracts/counter/query.operation.json")
+            .unwrap()
+            .bytes(),
+    )
+    .unwrap();
+    let changes = operation["statements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "changes")
+        .unwrap();
+    let id = changes["columns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "change_id")
+        .unwrap();
+    assert_eq!(id["type"], "int64");
 }

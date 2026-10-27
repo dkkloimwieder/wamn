@@ -424,15 +424,13 @@ fn emit_model(package: &str, model: &ModelIr) -> Result<String, ClientTsError> {
         emit_operation(&mut body, model, operation, &function, &mut used)?;
     }
 
-    // Integer ids await the wfe key accessor in wamn-qvj78.
     let sync = operations.iter().find(|operation| {
         operation.paging.as_ref().is_some_and(|paging| paging.feed)
             && operation.route.as_ref().is_some_and(|route| {
-                route
-                    .response
-                    .fields
-                    .iter()
-                    .any(|field| field.path == "id" && field.type_name == "uuid")
+                route.response.fields.iter().any(|field| {
+                    field.path == "id"
+                        && matches!(field.type_name.as_str(), "uuid" | "int32" | "int64")
+                })
             })
     });
     if let Some(operation) = sync {
@@ -505,9 +503,53 @@ fn write_sync(
         .response
         .fields;
     let revision = feed_revision(fields);
+    let id = fields
+        .iter()
+        .find(|field| field.path == "id")
+        .expect("a feed row has its model key");
+    let integer = matches!(id.type_name.as_str(), "int32" | "int64");
+    let key_type = if integer {
+        format!("<{}>", ts_type(&id.type_name)?)
+    } else {
+        String::new()
+    };
+    let mut transport = "";
+    let mut write_body = format!("return recordWrite(c, o, {{ model: {:?} }});", model.name);
+    if integer
+        && let Some(create) = model
+            .operations
+            .iter()
+            .find(|entry| entry.type_ == "create" && entry.route.is_some())
+    {
+        transport = ", transport: Transport";
+        let create_stem = type_stem(&model.name, &create.name);
+        let create_binding = ts_name(&create.name)?;
+        write_body = format!(
+            r#"const record = recordWrite(c, o, {{ model: {model:?} }});
+  return {{
+    ...record,
+    async create(items: readonly {create_stem}Request[], options?: {{ signal?: AbortSignal }}): Promise<Outcome<{create_stem}Result>> {{
+      if (await transport.probe?.(options?.signal) === false) throw new Error("This record cannot be created offline.");
+      return {create_binding}(transport, items, options);
+    }},
+  }};"#,
+            model = model.name
+        );
+    }
     let template = include_str!("client_ts_sync.ts");
     source.push_str(
         &template
+            .replace(
+                "$GET_KEY",
+                if integer {
+                    "getKey: (row) => row.id, "
+                } else {
+                    ""
+                },
+            )
+            .replace("$KEY_TYPE", &key_type)
+            .replace("$TRANSPORT", transport)
+            .replace("$WRITE_BODY", &write_body)
             .replace("$PREFIX", &prefix)
             .replace("$ROW", &row)
             .replace("$STEM", &stem)
