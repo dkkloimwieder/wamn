@@ -230,10 +230,13 @@ gcloud artifacts repositories add-iam-policy-binding wamn --project wamn-dev --l
   --member serviceAccount:wamn-blob@wamn-dev.iam.gserviceaccount.com --role roles/artifactregistry.reader
 ```
 
-Point the DNS name of each route host (`receiving.wamn.dev.` and `wms.wamn.dev.`) at the global address that OpenTofu creates in section 4.20:
+Point each route host at the global address that OpenTofu creates in section 4.20.
+Use `receiving.wamn.dev.`, `wms.wamn.dev.`, and `control.wamn.dev.`:
 
 ```bash
 gcloud dns record-sets create receiving.wamn.dev. --project wamn-dev --zone wamn-dev --type A --ttl 300 \
+  --rrdatas "$(gcloud compute addresses describe wamn-edge --project wamn-dev --global --format='value(address)')"
+gcloud dns record-sets create control.wamn.dev. --project wamn-dev --zone wamn-dev --type A --ttl 300 \
   --rrdatas "$(gcloud compute addresses describe wamn-edge --project wamn-dev --global --format='value(address)')"
 ```
 
@@ -321,7 +324,9 @@ gcloud container clusters list --project wamn-dev
 gcloud compute disks list --project wamn-dev --format="table(name,sizeGb,users.basename(),description)"
 ```
 
-The disks of the volumes of `wamn-pg-1` and `data-evt-nats-0` stay after the delete. Delete each one by name, one command for each disk:
+The disks of the volumes of `wamn-pg-1`, `data-evt-nats-0`, and `otel-collector-queue` stay after the delete.
+The collector's [volume claim](../../deploy/platform/otel-collector.yaml#L98) requests `1Gi`.
+Delete each one by name, one command for each disk:
 
 ```bash
 gcloud compute disks delete <pvc disk name> --project wamn-dev --zone us-central1-a --quiet
@@ -480,6 +485,10 @@ It prints 4.15 and 4.16 as skipped. Qualification stays on the build machine in 
 The verb then runs sections 4.17 through 4.21.
 The manual commands of each section follow the verb's description.
 
+After you delete the Secret, wait for cert-manager to create it again.
+The Certificate can still report its old `Ready` condition.
+The ctl image in [Dockerfile](../../Dockerfile#L177) pins kubectl `v1.36.1`, which supports [`--for=create`](https://github.com/kubernetes/kubectl/blob/v0.36.1/pkg/cmd/wait/wait.go#L70-L72).
+
 [deploy/gcp/letsencrypt.yaml](../../deploy/gcp/letsencrypt.yaml) holds the ClusterIssuer `letsencrypt` and the wildcard Certificate `wamn-edge-tls` in namespace `edge`. Issue from the staging server first, then from production:
 
 ```bash
@@ -491,7 +500,7 @@ kubectl -n edge wait certificate/wamn-edge-tls --for=condition=Ready --timeout=6
 kubectl apply -f deploy/gcp/letsencrypt.yaml
 kubectl wait clusterissuer/letsencrypt --for=condition=Ready --timeout=120s
 kubectl -n edge delete secret wamn-edge-tls
-kubectl -n edge wait certificate/wamn-edge-tls --for=condition=Ready --timeout=600s
+kubectl -n edge wait secret/wamn-edge-tls --for=create --timeout=600s
 kubectl -n cert-manager delete secret letsencrypt-staging
 kubectl -n edge get secret wamn-edge-tls -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -issuer -enddate
 ```
@@ -1161,6 +1170,7 @@ The control release chart writes its route host and platform version into the `h
 Helm upgrade and rollback update that ConfigMap with the release.
 The Rust edge reads it for each request.
 The `control.wamn.dev` DNS record must point to the same load balancer as the application hosts.
+Ask the project owner to run the `control.wamn.dev.` A record command in [section 2](#2-project-resources).
 The existing wildcard certificate covers this host.
 Section 4.20 installs both routing owners.
 They send `/api/` to `c-dkk-http`, `/password/` to identity, and every shell page to the platform UI index.
