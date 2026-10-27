@@ -781,6 +781,98 @@ Its [test source](../../crates/control/lib/tests/environment_apply_kind.rs) desc
 WAMN_RELEASE_CHART=<chart> cargo test -p wamn-control --test environment_apply_kind -- --ignored --nocapture
 ```
 
+### Files on PostgreSQL and MinIO
+
+The C4 tests use disposable PostgreSQL databases. Compile them without starting services:
+
+```bash
+export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='kache test-runner'
+export WAMN_NATIVE_C_NATS_BIN=/var/tmp/wamn-nats/nats-server
+cargo test --locked --offline -p wamn-control --test files_live --test platform_grants_live --no-run
+cargo test --locked --offline -p wamn-control-provision --test family_denial_matrix --test deploy_sql_authority --no-run
+cargo test --locked --offline -p wamn-execution-host --test files_live --test host_route_live --no-run
+cargo test --locked --offline -p wamn-schema-introspection --test file_reference_live --no-run
+```
+
+The NATS variable selects an existing server binary and prevents a native NATS build.
+
+Run the live cases with Docker and the PostgreSQL binaries:
+
+```bash
+cargo test --locked --offline -p wamn-control --test files_live --test platform_grants_live -- --nocapture
+cargo test --locked --offline -p wamn-control-provision --test family_denial_matrix --test deploy_sql_authority -- --nocapture
+cargo test --locked --offline -p wamn-execution-host --test files_live --test host_route_live -- --nocapture
+cargo test --locked --offline -p wamn-schema-introspection --test file_reference_live -- --nocapture
+```
+
+The file fixture declares read and write S3 bindings, including a binding for a store without a CDN host.
+Its document migration references `platform.file(id)`.
+The metadata tests cover grants, stamps, history, migration parity, connection disablement, and referenced deletion refusal.
+Registry tests use real scoped logins for `registry.lookup_file_connection`.
+They refuse unmapped logins, forged scope, disabled connections, and projects without enablement.
+They also read the recorded generation after a bucket and prefix change.
+
+The native host tests start an owned MinIO container and disposable PostgreSQL servers.
+They require PostgreSQL 18 binaries at `/usr/lib/postgresql/18/bin` and a running Docker daemon.
+They also require the pinned MinIO and mc images in `support/files.rs`.
+The fixture removes its containers and servers after each test.
+The tests upload more than 64 MiB through a stream, compare hashes, and repair committed staging bytes.
+They enforce sessions, operation grants, file ownership, private exposure, and read binding refusals.
+Signed URL tests call `FileRoutes::signed_url`, then require 403 after expiry and a 900-second lifetime cap.
+The package fixture also declares a public projection with a three-second signed read result.
+The test generates its contracts and admits its Wasm component through the production package admission path.
+It invokes that operation through `RouterDeliveryBridge` as a session caller that holds only the operation grant.
+The returned URL serves the private bytes, then returns 403 after expiry. Direct `file.get` returns 403.
+This test needs no external host, guest build, NATS server, or additional environment variables.
+Run that case alone with the exports above, Docker, and the PostgreSQL binaries:
+
+```bash
+cargo test --locked --offline -p wamn-execution-host --test files_live package_operation_returns_a_private_file_signed_url_that_expires -- --exact --nocapture
+```
+
+Run its package admission test without PostgreSQL or MinIO:
+
+```bash
+cargo test --locked --offline -p wamn-execution-host --test files_live package_signed_read_admits_the_real_node_abi_and_manifest_owned_authority -- --exact
+```
+
+Public exposure tests require anonymous origin reads, the cache header, and origin 404 after unexpose.
+Raw blobstore mutations refuse the reserved private and public keys.
+
+The age test imports a month-old metadata fixture through a non-superuser table owner.
+It restores the stamp trigger in the same transaction before the test actions.
+It seeds aged objects through MinIO's preserved modification time header and reads their actual timestamps.
+The [pinned MinIO request parser](https://github.com/minio/minio/blob/RELEASE.2025-09-07T16-13-09Z/cmd/object-api-options.go) defines that header.
+The test installs a one-day lifecycle rule for staging only, then requires that live bytes and unlinked metadata stay.
+No clock change or external aged snapshot is required.
+
+Root prepares the kind file fixture only after the owner allows kind.
+Use an owned cluster named `wamn-apply-files-<suffix>` and its private kubeconfig.
+Apply `support/file_package/deploy/minio.yaml` in the selected host namespace.
+Publish the file package with the admitted blob-put component and its declaration under `publication/components`.
+Build that component in debug mode. No WIT change is required.
+
+```bash
+cargo build --manifest-path apps/Cargo.toml --locked --offline -p blob-put --target wasm32-wasip2
+```
+
+The package is outside the application workspace, so its build does not compile the component automatically.
+Use the existing blob-put bytes from `apps/platform/execution/blob-put`, with all three declared store aliases.
+Create and enable the two store connections through the normal control routes.
+Use `connection.json` for `file-store`. Remove `cdn_host` and change the name to `files-no-cdn` for the other connection.
+Rotate both connections with the disposable credential and allow S3 at the org, project, and environment scopes.
+Apply a copy of `environment.k` with the published release digest.
+Grant the four file operations to the fixture role. Prepare another session whose role holds no file grants.
+Forward the host and MinIO services to the addresses of a private copy of `kind-fixture.example.json`.
+Set `WAMN_FILES_KIND_FIXTURE` to that private file. Its database URLs must use scoped readers.
+The kind test calls the deployed host and asserts the stored hash, access refusals, public origin behavior, and binding refusals.
+It reads the selected MinIO Deployment to make sure that the fixture uses the pinned S3-compatible server.
+
+```bash
+cargo test --locked --offline -p wamn-control --test environment_apply_kind \
+  native_files_on_kind_minio -- --ignored --exact --nocapture
+```
+
 ### Registry image archive in kind
 
 This test runs `tools/journey-image-cache` and `case_release::image_archive` of `wamn-gate-harness` against a private registry with a login and TLS.

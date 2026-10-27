@@ -19,7 +19,7 @@ use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
 use wamn_runtime::plugins::route_authentication::{
-    PlatformRouteAuthenticator, SessionRouteAuthentication,
+    PlatformRouteAuthenticator, RouteAuthentication, SessionRouteAuthentication,
 };
 use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
@@ -64,7 +64,11 @@ pub(super) fn generation(family: WorkloadRoleFamily, database: &str) -> anyhow::
 
 /// The project database, its two scoped logins, and the fixture rows: the
 /// first principal holds `admin`, and the member holds one authored role.
-pub(super) async fn install(admin: &Client, database: &str) -> anyhow::Result<(String, String)> {
+pub(super) async fn install(
+    admin: &Client,
+    database: &str,
+    admin_url: &str,
+) -> anyhow::Result<(String, String)> {
     admin
         .batch_execute(
             "CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS; \
@@ -105,12 +109,24 @@ pub(super) async fn install(admin: &Client, database: &str) -> anyhow::Result<(S
             &[&first],
         )
         .await?;
+    let writer = connect(&login(admin_url, &administration)?).await?;
+    let identity = writer
+        .query_one(
+            "SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user",
+            &[],
+        )
+        .await?;
+    anyhow::ensure!(
+        !identity.get::<_, bool>(0) && !identity.get::<_, bool>(1),
+        "fixture configuration uses the administration login"
+    );
+    writer.execute("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:seed-host-route-fixture',false)",&[&first]).await?;
     for role in ["admin", "purchase-reader"] {
-        admin
+        writer
             .execute("INSERT INTO platform.role (name) VALUES ($1)", &[&role])
             .await?;
     }
-    admin
+    writer
         .execute(
             "INSERT INTO platform.permission (role_name, permission) \
              VALUES ('purchase-reader', 'session-test:purchase/read')",
@@ -121,14 +137,14 @@ pub(super) async fn install(admin: &Client, database: &str) -> anyhow::Result<(S
         (first.as_str(), "first@example.test", "admin"),
         (MEMBER, "member@example.test", "purchase-reader"),
     ] {
-        admin
+        writer
             .execute(
                 "INSERT INTO platform.\"user\" (id, type, email) \
                  VALUES ($1::text::uuid, 'user', $2)",
                 &[&principal, &email],
             )
             .await?;
-        admin
+        writer
             .execute(
                 "INSERT INTO platform.user_role (user_id, role_name) \
                  VALUES ($1::text::uuid, $2)",
@@ -240,6 +256,15 @@ pub(super) struct ApplicationHost {
 }
 
 pub(super) async fn application_host(name: &str) -> anyhow::Result<ApplicationHost> {
+    Ok(application_host_with_release(name, load_release()?)
+        .await?
+        .0)
+}
+
+pub(super) async fn application_host_with_release(
+    name: &str,
+    release: Arc<LoadedRelease>,
+) -> anyhow::Result<(ApplicationHost, Arc<WamnPostgres>, String)> {
     let mut postgres = wamn_test_postgres::start(&[])?;
     let test_database = postgres.create_database(name)?;
     let admin_url = test_database.url();
@@ -248,12 +273,18 @@ pub(super) async fn application_host(name: &str) -> anyhow::Result<ApplicationHo
         .query_one("SELECT current_database()::text", &[])
         .await?
         .get(0);
-    let (admitter, administration) = install(&admin, &database).await?;
+    let (admitter, administration) = install(&admin, &database, admin_url).await?;
     let guest = app_generation(&admin, &database).await?;
     let first = claims()["sub"].as_str().unwrap().to_owned();
     let server = Server::start().await;
     let (verifier, token_clock, key_clock) = server.verifier();
     session_fixture::install_authority(&admin, PROJECT, "dev", AUDIENCE, &[&first, MEMBER]).await?;
+    // Application routes advertise PATs and sessions. Extend the session
+    // authority fixture with the columns the real PAT reader prepares.
+    admin.batch_execute(
+        "ALTER TABLE identity.principals ADD COLUMN subject text, ADD COLUMN display_name text; \
+         ALTER TABLE identity.pats ADD COLUMN token_prefix text, ADD COLUMN token_hash text",
+    ).await?;
     admin
         .batch_execute(&sql::grant_identity_reader_surface_sql())
         .await?;
@@ -270,7 +301,6 @@ pub(super) async fn application_host(name: &str) -> anyhow::Result<ApplicationHo
             .await?;
         Ok(Arc::new(client))
     };
-    let release = load_release()?;
     let postgres_credentials = credentials(
         &login(admin_url, &admitter)?,
         &login(admin_url, &administration)?,
@@ -278,33 +308,47 @@ pub(super) async fn application_host(name: &str) -> anyhow::Result<ApplicationHo
     )?;
     let routing = FlowHttpRouting::new(Some(Arc::clone(&release)), RouteInFlightLimit::default())
         .with_authenticator(Arc::new(
-            PlatformRouteAuthenticator::default().with_session_authentication(Arc::new(
-                SessionRouteAuthentication::new(
+            PlatformRouteAuthenticator::default()
+                .with_authentication(Arc::new(
+                    RouteAuthentication::new(
+                        reader().await?,
+                        Arc::clone(&postgres_credentials),
+                        ORG,
+                        PROJECT,
+                        TENANT,
+                    )
+                    .await?,
+                ))
+                .with_session_authentication(Arc::new(SessionRouteAuthentication::new(
                     verifier,
                     reader().await?,
                     Arc::clone(&postgres_credentials),
                     PROJECT,
-                ),
-            )),
+                ))),
         ));
     let delivery = HostRouteDelivery::new(
         Arc::clone(&release),
         HostRouteHandlers::Application {
-            postgres: postgres_credentials,
+            postgres: Arc::clone(&postgres_credentials),
             project: PROJECT.to_owned(),
             identity: Some((reader().await?, ORG.to_owned())),
             changes: AuthChanges::default(),
         },
         None,
     );
-    Ok(ApplicationHost {
-        admin,
-        server,
-        routing: Arc::new(routing),
-        delivery: Arc::new(delivery),
-        first,
-        _clocks: (token_clock, key_clock),
-        _database: test_database,
-        _postgres: postgres,
-    })
+    let administration_url = login(admin_url, &administration)?;
+    Ok((
+        ApplicationHost {
+            admin,
+            server,
+            routing: Arc::new(routing),
+            delivery: Arc::new(delivery),
+            first,
+            _clocks: (token_clock, key_clock),
+            _database: test_database,
+            _postgres: postgres,
+        },
+        postgres_credentials,
+        administration_url,
+    ))
 }

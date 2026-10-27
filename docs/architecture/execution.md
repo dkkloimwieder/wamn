@@ -63,6 +63,26 @@ A successful read also sends `Vary: Authorization, Cookie`.
 Every other response sends `Cache-Control: no-store`: a write, any status other than 200, and any request that carries `x-wamn-csrf`.
 [`read_cache_control`](../../crates/platform/engine/src/flow_http_routing.rs) owns the values.
 
+## Signed file results
+
+A package marks a custom operation's UUID result field with `result.signed_reads`.
+For example, `"signed_reads": {"document": {"lifetime_seconds": 60}}` marks the declared result field `document`.
+Omitting `lifetime_seconds` selects 900 seconds. The package gate refuses zero, longer lifetimes, unknown fields, and fields with another type.
+Only an operation with a permission can declare a signed read.
+
+Admission carries the marking in the main output schema under `x-wamn-signed-reads`.
+The release pins that schema in the component descriptor.
+After the operation returns, the host replaces each marked file UUID with a signed URL.
+The host signs under the operation's grant and the file's application and connection generation.
+A signing failure refuses the whole result.
+A direct file GET still refuses private files, including requests from administrators.
+
+Marked application routes use host delivery, so composed guest execution cannot bypass signing.
+These responses use `no-store` and no ETag because their URLs expire.
+The write log retains UUIDs. Each replay signs fresh URLs after the stored result returns.
+Typed native calls use the same signing step before the host returns their result.
+The guest interface stays unchanged.
+
 ## Host-run routes
 
 A host-run route is a route that the host answers with a fixed handler instead of a component.

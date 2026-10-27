@@ -201,6 +201,14 @@ pub enum HostHandler {
     /// Start one run of the enabled version of an environment workflow
     /// (docs/architecture/execution.md#environment-workflows).
     WorkflowStart,
+    /// Stream a file through a declared write binding.
+    FilePut,
+    /// Read a file owned by the application.
+    FileGet,
+    /// Delete a file unless an application row references it.
+    FileDelete,
+    /// Change a file's exposure.
+    FileExpose,
 }
 
 /// Who may call one host route, beside a valid credential.
@@ -239,6 +247,34 @@ pub struct HostRoute {
 }
 
 const ROUTES: &[HostRoute] = &[
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "file.put",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Granted,
+        handler: HostHandler::FilePut,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "file.get",
+        type_: OperationType::Get,
+        authority: HostRouteAuthority::Granted,
+        handler: HostHandler::FileGet,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "file.delete",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Granted,
+        handler: HostHandler::FileDelete,
+    },
+    HostRoute {
+        set: HostRouteSet::Application,
+        operation: "file.expose",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::Granted,
+        handler: HostHandler::FileExpose,
+    },
     HostRoute {
         set: HostRouteSet::Control,
         operation: "external_system.write",
@@ -695,6 +731,48 @@ mod tests {
         assert!(!is_granted_host_route_operation(
             "wamn-receiving:receipt/get"
         ));
+    }
+
+    #[test]
+    fn file_operations_are_grantable_and_contracts_carry_no_bytes_or_signed_url_switch() {
+        let contracts = [
+            (
+                "put",
+                include_str!("host_route/contracts/file/put.input.json"),
+            ),
+            (
+                "get",
+                include_str!("host_route/contracts/file/get.input.json"),
+            ),
+            (
+                "delete",
+                include_str!("host_route/contracts/file/delete.input.json"),
+            ),
+            (
+                "expose",
+                include_str!("host_route/contracts/file/expose.input.json"),
+            ),
+        ];
+        for (action, input) in contracts {
+            let id = format!("wamn-control-file-{action}-http");
+            let route = HostRouteSet::Application.attachment(&id).unwrap();
+            assert_eq!(route.route.authority, HostRouteAuthority::Granted);
+            assert!(route.registered_operation().is_some());
+            assert!(is_granted_host_route_operation(&route.reference));
+            assert!(HostRouteSet::Control.attachment(&id).is_none());
+            let input: Value = serde_json::from_str(input).unwrap();
+            let fields = input["fields"].as_array().unwrap();
+            assert!(
+                fields
+                    .iter()
+                    .any(|field| field["path"].as_str().unwrap().ends_with("application"))
+            );
+            assert!(fields.iter().all(|field| {
+                !["bytes", "signed", "lifetime", "url"]
+                    .iter()
+                    .any(|name| field["path"].as_str().unwrap().ends_with(name))
+            }));
+        }
     }
 
     /// `workflow.start` names no user, role or release: the caller is the

@@ -40,6 +40,17 @@ impl WamnCredentials {
         }
     }
 
+    /// Build a pinned handle from this reader's organization.
+    pub(crate) fn connection_handle(&self, name: &str, generation: i64) -> anyhow::Result<String> {
+        let org = self
+            .org
+            .as_deref()
+            .context("connection credentials unavailable")?;
+        let handle = format!("org:{org}:{name}@{generation}");
+        self.handle(&handle)?;
+        Ok(handle)
+    }
+
     async fn connection(
         &self,
         project: &str,
@@ -603,6 +614,30 @@ mod tests {
                 .await
                 .unwrap()
                 .is_none()
+        );
+    }
+}
+
+#[cfg(test)]
+mod handle_tests {
+    use super::*;
+
+    #[test]
+    fn credential_handles_use_the_reader_org_and_pin_the_generation() {
+        let reader = WamnCredentials {
+            org: Some("file-org".to_owned()),
+            database: None,
+        };
+        assert_eq!(
+            reader.connection_handle("files", 7).unwrap(),
+            "org:file-org:files@7"
+        );
+        assert!(reader.connection_handle("files", 0).is_err());
+        assert!(reader.connection_handle("files@2", 7).is_err());
+        assert!(
+            WamnCredentials::empty()
+                .connection_handle("files", 7)
+                .is_err()
         );
     }
 }

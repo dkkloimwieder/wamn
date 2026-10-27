@@ -94,7 +94,7 @@ pub struct ObjectHead {
 /// every key is resolved under `prefix`.
 #[derive(Clone)]
 pub struct BoundContainer {
-    store: Arc<dyn ObjectStore>,
+    pub(super) store: Arc<dyn ObjectStore>,
     container: String,
     prefix: String,
     read_only: bool,
@@ -154,7 +154,7 @@ impl BoundContainer {
         self
     }
 
-    async fn permit_connection(&self, verb: &'static str) -> Result<(), StoreError> {
+    pub(super) async fn permit_connection(&self, verb: &'static str) -> Result<(), StoreError> {
         if let Some(authority) = &self.authority
             && !authority
                 .vault
@@ -170,7 +170,7 @@ impl BoundContainer {
         Ok(())
     }
 
-    fn permit_write(&self, verb: &'static str) -> Result<(), StoreError> {
+    pub(super) fn permit_write(&self, verb: &'static str) -> Result<(), StoreError> {
         if self.read_only {
             return Err(StoreError::Refused {
                 verb,
@@ -186,7 +186,7 @@ impl BoundContainer {
         &self.container
     }
 
-    fn path(&self, author_key: &str) -> Result<Path, StoreError> {
+    pub(super) fn path(&self, author_key: &str) -> Result<Path, StoreError> {
         let resolved =
             confinement::resolve_key(&self.prefix, author_key).map_err(StoreError::Confinement)?;
         Ok(Path::from(resolved))
@@ -205,6 +205,7 @@ impl BoundContainer {
     pub async fn put(&self, author_key: &str, body: Vec<u8>) -> Result<(), StoreError> {
         self.permit_connection("put").await?;
         self.permit_write("put")?;
+        super::files::permit_raw_mutation(author_key)?;
         let path = self.path(author_key)?;
         self.store
             .put(&path, body.into())
@@ -260,6 +261,7 @@ impl BoundContainer {
     pub async fn delete(&self, author_key: &str) -> Result<(), StoreError> {
         self.permit_connection("delete").await?;
         self.permit_write("delete")?;
+        super::files::permit_raw_mutation(author_key)?;
         let path = self.path(author_key)?;
         match self.store.delete(&path).await {
             Ok(()) | Err(object_store::Error::NotFound { .. }) => Ok(()),
@@ -302,7 +304,12 @@ impl BoundContainer {
     pub async fn clear(&self) -> Result<(), StoreError> {
         self.permit_connection("clear").await?;
         self.permit_write("clear")?;
-        for key in self.list().await? {
+        let keys = self.list().await?;
+        // Refuse before deleting anything when file-managed objects share this prefix.
+        for key in &keys {
+            super::files::permit_raw_mutation(key)?;
+        }
+        for key in keys {
             self.delete(&key).await?;
         }
         Ok(())

@@ -117,6 +117,8 @@ pub struct BlobstoreBinding {
     pub container: String,
     /// The key prefix confining it within that container.
     pub prefix: String,
+    /// Optional public origin. It belongs to this generation.
+    pub cdn_host: Option<String>,
 }
 
 /// Resolve an authorized snapshot into binding coordinates.
@@ -139,10 +141,18 @@ pub fn resolve(snapshot: &ConnectionEffectSnapshot) -> Result<BlobstoreBinding, 
         .definition
         .as_ref()
         .ok_or(BindingError::NoDefinition)?;
-    let handle = snapshot
-        .credential_handle
-        .clone()
-        .filter(|handle| !handle.is_empty());
+    resolve_coordinates(definition, snapshot.credential_handle.as_deref())
+}
+
+/// Parse coordinates after the native caller authorizes a package binding.
+/// The definition must come from the selected connection generation.
+pub fn resolve_coordinates(
+    definition: &serde_json::Value,
+    credential_handle: Option<&str>,
+) -> Result<BlobstoreBinding, BindingError> {
+    let handle = credential_handle
+        .filter(|handle| !handle.is_empty())
+        .map(str::to_owned);
     let provider = match definition.get("provider").map(serde_json::Value::as_str) {
         None | Some(Some("s3")) => BlobstoreProvider::S3 {
             endpoint: coordinate(definition, "endpoint")?,
@@ -160,6 +170,15 @@ pub fn resolve(snapshot: &ConnectionEffectSnapshot) -> Result<BlobstoreBinding, 
         provider,
         container: coordinate(definition, "container")?,
         prefix: coordinate(definition, "prefix")?,
+        cdn_host: if definition.get("cdn_host").is_some() {
+            // Use the catalog validator so binding and declaration accept the same origins.
+            wamn_catalog::RequirementType::Blobstore
+                .check_definition(definition)
+                .map_err(|_| BindingError::MissingCoordinate { field: "cdn_host" })?;
+            Some(coordinate(definition, "cdn_host")?)
+        } else {
+            None
+        },
     })
 }
 
@@ -334,5 +353,23 @@ mod tests {
         let mut snapshot = authorized_snapshot();
         snapshot.credential_handle = None;
         assert_eq!(resolve(&snapshot), Err(BindingError::NoCredential));
+    }
+    #[test]
+    fn cdn_host_is_optional_and_malformed_values_refuse() {
+        let mut snapshot = authorized_snapshot();
+        assert_eq!(resolve(&snapshot).unwrap().cdn_host, None);
+        snapshot.definition.as_mut().unwrap()["cdn_host"] = "cdn.example.com".into();
+        assert_eq!(
+            resolve(&snapshot).unwrap().cdn_host.as_deref(),
+            Some("cdn.example.com")
+        );
+        for value in [
+            serde_json::json!(null),
+            serde_json::json!(42),
+            serde_json::json!("https://cdn.example.com/path"),
+        ] {
+            snapshot.definition.as_mut().unwrap()["cdn_host"] = value;
+            assert!(resolve(&snapshot).is_err());
+        }
     }
 }

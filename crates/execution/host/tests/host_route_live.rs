@@ -114,7 +114,7 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
         .query_one("SELECT current_database()::text", &[])
         .await?
         .get(0);
-    let (admitter, administration) = install(&admin, &database).await?;
+    let (admitter, administration) = install(&admin, &database, admin_url).await?;
 
     // The administration login writes the authorization relations and
     // appends their history entries, and reads nothing on the run plane.
@@ -220,6 +220,10 @@ async fn permission_mine_answers_the_held_grants_of_the_session_caller() -> anyh
         json!({"admin": true, "permissions": [
             "session-test:purchase/read",
             "session-test:purchase/write",
+            "wamn-control:file/delete",
+            "wamn-control:file/expose",
+            "wamn-control:file/get",
+            "wamn-control:file/put",
             "wamn-control:number-counter/set",
             "wamn-control:permission/grant",
             "wamn-control:permission/list",
@@ -916,5 +920,62 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
         401
     );
     server.stop().await;
+    Ok(())
+}
+
+/// Every native file operation remains in the application's permission catalog.
+#[test]
+fn four_file_operations_require_an_explicit_application_grant() {
+    for action in ["put", "get", "delete", "expose"] {
+        let reference = format!("wamn-control:file/{action}");
+        let attachment = HostRouteSet::Application
+            .attachments()
+            .find(|(_, attachment)| attachment.reference == reference)
+            .unwrap_or_else(|| panic!("missing file operation {reference}"))
+            .1;
+        assert_eq!(
+            attachment.route.authority,
+            wamn_catalog::HostRouteAuthority::Granted
+        );
+        assert!(wamn_catalog::is_granted_host_route_operation(&reference));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_session_without_file_grants_cannot_call_any_file_operation() -> anyhow::Result<()> {
+    let mut host = application_host("file_route_grants").await?;
+    let mut member = claims();
+    member["sub"] = json!(MEMBER);
+    member["authority"] = json!({"login": MEMBER});
+    member["roles"] = json!(["purchase-reader"]);
+    let bearer = format!("Bearer {}", signed(&header(), &member));
+    for action in ["put", "get", "delete", "expose"] {
+        let reference = format!("wamn-control:file/{action}");
+        let attachment = route_of(&reference);
+        let anonymous = host
+            .routing
+            .authenticate_authorization_for_test(&attachment, None)
+            .await;
+        assert!(
+            matches!(anonymous, Err((401, _))),
+            "anonymous {reference}: {anonymous:?}"
+        );
+        match host
+            .routing
+            .authenticate_authorization_for_test(&attachment, Some(&bearer))
+            .await
+        {
+            Err((403, _)) => {}
+            Ok(Some(caller)) => {
+                let result = outcome(&host.delivery, &attachment, Some(caller), json!({})).await;
+                assert!(
+                    matches!(result, Err(DeliveryError::PermissionDenied(_))),
+                    "ungranted {reference}: {result:?}"
+                );
+            }
+            other => panic!("a valid session without {reference} must receive 403: {other:?}"),
+        }
+    }
+    host.server.stop().await;
     Ok(())
 }

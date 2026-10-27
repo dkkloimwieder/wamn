@@ -950,6 +950,48 @@ Environment staging, connection administration, local development bindings, and 
 `connection_instances` and `workflows` keep their existing metadata and carry no record history trigger.
 Project migration `0036_retire_released_workflows` removes `wirings` and `event_registrations`; fresh databases create neither table.
 
+### Files
+
+`platform.file` records one owning application and the connection generation that stored its bytes.
+Application tables can reference `platform.file(id)`, as they reference `platform.external_system(id)`.
+Connection disablement preserves these references. A foreign key refuses deletion of a referenced file.
+Application roles read file metadata but cannot insert, update, or delete it.
+File rows use the standard stamps and unlimited history.
+
+The package declares its store binding. `environment.k` binds that declaration to an immutable connection name.
+C4 covers GCS and S3. C10 owns disk stores and eviction.
+Each mutation requires a write binding. Native host code transfers bytes, and guest operations carry only `file_id`.
+No file byte transfer changes WIT.
+
+Uploads stream to `_wamn_files/staging/<uuid>` under the binding prefix.
+The host commits metadata, copies staging to `_wamn_files/live/<uuid>`, and deletes staging.
+Reads repair a missing live object from staging.
+The store age rule covers staging only. Unlinked metadata and live objects never expire by age.
+Raw blobstore writes, deletes, and clears refuse file-managed keys and their public copies.
+
+Every file route requires its operation grant.
+The application URL requires a session with `file.get` on the owning application.
+Anonymous callers receive 401. A caller without the grant receives 403.
+Private files return 403 through that URL, including for administrators.
+Another application never serves the file.
+
+A package marks a UUID result field with `signed_reads` in its public operation declaration.
+The host replaces that file ID with a signed URL after the operation returns. The guest uses the existing WIT contract.
+The roles that hold the operation can read the private file through that result.
+The optional `lifetime_seconds` accepts 1 through 900 and defaults to 900. Signed URLs last at most 15 minutes.
+GCS uses IAM `signBlob` with the pod identity and stores no signing key.
+S3 reads its credential through `registry.lookup_connection_credential`.
+Reads and deletes use the bucket and prefix of the recorded generation.
+
+Public exposure requires the optional `cdn_host` store parameter, without a descriptor version change.
+The host copies bytes to `public/<key>` under the binding prefix and stores `url`.
+Public copies carry `Cache-Control: max-age=3600`.
+Unexpose deletes the origin object at once and clears the URL, without a cache purge.
+Expose and unexpose are idempotent.
+
+If an object delete fails after the row deletion commits, the host logs the object key and does not retry.
+Collector follow-up belongs to `wamn-2wdsf.4`.
+
 ### System database
 
 The system database owns `registry.integrations`, the connector catalog, and `registry.target`, the deployment target identities.

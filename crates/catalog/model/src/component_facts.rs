@@ -624,6 +624,9 @@ pub fn verify_stored_effect_projection(
             operation.registered_operation.as_deref(),
             operation.committed_result_schema.as_ref(),
         )?;
+        crate::signed_file_reads(operation).map_err(|error| {
+            ComponentFactError::new(ComponentFactErrorType::InvalidSchema, error.to_string())
+        })?;
         validate_operation_statement_facts(export, &operation.statements)?;
     }
     refuse_application_operation_imports(&component.imports)?;

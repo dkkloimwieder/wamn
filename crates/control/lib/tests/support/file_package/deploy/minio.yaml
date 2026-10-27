@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: c4-files-minio
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: c4-files-minio}
+  template:
+    metadata:
+      labels: {app: c4-files-minio}
+    spec:
+      containers:
+        - name: minio
+          image: minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+          args: [server, /data]
+          env:
+            - {name: MINIO_ROOT_USER, value: file-fixture}
+            - {name: MINIO_ROOT_PASSWORD, value: file-fixture-only}
+            - {name: MINIO_DOMAIN, value: localhost}
+            - {name: MINIO_SCANNER_SPEED, value: fastest}
+          ports: [{containerPort: 9000}]
+          readinessProbe:
+            httpGet: {path: /minio/health/ready, port: 9000}
+          volumeMounts: [{name: data, mountPath: /data}]
+      volumes: [{name: data, emptyDir: {}}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: c4-files-minio
+spec:
+  selector: {app: c4-files-minio}
+  ports: [{port: 9000, targetPort: 9000}]
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: c4-files-minio-prepare
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: mc
+          image: minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+          command: [/bin/sh, -ec]
+          args:
+            - |
+              until mc alias set files http://c4-files-minio:9000 file-fixture file-fixture-only; do sleep 1; done
+              mc mb --ignore-existing files/files-a files/files-b
+              for file_bucket in files-a files-b; do
+                if [ "$file_bucket" = files-a ]; then file_prefix=generation-one; else file_prefix=generation-two; fi
+                printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":["s3:ListBucket","s3:GetBucketLocation"],"Resource":["arn:aws:s3:::%s"]},{"Effect":"Allow","Principal":"*","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::%s/%s/public/*"]}]}' "$file_bucket" "$file_bucket" "$file_prefix" > /tmp/public-policy.json
+                mc anonymous set-json /tmp/public-policy.json "files/$file_bucket"
+              done
+              mc ilm rule add --expire-days 1 --prefix generation-one/_wamn_files/staging/ files/files-a
+              mc ilm rule add --expire-days 1 --prefix generation-two/_wamn_files/staging/ files/files-b

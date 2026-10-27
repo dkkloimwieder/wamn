@@ -8,6 +8,7 @@
 mod application_route;
 mod control_route;
 pub mod environment_status;
+pub mod file_route;
 mod host_route;
 mod operation;
 mod read_cache;

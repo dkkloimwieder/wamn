@@ -303,6 +303,21 @@ pub const CONNECTION: Table = Table {
     ],
 };
 
+/// Application-owned file metadata. Storage coordinates use the recorded generation.
+pub const FILE: Table = Table {
+    name: "file",
+    columns: &[
+        "id",
+        "application",
+        "connection_id",
+        "connection_generation",
+        "blob_key",
+        "exposure",
+        "url",
+        "created_by",
+    ],
+};
+
 /// The integrations allowed at an org, project or environment scope.
 pub const INTEGRATION_ALLOW: Table = Table {
     name: "integration_allow",
@@ -347,6 +362,7 @@ pub const TABLES: &[Table] = &[
     ENVIRONMENT,
     EXTERNAL_SYSTEM,
     CONNECTION,
+    FILE,
     INTEGRATION_ALLOW,
     PROJECT_CONNECTION,
     NUMBER_SEQUENCE,
@@ -392,9 +408,9 @@ mod tests {
     #[test]
     fn table_manifest_is_complete_and_unique() {
         // Four auth/RBAC concepts, with the user↔role linkage split out as
-        // its own table, the environment status, and the seven platform
-        // configuration tables make thirteen tables.
-        assert_eq!(TABLES.len(), 13);
+        // its own table, the environment status, and the eight platform
+        // configuration tables make fourteen tables.
+        assert_eq!(TABLES.len(), 14);
         let mut names: Vec<&str> = TABLES.iter().map(|t| t.name).collect();
         names.sort_unstable();
         names.dedup();

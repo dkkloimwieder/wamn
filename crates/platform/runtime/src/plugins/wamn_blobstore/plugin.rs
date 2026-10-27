@@ -211,6 +211,119 @@ impl WamnBlobstore {
             .and_then(|invocations| invocations.get(component_id).cloned())
     }
 
+    /// Open file storage after the native host authorizes the package-declared binding.
+    ///
+    /// `definition` must come from `generation` of this connection. For existing files,
+    /// use the row's generation, never the connection's current generation. The native
+    /// route supplies the binding mode after its package and environment authorization.
+    /// Credentials are resolved through the registry for exactly that generation.
+    pub async fn file_store(
+        &self,
+        connection_name: &str,
+        generation: i64,
+        definition: &serde_json::Value,
+        read_only: bool,
+    ) -> Result<super::files::FileStore, super::files::FileStorageError> {
+        use super::files::{FileStorageError, FileStorageErrorKind, FileStore};
+        let refused = |message: &str| {
+            FileStorageError::new(FileStorageErrorKind::Refused, "open", message.to_owned())
+        };
+        if generation < 1 {
+            return Err(refused("connection generation must be positive"));
+        }
+        if !self
+            .vault
+            .connection_enabled(&self.project, connection_name)
+            .await
+            .map_err(|error| {
+                FileStorageError::new(
+                    FileStorageErrorKind::Refused,
+                    "open",
+                    error.into_boxed_dyn_error(),
+                )
+            })?
+        {
+            return Err(refused(
+                "connection is disabled or unavailable to this project",
+            ));
+        }
+        wamn_catalog::RequirementType::Blobstore
+            .check_definition(definition)
+            .map_err(|error| refused(&error))?;
+        let handle = self
+            .vault
+            .connection_handle(connection_name, generation)
+            .map_err(|error| {
+                FileStorageError::new(
+                    FileStorageErrorKind::Refused,
+                    "credential handle",
+                    error.into_boxed_dyn_error(),
+                )
+            })?;
+        let is_gcs = definition
+            .get("provider")
+            .and_then(serde_json::Value::as_str)
+            == Some("gcs");
+        let bound = binding::resolve_coordinates(definition, (!is_gcs).then_some(handle.as_str()))
+            .map_err(|error| {
+                FileStorageError::new(FileStorageErrorKind::Refused, "binding", error)
+            })?;
+        let (store, signer): (Arc<dyn ObjectStore>, Arc<dyn object_store::signer::Signer>) =
+            match &bound.provider {
+                binding::BlobstoreProvider::S3 {
+                    endpoint,
+                    credential_handle,
+                } => {
+                    let secret = self
+                        .vault
+                        .read_connection(&self.project, credential_handle)
+                        .await
+                        .map_err(|error| {
+                            FileStorageError::new(
+                                FileStorageErrorKind::Refused,
+                                "open",
+                                error.into_boxed_dyn_error(),
+                            )
+                        })?
+                        .ok_or_else(|| refused("connection generation has no credential"))?;
+                    let client =
+                        build_s3_store(endpoint, &bound.container, &secret).map_err(|error| {
+                            FileStorageError::new(
+                                FileStorageErrorKind::Refused,
+                                "open",
+                                error.into_boxed_dyn_error(),
+                            )
+                        })?;
+                    (client.clone(), client)
+                }
+                binding::BlobstoreProvider::Gcs => {
+                    // Without a stored key, object_store signs through IAM signBlob
+                    // using credentials supplied by the pod metadata identity.
+                    let client = build_gcs_store(&bound.container).map_err(|error| {
+                        FileStorageError::new(
+                            FileStorageErrorKind::Refused,
+                            "open",
+                            error.into_boxed_dyn_error(),
+                        )
+                    })?;
+                    (client.clone(), client)
+                }
+            };
+        let container = BoundContainer::new(store, bound.container, bound.prefix)
+            .with_read_only(read_only)
+            .with_connection_authority(
+                Arc::clone(&self.vault),
+                &self.project,
+                connection_name.to_owned(),
+            );
+        FileStore::new(
+            container,
+            Some(signer),
+            bound.cdn_host.as_deref(),
+            generation,
+        )
+    }
+
     /// Resolve one store alias into a confined container.
     ///
     /// The guest names its own declared STORE ALIAS, never a container: the
@@ -336,7 +449,7 @@ impl WamnBlobstore {
             tracing::warn!(store_alias, component_id, error = %error, "blobstore binding refused: the binding does not resolve");
             error
         })?;
-        let store = match &bound.provider {
+        let store: Arc<dyn ObjectStore> = match &bound.provider {
             binding::BlobstoreProvider::S3 {
                 endpoint,
                 credential_handle,
@@ -356,9 +469,9 @@ impl WamnBlobstore {
                         );
                         BindingError::NoCredential
                     })?;
-                build_s3_store(endpoint, &bound.container, &secret)
+                build_s3_store(endpoint, &bound.container, &secret).map(|store| store as Arc<dyn ObjectStore>)
             }
-            binding::BlobstoreProvider::Gcs => build_gcs_store(&bound.container),
+            binding::BlobstoreProvider::Gcs => build_gcs_store(&bound.container).map(|store| store as Arc<dyn ObjectStore>),
         }
         .map_err(|error| {
             tracing::warn!(error = %error, "blobstore client construction failed");
@@ -383,7 +496,7 @@ fn build_s3_store(
     endpoint: &str,
     container: &str,
     secret: &str,
-) -> anyhow::Result<Arc<dyn ObjectStore>> {
+) -> anyhow::Result<Arc<object_store::aws::AmazonS3>> {
     let credential: serde_json::Value = serde_json::from_str(secret)
         .map_err(|_| anyhow::anyhow!("object-store credential is not JSON"))?;
     let access_key = credential
@@ -407,11 +520,13 @@ fn build_s3_store(
     Ok(Arc::new(store))
 }
 
-/// Build the Cloud Storage client for one binding. No credential is set, so
-/// the crate takes its token from the instance metadata server, which under
-/// Workload Identity answers for the pod's Google service account.
-fn build_gcs_store(container: &str) -> anyhow::Result<Arc<dyn ObjectStore>> {
+/// Build Cloud Storage with pod metadata credentials and IAM signing.
+/// Explicit providers prevent fallback to stored ADC keys.
+fn build_gcs_store(container: &str) -> anyhow::Result<Arc<object_store::gcp::GoogleCloudStorage>> {
+    let (credentials, signing_credentials) = super::pod_identity::providers()?;
     let store = GoogleCloudStorageBuilder::new()
+        .with_credentials(credentials)
+        .with_signing_credentials(signing_credentials)
         .with_bucket_name(container)
         .build()?;
     Ok(Arc::new(store))

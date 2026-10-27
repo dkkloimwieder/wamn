@@ -5468,6 +5468,7 @@ checksum = "97277d36b9c3ace13e58fa6e753f8b0bbbf302a18dd193240d70f9e29681059a"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
+ "serde_core",
  "sha1_smol",
  "wasm-bindgen",
 ]
@@ -6012,8 +6013,11 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "boon",
+ "bytes",
  "futures-util",
  "hex",
+ "http-body-util",
+ "hyper",
  "opentelemetry",
  "opentelemetry_sdk",
  "rcgen",
@@ -6031,6 +6035,7 @@ dependencies = [
  "tracing-opentelemetry",
  "tracing-subscriber",
  "url",
+ "uuid",
  "wamn-catalog",
  "wamn-component-composer",
  "wamn-control",
@@ -6052,6 +6057,7 @@ dependencies = [
  "wamn-test-postgres",
  "wash-runtime",
  "wasmparser 0.261.0",
+ "wasmtime-wasi-http",
  "wat",
 ]
 

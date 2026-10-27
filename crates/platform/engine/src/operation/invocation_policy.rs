@@ -48,6 +48,18 @@ pub trait InvocationPolicy: HostPlugin + Sized {
         failure: NativeCallFailure,
     ) -> impl Future<Output = anyhow::Result<Self::Authority>> + Send;
 
+    /// Replace host-owned result fields after guest execution. JSON results
+    /// reach this hook after intent replay and commit, so URLs are never logged.
+    fn finish_result(
+        &self,
+        _component_id: &str,
+        _operation: &str,
+        _facts: &Self::Facts,
+        outcome: super::native_call::NativeOutcome,
+    ) -> impl Future<Output = anyhow::Result<super::native_call::NativeOutcome>> + Send {
+        async { Ok(outcome) }
+    }
+
     /// Close component admission and revoke the authority of every active call.
     fn shutdown(&self);
 

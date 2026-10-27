@@ -1,0 +1,101 @@
+{
+  "package": {
+    "id": "file_fixture",
+    "version": "0.1.0"
+  },
+  "required_platform_policy_contract": {
+    "id": "file_fixture_data_access",
+    "state": "satisfied"
+  },
+  "models": {
+    "document": {
+      "schema": "file_fixture",
+      "table": "document",
+      "owner": "file_fixture",
+      "audit_log": {
+        "columns": [],
+        "retention": "none"
+      },
+      "operations": {}
+    }
+  },
+  "connections": {
+    "files": {
+      "integration": "s3",
+      "mode": "write"
+    },
+    "files_read": {
+      "integration": "s3",
+      "mode": "read"
+    },
+    "files_no_cdn": {
+      "integration": "s3",
+      "mode": "write"
+    }
+  },
+  "components": {
+    "signed_read": {
+      "connections": [
+        "files",
+        "postgres"
+      ]
+    }
+  },
+  "custom_operations": {
+    "document.signed_read": {
+      "type": "projection",
+      "visibility": "public",
+      "permission": "document.signed_read",
+      "component": "signed_read",
+      "input": {
+        "fields": [
+          {
+            "path": "value.document",
+            "type": "uuid",
+            "nullable": false
+          }
+        ]
+      },
+      "result": {
+        "class": "one",
+        "fields": [
+          {
+            "path": "document",
+            "type": "uuid",
+            "nullable": false
+          }
+        ],
+        "signed_reads": {
+          "document": {
+            "lifetime_seconds": 3
+          }
+        }
+      },
+      "errors": [
+        "permission_denied",
+        "invalid_input"
+      ],
+      "connection": "postgres",
+      "statements": {
+        "read_file_id": {
+          "path": "query/read_file_id.sql",
+          "fetch": "one",
+          "parameters": [
+            {
+              "name": "document",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "document",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        }
+      }
+    }
+  }
+}

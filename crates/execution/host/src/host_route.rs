@@ -82,6 +82,7 @@ pub struct HostRouteDelivery {
     release: Arc<LoadedRelease>,
     handlers: HostRouteHandlers,
     next: Option<Arc<dyn RouteDelivery>>,
+    files: Option<Arc<crate::file_route::FileRoutes>>,
 }
 
 impl fmt::Debug for HostRouteDelivery {
@@ -105,7 +106,14 @@ impl HostRouteDelivery {
             release,
             handlers,
             next,
+            files: None,
         }
+    }
+
+    /// Share the native file handlers with the JSON mutation routes.
+    pub fn with_files(mut self, files: Option<Arc<crate::file_route::FileRoutes>>) -> Self {
+        self.files = files;
+        self
     }
 
     async fn handle(
@@ -115,6 +123,32 @@ impl HostRouteDelivery {
         request_id: Option<&str>,
         payload: &str,
     ) -> Result<serde_json::Value, Refusal> {
+        if matches!(
+            attachment.route.handler,
+            HostHandler::FilePut
+                | HostHandler::FileGet
+                | HostHandler::FileDelete
+                | HostHandler::FileExpose
+        ) {
+            let files = self
+                .files
+                .as_ref()
+                .ok_or_else(|| Refusal::Failed(anyhow::anyhow!("file handlers unavailable")))?;
+            return files
+                .handle(attachment, caller, payload)
+                .await
+                .map_err(|error| match error.refusal {
+                    Some(refusal) => Refusal::Declared {
+                        code: refusal.code(),
+                        detail: if refusal == crate::file_route::FileRefusal::PermissionDenied {
+                            json!({"operation": attachment.reference})
+                        } else {
+                            json!({"field": error.field})
+                        },
+                    },
+                    None => Refusal::Failed(error.into()),
+                });
+        }
         let principal: PrincipalId = caller.principal_id().parse().map_err(
             |error: wamn_platform_identity::IdentityError| Refusal::Failed(error.into()),
         )?;

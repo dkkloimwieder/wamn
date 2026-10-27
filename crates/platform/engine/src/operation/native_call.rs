@@ -81,6 +81,7 @@ impl<P: InvocationPolicy> fmt::Debug for NativeInvocation<P> {
 
 struct NativeCall<P: InvocationPolicy> {
     request: NativeInvocation<P>,
+    finish_result: bool,
     reply: oneshot::Sender<NativeOutcome>,
     failure: NativeCallFailure,
     trace: InvocationTrace,
@@ -135,6 +136,7 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
         Box::pin(trace.run(async move {
             let Self {
                 request,
+                finish_result,
                 reply,
                 failure,
                 retired_after_reply,
@@ -229,6 +231,13 @@ impl<P: InvocationPolicy> GuestCall for NativeCall<P> {
                         )
                     }
                 };
+            // Direct native calls finish here under their active authority.
+            // The engine's intent path finishes after commit or replay instead.
+            let outcome = if finish_result {
+                request.application.policy.finish_result(
+                    &active_scope.component_id, &request.operation, &request.facts, outcome,
+                ).await?
+            } else { outcome };
             let refused = match &outcome {
                 NativeOutcome::Json(value) => value.is_err(),
                 NativeOutcome::Typed(value) => matches!(value, Val::Result(Err(_))),
@@ -302,6 +311,22 @@ pub async fn invoke_owned<P: InvocationPolicy>(
     target: &DispatchTarget,
     request: NativeInvocation<P>,
 ) -> anyhow::Result<NativeOutcome> {
+    invoke(target, request, true).await
+}
+
+/// The intent engine persists the raw result, then finishes its delivery.
+pub(super) async fn invoke_raw<P: InvocationPolicy>(
+    target: &DispatchTarget,
+    request: NativeInvocation<P>,
+) -> anyhow::Result<NativeOutcome> {
+    invoke(target, request, false).await
+}
+
+async fn invoke<P: InvocationPolicy>(
+    target: &DispatchTarget,
+    request: NativeInvocation<P>,
+    finish_result: bool,
+) -> anyhow::Result<NativeOutcome> {
     let deadline = request.deadline;
     anyhow::ensure!(Instant::now() < deadline, "native-node-deadline-exceeded");
     let (reply, response) = oneshot::channel();
@@ -317,6 +342,7 @@ pub async fn invoke_owned<P: InvocationPolicy>(
         if let Err(native_error) = target
             .dispatch(NativeCall {
                 request,
+                finish_result,
                 reply,
                 failure: Arc::clone(&failure),
                 // Native starts a separate task. Carry the existing invocation

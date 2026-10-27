@@ -1,0 +1,27 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "file_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "exposure",
+      "type": "text",
+      "nullable": false,
+      "values": [
+        "private",
+        "application",
+        "public"
+      ]
+    },
+    {
+      "path": "url",
+      "type": "text",
+      "nullable": true,
+      "values": []
+    }
+  ]
+}

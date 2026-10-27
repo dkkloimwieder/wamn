@@ -47,6 +47,7 @@ use wamn_engine::operation::{invocation_policy, native_call, native_workload, ne
 use wamn_engine::warm_reuse::WarmReuse;
 
 mod native_policy;
+mod signed_result;
 
 /// What one cloud call needs to log its intents
 /// (`docs/history/host-transaction.md` 5, issue 4).
@@ -206,6 +207,7 @@ pub struct OperationHost {
     owner_prefix: String,
     warm_reuse: WarmReuse,
     native: tokio::sync::OnceCell<ReleasedApplication>,
+    files: std::sync::OnceLock<Arc<crate::file_route::FileRoutes>>,
 }
 
 /// Keep the validated input alive so pointer identity proves immutable reuse.
@@ -301,7 +303,19 @@ impl OperationHost {
             owner_prefix: scope.owner_prefix,
             warm_reuse: scope.warm_reuse,
             native: tokio::sync::OnceCell::new(),
+            files: std::sync::OnceLock::new(),
         })
+    }
+
+    /// Attach native file signing before the released application loads.
+    pub fn set_file_routes(&self, files: Arc<crate::file_route::FileRoutes>) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.native.get().is_none(),
+            "file routes must precede application loading"
+        );
+        self.files
+            .set(files)
+            .map_err(|_| anyhow::anyhow!("file routes already attached"))
     }
 
     /// The identity of the carried release, bound on every released call.
@@ -505,6 +519,7 @@ impl OperationHost {
             &components,
             entry.as_ref(),
             NativePolicyResources {
+                files: self.files.get().cloned(),
                 postgres: Arc::clone(&self.postgres),
                 logging: Arc::clone(&self.logging),
                 connection_http: Arc::new(ConnectionHttp::new(

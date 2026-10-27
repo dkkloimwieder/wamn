@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:file/get@0.9.0",
+  "type": "get",
+  "label": "Get a file",
+  "grant": "wamn-control:file/get@0.9.0",
+  "permission_token": "file.get",
+  "result": "one",
+  "transaction": "implicit",
+  "visibility": "public"
+}

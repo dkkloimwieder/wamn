@@ -211,10 +211,38 @@ impl RequirementType {
                 }
             }
         }
-        if let Some(key) = object
-            .keys()
-            .find(|key| !coordinates.contains(&key.as_str()))
+        if self == Self::Blobstore
+            && let Some(value) = object.get("cdn_host")
         {
+            let value = value
+                .as_str()
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| "cdn_host must be a nonempty HTTP origin".to_owned())?;
+            let origin = if value.contains("://") {
+                value.to_owned()
+            } else {
+                format!("https://{value}")
+            };
+            let url = url::Url::parse(&origin)
+                .map_err(|_| "cdn_host must be an HTTP origin".to_owned())?;
+            if !matches!(url.scheme(), "http" | "https")
+                || url.host_str().is_none()
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.path() != "/"
+                || url.query().is_some()
+                || url.fragment().is_some()
+            {
+                return Err(
+                    "cdn_host must be an HTTP origin without a path, query, or credentials"
+                        .to_owned(),
+                );
+            }
+        }
+        if let Some(key) = object.keys().find(|key| {
+            !(coordinates.contains(&key.as_str())
+                || self == Self::Blobstore && key.as_str() == "cdn_host")
+        }) {
             return Err(format!(
                 "the generation definition carries {key}, which {self:?} never reads; \
                  a coordinate nobody reads is a coordinate nobody validates"
@@ -643,6 +671,45 @@ mod tests {
             "\"prefix\"",
         ] {
             assert!(json.contains(spelling), "missing {spelling} in {json}");
+        }
+    }
+    #[test]
+    fn blobstore_cdn_host_is_optional_and_accepts_only_an_http_origin() {
+        for provider in ["gcs", "s3"] {
+            let mut definition =
+                serde_json::json!({"provider": provider, "container": "files", "prefix": "app"});
+            if provider == "s3" {
+                definition["endpoint"] = "https://s3.example.com".into();
+            }
+            RequirementType::Blobstore
+                .check_definition(&definition)
+                .unwrap();
+            for origin in [
+                "cdn.example.com",
+                "https://cdn.example.com",
+                "http://localhost:9000/",
+            ] {
+                definition["cdn_host"] = origin.into();
+                RequirementType::Blobstore
+                    .check_definition(&definition)
+                    .unwrap();
+            }
+            for origin in [
+                serde_json::json!(null),
+                serde_json::json!(42),
+                serde_json::json!(""),
+                serde_json::json!("https://cdn.example.com/path"),
+                serde_json::json!("https://user:pass@cdn.example.com"),
+                serde_json::json!("https://cdn.example.com?query"),
+                serde_json::json!("ftp://cdn.example.com"),
+            ] {
+                definition["cdn_host"] = origin;
+                assert!(
+                    RequirementType::Blobstore
+                        .check_definition(&definition)
+                        .is_err()
+                );
+            }
         }
     }
 }

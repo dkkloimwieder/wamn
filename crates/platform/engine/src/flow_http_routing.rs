@@ -617,6 +617,19 @@ impl std::fmt::Debug for FlowHttpRouting {
 }
 
 impl FlowHttpRouting {
+    /// Admit a native transfer under the same ceiling as the guest route.
+    pub fn try_acquire_route(&self, attachment_id: &str) -> Option<RoutePermit> {
+        self.carries_route(attachment_id)
+            .ok()
+            .filter(|present| *present)?;
+        self.limiter.try_acquire(attachment_id)
+    }
+
+    /// The host's configured ceiling for a bounded native dispatch queue.
+    pub fn in_flight_limit(&self) -> usize {
+        self.limiter.limit.get()
+    }
+
     /// Bind this plugin to the release and per-route host ceiling.
     pub fn new(
         release: Option<Arc<LoadedRelease>>,
@@ -721,7 +734,9 @@ impl FlowHttpRouting {
         self.input_schemas.validate(attachment_id, payload)
     }
 
-    async fn authenticate(
+    /// Authenticate native or guest headers under the released attachment policy.
+    /// The native handler also enforces its operation grant before serving a file.
+    pub async fn authenticate(
         &self,
         attachment_id: &str,
         headers: &[Header],
@@ -956,6 +971,9 @@ fn route_definition(
         ),
         ServedAttachment::Host(_) => None,
     };
+    let signs_files = operation.is_some_and(|route| {
+        manifest.signs_file_results(&route.package_id, &route.component, &route.operation)
+    });
     Some(RouteDefinition {
         read_limits: operation.filter(|route| route.type_.is_read()).map(|_| {
             let item = &attachment.definition()["input-schema"]["items"];
@@ -987,7 +1005,11 @@ fn route_definition(
             }
         }),
         operation_deadline_ms: crate::router_delivery::bounded_node_deadline_ms(None),
-        sealed_operation_id: operation.map(|route| route.operation.clone()),
+        // Signed results must cross the host after the guest returns. The
+        // existing delivery import serves them instead of the guest fast path.
+        sealed_operation_id: operation
+            .filter(|_| !signs_files)
+            .map(|route| route.operation.clone()),
         idempotency_rule: operation
             .filter(|route| logs_intent(route.type_))
             .map(|route| {
@@ -1025,7 +1047,7 @@ fn route_definition(
                         .collect(),
                 }
             }),
-        etag_inputs: operation.and_then(|route| {
+        etag_inputs: operation.filter(|_| !signs_files).and_then(|route| {
             let kind = match route.type_ {
                 OperationType::Get => routing::EtagKind::Get(route.revision.clone()?),
                 OperationType::Query | OperationType::Projection if !route.reads.is_empty() => {
@@ -1058,9 +1080,13 @@ fn route_definition(
         // adapter's own mapped-byte limit in charge rather than inventing a
         // second policy here.
         mapped_limit: ADAPTER_GOVERNED_BYTES,
-        cache_control: route_type(manifest, attachment).and_then(|kind| {
-            read_cache_control(kind, parse_attachment_auth_policy(attachment.auth_policy()))
-        }),
+        cache_control: if signs_files {
+            None
+        } else {
+            route_type(manifest, attachment).and_then(|kind| {
+                read_cache_control(kind, parse_attachment_auth_policy(attachment.auth_policy()))
+            })
+        },
     })
 }
 
@@ -1720,15 +1746,16 @@ mod tests {
         assert_eq!(
             served_ids(&served),
             [
+                "wamn-control-file-get-http",
                 "wamn-control-permission-list-http",
                 "wamn-control-permission-mine-http",
                 "wamn-control-role-list-http",
                 "wamn-control-user-list-http",
             ]
         );
-        assert_eq!(served[1].path, "/wamn_control/permission/mine");
+        assert_eq!(served[2].path, "/wamn_control/permission/mine");
         assert_eq!(
-            served[1].cache_control.as_deref(),
+            served[2].cache_control.as_deref(),
             Some("private, no-cache"),
             "a host route read is private"
         );
@@ -1754,6 +1781,45 @@ mod tests {
             "a control route admits no PAT"
         );
         assert!(requires_session_route_authentication(root.manifest()));
+    }
+
+    #[test]
+    fn signed_results_cross_host_delivery_without_cache_or_etag() {
+        let mut manifest = release_manifest_with_routes(
+            BTreeSet::from([ServingRoute {
+                package_id: "cat".into(),
+                component: "http-request".into(),
+                operation: "request".into(),
+                type_: OperationType::Get,
+                reads: BTreeSet::new(),
+                revision: Some("revision".into()),
+                idempotency: None,
+                canonicalization: None,
+            }]),
+            BTreeMap::from([(
+                "route".into(),
+                attachment(
+                    AttachmentType::Http,
+                    json!({"route": {"path": "/file", "method": "GET"}}),
+                ),
+            )]),
+        );
+        let ordinary = route_definitions(&manifest, "GET");
+        assert!(ordinary[0].sealed_operation_id.is_some());
+        assert!(ordinary[0].cache_control.is_some());
+        assert!(ordinary[0].etag_inputs.is_some());
+        let mut component = manifest.components.pop_first().unwrap();
+        component.descriptor.operations.insert("request".into(), serde_json::from_value(json!({
+            "registered-operation": "cat:file/read@1.0.0", "input-ports": [], "parameters": [],
+            "output-ports": [{"name": "main", "schema": {"schema": {"type": "array", "x-wamn-signed-reads": {
+                "class": "one", "fields": [{"path": "file_id", "nullable": false, "read": {}}]
+            }}}}]
+        })).unwrap());
+        manifest.components.insert(component);
+        let marked = route_definitions(&manifest, "GET");
+        assert!(marked[0].sealed_operation_id.is_none());
+        assert!(marked[0].cache_control.is_none());
+        assert!(marked[0].etag_inputs.is_none());
     }
 
     #[test]

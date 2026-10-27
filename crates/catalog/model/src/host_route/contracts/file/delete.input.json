@@ -1,0 +1,28 @@
+{
+  "fields": [
+    {
+      "path": "request_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.application",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.file_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.binding",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "fields": [
+    {
+      "path": "application",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "file_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

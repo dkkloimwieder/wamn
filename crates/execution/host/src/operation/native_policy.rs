@@ -38,6 +38,7 @@ pub(super) const NATIVE_POLICY_ID: &str = "wamn:native-operation-policy";
 
 /// Process-owned capabilities; every authority registry remains keyed by invocation scope.
 pub(super) struct NativePolicyResources {
+    pub(super) files: Option<Arc<crate::file_route::FileRoutes>>,
     pub(super) postgres: Arc<WamnPostgres>,
     pub(super) logging: Arc<WamnLogging>,
     pub(super) connection_http: Arc<ConnectionHttp>,
@@ -65,6 +66,8 @@ struct ComponentPolicy {
     fact: AdmittedComponent,
     operations: BTreeMap<String, ServingComponentOperation>,
     statements: BTreeMap<String, PreparedStatementSet>,
+    /// Signing authority comes only from the release-pinned descriptor.
+    signed_results: BTreeMap<String, wamn_catalog::SignedFileReads>,
     /// The set of each named `statements` import, one per member.
     members: PreparedStatementMembers,
     runtime_schema: Option<String>,
@@ -149,7 +152,14 @@ pub(super) fn new_native_policy(
     };
     let policy =
         |fact: &AdmittedComponent, served: &ServingComponent, members: PreparedStatementMembers| {
+            let mut signed_results = BTreeMap::new();
+            for (name, operation) in &served.descriptor.operations {
+                if let Some(reads) = wamn_catalog::signed_file_reads(operation)? {
+                    signed_results.insert(name.clone(), reads);
+                }
+            }
             Ok::<_, anyhow::Error>(Arc::new(ComponentPolicy {
+                signed_results,
                 fact: fact.clone(),
                 operations: served.operations.clone(),
                 statements: prepare_statement_sets(served, &manifest.routes),
@@ -429,6 +439,65 @@ impl InvocationPolicy for NativePolicy {
         anyhow::ensure!(inserted, "native-invocation-scope-already-bound");
         self.traces.bind(scope, InvocationTrace::capture());
         Ok(guard)
+    }
+
+    async fn finish_result(
+        &self,
+        component_id: &str,
+        operation: &str,
+        facts: &NativeFacts,
+        outcome: super::native_call::NativeOutcome,
+    ) -> anyhow::Result<super::native_call::NativeOutcome> {
+        let component = self.admit(component_id, operation, facts)?;
+        let Some(reads) = component.signed_results.get(operation) else {
+            return Ok(outcome);
+        };
+        let files = self
+            .resources
+            .files
+            .as_ref()
+            .context("signed file results require native file routes")?;
+        let caller = facts
+            .caller
+            .as_ref()
+            .context("signed file results require an authenticated operation caller")?;
+        let scope = wamn_engine::operation::next_scope("signed-file-result");
+        // The same guard revokes every plugin scope on failure or cancellation.
+        let _authority = NativeAuthorityGuard {
+            policy: self.clone(),
+            scope: scope.to_string(),
+        };
+        {
+            // Serialize registration with shutdown, as activation does.
+            let bindings = self
+                .bindings
+                .read()
+                .expect("native component bindings lock poisoned");
+            bindings
+                .get(component_id)
+                .and_then(|served| served_component(served, &facts.acquisition))
+                .context("signed result component is no longer admitted")?;
+            self.resources
+                .blobstore
+                .bind_invocation(&scope, facts.acquisition.invocation.clone())?;
+            let inserted = self
+                .invocations
+                .lock()
+                .expect("native invocation lock poisoned")
+                .insert(scope.to_string());
+            anyhow::ensure!(inserted, "signed-result-scope-already-bound");
+        }
+        super::signed_result::sign_result(outcome, reads, |id, lifetime| {
+            let scope = &scope;
+            async move {
+                files
+                    .signed_url(&self.resources.blobstore, scope, caller, id, lifetime)
+                    .await
+                    .map_err(anyhow::Error::from)
+            }
+        })
+        .await
+        .map_err(anyhow::Error::from)
     }
 
     /// Close component admission and revoke all synchronous WAMN authority.

@@ -766,6 +766,7 @@ impl Fixture {
             &native,
             None,
             NativePolicyResources {
+                files: None,
                 connection_http: Arc::new(ConnectionHttp::new(
                     Arc::clone(&postgres),
                     Arc::new(HttpTransport::new().expect("HTTP transport")),

@@ -1,0 +1,14 @@
+{
+  "name": "file-store",
+  "integration": "s3",
+  "transport": "s3",
+  "exchange": "request",
+  "parameters": {
+    "provider": "s3",
+    "endpoint": "http://c4-files-minio:9000",
+    "container": "files-a",
+    "prefix": "generation-one/",
+    "cdn_host": "http://files-a.localhost:19000"
+  },
+  "status": "active"
+}

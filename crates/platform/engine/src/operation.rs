@@ -23,7 +23,7 @@ pub use intent::{IntentContext, logs_intent};
 pub use invocation_policy::{
     ApplicationHost, InvocationPolicy, ItemCommitFailure, ItemTransaction, NoItemTransaction,
 };
-use native_call::{NativeInput, NativeInvocation, NativeOutcome, invoke_owned};
+use native_call::{NativeInput, NativeInvocation, NativeOutcome, invoke_raw};
 pub use native_workload::NativeApplication;
 
 mod bindings {
@@ -99,11 +99,32 @@ pub async fn invoke_operation<H: ApplicationHost>(
     call: OperationCall<'_, H::Policy>,
     intent: Option<IntentContext<'_>>,
 ) -> anyhow::Result<Result<node_types::Emission, node_types::NodeError>> {
-    match intent.filter(|intent| logs_intent(intent.kind)) {
+    let closure = call.closure;
+    let component = call.component;
+    let operation = call.operation;
+    let facts = call.facts.clone();
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(call.deadline_ms);
+    let outcome = match intent.filter(|intent| logs_intent(intent.kind)) {
         // The per-item loop holds a large future, so it lives on the heap.
-        Some(intent) => Box::pin(intent::invoke_logged(host, call, intent)).await,
-        None => run_export(host, call).await,
-    }
+        Some(intent) => Box::pin(intent::invoke_logged(host, call, intent)).await?,
+        None => Box::pin(run_export(host, call)).await?,
+    };
+    // Persist UUIDs in the write log. Every delivery, including a replay,
+    // signs its own URLs under the originating operation's authority.
+    tokio::time::timeout_at(deadline, async {
+        let application = application_of(host, closure).await?;
+        let id = component_id_of(&application, component)?;
+        Box::pin(application.policy.finish_result(
+            id,
+            operation,
+            &facts,
+            NativeOutcome::Json(outcome),
+        ))
+        .await?
+        .into_json()
+    })
+    .await
+    .context("native result enclosing deadline elapsed")?
 }
 
 /// Run one export under the call's deadline.
@@ -125,7 +146,7 @@ async fn call_export<H: ApplicationHost>(
         let id = component_id_of(&application, call.component)?;
         let target = application.dispatch_target(id)?;
         let json = serde_json::to_string(call.input).context("encode node input")?;
-        invoke_owned(
+        invoke_raw(
             target,
             NativeInvocation {
                 operation: call.operation.to_owned(),

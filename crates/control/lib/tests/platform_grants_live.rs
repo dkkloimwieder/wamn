@@ -33,10 +33,11 @@ const TENANT_FLOOR: &str = include_str!("fixtures/org-boundary-before-0031.sql")
 /// The tables of `platform` that `wamn_app` reads, as `regclass` prints them. `environment` is the status
 /// that the host reads as `wamn_app` on each request
 /// (`crates/platform/runtime/src/plugins/wamn_postgres/claims.rs`).
-const READ_TABLES: [&str; 12] = [
+const READ_TABLES: [&str; 13] = [
     "connection",
     "environment",
     "external_system",
+    "file",
     "integration_allow",
     "number_counter",
     "number_sequence",
@@ -239,6 +240,15 @@ async fn the_migration_grants_the_application_role_invariant_one() {
         ))
         .await
         .unwrap();
+    let files = wamn_control_provision::schema_migrations::MigrationTarget::Project
+        .migrations()
+        .iter()
+        .find(|migration| migration.ordinal() == 45)
+        .expect("C4 project migration 0045");
+    client
+        .batch_execute(files.sql)
+        .await
+        .expect("apply the file catalog migration");
     assert_eq!(surface(&client).await, invariant_one());
     assert_eq!(control_plane_tables(&client).await, 0);
 }
@@ -345,7 +355,12 @@ async fn the_org_boundary_migration_keeps_the_rows_of_the_old_shape() {
             "platform.{table}_history keeps its entry under the new key"
         );
     }
-    assert_eq!(surface(&client).await, invariant_one());
+    // This case stops at 0031. The file table and its grant arrive in 0045.
+    let expected_before_files: Vec<_> = invariant_one()
+        .into_iter()
+        .filter(|entry| entry != "table platform.file SELECT")
+        .collect();
+    assert_eq!(surface(&client).await, expected_before_files);
 
     // The function reads no claim: the plugin resolves the sequence id from
     // the application in host state (wamn-9e4ks).

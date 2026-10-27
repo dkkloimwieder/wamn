@@ -1,0 +1,37 @@
+{
+  "scope": {
+    "tenant-id": "__TENANT_ID__",
+    "package-id": "__PACKAGE_ID__",
+    "package-version": "__PACKAGE_VERSION__"
+  },
+  "component": "signed_read",
+  "interface-version": "0.1.0",
+  "operations": {
+    "file-fixture:document/signed-read@0.1.0": {
+      "registered-operation": "file-fixture:document/signed-read@0.1.0",
+      "input-ports": [
+        {
+          "name": "input",
+          "schema": {
+            "type": "array"
+          }
+        }
+      ],
+      "output-ports": [
+        {
+          "name": "main",
+          "schema": {
+            "type": "array"
+          }
+        }
+      ],
+      "parameters": []
+    }
+  },
+  "connections": [
+    {
+      "store-alias": "files",
+      "requirement-type": "blobstore"
+    }
+  ]
+}

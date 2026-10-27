@@ -877,6 +877,20 @@ pub struct ServingManifest {
 }
 
 impl ServingManifest {
+    /// Whether this operation returns short-lived file capabilities.
+    pub fn signs_file_results(&self, package: &str, component: &str, operation: &str) -> bool {
+        self.components
+            .iter()
+            .find(|served| served.package_id == package && served.descriptor.component == component)
+            .and_then(|served| served.descriptor.operations.get(operation))
+            .is_some_and(|operation| {
+                operation
+                    .output_ports
+                    .iter()
+                    .any(|port| port.schema.schema.get(crate::SIGNED_FILE_READS).is_some())
+            })
+    }
+
     /// Build and validate a manifest from authoritative current-record facts.
     ///
     /// The attachments are the authored ones, and this helper splits them the
@@ -1152,6 +1166,13 @@ impl ServingManifest {
             ArtifactHash::parse(descriptor.component_digest.clone())?;
             if component.operations.is_empty() {
                 return invalid("a serving component must export at least one operation");
+            }
+            for operation in descriptor.operations.values() {
+                crate::signed_file_reads(operation).map_err(|error| {
+                    CatalogIdentityError::InvalidDefinition {
+                        message: error.to_string(),
+                    }
+                })?;
             }
             for (export, operation) in &component.operations {
                 validate_text(export, "component-operation")?;

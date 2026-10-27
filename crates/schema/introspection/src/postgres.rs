@@ -1749,6 +1749,20 @@ fn table_parts<'a>(
         })
 }
 
+fn platform_reference_is_permitted(
+    schema: &str,
+    table: &str,
+    columns: &[i16],
+    attributes: &BTreeMap<AttributeKey, String>,
+) -> bool {
+    schema == "platform"
+        && matches!(table, "external_system" | "file")
+        && columns.len() == 1
+        && attributes
+            .get(&(schema.to_owned(), table.to_owned(), columns[0]))
+            .is_some_and(|name| name == "id")
+}
+
 fn map_constraints(
     rows: &[ConstraintRow],
     attributes: &BTreeMap<AttributeKey, String>,
@@ -1851,16 +1865,12 @@ fn map_constraints(
                         "foreign key has no referenced table",
                     ));
                 };
-                let provenance = referenced_schema == "platform"
-                    && referenced_table == "external_system"
-                    && row.referenced_columns.len() == 1
-                    && attributes
-                        .get(&(
-                            referenced_schema.clone(),
-                            referenced_table.clone(),
-                            row.referenced_columns[0],
-                        ))
-                        .is_some_and(|name| name == "id");
+                let provenance = platform_reference_is_permitted(
+                    referenced_schema,
+                    referenced_table,
+                    &row.referenced_columns,
+                    attributes,
+                );
                 if !provenance
                     && !tables.contains_key(&(referenced_schema.clone(), referenced_table.clone()))
                 {
@@ -2104,9 +2114,9 @@ pub async fn read_catalog_with_synchronizations(
         .filter(|column| !relation_is_excluded(excluded_relations, &column.schema, &column.table))
         .collect::<Vec<_>>();
     let mut attributes = map_columns(&columns, &mut tables)?;
-    // The platform provenance key is the one public reference outside application schemas.
-    for row in client.query("SELECT a.attnum FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid = a.attrelid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'platform' AND c.relname = 'external_system' AND c.relkind = 'r' AND a.attname = 'id' AND a.atttypid = 'uuid'::regtype AND NOT a.attisdropped", &[]).await.map_err(|error| database_error("read the provenance key", error))? {
-        attributes.insert(("platform".into(), "external_system".into(), row.get(0)), "id".into());
+    // These platform identity keys are public references outside application schemas.
+    for row in client.query("SELECT c.relname::text, a.attnum FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid = a.attrelid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'platform' AND c.relname IN ('external_system', 'file') AND c.relkind = 'r' AND a.attname = 'id' AND a.atttypid = 'uuid'::regtype AND NOT a.attisdropped", &[]).await.map_err(|error| database_error("read the platform reference keys", error))? {
+        attributes.insert(("platform".into(), row.get(0), row.get(1)), "id".into());
     }
     let sequences = load_sequences(client, &schemas)
         .await?
@@ -2153,4 +2163,62 @@ pub async fn read_catalog_with_synchronizations(
             })
             .collect(),
     ))
+}
+
+#[cfg(test)]
+mod file_reference_tests {
+    use super::*;
+
+    #[test]
+    fn only_file_and_external_system_identity_keys_are_public_references() {
+        let mut attributes = BTreeMap::new();
+        for table in ["file", "external_system", "connection"] {
+            attributes.insert(
+                ("platform".to_owned(), table.to_owned(), 1),
+                "id".to_owned(),
+            );
+            attributes.insert(
+                ("platform".to_owned(), table.to_owned(), 2),
+                "name".to_owned(),
+            );
+        }
+        for table in ["file", "external_system"] {
+            assert!(platform_reference_is_permitted(
+                "platform",
+                table,
+                &[1],
+                &attributes
+            ));
+            assert!(!platform_reference_is_permitted(
+                "platform",
+                table,
+                &[2],
+                &attributes
+            ));
+            assert!(!platform_reference_is_permitted(
+                "platform",
+                table,
+                &[1, 2],
+                &attributes
+            ));
+            assert!(!platform_reference_is_permitted(
+                "platform",
+                table,
+                &[],
+                &attributes
+            ));
+            assert!(!platform_reference_is_permitted(
+                "other",
+                table,
+                &[1],
+                &attributes
+            ));
+        }
+        assert!(!platform_reference_is_permitted(
+            "platform",
+            "connection",
+            &[1],
+            &attributes
+        ));
+    }
 }

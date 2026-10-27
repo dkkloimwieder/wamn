@@ -2747,3 +2747,160 @@ mod prekind_render;
 
 #[path = "support/prekind_host.rs"]
 mod prekind_host;
+
+/// Deployed native file routes on an explicitly selected disposable kind fixture.
+/// The deployment inputs live in support/file_package/deploy. Root publishes
+/// the admitted blob-put fixture, applies its environment, and supplies sessions.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires WAMN_FILES_KIND_FIXTURE, the admitted file package, MinIO, and deployed host; owner must allow kind"]
+async fn native_files_on_kind_minio() -> anyhow::Result<()> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Fixture {
+        cluster: String,
+        kubeconfig: PathBuf,
+        namespace: String,
+        base_url: String,
+        route_host: String,
+        session: String,
+        denied_session: String,
+        project_reader_url: String,
+        connection_reader_url: String,
+        org: String,
+        project: String,
+        environment: String,
+        minio_address: std::net::SocketAddr,
+    }
+    let file = std::env::var("WAMN_FILES_KIND_FIXTURE")?;
+    let fixture: Fixture = serde_json::from_slice(&std::fs::read(file)?)?;
+    ensure!(
+        fixture.cluster.starts_with("wamn-apply-files-") && fixture.cluster != "wamn",
+        "select the owned wamn-apply-files fixture, never cluster wamn"
+    );
+    ensure!(
+        fixture.kubeconfig.is_file(),
+        "the fixture supplies its private kubeconfig"
+    );
+    for token in [&fixture.session, &fixture.denied_session] {
+        ensure!(
+            token.starts_with("Bearer ") && !token.contains("REPLACE"),
+            "supply a real fixture session"
+        );
+    }
+    let deployment = Command::new("kubectl")
+        .args([
+            "--kubeconfig",
+            &fixture.kubeconfig.to_string_lossy(),
+            "--context",
+            &format!("kind-{}", fixture.cluster),
+            "-n",
+            &fixture.namespace,
+            "get",
+            "deployment",
+            "c4-files-minio",
+            "-o",
+            "json",
+        ])
+        .env("KUBECONFIG", &fixture.kubeconfig)
+        .output()
+        .await?;
+    ensure!(
+        deployment.status.success(),
+        "read only the selected MinIO deployment: {}",
+        String::from_utf8_lossy(&deployment.stderr)
+    );
+    let deployment: Value = serde_json::from_slice(&deployment.stdout)?;
+    ensure!(
+        deployment["spec"]["template"]["spec"]["containers"][0]["image"]
+            == "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
+        "the kind fixture uses the pinned MinIO image"
+    );
+    let (reader, reader_driver) =
+        tokio_postgres::connect(&fixture.project_reader_url, tokio_postgres::NoTls).await?;
+    let reader_driver = tokio::spawn(reader_driver);
+    let (connections, connections_driver) =
+        tokio_postgres::connect(&fixture.connection_reader_url, tokio_postgres::NoTls).await?;
+    let connections_driver = tokio::spawn(connections_driver);
+    let result = async {
+        for database in [&reader,&connections] {
+            let row = database.query_one("SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user",&[]).await?;
+            ensure!(!row.get::<_,bool>(0) && !row.get::<_,bool>(1),"the kind probe uses scoped database logins");
+        }
+        let insert = reader.batch_execute("INSERT INTO platform.file DEFAULT VALUES").await.unwrap_err();
+        ensure!(insert.code()==Some(&tokio_postgres::error::SqlState::INSUFFICIENT_PRIVILEGE),
+            "the deployed application login refuses direct file INSERT");
+        let row = connections.query_one(
+            "SELECT parameters FROM registry.lookup_file_connection($1,$2,$3,'files','files',NULL,NULL)",
+            &[&fixture.org,&fixture.project,&fixture.environment],
+        ).await?;
+        let definition: Value = row.get(0);
+        ensure!(definition["provider"]=="s3" && definition["endpoint"]=="http://c4-files-minio:9000",
+            "the native host binds the S3-compatible MinIO fixture");
+        let client = reqwest::Client::builder().no_proxy().redirect(reqwest::redirect::Policy::none())
+            .resolve("files-a.localhost",fixture.minio_address)
+            .timeout(Duration::from_secs(30)).build()?;
+        let base = fixture.base_url.trim_end_matches('/');
+        let upload = async |binding: &str,bytes: &'static [u8]| -> anyhow::Result<uuid::Uuid> {
+            let response = client.post(format!("{base}/api/files/files?binding={binding}&name=kind.txt"))
+                .header("host",&fixture.route_host).header("authorization",&fixture.session)
+                .header("content-type","text/plain").body(bytes.to_vec()).send().await?;
+            let status = response.status();
+            let text = response.text().await?;
+            ensure!(status.as_u16()==201,"native file upload {status}: {text}");
+            Ok(serde_json::from_str::<Value>(&text)?["file_id"].as_str().context("file id")?.parse()?)
+        };
+        let mutate = async |id: uuid::Uuid,binding: &str,exposure: &str| -> anyhow::Result<Value> {
+            let attachment = wamn_catalog::HostRouteSet::Application.attachments()
+                .find(|(_,a)|a.reference=="wamn-control:file/expose").context("file.expose route")?.1;
+            let path = attachment.definition["route"]["path"].as_str().context("file.expose path")?;
+            let payload = json!([{"request_id":uuid::Uuid::new_v4().to_string(),"value":{
+                "application":"files","binding":binding,"file_id":id.to_string(),"exposure":exposure}}]);
+            let response = client.post(format!("{base}{path}"))
+                .header("host",&fixture.route_host).header("authorization",&fixture.session)
+                .header("content-type","application/json").body(payload.to_string()).send().await?;
+            let status = response.status();
+            let text = response.text().await?;
+            ensure!(status.is_success(),"file.expose {status}: {text}");
+            let [item]: [Value;1] = serde_json::from_str(&text)?;
+            Ok(item)
+        };
+        let bytes = b"kind native file bytes";
+        let id = upload("files",bytes).await?;
+        let row = reader.query_one("SELECT application,size,sha256,connection_generation FROM platform.file WHERE id=$1",&[&id]).await?;
+        ensure!(row.get::<_,String>(0)=="files" && row.get::<_,i64>(1)==i64::try_from(bytes.len())?,
+            "the committed row owns the deployed upload and records its size");
+        ensure!(row.get::<_,String>(2)==hex::encode(ring::digest::digest(&ring::digest::SHA256,bytes).as_ref()),"row hash matches the deployed bytes");
+        ensure!(row.get::<_,i64>(3)>0,"the row pins its storage generation");
+        let read_url = format!("{base}/api/files/files/{id}");
+        let response = client.get(&read_url).header("host",&fixture.route_host)
+            .header("authorization",&fixture.session).send().await?;
+        ensure!(response.status().as_u16()==200 && response.bytes().await?.as_ref()==bytes,
+            "the deployed host returns the uploaded bytes");
+        ensure!(client.get(&read_url).header("host",&fixture.route_host).send().await?.status().as_u16()==401,"anonymous file reads refuse");
+        ensure!(client.get(&read_url).header("host",&fixture.route_host).header("authorization",&fixture.denied_session)
+            .send().await?.status().as_u16()==403,"sessions without file.get refuse");
+        ensure!(mutate(id,"files","private").await?.get("value").is_some(),"private exposure succeeds");
+        ensure!(client.get(&read_url).header("host",&fixture.route_host).header("authorization",&fixture.session)
+            .send().await?.status().as_u16()==403,"private exposure refuses through the application URL");
+        let public = mutate(id,"files","public").await?;
+        let url = public["value"]["url"].as_str().context("the stored public URL")?;
+        let origin = client.get(url).send().await?;
+        ensure!(origin.status().as_u16()==200 && origin.headers().get("cache-control").is_some_and(|v|v=="max-age=3600"),
+            "the public MinIO origin serves bytes with the required cache lifetime");
+        ensure!(origin.bytes().await?.as_ref()==bytes,"public bytes match the upload");
+        ensure!(mutate(id,"files","public").await?["value"]["url"]==url,"expose is idempotent");
+        for _ in 0..2 {ensure!(mutate(id,"files","application").await?.get("value").is_some(),"unexpose is idempotent");}
+        ensure!(client.get(url).send().await?.status().as_u16()==404,"unexpose removes the origin object at once");
+        let denied = client.post(format!("{base}/api/files/files?binding=files_read&name=denied.txt"))
+            .header("host",&fixture.route_host).header("authorization",&fixture.session)
+            .header("content-type","text/plain").body("denied").send().await?;
+        ensure!(denied.status().as_u16()==403,"a read binding refuses deployed uploads");
+        let no_cdn = upload("files_no_cdn",b"no CDN").await?;
+        ensure!(mutate(no_cdn,"files_no_cdn","public").await?["error"]["code"]=="cdn_host_required",
+            "a store without cdn_host refuses public exposure");
+        Ok::<_,anyhow::Error>(())
+    }.await;
+    reader_driver.abort();
+    connections_driver.abort();
+    result
+}

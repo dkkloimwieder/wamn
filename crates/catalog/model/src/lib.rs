@@ -19,6 +19,7 @@ mod host_route;
 mod package;
 mod route_identity;
 mod serving_manifest;
+mod signed_file_read;
 mod wiring;
 mod wiring_compatibility;
 mod workflow_gate;
@@ -71,6 +72,10 @@ pub use serving_manifest::{
     ServingComponentOperation, ServingComposedEntry, ServingEntryMember, ServingManifest,
     ServingRelation, ServingRelease, ServingRoute, UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL,
     parse_attachment_auth_policy, parse_workflow_schedule, release_manifest_configmap_name,
+};
+pub use signed_file_read::{
+    MAX_SIGNED_FILE_SECONDS, SIGNED_FILE_READS, SignedFileField, SignedFileRead,
+    SignedFileReadError, SignedFileReads, SignedFileResultClass, signed_file_reads,
 };
 #[cfg(any(test, feature = "test-util"))]
 pub use wiring::fixture_graph;

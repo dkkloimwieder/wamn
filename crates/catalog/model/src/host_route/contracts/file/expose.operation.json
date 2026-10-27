@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:file/expose@0.9.0",
+  "type": "command",
+  "label": "Expose a file",
+  "grant": "wamn-control:file/expose@0.9.0",
+  "permission_token": "file.expose",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

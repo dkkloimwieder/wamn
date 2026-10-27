@@ -492,6 +492,32 @@ CREATE TABLE platform.connection (
         CHECK (status IN ('active', 'disabled'))
 );
 
+-- File objects belong to one application and retain their storage generation.
+CREATE TABLE platform.file (
+    id                    uuid NOT NULL DEFAULT gen_random_uuid(),
+    application           text NOT NULL CHECK (application <> ''),
+    connection_id         uuid NOT NULL REFERENCES platform.connection (id),
+    connection_generation bigint NOT NULL CHECK (connection_generation > 0),
+    name                  text NOT NULL CHECK (name <> ''),
+    media_type            text NOT NULL CHECK (media_type <> ''),
+    size                  bigint NOT NULL CHECK (size >= 0),
+    sha256                text NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
+    blob_key              text NOT NULL UNIQUE,
+    exposure              text NOT NULL DEFAULT 'application'
+                              CHECK (exposure IN ('private', 'application', 'public')),
+    url                   text,
+    width                 integer CHECK (width > 0),
+    height                integer CHECK (height > 0),
+    created_at            timestamptz NOT NULL,
+    created_by            uuid NOT NULL,
+    updated_at            timestamptz NOT NULL,
+    updated_by            uuid NOT NULL,
+    PRIMARY KEY (id),
+    CHECK (blob_key = '_wamn_files/live/' || id::text),
+    CHECK ((exposure = 'public') = (url IS NOT NULL)),
+    CHECK (url IS NULL OR url <> '')
+);
+
 -- The integrations allowed at one scope. Each scope narrows the one above it:
 -- org, then project, then environment.
 CREATE TABLE platform.integration_allow (
@@ -571,7 +597,7 @@ CREATE TABLE platform.setting (
 DO $platform_configuration$
 DECLARE relation text;
 BEGIN
-  FOREACH relation IN ARRAY ARRAY['external_system', 'connection', 'integration_allow',
+  FOREACH relation IN ARRAY ARRAY['external_system', 'connection', 'file', 'integration_allow',
                                   'project_connection', 'number_sequence',
                                   'number_counter', 'setting'] LOOP
     EXECUTE format('CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON platform.%I '
@@ -586,7 +612,7 @@ END $platform_configuration$;
 DO $platform_configuration_history$
 DECLARE relation text;
 BEGIN
-  FOREACH relation IN ARRAY ARRAY['external_system', 'connection', 'integration_allow',
+  FOREACH relation IN ARRAY ARRAY['external_system', 'connection', 'file', 'integration_allow',
                                   'project_connection', 'number_sequence', 'setting'] LOOP
     PERFORM wamn_history.create_history_table('platform', relation, false);
     EXECUTE format('CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE '

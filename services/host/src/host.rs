@@ -1188,7 +1188,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             executor_platform_url.clone(),
             http_admitter_url,
             event_materializer_url,
-            administration_url,
+            administration_url.clone(),
         ))
     } else {
         None
@@ -1210,6 +1210,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let postgres = Arc::new(postgres);
     let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
     let http_transport = Arc::new(HttpTransport::new().context("HTTP transport init")?);
+    let mut file_connection_reader = None;
     let (credentials, mut credential_connection) = match (&application, &args.connection_store_url)
     {
         (Some(release), Some(url)) => {
@@ -1224,8 +1225,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             let (client, connection) = tokio_postgres::connect(url, NoTls)
                 .await
                 .context("connect the credential reader")?;
+            let client = Arc::new(client);
+            file_connection_reader = Some(Arc::clone(&client));
             (
-                WamnCredentials::from_database(Arc::new(client), org),
+                WamnCredentials::from_database(client, org),
                 Some(SupervisedIdentityConnection::new(tokio::spawn(connection))),
             )
         }
@@ -1341,7 +1344,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // The host always installs its authenticator, even an empty one, so a
     // protected route refuses the same way on every host.
     let authenticator = PlatformRouteAuthenticator::default()
-        .with_signature_authentication(credentials, args.project.clone());
+        .with_signature_authentication(Arc::clone(&credentials), args.project.clone());
     let authenticator = match (&route_auth_scope, &identity_reader) {
         (Some((org, subject)), Some(identity_reader)) => {
             authenticator.with_authentication(Arc::new(
@@ -1393,6 +1396,37 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         None => flow_http.with_authenticator(Arc::new(authenticator)),
     };
 
+    let flow_http = Arc::new(flow_http);
+    let files = application.map(|release| {
+        let connections = Arc::new(wamn_execution_host::file_route::RegistryFileConnections {
+            client: file_connection_reader,
+            org: args.org.clone().unwrap_or_default(),
+            project: args.project.clone(),
+            environment: release.scope().environment.clone(),
+        });
+        let blobstore = Arc::new(
+            wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore::new(
+                Arc::clone(&postgres),
+                Arc::clone(&credentials),
+                release.scope().tenant_id.clone(),
+                args.project.clone(),
+                Some(Arc::clone(release)),
+            ),
+        );
+        Arc::new(wamn_execution_host::file_route::FileRoutes::new(
+            Arc::clone(release),
+            Arc::clone(&postgres),
+            blobstore,
+            connections,
+            args.project.clone(),
+            administration_url.clone(),
+        ))
+    });
+
+    if let (Some(operations), Some(files)) = (&operations, &files) {
+        operations.set_file_routes(Arc::clone(files))?;
+    }
+
     let mut plugins: Vec<Arc<dyn plugin::HostPlugin>> = vec![
         Arc::new(
             plugin::wasi_config::DynamicConfig::builder()
@@ -1422,7 +1456,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         // in-memory; a PAT-protected route additionally carries the scoped
         // identity reader and preloads exact grants from the existing
         // callable-HTTP project pool during authentication.
-        Arc::new(flow_http),
+        flow_http.clone(),
     ];
 
     if let Some(operations) = &operations {
@@ -1453,7 +1487,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                     changes: auth_changes.clone(),
                 },
                 Some(Arc::new(bridge)),
-            ),
+            )
+            .with_files(files.clone()),
         ))));
     }
     if let (Some(connection), Some(root)) = (&control, &release) {
@@ -1641,7 +1676,16 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         probe_state.register(Arc::new(connections.clone()));
         ingress_connections = Some(connections);
         ingress_handler = Some(Arc::clone(&server));
-        builder = builder.with_http_handler(server);
+        builder = match &files {
+            Some(files) => builder.with_http_handler(Arc::new(
+                wamn_execution_host::file_route::FileIngress::new(
+                    server,
+                    Arc::clone(files),
+                    Arc::clone(&flow_http),
+                ),
+            )),
+            None => builder.with_http_handler(server),
+        };
     }
     let probe_listener = match args.probe_addr {
         Some(address) => Some(probes::bind(address).await?),

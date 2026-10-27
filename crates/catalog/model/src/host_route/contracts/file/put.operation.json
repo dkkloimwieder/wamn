@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:file/put@0.9.0",
+  "type": "command",
+  "label": "Put a file",
+  "grant": "wamn-control:file/put@0.9.0",
+  "permission_token": "file.put",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

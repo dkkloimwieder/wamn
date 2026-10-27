@@ -284,6 +284,8 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
     let host_transactions = host_transaction_exports(&package_manifest, &statement_facts)?;
     bind_component_statement_facts(&mut admitted, statement_facts, &host_transactions)
         .context("bind generated SQL facts to exact component operations")?;
+    bind_signed_file_results(&mut admitted, &package_manifest)
+        .context("bind package signed file results")?;
     let requirements = facts
         .connections
         .iter()
@@ -299,6 +301,92 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
         requirements: requirements.into_boxed_slice(),
         statement_instances: facts.statement_instances,
     })
+}
+
+/// Bind result signing only from the package's verified typed result fields.
+fn bind_signed_file_results(
+    component: &mut AdmittedComponent,
+    manifest: &wamn_schema_generator::PackageManifest,
+) -> Result<(), ComponentProjectionError> {
+    use wamn_catalog::{
+        SIGNED_FILE_READS, SignedFileField, SignedFileReads, SignedFileResultClass,
+    };
+    use wamn_schema_generator::ResultClass;
+
+    let invalid = |detail: String| {
+        ComponentProjectionError::new(
+            ComponentProjectionErrorType::StatementContractInvalid,
+            detail,
+        )
+    };
+    // Re-run the same vocabulary gate for callers that construct a manifest.
+    wamn_schema_generator::validate_operation_vocabulary(manifest)
+        .map_err(|error| invalid(error.to_string()))?;
+    for (export, operation) in &mut component.operations {
+        let result = manifest
+            .custom_operations
+            .iter()
+            .find_map(|(name, declaration)| {
+                let canonical =
+                    wamn_schema_generator::canonical_operation_identity(&manifest.package, name)
+                        .ok()?;
+                (canonical == *export)
+                    .then_some(declaration.result.as_ref())
+                    .flatten()
+            });
+        let reads = result
+            .filter(|result| !result.signed_reads.is_empty())
+            .map(|result| SignedFileReads {
+                class: match result.class {
+                    ResultClass::One => SignedFileResultClass::One,
+                    ResultClass::OptionalOne => SignedFileResultClass::OptionalOne,
+                    ResultClass::BoundedList => SignedFileResultClass::BoundedList,
+                    ResultClass::Page => SignedFileResultClass::Page,
+                },
+                fields: result
+                    .signed_reads
+                    .iter()
+                    .map(|(path, read)| SignedFileField {
+                        path: path.clone(),
+                        nullable: result
+                            .fields
+                            .iter()
+                            .find(|field| field.path == *path)
+                            .expect("the package gate requires the signed result field")
+                            .nullable,
+                        read: read.clone(),
+                    })
+                    .collect(),
+            });
+        for port in &operation.output_ports {
+            if port.schema.schema.get(SIGNED_FILE_READS).is_some() {
+                return Err(invalid(format!(
+                    "{export} must declare signed_reads in its package result, not in its component schema"
+                )));
+            }
+        }
+        if let Some(reads) = reads {
+            let main = operation
+                .output_ports
+                .iter_mut()
+                .find(|port| port.name == "main")
+                .ok_or_else(|| {
+                    invalid(format!(
+                        "{export} signed result requires a main output port"
+                    ))
+                })?;
+            let schema = main.schema.schema.as_object_mut().ok_or_else(|| {
+                invalid(format!("{export} signed result requires an object schema"))
+            })?;
+            schema.insert(
+                SIGNED_FILE_READS.into(),
+                serde_json::to_value(reads).expect("verified signed file metadata serializes"),
+            );
+            wamn_catalog::signed_file_reads(operation)
+                .map_err(|error| invalid(format!("{export}: {error}")))?;
+        }
+    }
+    Ok(())
 }
 
 /// Translate one admitted connection into its platform-owned portable record.
@@ -1336,6 +1424,64 @@ mod tests {
             error.error_type(),
             ComponentProjectionErrorType::StatementComponentMismatch
         );
+    }
+
+    #[test]
+    fn signed_file_result_metadata_is_bound_from_the_package_only() {
+        let mut manifest = overlay_manifest();
+        let declaration = manifest.custom_operations.get_mut("audit.observe").unwrap();
+        declaration.type_ = wamn_schema_generator::CustomOperationType::Projection;
+        declaration.visibility = wamn_schema_generator::OperationVisibility::Public;
+        declaration.permission = Some("audit.observe".into());
+        declaration.errors.push("permission_denied".into());
+        declaration.result = Some(
+            serde_json::from_value(serde_json::json!({
+                "class": "one", "fields": [{"path": "document", "type": "uuid", "nullable": false}],
+                "signed_reads": {"document": {"lifetime_seconds": 12}}
+            }))
+            .unwrap(),
+        );
+        let export =
+            wamn_schema_generator::canonical_operation_identity(&manifest.package, "audit.observe")
+                .unwrap();
+        let mut component = stranger(&manifest, "observer_fixture", Some(&export));
+        let (_, mut operation) = component.operations.pop_first().unwrap();
+        operation
+            .output_ports
+            .push(wamn_catalog::AdmittedComponentPort {
+                name: "main".into(),
+                schema: wamn_catalog::ComponentSchema {
+                    schema: serde_json::json!({"type": "array"}),
+                },
+            });
+        component.operations.insert(export.clone(), operation);
+        super::bind_signed_file_results(&mut component, &manifest).unwrap();
+        let reads = wamn_catalog::signed_file_reads(&component.operations[&export])
+            .unwrap()
+            .unwrap();
+        assert_eq!(reads.fields[0].path, "document");
+        assert_eq!(reads.fields[0].read.lifetime_seconds().unwrap(), 12);
+        assert!(!reads.fields[0].nullable);
+        // A component cannot add its own signing authority through an annotation.
+        assert!(super::bind_signed_file_results(&mut component, &manifest).is_err());
+        component.operations.get_mut(&export).unwrap().output_ports[0]
+            .schema
+            .schema
+            .as_object_mut()
+            .unwrap()
+            .remove(wamn_catalog::SIGNED_FILE_READS);
+        manifest
+            .custom_operations
+            .get_mut("audit.observe")
+            .unwrap()
+            .result
+            .as_mut()
+            .unwrap()
+            .signed_reads
+            .get_mut("document")
+            .unwrap()
+            .lifetime_seconds = Some(901);
+        assert!(super::bind_signed_file_results(&mut component, &manifest).is_err());
     }
 
     fn overlay_manifest() -> wamn_schema_generator::PackageManifest {

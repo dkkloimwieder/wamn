@@ -447,6 +447,9 @@ impl FieldText {
 pub struct CustomOperationResultDeclaration {
     pub class: ResultClass,
     pub fields: Vec<ContractFieldDeclaration>,
+    /// Result fields that the host replaces with signed file read URLs.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub signed_reads: BTreeMap<String, wamn_catalog::SignedFileRead>,
 }
 
 /// Application choices for canonical command identity.
@@ -1172,9 +1175,32 @@ fn validate_custom_operation(
             ));
         }
         validate_contract_fields(operation_name, "result", &result.fields)?;
+        validate_signed_reads(operation_name, operation.visibility, result)?;
     }
     validate_custom_operation_errors(operation_name, operation)?;
     validate_static_sql_declarations(manifest, operation_name, operation)
+}
+
+fn validate_signed_reads(
+    operation: &str,
+    visibility: OperationVisibility,
+    result: &CustomOperationResultDeclaration,
+) -> Result<(), GenerateError> {
+    for (path, read) in &result.signed_reads {
+        let field = result.fields.iter().find(|field| field.path == *path);
+        if visibility != OperationVisibility::Public
+            || field.is_none_or(|field| field.ty != wamn_schema_introspection::ir::ColumnType::Uuid)
+            || read.lifetime_seconds().is_err()
+        {
+            return Err(GenerateError::new(
+                GenerateErrorType::InvalidOperation,
+                format!(
+                    "{operation} signed read {path} must name a UUID result field of a public operation with a lifetime of 1 through 900 seconds"
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_custom_operation_kind(
@@ -2373,6 +2399,53 @@ pub(crate) fn rust_type_identifier(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{binding_identifier, rust_identifier};
+
+    #[test]
+    fn signed_reads_require_a_declared_uuid_and_a_bounded_lifetime() {
+        use super::{CustomOperationResultDeclaration, OperationVisibility, validate_signed_reads};
+        let mut result: CustomOperationResultDeclaration =
+            serde_json::from_value(serde_json::json!({
+                "class": "one",
+                "fields": [{"path": "document", "type": "uuid", "nullable": false}],
+                "signed_reads": {"document": {}}
+            }))
+            .unwrap();
+        validate_signed_reads("document.read", OperationVisibility::Public, &result).unwrap();
+        result
+            .signed_reads
+            .get_mut("document")
+            .unwrap()
+            .lifetime_seconds = Some(12);
+        validate_signed_reads("document.read", OperationVisibility::Public, &result).unwrap();
+        for seconds in [0, 901] {
+            result
+                .signed_reads
+                .get_mut("document")
+                .unwrap()
+                .lifetime_seconds = Some(seconds);
+            assert!(
+                validate_signed_reads("document.read", OperationVisibility::Public, &result)
+                    .is_err()
+            );
+        }
+        result
+            .signed_reads
+            .get_mut("document")
+            .unwrap()
+            .lifetime_seconds = None;
+        assert!(
+            validate_signed_reads("document.read", OperationVisibility::Private, &result).is_err()
+        );
+        result.fields[0].path = "other".into();
+        assert!(
+            validate_signed_reads("document.read", OperationVisibility::Public, &result).is_err()
+        );
+        result.fields[0].path = "document".into();
+        result.fields[0].ty = wamn_schema_introspection::ir::ColumnType::Text;
+        assert!(
+            validate_signed_reads("document.read", OperationVisibility::Public, &result).is_err()
+        );
+    }
 
     #[test]
     fn rust_2024_names_have_one_lossless_spelling_authority() {

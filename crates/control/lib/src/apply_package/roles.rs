@@ -65,7 +65,8 @@ pub(super) async fn execute_migration(
         foreign_key_tables(&serde_json::to_value(raw)?, &mut references);
         let role = package_owner_role(owner);
         let mut granted = Vec::new();
-        let provenance_usage = references.contains("\"platform\".\"external_system\"")
+        let provenance_usage = (references.contains("\"platform\".\"external_system\"")
+            || references.contains("\"platform\".\"file\""))
             && !tx
                 .query_one(
                     "SELECT has_schema_privilege($1::text, 'platform', 'USAGE')",

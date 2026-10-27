@@ -570,7 +570,7 @@ pub fn grant_http_admitter_surface_sql(schema: &str) -> String {
 /// (docs/architecture/data-access.md#actors). `number_counter` is not one of
 /// them: only `platform.bump_counter`, `platform.assign_counter` and
 /// `platform.set_counter` write it.
-pub const ADMINISTRATION_RELATIONS: [&str; 11] = [
+pub const ADMINISTRATION_RELATIONS: [&str; 12] = [
     "user",
     "role",
     "user_role",
@@ -578,6 +578,7 @@ pub const ADMINISTRATION_RELATIONS: [&str; 11] = [
     "environment",
     "external_system",
     "connection",
+    "file",
     "project_connection",
     "integration_allow",
     "number_sequence",
@@ -938,7 +939,7 @@ pub fn grant_connection_reader_surface_sql() -> String {
     let mut sql =
         grant_system_reader_surface_sql(WorkloadRoleFamily::ConnectionReader, "registry", &[]);
     let role = quote_ident(WorkloadRoleFamily::ConnectionReader.acl_role());
-    write!(sql, " REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA registry, identity FROM {role}; GRANT EXECUTE ON FUNCTION registry.lookup_connection_credential(text,text,text,bigint) TO {role}; GRANT EXECUTE ON FUNCTION registry.lookup_connection_binding_mode(text,text,text,text,text) TO {role};")
+    write!(sql, " REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA registry, identity FROM {role}; GRANT EXECUTE ON FUNCTION registry.lookup_connection_credential(text,text,text,bigint) TO {role}; GRANT EXECUTE ON FUNCTION registry.lookup_connection_binding_mode(text,text,text,text,text) TO {role}; GRANT EXECUTE ON FUNCTION registry.lookup_file_connection(text,text,text,text,text,text,bigint) TO {role};")
         .expect("writing to a String cannot fail");
     sql
 }

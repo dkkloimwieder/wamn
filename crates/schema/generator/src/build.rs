@@ -687,9 +687,9 @@ async fn migrate(
                 .await
                 .context("create the package schemas")?;
         }
-        // Only the public provenance key is needed by application foreign keys.
-        // This verification relation contains no system database or registry data.
-        client.batch_execute("CREATE SCHEMA IF NOT EXISTS platform; CREATE TABLE IF NOT EXISTS platform.external_system (id uuid PRIMARY KEY)").await.context("create the provenance reference for package verification")?;
+        // Public platform identity keys support application foreign keys.
+        // These verification relations contain no system database or registry data.
+        client.batch_execute("CREATE SCHEMA IF NOT EXISTS platform; CREATE TABLE IF NOT EXISTS platform.external_system (id uuid PRIMARY KEY); CREATE TABLE IF NOT EXISTS platform.file (id uuid PRIMARY KEY)").await.context("create platform references for package verification")?;
         for directory in directories {
             if !directory.exists() {
                 continue;
@@ -914,6 +914,45 @@ mod tests {
 
     use super::*;
     use crate::describe::DescribedColumn;
+
+    #[tokio::test]
+    async fn verification_migration_accepts_a_platform_file_reference() {
+        let manifest = json!({
+            "package": {"id": "files_fixture", "version": "0.1.0"},
+            "required_platform_policy_contract": {"id": "files_fixture_data_access", "state": "satisfied"},
+            "connections": {},
+            "components": {},
+            "models": {"attachment": {
+                "schema": "files_fixture", "table": "attachment", "owner": "files_fixture",
+                "audit_log": {"columns": ["created_at"], "retention": "none"},
+                "operations": {}
+            }}
+        });
+        let manifest =
+            PackageManifest::from_slice(&serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let root = std::env::temp_dir().join(format!("wamn-file-reference-{}", std::process::id()));
+        fs::create_dir_all(root.join("migrations")).unwrap();
+        fs::write(root.join("migrations/0001_initial.sql"),
+            "CREATE TABLE files_fixture.attachment (id uuid CONSTRAINT attachment_id_pkey PRIMARY KEY, file_id uuid CONSTRAINT attachment_file_id_fkey REFERENCES platform.file(id), created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)").unwrap();
+        let database = wamn_test_postgres::database();
+        let result = migrate(database.url(), &root, &manifest).await;
+        fs::remove_dir_all(root).unwrap();
+        result.expect("the verification database permits a platform.file foreign key");
+        let (client, connection) = tokio_postgres::connect(database.url(), NoTls)
+            .await
+            .unwrap();
+        let task = tokio::spawn(connection);
+        wamn_schema_introspection::postgres::read_catalog(&client, &["files_fixture"])
+            .await
+            .unwrap();
+        let error = client.batch_execute("INSERT INTO files_fixture.attachment(id, file_id) VALUES (gen_random_uuid(), gen_random_uuid())").await.unwrap_err();
+        assert_eq!(
+            error.code(),
+            Some(&tokio_postgres::error::SqlState::FOREIGN_KEY_VIOLATION)
+        );
+        drop(client);
+        task.await.unwrap().unwrap();
+    }
 
     #[tokio::test]
     async fn current_build_preserves_files_and_changed_inputs_rebuild() {

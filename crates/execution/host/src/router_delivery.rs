@@ -207,6 +207,14 @@ impl RouterDeliveryBridge {
             outcome: DeliveryOutcome::NotModified,
             result: serde_json::Value::Null,
         };
+        // A fresh signed URL is a delivery result even when its row is unchanged.
+        // Never answer 304 for a result that holds an expiring capability.
+        let signs_files = self.release.manifest().signs_file_results(
+            call.package_id,
+            call.component,
+            call.operation,
+        );
+        let read = read.filter(|_| !signs_files);
         let mut tag = None;
         // A change feed read takes its tag from the cursor it returns, so it
         // runs before the tag is known.

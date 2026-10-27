@@ -92,13 +92,14 @@ const SCENARIO_AUTHOR_PROBE: &str = "wamn_matrix_author_probe";
 /// catalog relations the platform families read, and a package-shaped logged
 /// relation pair with its history tables. A family reaching one it does not own
 /// is what the pairwise arms below name.
-const MATRIX_RELATIONS: [&str; 30] = [
+const MATRIX_RELATIONS: [&str; 31] = [
     "platform.environment",
     "platform.permission",
     "platform.user_role",
     "platform.\"user\"",
     "platform.connection",
     "platform.external_system",
+    "platform.file",
     "platform.integration_allow",
     "platform.number_counter",
     "platform.number_sequence",
@@ -187,6 +188,7 @@ const MATRIX: [FamilyReach; 10] = [
             "platform.connection|SELECT|table",
             "platform.environment|SELECT|table",
             "platform.external_system|SELECT|table",
+            "platform.file|SELECT|table",
             "platform.integration_allow|SELECT|table",
             "platform.number_counter|SELECT|table",
             "platform.number_sequence|SELECT|table",
@@ -309,6 +311,10 @@ const MATRIX: [FamilyReach; 10] = [
             "platform.external_system|INSERT|table",
             "platform.external_system|SELECT|table",
             "platform.external_system|UPDATE|table",
+            "platform.file|DELETE|table",
+            "platform.file|INSERT|table",
+            "platform.file|SELECT|table",
+            "platform.file|UPDATE|table",
             "platform.integration_allow|DELETE|table",
             "platform.integration_allow|INSERT|table",
             "platform.integration_allow|SELECT|table",

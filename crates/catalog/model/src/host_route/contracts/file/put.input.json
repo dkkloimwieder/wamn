@@ -1,0 +1,34 @@
+{
+  "fields": [
+    {
+      "path": "request_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.application",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.binding",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.name",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.media_type",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

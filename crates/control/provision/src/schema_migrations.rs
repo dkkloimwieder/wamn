@@ -258,6 +258,10 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/system/0034_control_record_history_stamp.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/system/0035_c4_file_connection.sql",
+        sql: include_str!("../../../../deploy/sql/migrations/system/0035_c4_file_connection.sql"),
+    },
 ];
 
 /// Every file of `deploy/sql/migrations/project/`, in order.
@@ -490,6 +494,10 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
             "../../../../deploy/sql/migrations/project/0044_run_queue_record_history_stamp.sql"
         ),
     },
+    Migration {
+        relative_path: "migrations/project/0045_c4_files.sql",
+        sql: include_str!("../../../../deploy/sql/migrations/project/0045_c4_files.sql"),
+    },
 ];
 
 #[cfg(test)]
@@ -545,7 +553,53 @@ mod tests {
         }
     }
 
-    /// The connection binding migration carries the latest administration
+    #[test]
+    fn fresh_and_migrated_file_columns_match_the_plan_on_postgres() {
+        let _lock = wamn_test_postgres::lock();
+        let database = wamn_test_postgres::database();
+        database
+            .execute(&[
+                "DO $$ DECLARE role_name text; BEGIN \
+                   FOREACH role_name IN ARRAY ARRAY['wamn_app', 'wamn_scenario_author'] LOOP \
+                     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname=role_name) THEN \
+                       EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOBYPASSRLS', role_name); \
+                     END IF; \
+                   END LOOP; \
+                 END $$; CREATE SCHEMA wamn_run",
+                wamn_catalog::CATALOG_SCHEMA_SQL,
+                crate::APP_SCHEMA_SQL,
+            ])
+            .unwrap();
+        let default = "SELECT column_default FROM information_schema.columns \
+                       WHERE table_schema='platform' AND table_name='file' AND column_name='exposure'";
+        let columns = "SELECT count(*) FILTER (WHERE column_name='url' AND data_type='text')=1 \
+                       AND count(*) FILTER (WHERE column_name IN ('public_url','creator'))=0 \
+                       AND count(*) FILTER (WHERE column_name='created_by' AND data_type='uuid' \
+                                            AND is_nullable='NO')=1 \
+                       FROM information_schema.columns WHERE table_schema='platform' AND table_name='file'";
+        assert_eq!(
+            database.execute(&[default]).unwrap().trim(),
+            "'application'::text"
+        );
+        assert_eq!(database.execute(&[columns]).unwrap().trim(), "t");
+        let migration = PROJECT_MIGRATIONS
+            .iter()
+            .find(|migration| migration.ordinal() == 45)
+            .unwrap();
+        database
+            .execute(&[
+                "DROP TABLE platform.file, platform.file_history",
+                migration.sql,
+            ])
+            .unwrap();
+        assert_eq!(
+            database.execute(&[default]).unwrap().trim(),
+            "'application'::text"
+        );
+        assert_eq!(database.execute(&[columns]).unwrap().trim(), "t");
+    }
+
+    /// The file migration carries the latest administration
     /// surface. Earlier migrations retain the surfaces installed databases recorded.
     #[test]
     fn the_latest_administration_migration_is_the_rendered_administration_surface() {
@@ -555,12 +609,8 @@ mod tests {
         );
         let migration = PROJECT_MIGRATIONS
             .iter()
-            .find(|migration| {
-                migration
-                    .relative_path
-                    .ends_with("_c35_connection_bindings.sql")
-            })
-            .expect("the connection binding migration exists");
+            .find(|migration| migration.relative_path.ends_with("_c4_files.sql"))
+            .expect("the file migration exists");
         assert!(
             migration.sql.ends_with(&rendered),
             "{} does not end with the rendered administration surface",

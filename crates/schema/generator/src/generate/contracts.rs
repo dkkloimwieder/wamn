@@ -964,6 +964,7 @@ fn crud_result_contract(
 ) -> CustomOperationResultDeclaration {
     CustomOperationResultDeclaration {
         class,
+        signed_reads: BTreeMap::new(),
         fields: columns
             .iter()
             .map(|column| ContractFieldDeclaration {

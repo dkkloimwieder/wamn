@@ -947,6 +947,7 @@ fn verify_connection_reader_grants(
             "lookup_connection_credential",
             "EXECUTE",
         ),
+        ("routine", "registry", "lookup_file_connection", "EXECUTE"),
     ]);
     anyhow::ensure!(
         actual == expected,

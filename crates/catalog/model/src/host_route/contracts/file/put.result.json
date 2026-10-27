@@ -1,0 +1,11 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "file_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}
