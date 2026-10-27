@@ -704,7 +704,9 @@ pub(crate) fn expected_files(package: &GeneratedPackage) -> Result<BTreeMap<Path
 /// for the web packages. The application client goes to
 /// `<output_root>/wamn_control/client-ts` and the control client to
 /// `<output_root>/wamn_control/control/client-ts`. A file there that the
-/// contracts no longer generate is removed.
+/// contracts no longer generate is removed. When `output_root` lies in a pnpm
+/// workspace, each client is then copied to the packages that name it,
+/// `wamn_control` or `wamn_control_org`, in `"wamn": { "clients": [...] }`.
 pub fn materialize_host_route_client(output_root: &Path) -> Result<()> {
     let contract_root =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../catalog/model/src/host_route");
@@ -718,6 +720,13 @@ pub fn materialize_host_route_client(output_root: &Path) -> Result<()> {
         &contract_root.join("control"),
         &output.join("control"),
         wamn_catalog::HostRouteSet::Control,
+    )?;
+    // `wamn build` does not make these clients, so they have no build receipt.
+    copy_to_consumers(output_root, "wamn_control", &output.join("client-ts"))?;
+    copy_to_consumers(
+        output_root,
+        "wamn_control_org",
+        &output.join("control/client-ts"),
     )
 }
 
@@ -788,6 +797,17 @@ fn materialize_host_route_set(
 ///
 /// Names the consumer and application when the requested client is unavailable.
 pub fn materialize_client_consumers(package_root: &Path, app: &str, source: &Path) -> Result<()> {
+    if let Some(output) = source.parent()
+        && crate::output::is_build_output(output)
+    {
+        crate::receipt::read_current(package_root, output)?;
+    }
+    copy_to_consumers(package_root, app, source)
+}
+
+/// Copy the client at `source` into the packages of the workspace that holds
+/// `within` and name `app` in their `"wamn": { "clients": [...] }`.
+fn copy_to_consumers(within: &Path, app: &str, source: &Path) -> Result<()> {
     #[derive(serde::Deserialize)]
     struct Workspace {
         packages: Vec<PathBuf>,
@@ -804,13 +824,8 @@ pub fn materialize_client_consumers(package_root: &Path, app: &str, source: &Pat
         wamn: Clients,
     }
 
-    if let Some(output) = source.parent()
-        && crate::output::is_build_output(output)
-    {
-        crate::receipt::read_current(package_root, output)?;
-    }
-    let package_root = std::path::absolute(package_root)?;
-    let Some(repository) = package_root
+    let within = std::path::absolute(within)?;
+    let Some(repository) = within
         .ancestors()
         .find(|path| path.join("pnpm-workspace.yaml").is_file())
     else {
