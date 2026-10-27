@@ -23,7 +23,7 @@ For mechanical edits, compare source, paths, and syntax.
 Do not repeat builds or tests without a new behavior change or concrete failure.
 Cleanup boundaries do not require broad test runs.
 
-`tools/test-changes` selects the Cargo test commands for a change set.
+`tools/test-changes` selects suites and builds their inputs before tests run.
 The change set is the working tree against `git merge-base HEAD main`, or against the commit that `--base REF` names.
 It includes committed, staged, unstaged, deleted, and untracked files.
 
@@ -31,22 +31,47 @@ It includes committed, staged, unstaged, deleted, and untracked files.
 - A file under `apps/<name>/` outside a package selects every package under that directory in every workspace, with their dependents.
 - A workspace `Cargo.toml` or `Cargo.lock` runs that whole workspace.
 - Canonical router/runtime WIT changes select all three workspaces because direct bindings cross Cargo dependency boundaries. Shared router-delivery and materializer WASI WIT select root and apps.
-- Any other file outside `docs/`, `.beads/`, and the root Markdown files runs the root command `cargo test --workspace --locked --offline --features wamn-ctl/ops --no-fail-fast`.
-- A change set with only `docs/` files, `.beads/` files, and root Markdown files such as `README.md` and `CLAUDE.md` selects nothing.
-  A Markdown file below another directory follows the rules above.
+- Any other file outside `docs/`, `.beads/`, and the root Markdown files runs the root command `cargo test --workspace --locked --offline --features wamn-control/ops,wamn-ctl/ops --no-fail-fast`.
+- Documentation, `.beads/`, and root Markdown changes select the quality suite.
+  A Markdown file below another directory also follows the package rules above.
 
 Selected packages run their default tests with the required features of their targets.
-Use [`wamn build`](building.md#wamn-build) or `tools/repo-lint` to compile guest targets that disable Cargo tests.
+The tool builds the guests that selected suites need.
+`tools/repo-lint` also compiles guest targets that disable Cargo tests.
 A passing workspace test result does not establish compilation of those guest targets.
 If the change set selects a guest of the host image, `tools/test-changes` also runs `docker build --target component-builder --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)"`.
 These guests are the packages that the Dockerfile `component-builder` stage builds, so a shared WIT root or a platform crate that a guest links selects them.
 The stage checks the router pin, as the guest build of `wamn build` does.
 Control-client tests compose this pinned raw guest with an empty dispatcher and link operation calls without authority.
 `tools/test-changes --cluster` runs no guest build.
-Cargo metadata does not show a file that a package reads from another package's directory through `include_str!` or `#[path]`.
-Run the reading package's tests for such a change.
+The path rules in `tools/test-changes-suites.json` add suites beyond Cargo dependencies.
+Generator changes select `package_digest` in `wamn-control`.
+Platform fixture and catalog changes select `wamn-control-provision`.
+SQL changes select `wamn-ctl` with `ops`, including `protected_relations_live`.
+Control and platform deployment changes select prekind rendering and the exact native host case.
+The prekind command uses one `prekind` filter across both test targets.
+It does not use `--skip kind`, which also skips prekind cases.
+Web changes select repository web lint, runtime tests, and platform UI checks, tests, and build.
+Every change selects `tools/repo-lint run`, including root formatting and Clippy for every target.
+
+The tool builds native binaries, application packages, and guests only when selected suites need them.
+It builds HTTP route bytes in release mode and materializer bytes in debug mode under `$CARGO_TARGET_DIR/apps`.
+It builds the three HTTP workflow guests under `$CARGO_TARGET_DIR/no-std`.
+It copies those debug guests to the root target path that the native host test reads.
+It builds applications through a private PostgreSQL database.
+The quality suite needs generated application files because Clippy compiles every target.
+The tool derives those application roots from Cargo metadata and builds each base before its overlays.
+It exports `WAMN_APPLICATION_COMPONENTS` and the selected guest and host paths.
+Control and CLI suites enable `ops`.
+Runtime changes also select the ignored JetStream round trip.
+The tool starts a private NATS server on a free loopback port and stops it at exit.
+Set `WAMN_NATIVE_C_NATS_BIN` to a prebuilt `nats-server`, or put `nats-server` on `PATH`.
+If neither exists, the tool fails and names the variable.
+It never downloads or compiles NATS.
+
+Other cross-package file readers still need explicit path rules.
 `tools/test-changes dry-run` prints the selected commands.
-`tools/test-changes run` runs each command, reports each workspace, and returns a nonzero status if any command fails.
+`tools/test-changes run` reports each step and returns a nonzero status if any command fails.
 Each required command must report at least one executed passing case and exit successfully.
 The same rule applies to contract-diff, owned delivery, and the upstream release tests.
 `tools/require-test-result` captures command output in a private temporary file, prints it after completion, and removes the file.
@@ -54,6 +79,20 @@ It preserves command failures and refuses absent or entirely ignored test result
 An explicit dry run or a change set with no selected tests remains a planning result.
 It records no permanent result.
 `tools/test-changes` is the broad check before integration.
+
+`tools/train-run REF [--base BASE]` tests a committed revision in a fresh detached worktree at `/var/tmp/wamn-train/worktree`.
+Its default base is the merge base of `REF` and `main`.
+If that worktree already exists, the tool refuses and names its path.
+It initializes submodules and reuses `$HOME/.cache/wamn-target/train` between trains.
+The fixed worktree path keeps compiled source paths valid between trains.
+It stores logs in a temporary directory under `/var/tmp`.
+If the selected suites need web packages, it runs `pnpm install --offline` there.
+It then runs `tools/test-changes run --base BASE` in that worktree.
+It prints a PASS or FAIL table with UTC start and end times for each step.
+After success, it removes the worktree and logs but keeps the Cargo target directory.
+After failure, it prints the retained worktree path and keeps its logs and build files.
+It uses committed files from `REF`, so commit tool changes before testing them through this runner.
+Run `tools/train-tools-test` for offline self-tests with fake external commands.
 
 `tools/test-changes --cluster` runs the [ignored tests](#ignored-tests) of the selected packages instead of their default tests.
 It uses only the root workspace.

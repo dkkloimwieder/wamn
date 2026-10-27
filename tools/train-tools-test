@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+# Offline tests. Cargo, Git, pnpm, Docker, and NATS use disposable fakes.
+set -euo pipefail
+tools=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+fixture=$(mktemp -d "${TMPDIR:-/tmp}/wamn-train-tools-test.XXXXXXXX")
+trap 'status=$?; if ((status != 0)); then cat "$fixture/output" >&2 2>/dev/null || :; fi; rm -rf -- "$fixture"' EXIT
+mkdir -p "$fixture/bin" "$fixture/repo/tools" "$fixture/target/debug" \
+  "$fixture/repo/deploy/gcp/environments" "$fixture/repo/apps"
+cp "$tools/test-changes" "$tools/test-changes-suites.json" "$tools/require-test-result" \
+  "$tools/train-run" "$fixture/repo/tools/"
+# Substitute storage roots only, so the test never uses the real train paths.
+sed -e "s|/var/tmp/wamn-train/worktree|$fixture/train-worktree|g" \
+  -e 's|$HOME/.cache/wamn-target/train|$FAKE_STATE/train-target|g' \
+  "$tools/train-run" > "$fixture/repo/tools/train-run"
+cp "$tools/../Dockerfile" "$fixture/repo/"
+export FAKE_STATE="$fixture" PATH="$fixture/bin:$PATH" CARGO="$fixture/bin/cargo"
+export CARGO_TARGET_DIR="$fixture/target" TMPDIR="$fixture"
+cat > "$fixture/repo/deploy/gcp/environments/test.json" <<'JSON'
+{"packages": []}
+JSON
+for app in platform_fixture platform_fixture_overlay edge_device client_acme_receiving; do
+  mkdir -p "$fixture/repo/apps/$app"
+  : > "$fixture/repo/apps/$app/wamn.k"
+done
+cat > "$fixture/repo/tools/repo-lint" <<'FAKE'
+#!/usr/bin/env bash
+printf 'lint\n' >> "$FAKE_STATE/calls"
+FAKE
+cat > "$fixture/repo/tools/guest-rustflags" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' --remap-path-prefix=fake=/wamn
+FAKE
+cat > "$fixture/bin/git" <<'FAKE'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ ${1:-} == -C ]]; then shift 2; fi
+case "$*" in
+  'rev-parse --show-toplevel') printf '%s\n' "$FAKE_STATE/repo" ;;
+  rev-parse*|merge-base*) echo fake-commit ;;
+  diff*) printf '%s\0' "$FAKE_PATH" ;;
+  ls-files*) : ;;
+  'worktree add --detach '*)
+    work=$4
+    printf '%s\n' "$work" > "$FAKE_STATE/worktree"
+    mkdir -p "$work/tools"
+    cp "$FAKE_STATE/train-test-changes" "$work/tools/test-changes"
+    ;;
+  'worktree remove --force '*) rm -rf -- "$4" ;;
+  'submodule update --init --recursive') printf 'submodules %s\n' "$PWD" >> "$FAKE_STATE/calls" ;;
+  *) exit 64 ;;
+esac
+FAKE
+cat > "$fixture/bin/cargo" <<'FAKE'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'cargo %s\n' "$*" >> "$FAKE_STATE/calls"
+if [[ $1 == metadata ]]; then
+  root="$FAKE_STATE/repo"
+  workspace="${3%/Cargo.toml}"
+  jq -n --arg root "$root" --arg workspace "$workspace" '
+    [if $root == $workspace then
+      ["wamn-control", "crates/control/lib"], ["wamn-control-provision", "crates/control/provision"],
+      ["wamn-schema-generator", "crates/schema/generator"], ["wamn-runtime", "crates/platform/runtime"],
+      ["wamn-ctl", "services/ctl"] else empty end
+    | {name: .[0], id: .[0], manifest_path: ($root + "/" + .[1] + "/Cargo.toml"), targets: []}]
+    | {workspace_root: $root, packages: ., workspace_members: [.[].id],
+       resolve: {nodes: [.[] | {id, deps: []}]}}'
+elif [[ $1 == test ]]; then
+  if [[ $* == *prekind_host::* ]]; then
+    [[ $WAMN_HOST_BINARY == "$CARGO_TARGET_DIR/debug/wamn-host" ]]
+    [[ $WAMN_FLOW_HTTP_COMPONENT == "$CARGO_TARGET_DIR/apps/wasm32-wasip2/release/http_route.wasm" ]]
+    [[ $WAMN_MATERIALIZER_COMPONENT == "$CARGO_TARGET_DIR/apps/wasm32-wasip2/debug/materializer.wasm" ]]
+    [[ -f $CARGO_TARGET_DIR/wasm32-wasip2/debug/http_request.wasm ]]
+  fi
+  [[ ${FAKE_CARGO_FAIL_TEST:-false} != true ]] || exit 27
+  if [[ $* == *live_derived* ]]; then
+    [[ ${WAMN_EVT_NATS_URL:-} == nats://127.0.0.1:44222 ]]
+  fi
+  printf 'test result: ok. 1 passed; 0 failed; 0 ignored;\n'
+elif [[ ${FAKE_FAIL_INPUT:-false} == true ]]; then exit 31
+fi
+FAKE
+cat > "$fixture/target/debug/wamn-test-postgres" <<'FAKE'
+#!/usr/bin/env bash
+printf 'applications %s\n' "$*" >> "$FAKE_STATE/calls"
+FAKE
+cat > "$fixture/bin/docker" <<'FAKE'
+#!/usr/bin/env bash
+exit 91
+FAKE
+cat > "$fixture/bin/nats-server" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' "$$" > "$FAKE_STATE/nats-pid"
+trap 'exit 0' TERM
+printf 'Listening for client connections on 127.0.0.1:44222\nServer is ready\n'
+while :; do sleep 0.1; done
+FAKE
+chmod +x "$fixture/bin/"* "$fixture/repo/tools/"* "$fixture/target/debug/"*
+run_case() {
+  export FAKE_PATH=$1
+  : > "$fixture/calls"
+  "$fixture/repo/tools/test-changes" "${2:-dry-run}" --base fake > "$fixture/output" 2>&1
+}
+run_case docs/change.md
+grep -q '^suites: quality' "$fixture/output"
+grep -q '^repo-lint:' "$fixture/output"
+! grep -q '^root:' "$fixture/output"
+run_case crates/schema/generator/src/change.rs
+grep -q '^package-digest:.*--test package_digest' "$fixture/output"
+run_case apps/platform_fixture/wamn.k
+grep -q '^provision:.*-p wamn-control-provision' "$fixture/output"
+run_case deploy/sql/catalog.sql
+grep -q '^suites:.*ctl-ops' "$fixture/output"
+grep -q '^root .*wamn-ctl/ops' "$fixture/output"
+run_case deploy/platform/release/values.yaml
+grep -q '^prekind:.*--test environment_apply_kind --test platform_apply_kind prekind$' "$fixture/output"
+grep -q '^native host:.*--ignored --exact --test-threads=1$' "$fixture/output"
+! grep -q -- '--skip' "$fixture/output"
+grep -q 'target/no-std' "$fixture/output"
+grep -q 'target/apps' "$fixture/output"
+printf 'path rules, prekind filters, isolated guest paths: PASS\n'
+
+export FAKE_FAIL_INPUT=true
+if run_case docs/change.md run; then exit 1; fi
+! grep -q '^cargo test ' "$fixture/calls"
+unset FAKE_FAIL_INPUT
+run_case crates/platform/runtime/src/change.rs run
+kill -0 "$(cat "$fixture/nats-pid")" 2>/dev/null && exit 1
+! compgen -G "$fixture/wamn-test-changes-nats.*" > /dev/null
+printf 'failed inputs stop tests; private NATS starts and stops: PASS\n'
+export WAMN_NATIVE_C_NATS_BIN="$fixture/absent-nats"
+if run_case crates/platform/runtime/src/change.rs run; then exit 1; fi
+grep -q 'set WAMN_NATIVE_C_NATS_BIN' "$fixture/output"
+unset WAMN_NATIVE_C_NATS_BIN
+printf 'missing prebuilt NATS fails with the variable name: PASS\n'
+mkdir -p "$fixture/target/no-std/wasm32-wasip2/debug"
+for guest in transform http_request http_page; do
+  : > "$fixture/target/no-std/wasm32-wasip2/debug/$guest.wasm"
+done
+run_case deploy/platform/release/values.yaml run
+grep -q 'cargo test .*--features .*wamn-control/ops.*wamn-ctl/ops' "$fixture/calls"
+export FAKE_CARGO_FAIL_TEST=true
+if run_case crates/platform/runtime/src/change.rs run; then exit 1; fi
+kill -0 "$(cat "$fixture/nats-pid")" 2>/dev/null && exit 1
+unset FAKE_CARGO_FAIL_TEST
+printf 'native host inputs and ops features; NATS cleanup after failure: PASS\n'
+
+cat > "$fixture/train-test-changes" <<'FAKE'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ $PWD != "$FAKE_STATE/repo" ]]
+[[ $PWD == "$FAKE_STATE/train-worktree" ]]
+[[ $CARGO_TARGET_DIR == "$FAKE_STATE/train-target" ]]
+mkdir -p "$CARGO_TARGET_DIR"
+: > "$CARGO_TARGET_DIR/kept"
+printf 'test-changes %s %s\n' "$PWD" "$*" >> "$FAKE_STATE/calls"
+if [[ $1 == dry-run ]]; then printf 'suites: quality %s\n' "${FAKE_WEB:-}"
+else exit "${FAKE_TEST_STATUS:-0}"; fi
+FAKE
+cat > "$fixture/bin/pnpm" <<'FAKE'
+#!/usr/bin/env bash
+printf 'pnpm %s %s\n' "$PWD" "$*" >> "$FAKE_STATE/calls"
+FAKE
+chmod +x "$fixture/train-test-changes" "$fixture/bin/pnpm"
+# Keep even failed train fixtures inside this self-test's disposable directory.
+cat > "$fixture/bin/mktemp" <<'FAKE'
+#!/usr/bin/env bash
+if [[ $* == '-d /var/tmp/wamn-train.'* ]]; then
+  /usr/bin/mktemp -d "$FAKE_STATE/train.XXXXXXXX"
+else /usr/bin/mktemp "$@"; fi
+FAKE
+chmod +x "$fixture/bin/mktemp"
+for FAKE_WEB in '' web; do
+  export FAKE_WEB
+  : > "$fixture/calls"
+  "$fixture/repo/tools/train-run" HEAD --base main > "$fixture/output" 2>&1
+  worktree=$(cat "$fixture/worktree")
+  [[ $worktree == "$fixture/train-worktree" ]]
+  [[ ! -d $worktree ]]
+  [[ -f $fixture/train-target/kept ]]
+  grep -q '^tests .*PASS' "$fixture/output"
+  grep -q '^submodules ' "$fixture/calls"
+  if [[ $FAKE_WEB == web ]]; then grep -q 'pnpm .*install --offline' "$fixture/calls"
+  else ! grep -q '^pnpm ' "$fixture/calls"; fi
+done
+export FAKE_TEST_STATUS=7
+if "$fixture/repo/tools/train-run" HEAD > "$fixture/output" 2>&1; then exit 1; fi
+worktree=$(cat "$fixture/worktree")
+[[ -d $worktree ]]
+grep -q '^tests .*FAIL' "$fixture/output"
+grep -q 'kept worktree and logs:' "$fixture/output"
+: > "$worktree/retained"
+: > "$fixture/calls"
+if "$fixture/repo/tools/train-run" HEAD > "$fixture/output" 2>&1; then exit 1; fi
+grep -qF "worktree already exists: $worktree" "$fixture/output"
+[[ -f $worktree/retained && -f $fixture/train-target/kept && ! -s $fixture/calls ]]
+printf 'fixed train paths, target reuse, web install, cleanup, retained worktree refusal: PASS\n'

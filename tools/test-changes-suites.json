@@ -1,0 +1,8 @@
+[
+  { "path": ".", "suites": ["quality"] },
+  { "path": "^crates/schema/generator/", "suites": ["package-digest"] },
+  { "path": "^(apps/platform_fixture(_overlay)?/|crates/catalog/|deploy/sql/)", "suites": ["provision"] },
+  { "path": "^deploy/sql/", "suites": ["ctl-ops"] },
+  { "path": "^(crates/control/|deploy/platform/)", "suites": ["prekind"] },
+  { "path": "^(web/|apps/[^/]+/web/|apps/platform_ui/|package.json$|pnpm-)", "suites": ["web"] }
+]

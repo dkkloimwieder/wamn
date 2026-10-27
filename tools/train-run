@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly WAMN_USAGE='usage: tools/train-run REF [--base REF]'
+wamn_fail() { printf 'train-run: %s\n' "$*" >&2; exit 1; }
+if (($# != 1 && $# != 3)); then wamn_fail "$WAMN_USAGE"; fi
+ref=$1
+base=''
+if (($# == 3)); then
+  [[ $2 == --base ]] || wamn_fail "$WAMN_USAGE"
+  base=$3
+fi
+readonly tools="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+readonly repository="$(git -C "$tools/.." rev-parse --show-toplevel)"
+ref=$(git -C "$repository" rev-parse --verify "$ref^{commit}") || wamn_fail 'REF is not a commit'
+if [[ -z $base ]]; then base=$(git -C "$repository" merge-base "$ref" main); fi
+base=$(git -C "$repository" rev-parse --verify "$base^{commit}") || wamn_fail 'base is not a commit'
+readonly worktree='/var/tmp/wamn-train/worktree'
+if [[ -e $worktree ]] && git -C "$worktree" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  wamn_fail "worktree already exists: $worktree (kept from an earlier train)"
+fi
+readonly state="$(mktemp -d /var/tmp/wamn-train.XXXXXXXX)"
+declare -a rows=()
+owned=false
+step() {
+  local label=$1 start end status=0
+  shift
+  start=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  printf 'train-run: %s start %s\n' "$label" "$start"
+  "$@" </dev/null 2>&1 | tee "$state/$label.log" || status=$?
+  end=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  if ((status == 0)); then
+    rows+=("$(printf '%-12s PASS  %s %s' "$label" "$start" "$end")")
+  else
+    rows+=("$(printf '%-12s FAIL  %s %s (exit %s)' "$label" "$start" "$end" "$status")")
+  fi
+  return "$status"
+}
+cleanup() {
+  local status=$?
+  trap - EXIT
+  if ((status == 0)) && [[ $owned == true ]]; then
+    step remove git -C "$repository" worktree remove --force "$worktree" || status=$?
+  fi
+  printf '\n%-12s %-5s %-20s %s\n' STEP RESULT START END
+  printf '%s\n' "${rows[@]}"
+  if ((status != 0)); then
+    if [[ $owned == true ]]; then
+      printf 'train-run: kept worktree and logs: %s (logs: %s)\n' "$worktree" "$state" >&2
+    else
+      printf 'train-run: kept logs: %s\n' "$state" >&2
+    fi
+  else
+    rm -rf -- "$state"
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+step worktree git -C "$repository" worktree add --detach "$worktree" "$ref"
+owned=true
+cd -- "$worktree"
+# The fixed checkout path keeps embedded paths valid across trains.
+export CARGO_TARGET_DIR="$HOME/.cache/wamn-target/train"
+export CARGO_NET_OFFLINE=true
+step submodules git submodule update --init --recursive
+select_suites() { tools/test-changes dry-run --base "$base" > "$state/selection.log"; }
+step select select_suites
+cat "$state/selection.log"
+if grep -qE '^suites:.*(^| )web( |$)' "$state/selection.log"; then
+  step web-install pnpm install --offline
+fi
+step tests tools/test-changes run --base "$base"

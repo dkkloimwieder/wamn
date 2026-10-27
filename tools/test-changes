@@ -32,7 +32,7 @@ readonly WAMN_GUEST_STAGE='component-builder'
 readonly -a WAMN_WORKSPACES=(root apps no-std)
 readonly -a WAMN_MANIFESTS=(Cargo.toml apps/Cargo.toml apps/platform/no-std/Cargo.toml)
 # The root full run is the acceptance command of docs/operations/running-tests.md.
-readonly -a WAMN_ROOT_FULL_FEATURES=(wamn-ctl/ops)
+readonly -a WAMN_ROOT_FULL_FEATURES=(wamn-control/ops wamn-ctl/ops)
 
 WAMN_BASE=''
 WAMN_CLUSTER=false
@@ -94,7 +94,7 @@ WAMN_RELEVANT="$(
 )"
 readonly WAMN_RELEVANT
 
-if [[ "$WAMN_RELEVANT" == '[]' ]]; then
+if ((${#WAMN_CHANGED[@]} == 0)); then
   printf 'working-directory: %q\n' "$WAMN_REPOSITORY_ROOT"
   printf 'base: %s\n' "$WAMN_BASE"
   printf 'selected: nothing\n'
@@ -195,15 +195,173 @@ readonly WAMN_PLAN
 
 printf 'working-directory: %q\n' "$WAMN_REPOSITORY_ROOT"
 printf 'base: %s\n' "$WAMN_BASE"
-if [[ -z "$WAMN_PLAN" ]]; then
+if [[ -z "$WAMN_PLAN" && -n "$WAMN_NAME" ]]; then
   printf 'selected: nothing\n'
   [[ -z "$WAMN_NAME" ]] ||
     wamn_fail 1 "no package is selected, so no ignored test matches the name filter '$WAMN_NAME'"
   exit 0
 fi
 
+# Path rules supplement Cargo edges, including readers outside their package.
+WAMN_SUITES="$(jq -r --argjson paths "$(jq -n '$ARGS.positional' --args -- "${WAMN_CHANGED[@]}")" '
+  [.[] | . as $rule | select(any($paths[]; test($rule.path))) | .suites[]]
+  | unique | .[]' "$WAMN_TOOL_DIRECTORY/test-changes-suites.json")"
+declare -a WAMN_SELECTED_PACKAGES=()
+mapfile -t WAMN_SELECTED_PACKAGES < <(awk -F '\t' '$1 == 0 {print $4}' <<<"$WAMN_PLAN" | tr ' ' '\n')
+wamn_package_selected() {
+  local package
+  for package in "${WAMN_SELECTED_PACKAGES[@]}"; do
+    [[ "$package" != "$1" ]] || return 0
+  done
+  return 1
+}
+wamn_suite_selected() { grep -qxF -- "$1" <<<"$WAMN_SUITES"; }
+# The runtime owns this ignored, local-only JetStream round trip.
+if [[ "$WAMN_CLUSTER" != true ]] && wamn_package_selected wamn-runtime; then
+  WAMN_SUITES+=$'\njetstream'
+fi
+printf 'suites: %s\n' "$(tr '\n' ' ' <<<"$WAMN_SUITES")"
+
 failed=0
+wamn_step() {
+  local -r label="$1"
+  shift
+  if [[ "$WAMN_COMMAND" == dry-run ]]; then
+    printf '%s:' "$label"
+    printf ' %q' "$@"
+    printf '\n'
+    return 0
+  fi
+  printf 'test-changes: %s\n' "$label" >&2
+  local exit_code=0
+  "$@" </dev/null || exit_code=$?
+  if ((exit_code == 0)); then
+    printf 'test-changes: PASS: %s\n' "$label" >&2
+  else
+    printf 'test-changes: FAIL: %s (exit %d)\n' "$label" "$exit_code" >&2
+    failed=1
+  fi
+  return "$exit_code"
+}
+wamn_test() {
+  local label="$1"
+  shift
+  wamn_step "$label" "$WAMN_TOOL_DIRECTORY/require-test-result" "$WAMN_CARGO" test \
+    --locked --offline --no-fail-fast "$@"
+}
+
+# Inputs are built before any test. A failed input stops dependent tests.
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$WAMN_REPOSITORY_ROOT/target}"
+[[ "$CARGO_TARGET_DIR" == /* ]] || export CARGO_TARGET_DIR="$WAMN_REPOSITORY_ROOT/$CARGO_TARGET_DIR"
+export WAMN_APPLICATION_COMPONENTS="$CARGO_TARGET_DIR/virtualized/std-empty-environment"
+need_edge=false
+need_packages=false
+need_fixture=false
+need_nats=false
+need_route=false
+if wamn_package_selected wamn-control || wamn_suite_selected package-digest; then
+  need_packages=true
+  need_fixture=true
+fi
+if wamn_package_selected wamn-schema-generator; then need_packages=true; fi
+if wamn_package_selected wamn-control-provision || wamn_suite_selected provision; then need_fixture=true; fi
+if wamn_package_selected wamn-edge || wamn_suite_selected prekind; then need_edge=true; fi
+if wamn_suite_selected prekind; then need_nats=true; need_route=true; fi
+if wamn_suite_selected jetstream; then need_nats=true; fi
+# Clippy compiles every target, including generated application source and
+# compile-time fixture reads. Derive those application roots from Cargo targets.
+declare -a applications=()
+declare -A application_seen=()
+wamn_application() {
+  local app="$1" base source
+  [[ -z "${application_seen[$app]:-}" ]] || return 0
+  application_seen[$app]=true
+  # Authored base package IDs use one package = "id" line per dependency.
+  while IFS= read -r base; do
+    while IFS= read -r source; do
+      if [[ "$(basename "${source%/wamn.k}")" == "$base" ]]; then
+        wamn_application "${source%/wamn.k}"
+        break
+      fi
+    done < <(rg --files apps -g wamn.k)
+  done < <(sed -n 's/^[[:space:]]*package = "\([^" ]*\)".*/\1/p' "$app/wamn.k")
+  applications+=("$app")
+}
+if wamn_suite_selected quality; then
+  mapfile -t input_sources < <(printf '%s\n' "${WAMN_METADATA[@]}" | jq -rs -r '
+    .[] | . as $md | .packages[] | select(.id | IN($md.workspace_members[]))
+    | .manifest_path, .targets[].src_path')
+  for source in "${input_sources[@]}"; do
+    directory="${source%/*}"
+    while [[ "$directory" == "$WAMN_REPOSITORY_ROOT/apps/"* ]]; do
+      if [[ -f "$directory/wamn.k" ]]; then
+        wamn_application "${directory#"$WAMN_REPOSITORY_ROOT/"}"
+        break
+      fi
+      directory="${directory%/*}"
+    done
+  done
+  # Native tests also include generated fixture files at compile time.
+  need_fixture=true
+fi
+if [[ "$need_fixture" == true ]]; then
+  wamn_application apps/platform_fixture
+  wamn_application apps/platform_fixture_overlay
+fi
+if [[ "$need_packages" == true ]]; then
+  while IFS= read -r app; do wamn_application "$app"; done \
+    < <(jq -r '.packages[]' deploy/gcp/environments/*.json | sort -u)
+  if wamn_package_selected wamn-schema-generator; then wamn_application apps/client_acme_receiving; fi
+fi
+if [[ "$need_edge" == true ]]; then wamn_application apps/edge_device; fi
+if [[ "$need_nats" == true ]]; then
+  if [[ "$WAMN_COMMAND" == dry-run ]]; then
+    printf 'input nats: use WAMN_NATIVE_C_NATS_BIN or nats-server on PATH (prebuilt only)\n'
+  else
+    export WAMN_NATIVE_C_NATS_BIN="${WAMN_NATIVE_C_NATS_BIN:-$(command -v nats-server || :)}"
+    [[ -n "$WAMN_NATIVE_C_NATS_BIN" && -x "$WAMN_NATIVE_C_NATS_BIN" ]] ||
+      wamn_fail 65 'set WAMN_NATIVE_C_NATS_BIN to an existing prebuilt nats-server executable'
+  fi
+fi
+if ((${#applications[@]} > 0)); then
+  bins=(-p wamn-ctl --bin wamn -p wamn-test-infrastructure --bins)
+  if wamn_suite_selected prekind; then bins+=(-p wamn-host); fi
+  wamn_step 'input bins' "$WAMN_CARGO" build --locked --offline "${bins[@]}" || exit 1
+fi
+if [[ "$need_route" == true ]]; then
+  export WAMN_HOST_BINARY="$CARGO_TARGET_DIR/debug/wamn-host"
+  export WAMN_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/apps/wasm32-wasip2/release/http_route.wasm"
+  export WAMN_MATERIALIZER_COMPONENT="$CARGO_TARGET_DIR/apps/wasm32-wasip2/debug/materializer.wasm"
+  if [[ "$WAMN_COMMAND" == dry-run ]]; then guest_flags='$(tools/guest-rustflags)'
+  else guest_flags="$("$WAMN_TOOL_DIRECTORY/guest-rustflags")"; fi
+  wamn_step 'input http-route' env "RUSTFLAGS=$guest_flags" "$WAMN_CARGO" build --locked --offline \
+    --release --manifest-path apps/Cargo.toml --target-dir "$CARGO_TARGET_DIR/apps" \
+    --target wasm32-wasip2 -p http-route || exit 1
+  wamn_step 'input materializer' env "RUSTFLAGS=$guest_flags" "$WAMN_CARGO" build --locked --offline \
+    --manifest-path apps/Cargo.toml --target-dir "$CARGO_TARGET_DIR/apps" \
+    --target wasm32-wasip2 -p materializer || exit 1
+  wamn_step 'input native guest directory' mkdir -p "$CARGO_TARGET_DIR/wasm32-wasip2/debug" || exit 1
+  for guest in transform http-request http-page; do
+    wamn_step "input $guest" env "RUSTFLAGS=$guest_flags" "$WAMN_CARGO" build --locked --offline \
+      --manifest-path apps/platform/no-std/Cargo.toml --target-dir "$CARGO_TARGET_DIR/no-std" \
+      --target wasm32-wasip2 -p "$guest" || exit 1
+    wamn_step "input native $guest" cp "$CARGO_TARGET_DIR/no-std/wasm32-wasip2/debug/${guest//-/_}.wasm" \
+      "$CARGO_TARGET_DIR/wasm32-wasip2/debug/${guest//-/_}.wasm" || exit 1
+  done
+fi
+if ((${#applications[@]} > 0)); then
+  wamn_step 'input applications' "$CARGO_TARGET_DIR/debug/wamn-test-postgres" \
+    --database prekind_build --url-env DATABASE_URL -- \
+    "$CARGO_TARGET_DIR/debug/wamn" build "${applications[@]}" || exit 1
+fi
+
+# Every nonempty change set, including documentation, retains all lint legs.
+if wamn_suite_selected quality; then
+  wamn_step repo-lint "$WAMN_TOOL_DIRECTORY/repo-lint" run || :
+fi
+
 while IFS=$'\t' read -r index full trigger packages features; do
+  [[ -n "$index" ]] || continue
   argv=(test --manifest-path "$WAMN_REPOSITORY_ROOT/${WAMN_MANIFESTS[$index]}"
     --locked --offline --no-fail-fast)
   label="${WAMN_WORKSPACES[$index]}"
@@ -222,6 +380,10 @@ while IFS=$'\t' read -r index full trigger packages features; do
       argv+=(-p "$package")
     done
   fi
+  for package in wamn-control wamn-ctl; do
+    if [[ " $packages " == *" $package "* && " $features " != *" $package/ops "* ]]; then features+=" $package/ops"; fi
+  done
+  features="${features# }"
   if [[ -n "$features" ]]; then
     argv+=(--features "${features// /,}")
   fi
@@ -256,29 +418,77 @@ while IFS=$'\t' read -r index full trigger packages features; do
   fi
 done <<<"$WAMN_PLAN"
 
+if [[ "$WAMN_CLUSTER" != true ]]; then
+  if wamn_suite_selected package-digest && ! wamn_package_selected wamn-control; then
+    wamn_test package-digest -p wamn-control --features ops --test package_digest || :
+  fi
+  if wamn_suite_selected provision && ! wamn_package_selected wamn-control-provision; then
+    wamn_test provision -p wamn-control-provision || :
+  fi
+  if wamn_suite_selected ctl-ops && ! wamn_package_selected wamn-ctl; then
+    wamn_test ctl-ops -p wamn-ctl --features ops || :
+  fi
+  if wamn_suite_selected prekind; then
+    wamn_test prekind -p wamn-control --features ops --test environment_apply_kind \
+      --test platform_apply_kind prekind || :
+    wamn_test 'native host' -p wamn-control --features ops --test environment_apply_kind \
+      prekind_host::prekind_http_host_runs_and_rejects_respond_without_caller \
+      -- --ignored --exact --test-threads=1 || :
+  fi
+  if wamn_suite_selected web; then
+    wamn_step 'web lint' pnpm run check || :
+    for package in @wamn/web-runtime @wamn/platform-ui; do
+      wamn_step "$package check" pnpm --filter "$package" check || :
+      wamn_step "$package test" pnpm --filter "$package" test || :
+    done
+    wamn_step 'platform UI build' pnpm --filter @wamn/platform-ui build || :
+  fi
+fi
+
+# Ask NATS itself for an unused port, bound only on loopback. Own this process
+# and its storage, including on a signal or test failure. Never reuse a broker.
+nats_pid=''
+nats_directory=''
+wamn_cleanup() {
+  if [[ -n "$nats_pid" ]]; then
+    kill "$nats_pid" 2>/dev/null || :
+    wait "$nats_pid" 2>/dev/null || :
+  fi
+  if [[ -n "$nats_directory" ]]; then rm -rf -- "$nats_directory"; fi
+}
+trap wamn_cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+if [[ "$WAMN_CLUSTER" != true ]] && wamn_suite_selected jetstream; then
+  if [[ "$WAMN_COMMAND" == dry-run ]]; then
+    printf 'input jetstream: private nats-server -js -a 127.0.0.1 -p -1 -sd <temporary directory>\n'
+  else
+    nats_directory="$(mktemp -d "${TMPDIR:-/tmp}/wamn-test-changes-nats.XXXXXXXX")"
+    "$WAMN_NATIVE_C_NATS_BIN" -js -a 127.0.0.1 -p -1 -sd "$nats_directory/data" \
+      >"$nats_directory/server.log" 2>&1 &
+    nats_pid=$!
+    for ((attempt = 0; attempt < 100; attempt++)); do
+      if grep -q 'Server is ready' "$nats_directory/server.log"; then break; fi
+      kill -0 "$nats_pid" 2>/dev/null || break
+      sleep 0.1
+    done
+    port="$(sed -n 's/.*Listening for client connections on 127.0.0.1:\([0-9]*\).*/\1/p' \
+      "$nats_directory/server.log" | head -1)"
+    if [[ -z "$port" ]] || ! grep -q 'Server is ready' "$nats_directory/server.log"; then
+      cat "$nats_directory/server.log" >&2
+      wamn_fail 1 'private NATS did not become ready'
+    fi
+    export WAMN_EVT_NATS_URL="nats://127.0.0.1:$port"
+  fi
+  wamn_test jetstream -p wamn-runtime --lib \
+    plugins::wamn_jetstream::tests::live_derived_publish_replay_converges_through_jetstream_dedup \
+    -- --ignored --exact --test-threads=1 || :
+fi
+
 # A change set that selects a guest of the host image also builds the guests
 # with the Dockerfile guest stage, which checks the router pin that a local
 # guest build also checks (wamn-lt7y). The guests are the packages that the
 # stage builds, and they belong to the apps workspace.
-wamn_guest_check() {
-  local -r label="$1"
-  shift
-  if [[ "$WAMN_COMMAND" == dry-run ]]; then
-    printf '%s:' "$label"
-    printf ' %q' "$@"
-    printf '\n'
-    return 0
-  fi
-  printf 'test-changes: %s\n' "$label" >&2
-  local exit_code=0
-  "$@" </dev/null || exit_code=$?
-  if ((exit_code == 0)); then
-    printf 'test-changes: PASS: %s\n' "$label" >&2
-  else
-    printf 'test-changes: FAIL: %s (exit %d)\n' "$label" "$exit_code" >&2
-    failed=1
-  fi
-}
 
 if [[ "$WAMN_CLUSTER" != true ]]; then
   declare -a guests=()
@@ -298,8 +508,8 @@ if [[ "$WAMN_CLUSTER" != true ]]; then
     done
   done <<<"$WAMN_PLAN"
   if [[ "$guest_selected" == true ]]; then
-    wamn_guest_check "guests (Dockerfile $WAMN_GUEST_STAGE)" \
-      "$WAMN_DOCKER" build --target "$WAMN_GUEST_STAGE" --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath "$WAMN_REPOSITORY_ROOT")" | sha256sum | cut -c1-16)" "$WAMN_REPOSITORY_ROOT"
+    wamn_step "guests (Dockerfile $WAMN_GUEST_STAGE)" \
+      "$WAMN_DOCKER" build --target "$WAMN_GUEST_STAGE" --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath "$WAMN_REPOSITORY_ROOT")" | sha256sum | cut -c1-16)" "$WAMN_REPOSITORY_ROOT" || :
   fi
 fi
 ((failed == 0))
