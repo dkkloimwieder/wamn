@@ -68,7 +68,7 @@ impl LocalRegistry {
 impl Drop for LocalRegistry {
     fn drop(&mut self) {
         let _ = Command::new("docker")
-            .args(["rm", "-f", &self.name])
+            .args(["rm", "-f", "-v", &self.name])
             .output();
     }
 }

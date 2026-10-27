@@ -57,6 +57,7 @@ impl Drop for ClusterGuard {
             .args([
                 "rm",
                 "-f",
+                "-v",
                 &format!("{}-registry", self.name),
                 &format!("{}-artifacts", self.name),
             ])

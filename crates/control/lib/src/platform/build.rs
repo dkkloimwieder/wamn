@@ -223,7 +223,7 @@ impl Drop for PostgresContainer {
         // Also clean up when the install future is cancelled.
         let _ = std::process::Command::new("docker")
             .env("DOCKER_CONFIG", &self.docker)
-            .args(["rm", "-f", &self.name])
+            .args(["rm", "-f", "-v", &self.name])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -312,11 +312,13 @@ async fn build_packages(
         Ok(())
     }
     .await;
-    let removed =
-        run(Command::new("docker")
-            .env("DOCKER_CONFIG", docker)
-            .args(["rm", "-f", &guard.name]))
-        .await;
+    let removed = run(Command::new("docker").env("DOCKER_CONFIG", docker).args([
+        "rm",
+        "-f",
+        "-v",
+        &guard.name,
+    ]))
+    .await;
     guard.active = removed.is_err();
     built?;
     removed?;

@@ -976,6 +976,10 @@ pnpm --dir apps/wamn_receiving/web check
 ## Cleanup
 
 The app and RC runners clean up their own named resources on success, failure, or handled interruption.
+The RC runner removes its PostgreSQL and NATS containers with `docker rm --force --volumes`.
+The package-build PostgreSQL fixture, both registries of `platform_apply_kind`, and the local package registry use `docker rm -f -v`.
+These commands also remove anonymous volumes, which Docker creates for image-declared data directories.
+Container restarts retain their data until cleanup removes the container.
 Inspect their recorded cleanup result and remaining resource names before reporting completion.
 For manual fixtures, remove only the exact container, cluster, image, volume, and private directory that your run created.
 

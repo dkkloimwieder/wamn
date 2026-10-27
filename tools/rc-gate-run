@@ -49,7 +49,7 @@ case "${1-}" in
     status=0
     KUBECONFIG="$work/kubeconfig" kind delete cluster --name "$cluster" || status=1
     for container in "$cluster-postgres" "$cluster-nats"; do
-      if docker container inspect "$container" >/dev/null 2>&1; then docker rm --force "$container" >/dev/null || status=1; fi
+      if docker container inspect "$container" >/dev/null 2>&1; then docker rm --force --volumes "$container" >/dev/null || status=1; fi
     done
     for image in "$@"; do
       if docker image inspect "$image" >/dev/null 2>&1; then docker image rm "$image" >/dev/null || status=1; fi
