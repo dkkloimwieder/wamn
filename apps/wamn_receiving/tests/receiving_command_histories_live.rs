@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 use tokio_postgres::Client;
 use uuid::Uuid;
 use wamn_control::user_role::{grant_role_on, revoke_role_on};
-use wamn_platform_identity::auth_changes::{AUTH_TTL, AuthChanges, AuthNats};
+use wamn_platform_identity::auth_changes::{AuthChanges, AuthNats};
 
 use database::{
     Fixture, assert_state, bind_fixture_principal, connect, seed, snapshot, wait_for_blocked,
@@ -28,6 +28,8 @@ use model::{Expected, History, Receipt, Step};
 
 const RECEIPT_PATH: &str = "/receiving/record_receipt";
 const OCCURRED_AT: &str = "2026-09-09T12:00:00.000000Z";
+/// Invalidation delivery bound, far below AUTH_TTL: an expiry-only revocation fails.
+const AUTH_PROPAGATION: Duration = Duration::from_secs(5);
 
 // Secrets cross only through this private file. The evidence excludes them.
 #[derive(Deserialize)]
@@ -83,10 +85,15 @@ impl Route {
         body: &Value,
         expected: reqwest::StatusCode,
     ) -> Result<()> {
-        tokio::time::timeout(AUTH_TTL, async {
+        let started = tokio::time::Instant::now();
+        tokio::time::timeout(AUTH_PROPAGATION, async {
             loop {
                 let response = self.post(RECEIPT_PATH, body).await?;
                 if response.status == expected {
+                    println!(
+                        "REC-AUTHORITY reached {expected} after {:?}",
+                        started.elapsed()
+                    );
                     return Ok(());
                 }
                 ensure!(
@@ -97,7 +104,9 @@ impl Route {
             }
         })
         .await
-        .with_context(|| format!("REC-AUTHORITY did not reach {expected} within {AUTH_TTL:?}"))?
+        .with_context(|| {
+            format!("REC-AUTHORITY did not reach {expected} within {AUTH_PROPAGATION:?}")
+        })?
     }
 
     async fn post(&self, path: &str, body: &Value) -> Result<Response> {
@@ -929,7 +938,8 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
     // fixture uses the role writer to revoke and invalidate each holder, then
     // restore it after the denied call. Under docs/plan/workflows.md R3, a
     // host drops grants on delivery of the invalidation, or at AUTH_TTL if
-    // delivery fails. Poll the replay across that boundary without a sleep.
+    // delivery fails. Poll the replay for AUTH_PROPAGATION, so a delivery
+    // failure still fails the case.
     // A caller without a role holds no operation, and the denial names the
     // route's own operation.
     let auth = AuthChanges::connect(&AuthNats {
