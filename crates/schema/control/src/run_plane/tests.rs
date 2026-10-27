@@ -354,6 +354,10 @@ fn run_queue_record_columns_pin_the_global_fifo_shape() {
     assert_eq!(
         names,
         [
+            "created_at",
+            "created_by",
+            "updated_at",
+            "updated_by",
             "tenant_id",
             "run_id",
             "priority",
@@ -374,6 +378,10 @@ fn run_queue_record_columns_pin_the_global_fifo_shape() {
     assert_eq!(
         definitions,
         [
+            "created_at timestamptz NOT NULL",
+            "created_by uuid NOT NULL",
+            "updated_at timestamptz NOT NULL",
+            "updated_by uuid NOT NULL",
             "tenant_id text NOT NULL CHECK (tenant_id <> '')",
             "run_id text NOT NULL",
             "priority int NOT NULL DEFAULT 0",
@@ -2860,7 +2868,7 @@ fn missing_helpers_and_record_triggers_are_repaired() {
             .iter()
             .filter(|action| action.kind == RunPlaneActionKind::RepairTrigger)
             .count(),
-        11
+        17
     );
 }
 

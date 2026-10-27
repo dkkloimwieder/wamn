@@ -257,6 +257,10 @@ REVOKE ALL ON FUNCTION wamn_run.guard_terminal_run_delete() FROM PUBLIC;
 -- rows: release publishing refuses an unattested row until the sole policy-copy
 -- writer fills both from the authoritative system policy.
 CREATE TABLE wamn_run.environment_policies (
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
     tenant_id            text NOT NULL CHECK (tenant_id <> ''),
     expected_environment text NOT NULL CHECK (expected_environment <> ''),
     durability_class    text NOT NULL
@@ -266,6 +270,10 @@ CREATE TABLE wamn_run.environment_policies (
     source_policy_hash  text,
     PRIMARY KEY (tenant_id)
 );
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON wamn_run.environment_policies
+    FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(
+        'created_at', 'created_by', 'updated_at', 'updated_by');
 ALTER TABLE wamn_run.environment_policies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.environment_policies FORCE ROW LEVEL SECURITY;
 CREATE POLICY environment_policies_tenant
@@ -663,7 +671,10 @@ CREATE TABLE wamn_run.effect_attempts (
     attempt_started_at timestamptz NOT NULL DEFAULT now(),
     attempt_deadline_at timestamptz NOT NULL,
     attempt_input_ref text NOT NULL,
-    created_at      timestamptz NOT NULL DEFAULT now(),
+    created_at      timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
     CONSTRAINT effect_attempts_tenant_check CHECK (tenant_id <> ''),
     CONSTRAINT effect_attempts_root_plan_hash_check
         CHECK (root_plan_hash ~ '^sha256:[0-9a-f]{64}$'),
@@ -710,6 +721,10 @@ CREATE TABLE wamn_run.effect_attempts (
         UNIQUE (tenant_id, attempt_id, attempt_started_at,
                 run_id, frame_id, local_node_id, occurrence)
 );
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON wamn_run.effect_attempts
+    FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(
+        'created_at', 'created_by', 'updated_at', 'updated_by');
 -- Deliberately no FK from (tenant_id, run_id) to runs: effect attempts are an
 -- audit table with an independent retention lifetime. Pruning terminal run
 -- history cascades through the mutable node projection but must leave these
@@ -744,6 +759,10 @@ BEFORE DELETE ON wamn_run.effect_attempts
 FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change();
 
 CREATE TABLE wamn_run.effect_attempt_dispatches (
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
     tenant_id       text NOT NULL,
     attempt_id      uuid NOT NULL,
     attempt_started_at timestamptz NOT NULL,
@@ -770,6 +789,10 @@ CREATE TABLE wamn_run.effect_attempt_dispatches (
             (tenant_id, attempt_id, attempt_started_at,
              run_id, frame_id, local_node_id, occurrence)
 );
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON wamn_run.effect_attempt_dispatches
+    FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(
+        'created_at', 'created_by', 'updated_at', 'updated_by');
 ALTER TABLE wamn_run.effect_attempt_dispatches ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.effect_attempt_dispatches FORCE ROW LEVEL SECURITY;
 CREATE POLICY effect_attempt_dispatches_tenant ON wamn_run.effect_attempt_dispatches
@@ -795,6 +818,10 @@ BEFORE DELETE ON wamn_run.effect_attempt_dispatches
 FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change();
 
 CREATE TABLE wamn_run.effect_attempt_outcomes (
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
     tenant_id       text NOT NULL,
     attempt_id      uuid NOT NULL,
     dispatched_at   timestamptz NOT NULL,
@@ -811,6 +838,10 @@ CREATE TABLE wamn_run.effect_attempt_outcomes (
         REFERENCES wamn_run.effect_attempt_dispatches
             (tenant_id, attempt_id, dispatched_at)
 );
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON wamn_run.effect_attempt_outcomes
+    FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(
+        'created_at', 'created_by', 'updated_at', 'updated_by');
 ALTER TABLE wamn_run.effect_attempt_outcomes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.effect_attempt_outcomes FORCE ROW LEVEL SECURITY;
 CREATE POLICY effect_attempt_outcomes_tenant ON wamn_run.effect_attempt_outcomes
@@ -856,7 +887,10 @@ CREATE TABLE wamn_run.operator_run_actions (
     prior_started_node_local_node_id text,
     prior_started_node_occurrence int,
     prior_started_node_status text,
-    created_at      timestamptz NOT NULL DEFAULT now(),
+    created_at      timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
     CONSTRAINT operator_run_actions_tenant_check CHECK (tenant_id <> ''),
     CONSTRAINT operator_run_actions_correlation_check CHECK (correlation_id <> ''),
     CONSTRAINT operator_run_actions_run_check CHECK (run_id <> ''),
@@ -887,6 +921,10 @@ CREATE TABLE wamn_run.operator_run_actions (
     CONSTRAINT operator_run_actions_run_key UNIQUE (tenant_id, run_id),
     CONSTRAINT operator_run_actions_correlation_key UNIQUE (tenant_id, correlation_id)
 );
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON wamn_run.operator_run_actions
+    FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(
+        'created_at', 'created_by', 'updated_at', 'updated_by');
 ALTER TABLE wamn_run.operator_run_actions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.operator_run_actions FORCE ROW LEVEL SECURITY;
 CREATE POLICY operator_run_actions_tenant ON wamn_run.operator_run_actions

@@ -17,6 +17,9 @@ use wamn_run_state::queue::{
 use wamn_run_state::transitions::{release_caller_sql, terminalize_sql};
 
 fn psql(url: &str, script: &str) -> Output {
+    let actor = wamn_control_provision::PlatformComponent::Provisioning.principal_id();
+    let script =
+        format!("SET app.user_id='{actor}'; SET app.operation='admin:run-state-fixture'; {script}");
     let mut child = Command::new("psql")
         .args(["-X", "-v", "ON_ERROR_STOP=1", "-Atq", "-1", url])
         .stdin(Stdio::piped())

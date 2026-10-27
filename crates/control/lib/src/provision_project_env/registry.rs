@@ -350,8 +350,7 @@ pub async fn project_tenant_environment(
         return Ok(());
     };
     let env = triple.env.as_str();
-    let transaction = client
-        .transaction()
+    let transaction = super::provisioning_transaction(client)
         .await
         .context("begin the project-env control projection")?;
     transaction
@@ -404,16 +403,18 @@ pub async fn project_tenant_environment(
 /// The routine refuses a tenant that provisioning never projected — absence
 /// means durable, and a durable environment is never recreated.
 pub async fn claim_environment_instance(
-    client: &tokio_postgres::Client,
+    client: &mut tokio_postgres::Client,
     tenant: &str,
     instance: &str,
 ) -> anyhow::Result<()> {
-    let affected_rows = client
+    let transaction = super::provisioning_transaction(client).await?;
+    let affected_rows = transaction
         .execute(
             wamn_schema_control::claim_environment_instance_sql(),
             &[&tenant, &instance],
         )
         .await?;
     wamn_schema_control::check_environment_instance_claim(tenant, affected_rows)?;
+    transaction.commit().await?;
     Ok(())
 }

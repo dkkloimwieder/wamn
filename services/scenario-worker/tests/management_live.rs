@@ -702,6 +702,7 @@ async fn provision_project(
         ))
         .await
         .context("apply the project plane DDL and admitter credential")?;
+    project.execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:management-project-fixture', false)", &[&wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()]).await?;
     seed_candidate(&project).await?;
     Ok((project, task))
 }
@@ -1010,6 +1011,7 @@ async fn provision(admin: &mut Client, admin_url: &str) -> anyhow::Result<()> {
         ))
         .await
         .context("mint the identity-reader generation the surface authenticates as")?;
+    admin.execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:management-fixture', false)", &[&wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()]).await?;
     admin
         .execute(
             "INSERT INTO wamn_authority.author_login_tenants \

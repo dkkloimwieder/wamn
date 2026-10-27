@@ -81,7 +81,8 @@ const INSERT_GATE_REPORT_SQL: &str = "INSERT INTO wamn_run.gate_reports \
 /// Serialize one principal-scoped retry identity before reading or executing.
 /// Hash collisions only over-serialize unrelated commands; the exact primary
 /// key and request hash still decide replay versus reuse.
-const LOCK_COMMAND_RETRY_SQL: &str = "SELECT pg_catalog.pg_advisory_xact_lock( \
+const LOCK_COMMAND_RETRY_SQL: &str = "SELECT pg_catalog.set_config('app.user_id', $2, true), \
+    pg_catalog.pg_advisory_xact_lock( \
     pg_catalog.hashtextextended( \
       pg_catalog.jsonb_build_array($1::text, $2::text, $3::text)::text, 0))";
 
@@ -1628,6 +1629,54 @@ mod tests {
                 "stored command literal drifted from the contract for {kind:?}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn command_writers_stamp_the_verified_author() {
+        let _lock = wamn_test_postgres::lock();
+        let database = wamn_control_provision::test_database::system();
+        let (mut client, connection) = tokio_postgres::connect(database.url(), NoTls)
+            .await
+            .unwrap();
+        tokio::spawn(connection);
+        let actor = "11111111-1111-4111-8111-111111111111";
+        let audit = CommandAudit {
+            scope: CommandScope::new("history", "org", "project", "dev"),
+            command_id: "history".into(),
+            command: AuditedCommand::Gate,
+            author: AuthorizedAuthor {
+                principal_id: actor.into(),
+                principal_type: PrincipalType::User,
+                subject: "history@example.com".into(),
+                role: ManagementRole::ProjectAuthor,
+            },
+            target_ref: "history".into(),
+            provenance: None,
+        };
+        let report = crate::store::admission::GateReport {
+            wiring_hash: format!("sha256:{}", "a".repeat(64)),
+            passed: true,
+            summary: serde_json::json!({}),
+        };
+        let transaction = client.transaction().await.unwrap();
+        lock_retry_identity(&transaction, &audit).await.unwrap();
+        insert_gate_report(&transaction, "history", &report)
+            .await
+            .unwrap();
+        insert_command_audit(&transaction, &audit, &report.wiring_hash, b"outcome")
+            .await
+            .unwrap();
+        for relation in ["catalog.authoring_command_audit", "wamn_run.gate_reports"] {
+            wamn_test_infrastructure::record_history::assert_stamp(
+                &transaction,
+                relation,
+                "true",
+                actor,
+                actor,
+            )
+            .await;
+        }
+        transaction.commit().await.unwrap();
     }
 
     #[test]

@@ -434,3 +434,71 @@ async fn production_claim_live() -> anyhow::Result<()> {
 
     teardown(fixture).await
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn queue_writers_stamp_existing_executor_claims() -> anyhow::Result<()> {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_catalog::test_database::tenant();
+    let fixture = install_fixture(database.url()).await?;
+    let admin = &fixture.admin;
+    let plugin = &fixture.plugin;
+    // Admission already binds the executor in its existing transaction.
+    admin.execute("INSERT INTO wamn_run.environment_policies (tenant_id, expected_environment, durability_class) VALUES ($1, $2, 'standard')", &[&TENANT, &ENVIRONMENT]).await?;
+    let actor = wamn_project_state::PlatformComponent::Executor
+        .principal_id()
+        .to_string();
+    let admitted = plugin
+        .admit_manual_run(
+            "default",
+            TENANT,
+            &wamn_runtime::plugins::wamn_postgres::ManualRunAdmission {
+                package_id: PACKAGE_ID,
+                manifest_digest: POD_MANIFEST_DIGEST,
+                environment: ENVIRONMENT,
+                workflow_id: WIRING_ID,
+                workflow_version: WIRING_VERSION,
+                wiring_hash: EMPTY_HASH,
+                execution_principal_id: &actor,
+                execution_role: "workflow",
+                invoked_by_user_id: &actor,
+                node_digests: &json!({}),
+                idempotency_key: "history-admission",
+                input: &json!({}),
+            },
+        )
+        .await?;
+    let wamn_runtime::plugins::wamn_postgres::ManualRunAdmitted::Queued { run_id } = admitted
+    else {
+        panic!("new admission did not queue its run");
+    };
+    wamn_test_infrastructure::record_history::assert_stamp(
+        admin,
+        "wamn_run.run_queue",
+        &format!("run_id='{run_id}'"),
+        &actor,
+        &actor,
+    )
+    .await;
+    admin
+        .execute("DELETE FROM wamn_run.run_queue WHERE run_id=$1", &[&run_id])
+        .await?;
+
+    seed_run(admin, "history-claim", PACKAGE_ID, 0).await?;
+    let claimed = ready_run(
+        plugin
+            .claim_next(COMPONENT, &[PACKAGE_ID.to_owned()], ENVIRONMENT, 30_000)
+            .await?,
+    );
+    assert_eq!(claimed, "history-claim");
+    wamn_test_infrastructure::record_history::assert_stamp(
+        admin,
+        "wamn_run.run_queue",
+        "run_id='history-claim'",
+        &wamn_project_state::PlatformComponent::Provisioning
+            .principal_id()
+            .to_string(),
+        &actor,
+    )
+    .await;
+    teardown(fixture).await
+}

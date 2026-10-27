@@ -1054,11 +1054,28 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
     assert_eq!(row.get::<_, String>(3), suffix);
     assert_eq!(row.get::<_, bool>(4), disposable);
     assert_eq!(row.get::<_, String>(5), "");
+    let actor = wamn_control_provision::PlatformComponent::Provisioning
+        .principal_id()
+        .to_string();
+    wamn_test_infrastructure::record_history::assert_stamp(
+        &first,
+        "catalog.tenant_environments",
+        "tenant_id='tenant-race'",
+        &actor,
+        &actor,
+    )
+    .await;
 
     {
         // The losing first insert must compare the committed winner's full identity.
         let mut held = connect().await;
         let transaction = held.transaction().await.unwrap();
+        transaction
+            .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+                wamn_control_provision::PlatformComponent::Provisioning,
+            ))
+            .await
+            .unwrap();
         transaction
             .execute(
                 sql::insert_tenant_environment_sql(),
@@ -1113,7 +1130,7 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
         )
         .await;
     }
-    claim_environment_instance(&connect().await, "tenant-a", "16384")
+    claim_environment_instance(&mut connect().await, "tenant-a", "16384")
         .await
         .unwrap();
     first
@@ -1175,10 +1192,10 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
     assert_eq!(row.get::<_, chrono::DateTime<chrono::Utc>>(1), stable_at);
     assert_eq!(first.query_one("SELECT secret_name FROM registry.project_envs WHERE org='demo' AND project='shipping' AND env='dev'", &[]).await.unwrap().get::<_, String>(0), "db-other", "the earlier registry commit survives projection refusal");
 
-    claim_environment_instance(&connect().await, "tenant-a", "")
+    claim_environment_instance(&mut connect().await, "tenant-a", "")
         .await
         .unwrap();
-    let absent = claim_environment_instance(&connect().await, "tenant-unprojected", "16384")
+    let absent = claim_environment_instance(&mut connect().await, "tenant-unprojected", "16384")
         .await
         .unwrap_err();
     assert!(

@@ -1833,7 +1833,7 @@ pub(crate) async fn claim_environment_instance(
     tenant: &str,
     instance: &str,
 ) -> Result<(), ProductionDevStageError> {
-    let (client, connection) = tokio_postgres::connect(system_database_url, NoTls)
+    let (mut client, connection) = tokio_postgres::connect(system_database_url, NoTls)
         .await
         .map_err(|source| {
             ProductionDevStageError::owner(
@@ -1843,7 +1843,8 @@ pub(crate) async fn claim_environment_instance(
         })?;
     let connection_task = tokio::spawn(connection);
     let claimed =
-        crate::provision_project_env::claim_environment_instance(&client, tenant, instance).await;
+        crate::provision_project_env::claim_environment_instance(&mut client, tenant, instance)
+            .await;
     drop(client);
     connection_task.abort();
     claimed

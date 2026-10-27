@@ -72,12 +72,12 @@ pub async fn project_environment_policy(
         false,
     )
     .await?;
-    let (target, connection) = tokio_postgres::connect(verification_database_url, NoTls)
+    let (mut target, connection) = tokio_postgres::connect(verification_database_url, NoTls)
         .await
         .context("connect to the verification policy target")?;
     let connection_task = tokio::spawn(connection);
     let changed = crate::reconcile_run_plane::converge_environment_policy(
-        &target,
+        &mut target,
         run_schema,
         tenant_id,
         environment,

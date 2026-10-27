@@ -11,6 +11,9 @@ const EXECUTOR_LOGIN: &str = "wamn_matrix_executor_login";
 const MANAGEMENT_LOGIN: &str = "wamn_matrix_management_login";
 
 fn psql(url: &str, script: &str) -> Output {
+    let actor = wamn_control_provision::PlatformComponent::Provisioning.principal_id();
+    let script =
+        format!("SET app.user_id='{actor}'; SET app.operation='admin:run-state-fixture'; {script}");
     let mut child = Command::new("psql")
         .args(["-X", "-v", "ON_ERROR_STOP=1", "-Atq", url])
         .stdin(Stdio::piped())

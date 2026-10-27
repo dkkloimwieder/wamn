@@ -49,6 +49,7 @@ async fn reset_and_install(client: &Client) -> BareSchemaName {
     reconcile_run_plane::reconcile(client, &schema, true)
         .await
         .expect("install current run plane");
+    client.execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:terminalize-fixture', false)", &[&wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()]).await.unwrap();
     client
         .batch_execute(&format!(
             "INSERT INTO {SCHEMA}.environment_policies \
@@ -343,6 +344,17 @@ async fn terminalize_effect_uncertain_is_atomic_exact_and_authority_closed_live(
     assert_eq!(action.get::<_, String>(2), "external-evidence");
     assert_eq!(action.get::<_, String>(3), "case:operator-live");
     assert!(action.get::<_, bool>(4));
+    let actor = wamn_control_provision::PlatformComponent::Provisioning
+        .principal_id()
+        .to_string();
+    wamn_test_infrastructure::record_history::assert_stamp(
+        &client,
+        &format!("{SCHEMA}.operator_run_actions"),
+        "true",
+        &actor,
+        &actor,
+    )
+    .await;
     assert_eq!(action.get::<_, String>(5), "database-role");
     assert_eq!(action.get::<_, String>(6), "effect-uncertain");
     // wamn-0h0g.26.3.3: the prior-node columns are retained and written NULL.

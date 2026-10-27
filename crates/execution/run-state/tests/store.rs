@@ -230,6 +230,13 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
            ('t3','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'), ('t3','sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');"
     )
     .expect("writing to a String cannot fail");
+    script.push_str(include_str!("../../../../deploy/sql/record-history.sql"));
+    let actor = wamn_control_provision::PlatformComponent::Provisioning.principal_id();
+    writeln!(
+        script,
+        "SET app.user_id='{actor}'; SET app.operation='admin:run-state-fixture';"
+    )
+    .unwrap();
     script.push_str(&ddl);
     script.push('\n');
     script.push_str(

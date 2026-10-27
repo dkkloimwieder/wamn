@@ -200,6 +200,11 @@ async fn terminalize_in_transaction(
     request: &TerminalizeEffectUncertain<'_>,
 ) -> Result<OperatorTerminalizeResult, tokio_postgres::Error> {
     transaction
+        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+        .await?;
+    transaction
         .query_one(
             "SELECT set_config('search_path', $1, true), set_config('app.tenant', $2, true)",
             &[&schema.as_str(), &request.tenant()],

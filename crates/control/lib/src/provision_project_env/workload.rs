@@ -753,8 +753,7 @@ where
     let other_role = lifecycle.role(generation.other());
     let (mut admin, admin_task) = connect_config(admin_config, &lifecycle.label()).await?;
     lock_workload_family(&admin, lifecycle).await?;
-    let transaction = admin
-        .transaction()
+    let transaction = super::provisioning_transaction(&mut admin)
         .await
         .with_context(|| format!("begin {} generation prepare", lifecycle.label()))?;
     transaction

@@ -431,7 +431,9 @@ async fn delete_locked(
     }
 
     // The control rows of the tenant, then the environment row, last.
-    let transaction = crate::provision_project_env::provisioning_transaction(&mut system).await?;
+    let transaction = crate::provision_project_env::provisioning_transaction(&mut system)
+        .await
+        .context("begin the row delete")?;
     transaction
         .query_one("SELECT set_config('app.tenant', $1, true)", &[&tenant])
         .await

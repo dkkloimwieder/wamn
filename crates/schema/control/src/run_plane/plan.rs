@@ -840,6 +840,44 @@ $retire_run_projection_authority$;",
         });
     }
 
+    // Backfill populated relations before enforcing their required stamp columns.
+    let mut history_backfilled_tables = BTreeSet::new();
+    for (tables, migration) in [
+        (
+            &[
+                "environment_policies",
+                "effect_attempts",
+                "effect_attempt_dispatches",
+                "effect_attempt_outcomes",
+                "operator_run_actions",
+            ][..],
+            include_str!(
+                "../../../../../deploy/sql/migrations/project/0043_run_state_record_history_stamp.sql"
+            ),
+        ),
+        (
+            &["run_queue"][..],
+            include_str!(
+                "../../../../../deploy/sql/migrations/project/0044_run_queue_record_history_stamp.sql"
+            ),
+        ),
+    ] {
+        if tables.iter().any(|table| {
+            obs.tables.get(*table).is_some_and(|columns| {
+                ["created_at", "created_by", "updated_at", "updated_by"]
+                    .iter()
+                    .any(|column| !columns.contains(*column))
+            })
+        }) {
+            history_backfilled_tables.extend(tables.iter().copied());
+            plan.actions.push(RunPlaneAction {
+                kind: RunPlaneActionKind::AddColumn,
+                target: format!("{}.record-history", tables[0]),
+                sql: rewrite_schema(migration, schema),
+            });
+        }
+    }
+
     // 2. Column drift on PRESENT record tables: add what the record has and the
     //    live table lacks (record order); surface unknown extras, never drop
     //    them. Explicit cutover-owned retired columns are handled above.
@@ -858,6 +896,14 @@ $retire_run_projection_authority$;",
                     && matches!(
                         col.as_str(),
                         "run_id" | "frame_id" | "local_node_id" | "occurrence"
+                    )
+                {
+                    continue;
+                }
+                if super::declarations::RECORD_HISTORY_TABLES.contains(&table.as_str())
+                    && matches!(
+                        col.as_str(),
+                        "created_at" | "created_by" | "updated_at" | "updated_by"
                     )
                 {
                     continue;
@@ -1126,6 +1172,12 @@ $retire_run_projection_authority$;",
         .map(|spec| (spec.table.as_str(), spec.name.as_str()))
         .collect();
     for spec in &trigger_specs {
+        if spec.name == "wamn_record_history_stamp"
+            && history_backfilled_tables.contains(spec.table.as_str())
+        {
+            // The populated backfill installs this trigger in the same action.
+            continue;
+        }
         if !obs.tables.contains_key(&spec.table)
             && table_section_carries_trigger(&spec.table, &spec.name)
         {

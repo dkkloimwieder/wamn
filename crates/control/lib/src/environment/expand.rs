@@ -79,9 +79,9 @@ pub async fn expand(
         true,
     )
     .await?;
-    let project = connect(&project_url).await?;
+    let mut project = connect(&project_url).await?;
     crate::reconcile_run_plane::converge_environment_policy(
-        &project,
+        &mut project,
         &BareSchemaName::new(RUN_SCHEMA.to_owned())?,
         &tenant,
         &document.env,

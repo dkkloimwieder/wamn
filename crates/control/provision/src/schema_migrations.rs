@@ -252,6 +252,12 @@ pub const SYSTEM_MIGRATIONS: &[Migration] = &[
         relative_path: "migrations/system/0033_record_history_stamp.sql",
         sql: include_str!("../../../../deploy/sql/migrations/system/0033_record_history_stamp.sql"),
     },
+    Migration {
+        relative_path: "migrations/system/0034_control_record_history_stamp.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/system/0034_control_record_history_stamp.sql"
+        ),
+    },
 ];
 
 /// Every file of `deploy/sql/migrations/project/`, in order.
@@ -470,6 +476,18 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
         relative_path: "migrations/project/0042_c35_connection_bindings.sql",
         sql: include_str!(
             "../../../../deploy/sql/migrations/project/0042_c35_connection_bindings.sql"
+        ),
+    },
+    Migration {
+        relative_path: "migrations/project/0043_run_state_record_history_stamp.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/project/0043_run_state_record_history_stamp.sql"
+        ),
+    },
+    Migration {
+        relative_path: "migrations/project/0044_run_queue_record_history_stamp.sql",
+        sql: include_str!(
+            "../../../../deploy/sql/migrations/project/0044_run_queue_record_history_stamp.sql"
         ),
     },
 ];

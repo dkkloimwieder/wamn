@@ -419,6 +419,9 @@ fn control_universe() -> String {
 /// `VERBOSITY=verbose` is what carries the real SQLSTATE back into Rust, so a
 /// refusal is asserted on `42501` rather than on an error string.
 fn psql(url: &str, script: &str) -> (bool, String, String) {
+    let actor = wamn_control_provision::PlatformComponent::Provisioning.principal_id();
+    let script =
+        format!("SET app.user_id='{actor}'; SET app.operation='admin:provision-fixture'; {script}");
     let mut child = Command::new("psql")
         .arg(url)
         .args([

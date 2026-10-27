@@ -97,7 +97,7 @@ fn generation_url(admin: &str, database: Option<&str>) -> anyhow::Result<String>
 async fn begin_claimed(client: &Client) -> anyhow::Result<()> {
     client.batch_execute("BEGIN").await?;
     client
-        .execute("SELECT set_config('app.tenant', $1, true)", &[&TENANT])
+        .execute("SELECT set_config('app.tenant', $1, true), set_config('app.user_id', $2, true), set_config('app.operation', $3, true)", &[&TENANT, &wamn_control_provision::PlatformComponent::Executor.principal_id().to_string(), &wamn_control_provision::PlatformComponent::Executor.principal_name()])
         .await?;
     Ok(())
 }
@@ -110,6 +110,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     let test_database = wamn_test_postgres::database();
     let admin_url = test_database.url();
     let admin = connect(admin_url).await?;
+    admin.execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:executor-surface-fixture', false)", &[&wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()]).await?;
     let database: String = admin
         .query_one("SELECT current_database()::text", &[])
         .await?
@@ -552,6 +553,16 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         statement_timeout_ms: 10_000,
         row_limit: 10_000,
     })?;
+    plugin.set_user_id(
+        COMPONENT,
+        &wamn_control_provision::PlatformComponent::Executor
+            .principal_id()
+            .to_string(),
+    )?;
+    plugin.set_operation(
+        COMPONENT,
+        wamn_control_provision::PlatformComponent::Executor.principal_name(),
+    )?;
     plugin.set_tenant(COMPONENT, TENANT)?;
     plugin.set_schema(COMPONENT, "wamn_run")?;
     plugin.set_runner(COMPONENT, COMPONENT)?;

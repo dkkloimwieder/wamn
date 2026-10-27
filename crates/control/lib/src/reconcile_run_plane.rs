@@ -350,7 +350,7 @@ pub async fn reconcile_run_plane(
         let durability_class = source_policy.durability_class();
         let plan = reconcile(&client, &schema, !args.dry_run).await?;
         let policy_changed = converge_environment_policy(
-            &client,
+            &mut client,
             &schema,
             &args.tenant(),
             &args.env,
@@ -841,7 +841,7 @@ async fn converge_tenant_identity(
 /// supplies the durability class and the source identity
 /// (docs/plan/platform-deploy.md R2).
 pub(crate) async fn converge_environment_policy(
-    client: &tokio_postgres::Client,
+    client: &mut tokio_postgres::Client,
     schema: &BareSchemaName,
     tenant_id: &str,
     environment: &str,
@@ -911,7 +911,13 @@ pub(crate) async fn converge_environment_policy(
             table_present && source_carriers_present,
             "run-plane reconciliation did not create the environment policy source carriers"
         );
-        client
+        let transaction = client.transaction().await?;
+        transaction
+            .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+                PlatformComponent::Provisioning,
+            ))
+            .await?;
+        transaction
             .execute(
                 &format!(
                     "INSERT INTO {}.environment_policies \
@@ -942,6 +948,7 @@ pub(crate) async fn converge_environment_policy(
             )
             .await
             .context("converge project-local environment policy")?;
+        transaction.commit().await?;
     }
     Ok(changed)
 }

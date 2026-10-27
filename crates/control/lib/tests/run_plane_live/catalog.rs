@@ -277,7 +277,8 @@ pub(super) async fn two_plane_residency_leg(su: &Client) {
         .expect("read the co-resident control relation from the catalog")
         .get(0);
     assert_eq!(
-        residency_columns, "tenant_id,wiring_hash,passed,summary,gated_at",
+        residency_columns,
+        "created_at,created_by,updated_at,updated_by,tenant_id,wiring_hash,passed,summary,gated_at",
         "the project reconciler rewrote the CONTROL plane's record"
     );
 

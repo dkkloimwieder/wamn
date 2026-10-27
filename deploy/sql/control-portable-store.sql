@@ -36,6 +36,10 @@
 -- immutability trigger below stays unconditional.
 -- ---------------------------------------------------------------------------
 CREATE TABLE catalog.tenant_environments (
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
     tenant_id            text        NOT NULL CHECK (tenant_id <> ''),
     org                  text        NOT NULL CHECK (org <> ''),
     project              text        NOT NULL CHECK (project <> ''),
@@ -46,10 +50,18 @@ CREATE TABLE catalog.tenant_environments (
     projected_at         timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT tenant_environments_pkey PRIMARY KEY (tenant_id)
 );
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON catalog.tenant_environments
+    FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(
+        'created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- `principal_type` admits `human`, because the audit is immutable and rows
 -- written before system migration 0007 keep the old name of `user`.
 CREATE TABLE catalog.authoring_command_audit (
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
     tenant_id         text        NOT NULL CHECK (tenant_id <> ''),
     audit_id          uuid        NOT NULL DEFAULT gen_random_uuid(),
     command_id        text        NOT NULL CHECK (command_id <> ''),
@@ -79,10 +91,18 @@ CREATE TABLE catalog.authoring_command_audit (
         AND (provenance_commit IS NOT NULL OR provenance_ref IS NULL)
     )
 );
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON catalog.authoring_command_audit
+    FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(
+        'created_at', 'created_by', 'updated_at', 'updated_by');
 CREATE INDEX authoring_command_audit_recorded
     ON catalog.authoring_command_audit (tenant_id, recorded_at);
 
 CREATE TABLE wamn_run.gate_reports (
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
     tenant_id   text        NOT NULL CHECK (tenant_id <> ''),
     wiring_hash text        NOT NULL CHECK (wiring_hash ~ '^sha256:[0-9a-f]{64}$'),
     passed      boolean     NOT NULL,
@@ -90,6 +110,10 @@ CREATE TABLE wamn_run.gate_reports (
     gated_at    timestamptz NOT NULL DEFAULT clock_timestamp(),
     CONSTRAINT gate_reports_pkey PRIMARY KEY (tenant_id, wiring_hash)
 );
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON wamn_run.gate_reports
+    FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(
+        'created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- Tenant isolation is structural even for owner-only tables.
 DO $tenant_policies$
@@ -142,9 +166,16 @@ CREATE TABLE wamn_authority.author_login_tenants (
     org_id         text        NOT NULL CHECK (org_id <> ''),
     project_id     text        NOT NULL CHECK (project_id <> ''),
     environment    text        NOT NULL CHECK (environment <> ''),
-    created_at     timestamptz NOT NULL DEFAULT now(),
+    created_at     timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
     CONSTRAINT author_login_tenants_pkey PRIMARY KEY (login_identity)
 );
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON wamn_authority.author_login_tenants
+    FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(
+        'created_at', 'created_by', 'updated_at', 'updated_by');
 REVOKE ALL ON TABLE wamn_authority.author_login_tenants FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION wamn_authority.session_author_tenant()

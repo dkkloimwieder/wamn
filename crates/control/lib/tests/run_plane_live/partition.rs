@@ -226,6 +226,10 @@ pub(super) async fn partition_plane_cutover_leg(su: &Client) {
     assert_eq!(
         columns,
         [
+            "created_at",
+            "created_by",
+            "updated_at",
+            "updated_by",
             "tenant_id",
             "run_id",
             "priority",

@@ -618,7 +618,8 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
     apply(
         &db_url,
         &format!(
-            "INSERT INTO catalog.packages \
+            "SELECT set_config('app.user_id', '{}', false), set_config('app.operation', 'admin:authority-fixture', false); \
+             INSERT INTO catalog.packages \
                (tenant_id, package_id, package_version, artifact_digest) \
              SELECT t, 'platform_fixture', '1.0.0', {hash} \
                FROM unnest(ARRAY['t1', 't2']) AS t;\n\
@@ -629,7 +630,8 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
                (tenant_id, run_id, package_id, environment, \
                 flow_id, flow_version) \
              SELECT t, 'r', 'platform_fixture', 'dev', 'f', 1 \
-               FROM unnest(ARRAY['t1', 't2']) AS t;\n"
+               FROM unnest(ARRAY['t1', 't2']) AS t;\n",
+            wamn_control_provision::PlatformComponent::Provisioning.principal_id()
         ),
     );
     let retention = platform_probe_retention();

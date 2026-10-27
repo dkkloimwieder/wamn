@@ -932,6 +932,12 @@ A foreign key cascade writes its delete entries with the actor and the operation
 The log copies full rows, including `api_key.key_hash`.
 A column that is secret at rest does not belong in a stamped relation.
 An applier installs `record-history.sql` and then `record-history-app-grants.sql` before `app-schema.sql`.
+`platform.write_log` is the one exception: it has no stamps and no trigger.
+It is the idempotency record, and the rows that the work writes carry the actor ([app-schema.sql](../../deploy/sql/app-schema.sql#L412)).
+
+The run plane stamps `environment_policies`, `run_queue`, `effect_attempts`, `effect_attempt_dispatches`, `effect_attempt_outcomes`, and `operator_run_actions`.
+The three effect tables still have no production append writer.
+Their stamps apply to administrative writes and future writers that bind an actor.
 
 ### System database
 
@@ -948,8 +954,9 @@ These relations are `identity.principals`, `identity.org_memberships`, `identity
 Each relation carries the four stamp columns as `NOT NULL` with no default, and a static `wamn_record_history_stamp` trigger.
 System migration `0033_record_history_stamp` also stamps `registry.meta`, `orgs`, `env_policies`, `projects`, `project_envs`, `retired_project_envs`, `capture_gap`, and `generation_passwords`.
 It stamps `identity.session_keys`, `session_signing_state`, and `password_attempts` too.
-The migration attributes existing rows to `wamn:provisioning` and keeps each available row time, or uses migration transaction time.
-The operations tables and the control store carry no stamps.
+System migration `0034_control_record_history_stamp` stamps the control store relations `catalog.tenant_environments`, `catalog.authoring_command_audit`, `wamn_run.gate_reports`, and `wamn_authority.author_login_tenants`.
+Both migrations attribute existing rows to `wamn:provisioning` and keep each available row time, or use migration transaction time.
+The system operations tables carry no stamps.
 In the system database, the actor is an `identity.principals` id.
 The system identity tables record the actor only. A control route binds `app.operation` to its sealed operation id, and no column stores it.
 The system database keeps stamps only and no history table, as its [limits](#limits) state.

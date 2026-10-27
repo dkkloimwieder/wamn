@@ -80,6 +80,7 @@ tower-service = { workspace = true }
 wasmtime-wasi = { workspace = true }
 
 [dev-dependencies]
+wamn-test-infrastructure = { workspace = true }
 wamn-schema-control = { workspace = true }
 wamn-package-artifact = { workspace = true, features = ["test-util"] }
 http-route = { path = "../../../apps/platform/ingress/http-route" }

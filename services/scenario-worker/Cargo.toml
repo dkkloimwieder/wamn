@@ -40,6 +40,8 @@ tokio-postgres = { workspace = true, features = ["with-serde_json-1"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
+wamn-control-provision = { workspace = true, features = ["test-util"] }
+wamn-test-infrastructure = { workspace = true }
 wamn-session = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "time"] }
 # The gate judges the DOCUMENT (wamn-0h0g.8.28), so the live gate derives the

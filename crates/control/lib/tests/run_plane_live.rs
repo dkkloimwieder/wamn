@@ -496,6 +496,7 @@ async fn connect(url: &str) -> Client {
     tokio::spawn(async move {
         let _ = conn.await;
     });
+    client.execute("SELECT set_config('app.user_id', $1, false), set_config('app.operation', 'admin:run-plane-fixture', false)", &[&wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()]).await.unwrap();
     client
 }
 

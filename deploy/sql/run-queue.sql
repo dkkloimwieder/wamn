@@ -49,6 +49,10 @@
 -- on `runs` (5.7) — the queue is the claim/lease layer, not a second run-state.
 -- ---------------------------------------------------------------------------
 CREATE TABLE wamn_run.run_queue (
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
     tenant_id        text NOT NULL CHECK (tenant_id <> ''),
     run_id           text NOT NULL,
     priority         int  NOT NULL DEFAULT 0,
@@ -72,6 +76,10 @@ CREATE TABLE wamn_run.run_queue (
     PRIMARY KEY (tenant_id, run_id),
     FOREIGN KEY (tenant_id, run_id) REFERENCES wamn_run.runs (tenant_id, run_id) ON DELETE CASCADE
 );
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT OR UPDATE ON wamn_run.run_queue
+    FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(
+        'created_at', 'created_by', 'updated_at', 'updated_by');
 -- The claim scan: visible rows in dispatch order, filtered on lease liveness.
 -- `stream_seq` and `run_id` complete the ordering prefix, so the exact
 -- `ORDER BY available_at, stream_seq, run_id` is index-supported;

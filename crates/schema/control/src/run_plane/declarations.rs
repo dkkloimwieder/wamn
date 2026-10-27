@@ -606,6 +606,16 @@ pub(super) struct TriggerSpec {
     pub(super) sql: String,
 }
 
+/// Run-plane tables that carry the four record history stamps (wamn-jesy3.3).
+pub(super) const RECORD_HISTORY_TABLES: [&str; 6] = [
+    "environment_policies",
+    "effect_attempts",
+    "effect_attempt_dispatches",
+    "effect_attempt_outcomes",
+    "operator_run_actions",
+    "run_queue",
+];
+
 pub(super) fn trigger_specs() -> Vec<TriggerSpec> {
     let mut specs = vec![
         TriggerSpec {
@@ -667,6 +677,18 @@ pub(super) fn trigger_specs() -> Vec<TriggerSpec> {
                  wamn_run.operator_run_actions FOR EACH ROW EXECUTE FUNCTION \
                  wamn_run.reject_immutable_operator_run_action_change();"
             ),
+        });
+    }
+    for table in RECORD_HISTORY_TABLES {
+        let definition = format!(
+            "CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON wamn_run.{table} \
+             FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by')"
+        );
+        specs.push(TriggerSpec {
+            table: table.to_string(),
+            name: "wamn_record_history_stamp".to_string(),
+            sql: format!("{definition};"),
+            definition,
         });
     }
     specs

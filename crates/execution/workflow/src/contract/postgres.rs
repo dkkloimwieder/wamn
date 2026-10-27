@@ -2,6 +2,7 @@
 
 use tokio::sync::Mutex;
 use tokio_postgres::{Client, Transaction};
+use wamn_project_state::PlatformComponent;
 use wamn_run_state::RunStatus;
 use wamn_run_state::queue::{
     list_workflow_runs_sql, park_queued_run_sql, release_parked_run_sql, select_run_queue_state_sql,
@@ -65,10 +66,17 @@ impl PostgresWorkflows {
 
     /// Bind the transaction to the run plane and the release tenant.
     async fn scope(&self, transaction: &Transaction<'_>) -> Result<(), WorkflowError> {
+        let executor = PlatformComponent::Executor;
         transaction
             .query_one(
-                "SELECT set_config('search_path', $1, true), set_config('app.tenant', $2, true)",
-                &[&self.schema, &self.tenant()],
+                "SELECT set_config('search_path', $1, true), set_config('app.tenant', $2, true), \
+                 set_config('app.user_id', $3, true), set_config('app.operation', $4, true)",
+                &[
+                    &self.schema,
+                    &self.tenant(),
+                    &executor.principal_id().to_string(),
+                    &executor.principal_name(),
+                ],
             )
             .await
             .map_err(|error| WorkflowError::storage("scope the transaction", error))?;
