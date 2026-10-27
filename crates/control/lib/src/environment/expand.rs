@@ -1,5 +1,5 @@
-//! Step 5 of `apply`: expand (docs/plan/platform-deploy.md §10.1 step 5, R2,
-//! R22 (1), (5) to (7), epic decision D4).
+//! Step 5 of `apply`: expand
+//! (docs/architecture/overview.md#environment-lifecycle).
 //!
 //! The policy name and the route host of the environment row are written
 //! together, then the durability projection is reconciled from the declared

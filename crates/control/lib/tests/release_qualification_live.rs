@@ -1,6 +1,6 @@
 //! The qualification artifact on a local `registry:2`
-//! (docs/plan/platform-deploy.md §8.2, contract D, `wamn-t7gif.3`): the push
-//! of `qualify-release`, its immutability, and the read of `env apply`.
+//! (docs/architecture/overview.md#release-identity, wamn-t7gif.3): the push of
+//! `qualify-release`, its immutability, and the read of `env apply`.
 
 use std::path::PathBuf;
 

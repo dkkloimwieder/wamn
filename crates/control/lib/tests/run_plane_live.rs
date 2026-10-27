@@ -373,8 +373,8 @@ async fn tenant_identity_leg(su: &Client) {
 
 /// A user row whose membership is gone goes at the next reconcile, with its
 /// role assignments, and the service and platform rows stay
-/// (docs/plan/platform-ui.md §4.5). The membership then comes back, and the
-/// row with it.
+/// (docs/architecture/overview.md#organization-membership-and-administration).
+/// The membership then comes back, and the row with it.
 async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, target_url: &str) {
     let reconcile = async || {
         reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
@@ -450,7 +450,8 @@ async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, targe
         .expect("remove the fixture role");
 
     // A project admin of the project gets its admin row from the reconcile,
-    // which repairs an interrupted grant (docs/plan/platform-ui.md §4.4),
+    // which repairs an interrupted grant
+    // (docs/architecture/overview.md#organization-membership-and-administration),
     // and a second reconcile writes none.
     system_su
         .execute(

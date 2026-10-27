@@ -516,7 +516,7 @@ fn with_placeholder_types(authored: &Value) -> Value {
 }
 
 /// Apply what describe says to the statement values of the authored manifest
-/// (docs/plan/platform-deploy.md §6.1 row 3).
+/// (docs/architecture/data-access.md#application-declarations).
 ///
 /// A value without a type takes the described type. A stated type must equal
 /// it. A parameter without a nullability is not null, because SQLx describes

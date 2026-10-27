@@ -1,5 +1,5 @@
-//! One application delivered to the kept delivery cluster through
-//! `wamn-ctl env apply` (docs/plan/platform-deploy.md §10.1, §17.2 Epic 6).
+//! One application delivered to the kept delivery cluster through `wamn-ctl env
+//! apply` (docs/architecture/overview.md#environment-lifecycle).
 //!
 //! The application's own fixture publishes its release in its project
 //! database, starts its session issuer and renders its host overlay. Then the
@@ -399,9 +399,9 @@ async fn apply(app: &Application<'_>, platform: &Platform) -> anyhow::Result<Str
     let mut document = wamn_control::environment::show::show(platform, &app.triple).await?;
     document.release = DeclaredRelease::Digest(app.release_digest.to_owned());
     app.route_host.clone_into(&mut document.route_host);
-    // `env show` keeps no applications before the first release. The
-    // fixture's environment declares one application, named after its
-    // project, with every package of the release (docs/plan/platform-config.md).
+    // `env show` keeps no applications before the first release. The fixture's
+    // environment declares one application, named after its project, with every
+    // package of the release (docs/architecture/execution.md#workflows).
     if document.applications.is_empty() {
         let manifest =
             wamn_control::environment::analyse::pull_release_manifest(platform, app.release_digest)

@@ -1,5 +1,5 @@
-//! Step 8 of `apply`: drain (docs/plan/platform-deploy.md §10.1 step 8, R20
-//! (2) to (5), §11.1).
+//! Step 8 of `apply`: drain
+//! (docs/architecture/overview.md#environment-lifecycle).
 //!
 //! The old release's pods are terminating, and each finishes the runs pinned
 //! to its release in its SIGTERM path. The verb waits for the live set to be

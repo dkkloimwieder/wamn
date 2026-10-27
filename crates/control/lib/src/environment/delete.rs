@@ -1,5 +1,5 @@
-//! `env delete <coordinate> [--data]` (docs/plan/platform-deploy.md §12.3,
-//! R19, R20 (5)).
+//! `env delete <coordinate> [--data]`
+//! (docs/architecture/overview.md#environment-lifecycle).
 //!
 //! The one destructive verb, re-entrant: every step is "if present", so a run
 //! that fails at any boundary is resumed by running it again. Under the

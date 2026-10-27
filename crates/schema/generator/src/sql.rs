@@ -239,8 +239,9 @@ pub(crate) fn query(
         return format!("{page};\n");
     }
     // The page of a list read with a change feed also returns the cursor the
-    // feed starts from: the snapshot xmin of this one statement. The outer
-    // row carries it when the page has no rows (`docs/plan/wamn-sync.md`).
+    // feed starts from: the snapshot xmin of this one statement. The outer row
+    // carries it when the page has no rows
+    // (docs/architecture/execution.md#change-feed).
     format!(
         "SELECT\n    bound.feed_cursor,\n    {}\nFROM (SELECT {SNAPSHOT_XMIN} AS feed_cursor) AS bound\nLEFT JOIN LATERAL (\n{}\n) AS page ON true\nORDER BY page.{sort_field} {direction}, page.id {direction};\n",
         aliased_columns(table, "page"),
@@ -252,7 +253,7 @@ pub(crate) fn query(
 /// The snapshot xmin of the statement: every transaction below it has ended.
 const SNAPSHOT_XMIN: &str = "pg_snapshot_xmin(pg_current_snapshot())::text::int8";
 
-/// The change feed of a list read (`docs/plan/wamn-sync.md`, "Change feed").
+/// The change feed of a list read (docs/architecture/execution.md#change-feed).
 ///
 /// The statement reads the history entries of the transactions from the
 /// cursor transaction, including visible transactions at or above xmin and

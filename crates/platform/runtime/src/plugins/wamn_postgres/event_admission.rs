@@ -1,12 +1,13 @@
 //! Host admission of manual and schedule workflow runs.
 //!
-//! A manual workflow run (docs/plan/workflows.md R3, epic 1) enters the queue
-//! the same way: the host admits it on `workflow.start` against the release it
-//! serves, with the same credential, in one transaction.
+//! A manual workflow run (docs/architecture/execution.md#workflows) enters the
+//! queue the same way: the host admits it on `workflow.start` against the
+//! release it serves, with the same credential, in one transaction.
 //!
-//! A schedule workflow run (docs/plan/workflows.md R3, epic 2) is admitted by
-//! the host at a due moment, with the same credential, in one transaction
-//! that also reads the enabled version and gates it against the release.
+//! A schedule workflow run (docs/architecture/execution.md#workflows) is
+//! admitted by the host at a due moment, with the same credential, in one
+//! transaction that also reads the enabled version and gates it against the
+//! release.
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use wamn_catalog::{ServingManifest, gate_workflow_document, resolve_workflow_components};

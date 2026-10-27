@@ -43,9 +43,9 @@ use wamn_control_provision::events::{advisory_stream_config, source_stream_confi
 use wamn_control_registry::Triple;
 use wamn_test_infrastructure::event_broker::{self, EventBroker};
 
-/// One Receiving cluster case's environment of the candidate release, which
-/// it installs through the package stage and publishes nothing
-/// (docs/plan/platform-deploy.md §8.2).
+/// One Receiving cluster case's environment of the candidate release, which it
+/// installs through the package stage and publishes nothing
+/// (docs/architecture/overview.md#environment-lifecycle).
 struct ReceivingCluster {
     resources: Resources,
     inputs: JourneyDocument,
@@ -284,7 +284,7 @@ async fn postgres_18(url: &str) -> bool {
 /// Copy the candidate's release and its components by digest into the case
 /// registry, which the hosts read, then provision the environment and install
 /// the candidate in it through the package stage. It publishes nothing
-/// (docs/plan/platform-deploy.md §8.2, §10.2).
+/// (docs/architecture/overview.md#environment-lifecycle).
 async fn provision(
     cluster: &ReceivingCluster,
 ) -> anyhow::Result<(ProvisionedRoute, ReleaseCarrier)> {
@@ -378,9 +378,10 @@ impl Deployed {
 }
 
 /// Install the environment release of `carrier` through the release chart, as
-/// `env apply` does (wamn-ps2tj.1, docs/plan/platform-deploy.md §9.2): the
-/// host group and every role the release implies. The candidate's role
-/// images are copied by digest into the case registry (R12, R15).
+/// `env apply` does (docs/architecture/overview.md#environment-lifecycle,
+/// wamn-ps2tj.1): the host group and every role the release implies. The
+/// candidate's role images are copied by digest into the case registry (R12,
+/// R15).
 async fn install_release(
     cluster: &ReceivingCluster,
     carrier: &ReleaseCarrier,

@@ -1,7 +1,8 @@
-//! Live test of the lifecycle lock (docs/plan/platform-deploy.md R19,
-//! `wamn-snz0.1`): a second verb on the same coordinate refuses at once with
-//! "deployment in progress", another coordinate is not blocked, and closing
-//! the holder's connection releases the lock.
+//! Live test of the lifecycle lock
+//! (docs/architecture/overview.md#environment-lifecycle, wamn-snz0.1): a second
+//! verb on the same coordinate refuses at once with "deployment in progress",
+//! another coordinate is not blocked, and closing the holder's connection
+//! releases the lock.
 
 use wamn_control::environment::lock::{DEPLOYMENT_IN_PROGRESS, LifecycleLock};
 use wamn_control_registry::Triple;

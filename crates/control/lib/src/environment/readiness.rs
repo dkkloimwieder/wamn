@@ -1,5 +1,5 @@
-//! Step 7 of `apply`: readiness (docs/plan/platform-deploy.md §10.1 step 7,
-//! §10.3, epic decision D6).
+//! Step 7 of `apply`: readiness
+//! (docs/architecture/overview.md#environment-lifecycle).
 //!
 //! `helm upgrade --wait` returned when the host Deployment was ready. The verb
 //! then waits on each role WorkloadDeployment of the release to report

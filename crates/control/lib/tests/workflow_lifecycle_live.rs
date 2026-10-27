@@ -1,7 +1,8 @@
-//! Live tests of environment workflows (docs/plan/workflows.md R3, R8, epic 1
-//! issue 1): authorship against the serving release and a green gate report,
-//! one enabled version, the lifecycle lock, the enable-role checks, the
-//! immutability trigger and the `workflow` user row.
+//! Live tests of environment workflows
+//! (docs/architecture/execution.md#environment-workflows): authorship against
+//! the serving release and a green gate report, one enabled version, the
+//! lifecycle lock, the enable-role checks, the immutability trigger and the
+//! `workflow` user row.
 //!
 //! The project database carries the production catalog and platform schemas
 //! (`wamn_project_state::test_database::tenant_platform`), and the control

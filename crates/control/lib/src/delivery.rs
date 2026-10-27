@@ -34,10 +34,10 @@ impl ReleaseIdentity {
     }
 }
 
-/// One published release and the platform it qualifies on: the manifest
-/// bytes `qualify-release` pulled by the release digest, the release
-/// registry that holds the release's packages and components, and the
-/// release chart's images (docs/plan/platform-deploy.md §8.2).
+/// One published release and the platform it qualifies on: the manifest bytes
+/// `qualify-release` pulled by the release digest, the release registry that
+/// holds the release's packages and components, and the release chart's images
+/// (docs/architecture/overview.md#release-identity).
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Candidate {

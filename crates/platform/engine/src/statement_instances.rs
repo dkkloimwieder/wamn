@@ -4,16 +4,15 @@
 //! outer import of its own, `sql-<position>`, labelled `(implements
 //! "wamn:postgres/statements@0.4.0")`, and records the digest of that member
 //! beside the name in the custom section
-//! [`wamn_component_policy::STATEMENT_INSTANCES_SECTION`].
-//! Two outer imports share one interface type, so a valid composition could
-//! wire one member to the import meant for another. [`statement_instances`]
-//! reads the composed component's instantiation graph and accepts the record
-//! only when each named import is the statements argument of exactly the
-//! member whose digest the record names (`docs/plan/trx-pkg-plan.md`,
-//! Per-member import instances). A route wrapper can forward an import through
-//! a nested application's verified record to that same member.
-//! Admission refuses a component that fails it,
-//! and the host binds each import to that member's statements.
+//! [`wamn_component_policy::STATEMENT_INSTANCES_SECTION`]. Two outer imports
+//! share one interface type, so a valid composition could wire one member to
+//! the import meant for another. [`statement_instances`] reads the composed
+//! component's instantiation graph and accepts the record only when each named
+//! import is the statements argument of exactly the member whose digest the
+//! record names (docs/architecture/components.md#grouping-and-publication). A
+//! route wrapper can forward an import through a nested application's verified
+//! record to that same member. Admission refuses a component that fails it, and
+//! the host binds each import to that member's statements.
 
 use std::collections::{BTreeMap, BTreeSet};
 

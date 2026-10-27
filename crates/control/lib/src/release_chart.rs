@@ -1,4 +1,5 @@
-//! The `release` chart of one environment (docs/plan/platform-deploy.md §9).
+//! The `release` chart of one environment
+//! (docs/architecture/overview.md#environment-lifecycle).
 //!
 //! An environment is one Helm release of `deploy/platform/release`: the pinned
 //! runtime-operator subchart, host-only, plus one WorkloadDeployment per role.

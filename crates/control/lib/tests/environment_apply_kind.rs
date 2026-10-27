@@ -1,5 +1,5 @@
-//! `wamn-ctl env apply` on kind (docs/plan/platform-deploy.md §10.1 steps 4
-//! to 7, §10.2, R6, R22, §3 A6, A7 and A12; issue `wamn-snz0.3`).
+//! `wamn-ctl env apply` on kind
+//! (docs/architecture/overview.md#environment-lifecycle, wamn-snz0.3).
 //!
 //! This is the one kind suite of the platform. `apply` ensures the
 //! environment's `Database` CR, so the suite runs CloudNativePG: a fresh kind
@@ -66,8 +66,8 @@
 //! 16. After every check, the operator release has its revision and its
 //!     Deployment's resourceVersion of before the first apply.
 //!
-//! Check of `wamn-aqd0m.3` (docs/plan/platform-config.md, Issues for C1, 3),
-//! after check 1:
+//! Check of `wamn-aqd0m.3` (docs/architecture/data-access.md#actors), after
+//! check 1:
 //! 17. The dev environment's `wamn_administration` login, which env apply
 //!     prepares for the control host, writes one row of each of
 //!     `platform.external_system`, `connection`, `project_connection`,

@@ -1,5 +1,5 @@
-//! The one parser of document-number patterns (`docs/plan/platform-config.md`,
-//! "Numbering").
+//! The one parser of document-number patterns
+//! (docs/architecture/data-access.md#pattern).
 //!
 //! A pattern is literal text plus tokens:
 //!

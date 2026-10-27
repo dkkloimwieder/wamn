@@ -1,5 +1,5 @@
 //! The current state of one environment in its release namespace
-//! (docs/plan/platform-deploy.md §11.4).
+//! (docs/architecture/execution.md#host-run-routes).
 //!
 //! The one reader of the host Deployment, the WorkloadDeployments and the host
 //! pods of an environment's release: `wamn-ctl env status` reads them through

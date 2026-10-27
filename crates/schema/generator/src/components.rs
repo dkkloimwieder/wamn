@@ -1,4 +1,5 @@
-//! Step 7 of `wamn build` (docs/plan/platform-deploy.md §7.1): compile the
+//! Step 7 of `wamn build`
+//! (docs/architecture/components.md#guest-build-identity): compile the
 //! package's components and record them in `build.json`.
 //!
 //! The build compiles, each in its own Cargo invocation with the guest

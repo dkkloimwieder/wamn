@@ -32,11 +32,11 @@ async fn command_histories() -> anyhow::Result<()> {
     result
 }
 
-/// The ACL is the entry, on both sides (docs/plan/trx-pkg-plan.md,
-/// Authorization). A role that holds only Acme's record_receipt runs it,
-/// although the entry calls Receiving's record_receipt. The same role calling
-/// Receiving's record_receipt directly is refused, because nothing derives
-/// that grant from the entry it holds.
+/// The ACL is the entry, on both sides
+/// (docs/architecture/execution.md#routing-and-availability). A role that holds
+/// only Acme's record_receipt runs it, although the entry calls Receiving's
+/// record_receipt. The same role calling Receiving's record_receipt directly is
+/// refused, because nothing derives that grant from the entry it holds.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
 async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::Result<()> {
@@ -178,13 +178,13 @@ async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::
     result
 }
 
-/// `purchase_order.create` numbers the order from the `purchase_order`
-/// sequence and fills its actor fields from the caller
-/// (docs/plan/platform-config.md, Issues for C2, Receiving conformance): two
-/// creates give PO-000001 and PO-000002, each created and updated by the
-/// caller. The local runtime runs no env apply, so the test writes the
-/// sequence row that env apply creates, for the composing application and
-/// for Receiving; the application in host state selects one.
+/// `purchase_order.create` numbers the order from the `purchase_order` sequence
+/// and fills its actor fields from the caller
+/// (docs/architecture/data-access.md#declaration): two creates give PO-000001
+/// and PO-000002, each created and updated by the caller. The local runtime
+/// runs no env apply, so the test writes the sequence row that env apply
+/// creates, for the composing application and for Receiving; the application in
+/// host state selects one.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
 async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyhow::Result<()> {
@@ -318,10 +318,10 @@ async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyho
 
 /// A write-log entry is keyed by the versionless operation, so a key stored
 /// through Acme under one release answers the stored result under the next
-/// (docs/plan/trx-pkg-plan.md, Idempotency ruling 2026-10-12). The local
-/// runtime installs one release per database, so the second release serves
-/// a second database that carries the first one's write-log row and none of
-/// its business rows: a replay that ran again would find no purchase order.
+/// (docs/architecture/data-access.md#the-write-log). The local runtime installs
+/// one release per database, so the second release serves a second database
+/// that carries the first one's write-log row and none of its business rows: a
+/// replay that ran again would find no purchase order.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
 async fn an_acme_key_replays_across_a_release() -> anyhow::Result<()> {
@@ -573,10 +573,9 @@ async fn claims(
         .collect())
 }
 
-/// Acme's record_receipt calls Receiving's operation and records the
-/// inspection in the same host transaction, under its own claim
-/// (docs/plan/trx-pkg-plan.md, Spike and acceptance A: Real Acme behavior,
-/// Idempotency, Authority).
+/// Acme's record_receipt calls Receiving's operation and records the inspection
+/// in the same host transaction, under its own claim
+/// (docs/architecture/data-access.md#inputs-queries-and-transactions).
 async fn acme_inspection(application: &LocalApplication, database_url: &str) -> anyhow::Result<()> {
     let (project, connection) =
         tokio_postgres::connect(database_url, tokio_postgres::NoTls).await?;
@@ -877,10 +876,10 @@ async fn seed_acme_orders(project: &tokio_postgres::Client) -> anyhow::Result<()
 }
 
 /// The served release binds Acme's composed component through one named
-/// `statements` instance per member: Receiving's holds Receiving's
-/// statements and not Acme's, and Acme's holds Acme's and no Receiving
-/// statement, so a Receiving statement named through Acme's instance is
-/// unknown to it (docs/plan/trx-pkg-plan.md, Per-member import instances).
+/// `statements` instance per member: Receiving's holds Receiving's statements
+/// and not Acme's, and Acme's holds Acme's and no Receiving statement, so a
+/// Receiving statement named through Acme's instance is unknown to it
+/// (docs/architecture/components.md#grouping-and-publication).
 async fn member_instances(
     project: &tokio_postgres::Client,
     receiving_digest: &str,
@@ -937,10 +936,10 @@ async fn member_instances(
     Ok(())
 }
 
-/// The reads open their own guest transaction with begin and commit, and
-/// run outside any host transaction, so the refusals of run, run-stream and
-/// begin inside one leave them unchanged (docs/plan/trx-pkg-plan.md, Spike
-/// and acceptance A, Reads unchanged).
+/// The reads open their own guest transaction with begin and commit, and run
+/// outside any host transaction, so the refusals of run, run-stream and begin
+/// inside one leave them unchanged
+/// (docs/architecture/data-access.md#inputs-queries-and-transactions).
 async fn reads(application: &LocalApplication) -> anyhow::Result<()> {
     let http = reqwest::Client::new();
     let order = "00000000-0000-0000-0000-000000000720";

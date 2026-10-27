@@ -15,8 +15,8 @@
 //!
 //! The manifest names no tenant, environment, org, project, route host or
 //! integer id, so one release hashes identically in every environment
-//! (docs/plan/platform-deploy.md R1). A serving process takes its tenant and
-//! environment from its own configuration.
+//! (docs/architecture/overview.md#release-identity). A serving process takes
+//! its tenant and environment from its own configuration.
 //!
 //! The document identity is the SHA-256 of its RFC 8785 canonical JSON. Sets and
 //! maps make each collection's order deterministic, while
@@ -218,8 +218,8 @@ pub struct ServingComponent {
     pub operations: BTreeMap<String, ServingComponentOperation>,
     /// The statement set of each named `statements` import of a composed
     /// component, keyed by import name: each member's own package's declared
-    /// statements (Law 1 of `docs/plan/trx-pkg-plan.md`). Absent when empty, so
-    /// a release without named instances keeps its bytes.
+    /// statements (docs/architecture/components.md#grouping-and-publication).
+    /// Absent when empty, so a release without named instances keeps its bytes.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub statement_instances: BTreeMap<String, BTreeMap<String, ComponentSqlStatement>>,
 }
@@ -870,8 +870,8 @@ pub struct ServingManifest {
     /// The attachments that call a route.
     pub attachments: BTreeMap<String, RouteAttachment>,
     /// The fixed host route sets this release serves
-    /// (docs/plan/platform-ui.md §4.2). The platform builds their routes, so
-    /// the manifest names only the sets.
+    /// (docs/architecture/execution.md#host-run-routes). The platform builds
+    /// their routes, so the manifest names only the sets.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub host_routes: BTreeSet<HostRouteSet>,
 }

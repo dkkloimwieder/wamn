@@ -15,13 +15,14 @@
 //! # What it is — and is not
 //!
 //! The tables are the AUTH/RBAC half of plan item 2.4: [`USER`], [`ROLE`] (+
-//! the user↔role linkage [`USER_ROLE`]), [`PERMISSION`], [`API_KEY`], and
-//! the platform configuration tables of `docs/plan/platform-config.md`:
+//! the user↔role linkage [`USER_ROLE`]), [`PERMISSION`], [`API_KEY`], and the
+//! platform configuration tables in `docs/architecture/data-access.md#actors`:
 //! [`EXTERNAL_SYSTEM`], [`CONNECTION`], [`INTEGRATION_ALLOW`],
 //! [`PROJECT_CONNECTION`], [`NUMBER_SEQUENCE`], [`NUMBER_COUNTER`] and
-//! [`SETTING`]. The "platform metadata" half of 2.4 (entities /
-//! fields / relations / flows) is ALREADY shipped — the catalog model in
-//! `deploy/sql/catalog-schema.sql` (3.1) — and is referenced, not redefined here.
+//! [`SETTING`]. The "platform metadata" half of 2.4 (entities / fields /
+//! relations / flows) is ALREADY shipped — the catalog model in
+//! `deploy/sql/catalog-schema.sql` (3.1) — and is referenced, not redefined
+//! here.
 //!
 //! It is DISTINCT from the T1 control-plane registry (`wamn-control-registry` /
 //! `deploy/sql/system-schema.sql`): that is the platform-global system DB (orgs /
@@ -207,9 +208,9 @@ impl PlatformComponent {
     }
 }
 
-/// The name of the one `service` user that every environment holds for
-/// workflow runs (docs/plan/workflows.md R3). Admins grant it roles like any
-/// user. The platform grants it none.
+/// The name of the one `service` user that every environment holds for workflow
+/// runs (docs/architecture/execution.md#environment-workflows). Admins grant it
+/// roles like any user. The platform grants it none.
 pub const WORKFLOW_USER_NAME: &str = "workflow";
 
 /// The `platform."user"` id of the workflow user: the UUIDv5 of
@@ -250,8 +251,9 @@ pub const ROLE: Table = Table {
 };
 
 /// The one built-in user role. It has no permission rows and holds every
-/// operation the current serving release serves (docs/plan/platform-ui.md
-/// §2.2). `apply-package` creates it. Every other role is authored.
+/// operation the current serving release serves
+/// (docs/architecture/execution.md#host-run-routes). `apply-package` creates
+/// it. Every other role is authored.
 pub const ADMIN_ROLE: &str = "admin";
 
 /// The user↔role linkage (many-to-many).

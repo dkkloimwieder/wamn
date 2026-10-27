@@ -359,9 +359,9 @@ async fn assert_author_sql_boundaries(client: &Client, control_database: bool) {
         let relation: String = row.get(0);
         let role: String = row.get(1);
         let forced_row_security: bool = row.get(2);
-        // The write log has no tenant column and no row policy: the database
-        // is the tenant (`docs/plan/write-log.md` 4.1). Its grant is the claim
-        // insert and the result column alone.
+        // The write log has no tenant column and no row policy: the database is
+        // the tenant (docs/architecture/data-access.md#the-write-log). Its
+        // grant is the claim insert and the result column alone.
         assert!(
             forced_row_security || relation == WRITE_LOG,
             "{relation} grants author SQL mutation without forced row security"

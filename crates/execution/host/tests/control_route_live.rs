@@ -1,6 +1,6 @@
 //! The org and project routes of the control serving root
-//! (docs/plan/platform-ui.md §4.4 and §4.5, wamn-a40n.3 and wamn-a40n.6) on
-//! the org's real `control` login over the system schema.
+//! (docs/architecture/execution.md#host-run-routes, wamn-a40n.3, wamn-a40n.6)
+//! on the org's real `control` login over the system schema.
 //!
 //! The application rows of those routes are written in project databases of
 //! the same server, with administration logins that the production prepare

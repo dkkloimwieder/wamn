@@ -1,4 +1,5 @@
-//! Analysis: §10.1 steps 2 and 3 of docs/plan/platform-deploy.md.
+//! Analysis of the environment authorities in
+//! `docs/architecture/overview.md#environment-lifecycle`.
 //!
 //! Analysis compiles nothing new and writes nothing. It reads each authority
 //! once (§5): the policy and the environment row in the system database, the
@@ -314,11 +315,11 @@ async fn read_release_sequences(
     Ok(packages)
 }
 
-/// The refusals of the sequences that the packages of one application
-/// declare (docs/plan/platform-config.md, Numbering): two packages of one
-/// application that declare one sequence name declare one default pattern.
-/// This reads only the declarations, so a `number_sequence` row whose pattern the
-/// admin edited never refuses.
+/// The refusals of the sequences that the packages of one application declare
+/// (docs/architecture/data-access.md#counters): two packages of one application
+/// that declare one sequence name declare one default pattern. This reads only
+/// the declarations, so a `number_sequence` row whose pattern the admin edited
+/// never refuses.
 fn sequence_refusals(
     applications: &wamn_catalog::EnvironmentApplications,
     packages: &[wamn_schema_generator::PackageManifest],
@@ -673,8 +674,9 @@ async fn read_revision_in(
 }
 
 /// The release the environment serves: the digest of the newest successful
-/// revision of its release chart (docs/plan/platform-deploy.md §13). `tenant`
-/// is the environment's `org--project--env`.
+/// revision of its release chart
+/// (docs/architecture/overview.md#environment-lifecycle). `tenant` is the
+/// environment's `org--project--env`.
 ///
 /// None when the environment has no successful revision.
 ///
@@ -932,9 +934,9 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
 }
 
 /// The refusals of the declared applications against the packages of the
-/// release (docs/plan/platform-config.md): each package of the release
-/// belongs to exactly one application, and each assigned package is in the
-/// release.
+/// release (docs/architecture/execution.md#workflows): each package of the
+/// release belongs to exactly one application, and each assigned package is in
+/// the release.
 pub(crate) fn application_refusals<'a>(
     applications: &wamn_catalog::EnvironmentApplications,
     release_packages: impl IntoIterator<Item = &'a str>,

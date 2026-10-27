@@ -1,5 +1,5 @@
 //! `env show`: an environment document synthesized from the authorities
-//! (docs/plan/platform-deploy.md §10.1, R21 (3)).
+//! (docs/architecture/overview.md#environment-lifecycle).
 //!
 //! The release is the digest of the newest successful Helm revision, or
 //! `none`, and the applications are the ones that revision keeps. The route host and the policy name come from the environment row.

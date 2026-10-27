@@ -1,4 +1,5 @@
-//! Invite one user to an org (docs/plan/platform-ui.md §4.4 `user.invite`).
+//! Invite one user to an org
+//! (docs/architecture/overview.md#organization-membership-and-administration).
 //!
 //! Identity creates or reuses the user by email. One system database
 //! transaction, as `wamn_system` bound to `wamn:provisioning`, then writes the

@@ -1662,7 +1662,8 @@ fn derive(manifest: &Value) -> Result<Value, wamn_schema_generator::GenerateErro
 
 /// Generation derives each custom operation's relations from its statements,
 /// and the compiled manifest carries exactly what the fixture application's
-/// compiled manifest carries (docs/plan/platform-deploy.md §6.1).
+/// compiled manifest carries
+/// (docs/architecture/data-access.md#application-declarations).
 #[test]
 fn the_compiled_manifest_carries_the_relations_the_statements_reach() {
     let committed = fixture::manifest();

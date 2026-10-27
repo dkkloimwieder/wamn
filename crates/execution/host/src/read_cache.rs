@@ -44,8 +44,9 @@ pub(crate) fn list_tag(release: &str, reads: &BTreeSet<ServingRelation>, version
     )
 }
 
-/// Whether a read carries the feed part of a list read, which reads the
-/// changes since a cursor in place of a page (`docs/plan/wamn-sync.md`).
+/// Whether a read carries the feed part of a list read, which reads the changes
+/// since a cursor in place of a page
+/// (docs/architecture/execution.md#change-feed).
 pub(crate) fn is_feed_read(payload: &Value) -> bool {
     payload
         .get(0)

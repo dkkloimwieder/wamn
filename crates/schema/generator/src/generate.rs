@@ -239,12 +239,12 @@ struct RequiredConstraint {
 /// Compile an authored manifest: add the members that generation derives.
 ///
 /// The author states no relation of a custom operation and no stamp column
-/// (docs/plan/platform-deploy.md §6.1). Each relation comes from the
-/// operation's statements over the catalog, and the compiled manifest that
-/// every reader reads carries it. The other authored members keep their bytes
-/// and order. A model's `enum_fields` are checked here: an authored list only
-/// narrows a CHECK's value set or names a set that no CHECK carries, and
-/// generation reads the rest from the CHECKs ([`generate`]).
+/// (docs/architecture/data-access.md#application-declarations). Each relation
+/// comes from the operation's statements over the catalog, and the compiled
+/// manifest that every reader reads carries it. The other authored members keep
+/// their bytes and order. A model's `enum_fields` are checked here: an authored
+/// list only narrows a CHECK's value set or names a set that no CHECK carries,
+/// and generation reads the rest from the CHECKs ([`generate`]).
 ///
 /// # Errors
 ///

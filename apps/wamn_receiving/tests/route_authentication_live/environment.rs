@@ -89,8 +89,8 @@ pub(super) async fn reconcile_journey_data_access(
 }
 
 /// Applying the packages leaves the built-in `admin` role and no permission
-/// row: `admin` holds every served operation without rows, and no other role
-/// is authored yet (docs/plan/platform-ui.md §2.2).
+/// row: `admin` holds every served operation without rows, and no other role is
+/// authored yet (docs/architecture/execution.md#host-run-routes).
 pub(super) async fn verify_journey_operation_grants(project: &Client) -> anyhow::Result<()> {
     let roles = project
         .query(

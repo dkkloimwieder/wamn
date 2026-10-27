@@ -78,8 +78,8 @@ pub fn bind_platform_principal_sql(component: PlatformComponent) -> String {
 /// transaction. The binding ends with that transaction.
 ///
 /// The last row is the `workflow` user of type `service`
-/// (docs/plan/workflows.md R3), with the email `workflow@<platform-domain>`.
-/// The platform grants it no role.
+/// (docs/architecture/execution.md#environment-workflows), with the email
+/// `workflow@<platform-domain>`. The platform grants it no role.
 ///
 /// Each insert keeps a row that is already there. Running the SQL twice, or
 /// running it against a tenant that holds part of the list, writes the rest

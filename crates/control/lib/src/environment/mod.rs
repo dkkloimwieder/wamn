@@ -1,5 +1,5 @@
-//! `wamn-ctl env`: the environment lifecycle (docs/plan/platform-deploy.md
-//! §10, §11, §12.3, epic `wamn-snz0`).
+//! `wamn-ctl env`: the environment lifecycle
+//! (docs/architecture/overview.md#environment-lifecycle, wamn-snz0).
 //!
 //! An environment is declared in one document, `environment.k`. `apply` moves
 //! the environment toward it, under one lifecycle lock: lock, analyse, ensure,
@@ -207,10 +207,10 @@ pub async fn apply(platform: &Platform, file: &Path) -> anyhow::Result<Analysis>
     .await
 }
 
-/// `apply` of the environment's own document with `digest` as its release:
-/// the document that `show` synthesizes from the authorities, under the
-/// lifecycle lock. `upgrade-environment` deploys the release it published
-/// this way (docs/plan/platform-deploy.md §15.2).
+/// `apply` of the environment's own document with `digest` as its release: the
+/// document that `show` synthesizes from the authorities, under the lifecycle
+/// lock. `upgrade-environment` deploys the release it published this way
+/// (docs/architecture/overview.md#environment-lifecycle).
 ///
 /// # Errors
 ///

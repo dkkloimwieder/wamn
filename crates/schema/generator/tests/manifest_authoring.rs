@@ -1,4 +1,5 @@
-//! The compile step of `wamn.k` (docs/plan/manifest-authoring.md §4.3).
+//! The compile step of `wamn.k`
+//! (docs/architecture/data-access.md#application-declarations).
 //!
 //! Each test writes a package with a `wamn.k` to its own directory and runs the
 //! pinned `kcl` CLI that `tools/install-kcl` installs.
@@ -350,7 +351,8 @@ fn a_derived_member_is_refused() {
 }
 
 /// The schema module lets a statement value leave out its type, which only
-/// `wamn build` derives (docs/plan/platform-deploy.md §6.1). KCL accepts it;
+/// `wamn build` derives
+/// (docs/architecture/data-access.md#application-declarations). KCL accepts it;
 /// a reader that has no build to derive it refuses the compiled manifest.
 #[test]
 fn a_statement_value_type_is_optional_and_only_the_build_derives_it() {

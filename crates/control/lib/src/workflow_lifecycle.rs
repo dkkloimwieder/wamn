@@ -1,4 +1,5 @@
-//! Enable and disable one workflow version (docs/plan/workflows.md R3, R8).
+//! Enable and disable one workflow version
+//! (docs/architecture/execution.md#environment-workflows).
 //!
 //! Both verbs take the environment's lifecycle lock
 //! ([`LifecycleLock`], shared with `env apply`). While another verb holds it,
@@ -397,7 +398,7 @@ async fn enable_in(
     }
 
     // The role a run executes with: the execution role, or `admin` for a
-    // callerless `invoker` (docs/plan/workflows.md R3).
+    // callerless `invoker` (docs/architecture/execution.md#workflows).
     let assigned = match (execution_role.as_deref(), trigger.as_str()) {
         (Some(role), _) => Some(role),
         (None, "schedule" | "event") => Some(ADMIN_ROLE),

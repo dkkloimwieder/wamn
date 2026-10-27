@@ -700,8 +700,9 @@ fn emit_query(
     }
 }
 
-/// The change feed of a list read: the page helper, and `changes`, which
-/// reads the list's filters and the feed part (`docs/plan/wamn-sync.md`).
+/// The change feed of a list read: the page helper, and `changes`, which reads
+/// the list's filters and the feed part
+/// (docs/architecture/execution.md#change-feed).
 fn emit_feed(
     source: &mut String,
     model_name: &str,

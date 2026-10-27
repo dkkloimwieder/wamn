@@ -62,8 +62,8 @@ pub use wamn_record_history::AUDIT_RETENTION_ROLE;
 /// Stable NOLOGIN role used by administration generations. Its 19 bytes
 /// mint a 62-byte login, so the role name is its own generation prefix.
 pub const ADMINISTRATION_ROLE: &str = "wamn_administration";
-/// Stable NOLOGIN role used by control generations, the credential of an
-/// org's control host (docs/plan/platform-ui.md §4.2).
+/// Stable NOLOGIN role used by control generations, the credential of an org's
+/// control host (docs/architecture/execution.md#host-run-routes).
 pub const CONTROL_ROLE: &str = "wamn_control";
 
 /// The shared NOLOGIN group role every non-guest tenant-floor arm targets

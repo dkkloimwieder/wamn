@@ -1,6 +1,6 @@
 //! Arguments and output of the role and permission verbs: `grant-role`,
 //! `revoke-role`, `create-role`, `delete-role`, `grant-permission` and
-//! `revoke-permission` (docs/plan/platform-ui.md §4.1).
+//! `revoke-permission` (docs/architecture/execution.md#host-run-routes).
 
 use clap::Args;
 use wamn_control::role_permission;

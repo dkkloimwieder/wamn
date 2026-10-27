@@ -1,5 +1,5 @@
 //! `environment.status` of the control serving root
-//! (docs/plan/platform-deploy.md §11.4).
+//! (docs/architecture/execution.md#host-run-routes).
 //!
 //! The current state of one environment, read with the control host's
 //! read-only ServiceAccount from the release namespace `hosts`: the digest of

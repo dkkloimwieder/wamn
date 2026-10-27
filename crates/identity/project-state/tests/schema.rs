@@ -48,8 +48,8 @@ fn record_history_app_grants_sql() -> String {
 /// relation, not one blanket grant, so the log test checks it per relation too:
 ///
 /// - `users` / `role` / `user_role` / `permission` / `environment` and the
-///   platform configuration tables are SELECT-only (docs/plan/platform-config.md,
-///   invariant 1). The trust chain reads these rows as authorization INPUT — the
+///   platform configuration tables are SELECT-only (docs/architecture/data-access.md#actors). The
+///   trust chain reads these rows as authorization INPUT — the
 ///   3.5 builder compiles `app.user_id` (a `users.id`) and `app.role` (a
 ///   `role.name`, reached through `user_role`) into the data policies it
 ///   generates, and 4.2 resolves those claims from exactly these tables. Author
@@ -546,7 +546,8 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
     rows.sort();
     expected.extend(rows);
     // The two fixture users and the `workflow` service user
-    // (docs/plan/workflows.md R3) are the rows that are not platform rows.
+    // (docs/architecture/execution.md#environment-workflows) are the rows that
+    // are not platform rows.
     expected.push("3".to_owned());
     assert_eq!(output.lines().collect::<Vec<_>>(), expected);
 }

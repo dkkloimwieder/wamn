@@ -774,7 +774,7 @@ fn emit_operation(
 
 /// Emit the change feed of a list read: its change types, their field map, the
 /// route the feed reads, and `changes`, which reads the changes in the scope of
-/// a request since a cursor (`docs/plan/wamn-sync.md`).
+/// a request since a cursor (docs/architecture/execution.md#change-feed).
 ///
 /// The feed is the list read with its feed part, so it calls the list's route.
 /// Its value is the changes envelope, which the route states as its own result

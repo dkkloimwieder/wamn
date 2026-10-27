@@ -63,9 +63,9 @@ const USER_OPERATION_PERMISSIONS_SQL: &str = "SELECT user_role.role_name, permis
       ON permission.role_name = user_role.role_name \
     WHERE \"user\".id = $1::text::uuid AND \"user\".status = 'active'";
 
-/// The application authority a caller holds now: whether it holds `admin`,
-/// and the stable operation references its other roles grant under the loaded
-/// release (docs/plan/platform-ui.md §2.3).
+/// The application authority a caller holds now: whether it holds `admin`, and
+/// the stable operation references its other roles grant under the loaded
+/// release (docs/architecture/execution.md#routing-and-availability).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HeldOperationGrants {
     pub admin: bool,
@@ -93,9 +93,9 @@ impl HeldOperationGrants {
     }
 
     /// The one role a caller with these grants acts with
-    /// (docs/plan/workflows.md R3): `admin` for a holder of `admin`, the
-    /// single role of a caller that holds exactly one, and none for a caller
-    /// that holds no role or more than one.
+    /// (docs/architecture/execution.md#environment-workflows): `admin` for a
+    /// holder of `admin`, the single role of a caller that holds exactly one,
+    /// and none for a caller that holds no role or more than one.
     pub fn active_role(&self) -> Option<Box<str>> {
         if !self.user {
             return None;
@@ -256,11 +256,11 @@ pub struct WamnPostgres {
     /// of a write. Absent (the default) binds the empty string. Modified
     /// application SQL can forge it, as it can forge `app.user_id`.
     operations: std::sync::RwLock<HashMap<String, String>>,
-    /// component id → the `app.application` claim: the application name
-    /// from the environment map for the operation's package. Numbering keys its
+    /// component id → the `app.application` claim: the application name from
+    /// the environment map for the operation's package. Numbering keys its
     /// sequences on this host state, which the operation transaction keeps,
-    /// never on the claim (`docs/plan/platform-config.md`). Absent (the
-    /// default) binds the empty string.
+    /// never on the claim (docs/architecture/data-access.md#rendering). Absent
+    /// (the default) binds the empty string.
     applications: std::sync::RwLock<HashMap<String, String>>,
     /// component id → the release digest this pod carries.
     /// Absent (the default) ⇒ the production claim verifies nothing, so every
@@ -303,7 +303,8 @@ pub struct WamnPostgres {
     pub(super) destroyed: Arc<AtomicU64>,
     /// How many times each half of the un-fused workload bind has run.
     pub(super) bind_counters: super::BindCounters,
-    /// The auth facts this host keeps (docs/plan/request-round-trips.md).
+    /// The auth facts this host keeps
+    /// (docs/architecture/execution.md#auth-memory).
     auth: crate::auth_cache::AuthCache,
 }
 
@@ -799,9 +800,9 @@ pub(super) fn reject_claim_mutation(sql: &str) -> Result<(), PgError> {
 }
 
 /// The platform functions that write `number_counter`. Only the numbering
-/// renderer of this plugin calls them, on its own connection access, which
-/// does not pass this raw surface (`docs/plan/platform-config.md`,
-/// Numbering). Admission also refuses declared statements that name them.
+/// renderer of this plugin calls them, on its own connection access, which does
+/// not pass this raw surface (docs/architecture/data-access.md#actors).
+/// Admission also refuses declared statements that name them.
 const COUNTER_FUNCTIONS: [&str; 3] = ["bump_counter", "assign_counter", "set_counter"];
 
 /// True if `sql` names a platform counter function. Each function runs as
@@ -2232,8 +2233,8 @@ impl WamnPostgres {
             .map(|row| row.get(0)))
     }
 
-    /// The application roles and stored permissions a caller holds, read by
-    /// a host route (docs/plan/platform-ui.md §4.2) in an
+    /// The application roles and stored permissions a caller holds, read by a
+    /// host route (docs/architecture/execution.md#host-run-routes) in an
     /// [administration transaction](Self::administration_transaction).
     pub async fn held_operation_grants(
         &self,
@@ -2255,16 +2256,16 @@ impl WamnPostgres {
 
     /// Run `work` in a host-owned READ COMMITTED transaction under the
     /// administration credential of `project`, for a host route
-    /// (docs/plan/platform-ui.md §4.2). The transaction binds the caller and
-    /// the route's sealed operation id as `app.user_id` and `app.operation`,
-    /// so every row it writes is stamped with them. It commits when `work`
-    /// returns `Ok` and rolls back when `work` returns `Err`, whose value is
-    /// the inner result. The outer error is a failure of the transaction
-    /// itself.
-    /// Whether the environment of `tenant` is inactive, from its row of
-    /// `platform.environment`, read as `wamn_app` (docs/plan/platform-ui.md
-    /// §5.4). No row means active. The host keeps the answer in its
-    /// [auth memory](crate::auth_cache).
+    /// (docs/architecture/execution.md#host-run-routes). The transaction binds
+    /// the caller and the route's sealed operation id as `app.user_id` and
+    /// `app.operation`, so every row it writes is stamped with them. It commits
+    /// when `work` returns `Ok` and rolls back when `work` returns `Err`, whose
+    /// value is the inner result. The outer error is a failure of the
+    /// transaction itself. Whether the environment of `tenant` is inactive,
+    /// from its row of `platform.environment`, read as `wamn_app`
+    /// (docs/architecture/execution.md#routing-and-availability). No row means
+    /// active. The host keeps the answer in its [auth
+    /// memory](crate::auth_cache).
     pub async fn environment_inactive(&self, project: &str, tenant: &str) -> anyhow::Result<bool> {
         anyhow::ensure!(valid_project(project), "invalid environment-status project");
         anyhow::ensure!(valid_tenant(tenant), "invalid environment-status tenant");
@@ -2357,11 +2358,11 @@ impl WamnPostgres {
             .await
     }
 
-    /// The caller of one node of a workflow run that executes as
-    /// `principal_id` with `role` active, from the grants the principal holds
-    /// now, read through the host's auth memory as a request reads them
-    /// (docs/plan/workflows.md R3). None when the principal is inactive or no
-    /// longer holds `role`.
+    /// The caller of one node of a workflow run that executes as `principal_id`
+    /// with `role` active, from the grants the principal holds now, read
+    /// through the host's auth memory as a request reads them
+    /// (docs/architecture/execution.md#environment-workflows). None when the
+    /// principal is inactive or no longer holds `role`.
     pub async fn workflow_node_caller(
         &self,
         project: &str,

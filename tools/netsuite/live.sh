@@ -8,12 +8,13 @@ usage() {
   cat >&2 <<'USAGE'
 Usage:
   live.sh prepare CREDENTIALS_JSON ORG OUTPUT_DIRECTORY
-  live.sh run CREDENTIALS_JSON ORG TENANT ENVIRONMENT RELEASE_DIGEST PRINCIPAL RECORD_ID QUERY_FILE
+  live.sh run CREDENTIALS_JSON ORG TENANT APPLICATION HOST_URL RECORD_ID QUERY_FILE
 
 prepare writes a connection request and a private credential import file.
 Write the connection with connection write, then import the private file with connection import-credentials.
-run requires WAMN_PG_ADMIN_URL and WAMN_CONTROL_DATABASE_URL.
+run requires WAMN_PG_ADMIN_URL, WAMN_CONTROL_DATABASE_URL, and WAMN_TOKEN.
 The deployed host reads the imported credentials from the system database.
+The application must enable the manual workflows record_get and suiteql_query.
 Set WAMN_CTL to the CLI path if it is not target/debug/wamn-ctl.
 USAGE
   exit 2
@@ -51,10 +52,11 @@ if [[ $mode == prepare ]]; then
   printf 'Prepared %s/credential-import.json and %s/connection.json. Write the connection and import credentials before run.\n' "$output" "$output"
   exit 0
 fi
-[[ $mode == run && $# == 9 ]] || usage
+[[ $mode == run && $# == 8 ]] || usage
 : "${WAMN_PG_ADMIN_URL:?Set the deployed project admin database URL}"
 : "${WAMN_CONTROL_DATABASE_URL:?Set the control database URL}"
-tenant=$4 environment=$5 digest=$6 principal=$7 record_id=$8 query_file=$9
+export WAMN_TOKEN="${WAMN_TOKEN:?Set the caller bearer token}"
+tenant=$4 application=$5 host_url=$6 record_id=$7 query_file=$8
 ctl=${WAMN_CTL:-target/debug/wamn-ctl}
 work=$(mktemp -d "${TMPDIR:-/var/tmp}/wamn-netsuite-live.XXXXXX")
 trap 'rm -rf -- "$work"' EXIT
@@ -68,8 +70,8 @@ jq -n --arg id "$record_id" '{id:$id}' > "$work/record_get.json"
 jq -n --rawfile q "$query_file" '{q:$q}' > "$work/suiteql_query.json"
 for wiring in record_get suiteql_query; do
   run_id=$("$ctl" workflow start \
-    --release-digest "$digest" --package-id netsuite --wiring-id "$wiring" --wiring-version 1 \
-    --service-principal-id "$principal" --idempotency-key "netsuite-live:$(basename "$work"):$wiring" \
+    --host-url "$host_url" --application "$application" --workflow-id "$wiring" \
+    --idempotency-key "netsuite-live:$(basename "$work"):$wiring" \
     --input "$work/$wiring.json")
   deadline=$((SECONDS + 120))
   while :; do

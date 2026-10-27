@@ -7,7 +7,7 @@ use wamn_control::delivery::Candidate;
 pub(super) use wamn_test_infrastructure::rendering::{host_values, image_reference};
 
 /// The candidate that `qualify-release` names. A Receiving cluster case runs
-/// only with one (docs/plan/platform-deploy.md §8.2).
+/// only with one (docs/architecture/overview.md#release-identity).
 pub(super) fn candidate() -> anyhow::Result<(Candidate, ServingManifest)> {
     let candidate = Candidate::from_env()?;
     let (manifest, _) = candidate.manifest()?;

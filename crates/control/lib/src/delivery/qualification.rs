@@ -34,8 +34,8 @@ const WMS_CASES: &[&str] = &[
 const COMMAND_TIMEOUT: Duration = Duration::from_mins(45);
 
 /// Exact inputs for qualifying one published release, by its digest, on the
-/// platform image set of a release chart through the existing application
-/// cases (docs/plan/platform-deploy.md §8.2).
+/// platform image set of a release chart through the existing application cases
+/// (docs/architecture/overview.md#release-identity).
 #[derive(Clone, Debug)]
 pub struct QualifyReleaseRequest {
     /// The release, `sha256:<hex>`.

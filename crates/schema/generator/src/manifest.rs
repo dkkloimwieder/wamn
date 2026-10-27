@@ -30,7 +30,7 @@ pub struct PackageManifest {
     pub required_platform_policy_contract: PolicyContractRequirement,
     /// The target types the package may run on. Empty reads as `cloud` only,
     /// and a package with models runs on `cloud` only
-    /// (`docs/plan/platform-config.md`, "Declaration in wamn.k").
+    /// (docs/architecture/data-access.md#declaration).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub targets: Vec<Target>,
     /// The number sequences the package fills or calls, by name, each with
@@ -203,12 +203,12 @@ pub enum CommandTransaction {
 /// no idempotence at all.
 ///
 /// `Claim` claims the idempotency key in the write log, so a repeat answers the
-/// stored result (`docs/plan/write-log.md`). `State` mints no identity and
-/// names the row versions that guard it, so a repeat after success sees a
-/// version moved and gets a typed conflict. `Stateless`
+/// stored result (docs/architecture/data-access.md#the-write-log). `State`
+/// mints no identity and names the row versions that guard it, so a repeat
+/// after success sees a version moved and gets a typed conflict. `Stateless`
 /// declares no connection, relation or statement, so it writes no state that a
-/// repeat could change. The engine's per-item intent is its replay guard
-/// (owner ruling, `wamn-hxow`).
+/// repeat could change. The engine's per-item intent is its replay guard (owner
+/// ruling, `wamn-hxow`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CommandIdempotence {

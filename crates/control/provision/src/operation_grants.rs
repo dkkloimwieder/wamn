@@ -1,11 +1,11 @@
 //! The built-in role `admin` and the package-operation vocabulary.
 //!
-//! `admin` has no permission rows and holds every operation the current
-//! serving release serves (docs/plan/platform-ui.md §2.2). `apply-package`
-//! only creates the `admin` row when it is absent. Every other role is
-//! authored, and its permission rows are reconciled against the candidate
-//! serving release before activation, not by `apply-package`. The existing
-//! `platform` floor is a precondition; this module never installs or
+//! `admin` has no permission rows and holds every operation the current serving
+//! release serves (docs/architecture/execution.md#host-run-routes).
+//! `apply-package` only creates the `admin` row when it is absent. Every other
+//! role is authored, and its permission rows are reconciled against the
+//! candidate serving release before activation, not by `apply-package`. The
+//! existing `platform` floor is a precondition; this module never installs or
 //! redesigns that authority schema.
 
 use std::collections::BTreeSet;

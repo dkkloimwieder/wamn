@@ -1,5 +1,5 @@
 //! Checks of the release chart that `wamn-ctl env apply` writes, on a kind
-//! cluster (docs/plan/platform-deploy.md §9.2, assumptions A1 and A12).
+//! cluster (docs/architecture/overview.md#environment-lifecycle).
 //!
 //! The environment release is `deploy/platform/release`, in the operator
 //! namespace. Its host group is the release name, and its hosts carry the

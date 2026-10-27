@@ -1,8 +1,8 @@
-//! Arguments and output of the `env` verbs (docs/plan/platform-deploy.md
-//! §10.1, §11.2, §11.4, §12.3, R21). `apply` has one flag, `--dry-run`;
-//! `rollback` one argument, `--reason`; `delete` one flag, `--data`. Every
-//! other input is a field of the environment document, or a platform input
-//! that [`wamn_control::environment::Platform::from_env`] reads.
+//! Arguments and output of the `env` verbs
+//! (docs/architecture/overview.md#environment-lifecycle). `apply` has one flag,
+//! `--dry-run`; `rollback` one argument, `--reason`; `delete` one flag,
+//! `--data`. Every other input is a field of the environment document, or a
+//! platform input that [`wamn_control::environment::Platform::from_env`] reads.
 
 use std::io::{BufRead as _, IsTerminal as _, Write as _};
 use std::path::PathBuf;

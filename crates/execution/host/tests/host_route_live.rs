@@ -1,5 +1,5 @@
 //! The application host routes through a fixture serving release
-//! (docs/plan/platform-ui.md §4.2 and §4.6, wamn-a40n.2 and wamn-a40n.7).
+//! (docs/architecture/execution.md#host-run-routes, wamn-a40n.2, wamn-a40n.7).
 //!
 //! The test starts its own PostgreSQL 18 server. A real session token is
 //! verified against local HTTPS keys, the scoped session permission reader
@@ -560,11 +560,11 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
     Ok(())
 }
 
-/// `number_counter.set` is granted per role (docs/plan/platform-config.md,
-/// Numbering, Administration): an authored role without the permission is
-/// refused, `permission.grant` gives it to the role, and the set then runs
-/// in an operation transaction under the caller, logged in the write log by
-/// its request id.
+/// `number_counter.set` is granted per role
+/// (docs/architecture/data-access.md#setting-a-counter): an authored role
+/// without the permission is refused, `permission.grant` gives it to the role,
+/// and the set then runs in an operation transaction under the caller, logged
+/// in the write log by its request id.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn number_counter_set_is_granted_per_role() -> anyhow::Result<()> {
     let mut host = application_host("number_counter_set").await?;

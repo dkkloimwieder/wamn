@@ -6,9 +6,10 @@
 #   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target identity   -t wamn-identity:dev   .  # identity authority and JWKS
 #   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target gates      -t wamn-gates:dev      .  # gates: FROM host + suite + fixtures
 #   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target edge --output type=local,dest=target/edge .  # aarch64 edge box binary
+#   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target edge-web -t wamn-edge-web:dev .  # cluster web edge
 #   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target roles --output type=local,dest=DIR .  # http and materializer role components
 #   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --build-context apps-target=apps/target/wamn --target runner -t wamn-runner:dev .  # qualification runner: FROM ctl + the case binaries
-# `wamn-ctl build-platform` builds host, runner, gates, identity and roles, and
+# `wamn-ctl build-platform` builds host, runner, gates, identity, edge-web and roles, and
 # stamps their digests into the release chart's defaults (R15).
 # Later invocations reuse shared BuildKit registry and Git caches with locks
 # that prevent concurrent writes, and one locked native target cache per checkout.
@@ -42,11 +43,10 @@ COPY tests ./tests
 # their manifests to load the workspace.
 COPY tools/bench ./tools/bench
 COPY tools/submodule-check ./tools/submodule-check
-# The copied .cargo/config.toml carries the clang/mold linker settings the
-# toolchain stage installs above, and NO rustc-wrapper: this stage and
-# component-toolchain both inherit this file, and a wrapper naming a binary
-# neither of them installs fails the build at `<wrapper> rustc -vV`. Keep
-# sccache a per-developer RUSTC_WRAPPER setting -- see .cargo/config.toml.
+# The copied .cargo/config.toml selects clang/mold, limits build jobs, and
+# enables offline SQLx. It sets no rustc-wrapper, so this stage and
+# component-toolchain need no wrapper binary. Local Cargo uses kache through
+# the personal ~/.cargo/config.toml.
 COPY .cargo/config.toml ./.cargo/config.toml
 # The canonical deploy DDL is consumed by the ctl reconcilers and exact package
 # runner -- single source of truth, no clones.

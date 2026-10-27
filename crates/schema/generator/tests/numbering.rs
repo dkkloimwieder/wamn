@@ -1,5 +1,6 @@
-//! Numbering and caller-filled columns (`docs/plan/platform-config.md`,
-//! "Numbering"): build refusals and generated SQL executed in PostgreSQL.
+//! Numbering and caller-filled columns
+//! (docs/architecture/data-access.md#declaration): build refusals and generated
+//! SQL executed in PostgreSQL.
 
 use serde_json::{Value, json};
 use wamn_schema_generator::{DATA_ACCESS_OVERLAY_PATH, GenerateErrorType, GeneratedPackage};

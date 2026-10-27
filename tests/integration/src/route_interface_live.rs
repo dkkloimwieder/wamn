@@ -881,8 +881,8 @@ async fn note_widget(paths: &Paths, id: &Value, version: i64, note: &str) -> any
     edit_version(&updated)
 }
 
-/// The change feed of a list read (`docs/plan/wamn-sync.md`, Epic 2b). The
-/// fixture allows two widget codes, so the test works with two rows.
+/// The change feed of a list read (docs/architecture/execution.md#change-feed).
+/// The fixture allows two widget codes, so the test works with two rows.
 ///
 /// A feed read right after a list returns no rows, because every write came
 /// before the list. Two writes after the list arrive with their revisions. A

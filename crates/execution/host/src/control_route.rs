@@ -1,5 +1,5 @@
 //! The org and project routes of the control serving root
-//! (docs/plan/platform-ui.md §4.4 and §4.5).
+//! (docs/architecture/execution.md#host-run-routes).
 //!
 //! Every org route needs a current `org-admin` row of the caller in the
 //! token's org. A project route needs that row or a current `project-admin`
@@ -10,22 +10,25 @@
 //! `wamn_platform_identity::org`, which `wamn-ctl invite` also calls, so no
 //! second writer exists.
 //!
-//! A write that changes administrative authority or membership also changes
-//! the application rows of each environment it covers, with the
-//! environment's `wamn_administration` login from the mounted Secret
+//! A write that changes administrative authority or membership also changes the
+//! application rows of each environment it covers, with the environment's
+//! `wamn_administration` login from the mounted Secret
 //! `wamn-control-administration-<org>`, one transaction per environment
-//! (§4.4, application writes). A grant commits its system transaction first.
-//! A revoke or a deactivation writes the environments first and commits its
-//! system transaction last, so its refusals come before any application row
-//! changes. The route reports success only when every environment is done.
+//! (docs/architecture/overview.md#organization-membership-and-administration).
+//! A grant commits its system transaction first. A revoke or a deactivation
+//! writes the environments first and commits its system transaction last, so
+//! its refusals come before any application row changes. The route reports
+//! success only when every environment is done.
 //!
 //! The status routes mirror the status of each environment into its row of
-//! `platform.environment` in the same way (§5.4): an inactivation writes
-//! the environments first and commits the system rows last, and an
+//! `platform.environment` in the same way
+//! (docs/architecture/execution.md#routing-and-availability): an inactivation
+//! writes the environments first and commits the system rows last, and an
 //! activation commits the system rows first.
 //!
 //! `project.create` writes a project of the org with no environment, and
-//! `project-admin` in it for each `org-admin` of the org (§5.1).
+//! `project-admin` in it for each `org-admin` of the org
+//! (docs/architecture/execution.md#host-run-routes).
 //!
 //! `environment.status` reads the runtime through the host-selected
 //! [`crate::environment_status::StatusSource`] and writes nothing. Optional
@@ -1164,7 +1167,7 @@ const RELATION_COLUMNS_SQL: &str = "SELECT c.relname::text, a.attname::text \
        AND n.nspname NOT LIKE 'pg\\_%' AND n.nspname NOT LIKE 'wamn\\_%'";
 
 /// The effect profile of the installed release `digest`
-/// (docs/plan/trx-pkg-plan.md, Spike and acceptance B) and the operations each
+/// (docs/architecture/execution.md#host-run-routes) and the operations each
 /// role of the environment holds, or `None` when the environment has no such
 /// release. `admin` holds every operation of the release. It writes nothing.
 async fn release_profile(

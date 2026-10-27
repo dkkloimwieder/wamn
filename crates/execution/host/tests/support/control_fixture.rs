@@ -1,6 +1,6 @@
-//! The fixture of the control host route tests: the control store, one org
-//! with two projects and one environment each, and the org's `control`
-//! login (docs/plan/platform-ui.md §4.4 and §4.5).
+//! The fixture of the control host route tests: the control store, one org with
+//! two projects and one environment each, and the org's `control` login
+//! (docs/architecture/execution.md#host-run-routes).
 //!
 //! It also builds the project databases of the two environments, with the
 //! administration logins that the control host reads from its mounted Secret.

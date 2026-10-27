@@ -47,8 +47,9 @@ pub struct RouterDriverRequest {
     pub tracestate: Option<String>,
 }
 
-/// One queued run of an environment workflow (docs/plan/workflows.md R3,
-/// epic 1), with the facts its run row froze at admission.
+/// One queued run of an environment workflow
+/// (docs/architecture/execution.md#environment-workflows), with the facts its
+/// run row froze at admission.
 ///
 /// `run` carries the application as its package, the workflow id and version
 /// as its wiring coordinate, and the claim-time caller. The run executes on a

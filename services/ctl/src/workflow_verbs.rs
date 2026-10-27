@@ -1,7 +1,8 @@
 //! Arguments and output of the `workflow` verbs: author, enable, disable and
-//! list environment workflows (docs/plan/workflows.md, epic 1), start a run
-//! through the host route `workflow.start`, and park, release and list
-//! workflow runs through the workflow contract of `wamn-workflow`.
+//! list environment workflows
+//! (docs/architecture/execution.md#environment-workflows), start a run through
+//! the host route `workflow.start`, and park, release and list workflow runs
+//! through the workflow contract of `wamn-workflow`.
 //!
 //! `author` and `enable` gate the graph against the release the environment
 //! serves, derived as `env show` derives it. `enable` and `disable` take the

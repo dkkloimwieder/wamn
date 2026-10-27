@@ -107,7 +107,8 @@ impl BindConnectionRequest {
 }
 
 /// One environment-owned connection instance with the inputs of its active
-/// generation, with no binding (docs/plan/platform-deploy.md R22 (1)).
+/// generation, with no binding
+/// (docs/architecture/capabilities.md#invocation-and-connection-authority).
 #[derive(Clone, Debug)]
 pub struct ConnectionInstance {
     /// The project-environment database holding the catalog schema.
@@ -213,7 +214,7 @@ pub use wamn_runtime::connection_generation::binding_validation_subject as valid
 ///
 /// An ensure: an instance, generation and binding equal to the request write
 /// nothing, and a disabled instance of the same type is enabled again
-/// (docs/plan/platform-deploy.md R22).
+/// (docs/architecture/capabilities.md#invocation-and-connection-authority).
 pub async fn bind(args: &BindConnectionRequest) -> anyhow::Result<BoundConnection> {
     bind_with_mode(args, wamn_schema_generator::ConnectionMode::Write, "").await
 }

@@ -111,9 +111,9 @@ async fn provision_environment(
 }
 
 /// Provision the environment and install the candidate's release in it as
-/// `apply` does: its packages through the package stage from their
-/// artifacts. It publishes nothing (docs/plan/platform-deploy.md §8.2,
-/// §10.2). Returns the route of the environment.
+/// `apply` does: its packages through the package stage from their artifacts.
+/// It publishes nothing (docs/architecture/overview.md#environment-lifecycle).
+/// Returns the route of the environment.
 pub(super) async fn install_candidate_release(
     inputs: &JourneyDocument,
     candidate: &Candidate,

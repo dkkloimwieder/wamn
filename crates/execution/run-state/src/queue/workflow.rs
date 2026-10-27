@@ -73,12 +73,12 @@ pub fn select_event_run_sql() -> &'static str {
         AND trigger_source = 'event' AND input_json = $3::text::jsonb"
 }
 
-/// Admit one manual run of an environment workflow (docs/plan/workflows.md
-/// R3, epic 1): the host admits it against the release it serves, and the run
-/// carries its executing principal and active role, its caller and the
-/// component digest of every node. `ON CONFLICT DO NOTHING` on the
-/// idempotency key returns no row for a repeated key, and the caller then
-/// reads the first run with [`select_manual_run_sql`].
+/// Admit one manual run of an environment workflow
+/// (docs/architecture/execution.md#environment-workflows): the host admits it
+/// against the release it serves, and the run carries its executing principal
+/// and active role, its caller and the component digest of every node. `ON
+/// CONFLICT DO NOTHING` on the idempotency key returns no row for a repeated
+/// key, and the caller then reads the first run with [`select_manual_run_sql`].
 ///
 /// Binds: `$1` tenant, `$2` application package, `$3` release manifest
 /// digest, `$4` environment, `$5` workflow id, `$6` workflow version, `$7`
@@ -109,13 +109,13 @@ pub fn select_manual_run_sql() -> &'static str {
         AND trigger_source = 'manual' AND input_json = $3::text::jsonb"
 }
 
-/// Admit one schedule run of an environment workflow (docs/plan/workflows.md
-/// R3, epic 2): the host admits it at a due moment against the release it
-/// serves. The run executes as the `workflow` user with one role, is invoked
-/// by the schedule with no user, and carries the component digest of every
-/// node. `ON CONFLICT DO NOTHING` on the idempotency key returns no row for a
-/// repeated due moment, and the caller then reads the first run with
-/// [`select_workflow_schedule_run_sql`].
+/// Admit one schedule run of an environment workflow
+/// (docs/architecture/execution.md#workflows): the host admits it at a due
+/// moment against the release it serves. The run executes as the `workflow`
+/// user with one role, is invoked by the schedule with no user, and carries the
+/// component digest of every node. `ON CONFLICT DO NOTHING` on the idempotency
+/// key returns no row for a repeated due moment, and the caller then reads the
+/// first run with [`select_workflow_schedule_run_sql`].
 ///
 /// Binds: `$1` tenant, `$2` application package, `$3` release manifest
 /// digest, `$4` environment, `$5` workflow id, `$6` workflow version, `$7`

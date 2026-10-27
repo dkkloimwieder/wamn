@@ -67,9 +67,9 @@ pub struct ProductionCandidate {
     pub binding_world: CandidateBindingWorld,
 }
 
-/// What an event, manual or schedule workflow run froze at admission (docs/plan/workflows.md R3,
-/// R2): the graph hash, the principal it executes as, its one active role,
-/// and the component digest of every node.
+/// What an event, manual or schedule workflow run froze at admission
+/// (docs/architecture/execution.md#workflows): the graph hash, the principal it
+/// executes as, its one active role, and the component digest of every node.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductionWorkflow {
     pub wiring_hash: String,

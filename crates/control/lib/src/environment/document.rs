@@ -1,12 +1,12 @@
-//! The environment document, `environment.k` (docs/plan/platform-deploy.md
-//! §10.1, R21).
+//! The environment document, `environment.k`
+//! (docs/architecture/overview.md#environment-lifecycle).
 //!
 //! The document names the coordinate, the release digest or `none`, the route
 //! host, the policy by name, the applications and their packages
-//! (docs/plan/platform-config.md), the target, connection names and floors,
-//! and nothing else. It compiles with the `environment` KCL schema module to JSON,
-//! which this module reads into [`EnvironmentDocument`]. Its canonical form is
-//! RFC 8785 JSON, as `wamn.json` is.
+//! (docs/architecture/execution.md#workflows), the target, connection names and
+//! floors, and nothing else. It compiles with the `environment` KCL schema
+//! module to JSON, which this module reads into [`EnvironmentDocument`]. Its
+//! canonical form is RFC 8785 JSON, as `wamn.json` is.
 
 use std::collections::BTreeMap;
 use std::fmt;

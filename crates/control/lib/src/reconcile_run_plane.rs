@@ -334,7 +334,8 @@ pub async fn reconcile_run_plane(
         );
     }
     let result = async {
-        // The environment row names the policy (docs/plan/platform-deploy.md R2).
+        // The environment row names the policy
+        // (docs/architecture/overview.md#environment-lifecycle).
         let policy = crate::provision_project_env::read_project_env_policy(
             &args.system_database_url,
             &triple,
@@ -421,7 +422,8 @@ struct TenantIdentitySource {
     services: Vec<ServicePrincipal>,
     users: Vec<UserPrincipal>,
     /// The members of `users` who hold `project-admin` in the project, which
-    /// every `org-admin` of the org holds too (docs/plan/platform-ui.md §4.4).
+    /// every `org-admin` of the org holds too
+    /// (docs/architecture/overview.md#organization-membership-and-administration).
     admins: BTreeSet<String>,
 }
 
@@ -574,8 +576,8 @@ pub struct TenantIdentityOutcome {
 ///
 /// A user row whose user is not in that source any more is removed, and the
 /// foreign keys remove its role assignments and API keys
-/// (docs/plan/platform-ui.md §4.5). Service and platform rows keep their own
-/// sources, so this removes neither.
+/// (docs/architecture/overview.md#organization-membership-and-administration).
+/// Service and platform rows keep their own sources, so this removes neither.
 ///
 /// `apply=false` observes only and writes nothing.
 async fn converge_tenant_identity(

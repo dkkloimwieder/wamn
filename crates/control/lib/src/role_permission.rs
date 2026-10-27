@@ -1,5 +1,5 @@
 //! Authored application roles and their permission rows
-//! (docs/plan/platform-ui.md §2.2 to §2.4 and §4.1).
+//! (docs/architecture/execution.md#host-run-routes).
 //!
 //! A permission row is a stable operation reference that an administrator
 //! granted to a role. A grant stores the row, served by a release or not, and

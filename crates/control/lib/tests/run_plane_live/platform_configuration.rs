@@ -1,5 +1,5 @@
 //! The platform configuration rows on the admin-hierarchy path
-//! (docs/plan/platform-config.md, Issues for C1, 3; issue `wamn-aqd0m.3`).
+//! (docs/architecture/data-access.md#actors, wamn-aqd0m.3).
 //!
 //! `reconcile-run-plane` writes the identity rows of the tenant first, as env
 //! apply does. Then an administration generation login, minted by the
@@ -203,11 +203,11 @@ async fn platform_configuration_live() {
     platform_configuration_leg(&su, &url).await;
 }
 
-/// Env apply's sequence step (docs/plan/platform-config.md, "Declaration in
-/// wamn.k"; issue `wamn-83eth.3`): the first apply creates the
-/// `number_sequence` row of a package default under the administration
-/// authority, stamped by `wamn:provisioning`; a second apply after an edit of
-/// the pattern creates nothing and keeps the edited pattern.
+/// Env apply's sequence step (docs/architecture/data-access.md#counters,
+/// wamn-83eth.3): the first apply creates the `number_sequence` row of a
+/// package default under the administration authority, stamped by
+/// `wamn:provisioning`; a second apply after an edit of the pattern creates
+/// nothing and keeps the edited pattern.
 #[tokio::test]
 async fn env_apply_creates_number_sequences_and_keeps_an_edit_live() {
     use wamn_control::environment::stage::{create_number_sequences, sequence_defaults};

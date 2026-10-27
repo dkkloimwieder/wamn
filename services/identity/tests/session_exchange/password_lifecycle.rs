@@ -378,9 +378,10 @@ async fn renewal_rotation_authority_expiry_and_logout_use_real_https() {
     cleanup(fixture).await;
 }
 
-/// A control session (docs/plan/platform-ui.md §4.3) is offered, issued and
-/// renewed only while the user holds `project-admin` or `org-admin` in the
-/// org, carries no application role, and never comes from a PAT.
+/// A control session (docs/architecture/execution.md#control-sessions) is
+/// offered, issued and renewed only while the user holds `project-admin` or
+/// `org-admin` in the org, carries no application role, and never comes from a
+/// PAT.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_control_session_follows_the_admin_roles_of_its_org() {
     const CONTROL: &str = "urn:wamn:control:demo";

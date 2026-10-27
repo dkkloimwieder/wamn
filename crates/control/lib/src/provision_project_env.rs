@@ -146,8 +146,9 @@ pub struct ProvisionProjectEnvRequest {
 
     /// The environment policy a new environment row names. Absent names the
     /// policy whose name is the env. A recorded row keeps its policy: the
-    /// environment document owns it (docs/plan/platform-deploy.md R2). The
-    /// tenant is derived from the coordinate (`project_env_tenant`).
+    /// environment document owns it
+    /// (docs/architecture/overview.md#environment-lifecycle). The tenant is
+    /// derived from the coordinate (`project_env_tenant`).
     pub policy: Option<String>,
 
     /// Mark this environment DISPOSABLE: its admitted component facts may be

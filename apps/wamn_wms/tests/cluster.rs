@@ -2,7 +2,7 @@
 //!
 //! Each case runs the candidate release that `qualify-release` names: it
 //! installs the candidate's packages through the package stage and publishes
-//! nothing (docs/plan/platform-deploy.md §8.2).
+//! nothing (docs/architecture/overview.md#environment-lifecycle).
 
 mod application;
 mod bootstrap;

@@ -1,4 +1,4 @@
-//! Host-run routes (docs/plan/platform-ui.md §4.2).
+//! Host-run routes (docs/architecture/execution.md#host-run-routes).
 //!
 //! A host route keeps the route table, credentials, CSRF treatment and
 //! operation grant of any route, but the host serves it with a fixed handler

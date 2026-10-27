@@ -110,10 +110,10 @@ async fn automation_admission_delivers_with_current_service_permissions() -> any
 }
 
 /// A queued service holds exactly the operations its role rows grant
-/// (docs/plan/trx-pkg-plan.md, Authorization). Receiving's record_receipt is
-/// the operation the retired fresh-only fixture marked, which refused a
-/// queued service even with the grant. Now the grant admits the service, and
-/// without it the ACL alone refuses.
+/// (docs/architecture/execution.md#routing-and-availability). Receiving's
+/// record_receipt is the operation the retired fresh-only fixture marked, which
+/// refused a queued service even with the grant. Now the grant admits the
+/// service, and without it the ACL alone refuses.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_queued_service_runs_a_formerly_fresh_only_operation_only_with_its_grant()
 -> anyhow::Result<()> {

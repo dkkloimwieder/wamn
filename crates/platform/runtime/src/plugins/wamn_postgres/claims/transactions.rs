@@ -89,7 +89,7 @@ pub(in super::super) async fn finish_transaction(
 ///   operation, named by the environment map entry that holds its package.
 ///   Base operations use that map too. It is for logging only:
 ///   guest SQL can rewrite it, so numbering reads the application from host
-///   state instead (`docs/plan/platform-config.md`, Numbering). It binds
+///   state instead (docs/architecture/data-access.md#rendering). It binds
 ///   unconditionally like `$7`, and an absent application binds `''`.
 ///
 /// The `wamn.causation` emit (l5i9.12.2) is NOT part of this statement — it is a
@@ -373,9 +373,10 @@ impl WamnPostgres {
         }
         // The isolation level is stated, not inherited from a session default:
         // the write log's retry reads the claim that its insert waited on, and
-        // only a fresh READ COMMITTED snapshot sees it (`docs/plan/write-log.md`
-        // 4.2). A guest has no way to name the level through `begin`; the
-        // guest transaction of a read invocation (`read`) reads one snapshot.
+        // only a fresh READ COMMITTED snapshot sees it
+        // (docs/architecture/execution.md#native-dispatch). A guest has no way
+        // to name the level through `begin`; the guest transaction of a read
+        // invocation (`read`) reads one snapshot.
         let begin = if read {
             BEGIN_READ_SNAPSHOT
         } else {

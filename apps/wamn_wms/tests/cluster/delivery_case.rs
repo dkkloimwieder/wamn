@@ -1,5 +1,5 @@
 //! The WMS release delivered with `wamn-ctl env apply` on the kept delivery
-//! cluster (docs/plan/platform-deploy.md §10.1, §17.2 Epic 6, issue `wamn-qh1g`).
+//! cluster (docs/architecture/overview.md#environment-lifecycle, wamn-qh1g).
 //!
 //! The WMS fixture provisions the environment, applies the package and
 //! publishes the release in its project database, on its own CloudNativePG

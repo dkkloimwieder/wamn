@@ -6,7 +6,7 @@ use wamn_control::delivery::Candidate;
 pub(crate) use wamn_test_infrastructure::rendering::{host_values, image_reference};
 
 /// The candidate that `qualify-release` names. A WMS cluster case runs only
-/// with one (docs/plan/platform-deploy.md §8.2).
+/// with one (docs/architecture/overview.md#release-identity).
 pub(crate) fn candidate() -> anyhow::Result<Candidate> {
     let candidate = Candidate::from_env()?;
     let (manifest, _) = candidate.manifest()?;

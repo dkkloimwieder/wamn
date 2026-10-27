@@ -379,9 +379,9 @@ fn expected_executor_grants() -> Vec<String> {
         rows.push(format!("column|wamn_run|run_queue.{column}|UPDATE"));
     }
     // The event run grain of `wamn_run_state::queue::insert_event_run_sql`
-    // (owner ruling on wamn-upl3.6): the host admits an event-started run,
-    // and the manual grain of `insert_manual_run_sql` (docs/plan/workflows.md
-    // R3).
+    // (owner ruling on wamn-upl3.6): the host admits an event-started run, and
+    // the manual grain of `insert_manual_run_sql`
+    // (docs/architecture/execution.md#environment-workflows).
     for column in [
         "durability_class",
         "event_source_run_id",

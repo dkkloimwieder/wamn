@@ -1,5 +1,5 @@
 //! The application administration routes of every application audience
-//! (docs/plan/platform-ui.md §4.6).
+//! (docs/architecture/execution.md#host-run-routes).
 //!
 //! Every route but `permission.mine` needs `admin`, which the router checks
 //! before the handler runs. A route runs in one host-owned transaction under
@@ -11,10 +11,11 @@
 //! second writer exists. A grant stores one row, and a caller holds exactly
 //! its rows, so a grant works while two releases serve during a rollout.
 //!
-//! `workflow.start` is the one granted route here (docs/plan/workflows.md R3,
-//! epic 1): it admits a run of the enabled version of an environment workflow
-//! of an application the environment declares, against the release the host
-//! serves, as the identity the workflow names.
+//! `workflow.start` is the one granted route here
+//! (docs/architecture/execution.md#environment-workflows): it admits a run of
+//! the enabled version of an environment workflow of an application the
+//! environment declares, against the release the host serves, as the identity
+//! the workflow names.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -73,10 +74,10 @@ struct PermissionRequest {
     operation: String,
 }
 
-/// The input of `workflow.start`. It names no user, role or release: the
-/// caller is the authenticated one, and the release is the one the host
-/// serves (docs/plan/workflows.md R3). It names the application by the name
-/// the environment declares.
+/// The input of `workflow.start`. It names no user, role or release: the caller
+/// is the authenticated one, and the release is the one the host serves
+/// (docs/architecture/execution.md#environment-workflows). It names the
+/// application by the name the environment declares.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WorkflowStartRequest {
@@ -157,12 +158,13 @@ fn start_refusal(code: &'static str, field: &str) -> Refusal {
 }
 
 impl ApplicationRoutes<'_> {
-    /// Admit one run of the enabled version of a workflow of an application
-    /// the environment declares (docs/plan/workflows.md R3, R8). The stored graph is gated
-    /// against the release the host serves, and the run freezes the
+    /// Admit one run of the enabled version of a workflow of an application the
+    /// environment declares
+    /// (docs/architecture/execution.md#environment-workflows). The stored graph
+    /// is gated against the release the host serves, and the run freezes the
     /// component digest of every node. A `role` workflow executes as the
-    /// `workflow` user with its role, an `invoker` workflow as the caller
-    /// with its active role. The caller is recorded as the invoker.
+    /// `workflow` user with its role, an `invoker` workflow as the caller with
+    /// its active role. The caller is recorded as the invoker.
     pub(crate) async fn start_workflow(
         &self,
         caller: &AuthenticatedCaller,
@@ -431,8 +433,8 @@ impl ApplicationRoutes<'_> {
     /// Set one counter of a sequence of the requested application in an
     /// operation transaction of the guest authority, logged in the write log
     /// under the route's operation and the request id
-    /// (docs/plan/platform-config.md, Numbering, Administration). The
-    /// application is a declared application of the release.
+    /// (docs/architecture/data-access.md#setting-a-counter). The application is
+    /// a declared application of the release.
     async fn set_counter(
         &self,
         attachment: &HostAttachment,
@@ -585,7 +587,7 @@ mod tests {
     }
 
     /// `workflow.start` takes no user id: the caller is the authenticated one
-    /// (docs/plan/workflows.md R3).
+    /// (docs/architecture/execution.md#environment-workflows).
     #[test]
     fn a_start_refuses_a_user_id() {
         let start = json!({

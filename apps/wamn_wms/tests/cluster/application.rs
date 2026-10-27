@@ -265,7 +265,8 @@ async fn released_routes_inner(
     write_result(evidence, "wms-label-delivery-result.json", &delivery)?;
 
     // The move's row event starts the label workflow off the request path, so
-    // the label lands after the move answers (docs/plan/workflow-feature.md).
+    // the label lands after the move answers
+    // (docs/architecture/execution.md#workflows).
     let mut objects = Vec::new();
     for _ in 0..LABEL_WAIT_SECONDS {
         objects = labels(store).await?;

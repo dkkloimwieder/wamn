@@ -1,4 +1,5 @@
-//! The fixed routes that the host runs itself (docs/plan/platform-ui.md §4.2).
+//! The fixed routes that the host runs itself
+//! (docs/architecture/execution.md#host-run-routes).
 //!
 //! A host route has the operation contract, request envelope, result shape,
 //! limits and CSRF treatment of any route, but the host serves it with a
@@ -68,7 +69,7 @@ pub fn host_route_version() -> &'static str {
 
 /// Whether a stable operation reference or sealed operation id names a host
 /// route. Most host routes are fixed to `admin` or to every member, so no
-/// authored role holds one (docs/plan/platform-ui.md §2.5). A
+/// authored role holds one (docs/architecture/execution.md#host-run-routes). A
 /// [`HostRouteAuthority::Granted`] route is the exception: see
 /// [`is_granted_host_route_operation`].
 pub fn is_host_route_operation(operation: &str) -> bool {
@@ -124,7 +125,8 @@ pub enum HostHandler {
     IntegrationAllow,
     /// The caller's effective permission set in this application.
     PermissionMine,
-    /// The user rows of the application (docs/plan/platform-ui.md §4.6).
+    /// The user rows of the application
+    /// (docs/architecture/execution.md#host-run-routes).
     ApplicationUserList,
     /// The roles of the application.
     RoleList,
@@ -144,7 +146,8 @@ pub enum HostHandler {
     UserRoleRevoke,
     /// The caller's current control authority in the token's org.
     ControlMine,
-    /// The members of the org (docs/plan/platform-ui.md §4.4).
+    /// The members of the org
+    /// (docs/architecture/overview.md#organization-membership-and-administration).
     UserList,
     /// Create or reuse a user, make it a member of the org with the
     /// requested grants, and mail the invitation when it has no password.
@@ -159,11 +162,12 @@ pub enum HostHandler {
     OrgAdminGrant,
     /// Revoke `org-admin` and `project-admin` throughout the org.
     OrgAdminRevoke,
-    /// The environments of one project (docs/plan/platform-ui.md §4.5).
+    /// The environments of one project
+    /// (docs/architecture/execution.md#host-run-routes).
     EnvironmentList,
     /// The current state of one environment in its release namespace: the
     /// digest, the rollout, the workload conditions and the live set
-    /// (docs/plan/platform-deploy.md §11.4).
+    /// (docs/architecture/execution.md#host-run-routes).
     EnvironmentStatus,
     /// The users with a membership or `project-admin` in one project.
     MemberList,
@@ -177,9 +181,10 @@ pub enum HostHandler {
     /// Revoke `project-admin` in one project.
     ProjectAdminRevoke,
     /// The effect profile of one release of an environment
-    /// (docs/plan/trx-pkg-plan.md, Spike and acceptance B).
+    /// (docs/architecture/execution.md#host-run-routes).
     ReleaseProfile,
-    /// Make one environment active (docs/plan/platform-ui.md §5.4).
+    /// Make one environment active
+    /// (docs/architecture/execution.md#host-run-routes).
     EnvironmentActivate,
     /// Make one environment inactive.
     EnvironmentInactivate,
@@ -187,13 +192,14 @@ pub enum HostHandler {
     ProjectActivate,
     /// Make every environment of one project inactive.
     ProjectInactivate,
-    /// Create a project with no environment (docs/plan/platform-ui.md §5.1).
+    /// Create a project with no environment
+    /// (docs/architecture/execution.md#host-run-routes).
     ProjectCreate,
     /// Set one counter of a number sequence of the application
-    /// (docs/plan/platform-config.md, Numbering, Administration).
+    /// (docs/architecture/data-access.md#setting-a-counter).
     NumberCounterSet,
     /// Start one run of the enabled version of an environment workflow
-    /// (docs/plan/workflows.md R3, epic 1).
+    /// (docs/architecture/execution.md#environment-workflows).
     WorkflowStart,
 }
 
@@ -215,8 +221,8 @@ pub enum HostRouteAuthority {
     ProjectAdmin,
     /// A holder of `admin`, or of an authored role that holds the route's
     /// operation as a stored permission row, as for a package operation.
-    /// `permission.grant` gives it to a role (docs/plan/platform-config.md,
-    /// Numbering, Administration; owner ruling of wamn-83eth.3).
+    /// `permission.grant` gives it to a role
+    /// (docs/architecture/data-access.md#setting-a-counter, wamn-83eth.3).
     Granted,
 }
 
@@ -693,7 +699,8 @@ mod tests {
 
     /// `workflow.start` names no user, role or release: the caller is the
     /// authenticated one and the release is the served one
-    /// (docs/plan/workflows.md R3). It names the declared application.
+    /// (docs/architecture/execution.md#environment-workflows). It names the
+    /// declared application.
     #[test]
     fn workflow_start_input_names_no_user() {
         let input: Value = serde_json::from_str(include_str!(

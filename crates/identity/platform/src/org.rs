@@ -1,5 +1,5 @@
 //! Org membership and the administrative grants of an org
-//! (docs/plan/platform-ui.md §4.4 and §4.5).
+//! (docs/architecture/overview.md#organization-membership-and-administration).
 //!
 //! Each grant here is the one write of its row. `wamn-ctl invite`, the
 //! provisioning of an org owner and the control routes call these functions,
@@ -588,7 +588,8 @@ pub async fn org_environments(
         .collect())
 }
 
-/// The status of a project environment (docs/plan/platform-ui.md §5.4).
+/// The status of a project environment
+/// (docs/architecture/execution.md#host-run-routes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EnvironmentStatus {
     /// Identity offers its audience and its host serves its routes.

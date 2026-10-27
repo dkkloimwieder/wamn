@@ -1,13 +1,14 @@
 //! Publish one immutable release.
 //!
-//! A release is its manifest digest (docs/plan/platform-deploy.md R1). The
-//! publisher composes package artifacts (§8.1): it pulls the artifact under
-//! the tag of each exact package pair from the registry only, and refuses a
-//! package with no artifact before it writes anything (R11 (2)). It resolves every component from the admitted
-//! descriptors of those artifacts, and each release component carries its
-//! descriptor. It pushes the canonical manifest bytes to OCI and writes no
-//! Postgres row: `apply` step 2 writes `catalog.releases` where it installs
-//! (R1 (3), R2, §10.2).
+//! A release is its manifest digest
+//! (docs/architecture/overview.md#release-identity). The publisher composes
+//! package artifacts (§8.1): it pulls the artifact under the tag of each exact
+//! package pair from the registry only, and refuses a package with no artifact
+//! before it writes anything (R11 (2)). It resolves every component from the
+//! admitted descriptors of those artifacts, and each release component carries
+//! its descriptor. It pushes the canonical manifest bytes to OCI and writes no
+//! Postgres row: `apply` step 2 writes `catalog.releases` where it installs (R1
+//! (3), R2, §10.2).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -705,8 +706,8 @@ pub fn assemble_local_release(
         components: pin_runtime_schemas(components, &package_manifests)?,
         routes,
         attachments: route_attachments,
-        // Every application release serves the fixed application
-        // administration routes (docs/plan/platform-ui.md §4.6).
+        // Every application release serves the fixed application administration
+        // routes (docs/architecture/execution.md#host-run-routes).
         host_routes: BTreeSet::from([wamn_catalog::HostRouteSet::Application]),
     };
     let canonical_bytes = manifest.canonical_bytes();
@@ -1152,8 +1153,8 @@ async fn publish_release_from_sources(
         components: pin_runtime_schemas(components, package_manifests)?,
         routes,
         attachments: route_attachments,
-        // Every application release serves the fixed application
-        // administration routes (docs/plan/platform-ui.md §4.6).
+        // Every application release serves the fixed application administration
+        // routes (docs/architecture/execution.md#host-run-routes).
         host_routes: BTreeSet::from([wamn_catalog::HostRouteSet::Application]),
     };
     let canonical_bytes = projected.canonical_bytes();
@@ -2859,7 +2860,7 @@ mod manifest_push {
     //! A tag holding any other layout or bytes refuses instead of being replaced.
     //!
     //! `publish-release` pushes the bytes it composed before it records them
-    //! (docs/plan/platform-deploy.md §8.1).
+    //! (docs/architecture/components.md#application-http-composition).
 
     use std::fmt;
     use std::path::{Path, PathBuf};

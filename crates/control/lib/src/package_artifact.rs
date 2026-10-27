@@ -166,7 +166,7 @@ pub fn pack_package(root: &Path) -> anyhow::Result<PackedPackage> {
 
 /// The component descriptors of the unpacked artifact at `root`, sorted by
 /// component name: the admitted facts that `publish-release` composes into a
-/// release (docs/plan/platform-deploy.md §8.1).
+/// release (docs/architecture/components.md#grouping-and-publication).
 ///
 /// # Errors
 ///

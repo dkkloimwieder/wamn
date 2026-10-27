@@ -24,7 +24,8 @@ use crate::{ConfiguredTarget, IO_TIMEOUT, Inner, connect_database, response, una
 // The request contains one bounded provisioned audience, never user documents.
 const MAX_REQUEST_BYTES: usize = 1024;
 const REGISTERED_ORG_SQL: &str = "SELECT EXISTS (SELECT 1 FROM registry.orgs WHERE id = $1)";
-// An inactive environment offers and mints no audience (docs/plan/platform-ui.md §5.4).
+// An inactive environment offers and mints no audience
+// (docs/architecture/execution.md#routing-and-availability).
 const CURRENT_TARGET_SQL: &str = "SELECT EXISTS (SELECT 1 FROM registry.project_envs \
     WHERE org = $1 AND project = $2 AND env = $3 AND instance_suffix = $4 \
     AND status = 'active')";
@@ -153,9 +154,10 @@ pub(super) async fn mint_for_principal(
         .map_err(|_| failed())
 }
 
-/// The audience a password login asks for: a configured project
-/// environment, or the control audience of an org
-/// (docs/plan/platform-ui.md §4.3), which is derived and never configured.
+/// The audience a password login asks for: a configured project environment, or
+/// the control audience of an org
+/// (docs/architecture/execution.md#control-sessions), which is derived and
+/// never configured.
 pub(super) enum Audience<'a> {
     Environment(&'a ConfiguredTarget),
     Control { audience: &'a str, org: &'a str },

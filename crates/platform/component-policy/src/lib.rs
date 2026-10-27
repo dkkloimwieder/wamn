@@ -45,7 +45,8 @@ impl ComponentImports {
 use std::collections::BTreeSet;
 
 /// The interface that each member of a composed component imports as an
-/// instance of its own (`docs/plan/trx-pkg-plan.md`, Per-member import instances).
+/// instance of its own
+/// (docs/architecture/components.md#grouping-and-publication).
 pub const STATEMENTS_INTERFACE: &str = "wamn:postgres/statements@0.4.0";
 
 /// The custom section of a composed component that maps each named
@@ -211,9 +212,8 @@ pub const CAPABILITY_REGISTRY: [CapabilityRow; 9] = [
 ///
 /// `wamn:postgres/client` runs raw SQL outside the admitted statements, so it
 /// would step around each member's own statements instance
-/// (`docs/plan/trx-pkg-plan.md`). Platform
-/// components keep it: they are admitted by [`analyze`], which this list does
-/// not reach.
+/// (docs/architecture/capabilities.md#import-admission). Platform components
+/// keep it: they are admitted by [`analyze`], which this list does not reach.
 pub const APPLICATION_DENIED_INTERFACES: [&str; 1] = ["wamn:postgres/client"];
 
 /// Whether an application component may not import this interface instance type.

@@ -352,9 +352,10 @@ pub struct ComponentDescriptor {
     pub operations: BTreeMap<String, AdmittedComponentOperation>,
     pub imports: Vec<String>,
     /// Each named `statements` import and the digest of its member, as
-    /// admission verified them (`docs/plan/trx-pkg-plan.md`, Per-member import
-    /// instances). `imports-fingerprint` covers it. Absent when empty, so
-    /// other descriptors keep their bytes.
+    /// admission verified them
+    /// (docs/architecture/components.md#grouping-and-publication).
+    /// `imports-fingerprint` covers it. Absent when empty, so other descriptors
+    /// keep their bytes.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub statement_instances: BTreeMap<String, String>,
     pub imports_fingerprint: String,

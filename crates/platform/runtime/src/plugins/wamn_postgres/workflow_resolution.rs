@@ -1,5 +1,5 @@
 //! Environment workflow admission reads and run resolution
-//! (docs/plan/workflows.md R2, R3, R8, epic 1).
+//! (docs/architecture/execution.md#environment-workflows).
 //!
 //! A workflow is a row of `catalog.workflows`, not a member of the release.
 //! The host reads the enabled version of a workflow when `workflow.start`
@@ -148,7 +148,8 @@ impl std::error::Error for WorkflowResolutionError {
 /// The stored hash must be the run's hash, and the graph must hash to it. A
 /// node resolves to a component of the application's packages first, then to
 /// any package's. A workflow belongs to an application, not to a package
-/// version (docs/plan/workflows.md R8), so the resolved wiring names none.
+/// version (docs/architecture/execution.md#environment-workflows), so the
+/// resolved wiring names none.
 pub fn resolve_workflow_in_release(
     run: &WorkflowRunKey<'_>,
     manifest: &ServingManifest,

@@ -1,6 +1,6 @@
 //! One row of each platform configuration table that the control host writes
-//! (docs/plan/platform-config.md, Tables; issue `wamn-aqd0m.3`), and the read
-//! of those rows back.
+//! (docs/architecture/data-access.md#actors, wamn-aqd0m.3), and the read of
+//! those rows back.
 //!
 //! `run_plane_live` and `environment_apply_kind` [`write`] the rows of
 //! [`configuration`] with the environment's `wamn_administration` login, as

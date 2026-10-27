@@ -147,7 +147,7 @@ pub async fn read_project_env_instance(
 }
 
 /// Read the policy name of one project-env's registry row. The environment
-/// document owns it (docs/plan/platform-deploy.md R2).
+/// document owns it (docs/architecture/overview.md#environment-lifecycle).
 pub async fn read_project_env_policy(system_url: &str, triple: &Triple) -> anyhow::Result<String> {
     let (client, conn) = tokio_postgres::connect(system_url, NoTls)
         .await
@@ -263,7 +263,7 @@ pub(super) async fn do_record_project_env(
         .context("upsert registry.project_envs row")?;
     // The current org admins and project admins reach a new project or
     // environment in the same way a grant reaches an existing one
-    // (docs/plan/platform-ui.md §4.4).
+    // (docs/architecture/overview.md#organization-membership-and-administration).
     wamn_platform_identity::org::materialize_admin_grants(
         &transaction,
         &triple.org,

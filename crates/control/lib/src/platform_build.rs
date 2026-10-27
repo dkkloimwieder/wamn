@@ -1,4 +1,5 @@
-//! The platform build step (docs/plan/platform-deploy.md §9.3, R15).
+//! The platform build step
+//! (docs/architecture/overview.md#environment-lifecycle).
 //!
 //! It builds the host, runner, gates, identity and edge images and the two role
 //! components from the root `Dockerfile`. Only when every build succeeded

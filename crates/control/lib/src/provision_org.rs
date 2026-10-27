@@ -17,7 +17,8 @@
 //!    the org's per-env customizations and a richer template only adds missing
 //!    envs — in one transaction, as the `wamn_system` owner. The same
 //!    transaction writes that user's active org membership and `org-admin`
-//!    row, stamped `wamn:provisioning` (docs/plan/platform-ui.md §4.4). On an
+//!    row, stamped `wamn:provisioning`
+//!    (docs/architecture/overview.md#organization-membership-and-administration). On an
 //!    identity store with no user it first creates that user, the platform's
 //!    first; otherwise the email must name an existing user;
 //! 3. for a dedicated org, renders one CNPG `Cluster` CR per distinct

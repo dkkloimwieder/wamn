@@ -28,15 +28,16 @@ use crate::{RunStatus, sql as run_sql};
 /// the router, the durability class it gates the rest of the turn on, and the
 /// immutable wiring pair admission froze, plus the existing trigger-source
 /// classification that tells the router whether a caller is waiting, and the
-/// selected row's package id. A manual workflow run adds what its queue
-/// request needs: its trigger source, its executing principal and active role,
-/// and the component digest of every node (docs/plan/workflows.md R3, R2). The
-/// release is admission-pinned by its manifest digest, which the grant
-/// compares with the claiming pod's digest.
-/// `$1` is the exact package-id set in the mounted release and `$2` is the
-/// environment scope. One set-valued predicate preserves the tenant's single
-/// global FIFO; an executor never leases a package outside its release merely
-/// because the tenant shares a project database.
+/// selected row's package id. A manual workflow run adds what its queue request
+/// needs: its trigger source, its executing principal and active role, and the
+/// component digest of every node
+/// (docs/architecture/execution.md#environment-workflows). The release is
+/// admission-pinned by its manifest digest, which the grant compares with the
+/// claiming pod's digest. `$1` is the exact package-id set in the mounted
+/// release and `$2` is the environment scope. One set-valued predicate
+/// preserves the tenant's single global FIFO; an executor never leases a
+/// package outside its release merely because the tenant shares a project
+/// database.
 ///
 /// `$3` is the claiming host's release manifest digest, or NULL for a host that
 /// carries none. A run executes only on hosts of the release it was admitted

@@ -46,10 +46,11 @@ const QUEUED_RUN_CALLER_SQL: &str = "SELECT \"user\".id::text, \"user\".type, us
 /// and role grants.
 ///
 /// With `role`, the run executes with that one role active
-/// (docs/plan/workflows.md R3): the principal is an active service (the
-/// `workflow` user or an application principal) or user that holds `role`,
-/// its permissions are the rows of `role` only, and it is `admin` only when
-/// `role` is `admin`. A principal that does not hold `role` refuses.
+/// (docs/architecture/execution.md#environment-workflows): the principal is an
+/// active service (the `workflow` user or an application principal) or user
+/// that holds `role`, its permissions are the rows of `role` only, and it is
+/// `admin` only when `role` is `admin`. A principal that does not hold `role`
+/// refuses.
 ///
 /// Without `role`, the run is an operator-admitted automation run: the
 /// principal is an active service, and its permissions are the rows of every
@@ -164,8 +165,9 @@ impl RouteAuthentication {
 }
 
 /// The application host's read of the status of its environment
-/// (docs/plan/platform-ui.md §5.4): its row of `platform.environment`, as
-/// `wamn_app`, kept in the host's [auth memory](crate::auth_cache).
+/// (docs/architecture/execution.md#routing-and-availability): its row of
+/// `platform.environment`, as `wamn_app`, kept in the host's [auth
+/// memory](crate::auth_cache).
 pub struct EnvironmentStatusReader {
     postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
     project: String,
@@ -584,7 +586,7 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
 }
 
 /// Admits a request to a route of the control serving root
-/// (docs/plan/platform-ui.md §4.3).
+/// (docs/architecture/execution.md#control-sessions).
 ///
 /// Only a browser login session of the host's control audience passes. Every
 /// request rechecks, through the `control` login, that the login is live and

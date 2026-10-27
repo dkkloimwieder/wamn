@@ -361,11 +361,12 @@ async fn after_install(route: &ProvisionedRoute, package: PathBuf) -> anyhow::Re
 }
 
 /// Install the candidate's release in the provisioned environment as `apply`
-/// does, and publish nothing (docs/plan/platform-deploy.md §8.2, §10.2): its
-/// packages through the package stage from their artifacts, the operator's
-/// admin role and the replica identity of the WMS package, and a binding of
-/// each connection the release requires to the labels store at
-/// `minio_endpoint`, named after its store alias.
+/// does, and publish nothing
+/// (docs/architecture/overview.md#environment-lifecycle): its packages through
+/// the package stage from their artifacts, the operator's admin role and the
+/// replica identity of the WMS package, and a binding of each connection the
+/// release requires to the labels store at `minio_endpoint`, named after its
+/// store alias.
 pub async fn install(
     candidate: &Candidate,
     inputs: &JourneyDocument,
@@ -702,9 +703,9 @@ pub async fn publish(
     let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
     // A binding names the connection requirements that the package stage
     // projects, so the release's stage runs first, on the package installed
-    // above (docs/plan/platform-deploy.md §10.2). The
-    // instance and its credential handle are named after the store alias, as
-    // `env apply` names the instances it binds.
+    // above (docs/architecture/overview.md#environment-lifecycle). The instance
+    // and its credential handle are named after the store alias, as `env apply`
+    // names the instances it binds.
     let version = package.package_version().to_owned();
     stage::stage(
         platform,

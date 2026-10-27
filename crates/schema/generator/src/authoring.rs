@@ -110,7 +110,8 @@ pub fn compile_manifest(package_root: &Path) -> Result<Vec<u8>> {
 }
 
 /// Compile a package's `wamn.k` to its authored form: every fact the author
-/// states and no derived member (docs/plan/platform-deploy.md §7.1 step 1).
+/// states and no derived member
+/// (docs/architecture/data-access.md#application-declarations).
 ///
 /// The authored form may leave out the type of a statement parameter or row
 /// value, which `wamn build` derives from the statement. It therefore is not
@@ -175,7 +176,8 @@ pub fn write_compiled_manifest(package_root: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Compile an environment document (docs/plan/platform-deploy.md §10.1) to JSON.
+/// Compile an environment document
+/// (docs/architecture/overview.md#environment-lifecycle) to JSON.
 ///
 /// The file imports the `environment` schema module that ships in this crate.
 /// The bytes are 2-space indented JSON with the keys in schema order. The
@@ -348,7 +350,8 @@ fn without_terminal_colors(text: &str) -> String {
 }
 
 /// The members of a custom operation that generation derives, so `wamn.k`
-/// states none of them (docs/plan/platform-deploy.md §6.1, R9).
+/// states none of them
+/// (docs/architecture/data-access.md#application-declarations).
 const DERIVED_OPERATION_MEMBERS: [&str; 1] = ["relations"];
 
 /// Refuse an authored manifest that states a member generation derives.

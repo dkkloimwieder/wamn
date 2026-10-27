@@ -43,7 +43,7 @@ pub enum AuthorityClass {
     /// Materializer-owned event consumption and admission SQL.
     EventMaterializer,
     /// Host-run administration routes and their writes of the application
-    /// authorization relations (docs/plan/platform-ui.md §2.1).
+    /// authorization relations (docs/architecture/data-access.md#actors).
     Administration,
 }
 

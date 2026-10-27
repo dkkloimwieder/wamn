@@ -482,12 +482,13 @@ fn runs_failure_and_outcome_check_mirrors_are_exact_and_frozen() {
     );
 }
 
-/// A manual workflow run is its own grain (docs/plan/workflows.md R3): no
-/// flow, no service principal, no registration, no binding world; a release
-/// pin, frozen node digests as a JSON object, an executing principal and
-/// role, and the invoking user. A schedule workflow run is the same grain
-/// with the schedule as its cause and no invoking user. Every other grain
-/// leaves those columns NULL, and admission pins them.
+/// A manual workflow run is its own grain
+/// (docs/architecture/execution.md#environment-workflows): no flow, no service
+/// principal, no registration, no binding world; a release pin, frozen node
+/// digests as a JSON object, an executing principal and role, and the invoking
+/// user. A schedule workflow run is the same grain with the schedule as its
+/// cause and no invoking user. Every other grain leaves those columns NULL, and
+/// admission pins them.
 #[test]
 fn runs_manual_grain_check_mirrors_are_exact() {
     let check = |name: &str| {

@@ -1410,7 +1410,8 @@ fn authored_query_sql_that_does_not_implement_a_filter_mode_refuses() {
 }
 
 // ---------------------------------------------------------------------------
-// Generated create: the write log (`docs/plan/write-log.md`).
+// Generated create: the write log
+// (docs/architecture/data-access.md#the-write-log).
 //
 // A create claims its key in `platform.write_log`, inserts its row and
 // stores its result in one transaction that its codec holds. The binding
@@ -2668,8 +2669,8 @@ fn a_logged_relation_keeps_the_schema_description_and_grants_its_history_insert(
 }
 
 /// A logged model with a generated list read and a revision field gets the
-/// change feed of its list read (`docs/plan/wamn-sync.md`, Epic 2b): the
-/// changes statement, the feed part of the input, `cursor_expired` for a
+/// change feed of its list read (docs/architecture/execution.md#change-feed):
+/// the changes statement, the feed part of the input, `cursor_expired` for a
 /// retention that prunes, and the App role's read of the history columns the
 /// statement selects. The cursor stays opaque: no contract or route names a
 /// history position or a transaction id.

@@ -1,5 +1,5 @@
 //! Build refusals of the package's numbering and caller-filled columns
-//! (`docs/plan/platform-config.md`, "Declaration in wamn.k" and "Numbering").
+//! (docs/architecture/data-access.md#declaration).
 //!
 //! A sequence's pattern parses with the one parser, [`wamn_number_pattern`].
 //! A `number` field and an `actor` field are filled by generated SQL, so no

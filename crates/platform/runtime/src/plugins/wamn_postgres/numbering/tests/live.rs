@@ -1,5 +1,5 @@
-//! Live checks of the numbering invariants (docs/plan/platform-config.md,
-//! Invariants).
+//! Live checks of the numbering invariants
+//! (docs/architecture/data-access.md#numbering).
 //!
 //! Each test owns a database of the test PostgreSQL server with the real
 //! catalog and application schema. An administration generation, minted by

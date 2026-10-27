@@ -103,8 +103,9 @@ pub fn insert_component_connection_binding_with_mode_sql() -> &'static str {
 }
 
 /// Remove the bindings of every release outside the live set `$3` (a text
-/// array) after the drain (docs/plan/platform-deploy.md R22 (3)). Returns the
-/// removed bindings' release digests.
+/// array) after the drain
+/// (docs/architecture/overview.md#environment-lifecycle). Returns the removed
+/// bindings' release digests.
 pub fn remove_connection_bindings_outside_live_set_sql() -> &'static str {
     "DELETE FROM catalog.connection_bindings \
       WHERE tenant_id = $1 AND environment = $2 AND NOT (manifest_digest = ANY($3)) \

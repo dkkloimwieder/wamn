@@ -819,7 +819,7 @@ fn emit_operation_contracts(
     let mut input = input_contract(manifest, model, table, action, operation);
     // A list read with a change feed takes the feed part in place of a page
     // request: the cursor a page or a previous feed read returned, and the
-    // limit of the page (docs/plan/wamn-sync.md).
+    // limit of the page (docs/architecture/execution.md#change-feed).
     if action == CrudAction::Query
         && model.feed_revision().is_some()
         && let Some(limit) = &operation.limit

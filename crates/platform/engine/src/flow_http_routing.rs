@@ -262,7 +262,7 @@ const AUTHENTICATION_UNAVAILABLE_CODE: &str = "authentication-unavailable";
 const UNSUPPORTED_POLICY_STATUS: u16 = 501;
 const UNSUPPORTED_POLICY_CODE: &str = "auth-policy-unsupported";
 /// 503, because the environment exists and serves again once it is active
-/// (docs/plan/platform-ui.md §5.4, owner ruling of 2026-10-02).
+/// (docs/architecture/execution.md#routing-and-availability).
 const ENVIRONMENT_INACTIVE_STATUS: u16 = 503;
 const ENVIRONMENT_INACTIVE_CODE: &str = "environment-inactive";
 
@@ -385,7 +385,7 @@ fn compile_input_schema(hash: &str, schema: Value) -> InputSchemaValidator {
 /// The grants are the stored application authority of the caller: whether it
 /// holds `admin`, and the distinct stable operation references
 /// (`<package>:<interface>/<operation>`) its other roles hold
-/// (docs/plan/platform-ui.md §2.3).
+/// (docs/architecture/execution.md#routing-and-availability).
 ///
 /// The guest can hold only the resource handle. It cannot construct this value,
 /// inspect the grant set, or replace the principal while forwarding it to router
@@ -430,10 +430,10 @@ impl std::fmt::Debug for AuthenticatedCaller {
 impl AuthenticatedCaller {
     /// Record the caller that a host authenticated for one attachment.
     ///
-    /// `admin` is whether the caller currently holds the built-in `admin`
-    /// role. `permissions` are the stable operation references of its other
-    /// roles. `active_role` is the one role the caller acts with, when it has
-    /// one (docs/plan/workflows.md R3).
+    /// `admin` is whether the caller currently holds the built-in `admin` role.
+    /// `permissions` are the stable operation references of its other roles.
+    /// `active_role` is the one role the caller acts with, when it has one
+    /// (docs/architecture/execution.md#environment-workflows).
     pub fn new(
         attachment_id: impl Into<Box<str>>,
         principal_id: impl Into<Box<str>>,
@@ -481,14 +481,14 @@ impl AuthenticatedCaller {
 
     /// Check one sealed registered-operation token of the serving release.
     ///
-    /// `admin` holds every operation the release serves. Any other caller
-    /// holds the operation when it holds the token's stable reference, the
-    /// token without its `@<version>`. The caller asks only about tokens of
-    /// the serving release, so a stored reference the release does not serve
-    /// grants nothing. A host route is not grantable, so a stored row that
-    /// names one grants nothing either (docs/plan/platform-ui.md §2.5), except
-    /// a granted host route such as `number_counter.set`
-    /// (docs/plan/platform-config.md, Numbering, Administration).
+    /// `admin` holds every operation the release serves. Any other caller holds
+    /// the operation when it holds the token's stable reference, the token
+    /// without its `@<version>`. The caller asks only about tokens of the
+    /// serving release, so a stored reference the release does not serve grants
+    /// nothing. A host route is not grantable, so a stored row that names one
+    /// grants nothing either (docs/architecture/execution.md#host-run-routes),
+    /// except a granted host route such as `number_counter.set`
+    /// (docs/architecture/data-access.md#setting-a-counter).
     pub fn permits(&self, operation: &str) -> bool {
         self.admin
             || ((!wamn_catalog::is_host_route_operation(operation)

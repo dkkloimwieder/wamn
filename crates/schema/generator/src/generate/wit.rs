@@ -248,7 +248,8 @@ fn emit_query_page(
     source.push_str("  }\n\n");
     if feed {
         // A list read with a feed answers a page, with the cursor its feed
-        // starts from, or the changes since a cursor (docs/plan/wamn-sync.md).
+        // starts from, or the changes since a cursor
+        // (docs/architecture/execution.md#change-feed).
         source.push_str(&"  /// One page. A next cursor means more rows follow. The cursor starts\n  /// the change feed at this page's snapshot.\n  record query-page {\n    item: list<query-row>,\n    next-cursor: option<string>,\n    cursor: string,\n  }\n\n  /// One changed row. A change with no data is a row that was deleted or\n  /// left the scope of the read.\n  record query-change {\n    id: string,\n    row-version: s32,\n    data: option<query-row>,\n  }\n\n  /// The changes since a cursor, one per row. Not complete means more\n  /// changes follow the next cursor.\n  record query-changes {\n    rows: list<query-change>,\n    next-cursor: string,\n    complete: bool,\n  }\n\n  variant query-result {\n    page(query-page),\n    changes(query-changes),\n  }\n\n  record query-outcome {\n    outcome: result<query-result, query-error>,\n  }\n\n".replace("id: string", &format!("id: {}", wit_type(crate::key::key_type(table).expect("validated model key").column_type()))));
     } else {
         source.push_str("  /// One page. A cursor means more rows follow.\n  record query-result {\n    item: list<query-row>,\n    next-cursor: option<string>,\n  }\n\n  record query-outcome {\n    outcome: result<query-result, query-error>,\n  }\n\n");

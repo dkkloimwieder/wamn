@@ -143,7 +143,8 @@ pub struct ReleaseScope {
     pub tenant_id: String,
     /// The environment name.
     pub environment: String,
-    /// Application name to its packages (docs/plan/platform-config.md).
+    /// Application name to its packages
+    /// (docs/architecture/execution.md#workflows).
     pub applications: wamn_catalog::EnvironmentApplications,
 }
 
@@ -231,10 +232,11 @@ impl LoadedRelease {
         })
     }
 
-    /// The control serving root (docs/plan/platform-ui.md §4.2). It is built
-    /// with the platform and serves only the control host routes: it has no
-    /// package, component, route, attachment or database. Its fixed scope
-    /// names no real tenant or environment, and a control host reads neither.
+    /// The control serving root
+    /// (docs/architecture/execution.md#host-run-routes). It is built with the
+    /// platform and serves only the control host routes: it has no package,
+    /// component, route, attachment or database. Its fixed scope names no real
+    /// tenant or environment, and a control host reads neither.
     pub fn control_root() -> Self {
         let manifest = ServingManifest {
             composed_entry: None,
@@ -318,9 +320,10 @@ pub fn validate_component_in_release(
 /// base32, unpadded and lowercase, 52 characters.
 ///
 /// A Kubernetes label value holds at most 63 characters, so the hex digest does
-/// not fit. Base32 carries the whole digest exactly. The host puts this value in
-/// its heartbeat, the operator copies it onto the `Host` resource, and the
-/// `release` chart's `hostSelector` matches it (docs/plan/platform-deploy.md §9.2).
+/// not fit. Base32 carries the whole digest exactly. The host puts this value
+/// in its heartbeat, the operator copies it onto the `Host` resource, and the
+/// `release` chart's `hostSelector` matches it
+/// (docs/architecture/overview.md#environment-lifecycle).
 pub fn release_label(digest: &str) -> Result<String, CatalogIdentityError> {
     let digest = ManifestDigest::parse(digest)?;
     let hex = digest

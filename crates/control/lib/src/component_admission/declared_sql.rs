@@ -3,7 +3,7 @@
 //! An application guest runs only statements declared at build: the host
 //! resolves a statement path in the admitted set and runs those exact bytes
 //! (`wamn:postgres/statements`). So admission, not the host, is the authority
-//! on what that SQL may do (`docs/plan/platform-config.md`, Numbering). This
+//! on what that SQL may do (docs/architecture/data-access.md#actors). This
 //! check parses each statement with PostgreSQL's own grammar (`pg_query`) and
 //! walks the whole parse tree, so a name in a subquery, a CTE, a default or a
 //! cast is seen, and quoting, schema qualification, case and comments change

@@ -562,12 +562,14 @@ pub fn grant_http_admitter_surface_sql(schema: &str) -> String {
     sql
 }
 
-/// The application authorization relations the administration family reads
-/// and writes (docs/plan/platform-ui.md §2.1), the environment status that
-/// the status routes mirror (§5.4), and the platform configuration tables
-/// that the control host writes (docs/plan/platform-config.md, Issues for C1,
-/// 3). `number_counter` is not one of them: only `platform.bump_counter`,
-/// `platform.assign_counter` and `platform.set_counter` write it.
+/// The application authorization relations the administration family reads and
+/// writes (docs/architecture/data-access.md#actors), the environment status
+/// that the status routes mirror
+/// (docs/architecture/execution.md#host-run-routes), and the platform
+/// configuration tables that the control host writes
+/// (docs/architecture/data-access.md#actors). `number_counter` is not one of
+/// them: only `platform.bump_counter`, `platform.assign_counter` and
+/// `platform.set_counter` write it.
 pub const ADMINISTRATION_RELATIONS: [&str; 11] = [
     "user",
     "role",
@@ -963,13 +965,12 @@ pub const CONTROL_CONNECTION_FUNCTIONS: &[&str] = &[
 const CONTROL_WRITE: &[&str] = &["SELECT", "INSERT", "UPDATE", "DELETE"];
 
 /// The control database relations an org's control host reaches, with the
-/// privileges it holds on each (docs/plan/platform-ui.md §4.4, owner rulings
-/// of 2026-10-01 on `wamn-a40n.3`). It reads who is a user and whether the
-/// password login of a control session is live. It writes the org
-/// memberships and the org, project and environment grants of the org
-/// operations, and it reads the projects and environments those grants
-/// cover. The `project.create` route writes a project. It holds nothing else
-/// in the control database.
+/// privileges it holds on each (docs/architecture/execution.md#host-run-routes,
+/// wamn-a40n.3). It reads who is a user and whether the password login of a
+/// control session is live. It writes the org memberships and the org, project
+/// and environment grants of the org operations, and it reads the projects and
+/// environments those grants cover. The `project.create` route writes a
+/// project. It holds nothing else in the control database.
 pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 8] = [
     ("identity", "org_memberships", CONTROL_WRITE),
     ("identity", "org_roles", CONTROL_WRITE),
@@ -981,11 +982,11 @@ pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 8] = [
     ("registry", "projects", &["SELECT", "INSERT"]),
 ];
 
-/// The columns the control host writes in a relation of which it otherwise
-/// only reads, with the privilege it holds on them. The status routes write
-/// the status of an environment (docs/plan/platform-ui.md §5.4, owner ruling
-/// of 2026-10-02 on `wamn-zua8.2`). The other columns of
-/// `registry.project_envs` belong to provisioning.
+/// The columns the control host writes in a relation of which it otherwise only
+/// reads, with the privilege it holds on them. The status routes write the
+/// status of an environment (docs/architecture/execution.md#host-run-routes,
+/// wamn-zua8.2). The other columns of `registry.project_envs` belong to
+/// provisioning.
 pub const CONTROL_COLUMN_SURFACE: [(&str, &str, &str, &[&str]); 1] =
     [("registry", "project_envs", "UPDATE", &["status"])];
 

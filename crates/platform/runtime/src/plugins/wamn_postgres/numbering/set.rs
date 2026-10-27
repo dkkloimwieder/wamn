@@ -1,5 +1,5 @@
 //! The write of the `number_counter.set` host route
-//! (`docs/plan/platform-config.md`, "Numbering", "Administration").
+//! (docs/architecture/data-access.md#setting-a-counter).
 //!
 //! A set runs in an operation transaction of the guest authority, under the
 //! caller, the route's operation and the application as claims, so the

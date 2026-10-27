@@ -18,13 +18,14 @@
 //! `wamn-registry-helper` of `deploy/gcp/registry-helper.yaml` in place of
 //! Secret `wamn-registry-pull`. No file names that Secret.
 //!
-//! The control host group of the org (docs/plan/platform-ui.md §4.2) joins
-//! them as `hostgroup-control`. It serves the control serving root, so it has
-//! no release and no event stream. It reads `wamn_system` through the org's
-//! `control` login from Secret `wamn-control-<org>`, which
-//! `wamn-ctl-ops provision-org` emits. It mounts Secret
-//! `wamn-control-administration-<org>`, the administration login of each
-//! environment of the org (docs/plan/platform-ui.md §4.4).
+//! The control host group of the org
+//! (docs/architecture/execution.md#host-run-routes) joins them as
+//! `hostgroup-control`. It serves the control serving root, so it has no
+//! release and no event stream. It reads `wamn_system` through the org's
+//! `control` login from Secret `wamn-control-<org>`, which `wamn-ctl-ops
+//! provision-org` emits. It mounts Secret `wamn-control-administration-<org>`,
+//! the administration login of each environment of the org
+//! (docs/plan/platform-ui.md §4.4).
 //!
 //! cargo run -p wamn-test-infrastructure --example host_values_files -- \
 //!   <output directory> <host image> <release artifact base> \

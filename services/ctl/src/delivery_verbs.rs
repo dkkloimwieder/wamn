@@ -10,7 +10,8 @@ use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;
 
 /// Qualify one published release, by its digest, on the release chart's
 /// platform image set through the existing application cases, and push the
-/// qualification beside the release (docs/plan/platform-deploy.md §8.2).
+/// qualification beside the release
+/// (docs/architecture/overview.md#release-identity).
 #[derive(Debug, Args)]
 pub struct QualifyReleaseArgs {
     /// The published release, as its manifest digest.
@@ -37,8 +38,9 @@ pub struct QualifyReleaseArgs {
     pub release_chart: PathBuf,
 }
 
-/// Build every platform image, then push them, and stamp their digests into
-/// a copy of the release chart's defaults; a failed build pushes nothing (docs/plan/platform-deploy.md §9.3, R15).
+/// Build every platform image, then push them, and stamp their digests into a
+/// copy of the release chart's defaults; a failed build pushes nothing
+/// (docs/architecture/overview.md#environment-lifecycle).
 #[derive(Debug, Args)]
 pub struct BuildPlatformArgs {
     /// The `<host>[:<port>]` of the registry the images are pushed to. A

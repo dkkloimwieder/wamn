@@ -1,4 +1,5 @@
-//! The lifecycle lock of one environment (docs/plan/platform-deploy.md R19).
+//! The lifecycle lock of one environment
+//! (docs/architecture/overview.md#environment-lifecycle).
 //!
 //! `apply`, `rollback` and `delete` take one session-level advisory lock in the
 //! system database, keyed by the coordinate, on a connection of their own, and

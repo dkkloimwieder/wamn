@@ -1,5 +1,5 @@
 //! Live test of authored role permissions as rows
-//! (docs/plan/trx-pkg-plan.md, Authorization).
+//! (docs/architecture/execution.md#host-run-routes).
 //!
 //! A grant stores one row, served by a release or not, and a revoke removes
 //! it. The test holds the process lock of its server, because the schema

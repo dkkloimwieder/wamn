@@ -60,8 +60,9 @@ pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 7] = [
         "project_envs",
         &["org", "project", "env", "instance_suffix", "status"],
     ),
-    // The control audience of an org (docs/plan/platform-ui.md §4.3): the
-    // org must be registered and the user must hold a control role there.
+    // The control audience of an org
+    // (docs/architecture/execution.md#control-sessions): the org must be
+    // registered and the user must hold a control role there.
     (
         "identity",
         "project_roles",
@@ -72,8 +73,9 @@ pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 7] = [
 ];
 
 /// Narrow password and invitation endpoint column grants. Identity creates a
-/// user that an invitation names (docs/plan/platform-ui.md §4.4), and
-/// changes no principal it did not create.
+/// user that an invitation names
+/// (docs/architecture/overview.md#organization-membership-and-administration),
+/// and changes no principal it did not create.
 pub const IDENTITY_ISSUER_PASSWORD_COLUMNS: &[(&str, &str, &[&str])] = &[
     ("principals", "SELECT", &["email"]),
     (

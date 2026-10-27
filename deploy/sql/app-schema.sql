@@ -58,8 +58,8 @@
 --   is platform-pending — 4.2 (wamn-0xd) resolves the claims from these rows and
 --   the first-party identity authority (wamn-ctc8) mints them, both on a
 --   platform identity, not on this grant. The application advances
---   number_counter only through platform.bump_counter, the one routine it may
---   EXECUTE in this schema.
+--   number_counter through platform.bump_counter, platform.assign_counter and
+--   platform.set_counter, the three routines it can EXECUTE in this schema.
 --
 --   NO GRANT — api_key. No runtime code reads it, so wamn_app holds nothing
 --   on it.

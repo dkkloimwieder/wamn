@@ -1,7 +1,7 @@
-//! The fixture of the application host route tests: a project database with
-//! its scoped logins and rows, a fixture release that serves the
-//! application set, and a host that serves it to session callers
-//! (docs/plan/platform-ui.md §4.6).
+//! The fixture of the application host route tests: a project database with its
+//! scoped logins and rows, a fixture release that serves the application set,
+//! and a host that serves it to session callers
+//! (docs/architecture/execution.md#host-run-routes).
 //!
 //! `host_route_live` and `tests/integration`'s `control_client_live` include
 //! it beside the shared session fixture, as `session_fixture`.

@@ -6,6 +6,9 @@
 .beads-credential-key
 .beads/proxieddb/
 
+# Python bytecode
+__pycache__/
+
 # Rust build artifacts, and the wamn build output under apps/target/wamn
 /target
 /apps/target

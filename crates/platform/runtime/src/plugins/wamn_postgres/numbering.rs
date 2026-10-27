@@ -1,5 +1,5 @@
 //! The document-number renderer of `wamn:postgres`
-//! (`docs/plan/platform-config.md`, "Numbering").
+//! (docs/architecture/data-access.md#rendering).
 //!
 //! `next-number` and `peek-number` render the pattern of one sequence of the
 //! declared application, never an argument and never a claim. The plugin

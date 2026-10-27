@@ -1,5 +1,5 @@
 //! The gate of an environment workflow graph against a serving release
-//! (docs/plan/workflows.md R8, epic 1).
+//! (docs/architecture/execution.md#environment-workflows).
 //!
 //! A workflow graph is a [`WiringDocument`]. It is gated against the release
 //! an environment serves, not against one package: each node resolves to the

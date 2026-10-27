@@ -1,5 +1,5 @@
-//! Step 6 of `apply`: the one rollout write (docs/plan/platform-deploy.md
-//! §10.1 step 6, §9.2, R6, R22 (5)).
+//! Step 6 of `apply`: the one rollout write
+//! (docs/architecture/overview.md#environment-lifecycle).
 //!
 //! The verb renders the `release` values. When the chart version and the
 //! values, `audit` excluded, equal the newest successful revision's, there is

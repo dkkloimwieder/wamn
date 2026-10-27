@@ -1,18 +1,18 @@
-//! Live test of invariant 1 of `docs/plan/platform-config.md` (wamn-aqd0m.1):
-//! in a project database, the application role `wamn_app` holds `SELECT` on
-//! the listed `platform` tables, `EXECUTE` on `platform.bump_counter`,
-//! `platform.assign_counter` and `platform.set_counter`, the
-//! existing grants of `platform.write_log`, the engine's claim record, and
-//! nothing else in `platform`. It holds no grant on a history table or on
-//! `schema_migrations`, and no `credential`, `target` or `target_application`
-//! table exists. The test reads the privileges from the server catalogs, on a
-//! fresh install and on a database that `project/0025_platform_configuration.sql`
-//! and `project/0028_platform_singular_tables.sql`,
-//! `project/0029_number_assignment.sql`,
-//! `project/0030_number_counter_set.sql` and `project/0031_org_boundary.sql`
-//! upgrade. A last test applies 0031 to a database with rows in the old shape
-//! (wamn-83eth.6). It holds the process lock of its server, because the
-//! schema files create cluster-wide roles.
+//! Live test of the grants in `docs/architecture/data-access.md#actors`
+//! (wamn-aqd0m.1): in a project database, the application role `wamn_app` holds
+//! `SELECT` on the listed `platform` tables, `EXECUTE` on
+//! `platform.bump_counter`, `platform.assign_counter` and
+//! `platform.set_counter`, the existing grants of `platform.write_log`, the
+//! engine's claim record, and nothing else in `platform`. It holds no grant on
+//! a history table or on `schema_migrations`, and no `credential`, `target` or
+//! `target_application` table exists. The test reads the privileges from the
+//! server catalogs, on a fresh install and on a database that
+//! `project/0025_platform_configuration.sql` and
+//! `project/0028_platform_singular_tables.sql`,
+//! `project/0029_number_assignment.sql`, `project/0030_number_counter_set.sql`
+//! and `project/0031_org_boundary.sql` upgrade. A last test applies 0031 to a
+//! database with rows in the old shape (wamn-83eth.6). It holds the process
+//! lock of its server, because the schema files create cluster-wide roles.
 
 use tokio_postgres::{Client, NoTls};
 use wamn_test_infrastructure::locked_database;

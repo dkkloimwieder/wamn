@@ -1,5 +1,5 @@
-//! Step 4 of `apply`: ensure the substrate (docs/plan/platform-deploy.md
-//! §10.1 step 4, R6 (3) and (4)).
+//! Step 4 of `apply`: ensure the substrate
+//! (docs/architecture/overview.md#environment-lifecycle).
 //!
 //! Each step is an ensure, judged by what it observes: the environment row
 //! with a fresh instance suffix only if there is none, the CNPG `Database` CR

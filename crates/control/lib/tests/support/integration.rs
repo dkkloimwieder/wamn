@@ -778,9 +778,9 @@ pub async fn exercise(
         super::netsuite::seed(&project).await?;
     }
     let mut reader = start_reader(run, repository, &broker, &server, admin_url).await?;
-    // The release declares no schedule. The pull is an environment workflow
-    // of the connector, authored and enabled after apply
-    // (docs/plan/workflows.md epic 2).
+    // The release declares no schedule. The pull is an environment workflow of
+    // the connector, authored and enabled after apply
+    // (docs/architecture/execution.md#workflows).
     let (auth, _auth_forward) = auth_changes(run).await?;
     let workflows = WorkflowEnvironment {
         system_url: &platform.system_database_url,

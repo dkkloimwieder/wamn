@@ -1,5 +1,5 @@
 //! The platform configuration rows of one project database
-//! (docs/plan/platform-config.md, Tables).
+//! (docs/architecture/data-access.md#actors).
 //!
 //! The control host writes `platform.external_system`, `platform.connection`,
 //! `platform.project_connection`, `platform.integration_allow`,
@@ -250,9 +250,9 @@ pub async fn write_configuration(
     Ok(written)
 }
 
-/// One sequence default of a package (`docs/plan/platform-config.md`,
-/// "Declaration in wamn.k"): its application name from the environment map,
-/// its sequence name and its default pattern.
+/// One sequence default of a package
+/// (docs/architecture/data-access.md#counters): its application name from the
+/// environment map, its sequence name and its default pattern.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SequenceDefault {
     pub application: String,

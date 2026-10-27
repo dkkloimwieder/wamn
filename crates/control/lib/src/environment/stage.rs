@@ -1,5 +1,6 @@
-//! The package stage of `apply` (docs/plan/platform-deploy.md §10.1 step 5,
-//! §10.2), run in the project database before any Kubernetes write.
+//! The package stage of `apply`
+//! (docs/architecture/overview.md#environment-lifecycle), run in the project
+//! database before any Kubernetes write.
 //!
 //! Under the lifecycle lock, idempotently: apply the pending platform
 //! migrations of the project database (`upgrade-schema`), or refuse and name

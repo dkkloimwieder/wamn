@@ -16,7 +16,8 @@ use crate::{WorkflowErrorType, Workflows as _};
 const DECLARATION: &str =
     include_str!("../../../../../../apps/platform/execution/jsonata/declaration.json.in");
 
-/// The WMS label workflow's shape expression (docs/plan/workflow-feature.md 4.4).
+/// The WMS label workflow's shape expression
+/// (docs/architecture/execution.md#workflows).
 const SHAPE: &str = r#"event = "insert" and new.kind = "move"
     ? [{"request_id": new.id,
         "value": {"label_key": new.idempotency_key, "movement_id": new.id,

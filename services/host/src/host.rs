@@ -373,8 +373,8 @@ pub struct HostArgs {
     pub session_jwks_ca: Option<PathBuf>,
 
     /// Serve the control serving root of `--org` in place of an application
-    /// release (docs/plan/platform-ui.md §4.2). A control host reads
-    /// `wamn_system` through the org's `control` login in
+    /// release (docs/architecture/execution.md#host-run-routes). A control host
+    /// reads `wamn_system` through the org's `control` login in
     /// `WAMN_CONTROL_URL`, admits only browser sessions of the org's control
     /// audience, and holds no project credential.
     #[arg(
@@ -1163,7 +1163,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .ok()
         .filter(|url| !url.is_empty());
     // An application host refuses every route while its environment is
-    // inactive, from its row read as `wamn_app` (docs/plan/platform-ui.md §5.4).
+    // inactive, from its row read as `wamn_app`
+    // (docs/architecture/execution.md#routing-and-availability).
     let reads_environment_status = application.is_some() && guest_url.is_some();
     let queue_credentials_complete = require_queue_admission(
         application.is_some(),
@@ -1172,7 +1173,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     )?;
     // The host routes of an application release read and write the
     // authorization relations under their own credential
-    // (docs/plan/platform-ui.md §2.1).
+    // (docs/architecture/data-access.md#actors).
     let administration_url = std::env::var("WAMN_ADMINISTRATION_PG_URL")
         .ok()
         .filter(|url| !url.is_empty() && application.is_some());
@@ -1437,8 +1438,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         // variable is set. Without this call both `wamn.router.delivery`
         // series exist and stay permanently silent (wamn-1fhk).
         .with_metrics(&global::meter(ROUTER_DELIVERY_ID));
-        // The application administration routes run in the host, in front
-        // of the bridge (docs/plan/platform-ui.md §4.6).
+        // The application administration routes run in the host, in front of
+        // the bridge (docs/architecture/execution.md#host-run-routes).
         plugins.push(Arc::new(RouterDelivery::new(Arc::new(
             HostRouteDelivery::new(
                 Arc::clone(&operations.release),
@@ -1560,8 +1561,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let (stop_queue, stopping) = tokio::sync::watch::channel(false);
     let mut schedule_tasks = tokio::task::JoinSet::new();
     // Every application host serves the enabled schedule workflows of the
-    // applications its environment declares, read from `catalog.workflows`
-    // at each tick (docs/plan/workflows.md epic 2).
+    // applications its environment declares, read from `catalog.workflows` at
+    // each tick (docs/architecture/execution.md#workflows).
     let schedule_release = application.filter(|release| {
         let declared = !release.scope().applications.is_empty();
         if !declared {

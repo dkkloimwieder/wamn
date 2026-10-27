@@ -1,5 +1,6 @@
-//! One cluster case's environment of the candidate release (wamn-ps2tj.1,
-//! wamn-ps2tj.4, docs/plan/platform-deploy.md §8.2, §9.2, §10.2, R12, R15).
+//! One cluster case's environment of the candidate release
+//! (docs/architecture/overview.md#environment-lifecycle, wamn-ps2tj.1,
+//! wamn-ps2tj.4).
 //!
 //! A case installs the candidate's packages through the package stage of
 //! `apply`, from the package repository beside the release repository, and
@@ -739,8 +740,8 @@ pub async fn copy_roles(candidate: &Candidate, to: &Registry) -> anyhow::Result<
     ))
 }
 
-/// The release chart that `WAMN_RELEASE_CHART` names, stamped by
-/// `wamn-ctl build-platform` (docs/plan/platform-deploy.md §9.3).
+/// The release chart that `WAMN_RELEASE_CHART` names, stamped by `wamn-ctl
+/// build-platform` (docs/architecture/overview.md#environment-lifecycle).
 ///
 /// # Errors
 ///

@@ -1,5 +1,5 @@
 //! R10(1): Git holds nothing that the build regenerates byte-for-byte from
-//! sources (docs/plan/platform-deploy.md R10(1)).
+//! sources (docs/architecture/overview.md#application-ownership).
 //!
 //! The lint refuses a tracked file that is:
 //! - in a `client-ts` directory: a TypeScript client generated from contracts.

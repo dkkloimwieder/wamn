@@ -1,5 +1,5 @@
 //! The host routes through their generated TypeScript clients
-//! (docs/plan/platform-ui.md §4.4 to §4.6, wamn-a40n.7 and wamn-a40n.8).
+//! (docs/architecture/execution.md#host-run-routes, wamn-a40n.7, wamn-a40n.8).
 //!
 //! Each test serves one set through the shipped flow-http component, as a
 //! host does, and runs its test file in `apps/platform_ui` against it with

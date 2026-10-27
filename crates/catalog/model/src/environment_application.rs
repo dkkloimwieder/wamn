@@ -1,4 +1,5 @@
-//! The applications an environment declares (docs/plan/platform-config.md).
+//! The applications an environment declares
+//! (docs/architecture/execution.md#workflows).
 //!
 //! `environment.k` names each application and the packages of the release
 //! that belong to it. `wamn-ctl env apply` checks the map against the

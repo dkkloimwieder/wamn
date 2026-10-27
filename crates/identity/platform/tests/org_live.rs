@@ -1,4 +1,5 @@
-//! Real-PostgreSQL test of the org grants (docs/plan/platform-ui.md §4.4):
+//! Real-PostgreSQL test of the org grants
+//! (docs/architecture/overview.md#organization-membership-and-administration):
 //! `org-admin` and `project-admin` write their row, then the project roles and
 //! memberships below it, and refuse a scope outside the member's org.
 

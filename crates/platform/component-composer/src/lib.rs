@@ -10,13 +10,13 @@
 //! [`compose_application`] adds the platform route layer while keeping the
 //! application's operation exports, including those of an existing composition.
 //!
-//! Each member that imports `wamn:postgres/statements` gets an outer import
-//! of its own, named by the member's position in the composition (`sql-0`,
+//! Each member that imports `wamn:postgres/statements` gets an outer import of
+//! its own, named by the member's position in the composition (`sql-0`,
 //! `sql-1`). Each import has a separate instance type and carries the same
-//! `(implements ..)` interface label. A custom section records the digest of the
-//! member each outer import was made for, so admission can check the wiring
-//! in the composed bytes and the host can bind each import to the statements
-//! of that member (`docs/plan/trx-pkg-plan.md`, Per-member import instances).
+//! `(implements ..)` interface label. A custom section records the digest of
+//! the member each outer import was made for, so admission can check the wiring
+//! in the composed bytes and the host can bind each import to the statements of
+//! that member (docs/architecture/components.md#grouping-and-publication).
 
 use std::collections::{BTreeMap, BTreeSet};
 

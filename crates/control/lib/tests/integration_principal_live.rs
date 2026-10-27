@@ -161,7 +161,8 @@ async fn apply_creates_one_integration_principal_and_grants_declared_dependencie
         )
         .await?;
     }
-    // The workflow user is the other service row (docs/plan/workflows.md R3).
+    // The workflow user is the other service row
+    // (docs/architecture/execution.md#environment-workflows).
     let workflow_user = wamn_project_state::workflow_user_id().to_string();
     let row = admin
         .query_one(

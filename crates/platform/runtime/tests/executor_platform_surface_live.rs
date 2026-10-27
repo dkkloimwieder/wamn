@@ -567,7 +567,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     plugin.set_schema(COMPONENT, "wamn_run")?;
     plugin.set_runner(COMPONENT, COMPONENT)?;
     // A production host carries its release digest and claims only the runs
-    // pinned to it (docs/plan/platform-deploy.md R20).
+    // pinned to it (docs/architecture/execution.md#environment-workflows).
     plugin.set_release_identity(
         COMPONENT,
         ReleaseIdentity::for_test(wamn_catalog::ManifestDigest::parse(&manifest_digest)?),

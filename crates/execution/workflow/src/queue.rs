@@ -606,9 +606,9 @@ async fn drive_claim(
 }
 
 /// The failure a workflow run records for a refusal that no retry changes
-/// (docs/plan/workflows.md R3, R8): a node its principal no longer holds the
-/// grant for, or a run that does not resolve against its pinned release.
-/// Any other error leaves the lease for redelivery.
+/// (docs/architecture/execution.md#environment-workflows): a node its principal
+/// no longer holds the grant for, or a run that does not resolve against its
+/// pinned release. Any other error leaves the lease for redelivery.
 fn workflow_refusal(error: &anyhow::Error, run_id: &str) -> Option<(serde_json::Value, FailType)> {
     if let Some(refusal) = error.downcast_ref::<OperationRefusal>() {
         let OperationRefusalType::PermissionDenied = refusal.refusal_type();

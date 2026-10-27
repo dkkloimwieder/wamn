@@ -1,8 +1,9 @@
 //! The route plugin refuses every route of an inactive environment
-//! (docs/plan/platform-ui.md §5.4, wamn-zua8.2). The host reads its row of
-//! `platform.environment` as a tenant's `wamn_app` generation, before the
-//! route's policy, so an anonymous route is refused too. The host keeps the
-//! answer only while it watches the auth bucket (wamn-stxy9.2, wamn-f2qud).
+//! (docs/architecture/execution.md#routing-and-availability, wamn-zua8.2). The
+//! host reads its row of `platform.environment` as a tenant's `wamn_app`
+//! generation, before the route's policy, so an anonymous route is refused too.
+//! The host keeps the answer only while it watches the auth bucket
+//! (wamn-stxy9.2, wamn-f2qud).
 //!
 //! This test starts its own PostgreSQL 18 server.
 #![cfg(feature = "test-util")]

@@ -1,6 +1,6 @@
-//! PostgreSQL 18 test of the built-in `admin` role that `apply-package`
-//! writes, and of the permission rows of authored roles
-//! (docs/plan/platform-ui.md §2.2 to §2.4).
+//! PostgreSQL 18 test of the built-in `admin` role that `apply-package` writes,
+//! and of the permission rows of authored roles
+//! (docs/architecture/execution.md#host-run-routes).
 //!
 //! The test uses a test database of the test PostgreSQL server as its superuser,
 //! and holds the process lock, because it creates cluster-wide roles.

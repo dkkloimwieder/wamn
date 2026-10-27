@@ -1,5 +1,5 @@
-//! The status operation (docs/plan/platform-deploy.md §11.4, owner ruling of
-//! 2026-10-09 on `wamn-snz0.6`).
+//! The status operation (docs/architecture/execution.md#host-run-routes,
+//! wamn-snz0.6).
 //!
 //! Current state only, read and never written: the newest successful Helm
 //! revision and its digest, the digest the host Deployment's pod template

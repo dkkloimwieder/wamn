@@ -1,5 +1,5 @@
 //! The packaging screen follows the change feed of a local WMS host
-//! (Epic 2b, `docs/plan/wamn-sync.md`).
+//! (docs/architecture/execution.md#change-feed).
 //!
 //! The test serves WMS over real components and PostgreSQL, and runs
 //! `web/sync-bench/bench/follow.mjs`, which opens the packaging screen in

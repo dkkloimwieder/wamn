@@ -1,5 +1,6 @@
 //! The application rows of org and project administration in one project
-//! database (docs/plan/platform-ui.md §4.4, application writes).
+//! database
+//! (docs/architecture/overview.md#organization-membership-and-administration).
 //!
 //! The control host calls these with the environment's `wamn_administration`
 //! login, in one transaction per environment that binds the caller and the
@@ -78,8 +79,8 @@ pub async fn require_platform_rows(
     }
 }
 
-/// Write the status row of the environment, the mirror of its system row
-/// that its host reads (docs/plan/platform-ui.md §5.4).
+/// Write the status row of the environment, the mirror of its system row that
+/// its host reads (docs/architecture/execution.md#routing-and-availability).
 pub async fn write_environment_status(
     client: &(impl GenericClient + Sync),
     environment_key: &str,
@@ -185,8 +186,9 @@ pub async fn remove_user(
     Ok(())
 }
 
-/// Why an application administration write refused (docs/plan/platform-ui.md
-/// §2.4 and §4.6). Each refusal changes no row.
+/// Why an application administration write refused
+/// (docs/architecture/execution.md#host-run-routes). Each refusal changes no
+/// row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AdministrationRefusal {
     /// `admin` holds every operation the release serves.

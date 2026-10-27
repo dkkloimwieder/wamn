@@ -546,8 +546,8 @@ pub async fn invoke(
         tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
     tokio::spawn(connection);
     let source_id = source(&admin, "rest-fixture").await?.to_string();
-    // The rest_connector item is an environment workflow, authored, enabled
-    // and admitted at one due moment (docs/plan/workflows.md epic 2).
+    // The rest_connector item is an environment workflow, authored, enabled and
+    // admitted at one due moment (docs/architecture/execution.md#workflows).
     let document: wamn_catalog::WiringDocument = serde_json::from_value(
         wamn_schema_generator::operation_reference::read_authored_document(
             &super::support::repository()

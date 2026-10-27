@@ -4,7 +4,7 @@
 //! actually enforces them: every revoke lands with its positive assertion — this
 //! principal, on this relation, denied — rather than as a paper narrowing.
 //!
-//! One test per adjudicated class (docs/plan/platform-config.md, invariant 1):
+//! One test per adjudicated class (docs/architecture/data-access.md#actors):
 //! - `users` / `role` / `user_role` / `permission` are the rows the trust
 //!   chain reads as authorization INPUT, `environment` is the status the host
 //!   admits a request by, and the platform configuration tables are the rows
@@ -270,14 +270,13 @@ ROLLBACK;"#
 }
 
 /// `number_counter` advances only through `platform.bump_counter`
-/// (docs/plan/platform-config.md, Numbering). The App generation holds
-/// EXECUTE on it and no write on the table. The function runs as its owner
-/// on a sequence id and reads no claim: it returns 1 for a new counter row
-/// and then counts up, starts each key at 1, and refuses with
-/// `undefined_object` an id that is not a sequence. The `wamn:postgres`
-/// plugin resolves the id from the application in host state, and its
-/// statement admission refuses guest SQL that names the function.
-/// `number_counter` has no history table.
+/// (docs/architecture/data-access.md#counters). The App generation holds
+/// EXECUTE on it and no write on the table. The function runs as its owner on a
+/// sequence id and reads no claim: it returns 1 for a new counter row and then
+/// counts up, starts each key at 1, and refuses with `undefined_object` an id
+/// that is not a sequence. The `wamn:postgres` plugin resolves the id from the
+/// application in host state, and its statement admission refuses guest SQL
+/// that names the function. `number_counter` has no history table.
 #[test]
 fn the_application_advances_a_counter_only_through_bump_counter() {
     let _serialized = wamn_test_postgres::lock();
@@ -344,10 +343,10 @@ ROLLBACK;"
 }
 
 /// The per= key rows of `number_counter` are written only by
-/// `platform.assign_counter` (docs/plan/platform-config.md, Numbering; owner
-/// ruling of wamn-83eth.2). The App generation holds EXECUTE on it. A key gets
-/// the next value of the `''` allocator once, and the same value after; the
-/// `''` key is refused, and an id that is not a sequence is refused with
+/// `platform.assign_counter` (docs/architecture/data-access.md#counters,
+/// wamn-83eth.2). The App generation holds EXECUTE on it. A key gets the next
+/// value of the `''` allocator once, and the same value after; the `''` key is
+/// refused, and an id that is not a sequence is refused with
 /// `undefined_object`. The function reads no claim.
 #[test]
 fn the_application_assigns_a_keyed_counter_only_through_assign_counter() {
@@ -403,12 +402,12 @@ ROLLBACK;"
     run(&url, &script);
 }
 
-/// `platform.set_counter` is the third writer of `number_counter`, the write
-/// of the set_counter host route (docs/plan/platform-config.md, Numbering;
-/// owner ruling of wamn-83eth.3). The App generation holds EXECUTE on it. It
-/// inserts a counter row or sets its value; it refuses a value below 1, and
-/// refuses with `undefined_object` an id that is not a sequence. It reads no
-/// claim: the route resolves the sequence by the application it checked.
+/// `platform.set_counter` is the third writer of `number_counter`, the write of
+/// the set_counter host route (docs/architecture/data-access.md#counters,
+/// wamn-83eth.3). The App generation holds EXECUTE on it. It inserts a counter
+/// row or sets its value; it refuses a value below 1, and refuses with
+/// `undefined_object` an id that is not a sequence. It reads no claim: the
+/// route resolves the sequence by the application it checked.
 #[test]
 fn the_application_sets_a_counter_only_through_set_counter() {
     let _serialized = wamn_test_postgres::lock();

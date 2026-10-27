@@ -1,7 +1,7 @@
 //! Live test of the org admin that `provision-org --admin` writes
-//! (wamn-a40n.3, wamn-sjdxt, docs/plan/platform-ui.md §4.4). The test holds
-//! the process lock of its server, because the installer creates cluster-wide
-//! roles.
+//! (docs/architecture/overview.md#organization-membership-and-administration,
+//! wamn-a40n.3, wamn-sjdxt). The test holds the process lock of its server,
+//! because the installer creates cluster-wide roles.
 
 use tokio_postgres::{Client, NoTls};
 use wamn_control::provision_org::{OrgRecord, ProvisionOrgRequest, provision_org};

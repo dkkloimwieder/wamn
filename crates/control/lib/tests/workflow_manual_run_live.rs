@@ -1,5 +1,5 @@
 //! A manual run of an environment-authored workflow, live
-//! (docs/plan/workflows.md R1, R3, R8, epic 1 item 3), and its negative
+//! (docs/architecture/execution.md#environment-workflows), and its negative
 //! checks.
 //!
 //! The fixture release carries one application, `orders`, with one read
@@ -63,7 +63,7 @@ const PROJECT: &str = "default";
 const ENVIRONMENT: &str = "dev";
 const APPLICATION: &str = "orders";
 /// The application the environment declares, with the package `orders`. Its
-/// name is no package (docs/plan/platform-config.md).
+/// name is no package (docs/architecture/execution.md#workflows).
 const APP: &str = "erp";
 const WORKFLOW: &str = "orders_report";
 const PASSWORD: &str = "manual-live-test-only";

@@ -1,7 +1,8 @@
-//! Schedule workflows from rows, live (docs/plan/workflows.md R3, R8, epic 2
-//! issues 1 and 2): a schedule trigger authored with its cron, the enable rule
-//! of a schedule, the host-owned admission of a due moment, and the host's
-//! schedule task, which reads the enabled rows at each tick.
+//! Schedule workflows from rows, live
+//! (docs/architecture/execution.md#workflows): a schedule trigger authored with
+//! its cron, the enable rule of a schedule, the host-owned admission of a due
+//! moment, and the host's schedule task, which reads the enabled rows at each
+//! tick.
 //!
 //! The fixture release carries one package, `orders`, with one read
 //! operation (a WAT component that answers fixed rows and writes nothing). A
@@ -59,7 +60,7 @@ const PROJECT: &str = "default";
 const ENVIRONMENT: &str = "dev";
 const APPLICATION: &str = "orders";
 /// The application the environment declares, with the package `orders`. Its
-/// name is no package (docs/plan/platform-config.md).
+/// name is no package (docs/architecture/execution.md#workflows).
 const APP: &str = "erp";
 const PASSWORD: &str = "schedule-live-test-only";
 const READ: &str = "orders:order/read@1.0.0";
@@ -1041,14 +1042,14 @@ async fn the_schedule_task_fires_a_row_enabled_after_start_and_stops_after_disab
     assert_eq!(fixture.outcome(&run).await.0, "completed");
 }
 
-/// Schedules run from rows (docs/plan/workflows.md, Invariants and checks):
-/// the serving release declares no schedule, an authored and enabled row
-/// fires, and a tick missed while the task waits on the database is skipped,
-/// not caught up. The enable after start and the disable are the case above.
-/// A missed tick during a slow admission is the schedule task's unit test
-/// `ticks_missed_during_a_slow_admission_are_skipped`. Here the task's read
-/// of the rows waits on a lock across a whole minute, in real time: about
-/// three minutes.
+/// Schedules run from rows (docs/architecture/execution.md#workflows): the
+/// serving release declares no schedule, an authored and enabled row fires, and
+/// a tick missed while the task waits on the database is skipped, not caught
+/// up. The enable after start and the disable are the case above. A missed tick
+/// during a slow admission is the schedule task's unit test
+/// `ticks_missed_during_a_slow_admission_are_skipped`. Here the task's read of
+/// the rows waits on a lock across a whole minute, in real time: about three
+/// minutes.
 #[tokio::test(flavor = "multi_thread")]
 async fn schedules_run_from_rows_and_a_missed_tick_is_skipped() {
     let _lock = wamn_test_postgres::lock();

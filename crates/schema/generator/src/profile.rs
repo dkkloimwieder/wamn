@@ -1,6 +1,7 @@
-//! The effect profile of one release (docs/plan/trx-pkg-plan.md, Spike and
-//! acceptance B): per operation, per export it reaches, the statements those
-//! bindings reach and the tables and columns each reads, writes or locks.
+//! The effect profile of one release
+//! (docs/architecture/execution.md#host-run-routes): per operation, per export
+//! it reaches, the statements those bindings reach and the tables and columns
+//! each reads, writes or locks.
 //!
 //! Reachability is the release's component composition. An export reaches
 //! its own declared statements. A composed component also reaches each base

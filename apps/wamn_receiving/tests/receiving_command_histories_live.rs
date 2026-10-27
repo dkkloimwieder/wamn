@@ -936,10 +936,10 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
     let before = snapshot(db, &fixture).await?;
     // The caller holds `admin`, which has no permission row to remove, so the
     // fixture uses the role writer to revoke and invalidate each holder, then
-    // restore it after the denied call. Under docs/plan/workflows.md R3, a
-    // host drops grants on delivery of the invalidation, or at AUTH_TTL if
-    // delivery fails. Poll the replay for AUTH_PROPAGATION, so a delivery
-    // failure still fails the case.
+    // restore it after the denied call. Under
+    // `docs/architecture/execution.md#auth-memory`, a host drops grants on
+    // delivery of the invalidation, or at AUTH_TTL if delivery fails. Poll the
+    // replay for AUTH_PROPAGATION, so a delivery failure still fails the case.
     // A caller without a role holds no operation, and the denial names the
     // route's own operation.
     let auth = AuthChanges::connect(&AuthNats {

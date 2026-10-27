@@ -1,5 +1,5 @@
 //! `env rollback <coordinate> --reason <text>`: `apply` of the previous
-//! intended release (docs/plan/platform-deploy.md §11.2, R8).
+//! intended release (docs/architecture/overview.md#environment-lifecycle).
 //!
 //! The previous intended release is the newest `helm history` revision whose
 //! status is `deployed` or `superseded` and whose digest differs from the

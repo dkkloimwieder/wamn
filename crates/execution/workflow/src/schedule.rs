@@ -1,5 +1,5 @@
 //! UTC schedule evaluation and host-owned schedule workflow admission
-//! (docs/plan/workflows.md R3, R8, epic 2).
+//! (docs/architecture/execution.md#workflows).
 //!
 //! The task wakes at every minute boundary, reads the enabled schedule
 //! workflows of the applications its environment declares in one SELECT, and

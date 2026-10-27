@@ -381,10 +381,11 @@ pub(crate) async fn require_application(
             evidence.upgrade_stage.as_ref(),
         )?;
     }
-    // The predecessor recheck (docs/plan/platform-deploy.md §10.2 step 1): the
-    // installed packages and their data access are the predecessor the
-    // evidence was made against. `apply` holds the lifecycle lock, and the
-    // release the predecessor serves is the evidence's own digest.
+    // The predecessor recheck
+    // (docs/architecture/data-access.md#schema-and-definition-ownership): the
+    // installed packages and their data access are the predecessor the evidence
+    // was made against. `apply` holds the lifecycle lock, and the release the
+    // predecessor serves is the evidence's own digest.
     let installed = read_current_packages(tx, tenant).await?;
     ensure!(
         installed == evidence.predecessor_packages,

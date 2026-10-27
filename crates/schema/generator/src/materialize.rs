@@ -690,15 +690,15 @@ pub(crate) fn expected_files(package: &GeneratedPackage) -> Result<BTreeMap<Path
 }
 
 /// Write the generated TypeScript clients of the host routes
-/// (docs/plan/platform-ui.md §4.4 to §4.6).
+/// (docs/architecture/execution.md#host-run-routes).
 ///
 /// The clients are build output, so Git does not hold them
-/// (docs/plan/platform-deploy.md R10(1)). The contract is the directory
-/// `crates/catalog/model/src/host_route`. The application set's authored
-/// `contracts/` hold one operation, input, result and errors file per route.
-/// The control set has the same layout under `control/`. The routes come from
-/// the catalog's set, so each operation reaches the path the host serves it
-/// at.
+/// (docs/architecture/overview.md#application-ownership). The contract is the
+/// directory `crates/catalog/model/src/host_route`. The application set's
+/// authored `contracts/` hold one operation, input, result and errors file per
+/// route. The control set has the same layout under `control/`. The routes come
+/// from the catalog's set, so each operation reaches the path the host serves
+/// it at.
 ///
 /// `output_root` is a build output root, [`crate::host_route_client_output_root`]
 /// for the web packages. The application client goes to

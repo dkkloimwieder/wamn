@@ -1,5 +1,5 @@
 //! The qualification of a release as an OCI artifact
-//! (docs/plan/platform-deploy.md §8.2, §8.3, R12, contract D).
+//! (docs/architecture/overview.md#release-identity).
 //!
 //! `qualify-release` pushes one artifact after every case of a release has
 //! passed. It is an OCI image manifest of artifact type

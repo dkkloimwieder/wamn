@@ -158,7 +158,8 @@ pub fn select_retired_project_envs_sql() -> &'static str {
 /// rather than the one it hoped it wrote.
 ///
 /// A new row's `policy_name` is its env name, and a conflict keeps the stored
-/// one: the environment document owns it (docs/plan/platform-deploy.md R2).
+/// one: the environment document owns it
+/// (docs/architecture/overview.md#environment-lifecycle).
 pub fn upsert_project_env_sql() -> &'static str {
     "INSERT INTO registry.project_envs \
        (org, project, env, secret_name, secret_namespace, instance_suffix, disposable, \

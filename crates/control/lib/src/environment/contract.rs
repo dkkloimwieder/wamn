@@ -1,5 +1,5 @@
-//! Step 9 of `apply`: contract (docs/plan/platform-deploy.md §10.1 step 9,
-//! §10.4, R13, R16, R22 (3), (4), (7), epic decision D8).
+//! Step 9 of `apply`: contract
+//! (docs/architecture/overview.md#environment-lifecycle).
 //!
 //! Step 8 returned, so no pod of another release remains and no run is
 //! stranded. The verb removes the bindings of every release outside the live

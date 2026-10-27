@@ -3005,8 +3005,7 @@ async fn an_acquisition_binds_its_application_and_the_next_one_does_not_inherit_
 }
 
 /// The claim half of the cross-application refusal
-/// (`docs/plan/platform-config.md`, Invariants: `next_number` cannot be aimed
-/// at another application; the claim decides, not the SQL text).
+/// (docs/architecture/data-access.md#rendering).
 ///
 /// Two applications share the one pooled connection. Each transaction carries
 /// the application its host bound and never the other's: not the previous
@@ -3588,9 +3587,10 @@ async fn live_stream_reads_once_and_scopes_claims() {
     }
 }
 
-/// A session (signed roles) and a PAT (every held role) act with one role
-/// when they hold exactly one, with `admin` when they hold `admin`, and with
-/// none when they hold no role or two (docs/plan/workflows.md R3).
+/// A session (signed roles) and a PAT (every held role) act with one role when
+/// they hold exactly one, with `admin` when they hold `admin`, and with none
+/// when they hold no role or two
+/// (docs/architecture/execution.md#environment-workflows).
 #[test]
 fn session_and_pat_callers_act_with_their_single_role() {
     let grants = |roles: &[&str]| crate::auth_cache::PrincipalGrants {

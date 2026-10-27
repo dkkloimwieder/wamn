@@ -1,5 +1,5 @@
 //! Control authority: who may hold a control session of an org
-//! (docs/plan/platform-ui.md §4.3).
+//! (docs/architecture/execution.md#control-sessions).
 //!
 //! A control session is org-scoped and carries no application roles. Its
 //! audience is derived from the org, so nothing is configured per org. The

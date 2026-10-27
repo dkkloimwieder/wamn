@@ -1,5 +1,5 @@
 //! Author one immutable version of an environment workflow
-//! (docs/plan/workflows.md R8, epic 1).
+//! (docs/architecture/execution.md#environment-workflows).
 //!
 //! A workflow is environment data: its graph is a [`WiringDocument`], and the
 //! row lives in `catalog.workflows` of the environment's project database.
@@ -149,7 +149,8 @@ impl std::error::Error for AuthorWorkflowError {
     }
 }
 
-/// The identity a run of the workflow executes as (docs/plan/workflows.md R3).
+/// The identity a run of the workflow executes as
+/// (docs/architecture/execution.md#environment-workflows).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WorkflowExecution<'a> {
     /// The `workflow` user, with this role active.
@@ -176,7 +177,8 @@ impl<'a> WorkflowExecution<'a> {
     }
 }
 
-/// What starts a run of the workflow (docs/plan/workflows.md R3).
+/// What starts a run of the workflow
+/// (docs/architecture/execution.md#workflows).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WorkflowTrigger<'a> {
     /// The host route `workflow.start`.

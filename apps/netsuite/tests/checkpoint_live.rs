@@ -98,14 +98,14 @@ pub async fn invoke(
         wamn_schema_generator::operation_reference::AuthoredDocument::Wiring,
     )?;
     let wiring: wamn_catalog::WiringDocument = serde_json::from_value(document)?;
-    // The NetSuite pull is an environment workflow (docs/plan/workflows.md
-    // epic 2), authored, enabled and admitted at one due moment. Its run
-    // executes as the `workflow` user with its execution role, which holds
-    // exactly the operation of the graph that needs a grant: the consumer
-    // command of another package of the release.
+    // The NetSuite pull is an environment workflow
+    // (docs/architecture/execution.md#workflows), authored, enabled and
+    // admitted at one due moment. Its run executes as the `workflow` user with
+    // its execution role, which holds exactly the operation of the graph that
+    // needs a grant: the consumer command of another package of the release.
     let workflow_host = super::consumer_live::workflow_host(&admin, &database, manifest).await?;
     // The application `erp` holds the three packages of the release. Its name
-    // is no package (docs/plan/platform-config.md).
+    // is no package (docs/architecture/execution.md#workflows).
     let run = super::consumer_live::schedule_run(
         &database,
         &workflow_host,

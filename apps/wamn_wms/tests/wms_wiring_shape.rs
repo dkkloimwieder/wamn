@@ -16,7 +16,7 @@ fn read_json(path: &Path) -> Value {
 }
 
 /// THE WORKFLOW WIRING parses, and its graph is the one the spec describes
-/// (docs/plan/workflow-feature.md 4.4).
+/// (docs/architecture/execution.md#workflows).
 ///
 /// Three palette nodes joined by two edges. The move is not a node: it is the
 /// route that changes the packaging location, and that update's event starts

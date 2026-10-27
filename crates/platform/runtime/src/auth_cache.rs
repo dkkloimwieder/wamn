@@ -1,5 +1,5 @@
 //! The host's memory of the auth facts of a request
-//! (docs/plan/request-round-trips.md, issue 2).
+//! (docs/architecture/execution.md#auth-memory).
 //!
 //! Postgres stays the owner of every fact here. The memory is the local
 //! replica of the NATS KV bucket [`BUCKET`] on the scheduler NATS. The key

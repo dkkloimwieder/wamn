@@ -1,4 +1,5 @@
-//! The §3 check A7 of `docs/plan/platform-deploy.md` (`wamn-snz0.5`): one
+//! The release identity test of
+//! `docs/architecture/overview.md#release-identity` (`wamn-snz0.5`): one
 //! release published for two environments hashes to one digest.
 //!
 //! The serving manifest names no tenant, environment, route host or integer

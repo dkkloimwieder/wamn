@@ -715,9 +715,9 @@ fn a_described_member_carries_its_description_and_the_rest_are_unchanged() {
     );
 }
 
-/// Both host route clients are written below the output root, and a file
-/// that the contracts no longer generate is removed (docs/plan/platform-ui.md
-/// §4.6, docs/plan/platform-deploy.md R10(1)).
+/// Both host route clients are written below the output root, and a file that
+/// the contracts no longer generate is removed
+/// (docs/architecture/execution.md#host-run-routes).
 #[test]
 fn the_host_route_clients_are_written_below_the_output_root() {
     let root = std::env::temp_dir().join(format!("wamn-host-route-client-{}", std::process::id()));

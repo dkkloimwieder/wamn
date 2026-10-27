@@ -1,6 +1,6 @@
 //! Renders `deploy/platform/release` with `helm template` and checks what an
-//! environment's Helm release holds (docs/plan/platform-deploy.md §9.2, R6, R15;
-//! the render halves of assumptions A2 and A12).
+//! environment's Helm release holds
+//! (docs/architecture/overview.md#environment-lifecycle).
 //!
 //! The subchart is fetched from OCI by `helm dependency build`, so the test is
 //! ignored and needs `helm` and the network.

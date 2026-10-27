@@ -204,9 +204,9 @@ const NAMED_PROJECT_CONFIG_KEY: &str = "project";
 
 /// The name of one member's `statements` import in a composed component.
 ///
-/// The host binds each name to that member's own statement set, so the name
-/// is the member's identity, fixed at link (`docs/plan/trx-pkg-plan.md`,
-/// Per-member import instances).
+/// The host binds each name to that member's own statement set, so the name is
+/// the member's identity, fixed at link
+/// (docs/architecture/components.md#grouping-and-publication).
 #[cfg(feature = "wasm_component_model_implements")]
 #[derive(Clone, Debug)]
 pub struct NamedStatements(Arc<str>);
