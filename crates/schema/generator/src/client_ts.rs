@@ -579,7 +579,6 @@ fn write_sync(
     source.push_str(
         &template
             .replace("$ROW_ALIAS;", &alias)
-            .replace("$ID", &key)
             .replace("$CHANGES", &changes_name(operation)?)
             .replace(
                 "$CAP",
@@ -631,14 +630,6 @@ fn write_sync(
                     "PAGE_MAXIMUM".into()
                 } else {
                     format!("{}_PAGE_MAXIMUM", operation.name.to_uppercase())
-                },
-            )
-            .replace(
-                "$SNAPSHOTS",
-                &if generated {
-                    "snapshotVersions".into()
-                } else {
-                    format!("{query}SnapshotVersions")
                 },
             )
             .replace(

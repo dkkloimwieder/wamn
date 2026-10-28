@@ -20,14 +20,6 @@ pub(crate) mod wamn {
         ));
     }
 
-    /// Generated `receiving.load_receipt_screen` projection.
-    pub(crate) mod receiving_load_receipt_screen {
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../target/wamn/wamn_receiving/wamn/receiving_load_receipt_screen.rs"
-        ));
-    }
-
     /// Generated `receiving.load_purchase_order_history` projection.
     pub(crate) mod receiving_load_purchase_order_history {
         include!(concat!(

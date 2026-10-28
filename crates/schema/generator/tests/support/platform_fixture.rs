@@ -85,6 +85,27 @@ pub(crate) fn client_release() -> ClientContractIr {
     client_release_of(&generate_fixture())
 }
 
+/// The same authored view contract with an aliased root key.
+#[allow(dead_code, reason = "only the sync adapter tests need an aliased key")]
+pub(crate) fn line_key_release() -> ClientContractIr {
+    let mut release = client_release();
+    let read = &mut release
+        .models
+        .iter_mut()
+        .find(|model| model.name == "feed_line")
+        .unwrap()
+        .operations[0];
+    read.lists.as_mut().unwrap().key_field = vec!["line_id".to_owned()];
+    for fields in [
+        &mut read.result_fields,
+        &mut read.route.as_mut().unwrap().response.fields,
+    ] {
+        let field = fields.iter_mut().find(|field| field.path == "id").unwrap();
+        "line_id".clone_into(&mut field.path);
+    }
+    release
+}
+
 /// The release a test's own package publishes, with the fixture's routes.
 pub(crate) fn client_release_of(package: &GeneratedPackage) -> ClientContractIr {
     let contracts = contracts(package);

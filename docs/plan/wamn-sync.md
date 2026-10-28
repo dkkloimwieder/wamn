@@ -1005,6 +1005,7 @@ Each row names a measurable rule and its test boundary.
 | Assumption | Evidence or test | Consequence when it does not hold |
 | --- | --- | --- |
 | A long-open transaction permits one page of visible commits before xmin advances | Hold one transaction, commit more than one page, read, then release the held transaction | Later visible rows wait for xmin |
+| A row version is exact in the browser while xid8 stays below 2^53 | The generated version accessor reads the xmin string with `Number()`. A server reaches 2^53 only after about 9 quadrillion transactions | Two nearby versions compare as equal, and an older read can replace a newer row |
 | A live-query float sum is exact only for int32-range totals | The measurement sums integer `row_version`. `@tanstack/db` accepts no custom aggregates | Decimal or larger totals require a separate exact calculation |
 | Generated list pages accept 1–100 rows | `generate/validation.rs`, `validate_query`, fixes the minimum and maximum | A 20,000-row reference fill takes about 200 requests |
 | Retention covers the expected outage and recovery window | Retention declarations and host retention tests | Expired cursors require a fresh list |

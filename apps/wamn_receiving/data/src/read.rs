@@ -4,29 +4,12 @@ use crate::cursor::{CursorDirection, decode_cursor, encode_cursor};
 use crate::error::{AccessError, AllowedConstraints};
 use crate::statements::wamn::{
     location_list as location_sql, receiving_load_purchase_order_history as history_sql,
-    receiving_load_receipt_screen as screen_sql, receiving_purchase_order_summary as summary_sql,
+    receiving_purchase_order_summary as summary_sql,
 };
-use wamn_postgres_statements::{Connection, Numeric, Uuid};
+use wamn_postgres_statements::{Connection, Uuid};
 
 pub use location_sql::ListLocationsRow;
 pub use summary_sql::PurchaseOrderSummaryRow;
-
-/// One purchase order line of the receipt screen, with its order and item.
-#[derive(Debug)]
-pub struct ReceiptScreenLine {
-    pub purchase_order_id: Uuid,
-    pub purchase_order_number: String,
-    pub purchase_order_status: String,
-    pub supplier_id: Uuid,
-    pub row_version: i32,
-    pub line_id: Uuid,
-    pub line_number: i32,
-    pub item_id: Uuid,
-    pub item_number: String,
-    pub ordered_quantity: Numeric,
-    pub received_quantity: Numeric,
-    pub remaining_quantity: Numeric,
-}
 
 /// The largest page of one purchase order history read.
 const MAX_HISTORY_PAGE: i32 = 100;
@@ -108,51 +91,6 @@ pub async fn location_list(
             AccessError::from_statement("list locations", &source, AllowedConstraints::NONE)
         })?;
     Ok(rows)
-}
-
-/// Read one receipt screen row per purchase order line.
-///
-/// A missing order is not found. An order with no lines reads as no rows.
-pub async fn receipt_screen(
-    connection: &mut Connection,
-    id: Uuid,
-) -> Result<Vec<ReceiptScreenLine>, AccessError> {
-    let rows = screen_sql::load_receipt_screen(connection, id)
-        .await
-        .map_err(|source| {
-            AccessError::from_statement("load receipt screen", &source, AllowedConstraints::NONE)
-        })?;
-    receipt_screen_lines(rows)
-}
-
-/// The statement anchors on the order, so no row means no order, and an order
-/// with no lines comes back as one row with null line columns.
-fn receipt_screen_lines(
-    rows: Vec<screen_sql::LoadReceiptScreenRow>,
-) -> Result<Vec<ReceiptScreenLine>, AccessError> {
-    if rows.is_empty() {
-        return Err(AccessError::not_found("purchase_order does not exist"));
-    }
-    rows.into_iter()
-        .filter(|row| row.line_id.is_some())
-        .map(|row| {
-            let missing = || AccessError::internal("receipt screen line has a null column");
-            Ok(ReceiptScreenLine {
-                purchase_order_id: row.purchase_order_id,
-                purchase_order_number: row.purchase_order_number,
-                purchase_order_status: row.purchase_order_status,
-                supplier_id: row.supplier_id,
-                row_version: row.row_version,
-                line_id: row.line_id.ok_or_else(missing)?,
-                line_number: row.line_number.ok_or_else(missing)?,
-                item_id: row.item_id.ok_or_else(missing)?,
-                item_number: row.item_number.ok_or_else(missing)?,
-                ordered_quantity: row.ordered_quantity.ok_or_else(missing)?,
-                received_quantity: row.received_quantity.ok_or_else(missing)?,
-                remaining_quantity: row.remaining_quantity.ok_or_else(missing)?,
-            })
-        })
-        .collect()
 }
 
 /// Read the receiving totals for orders with the supplied supplier and status.
@@ -327,34 +265,5 @@ mod tests {
         let error = history_position(Some("not-a-cursor"), &record)
             .expect_err("a malformed cursor refuses");
         assert_eq!(error.error_type(), AccessErrorType::InvalidInput);
-    }
-
-    #[test]
-    fn a_missing_order_is_not_found_and_an_order_without_lines_reads_empty() {
-        let row = |line: Option<i32>| screen_sql::LoadReceiptScreenRow {
-            purchase_order_id: Uuid("00000000-0000-0000-0000-000000000001".to_owned()),
-            purchase_order_number: "PO-1".to_owned(),
-            purchase_order_status: "open".to_owned(),
-            supplier_id: Uuid("00000000-0000-0000-0000-000000000002".to_owned()),
-            row_version: 1,
-            line_id: line.map(|_| Uuid("00000000-0000-0000-0000-000000000003".to_owned())),
-            line_number: line,
-            item_id: line.map(|_| Uuid("00000000-0000-0000-0000-000000000004".to_owned())),
-            item_number: line.map(|_| "ITEM-1".to_owned()),
-            ordered_quantity: line.map(|_| Numeric("2".to_owned())),
-            received_quantity: line.map(|_| Numeric("0".to_owned())),
-            remaining_quantity: line.map(|_| Numeric("2".to_owned())),
-        };
-        let error = receipt_screen_lines(Vec::new()).expect_err("a missing order refuses");
-        assert_eq!(error.error_type(), AccessErrorType::NotFound);
-        assert!(receipt_screen_lines(vec![row(None)]).unwrap().is_empty());
-        let lines = receipt_screen_lines(vec![row(Some(1)), row(Some(2))]).unwrap();
-        assert_eq!(
-            lines
-                .iter()
-                .map(|line| line.line_number)
-                .collect::<Vec<_>>(),
-            [1, 2]
-        );
     }
 }

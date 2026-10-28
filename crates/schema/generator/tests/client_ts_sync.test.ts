@@ -26,6 +26,10 @@ import {
   screenKey,
   FEED_LINE_SCREEN_ROUTE,
 } from "../../../../web/sync-bench/src/generated/sync_fixture/feed_line.js";
+import {
+  screenCollection as lineCollection,
+  screenFeed as lineFeed,
+} from "../../../../web/sync-bench/src/generated/sync_line_key/feed_line.js";
 import type { Int64, JsonValue, Transport, WireRequest } from "../../../../web/runtime/src/index.js";
 
 const id = "00000000-0000-7000-8000-000000000001";
@@ -157,6 +161,44 @@ it("lists an authored view, follows an equal snapshot and deletes by the root id
   }
 });
 
+it("lists, follows and deletes a collection keyed on line_id", async () => {
+  const line = {
+    line_id: id,
+    order_id: id,
+    item_id: "item-1",
+    label: "line",
+    order_label: "open",
+    item_label: "item",
+    row_version: "4000",
+  };
+  const values: JsonValue[] = [
+    { item: [line], next_cursor: null, cursor: "c1" },
+    {
+      rows: [{ id, row_version: "4000", deleted: false, data: { ...line, order_label: "updated" } }],
+      next_cursor: "c2",
+      complete: true,
+    },
+    { rows: [{ id, row_version: "4001", deleted: true }], next_cursor: "c3", complete: true },
+  ];
+  const transport = {
+    async invoke() {
+      return { status: "completed", value: values.shift()! };
+    },
+  } as Transport;
+  const c = lineCollection(lineFeed(transport), { orderId: id }, { pollMs: 60_000 });
+  try {
+    await c.preload();
+    expect(c.get(id)).toEqual(expect.objectContaining({ lineId: id, orderLabel: "open" }));
+    expect(c.get(id)).not.toHaveProperty("id");
+    await c.utils.pull();
+    expect(c.get(id)).toEqual(expect.objectContaining({ lineId: id, orderLabel: "updated" }));
+    await c.utils.pull();
+    expect(c.size).toBe(0);
+  } finally {
+    await c.cleanup();
+  }
+});
+
 it("replaces equal snapshots and ignores lower snapshots for pulls and refills", async () => {
   const row: WidgetQueryRow = {
     id,
@@ -164,7 +206,7 @@ it("replaces equal snapshots and ignores lower snapshots for pulls and refills",
     note: null,
     makerId: null,
     editVersion: 4,
-    rowVersion: "9007199254740993",
+    rowVersion: "4003",
     createdAt: wire.created_at,
   };
   let rows = [row];
@@ -194,7 +236,7 @@ it("replaces equal snapshots and ignores lower snapshots for pulls and refills",
   try {
     await c.preload();
     expect(c.get(id)).toMatchObject(row);
-    next = { ...row, rowVersion: "9007199254740992", code: "standard" };
+    next = { ...row, rowVersion: "4002", code: "standard" };
     await c.utils.pull();
     expect(c.get(id)).toMatchObject(row);
     next = { ...row, code: "standard" };
@@ -203,15 +245,15 @@ it("replaces equal snapshots and ignores lower snapshots for pulls and refills",
     rows = [{ ...next, note: "equal refill" }];
     await c.utils.refill();
     expect(c.get(id)?.note).toBe("equal refill");
-    rows = [{ ...row, rowVersion: "9007199254740992" }];
+    rows = [{ ...row, rowVersion: "4002" }];
     await c.utils.refill();
     expect(c.get(id)?.note).toBe("equal refill");
-    next = { ...row, rowVersion: "9007199254740994", note: "newer" };
+    next = { ...row, rowVersion: "4004", note: "newer" };
     await c.utils.pull();
     expect(c.get(id)).toMatchObject(next);
     batch = [
-      { ...row, rowVersion: "9007199254740995", note: "held in batch" },
-      { ...row, rowVersion: "9007199254740994", note: "lower in batch" },
+      { ...row, rowVersion: "4005", note: "held in batch" },
+      { ...row, rowVersion: "4004", note: "lower in batch" },
     ];
     await c.utils.pull();
     expect(c.get(id)?.note).toBe("held in batch");

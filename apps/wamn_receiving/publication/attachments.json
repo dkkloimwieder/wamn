@@ -96,7 +96,7 @@
     "package-id": "wamn_receiving",
     "component": "receiving",
     "operation": "wamn-receiving:receiving/load-receipt-screen",
-    "definition-hash": "sha256:e22498fd97f0091387f4f54363bf62239f790859e66a455cbeca1788dc34debc",
+    "definition-hash": "sha256:523ee09cb1e99d5e9f2c2aed052a959ef24c1fafe4a1715254361ec32e2f801e",
     "definition": {
       "id": "receiving-load-receipt-screen-http",
       "type": "http",
@@ -109,7 +109,7 @@
       "input-schema": {
         "type": "array",
         "minItems": 1,
-        "maxItems": 100,
+        "maxItems": 1,
         "items": {
           "type": "object",
           "required": [
@@ -120,6 +120,26 @@
             "purchase_order_id": {
               "type": "string",
               "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "feed": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "cursor": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "limit": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "minimum": 1,
+                  "maximum": 100
+                }
+              }
             }
           }
         }
@@ -129,6 +149,58 @@
       "modes": ["pat", "session"]
     },
     "registered-operation": "wamn-receiving:receiving/load-receipt-screen"
+  },
+  "receiving-load-open-receipt-lines-http": {
+    "type": "http",
+    "package-id": "wamn_receiving",
+    "component": "receiving",
+    "operation": "wamn-receiving:receiving/load-open-receipt-lines",
+    "definition-hash": "sha256:efd2d29aac64e5c7d77bc9b404732741ca1c2ebbdc1c9966c7657f8412ae419a",
+    "definition": {
+      "id": "receiving-load-open-receipt-lines-http",
+      "type": "http",
+      "route": {
+        "path": "/receiving/load_open_receipt_lines"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 1,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "feed": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "cursor": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "limit": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "minimum": 1,
+                  "maximum": 100
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "modes": ["pat", "session"]
+    },
+    "registered-operation": "wamn-receiving:receiving/load-open-receipt-lines"
   },
   "receiving-load-purchase-order-history-http": {
     "type": "http",

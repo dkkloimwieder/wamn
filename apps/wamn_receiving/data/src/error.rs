@@ -143,10 +143,6 @@ impl AccessError {
         Self::new(AccessErrorType::InvalidInput, context).with_field(field)
     }
 
-    pub(crate) fn not_found(context: impl Into<Box<str>>) -> Self {
-        Self::new(AccessErrorType::NotFound, context)
-    }
-
     pub(crate) fn internal(context: impl Into<Box<str>>) -> Self {
         Self::new(AccessErrorType::InternalError, context)
     }

@@ -72,7 +72,7 @@ const OVERLAY_COMPONENT: &str = "client_acme_receiving";
 /// Domain of the platform principal emails in every test tenant.
 const PLATFORM_DOMAIN: &str = "example.invalid";
 // The base operation grants include the receiving summary projection.
-const BASE_OPERATIONS: [(&str, &str); 13] = [
+const BASE_OPERATIONS: [(&str, &str); 14] = [
     ("location_list", "wamn-receiving:location/list"),
     (
         "purchase_order_create",
@@ -92,6 +92,10 @@ const BASE_OPERATIONS: [(&str, &str); 13] = [
     (
         "receiving_load_purchase_order_history",
         "wamn-receiving:receiving/load-purchase-order-history",
+    ),
+    (
+        "receiving_load_open_receipt_lines",
+        "wamn-receiving:receiving/load-open-receipt-lines",
     ),
     (
         "receiving_load_receipt_screen",
@@ -228,7 +232,7 @@ struct JourneyAttachment {
 }
 
 // Deployment-owned route spellings live in this one publication table.
-const JOURNEY_ATTACHMENTS: [JourneyAttachment; 17] = [
+const JOURNEY_ATTACHMENTS: [JourneyAttachment; 18] = [
     JourneyAttachment {
         package_id: BASE_PACKAGE_ID,
         wiring_id: "location_list",
@@ -263,6 +267,11 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 17] = [
         package_id: BASE_PACKAGE_ID,
         wiring_id: "receiving_record_receipt",
         path: "/receiving/record_receipt",
+    },
+    JourneyAttachment {
+        package_id: BASE_PACKAGE_ID,
+        wiring_id: "receiving_load_open_receipt_lines",
+        path: "/receiving/load_open_receipt_lines",
     },
     JourneyAttachment {
         package_id: BASE_PACKAGE_ID,

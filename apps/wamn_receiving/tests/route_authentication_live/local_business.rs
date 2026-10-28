@@ -32,6 +32,86 @@ async fn command_histories() -> anyhow::Result<()> {
     result
 }
 
+/// Both screen reads return view lines, and closing an order removes its open lines.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+async fn receipt_screen_feeds_follow_open_orders() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&[
+        "WAMN_APPLICATION_COMPONENTS",
+        "WAMN_FLOW_HTTP_COMPONENT",
+        "WAMN_NATIVE_C_NATS_BIN",
+    ]);
+    let _lock = wamn_test_postgres::lock();
+    let system = wamn_test_postgres::database();
+    let project = wamn_test_postgres::database();
+    let scratch = ScratchRoot::create()?;
+    let application = start(system.url(), project.url(), scratch.path()).await?;
+    let result = async {
+        let (client, connection) = tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
+        let connection = tokio::spawn(connection);
+        super::bind_fixture_principal(&client).await?;
+        seed_acme_orders(&client).await?;
+        client.batch_execute(
+            "UPDATE receiving.purchase_order SET status = 'complete', row_version = row_version + 1
+                WHERE id = '00000000-0000-0000-0000-000000000721';
+             UPDATE receiving.purchase_order SET status = 'cancelled', row_version = row_version + 1
+                WHERE id = '00000000-0000-0000-0000-000000000722';
+             INSERT INTO receiving.purchase_order
+                (id, purchase_order_number, supplier_id, status, acme_inspection_required, acme_quality_status)
+             VALUES ('00000000-0000-0000-0000-000000000727', 'PO-FEED-EMPTY',
+                '00000000-0000-0000-0000-000000000730', 'open', false, 'not_required');"
+        ).await?;
+        let http = reqwest::Client::new();
+        let read = async |path: &str, input: Value| -> anyhow::Result<Value> {
+            let item = input.as_object().context("read input is an object")?;
+            let query = wamn_execution_contract::encode_read_query(item);
+            let response = http.get(format!("{}{path}?{query}", application.endpoint))
+                .header(reqwest::header::HOST, &application.route_host)
+                .bearer_auth(&application.bearer).send().await?;
+            let status = response.status();
+            let body: Value = response.json().await?;
+            ensure!(status.is_success(), "{path} returned {status}: {body}");
+            let value = &body[0]["value"];
+            ensure!(value.is_object(), "{path} refused the read: {body}");
+            Ok(value.clone())
+        };
+        let screen_path = "/receiving/load_receipt_screen";
+        for order in ["00000000-0000-0000-0000-000000000727", "00000000-0000-0000-0000-000000000999"] {
+            let page = read(screen_path, json!({"purchase_order_id": order})).await?;
+            ensure!(page["item"] == json!([]), "an empty or missing order returned lines: {page}");
+            ensure!(page["cursor"].is_string());
+        }
+        let page = read(screen_path, json!({"purchase_order_id": "00000000-0000-0000-0000-000000000725"})).await?;
+        let rows = page["item"].as_array().context("screen page rows")?;
+        ensure!(rows.len() == 2 && rows[0]["line_number"] == 1 && rows[1]["line_number"] == 2);
+        ensure!(rows.iter().all(|row| row["purchase_order_row_version"] == 1
+            && row["row_version"].is_string() && row.as_object().unwrap().values().all(|value| !value.is_null())));
+        let open_path = "/receiving/load_open_receipt_lines";
+        let page = read(open_path, json!({})).await?;
+        let rows = page["item"].as_array().context("open lines page rows")?;
+        let ids = rows.iter().map(|row| row["line_id"].as_str().unwrap()).collect::<std::collections::BTreeSet<_>>();
+        ensure!(ids == ["00000000-0000-0000-0000-000000000820", "00000000-0000-0000-0000-000000000823",
+            "00000000-0000-0000-0000-000000000824", "00000000-0000-0000-0000-000000000825",
+            "00000000-0000-0000-0000-000000000826"].into_iter().collect());
+        ensure!(rows.iter().all(|row| row["purchase_order_status"] == "open"));
+        let cursor = page["cursor"].as_str().context("open lines cursor")?;
+        client.execute("UPDATE receiving.purchase_order SET status = 'complete', row_version = row_version + 1 WHERE id = '00000000-0000-0000-0000-000000000725'", &[]).await?;
+        let changes = read(open_path, json!({"feed": {"cursor": cursor}})).await?;
+        let rows = changes["rows"].as_array().context("open lines changes")?;
+        ensure!(changes["complete"] == true && rows.len() == 2, "order close did not remove both lines: {changes}");
+        let ids = rows.iter().map(|row| row["id"].as_str().unwrap()).collect::<std::collections::BTreeSet<_>>();
+        ensure!(ids == ["00000000-0000-0000-0000-000000000825", "00000000-0000-0000-0000-000000000826"].into_iter().collect());
+        ensure!(rows.iter().all(|row| row["deleted"] == true && row.get("data").is_none()));
+        let page = read(open_path, json!({})).await?;
+        ensure!(page["item"].as_array().context("remaining open lines")?.len() == 3);
+        drop(client);
+        connection.await??;
+        Ok(())
+    }.await;
+    application.shutdown().await?;
+    result
+}
+
 /// The ACL is the entry, on both sides
 /// (docs/architecture/execution.md#routing-and-availability). A role that holds
 /// only Acme's record_receipt runs it, although the entry calls Receiving's
@@ -468,6 +548,7 @@ async fn start_with(
                 | "wamn-receiving:receipt/get"
                 | "wamn-receiving:receiving/record-receipt"
                 | "wamn-receiving:receiving/load-receipt-screen"
+                | "wamn-receiving:receiving/load-open-receipt-lines"
                 | "wamn-receiving:receiving/load-purchase-order-history"
                 | "wamn-receiving:receiving/purchase-order-summary"
                 | "wamn-receiving:location/list"
@@ -969,7 +1050,12 @@ async fn reads(application: &LocalApplication) -> anyhow::Result<()> {
         let body = response.json::<Value>().await?;
         ensure!(status.is_success(), "{path} returned {status}: {body}");
         ensure!(
-            body.to_string().contains("\"rows\":[{"),
+            body[0]["value"]["rows"]
+                .as_array()
+                .is_some_and(|rows| !rows.is_empty())
+                || body[0]["value"]["item"]
+                    .as_array()
+                    .is_some_and(|rows| !rows.is_empty()),
             "{path} answered no rows: {body}"
         );
     }

@@ -19,6 +19,8 @@ mod tests {
         include_str!("../../../apps/wamn_receiving/migrations/0001_initial.sql");
     const VIEWS_MIGRATION: &str =
         include_str!("../../../apps/wamn_receiving/migrations/0004_receiving_views.sql");
+    const WRITE_GUARD_MIGRATION: &str =
+        include_str!("../../../apps/wamn_receiving/migrations/0005_receipt_screen_write_guard.sql");
     const SCREEN_SQL: &str =
         include_str!("../../../apps/wamn_receiving/query/load_receipt_screen.sql");
     const SUMMARY_SQL: &str =
@@ -169,6 +171,173 @@ mod tests {
         history_entries: i64,
     }
 
+    /// Run alone on a quiet machine after rebuilding Receiving.
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL 18 and a quiet machine for feed measurements"]
+    async fn open_receipt_lines_feed_measurement() -> Result<()> {
+        use std::time::Instant;
+
+        const CHANGES: &str = include_str!(
+            "../../../apps/target/wamn/wamn_receiving/sql/receiving_load_open_receipt_lines/feed_changes.sql"
+        );
+        const OPEN_LINES: &str =
+            include_str!("../../../apps/wamn_receiving/query/load_open_receipt_lines.sql");
+        const RUNS: usize = 7;
+        const PAGE: usize = 100;
+        let mut server = wamn_test_infrastructure::postgres::start(&[])?;
+        let url = server
+            .create_database("receiving_feed_measurement")?
+            .url()
+            .to_owned();
+        let client = connect(&url).await?;
+        assert_postgres_18(&client).await?;
+        client
+            .batch_execute(
+                "CREATE SCHEMA receiving; \
+                 CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+                   NOINHERIT NOREPLICATION NOBYPASSRLS",
+            )
+            .await?;
+        client.batch_execute(MIGRATION).await?;
+        client.batch_execute(VIEWS_MIGRATION).await?;
+        client.batch_execute(WRITE_GUARD_MIGRATION).await?;
+        install_record_history(&client, MANIFEST).await?;
+        select_receiving_schema(&client).await?;
+        bind_actor(&client, FIXTURE_PRINCIPAL).await?;
+        client.batch_execute(
+            "INSERT INTO supplier (id, name) VALUES (md5('feed-supplier')::uuid, 'Feed supplier');
+             INSERT INTO item (id, item_number)
+                SELECT md5('feed-item-' || n)::uuid, 'FEED-ITEM-' || n FROM generate_series(1, 10000) AS n;
+             INSERT INTO purchase_order (id, purchase_order_number, supplier_id, status)
+                SELECT md5('feed-order-' || n)::uuid, 'FEED-PO-' || n, md5('feed-supplier')::uuid, 'open'
+                FROM generate_series(1, 10000) AS n;
+             INSERT INTO purchase_order_line (id, purchase_order_id, line_number, item_id, ordered_quantity)
+                SELECT md5('feed-line-' || n)::uuid, md5('feed-order-' || n)::uuid, 1,
+                       md5('feed-item-' || n)::uuid, 10 FROM generate_series(1, 10000) AS n;
+             ANALYZE receiving.item; ANALYZE receiving.purchase_order; ANALYZE receiving.purchase_order_line;
+             ANALYZE receiving.item_history; ANALYZE receiving.purchase_order_history;
+             ANALYZE receiving.purchase_order_line_history;"
+        ).await?;
+        let count: i64 = client
+            .query_one("SELECT count(*) FROM receipt_screen_line", &[])
+            .await?
+            .get(0);
+        ensure!(count == 10_000, "measurement needs 10,000 synthetic lines");
+        let changes = client.prepare(CHANGES).await?;
+        // Keep the generated bounds and affected CTE verbatim for its separate plan.
+        let (_, from) = CHANGES
+            .split_once("\nFROM (")
+            .context("feed snapshot carrier")?;
+        let (affected, _) = from
+            .split_once("), result AS (")
+            .context("feed affected CTE")?;
+        let affected = format!(
+            "SELECT bound.feed_end, page.change_id, page.change_transaction\nFROM ({affected}) SELECT change_id, change_transaction FROM affected\n) AS page ON true ORDER BY page.change_transaction, page.change_id;"
+        );
+        let affected = client
+            .prepare(&format!("EXPLAIN (ANALYZE, BUFFERS) {affected}"))
+            .await?;
+        let restricted = client.prepare(&format!(
+            "EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM ({}) AS result WHERE result.line_id = ANY($1::uuid[])",
+            OPEN_LINES.trim().trim_end_matches(';')
+        )).await?;
+        for (table, prefix, change) in [
+            (
+                "purchase_order_line",
+                "line",
+                "ordered_quantity = ordered_quantity + 1",
+            ),
+            ("purchase_order", "order", "row_version = row_version + 1"),
+            ("item", "item", "item_number = item_number || 'x'"),
+        ] {
+            for changed in [0_i32, 10, 1000] {
+                let mut totals = Vec::with_capacity(RUNS);
+                let mut first_calls = Vec::with_capacity(RUNS);
+                for run in 0..RUNS {
+                    let transaction: i64 = client
+                        .query_one(
+                            "SELECT pg_snapshot_xmin(pg_current_snapshot())::text::int8",
+                            &[],
+                        )
+                        .await?
+                        .get(0);
+                    if changed != 0 {
+                        let written = client.execute(&format!(
+                            "UPDATE {table} SET {change} WHERE id IN (SELECT md5('feed-{prefix}-' || n)::uuid FROM generate_series(1, $1::int4) AS n)"
+                        ), &[&changed]).await?;
+                        ensure!(written == u64::try_from(changed)?);
+                    }
+                    let start = Instant::now();
+                    let mut after = None::<Uuid>;
+                    let mut position = transaction;
+                    let mut seen = 0;
+                    let mut calls = 0;
+                    let mut first_keys = Vec::<Uuid>::new();
+                    loop {
+                        let call = Instant::now();
+                        let rows = client
+                            .query(&changes, &[&position, &after, &101_i64])
+                            .await?;
+                        if calls == 0 {
+                            first_calls.push(call.elapsed());
+                        }
+                        calls += 1;
+                        let rows = rows
+                            .iter()
+                            .filter(|row| row.get::<_, Option<Uuid>>("change_id").is_some())
+                            .collect::<Vec<_>>();
+                        let page = &rows[..rows.len().min(PAGE)];
+                        if calls == 1 {
+                            first_keys = page.iter().map(|row| row.get("change_id")).collect();
+                        }
+                        ensure!(
+                            page.iter()
+                                .all(|row| row.get::<_, Option<bool>>("present") == Some(true))
+                        );
+                        seen += page.len();
+                        if rows.len() <= PAGE {
+                            break;
+                        }
+                        let last = page.last().context("a cut page has a last key")?;
+                        position = last.get("change_transaction");
+                        after = last.get("change_id");
+                    }
+                    totals.push(start.elapsed());
+                    ensure!(
+                        seen == usize::try_from(changed)?,
+                        "{table}: expected {changed} changed lines, read {seen}"
+                    );
+                    if run + 1 == RUNS {
+                        println!("EXPLAIN affected ids: {table}, {changed} changed rows");
+                        for row in client
+                            .query(&affected, &[&transaction, &None::<Uuid>, &101_i64])
+                            .await?
+                        {
+                            println!("{}", row.get::<_, String>(0));
+                        }
+                        println!(
+                            "EXPLAIN restricted run: {table}, {changed} changed rows, {} page keys",
+                            first_keys.len()
+                        );
+                        for row in client.query(&restricted, &[&first_keys]).await? {
+                            println!("{}", row.get::<_, String>(0));
+                        }
+                    }
+                }
+                totals.sort_unstable();
+                first_calls.sort_unstable();
+                println!(
+                    "open receipt lines: table={table} changed={changed} runs={RUNS} first_call_median={:?} first_call_max={:?} drain_median={:?} drain_max={:?}",
+                    first_calls[RUNS / 2],
+                    first_calls[RUNS - 1],
+                    totals[RUNS / 2],
+                    totals[RUNS - 1]
+                );
+            }
+        }
+        Ok(())
+    }
+
     #[tokio::test]
     async fn receiving_views_read_lines_and_filtered_totals_with_column_grants() -> Result<()> {
         use wamn_schema_generator::{
@@ -189,6 +358,7 @@ mod tests {
             .await?;
         client.batch_execute(MIGRATION).await?;
         client.batch_execute(VIEWS_MIGRATION).await?;
+        client.batch_execute(WRITE_GUARD_MIGRATION).await?;
         client
             .batch_execute(
                 "INSERT INTO receiving.supplier (id, name) VALUES
@@ -233,15 +403,7 @@ mod tests {
                 .as_array()
                 .unwrap()
             {
-                // The screen left-joins its lines, so only its order values
-                // are never null.
-                let line = statement == "load_receipt_screen"
-                    && !field["name"]
-                        .as_str()
-                        .unwrap()
-                        .starts_with("purchase_order")
-                    && !matches!(field["name"].as_str(), Some("supplier_id" | "row_version"));
-                ensure!(field["nullable"] == line, "view row nullability: {field}");
+                ensure!(field["nullable"] == false, "view row nullability: {field}");
             }
             for field in operation["result"]["fields"].as_array().unwrap() {
                 ensure!(field["nullable"] == false, "nullable view result: {field}");
@@ -289,16 +451,8 @@ mod tests {
             ensure!(!access, "view reader can read base table {relation}");
         }
 
-        // The screen also reads its order row from the base table, so the
-        // owner runs it here.
-        client.batch_execute("RESET ROLE").await?;
         let empty = Uuid::from_u128(0x101);
-        let rows = client.query(SCREEN_SQL, &[&empty]).await?;
-        ensure!(
-            rows.len() == 1,
-            "an order with no lines reads one order row"
-        );
-        ensure!(rows[0].get::<_, Option<Uuid>>("line_id").is_none());
+        ensure!(client.query(SCREEN_SQL, &[&empty]).await?.is_empty());
         let missing = Uuid::from_u128(0x999);
         ensure!(client.query(SCREEN_SQL, &[&missing]).await?.is_empty());
         let order = Uuid::from_u128(0x102);
@@ -399,6 +553,7 @@ mod tests {
             .await?;
         client.batch_execute(MIGRATION).await?;
         client.batch_execute(VIEWS_MIGRATION).await?;
+        client.batch_execute(WRITE_GUARD_MIGRATION).await?;
         install_record_history(&client, MANIFEST).await?;
         client.batch_execute(OVERLAY_FIELDS_MIGRATION).await?;
         client.batch_execute(OVERLAY_INSPECTION_MIGRATION).await?;
@@ -568,6 +723,7 @@ mod tests {
             .await?;
         client.batch_execute(MIGRATION).await?;
         client.batch_execute(VIEWS_MIGRATION).await?;
+        client.batch_execute(WRITE_GUARD_MIGRATION).await?;
         install_record_history(&client, MANIFEST).await?;
         client.batch_execute(OVERLAY_FIELDS_MIGRATION).await?;
         client.batch_execute(OVERLAY_INSPECTION_MIGRATION).await?;
@@ -799,6 +955,7 @@ mod tests {
             .await
             .context("apply the exact Receiving migration")?;
         client.batch_execute(VIEWS_MIGRATION).await?;
+        client.batch_execute(WRITE_GUARD_MIGRATION).await?;
         install_record_history(&client, MANIFEST).await?;
         install_write_log(&client).await?;
         select_receiving_schema(&client).await?;

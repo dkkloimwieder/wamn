@@ -86,6 +86,15 @@ fn main() -> Result<()> {
         std::fs::write(root.join(name), file.bytes())?;
     }
 
+    let line_key = root.join("line-key");
+    std::fs::create_dir(&line_key)?;
+    for file in emit_ts_client(&fixture::line_key_release())? {
+        let name = Path::new(file.path())
+            .file_name()
+            .context("an emitted path names a file")?;
+        std::fs::write(line_key.join(name), file.bytes())?;
+    }
+
     // Exercise the same binding surfaces with each integer key wire type.
     for ty in ["int32", "int64"] {
         let mut release = fixture::client_release();

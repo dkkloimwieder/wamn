@@ -8,16 +8,10 @@ export type $ROWScope = Omit<$STEMRequest, "cursor" | "limit" | "sort" | "feed">
 export const $CAP = 1000;
 
 $PAGE_DECLARATION
-// Part of the wamn-nsufz workaround: the exact snapshot version of a change.
-const $SNAPSHOTS = new WeakMap<Change<$ROWRow>, Int64>();
-
 function $TO_CHANGE(change: $STEMChange): Change<$ROWRow> {
-  const converted: Change<$ROWRow> =
-    change.deleted || change.data === undefined
-      ? { id: change.id, row_version: Number(change.rowVersion), deleted: true }
-      : { id: change.id, row_version: Number(change.rowVersion), deleted: false, data: change.data };
-  $SNAPSHOTS.set(converted, change.rowVersion);
-  return converted;
+  return change.deleted || change.data === undefined
+    ? { id: change.id, row_version: Number(change.rowVersion), deleted: true }
+    : { id: change.id, row_version: Number(change.rowVersion), deleted: false, data: change.data };
 }
 
 /** Read pages up to the cap and follow changes from the first page's cursor. */
@@ -82,50 +76,11 @@ export function $PREFIXCollection(
   scope: $ROWScope,
   follow: { readonly pollMs?: number; readonly persistence?: Persistence } = {},
 ) {
-  // Workaround for wamn-nsufz until the wfe pin carries its fix: the package
-  // ignores an equal version, so accepted deliveries get a local order.
-  const delivery = Symbol();
-  type Delivered = $ROWRow & { readonly [delivery]?: number };
-  type Batch = Map<string | number, Delivered | null>;
-  let serial = 0;
-  const accept = (row: $ROWRow, pending: Batch): Delivered => {
-    const held = pending.has(row.$ID) ? pending.get(row.$ID) : c.get(row.$ID);
-    const accepted =
-      held != null && BigInt(row.rowVersion) < BigInt(held.rowVersion) ? held : { ...row, [delivery]: ++serial };
-    pending.set(row.$ID, accepted);
-    return accepted;
-  };
-  const ordered: Feed<$ROWRow, $ROWScope> = {
-    ...feed,
-    async list(...args) {
-      const page = await feed.list(...args);
-      const pending: Batch = new Map();
-      return { ...page, rows: page.rows.map((row) => accept(row, pending)) };
-    },
-    async changes(...args) {
-      const page = await feed.changes(...args);
-      const pending: Batch = new Map();
-      return {
-        ...page,
-        rows: page.rows.flatMap<Change<$ROWRow>>((change) => {
-          const held = pending.has(change.id) ? pending.get(change.id) : c.get(change.id);
-          if (change.deleted) {
-            if (held != null && BigInt($SNAPSHOTS.get(change) ?? change.row_version) < BigInt(held.rowVersion))
-              return [];
-            pending.set(change.id, null);
-            return [change];
-          }
-          return [{ ...change, data: accept(change.data, pending) }];
-        }),
-      };
-    },
-  };
-  const c: SyncCollection<$ROWRow> = collection(ordered, scope, {
+  return collection(feed, scope, {
     key: $PREFIXKey(scope),
-    $GET_KEYversion: (row) => (row as Delivered)[delivery] ?? 0,
+    $GET_KEYversion: (row) => Number(row.rowVersion),
     ...follow,
   });
-  return c;
 }
 
 /** Record a write for this model through the supplied outbox. */

@@ -18,7 +18,7 @@ manifest.Package {
             owner = "wamn_receiving"
             server_owned_fields = []
             field_text = {item_number = {label = "Item number", visible = True}}
-            audit_log = {columns = []}
+            audit_log = {columns = [], retention = "P30D"}
             operations = {}
         }
         location = manifest.Model("location", _schema) {
@@ -238,6 +238,7 @@ manifest.Package {
         }
         "receiving.load_receipt_screen" = manifest.Projection("receiving.load_receipt_screen") {
             label = "Receiving screen"
+            feed = True
             lists = {model = "purchase_order_line", key_field = "line_id", display_field = "item_number"}
             input: {
                 fields = [
@@ -262,7 +263,7 @@ manifest.Package {
                         label = "Status", visible = True
                     }
                     {path = "supplier_id", type = "uuid", nullable = False, label = "Supplier"}
-                    {path = "row_version", type = "int32", nullable = False, revision = True, label = "Revision", visible = True}
+                    {path = "purchase_order_row_version", type = "int32", nullable = False, revision = True, label = "Revision", visible = True}
                     {path = "line_id", type = "uuid", nullable = False}
                     {path = "line_number", type = "int32", nullable = False, label = "Line", visible = True}
                     {path = "item_id", type = "uuid", nullable = False}
@@ -272,7 +273,7 @@ manifest.Package {
                     {path = "remaining_quantity", type = "numeric", nullable = False, label = "Remaining", visible = True}
                 ]
             }
-            errors = ["invalid_input", "not_found", *_errors_after_input]
+            errors = ["invalid_input", *_errors_after_input]
             statements = {
                 load_receipt_screen = manifest.Statement("query", "load_receipt_screen") {
                     fetch = "bounded_list"
@@ -282,14 +283,64 @@ manifest.Package {
                         manifest.Value {name = "purchase_order_number", type = "text", nullable = False}
                         manifest.Value {name = "purchase_order_status", type = "text", nullable = False}
                         manifest.Value {name = "supplier_id", type = "uuid", nullable = False}
-                        manifest.Value {name = "row_version", type = "int32", nullable = False}
-                        manifest.Value {name = "line_id", type = "uuid", nullable = True}
-                        manifest.Value {name = "line_number", type = "int32", nullable = True}
-                        manifest.Value {name = "item_id", type = "uuid", nullable = True}
-                        manifest.Value {name = "item_number", type = "text", nullable = True}
-                        manifest.Value {name = "ordered_quantity", type = "numeric", nullable = True}
-                        manifest.Value {name = "received_quantity", type = "numeric", nullable = True}
-                        manifest.Value {name = "remaining_quantity", type = "numeric", nullable = True}
+                        manifest.Value {name = "purchase_order_row_version", type = "int32", nullable = False}
+                        manifest.Value {name = "line_id", type = "uuid", nullable = False}
+                        manifest.Value {name = "line_number", type = "int32", nullable = False}
+                        manifest.Value {name = "item_id", type = "uuid", nullable = False}
+                        manifest.Value {name = "item_number", type = "text", nullable = False}
+                        manifest.Value {name = "ordered_quantity", type = "numeric", nullable = False}
+                        manifest.Value {name = "received_quantity", type = "numeric", nullable = False}
+                        manifest.Value {name = "remaining_quantity", type = "numeric", nullable = False}
+                    ]
+                }
+            }
+        }
+        "receiving.load_open_receipt_lines" = manifest.Projection("receiving.load_open_receipt_lines") {
+            label = "Open receipt lines"
+            feed = True
+            lists = {model = "purchase_order_line", key_field = "line_id", display_field = "item_number"}
+            input.fields = []
+            result = {
+                class = "bounded_list"
+                fields = [
+                    {path = "purchase_order_id", type = "uuid", nullable = False}
+                    {path = "purchase_order_number", type = "text", nullable = False, label = "Order number", visible = True}
+                    {
+                        path = "purchase_order_status"
+                        type = "text"
+                        nullable = False
+                        values = ["open", "complete", "cancelled"]
+                        label = "Status", visible = True
+                    }
+                    {path = "supplier_id", type = "uuid", nullable = False, label = "Supplier"}
+                    {path = "purchase_order_row_version", type = "int32", nullable = False, revision = True, label = "Revision", visible = True}
+                    {path = "line_id", type = "uuid", nullable = False}
+                    {path = "line_number", type = "int32", nullable = False, label = "Line", visible = True}
+                    {path = "item_id", type = "uuid", nullable = False}
+                    {path = "item_number", type = "text", nullable = False, label = "Item", visible = True}
+                    {path = "ordered_quantity", type = "numeric", nullable = False, label = "Ordered", visible = True}
+                    {path = "received_quantity", type = "numeric", nullable = False, label = "Received", visible = True}
+                    {path = "remaining_quantity", type = "numeric", nullable = False, label = "Remaining", visible = True}
+                ]
+            }
+            errors = ["invalid_input", *_errors_after_input]
+            statements = {
+                load_open_receipt_lines = manifest.Statement("query", "load_open_receipt_lines") {
+                    fetch = "bounded_list"
+                    parameters = []
+                    row = [
+                        manifest.Value {name = "purchase_order_id", type = "uuid", nullable = False}
+                        manifest.Value {name = "purchase_order_number", type = "text", nullable = False}
+                        manifest.Value {name = "purchase_order_status", type = "text", nullable = False}
+                        manifest.Value {name = "supplier_id", type = "uuid", nullable = False}
+                        manifest.Value {name = "purchase_order_row_version", type = "int32", nullable = False}
+                        manifest.Value {name = "line_id", type = "uuid", nullable = False}
+                        manifest.Value {name = "line_number", type = "int32", nullable = False}
+                        manifest.Value {name = "item_id", type = "uuid", nullable = False}
+                        manifest.Value {name = "item_number", type = "text", nullable = False}
+                        manifest.Value {name = "ordered_quantity", type = "numeric", nullable = False}
+                        manifest.Value {name = "received_quantity", type = "numeric", nullable = False}
+                        manifest.Value {name = "remaining_quantity", type = "numeric", nullable = False}
                     ]
                 }
             }

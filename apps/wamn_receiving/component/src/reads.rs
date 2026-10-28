@@ -52,37 +52,6 @@ pub(super) mod location_list {
     }
 }
 
-pub(super) mod receiving_load_receipt_screen {
-    use super::{Connection, Uuid, error_detail, read};
-    use crate::exports::wamn_receiving::receiving::load_receipt_screen as contract;
-    include!("../../../target/wamn/wamn_receiving/wit/receiving_load_receipt_screen_codec.rs");
-
-    pub(super) async fn execute(
-        connection: &mut Connection,
-        request: contract::LoadReceiptScreenRequest,
-    ) -> Result<contract::LoadReceiptScreenResult, contract::LoadReceiptScreenError> {
-        read::receipt_screen(connection, Uuid(request.purchase_order_id.clone()))
-            .await
-            .map(|rows| contract::LoadReceiptScreenResult {
-                rows: rows
-                    .into_iter()
-                    .map(|value| row!(value, contract::LoadReceiptScreenRow))
-                    .collect(),
-            })
-            .map_err(|error| {
-                map_error(error.error_type().literal(), |key| {
-                    error_detail(
-                        &error,
-                        key,
-                        "receiving.load_receipt_screen",
-                        Some(("purchase_order_id", request.purchase_order_id.as_str())),
-                        None,
-                    )
-                })
-            })
-    }
-}
-
 pub(super) mod receiving_load_purchase_order_history {
     use super::{Connection, Uuid, error_detail, read};
     use crate::exports::wamn_receiving::receiving::load_purchase_order_history as contract;
@@ -156,15 +125,6 @@ location_list::export_operation!(
     location_list
 );
 
-receiving_load_receipt_screen::export_operation!(
-    crate::Component,
-    crate::exports::wamn_receiving::receiving::load_receipt_screen,
-    crate::wamn::node::types,
-    Connection::new(),
-    receiving_load_receipt_screen::execute,
-    receiving_load_receipt_screen
-);
-
 receiving_load_purchase_order_history::export_operation!(
     crate::Component,
     crate::exports::wamn_receiving::receiving::load_purchase_order_history,
@@ -185,17 +145,16 @@ receiving_purchase_order_summary::export_operation!(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        location_list as locations, receiving_load_receipt_screen as screen,
-        receiving_purchase_order_summary as summary,
-    };
+    use super::{location_list as locations, receiving_purchase_order_summary as summary};
     use crate::exports::wamn_receiving::{
         location::list as location_contract,
         receiving::{
             load_receipt_screen as screen_contract, purchase_order_summary as summary_contract,
         },
     };
-    use crate::generated::purchase_order::get::codec as get;
+    use crate::generated::{
+        purchase_order::get::codec as get, receiving_load_receipt_screen::codec as screen,
+    };
     use wamn_postgres_statements::{Numeric, Uuid};
 
     #[test]
@@ -260,6 +219,24 @@ mod tests {
     }
 
     #[test]
+    fn missing_orders_and_orders_without_lines_encode_empty_pages() {
+        for cursor in ["missing-order", "order-without-lines"] {
+            let output = [screen_contract::LoadReceiptScreenOutcome {
+                outcome: Ok(screen_contract::LoadReceiptScreenResult::Page(
+                    screen_contract::LoadReceiptScreenPage {
+                        item: vec![],
+                        next_cursor: None,
+                        cursor: cursor.to_owned(),
+                    },
+                )),
+            }];
+            let value: serde_json::Value = serde_json::from_str(&screen::encode(&output)).unwrap();
+            assert_eq!(value[0]["value"]["item"], serde_json::json!([]));
+            assert_eq!(value[0]["value"]["cursor"], cursor);
+        }
+    }
+
+    #[test]
     fn bounded_projection_rows_preserve_the_declared_wire_scalars() {
         let row = wamn_receiving_data_access::read::ListLocationsRow {
             id: Uuid("00000000-0000-0000-0000-000000000001".to_owned()),
@@ -277,12 +254,13 @@ mod tests {
             "a read outcome carries no request identity"
         );
 
-        let row = wamn_receiving_data_access::read::ReceiptScreenLine {
+        let row = wamn_receiving_data_access::generated::receiving_load_receipt_screen::Row {
             purchase_order_id: Uuid("00000000-0000-0000-0000-000000000002".to_owned()),
             purchase_order_number: "PO-1".to_owned(),
             purchase_order_status: "open".to_owned(),
             supplier_id: Uuid("00000000-0000-0000-0000-000000000003".to_owned()),
-            row_version: 4,
+            purchase_order_row_version: 4,
+            row_version: 4000,
             line_id: Uuid("00000000-0000-0000-0000-000000000004".to_owned()),
             line_number: 1,
             item_id: Uuid("00000000-0000-0000-0000-000000000005".to_owned()),
@@ -292,13 +270,18 @@ mod tests {
             remaining_quantity: Numeric("12.3400".to_owned()),
         };
         let output = [screen_contract::LoadReceiptScreenOutcome {
-            outcome: Ok(screen_contract::LoadReceiptScreenResult {
-                rows: vec![screen::row!(row, screen_contract::LoadReceiptScreenRow)],
-            }),
+            outcome: Ok(screen_contract::LoadReceiptScreenResult::Page(
+                screen_contract::LoadReceiptScreenPage {
+                    item: vec![screen::row!(row, screen_contract::LoadReceiptScreenRow)],
+                    next_cursor: None,
+                    cursor: "snapshot".to_owned(),
+                },
+            )),
         }];
         let value: serde_json::Value = serde_json::from_str(&screen::encode(&output)).unwrap();
-        let row = &value[0]["value"]["rows"][0];
-        assert_eq!(row["row_version"], 4, "a revision is an int32 number");
+        let row = &value[0]["value"]["item"][0];
+        assert_eq!(row["purchase_order_row_version"], 4);
+        assert_eq!(row["row_version"], "4000");
         assert_eq!(row["line_id"], "00000000-0000-0000-0000-000000000004");
         assert_eq!(row["ordered_quantity"], "12.3400");
 

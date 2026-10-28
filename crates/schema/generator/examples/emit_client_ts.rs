@@ -22,11 +22,17 @@ fn main() -> Result<()> {
     if packages.is_empty() {
         // The fixture reads the current `wamn build` output of
         // apps/platform_fixture, so this writes no package output.
-        return emit(
+        emit(
             &fixture::client_release(),
             "@wamn/sync-fixture-client",
             "0.0.0",
             &repository.join("web/sync-bench/src/generated/sync_fixture"),
+        )?;
+        return emit(
+            &fixture::line_key_release(),
+            "@wamn/sync-line-key-client",
+            "0.0.0",
+            &repository.join("web/sync-bench/src/generated/sync_line_key"),
         );
     }
     for package in packages {
