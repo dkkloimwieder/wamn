@@ -1808,8 +1808,10 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     // 8. host_exits_before_its_grace_period: a host pod with a pinned backlog
     // it can claim finishes the run and exits with code 0 before its grace
     // period (R20 (2)). The run turns claimable ten seconds after it is
-    // seeded, once the pod is draining. Its prior lease expired, so the
-    // draining host claims it again and runs it to a terminal status. A run of release B,
+    // seeded, once the pod is draining. The manual workflow is authored
+    // against H's real device, but this run pins A, which lacks that node.
+    // Reclaim resolves the workflow and terminalizes the release mismatch
+    // without fetching A's fake component. A run of release B,
     // claimable and ahead of it in the queue, stays queued: the draining host
     // claims no run of another release (R20 (1), (2)).
     let (system, system_task) = connect(&system_url).await?;
@@ -1823,6 +1825,43 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         .await?;
     system_task.abort();
     apply(&shown, "dev-short-drain").await?;
+    // A has no descriptor operations, so no workflow can gate against it.
+    // Cache H without deploying it, then use the normal authoring path.
+    let (drain_release, drain_digest) =
+        wamn_catalog::ServingManifest::from_canonical_bytes(&manifest_h)?;
+    environment::stage::write_release(&dev_url, &env_key, drain_digest.as_str(), &drain_release)
+        .await?;
+    let device = drain_release.components.iter()
+        .find(|component| component.descriptor.component == "device")
+        .context("H carries the real device")?;
+    let drain_workflow: wamn_catalog::WiringDocument = serde_json::from_value(json!({
+        "format-version":"0.1", "wiring-id":"drain-claimable", "version":1,
+        "entry":"device", "nodes":{"device":{
+            "component":"device", "interface-version":device.descriptor.interface_version,
+            "operation":device.descriptor.operations.keys().next().context("the device operation")?
+        }}, "edges":[]
+    }))?;
+    let (auth, _auth_forward) = integration::auth_changes(run).await?;
+    integration::enable_trigger(
+        &integration::WorkflowEnvironment {
+            system_url: &platform.system_database_url,
+            project_url: &dev_url,
+            scope: &dev_triple,
+            env_key: &env_key,
+            digest: drain_digest.as_str(),
+            applications: &shown.applications,
+            auth: &auth,
+        },
+        PACKAGE,
+        &drain_workflow,
+        "drain",
+        &[],
+        wamn_control::author_workflow::WorkflowTrigger::Manual,
+        None,
+    ).await?;
+    let drain_hash = drain_workflow.wiring_hash();
+    let drain_nodes = json!({"device":device.descriptor.component_digest}).to_string();
+    let drain_principal = wamn_project_state::workflow_user_id().to_string();
     // The new drain bound rolls the host pod, and both pods carry release A,
     // so apply's live set is A before the old pod is gone. Run 5 deleted the
     // old pod, already draining with no backlog, and read the run before it
@@ -1879,13 +1918,14 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     project
         .execute(
             "INSERT INTO wamn_run.runs \
-               (env_key, run_id, flow_id, flow_version, package_id, manifest_digest, environment, \
-                wiring_id, wiring_version, status, trigger_source, input_json, service_principal_id, \
-                durability_class) \
-             VALUES ($1, 'drain-claimable', 'orders', 1, $2, $3, 'dev', 'orders', 1, \
-                     'running', 'automation', '{}', '00000000-0000-0000-0000-000000000001', \
-                     'standard')",
-            &[&env_key, &PACKAGE, &digest],
+               (env_key, run_id, package_id, manifest_digest, environment, \
+                wiring_id, wiring_version, wiring_hash, status, trigger_source, input_json, \
+                durability_class, execution_principal_id, execution_role, invoked_by, \
+                invoked_by_user_id, node_digests_json) \
+             VALUES ($1, 'drain-claimable', $2, $3, 'dev', 'drain-claimable', 1, $4, \
+                     'running', 'manual', '{}', 'standard', $5::text::uuid, 'drain', 'manual', \
+                     $5::text::uuid, $6::text::jsonb)",
+            &[&env_key, &PACKAGE, &digest, &drain_hash.as_str(), &drain_principal, &drain_nodes],
         )
         .await?;
     project
@@ -2055,7 +2095,8 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
             "host_log_tail": log_tail}),
         exit_code == Some(0)
             && exited_after.is_some_and(|seconds| seconds < grace)
-            && !matches!(status.as_str(), "dispatched" | "running")
+            && wamn_run_state::RunStatus::from_sql(&status)
+                .is_some_and(wamn_run_state::RunStatus::is_terminal)
             && !queued
             && other_status == "dispatched"
             && other_queued,
