@@ -1,5 +1,5 @@
 //! Change feeds with typed record ids
-//! (`docs/plan/wamn-sync.md`, "Change feed (host)").
+//! (`docs/plan/wamn-sync.md`, "Query feed (host)").
 //!
 //! The cursor is opaque to the client: the URL-safe base64 of
 //! `<model>:<transaction>` or `<model>:<transaction>:<id>`. `transaction` is
