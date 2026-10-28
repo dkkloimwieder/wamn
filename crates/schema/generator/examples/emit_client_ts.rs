@@ -20,11 +20,8 @@ fn main() -> Result<()> {
         .unwrap();
     let packages: Vec<_> = std::env::args_os().skip(1).map(PathBuf::from).collect();
     if packages.is_empty() {
-        let fixture_root = repository.join("apps/platform_fixture");
-        wamn_schema_generator::materialize_package_from_catalog(
-            &fixture::catalog(),
-            &fixture_root,
-        )?;
+        // The fixture reads the current `wamn build` output of
+        // apps/platform_fixture, so this writes no package output.
         return emit(
             &fixture::client_release(),
             "@wamn/sync-fixture-client",
