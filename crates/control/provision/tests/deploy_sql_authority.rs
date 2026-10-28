@@ -2873,8 +2873,8 @@ fn the_platform_history_stays_out_of_audit_retention_reach_on_postgres() {
                AND acl.grantee = 'wamn_audit_retention'::regrole))",
     );
     assert_eq!(
-        reach, "t f 0 0 0",
-        "the audit retention role reaches the platform log (order: control \
+        reach, "t t 1 1 2",
+        "the audit retention role reaches only the write log in platform (order: control \
          DELETE on the P30D history table, platform USAGE, schema ACL \
          entries, relation ACL entries, column ACL entries)"
     );

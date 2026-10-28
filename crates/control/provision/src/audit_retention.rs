@@ -6,6 +6,8 @@
 //! prune. apply-package reads it to grant [`AUDIT_RETENTION_ROLE`] exactly the
 //! privileges that the verb needs, and the provisioning verifier reads it to
 //! check those grants.
+//! The same job prunes successful write-log claims after 30 days and keeps
+//! uncertain claims. The write log provides idempotency protection.
 
 use wamn_pg_core::{quote_ident, quote_literal};
 
@@ -23,6 +25,17 @@ pub const AUDIT_RETENTION_LOCK_SQL: &str =
 /// The history table columns that pruning reads and returns.
 pub const AUDIT_RETENTION_READ_COLUMNS: [&str; 4] =
     ["row_key", "position", "changed_at", "transaction_id"];
+
+/// Read only the age and completion state when pruning idempotency records.
+pub const WRITE_LOG_RETENTION_READ_COLUMNS: [&str; 2] = ["created_at", "result"];
+
+/// Expire successful claims after 30 days. Uncertain claims never expire.
+pub const WRITE_LOG_RETENTION_SQL: &str = "DELETE FROM platform.write_log \
+    WHERE created_at < transaction_timestamp() - interval '30 days' AND result IS NOT NULL";
+
+/// The optional write log target in databases that install the application schema.
+pub const WRITE_LOG_RETENTION_TARGET_SQL: &str = "SELECT 'platform'::text AS schema_name, \
+    'write_log'::text AS history_name WHERE to_regclass('platform.write_log') IS NOT NULL";
 
 /// Each relation of the current database whose log keeps its entries for n days.
 ///
@@ -71,7 +84,9 @@ SELECT log.schema_name, log.relation_name, log.history_name, log.days
 /// `USAGE` and `SELECT`, `INSERT`, and `UPDATE` on the pruning watermarks.
 /// The block revokes
 /// every privilege that the role holds on a schema or a relation, and then
-/// grants the exact set. A database without the role gets no change, like the
+/// grants the exact set. The write log also grants schema `USAGE`, `DELETE`,
+/// and `SELECT (created_at, result)` for its fixed 30-day success retention.
+/// A database without the role gets no change, like the
 /// run plane repair of the `wamn_run_retention` grants. The caller runs the block in the transaction that
 /// reconciles the log triggers, after it takes [`AUDIT_RETENTION_LOCK_SQL`].
 pub fn reconcile_audit_retention_grants_sql() -> String {
@@ -129,6 +144,10 @@ pub fn reconcile_audit_retention_grants_sql() -> String {
            IF FOUND THEN \
              EXECUTE format('GRANT USAGE ON SCHEMA wamn_history TO %I', role_name); \
              EXECUTE format('GRANT SELECT, INSERT, UPDATE ON TABLE wamn_history.pruning_watermarks TO %I', role_name); \
+           END IF; \
+           IF to_regclass('platform.write_log') IS NOT NULL THEN \
+             EXECUTE format('GRANT USAGE ON SCHEMA platform TO %I', role_name); \
+             EXECUTE format('GRANT DELETE, SELECT (created_at, result) ON TABLE platform.write_log TO %I', role_name); \
            END IF; \
          END $audit_retention_grants$;",
         role = quote_literal(AUDIT_RETENTION_ROLE),

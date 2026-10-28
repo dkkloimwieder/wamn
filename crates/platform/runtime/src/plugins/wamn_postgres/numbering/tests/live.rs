@@ -1039,6 +1039,16 @@ async fn live_set_counter_is_logged_by_its_request_id() {
     live.sequence(APPLICATION, "purchase_order", "P-{seq:po}")
         .await;
     let superuser = live.records().await;
+    superuser
+        .batch_execute(
+            "ALTER TABLE platform.write_log ADD CHECK (result IS NOT NULL); \
+             CREATE FUNCTION public.refuse_log_update() RETURNS trigger LANGUAGE plpgsql AS $$ \
+             BEGIN RAISE EXCEPTION 'the known result must not need an update'; END $$; \
+             CREATE TRIGGER refuse_log_update BEFORE UPDATE ON platform.write_log \
+             FOR EACH ROW EXECUTE FUNCTION public.refuse_log_update()",
+        )
+        .await
+        .unwrap();
     assert_eq!(
         live.set("logged", "purchase_order", "po", "", 10)
             .await
@@ -1082,4 +1092,17 @@ async fn live_set_counter_is_logged_by_its_request_id() {
         .expect("the counter row")
         .get(0);
     assert_eq!(updated_by, LIVE_PRINCIPAL);
+    assert_eq!(
+        live.refused("missing", "po", "", 5).await,
+        CounterSetRefusal::SequenceNotFound
+    );
+    let claims: i64 = superuser
+        .query_one("SELECT count(*) FROM platform.write_log", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(
+        claims, 1,
+        "replay keeps the result and refusal rolls back its claim"
+    );
 }

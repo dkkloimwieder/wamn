@@ -335,6 +335,26 @@ impl InvocationPolicy for NativePolicy {
             postgres
                 .begin_operation_transaction(&scope)
                 .await
+                .map(|transaction| {
+                    if self
+                        .resources
+                        .release
+                        .manifest()
+                        .routes
+                        .iter()
+                        .any(|route| {
+                            route.operation == operation
+                                && route.type_ == wamn_catalog::OperationType::Delete
+                        })
+                    {
+                        transaction.with_known_result(
+                            wamn_runtime::plugins::wamn_postgres::write_log::DELETED_RESULT
+                                .to_owned(),
+                        )
+                    } else {
+                        transaction
+                    }
+                })
                 .map_err(|error| anyhow::anyhow!("begin the item transaction: {error:?}"))
         }
         .await;

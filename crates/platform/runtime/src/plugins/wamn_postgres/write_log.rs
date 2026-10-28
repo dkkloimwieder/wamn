@@ -28,6 +28,9 @@ use super::operation_transaction::OperationTransaction;
 use super::resources::{StatementConnectionGuard, take_conn};
 use super::{PgError, WamnPostgres};
 
+/// The complete success body of a generated delete, before request correlation.
+pub const DELETED_RESULT: &str = r#"{"value":{"outcome":"deleted"}}"#;
+
 /// Insert the claim of one key, or nothing when a committed row holds the key.
 ///
 /// An uncommitted row of another transaction makes this insert wait until that
@@ -37,6 +40,25 @@ pub const CLAIM_SQL: &str = "INSERT INTO platform.write_log (operation, idempote
      VALUES ($1::text, $2::text, $3::bytea) \
      ON CONFLICT (operation, idempotency_key) DO NOTHING \
      RETURNING idempotency_key";
+
+/// Insert a known success result with a claim in the transaction of its work.
+const CLAIM_RESULT_SQL: &str = "INSERT INTO platform.write_log (operation, idempotency_key, request, result) \
+     VALUES ($1::text, $2::text, $3::bytea, $4::text) \
+     ON CONFLICT (operation, idempotency_key) DO NOTHING \
+     RETURNING idempotency_key";
+
+/// Bind a known result only when the claim and the work share a transaction.
+fn claim_statement(
+    mut params: Vec<Box<dyn ToSql + Sync + Send>>,
+    result: Option<&str>,
+) -> (&'static str, Vec<Box<dyn ToSql + Sync + Send>>) {
+    if let Some(result) = result {
+        params.push(Box::new(result.to_owned()));
+        (CLAIM_RESULT_SQL, params)
+    } else {
+        (CLAIM_SQL, params)
+    }
+}
 
 /// Read the request and the result that a committed claim of one key holds.
 pub const READ_SQL: &str = "SELECT request, result FROM platform.write_log \
@@ -100,7 +122,11 @@ fn contract(operation: &'static str, detail: String) -> StoreError {
 /// Run one write log statement on `run`, and answer the begin of `intent`.
 ///
 /// `run` executes one statement and returns its rows.
-async fn begin_with<F, Fut>(intent: &Intent<'_>, run: F) -> Result<Begun, StoreError>
+async fn begin_with<F, Fut>(
+    intent: &Intent<'_>,
+    result: Option<&str>,
+    run: F,
+) -> Result<Begun, StoreError>
 where
     F: Fn(&'static str, Vec<Box<dyn ToSql + Sync + Send>>) -> Fut,
     Fut: Future<Output = Result<Vec<Row>, PgError>>,
@@ -109,16 +135,15 @@ where
     let key = intent.idempotency_key.to_owned();
     let request = intent.input_hash.as_bytes().to_vec();
     let id = intent_id(&operation, &key);
-    let claimed = run(
-        CLAIM_SQL,
+    let (sql, params) = claim_statement(
         vec![
             Box::new(operation.clone()),
             Box::new(key.clone()),
             Box::new(request.clone()),
         ],
-    )
-    .await
-    .map_err(storage("begin"))?;
+        result,
+    );
+    let claimed = run(sql, params).await.map_err(storage("begin"))?;
     if !claimed.is_empty() {
         return Ok(Begun::New(id));
     }
@@ -179,16 +204,15 @@ impl OperationTransaction {
         request: Vec<u8>,
     ) -> Result<OpaqueBegun, PgError> {
         let operation = log_operation(operation).to_owned();
-        let claimed = self
-            .log_statement(
-                CLAIM_SQL,
-                vec![
-                    Box::new(operation.clone()),
-                    Box::new(key.to_owned()),
-                    Box::new(request.clone()),
-                ],
-            )
-            .await?;
+        let (sql, params) = claim_statement(
+            vec![
+                Box::new(operation.clone()),
+                Box::new(key.to_owned()),
+                Box::new(request.clone()),
+            ],
+            self.known_result.as_deref(),
+        );
+        let claimed = self.log_statement(sql, params).await?;
         if !claimed.is_empty() {
             return Ok(OpaqueBegun::New);
         }
@@ -217,6 +241,9 @@ impl OperationTransaction {
 
     /// Stage the application's result text for the existing commit pipeline.
     pub(super) fn finish_opaque(&self, operation: &str, key: &str, result: String) {
+        if self.known_result.is_some() {
+            return;
+        }
         *self.finish.lock().expect("item finish lock poisoned") =
             Some([log_operation(operation).to_owned(), key.to_owned(), result]);
     }
@@ -296,11 +323,17 @@ pub(super) enum OpaqueBegun {
 #[async_trait]
 impl IntentStore for OperationTransaction {
     async fn begin(&self, intent: &Intent<'_>) -> Result<Begun, StoreError> {
-        begin_with(intent, |sql, params| self.log_statement(sql, params)).await
+        begin_with(intent, self.known_result.as_deref(), |sql, params| {
+            self.log_statement(sql, params)
+        })
+        .await
     }
 
     /// Stage the guest result for the owner's finish-and-commit pipeline.
     async fn finish(&self, id: &IntentId, outcome: &StoredOutcome) -> Result<(), StoreError> {
+        if self.known_result.is_some() {
+            return Ok(());
+        }
         let (operation, key) = claim_of("finish", id)?;
         let result = serde_json::to_string(&outcome.0)
             .map_err(|error| contract("finish", format!("encode outcome: {error}")))?;
@@ -393,7 +426,7 @@ impl IntentStore for WriteLogStore {
                 ),
             ));
         }
-        begin_with(intent, |sql, params| self.statement(sql, params)).await
+        begin_with(intent, None, |sql, params| self.statement(sql, params)).await
     }
 
     async fn finish(&self, id: &IntentId, outcome: &StoredOutcome) -> Result<(), StoreError> {

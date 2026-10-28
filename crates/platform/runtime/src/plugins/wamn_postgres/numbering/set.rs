@@ -219,7 +219,8 @@ impl WamnPostgres {
         let transaction = self
             .begin_operation_transaction(scope)
             .await
-            .map_err(|error| with_source("begin the set's transaction", error.into()))?;
+            .map_err(|error| with_source("begin the set's transaction", error.into()))?
+            .with_known_result(serde_json::json!({ "value": set.value }).to_string());
         let request =
             Sha256::digest(serde_json::to_vec(set).expect("a counter set serializes to JSON"))
                 .to_vec();
@@ -283,11 +284,6 @@ impl WamnPostgres {
                 return Err(with_source("set the counter", error.into()));
             }
         }
-        transaction.finish_opaque(
-            operation,
-            request_id,
-            serde_json::json!({ "value": set.value }).to_string(),
-        );
         transaction
             .commit()
             .await

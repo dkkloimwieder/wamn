@@ -759,10 +759,15 @@ async fn begin(
         open.settled = false;
         return Ok((Some(open), Begun::New(delivery)));
     }
-    let transaction = postgres
+    let mut transaction = postgres
         .begin_operation_transaction(&open.scope)
         .await
         .map_err(Refusal::Postgres)?;
+    if facts.release.manifest().routes.iter().any(|route| {
+        route.operation == open.operation && route.type_ == wamn_catalog::OperationType::Delete
+    }) {
+        transaction = transaction.with_known_result(super::write_log::DELETED_RESULT.to_owned());
+    }
     if !postgres.active_read(&open.scope) {
         match transaction
             .begin_opaque(&open.operation, &open.key, request)

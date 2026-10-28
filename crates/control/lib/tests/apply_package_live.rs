@@ -2050,26 +2050,30 @@ async fn audit_retention_grants(client: &Client) -> Vec<String> {
         .collect()
 }
 
-/// The audit retention grants on the history table of one P<n>D relation.
+/// The history grants of one P<n>D relation and the fixed write log grants.
 fn retention_grants_on(history: &str) -> Vec<String> {
     vec![
         format!("column inventory.{history}.changed_at SELECT"),
         format!("column inventory.{history}.position SELECT"),
         format!("column inventory.{history}.row_key SELECT"),
         format!("column inventory.{history}.transaction_id SELECT"),
+        "column platform.write_log.created_at SELECT".to_owned(),
+        "column platform.write_log.result SELECT".to_owned(),
         format!("relation inventory.{history} DELETE"),
+        "relation platform.write_log DELETE".to_owned(),
         "relation wamn_history.pruning_watermarks INSERT".to_owned(),
         "relation wamn_history.pruning_watermarks SELECT".to_owned(),
         "relation wamn_history.pruning_watermarks UPDATE".to_owned(),
         "schema inventory.inventory USAGE".to_owned(),
+        "schema platform.platform USAGE".to_owned(),
         "schema wamn_history.wamn_history USAGE".to_owned(),
     ]
 }
 
 /// Level-2 spec tests 13 and 14: the declaration derives the history table,
 /// the log trigger with its retention, and the CDC exclusion. apply-package
-/// grants the audit retention role its privileges only on the history table of
-/// a P<n>D relation, and revokes them when the retention changes.
+/// grants history privileges only on the history table of a P<n>D relation,
+/// and revokes them when the retention changes. The fixed write log grants stay.
 #[tokio::test]
 async fn record_history_log_follows_the_declaration() {
     let url = locked_database::database(wamn_test_postgres::database);
@@ -2249,7 +2253,15 @@ async fn record_history_log_follows_the_declaration() {
     apply(&url, &package)
         .await
         .expect("an upgrade to unlimited retention revokes the retention grants");
-    assert_eq!(audit_retention_grants(&client).await, Vec::<String>::new());
+    assert_eq!(
+        audit_retention_grants(&client).await,
+        [
+            "column platform.write_log.created_at SELECT",
+            "column platform.write_log.result SELECT",
+            "relation platform.write_log DELETE",
+            "schema platform.platform USAGE",
+        ]
+    );
 
     // A migration cannot create a table with the reserved history suffix.
     set_package_identity(&package, "1.0.3", Some("1.0.2"));

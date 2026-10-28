@@ -22,11 +22,14 @@
 //! interior entry. It advances the pruning watermark in the same transaction.
 //! The daily schedule
 //! (`deploy/platform/audit-retention.example.yaml`) sets the retention precision.
+//! The final transaction also expires successful write-log claims after 30 days.
+//! Claims with a null result remain, regardless of age.
 
 use anyhow::{Context as _, bail};
 use tokio_postgres::{Client, NoTls};
 use wamn_control_provision::audit_retention::{
-    AUDIT_RETENTION_LOCK_SQL, AUDIT_RETENTION_TARGETS_SQL,
+    AUDIT_RETENTION_LOCK_SQL, AUDIT_RETENTION_TARGETS_SQL, WRITE_LOG_RETENTION_SQL,
+    WRITE_LOG_RETENTION_TARGET_SQL,
 };
 use wamn_control_provision::{
     CredentialGeneration, PlatformComponent, WorkloadRoleFamily, WorkloadRoleScope,
@@ -177,6 +180,17 @@ pub async fn prune(client: &mut Client) -> anyhow::Result<Vec<PrunedHistory>> {
                 })
             });
         let Some((schema, relation, history, days)) = next else {
+            if transaction
+                .query_opt(WRITE_LOG_RETENTION_TARGET_SQL, &[])
+                .await
+                .context("find the write log retention target")?
+                .is_some()
+            {
+                transaction
+                    .execute(WRITE_LOG_RETENTION_SQL, &[])
+                    .await
+                    .context("prune successful write log claims older than 30 days")?;
+            }
             transaction
                 .commit()
                 .await

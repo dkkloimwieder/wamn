@@ -425,6 +425,7 @@ CREATE TABLE IF NOT EXISTS platform.write_log (
     created_at      timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT write_log_pkey PRIMARY KEY (operation, idempotency_key)
 );
+CREATE INDEX IF NOT EXISTS write_log_created_at_idx ON platform.write_log (created_at);
 GRANT SELECT, INSERT ON platform.write_log TO wamn_app;
 GRANT UPDATE (result) ON platform.write_log TO wamn_app;
 GRANT DELETE ON platform.write_log TO wamn_app;

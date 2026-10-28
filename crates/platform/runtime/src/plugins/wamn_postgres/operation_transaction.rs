@@ -34,6 +34,7 @@ pub struct OperationTransaction {
     transaction: Arc<PgTransaction>,
     pub(super) claims: Arc<Mutex<Option<super::claims::transactions::BoundClaims>>>,
     pub(super) finish: Arc<Mutex<Option<[String; 3]>>>,
+    pub(super) known_result: Option<String>,
     causation: Option<wamn_event_wire::Causation>,
     /// The declared application that the transaction binds as
     /// `app.application`, read from host state at begin. Numbering resolves
@@ -66,6 +67,13 @@ impl std::fmt::Display for CommitFailure {
 impl std::error::Error for CommitFailure {}
 
 impl OperationTransaction {
+    /// Store a known success result in the claim, inside this transaction.
+    /// A refusal must still roll back the transaction and its claim.
+    pub fn with_known_result(mut self, result: String) -> Self {
+        self.known_result = Some(result);
+        self
+    }
+
     /// Read the WAL position on this operation's connection.
     pub(super) async fn wal_position(&self) -> Result<String, PgError> {
         self.start().await?;
@@ -308,6 +316,7 @@ impl WamnPostgres {
             transaction: Arc::new(transaction),
             claims: Arc::new(Mutex::new(Some(claims))),
             finish: Arc::new(Mutex::new(None)),
+            known_result: None,
             causation: if self.active_read(scope) {
                 None
             } else {

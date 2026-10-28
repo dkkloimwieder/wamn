@@ -711,6 +711,26 @@ fn audit_retention_requires_exact_grants_on_the_retention_targets() {
     };
     assert!(verify(&exact, &targets).is_ok());
     assert!(verify(&[], &[]).is_ok());
+    let write_log = vec![
+        role_acl("schema", "platform", "platform", "USAGE"),
+        role_acl("relation", "platform", "write_log", "DELETE"),
+        role_acl("column", "platform", "write_log.created_at", "SELECT"),
+        role_acl("column", "platform", "write_log.result", "SELECT"),
+    ];
+    let write_log_target = ("platform".to_string(), "write_log".to_string());
+    assert!(verify(&write_log, std::slice::from_ref(&write_log_target)).is_ok());
+    let mut combined = exact.clone();
+    combined.extend(write_log);
+    let mut combined_targets = targets.clone();
+    combined_targets.push(write_log_target);
+    assert!(verify(&combined, &combined_targets).is_ok());
+    combined.push(role_acl(
+        "column",
+        "platform",
+        "write_log.request",
+        "SELECT",
+    ));
+    assert!(verify(&combined, &combined_targets).is_err());
     for index in 0..exact.len() {
         let mut missing = exact.clone();
         missing.remove(index);

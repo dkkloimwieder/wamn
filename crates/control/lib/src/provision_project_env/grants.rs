@@ -2,7 +2,8 @@
 
 use anyhow::Context as _;
 use wamn_control_provision::audit_retention::{
-    AUDIT_RETENTION_READ_COLUMNS, AUDIT_RETENTION_TARGETS_SQL,
+    AUDIT_RETENTION_READ_COLUMNS, AUDIT_RETENTION_TARGETS_SQL, WRITE_LOG_RETENTION_READ_COLUMNS,
+    WRITE_LOG_RETENTION_TARGET_SQL,
 };
 
 use super::{
@@ -219,7 +220,10 @@ pub(super) async fn verify_role_grants(
                 // the retention verb reads, in this same database.
                 let dynamic_targets = if grant_set == StableGrantSet::AuditRetention {
                     client
-                        .query(AUDIT_RETENTION_TARGETS_SQL, &[])
+                        .query(
+                            &format!("SELECT schema_name, history_name FROM ({AUDIT_RETENTION_TARGETS_SQL}) AS history UNION ALL {WRITE_LOG_RETENTION_TARGET_SQL}"),
+                            &[],
+                        )
                         .await
                         .with_context(|| {
                             format!("read retention targets in database {database:?}")
@@ -353,8 +357,8 @@ fn verify_retention_grants(role: &str, database: &str, grants: &[RoleAcl]) -> an
 /// `retention_targets` lists those
 /// history tables as `(schema, history table)`, from the same query that the
 /// retention verb runs. So a grant on an `unlimited` history table, a wider
-/// grant, and a missing grant all refuse. A reserved schema or `platform`
-/// refuses in the grants and in the targets.
+/// grant, and a missing grant all refuse. The optional `platform.write_log`
+/// target grants only deletion and reads of its age and result.
 pub(super) fn verify_audit_retention_grants(
     role: &str,
     database: &str,
@@ -362,7 +366,10 @@ pub(super) fn verify_audit_retention_grants(
     retention_targets: &[(String, String)],
 ) -> anyhow::Result<()> {
     let mut expected = BTreeSet::new();
-    if !retention_targets.is_empty() {
+    if retention_targets
+        .iter()
+        .any(|(schema, history)| schema != "platform" || history != "write_log")
+    {
         expected.insert((
             "schema".to_string(),
             "wamn_history".to_string(),
@@ -391,7 +398,12 @@ pub(super) fn verify_audit_retention_grants(
             history.clone(),
             "DELETE".to_string(),
         ));
-        for column in AUDIT_RETENTION_READ_COLUMNS {
+        let columns = if schema == "platform" && history == "write_log" {
+            WRITE_LOG_RETENTION_READ_COLUMNS.as_slice()
+        } else {
+            AUDIT_RETENTION_READ_COLUMNS.as_slice()
+        };
+        for column in columns {
             expected.insert((
                 "column".to_string(),
                 schema.clone(),
@@ -401,22 +413,33 @@ pub(super) fn verify_audit_retention_grants(
         }
     }
     let actual = acl_tuples(grants);
-    for (kind, schema, _, _) in actual.iter().chain(&expected) {
+    for (kind, schema, object, privilege) in actual.iter().chain(&expected) {
         anyhow::ensure!(
             matches!(kind.as_str(), "schema" | "relation" | "column"),
             "stable role {role:?} carries non-retention {kind} ACL in database {database:?}"
         );
         anyhow::ensure!(
-            !schema.starts_with("pg_")
-                && !matches!(
-                    schema.as_str(),
-                    "public"
-                        | "information_schema"
-                        | "wamn_system"
-                        | "catalog"
-                        | "app"
-                        | "platform"
-                ),
+            (schema == "platform"
+                && matches!(
+                    (kind.as_str(), object.as_str(), privilege.as_str()),
+                    ("schema", "platform", "USAGE")
+                        | ("relation", "write_log", "DELETE")
+                        | (
+                            "column",
+                            "write_log.created_at" | "write_log.result",
+                            "SELECT"
+                        )
+                ))
+                || !schema.starts_with("pg_")
+                    && !matches!(
+                        schema.as_str(),
+                        "public"
+                            | "information_schema"
+                            | "wamn_system"
+                            | "catalog"
+                            | "app"
+                            | "platform"
+                    ),
             "stable role {role:?} carries audit-retention ACLs in reserved schema {schema:?} in database {database:?}"
         );
     }

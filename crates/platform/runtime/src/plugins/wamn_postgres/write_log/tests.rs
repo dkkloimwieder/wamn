@@ -117,6 +117,90 @@ fn intent<'a>(key: &'a str, input_hash: &'a str) -> Intent<'a> {
     }
 }
 
+/// A known result is inserted once, replays in full, and rolls back on refusal.
+#[tokio::test]
+async fn a_known_result_commits_in_the_claim_without_a_finish_update() {
+    let _lock = wamn_test_postgres::lock();
+    let (database, postgres) = env_key_database("writelogtx").await;
+    database
+        .execute(&[
+            "ALTER TABLE platform.write_log ADD CHECK (result IS NOT NULL); \
+             CREATE FUNCTION public.refuse_log_update() RETURNS trigger LANGUAGE plpgsql AS $$ \
+             BEGIN RAISE EXCEPTION 'the known result must not need an update'; END $$; \
+             CREATE TRIGGER refuse_log_update BEFORE UPDATE ON platform.write_log \
+             FOR EACH ROW EXECUTE FUNCTION public.refuse_log_update()",
+        ])
+        .unwrap();
+    postgres
+        .bind_session_claims(
+            SCOPE,
+            &SessionClaims {
+                env_key: "writelogtx".into(),
+                user_id: Some(LIVE_PRINCIPAL.into()),
+                operation: Some("base:widget/delete@1.0.0".into()),
+                ..SessionClaims::default()
+            },
+        )
+        .await
+        .unwrap();
+    let begin = async || {
+        postgres
+            .begin_operation_transaction(SCOPE)
+            .await
+            .unwrap()
+            .with_known_result(super::DELETED_RESULT.to_owned())
+    };
+    let outcome = StoredOutcome(json!({"value": {"outcome": "deleted"}}));
+    let first = begin().await;
+    let Begun::New(id) = first.begin(&intent("known", "h1")).await.unwrap() else {
+        panic!("new claim")
+    };
+    first.finish(&id, &outcome).await.unwrap();
+    first.commit().await.unwrap();
+    let retry = begin().await;
+    assert_eq!(
+        retry.begin(&intent("known", "h1")).await.unwrap(),
+        Begun::Finished(outcome),
+    );
+    retry.rollback().await.unwrap();
+
+    // Exercise the opaque entry path with the same known result and no UPDATE.
+    let opaque = begin().await;
+    assert!(matches!(
+        opaque
+            .begin_opaque("base:widget/delete@1", "opaque", vec![1])
+            .await
+            .unwrap(),
+        super::OpaqueBegun::New
+    ));
+    opaque.finish_opaque(
+        "base:widget/delete@1",
+        "opaque",
+        super::DELETED_RESULT.to_owned(),
+    );
+    opaque.commit().await.unwrap();
+    let replay = begin().await;
+    assert!(matches!(
+        replay.begin_opaque("base:widget/delete@2", "opaque", vec![1]).await.unwrap(),
+        super::OpaqueBegun::Finished(result) if result == r#"{"value":{"outcome":"deleted"}}"#
+    ));
+    replay.rollback().await.unwrap();
+    let refused = begin().await;
+    assert!(matches!(
+        refused.begin(&intent("refused", "h1")).await.unwrap(),
+        Begun::New(_)
+    ));
+    refused.rollback().await.unwrap();
+    assert_eq!(
+        database
+            .execute(&["SELECT count(*) FROM platform.write_log"])
+            .unwrap()
+            .trim(),
+        "2",
+        "replay keeps both success rows and refusal leaves no claim"
+    );
+}
+
 /// An operation with SQL claims in its item transaction: the claim commits
 /// with the result, a retry answers the stored result or a conflict, a
 /// rollback frees the key, and a second claim of a key waits for the first.

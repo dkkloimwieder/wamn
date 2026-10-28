@@ -397,6 +397,11 @@ After the component returns its result, the host queues the finish, causation me
 The guest statement needs its own trip because the finish stores the returned value.
 The [execution path](execution.md#native-dispatch) describes the statement and round-trip counts.
 
+Counter set and generated delete know their complete success result before the work.
+Their transactional claim inserts that result and skips the finish update.
+The delete result is `{"value":{"outcome":"deleted"}}`.
+A refusal still rolls back the work and the claim.
+
 The component reaches that transaction with `wamn_postgres_statements::operation_transaction()` of `wamn:postgres` 0.4.0, and its data access takes the `Transaction`.
 A `begin` inside such an operation refuses.
 An operation without SQL claims in two steps on a host connection of its own: begin before the call, and finish after it.
@@ -407,6 +412,12 @@ A refused item leaves no row, so its key is free again, and a later different re
 A retry that answers a stored result commits nothing, so no event publishes a second time.
 A new id comes from its insert's `RETURNING`, and nothing mints an id before the work.
 No application table implements or references the claim. The stored result names the rows that the work wrote, for example the `transaction_ids` of a WMS command.
+The result row stays stored, so each retry returns the original success answer in full.
+The existing `prune-record-history` job deletes successful claims older than 30 days, using `created_at`.
+Its expiry statement lives in `crates/control/provision/src/audit_retention.rs` and runs from `crates/control/lib/src/prune_record_history.rs`.
+Claims with a null result stay until they are resolved, regardless of age.
+The write log provides idempotency protection, which prevents repeated work for the same key.
+Record history carries the actor and provides the audit.
 
 The host also provides `wamn:operation/operation@0.1.0` for the composed application entry.
 Receiving calls this interface through its composed HTTP entry.
@@ -908,7 +919,7 @@ These relations are `user`, `role`, `user_role`, `permission`, `api_key`, and `e
 `environment` holds at most one row, the status of the environment that the host reads. No row means active.
 An integration is connector code, and `integration` columns hold its catalog code. A connection is a configured instance of an integration. An external system is the persistent identity that a group of connections reach.
 Each relation except `number_counter` also has a `wamn_record_history_log` trigger with the retention `unlimited`, and a history table.
-`number_counter` has no history table, because one entry per counter advance would double the writes of every create. The write log is its audit.
+`number_counter` has no history table, because one entry per counter advance doubles the writes of every create.
 The database separates environments. The platform account and configuration tables and their history tables have no `tenant_id`, row policy, or tenant key index.
 `role` keys on `name`. `user_role` keys on `(user_id, role_name)`, and `permission` keys on `(role_name, permission)`.
 Their foreign keys reference one column. `api_key` keys on `id`, and `key_hash` is unique in the database.

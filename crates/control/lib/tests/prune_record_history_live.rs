@@ -138,6 +138,77 @@ async fn age_history(client: &Client) {
 }
 
 #[tokio::test]
+async fn write_log_retention_removes_old_successes_and_keeps_uncertain_claims() {
+    let _lock = wamn_test_postgres::lock();
+    let (_database, mut client, _) = fixture().await;
+    let schema = include_str!("../../../../deploy/sql/app-schema.sql");
+    let start = schema
+        .find("CREATE TABLE IF NOT EXISTS platform.write_log")
+        .unwrap();
+    let grant = "GRANT DELETE ON platform.write_log TO wamn_app;";
+    let end = start + schema[start..].find(grant).unwrap() + grant.len();
+    client
+        .batch_execute("CREATE SCHEMA IF NOT EXISTS platform")
+        .await
+        .unwrap();
+    client.batch_execute(&schema[start..end]).await.unwrap();
+    client
+        .batch_execute(
+            "INSERT INTO platform.write_log (operation, idempotency_key, request, result, created_at) VALUES \
+             ('set', 'old-success', 'request', '{\"value\":7}', now() - interval '31 days'), \
+             ('set', 'old-uncertain', 'request', NULL, now() - interval '60 days'), \
+             ('set', 'recent-success', 'request', '{\"value\":8}', now() - interval '29 days'); \
+             DROP TRIGGER wamn_record_history_log ON inventory.widget;",
+        )
+        .await
+        .unwrap();
+    client
+        .batch_execute(
+            &wamn_control_provision::audit_retention::reconcile_audit_retention_grants_sql(),
+        )
+        .await
+        .unwrap();
+    client
+        .batch_execute("SET ROLE wamn_audit_retention")
+        .await
+        .unwrap();
+    assert!(
+        prune(&mut client).await.unwrap().is_empty(),
+        "expiry also runs without history targets"
+    );
+    assert!(
+        client
+            .query("SELECT request FROM platform.write_log", &[])
+            .await
+            .is_err()
+    );
+    client.batch_execute("RESET ROLE").await.unwrap();
+    let keys: Vec<String> = client
+        .query(
+            "SELECT idempotency_key FROM platform.write_log ORDER BY idempotency_key",
+            &[],
+        )
+        .await
+        .unwrap()
+        .iter()
+        .map(|row| row.get(0))
+        .collect();
+    assert_eq!(keys, ["old-uncertain", "recent-success"]);
+    let index: bool = client
+        .query_one(
+            "SELECT EXISTS (SELECT FROM pg_index i \
+               JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) \
+               WHERE i.indrelid = 'platform.write_log'::regclass AND a.attname = 'created_at' \
+                 AND i.indisvalid AND i.indnkeyatts = 1 AND i.indpred IS NULL)",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert!(index, "the retention cutoff has an index");
+}
+
+#[tokio::test]
 async fn pruning_every_entry_expires_the_cursor() {
     let _lock = wamn_test_postgres::lock();
     let (_database, mut client, changes) = fixture().await;
