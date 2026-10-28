@@ -292,6 +292,17 @@ The host resolves those identities to admitted SQL bytes and the operation's all
 Generation refuses PostgreSQL values that the production `wamn:postgres` type contract cannot represent.
 SQLx metadata is compilation data, not the SQL or package contract.
 
+The generator default for a base package command is one SQL statement that validates and writes.
+Review authored commands against the same rule. SQL returns the outcome and its details, and the guest maps them without repeating database predicates.
+
+Two exceptions keep statements separate. A parent lock precedes a fresh read, as in Receiving `record_receipt`.
+An operation that an overlay composes with a base operation also stays separate.
+A CTE is a named query within a statement.
+Under READ COMMITTED, a locking CTE retains the snapshot from before a lock wait. The next statement reads fresh data.
+
+Dependent writes within one statement use `RETURNING` dependencies, because textual order does not order their execution.
+This is a review rule and a generator default. It adds no build refusal.
+
 A model that removes rows declares `delete_mode`, and only the package that owns the relation declares it.
 The `delete` operation is a route, and it needs `delete_mode`. A model can declare `delete_mode` with no `delete` operation, when only its command SQL deletes rows.
 A `hard` delete removes the row, and the record history keeps its contents in the `before` image of the delete entry.

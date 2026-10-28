@@ -51,14 +51,6 @@ pub(crate) fn count(field: &str, value: &str) -> Result<Numeric, AccessError> {
         .ok_or_else(|| AccessError::field(AccessErrorType::InvalidInput, field))
 }
 
-/// Whether a re-spelled quantity is zero at any scale.
-pub(crate) fn is_zero(quantity: &Numeric) -> bool {
-    !quantity
-        .0
-        .bytes()
-        .any(|byte| byte.is_ascii_digit() && byte != b'0')
-}
-
 /// The type of a packaging. A pallet is one type of packaging.
 pub(crate) fn packaging_type(field: &str, value: &str) -> Result<String, AccessError> {
     match value {
@@ -112,9 +104,9 @@ mod tests {
     #[test]
     fn a_count_admits_zero_and_refuses_a_sign() {
         for zero in ["0", "0.00"] {
-            assert!(is_zero(&count("f", zero).unwrap()), "{zero}");
+            assert_eq!(count("f", zero).unwrap().0, zero);
         }
-        assert!(!is_zero(&count("f", "0.5").unwrap()));
+        assert_eq!(count("f", "0.5").unwrap().0, "0.5");
         for refused in ["", "-1", "-0", "1e3"] {
             assert!(count("f", refused).is_err(), "{refused:?} must refuse");
         }

@@ -1,19 +1,11 @@
-//! `inventory.adjust` -- a counted correction to one quantity row.
+//! `inventory.adjust` validates and writes under packaging locks.
 //!
-//! ```text
-//! → lock the packaging          (the serialization point)
-//! → compare expected_row_version to observed
-//! → read the (packaging, product, status) balance
-//! → write the transaction: the difference between the count and the balance
-//! → set the balance to the count, or delete it at zero
-//! → bump the packaging's revision
-//! ```
+//! The first statement locks the parent packaging rows and returns any parent
+//! refusal. The second reads quantities with a fresh READ COMMITTED snapshot,
+//! validates them, and writes through `RETURNING` dependencies. A locking CTE
+//! alone cannot refresh the snapshot after a lock wait.
 //!
-//! A higher count is stock that appears and a lower count is stock that
-//! leaves, so the transaction row carries the sign in which side it sets
-//! (`insert_transaction.sql`). A count equal to the balance changes nothing
-//! and refuses. The generated codec claims the key in the write log and holds
-//! the transaction, so a retry answers the stored result.
+//! The generated codec holds the transaction and write log for exact replay.
 
 use serde::Deserialize;
 use wamn_postgres_statements::{Numeric, TimestampTz, Transaction, Uuid};
@@ -89,47 +81,17 @@ async fn run(
     command: &AdjustCommand,
     parsed: &Parsed,
 ) -> Result<AdjustResult, AccessError> {
-    // THE SERIALIZATION POINT.
-    let not_found = || {
-        AccessError::missing(
-            AccessErrorType::PackagingNotFound,
-            "value.packaging_id",
-            &parsed.packaging_id.0,
-        )
-    };
-    let locked = sql::lock_packaging(transaction, parsed.packaging_id.clone())
-        .await
-        .map_err(|e| error::from_statement(&e))?
-        .ok_or_else(not_found)?;
-    if locked.status == scalar::CONSUMED {
-        return Err(not_found());
-    }
-    if locked.row_version != command.expected_row_version {
-        return Err(AccessError::conflict(
-            command.expected_row_version,
-            locked.row_version,
-        ));
-    }
-
-    let quantity_not_found = || {
-        AccessError::missing(
-            AccessErrorType::QuantityNotFound,
-            "value.product_id",
-            &parsed.product_id.0,
-        )
-    };
-    sql::select_quantity(
+    let locked = sql::lock_packaging(
         transaction,
         parsed.packaging_id.clone(),
-        parsed.product_id.clone(),
-        parsed.status.clone(),
+        command.expected_row_version,
     )
     .await
-    .map_err(|e| error::from_statement(&e))?
-    .ok_or_else(quantity_not_found)?;
+    .map_err(|e| error::from_statement(&e))?;
+    error::command_outcome(&locked.outcome, &locked.detail.0)?;
 
-    // A count equal to the balance selects no row: nothing to change.
-    let written = sql::insert_transaction(
+    // This statement starts after the lock wait, so child reads see fresh data.
+    let written = sql::adjust(
         transaction,
         parsed.packaging_id.clone(),
         parsed.product_id.clone(),
@@ -139,44 +101,25 @@ async fn run(
         parsed.occurred_at.clone(),
     )
     .await
-    .map_err(|e| error::from_statement(&e))?
-    .ok_or_else(|| AccessError::field(AccessErrorType::InvalidInput, "value.quantity"))?;
-
-    // A balance row means stock is present, so a count of zero deletes it.
-    let adjusted_quantity = if scalar::is_zero(&parsed.quantity) {
-        sql::delete_quantity(
-            transaction,
-            parsed.packaging_id.clone(),
-            parsed.product_id.clone(),
-            parsed.status.clone(),
-        )
-        .await
-        .map_err(|e| error::from_statement(&e))?;
-        parsed.quantity.0.clone()
-    } else {
-        sql::set_quantity(
-            transaction,
-            parsed.packaging_id.clone(),
-            parsed.product_id.clone(),
-            parsed.status.clone(),
-            parsed.quantity.clone(),
-        )
-        .await
-        .map_err(|e| error::from_statement(&e))?
-        .map(|set| set.quantity.0)
-        .ok_or_else(quantity_not_found)?
+    .map_err(|e| error::from_statement(&e))?;
+    error::command_outcome(&written.outcome, &written.detail.0)?;
+    let (Some(transaction_id), Some(adjusted_quantity), Some(row_version), Some(packaging_status)) = (
+        written.transaction_id,
+        written.adjusted_quantity,
+        written.row_version,
+        written.status,
+    ) else {
+        return Err(AccessError::new(
+            AccessErrorType::InternalError,
+            serde_json::json!({}),
+        ));
     };
-
-    let touched = sql::touch_packaging(transaction, parsed.packaging_id.clone())
-        .await
-        .map_err(|e| error::from_statement(&e))?;
-
     Ok(AdjustResult {
-        transaction_ids: vec![written.id.0],
+        transaction_ids: vec![transaction_id.0],
         packaging_id: parsed.packaging_id.0.clone(),
-        adjusted_quantity,
-        packaging_status: touched.status,
-        row_version: touched.row_version,
+        adjusted_quantity: adjusted_quantity.0,
+        packaging_status,
+        row_version,
     })
 }
 

@@ -74,6 +74,8 @@ async fn operations_and_replay() -> anyhow::Result<()> {
         application.route_host.clone(),
         application.bearer.clone(),
     );
+    crate::inventory_commands_live::assert_outcomes(&admin).await?;
+    crate::inventory_commands_live::assert_fresh_reads(&admin, project.url()).await?;
     crate::wms_runtime_live::assert_contention_and_replay(&route, &runtime, initial_revision)
         .await?;
     crate::wms_runtime_live::assert_remaining_operations(&route, &runtime).await?;

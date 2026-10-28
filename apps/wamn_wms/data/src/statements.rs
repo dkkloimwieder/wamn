@@ -1,25 +1,9 @@
 //! The statement accessors of the WMS commands, materialized in the package.
 //! The generated operations include their own, in [`crate::generated`].
-//!
-//! Four of the five modules carry a `dead_code` expectation. A generated row
-//! mirrors the columns its statement returns, and a command does not always
-//! read all of them: an existence probe must still select something, and a
-//! write that ends `RETURNING` hands back a row the caller may want only in
-//! part. Decoding a column the command does not read still asserts that the
-//! column exists and has the declared type, which is part of what the
-//! statement contract buys, so the decode stays.
-//!
-//! The expectation belongs here and not in the generator. Whether a field is
-//! read is a fact about this crate, and the generator sees only the catalog,
-//! the manifest, and the authored SQL.
 
 /// Runtime projections carrying only admitted statement paths.
 pub(crate) mod wamn {
     /// Generated `inventory.adjust` transaction accessors.
-    #[expect(
-        dead_code,
-        reason = "an adjust reads the locked packaging's row_version and status, the transaction id, the quantity its update returns, and the revision its touch returns; it leaves the locked packaging's location_id, which only a move consults, the balance its existence read selects, which the transaction insert compares in SQL, and the ids its update and delete return"
-    )]
     pub(crate) mod inventory_adjust {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -36,10 +20,6 @@ pub(crate) mod wamn {
     }
 
     /// Generated `inventory.merge` transaction accessors.
-    #[expect(
-        dead_code,
-        reason = "a merge leaves the id and quantity of both the target quantity row it updates and the one it inserts, the ids of the source balance rows it deletes, and the row_version the consumed source returns. Each statement must return something. Of the two packagings it locks in id order it reads id, row_version and status, not location_id"
-    )]
     pub(crate) mod inventory_merge {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -60,10 +40,6 @@ pub(crate) mod wamn {
     }
 
     /// Generated `inventory.split` transaction accessors.
-    #[expect(
-        dead_code,
-        reason = "of the new packaging the split reads only the id create_packaging returns. It leaves the id and quantity of the quantity row it takes from and the one it places, and the id its own existence probe must select to ask whether the destination location is there. Of the source packaging it locks it reads row_version and status, not location_id"
-    )]
     pub(crate) mod inventory_split {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),

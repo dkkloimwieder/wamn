@@ -52,3 +52,6 @@ mod local_release;
 
 #[cfg(test)]
 mod local_take_offline;
+
+#[cfg(test)]
+mod inventory_commands_live;

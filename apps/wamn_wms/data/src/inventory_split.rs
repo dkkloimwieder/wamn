@@ -1,20 +1,11 @@
-//! `inventory.split` -- part of one quantity row moved onto a NEW packaging.
+//! `inventory.split` validates and writes under packaging locks.
 //!
-//! ```text
-//! → lock the source packaging     (the serialization point)
-//! → compare expected_row_version to observed
-//! → validate the destination
-//! → read the quantity row, then take from it (it must keep stock)
-//! → create the new packaging, place the quantity on it, write the transaction
-//! → bump the source's revision
-//! ```
+//! The first statement locks the parent packaging rows and returns any parent
+//! refusal. The second reads quantities with a fresh READ COMMITTED snapshot,
+//! validates them, and writes through `RETURNING` dependencies. A locking CTE
+//! alone cannot refresh the snapshot after a lock wait.
 //!
-//! The generated codec claims the key in the write log and holds the
-//! transaction, so a retry answers the stored result and creates no second
-//! packaging. The new packaging's id and the one transaction id come from their
-//! inserts' `RETURNING`. The new packaging takes the type the command names,
-//! which need not be the source's, and inherits the source's status -- a split
-//! of a held packaging does not release the hold. The source must keep stock.
+//! The generated codec holds the transaction and write log for exact replay.
 
 use serde::Deserialize;
 use wamn_postgres_statements::{Numeric, TimestampTz, Transaction, Uuid};
@@ -101,108 +92,47 @@ async fn run(
     command: &SplitCommand,
     parsed: &Parsed,
 ) -> Result<SplitResult, AccessError> {
-    // THE SERIALIZATION POINT.
-    let not_found = || {
-        AccessError::missing(
-            AccessErrorType::PackagingNotFound,
-            "value.source_packaging_id",
-            &parsed.source_packaging_id.0,
-        )
-    };
-    let locked = sql::lock_packaging(transaction, parsed.source_packaging_id.clone())
-        .await
-        .map_err(|e| error::from_statement(&e))?
-        .ok_or_else(not_found)?;
-    if locked.status == scalar::CONSUMED {
-        return Err(not_found());
-    }
-    if locked.row_version != command.expected_row_version {
-        return Err(AccessError::conflict(
-            command.expected_row_version,
-            locked.row_version,
-        ));
-    }
-
-    sql::validate_location(transaction, parsed.to_location_id.clone())
-        .await
-        .map_err(|e| error::from_statement(&e))?
-        .ok_or_else(|| {
-            AccessError::missing(
-                AccessErrorType::LocationNotFound,
-                "value.to_location_id",
-                &parsed.to_location_id.0,
-            )
-        })?;
-
-    // Read before taking, so the refusal can say which of two things is
-    // wrong: no such row, or a row that cannot spare what was asked.
-    let held = sql::select_quantity(
+    let locked = sql::lock_packaging(
         transaction,
         parsed.source_packaging_id.clone(),
-        parsed.product_id.clone(),
-        parsed.status.clone(),
+        command.expected_row_version,
     )
     .await
-    .map_err(|e| error::from_statement(&e))?
-    .ok_or_else(|| {
-        AccessError::missing(
-            AccessErrorType::QuantityNotFound,
-            "value.product_id",
-            &parsed.product_id.0,
-        )
-    })?;
-    sql::take_from_source(
+    .map_err(|e| error::from_statement(&e))?;
+    error::command_outcome(&locked.outcome, &locked.detail.0)?;
+
+    // This statement starts after the lock wait, so child reads see fresh data.
+    let written = sql::split(
         transaction,
         parsed.source_packaging_id.clone(),
         parsed.product_id.clone(),
         parsed.status.clone(),
         parsed.quantity.clone(),
-    )
-    .await
-    .map_err(|e| error::from_statement(&e))?
-    .ok_or_else(|| AccessError::insufficient("value.quantity", &held.quantity.0))?;
-
-    let created = sql::create_packaging(
-        transaction,
         command.new_packaging_code.clone(),
         parsed.new_packaging_type.clone(),
         parsed.to_location_id.clone(),
         parsed.occurred_at.clone(),
-        locked.status.clone(),
     )
     .await
     .map_err(|e| error::from_statement(&e))?;
-    sql::place_quantity(
-        transaction,
-        created.id.clone(),
-        parsed.product_id.clone(),
-        parsed.status.clone(),
-        parsed.quantity.clone(),
-    )
-    .await
-    .map_err(|e| error::from_statement(&e))?;
-    let written = sql::insert_transaction(
-        transaction,
-        parsed.product_id.clone(),
-        parsed.quantity.clone(),
-        parsed.source_packaging_id.clone(),
-        parsed.status.clone(),
-        created.id.clone(),
-        parsed.occurred_at.clone(),
-    )
-    .await
-    .map_err(|e| error::from_statement(&e))?;
-
-    let touched = sql::touch_source(transaction, parsed.source_packaging_id.clone())
-        .await
-        .map_err(|e| error::from_statement(&e))?;
-
+    error::command_outcome(&written.outcome, &written.detail.0)?;
+    let (Some(transaction_id), Some(new_packaging_id), Some(row_version), Some(source_status)) = (
+        written.transaction_id,
+        written.new_packaging_id,
+        written.row_version,
+        written.status,
+    ) else {
+        return Err(AccessError::new(
+            AccessErrorType::InternalError,
+            serde_json::json!({}),
+        ));
+    };
     Ok(SplitResult {
-        transaction_ids: vec![written.id.0],
+        transaction_ids: vec![transaction_id.0],
         source_packaging_id: parsed.source_packaging_id.0.clone(),
-        new_packaging_id: created.id.0,
-        source_status: touched.status,
-        row_version: touched.row_version,
+        new_packaging_id: new_packaging_id.0,
+        source_status,
+        row_version,
     })
 }
 

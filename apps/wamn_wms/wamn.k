@@ -171,17 +171,15 @@ manifest.Package {
             }
             statements = {
                 lock_packaging = manifest.Statement("command/inventory_adjust", "lock_packaging") {
-                    fetch = "optional_one"
-                    parameters = [manifest.uuid("packaging_id")]
-                    row = [manifest.uuid("location_id"), manifest.int32("row_version"), manifest.text("status")]
+                    fetch = "one"
+                    parameters = [manifest.uuid("packaging_id"), manifest.int32("expected_row_version")]
+                    row = [
+                        manifest.Value {name = "outcome", type = "text", nullable = False}
+                        manifest.Value {name = "detail", type = "json", nullable = False}
+                    ]
                 }
-                select_quantity = manifest.Statement("command/inventory_adjust", "select_quantity") {
-                    fetch = "optional_one"
-                    parameters = [manifest.uuid("packaging_id"), manifest.uuid("product_id"), manifest.text("status")]
-                    row = [manifest.numeric("quantity")]
-                }
-                insert_transaction = manifest.Statement("command/inventory_adjust", "insert_transaction") {
-                    fetch = "optional_one"
+                adjust = manifest.Statement("command/inventory_adjust", "adjust") {
+                    fetch = "one"
                     parameters = [
                         manifest.uuid("packaging_id")
                         manifest.uuid("product_id")
@@ -190,27 +188,14 @@ manifest.Package {
                         manifest.text("reason_code")
                         manifest.timestamptz("occurred_at")
                     ]
-                    row = [manifest.uuid("id")]
-                }
-                set_quantity = manifest.Statement("command/inventory_adjust", "set_quantity") {
-                    fetch = "optional_one"
-                    parameters = [
-                        manifest.uuid("packaging_id")
-                        manifest.uuid("product_id")
-                        manifest.text("status")
-                        manifest.numeric("quantity")
+                    row = [
+                        manifest.Value {name = "outcome", type = "text", nullable = False}
+                        manifest.Value {name = "detail", type = "json", nullable = False}
+                        manifest.Value {name = "transaction_id", type = "uuid", nullable = True}
+                        manifest.Value {name = "adjusted_quantity", type = "numeric", nullable = True}
+                        manifest.Value {name = "row_version", type = "int32", nullable = True}
+                        manifest.Value {name = "status", type = "text", nullable = True}
                     ]
-                    row = [manifest.uuid("id"), manifest.numeric("quantity")]
-                }
-                delete_quantity = manifest.Statement("command/inventory_adjust", "delete_quantity") {
-                    fetch = "one"
-                    parameters = [manifest.uuid("packaging_id"), manifest.uuid("product_id"), manifest.text("status")]
-                    row = [manifest.uuid("id")]
-                }
-                touch_packaging = manifest.Statement("command/inventory_adjust", "touch_packaging") {
-                    fetch = "one"
-                    parameters = [manifest.uuid("packaging_id")]
-                    row = [manifest.int32("row_version"), manifest.text("status")]
                 }
             }
         }
@@ -242,66 +227,23 @@ manifest.Package {
             }
             statements = {
                 lock_both_packagings = manifest.Statement("command/inventory_merge", "lock_both_packagings") {
-                    fetch = "bounded_list"
-                    parameters = [manifest.uuid("source_packaging_id"), manifest.uuid("target_packaging_id")]
+                    fetch = "one"
+                    parameters = [manifest.uuid("source_packaging_id"), manifest.uuid("target_packaging_id"), manifest.int32("expected_row_version")]
                     row = [
-                        manifest.uuid("id")
-                        manifest.uuid("location_id")
-                        manifest.int32("row_version")
-                        manifest.text("status")
+                        manifest.Value {name = "outcome", type = "text", nullable = False}
+                        manifest.Value {name = "detail", type = "json", nullable = False}
                     ]
                 }
-                select_source_quantity = manifest.Statement("command/inventory_merge", "select_source_quantity") {
-                    fetch = "bounded_list"
-                    parameters = [manifest.uuid("source_packaging_id")]
-                    row = [manifest.uuid("product_id"), manifest.numeric("quantity"), manifest.text("status")]
-                }
-                add_to_target = manifest.Statement("command/inventory_merge", "add_to_target") {
-                    fetch = "optional_one"
-                    parameters = [
-                        manifest.uuid("target_packaging_id")
-                        manifest.uuid("product_id")
-                        manifest.text("status")
-                        manifest.numeric("quantity")
+                merge = manifest.Statement("command/inventory_merge", "merge") {
+                    fetch = "one"
+                    parameters = [manifest.uuid("source_packaging_id"), manifest.uuid("target_packaging_id"), manifest.timestamptz("occurred_at")]
+                    row = [
+                        manifest.Value {name = "outcome", type = "text", nullable = False}
+                        manifest.Value {name = "detail", type = "json", nullable = False}
+                        manifest.Value {name = "transaction_ids", type = "json", nullable = False}
+                        manifest.Value {name = "row_version", type = "int32", nullable = True}
+                        manifest.Value {name = "status", type = "text", nullable = True}
                     ]
-                    row = [manifest.uuid("id"), manifest.numeric("quantity")]
-                }
-                place_on_target = manifest.Statement("command/inventory_merge", "place_on_target") {
-                    fetch = "one"
-                    parameters = [
-                        manifest.uuid("target_packaging_id")
-                        manifest.uuid("product_id")
-                        manifest.text("status")
-                        manifest.numeric("quantity")
-                    ]
-                    row = [manifest.uuid("id"), manifest.numeric("quantity")]
-                }
-                insert_transaction = manifest.Statement("command/inventory_merge", "insert_transaction") {
-                    fetch = "one"
-                    parameters = [
-                        manifest.uuid("product_id")
-                        manifest.numeric("quantity")
-                        manifest.uuid("source_packaging_id")
-                        manifest.text("status")
-                        manifest.uuid("target_packaging_id")
-                        manifest.timestamptz("occurred_at")
-                    ]
-                    row = [manifest.uuid("id")]
-                }
-                delete_source_quantity = manifest.Statement("command/inventory_merge", "delete_source_quantity") {
-                    fetch = "bounded_list"
-                    parameters = [manifest.uuid("source_packaging_id")]
-                    row = [manifest.uuid("id")]
-                }
-                consume_source = manifest.Statement("command/inventory_merge", "consume_source") {
-                    fetch = "one"
-                    parameters = [manifest.uuid("source_packaging_id")]
-                    row = [manifest.int32("row_version")]
-                }
-                touch_target = manifest.Statement("command/inventory_merge", "touch_target") {
-                    fetch = "one"
-                    parameters = [manifest.uuid("target_packaging_id")]
-                    row = [manifest.int32("row_version"), manifest.text("status")]
                 }
             }
         }
@@ -352,71 +294,33 @@ manifest.Package {
             }
             statements = {
                 lock_packaging = manifest.Statement("command/inventory_split", "lock_packaging") {
-                    fetch = "optional_one"
-                    parameters = [manifest.uuid("source_packaging_id")]
-                    row = [manifest.uuid("location_id"), manifest.int32("row_version"), manifest.text("status")]
-                }
-                select_quantity = manifest.Statement("command/inventory_split", "select_quantity") {
-                    fetch = "optional_one"
-                    parameters = [
-                        manifest.uuid("source_packaging_id")
-                        manifest.uuid("product_id")
-                        manifest.text("status")
+                    fetch = "one"
+                    parameters = [manifest.uuid("source_packaging_id"), manifest.int32("expected_row_version")]
+                    row = [
+                        manifest.Value {name = "outcome", type = "text", nullable = False}
+                        manifest.Value {name = "detail", type = "json", nullable = False}
                     ]
-                    row = [manifest.numeric("quantity")]
                 }
-                take_from_source = manifest.Statement("command/inventory_split", "take_from_source") {
-                    fetch = "optional_one"
+                split = manifest.Statement("command/inventory_split", "split") {
+                    fetch = "one"
                     parameters = [
                         manifest.uuid("source_packaging_id")
                         manifest.uuid("product_id")
                         manifest.text("status")
                         manifest.numeric("quantity")
-                    ]
-                    row = [manifest.uuid("id"), manifest.numeric("quantity")]
-                }
-                validate_location = manifest.Statement("command/inventory_split", "validate_location") {
-                    fetch = "optional_one"
-                    parameters = [manifest.uuid("to_location_id")]
-                    row = [manifest.uuid("id")]
-                }
-                create_packaging = manifest.Statement("command/inventory_split", "create_packaging") {
-                    fetch = "one"
-                    parameters = [
                         manifest.text("new_packaging_code")
                         manifest.text("new_packaging_type")
                         manifest.uuid("to_location_id")
                         manifest.timestamptz("occurred_at")
-                        manifest.text("status")
                     ]
-                    row = [manifest.uuid("id"), manifest.int32("row_version"), manifest.text("status")]
-                }
-                place_quantity = manifest.Statement("command/inventory_split", "place_quantity") {
-                    fetch = "one"
-                    parameters = [
-                        manifest.uuid("new_packaging_id")
-                        manifest.uuid("product_id")
-                        manifest.text("status")
-                        manifest.numeric("quantity")
+                    row = [
+                        manifest.Value {name = "outcome", type = "text", nullable = False}
+                        manifest.Value {name = "detail", type = "json", nullable = False}
+                        manifest.Value {name = "transaction_id", type = "uuid", nullable = True}
+                        manifest.Value {name = "new_packaging_id", type = "uuid", nullable = True}
+                        manifest.Value {name = "row_version", type = "int32", nullable = True}
+                        manifest.Value {name = "status", type = "text", nullable = True}
                     ]
-                    row = [manifest.uuid("id"), manifest.numeric("quantity")]
-                }
-                insert_transaction = manifest.Statement("command/inventory_split", "insert_transaction") {
-                    fetch = "one"
-                    parameters = [
-                        manifest.uuid("product_id")
-                        manifest.numeric("quantity")
-                        manifest.uuid("source_packaging_id")
-                        manifest.text("status")
-                        manifest.uuid("new_packaging_id")
-                        manifest.timestamptz("occurred_at")
-                    ]
-                    row = [manifest.uuid("id")]
-                }
-                touch_source = manifest.Statement("command/inventory_split", "touch_source") {
-                    fetch = "one"
-                    parameters = [manifest.uuid("source_packaging_id")]
-                    row = [manifest.int32("row_version"), manifest.text("status")]
                 }
             }
         }

@@ -152,6 +152,28 @@ impl fmt::Display for AccessError {
 
 impl Error for AccessError {}
 
+/// Translate a command's SQL outcome without repeating its database predicate.
+pub(crate) fn command_outcome(outcome: &str, detail: &str) -> Result<(), AccessError> {
+    let kind = match outcome {
+        "ok" => return Ok(()),
+        "invalid_input" => AccessErrorType::InvalidInput,
+        "packaging_not_found" => AccessErrorType::PackagingNotFound,
+        "location_not_found" => AccessErrorType::LocationNotFound,
+        "quantity_not_found" => AccessErrorType::QuantityNotFound,
+        "insufficient_quantity" => AccessErrorType::InsufficientQuantity,
+        "concurrency_conflict" => AccessErrorType::ConcurrencyConflict,
+        _ => {
+            return Err(AccessError::new(
+                AccessErrorType::InternalError,
+                serde_json::json!({}),
+            ));
+        }
+    };
+    let detail = serde_json::from_str(detail)
+        .map_err(|_| AccessError::new(AccessErrorType::InternalError, serde_json::json!({})))?;
+    Err(AccessError::new(kind, detail))
+}
+
 /// The ONE translation of a statement failure into the contract vocabulary.
 ///
 /// Every unmapped kind lands on `internal_error` rather than leaking a class
