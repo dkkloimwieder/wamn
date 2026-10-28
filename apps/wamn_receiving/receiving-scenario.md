@@ -32,7 +32,8 @@ The history read has the grant `wamn-receiving:receiving/load-purchase-order-his
 
 The receipt screen reads `receiving.receipt_screen_line`, with one row per line, ordered by line number and line id.
 An order with no lines has no row in this view.
-The operation returns `not_found` if the order has no lines or does not exist.
+The operation reads the order row and its lines in one statement.
+An existing order with no lines returns an empty list, and a missing order returns `not_found`.
 The summary reads `receiving.purchase_order_receiving_summary`, with one row per order.
 Its required filters are `supplier_id` and `status`.
 An order with no lines has a zero line count and zero quantity totals.

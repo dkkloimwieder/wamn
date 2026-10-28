@@ -277,7 +277,7 @@ mod tests {
             "a read outcome carries no request identity"
         );
 
-        let row = wamn_receiving_data_access::read::LoadReceiptScreenRow {
+        let row = wamn_receiving_data_access::read::ReceiptScreenLine {
             purchase_order_id: Uuid("00000000-0000-0000-0000-000000000002".to_owned()),
             purchase_order_number: "PO-1".to_owned(),
             purchase_order_status: "open".to_owned(),

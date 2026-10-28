@@ -285,13 +285,13 @@ manifest.Package {
                         manifest.Value {name = "purchase_order_status", type = "text", nullable = False}
                         manifest.Value {name = "supplier_id", type = "uuid", nullable = False}
                         manifest.Value {name = "row_version", type = "int32", nullable = False}
-                        manifest.Value {name = "line_id", type = "uuid", nullable = False}
-                        manifest.Value {name = "line_number", type = "int32", nullable = False}
-                        manifest.Value {name = "item_id", type = "uuid", nullable = False}
-                        manifest.Value {name = "item_number", type = "text", nullable = False}
-                        manifest.Value {name = "ordered_quantity", type = "numeric", nullable = False}
-                        manifest.Value {name = "received_quantity", type = "numeric", nullable = False}
-                        manifest.Value {name = "remaining_quantity", type = "numeric", nullable = False}
+                        manifest.Value {name = "line_id", type = "uuid", nullable = True}
+                        manifest.Value {name = "line_number", type = "int32", nullable = True}
+                        manifest.Value {name = "item_id", type = "uuid", nullable = True}
+                        manifest.Value {name = "item_number", type = "text", nullable = True}
+                        manifest.Value {name = "ordered_quantity", type = "numeric", nullable = True}
+                        manifest.Value {name = "received_quantity", type = "numeric", nullable = True}
+                        manifest.Value {name = "remaining_quantity", type = "numeric", nullable = True}
                     ]
                 }
             }

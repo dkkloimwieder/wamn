@@ -233,7 +233,15 @@ mod tests {
                 .as_array()
                 .unwrap()
             {
-                ensure!(field["nullable"] == false, "nullable view row: {field}");
+                // The screen left-joins its lines, so only its order values
+                // are never null.
+                let line = statement == "load_receipt_screen"
+                    && !field["name"]
+                        .as_str()
+                        .unwrap()
+                        .starts_with("purchase_order")
+                    && !matches!(field["name"].as_str(), Some("supplier_id" | "row_version"));
+                ensure!(field["nullable"] == line, "view row nullability: {field}");
             }
             for field in operation["result"]["fields"].as_array().unwrap() {
                 ensure!(field["nullable"] == false, "nullable view result: {field}");
@@ -281,8 +289,16 @@ mod tests {
             ensure!(!access, "view reader can read base table {relation}");
         }
 
+        // The screen also reads its order row from the base table, so the
+        // owner runs it here.
+        client.batch_execute("RESET ROLE").await?;
         let empty = Uuid::from_u128(0x101);
-        ensure!(client.query(SCREEN_SQL, &[&empty]).await?.is_empty());
+        let rows = client.query(SCREEN_SQL, &[&empty]).await?;
+        ensure!(
+            rows.len() == 1,
+            "an order with no lines reads one order row"
+        );
+        ensure!(rows[0].get::<_, Option<Uuid>>("line_id").is_none());
         let missing = Uuid::from_u128(0x999);
         ensure!(client.query(SCREEN_SQL, &[&missing]).await?.is_empty());
         let order = Uuid::from_u128(0x102);
@@ -306,6 +322,7 @@ mod tests {
         ensure!(rows[0]["remaining_quantity"].as_f64() == Some(9.0));
         ensure!(rows[1]["remaining_quantity"].as_f64() == Some(2.0));
 
+        client.batch_execute("SET LOCAL ROLE wamn_app").await?;
         let summary = format!(
             "SELECT to_jsonb(row) FROM ({}) AS row",
             SUMMARY_SQL.trim().trim_end_matches(';')
