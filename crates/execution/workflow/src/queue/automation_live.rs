@@ -174,6 +174,8 @@ enum Mode {
     Admission,
     /// A guest that stays active until the adapter stops.
     Shutdown,
+    /// A claim without a workflow, followed by a valid workflow run.
+    MissingWorkflow,
     /// The virtualized `jsonata` node with these bytes.
     Jsonata(Vec<u8>),
 }
@@ -238,7 +240,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
       INSERT INTO catalog.packages (env_key,package_id,package_version,artifact_digest) VALUES ('{ENV_KEY}','automation','1.0.0','{HASH}');")).await?;
     let engine = Arc::new(build_engine(&[])?);
     let node = match &mode {
-        Mode::Admission => Node::echo(component_bytes()),
+        Mode::Admission | Mode::MissingWorkflow => Node::echo(component_bytes()),
         Mode::Shutdown => Node::echo(shutdown::component_bytes()),
         Mode::Jsonata(bytes) => jsonata::node(bytes.clone()),
     };
@@ -469,6 +471,16 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         },
     )
     .await?;
+    if let Mode::MissingWorkflow = mode {
+        return shutdown::missing_workflow(
+            &admin,
+            &workflows,
+            &request,
+            &first,
+            release.release().manifest_digest.as_str(),
+        )
+        .await;
+    }
     let run = workflows.start(&request).await?;
     assert!(admin.query_one(
         "SELECT EXISTS (SELECT FROM wamn_run.run_queue WHERE run_id=$1) AND to_regclass('application_data.run_queue') IS NULL",

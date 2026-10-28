@@ -370,7 +370,21 @@ async fn drain_one(
                 .context("claimed wiring version is not a positive u32")?;
             let queue_span =
                 queue_delivery_span(scope, &package_id, &run_id, &wiring_id, wiring_version);
-            let workflow = *workflow.context("claimed run has no environment workflow")?;
+            let Some(workflow) = workflow else {
+                let (result, fail_type) =
+                    workflow_resolution_refusal(WorkflowResolutionErrorType::NotFound, &run_id);
+                commit_completion(
+                    postgres,
+                    &run_id,
+                    lease_generation,
+                    &wamn_runtime::plugins::wamn_postgres::ProductionCompletion::failed(
+                        result, fail_type, None,
+                    ),
+                )
+                .await?;
+                return Ok(true);
+            };
+            let workflow = *workflow;
             let caller = Some(
                 postgres
                     .queued_run_caller(
@@ -607,7 +621,14 @@ fn workflow_refusal(error: &anyhow::Error, run_id: &str) -> Option<(serde_json::
         return Some((result, FailType::Terminal));
     }
     let refusal = error.downcast_ref::<WorkflowResolutionError>()?;
-    let fail_type = match refusal.error_type() {
+    Some(workflow_resolution_refusal(refusal.error_type(), run_id))
+}
+
+fn workflow_resolution_refusal(
+    error_type: WorkflowResolutionErrorType,
+    run_id: &str,
+) -> (serde_json::Value, FailType) {
+    let fail_type = match error_type {
         WorkflowResolutionErrorType::NotFound => FailType::UnresolvableName,
         WorkflowResolutionErrorType::HashMismatch => FailType::HashInvalidBytes,
         WorkflowResolutionErrorType::NodeNotInRelease => FailType::ForeignRevision,
@@ -619,7 +640,7 @@ fn workflow_refusal(error: &anyhow::Error, run_id: &str) -> Option<(serde_json::
         "code": "workflow_resolution_refused",
         "run-id": run_id,
     }});
-    Some((result, fail_type))
+    (result, fail_type)
 }
 
 async fn commit_completion(

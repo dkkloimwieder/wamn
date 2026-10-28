@@ -231,3 +231,78 @@ pub(super) async fn run(
 async fn active_drain_preserves_recovery_and_revokes_authority() -> anyhow::Result<()> {
     super::run_automation(super::Mode::Shutdown).await
 }
+
+pub(super) async fn missing_workflow(
+    admin: &tokio_postgres::Client,
+    workflows: &super::WorkflowsFixture,
+    request: &super::StartInput,
+    queue: &super::QueueService,
+    manifest_digest: &str,
+) -> anyhow::Result<()> {
+    let missing = "missing-workflow";
+    admin
+        .execute(
+            "INSERT INTO wamn_run.runs \
+             (env_key,run_id,flow_id,flow_version,status,package_id,manifest_digest, \
+              environment,wiring_id,wiring_version,input_json,trigger_source,durability_class) \
+             VALUES ($1,$2,'missing-workflow',1,'dispatched','automation',$3, \
+                     'test','echo-manual',1,'{}','http','standard')",
+            &[&super::ENV_KEY, &missing, &manifest_digest],
+        )
+        .await?;
+    // Put the claim without a workflow first in the durable queue.
+    admin
+        .execute(
+            "INSERT INTO wamn_run.run_queue (env_key,run_id,available_at,stream_seq) \
+             VALUES ($1,$2,'2000-01-01',0)",
+            &[&super::ENV_KEY, &missing],
+        )
+        .await?;
+    let next = workflows.start(request).await?;
+    let (_stop, stopping) = tokio::sync::watch::channel(true);
+    timeout(Duration::from_secs(5), queue.serve(stopping))
+        .await
+        .expect("the same drain fails the missing workflow and delivers the next run")?;
+    let row = admin
+        .query_one(
+            "SELECT status,fail_type,result_json::text FROM wamn_run.runs WHERE run_id=$1",
+            &[&missing],
+        )
+        .await?;
+    assert_eq!(row.get::<_, String>(0), "failed");
+    assert_eq!(row.get::<_, String>(1), "unresolvable-name");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&row.get::<_, String>(2))?,
+        serde_json::json!({"error": {
+            "code": "workflow_resolution_refused",
+            "run-id": missing,
+        }})
+    );
+    let row = admin
+        .query_one(
+            "SELECT status,result_json::text FROM wamn_run.runs WHERE run_id=$1",
+            &[&next],
+        )
+        .await?;
+    assert_eq!(row.get::<_, String>(0), "completed");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&row.get::<_, String>(1))?,
+        request.input
+    );
+    assert!(
+        !admin
+            .query_one(
+                "SELECT EXISTS (SELECT FROM wamn_run.run_queue WHERE run_id IN ($1,$2))",
+                &[&missing, &next],
+            )
+            .await?
+            .get::<_, bool>(0)
+    );
+    queue.revoke();
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn drain_fails_a_claim_without_workflow_and_continues() -> anyhow::Result<()> {
+    super::run_automation(super::Mode::MissingWorkflow).await
+}
