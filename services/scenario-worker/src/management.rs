@@ -56,8 +56,6 @@ use crate::authoring::{ControlAuthoringScope, GetReportResult, InternalAuthoring
 /// The principal columns are denormalized text, not a foreign key: principals
 /// live in the T1 system database while this command table lives in the project
 /// database, so a row has to stand on its own.
-/// `wamn_run.operator_run_actions` carries the same shape for the same
-/// reason.
 const INSERT_COMMAND_AUDIT_SQL: &str = "INSERT INTO catalog.authoring_command_audit \
     (env_key, command_id, command_type, principal_id, principal_type, \
      principal_subject, effective_role, org, project, environment, target_ref, \

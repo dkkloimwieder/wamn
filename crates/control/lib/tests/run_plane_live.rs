@@ -896,7 +896,6 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
         "effect_attempts",
         "effect_attempt_dispatches",
         "effect_attempt_outcomes",
-        "operator_run_actions",
         "run_queue",
     ] {
         assert!(
@@ -1182,14 +1181,14 @@ async fn current_noop_leg(su: &Client) {
         "current schema dry-run is a no-op: {:#?}",
         dry.actions
     );
-    // The record is the six `run-state.sql` tables plus `run_queue`, pinned by
+    // The record is the five `run-state.sql` tables plus `run_queue`, pinned by
     // `record_tables_are_pinned`. The authoring-test orchestration relations that
     // used to make this twelve left the record with wamn-0h0g.9.11.3 (805701ec);
     // this assertion had been unreachable behind an earlier leg's abort ever since.
     assert_eq!(
         dry.at_target.len(),
-        7,
-        "all seven run-plane record tables at target: {:?}",
+        6,
+        "all six run-plane record tables at target: {:?}",
         dry.at_target
     );
 

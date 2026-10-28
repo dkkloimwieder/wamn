@@ -25,9 +25,6 @@
 -- and CHECK (env_key <> '') forbids a ''-tenant row, so an empty claim
 -- matches nothing structurally.
 --
--- `wamn_run.operator_run_actions` (deploy/sql/run-state.sql) is the only other
--- relation in this class.
---
 -- SCOPE: the SKIP LOCKED queue + write-ahead + single-owner leases + janitor +
 -- reconciliation. Every row shares one tenant-global FIFO ordered by
 -- `(available_at, stream_seq, run_id)`; `priority` remains reserved (default 0).

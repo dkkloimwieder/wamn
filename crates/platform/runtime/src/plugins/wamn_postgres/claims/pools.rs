@@ -386,10 +386,9 @@ impl WamnPostgres {
     /// one is what stops executor-platform work and callable-HTTP admission
     /// sharing a pooled session.
     /// `env_key` is deliberately absent: platform credentials are scoped to the
-    /// project-environment, not to a tenant, and the two relations that still
-    /// carry a settable claim (`wamn_run.run_queue`,
-    /// `wamn_run.operator_run_actions`) are exactly the ones the guest cannot
-    /// reach — their claim is host-injected.
+    /// project-environment, not to a tenant. The remaining relation with a
+    /// settable claim is `wamn_run.run_queue`. The host injects that claim,
+    /// and the guest cannot reach the relation.
     pub(in super::super) async fn checkout_platform(
         &self,
         project: &str,

@@ -294,7 +294,7 @@ result_json,state_json,status,terminal_reason,updated_at', \
               AND NOT a.attisdropped \
               AND pg_catalog.has_column_privilege( \
                     'wamn_executor_platform', a.attrelid, a.attnum, 'UPDATE'); \
-           ASSERT actual = 'attempts,lease_expires_at,lease_generation,lease_owner', \
+           ASSERT actual = 'attempts,available_at,lease_expires_at,lease_generation,lease_owner', \
                   'run_queue UPDATE columns drifted: ' || coalesce(actual, '<none>'); \
            SELECT string_agg(a.attname, ',' ORDER BY a.attname) INTO actual \
              FROM pg_catalog.pg_attribute AS a \

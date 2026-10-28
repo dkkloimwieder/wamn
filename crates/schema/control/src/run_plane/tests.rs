@@ -466,8 +466,8 @@ fn observation_at_record_plans_a_noop() {
     assert!(plan.extra_columns.is_empty());
     assert_eq!(
         plan.at_target.len(),
-        7,
-        "all seven retained run-plane tables are at target"
+        6,
+        "all six retained run-plane tables are at target"
     );
 }
 
@@ -827,7 +827,6 @@ fn from_zero_plans_the_full_set_in_order() {
             "effect_attempts",
             "effect_attempt_dispatches",
             "effect_attempt_outcomes",
-            "operator_run_actions",
             "run_queue"
         ]
     );
@@ -1241,7 +1240,7 @@ fn missing_helpers_and_record_triggers_are_repaired() {
             .iter()
             .filter(|action| action.kind == RunPlaneActionKind::RepairHelperFunction)
             .count(),
-        5
+        4
     );
     let terminal_delete_guard = plan
         .actions
@@ -1284,16 +1283,12 @@ fn missing_helpers_and_record_triggers_are_repaired() {
             .sql
             .contains("runs_terminal_delete_only BEFORE DELETE ON")
     );
-    assert!(plan.actions.iter().any(|action| {
-        action.kind == RunPlaneActionKind::RepairTrigger
-            && action.target == "operator_run_actions.operator_run_actions_update_immutable"
-    }));
     assert_eq!(
         plan.actions
             .iter()
             .filter(|action| action.kind == RunPlaneActionKind::RepairTrigger)
             .count(),
-        17
+        14
     );
 }
 
@@ -1470,9 +1465,6 @@ fn schema_rewrite_is_dot_anchored() {
     // The prose mention of the wamn_run_store crate must survive verbatim.
     assert!(rewrite_schema(RUN_STATE_SQL, &schema).contains("wamn_run_store"));
     assert!(
-        rewrite_schema(RUN_STATE_SQL, &schema).contains("CREATE TABLE poc_f1.operator_run_actions")
-    );
-    assert!(
         !rewrite_schema(RUN_STATE_SQL, &schema).contains("SET search_path = pg_catalog, wamn_run")
     );
     assert!(
@@ -1548,9 +1540,5 @@ fn observation_sql_is_pinned() {
     assert!(select_run_plane_helper_functions_sql().contains("pg_get_functiondef"));
     assert!(
         select_run_plane_helper_functions_sql().contains("reject_immutable_effect_fact_change")
-    );
-    assert!(
-        select_run_plane_helper_functions_sql()
-            .contains("reject_immutable_operator_run_action_change")
     );
 }

@@ -50,8 +50,8 @@ pub(crate) fn execution_input_sql(run_alias: &str) -> String {
 /// the RETIRED tenant keying: `wamn-0h0g.22.6` re-keyed `runs`' floor onto
 /// `wamn_authority.tenant_key(env_key) =
 /// wamn_authority.current_tenant_key()`, and the `app.env_key` claim survives
-/// only on `operator_run_actions` and `run_queue`. A GUC-shaped predicate has
-/// one failure mode no amount of care removes: `current_setting(_, true)`
+/// only on `run_queue`. A GUC-shaped predicate has one failure mode no amount
+/// of care removes: `current_setting(_, true)`
 /// returns NULL when the claim was never injected, `env_key = NULL` is NULL,
 /// and the statement reports ZERO ROWS DELETED with no error — measured on
 /// PostgreSQL 18.6 as `DELETE 0` under the dedicated retention role

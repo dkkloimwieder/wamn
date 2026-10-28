@@ -152,7 +152,7 @@ async fn install_control_plane_residency(su: &Client) {
 ///
 /// **Why the residency is the discriminator.** A post-check that reached the
 /// other plane's record could pass while the plane it guards has drifted. So
-/// this asserts both directions: the seven PROJECT record tables are at target,
+/// this asserts both directions: the six PROJECT record tables are at target,
 /// and the control-plane relation is neither counted as a record table, nor
 /// named by any action, nor amputated — the project reconciler must leave the
 /// other plane's record exactly as it found it.
@@ -215,7 +215,7 @@ pub(super) async fn two_plane_residency_leg(su: &Client) {
         .await
         .expect("read-only third reconcile");
     assert!(dry.is_noop(), "dry-run drift: {:#?}", dry.actions);
-    // …and the post-check names the PROJECT record exactly: the six run-state
+    // …and the post-check names the PROJECT record exactly: the five run-state
     // tables plus run_queue, with the co-resident control relation excluded.
     let mut at_target = dry.at_target.clone();
     at_target.sort();
@@ -226,7 +226,6 @@ pub(super) async fn two_plane_residency_leg(su: &Client) {
             "effect_attempt_outcomes",
             "effect_attempts",
             "environment_policies",
-            "operator_run_actions",
             "run_queue",
             "runs",
         ],
@@ -241,7 +240,6 @@ pub(super) async fn two_plane_residency_leg(su: &Client) {
         "effect_attempts",
         "effect_attempt_dispatches",
         "effect_attempt_outcomes",
-        "operator_run_actions",
         "run_queue",
     ] {
         assert!(

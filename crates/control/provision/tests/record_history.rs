@@ -70,7 +70,6 @@ fn fresh_run_history_stamps_rows() {
         INSERT INTO wamn_run.effect_attempts (env_key,attempt_id,run_id,root_plan_hash,current_plan_hash,local_node_id,source_artifact_hash,requirement_name,occurrence,seq,generation_fact_type,attempt_deadline_at,attempt_input_ref) VALUES ('history','11111111-1111-4111-8111-111111111111','run','sha256:'||repeat('a',64),'sha256:'||repeat('a',64),'node','sha256:'||repeat('a',64),'database',0,0,'not-required',now()+interval '1 hour','input');
         INSERT INTO wamn_run.effect_attempt_dispatches (env_key,attempt_id,attempt_started_at,run_id,frame_id,local_node_id,occurrence) SELECT env_key,attempt_id,attempt_started_at,run_id,frame_id,local_node_id,occurrence FROM wamn_run.effect_attempts;
         INSERT INTO wamn_run.effect_attempt_outcomes (env_key,attempt_id,dispatched_at,outcome_status) SELECT env_key,attempt_id,dispatched_at,'success' FROM wamn_run.effect_attempt_dispatches;
-        INSERT INTO wamn_run.operator_run_actions (env_key,correlation_id,run_id,action_type,basis,evidence_ref,principal,principal_type) VALUES ('history','action','run','terminalize-effect-uncertain','external-evidence','case','operator','database-role');
     ",
         "INSERT INTO wamn_run.run_queue(env_key,run_id) VALUES ('history','run');",
         "COMMIT",
@@ -81,34 +80,8 @@ fn fresh_run_history_stamps_rows() {
         "wamn_run.effect_attempts",
         "wamn_run.effect_attempt_dispatches",
         "wamn_run.effect_attempt_outcomes",
-        "wamn_run.operator_run_actions",
         "wamn_run.run_queue",
     ] {
         database.execute(&[&format!("DO $$ BEGIN ASSERT (SELECT count(*)=1 AND bool_and(created_by='{actor}'::uuid AND updated_by='{actor}'::uuid AND created_at=updated_at AND isfinite(created_at)) FROM {relation}), '{relation}: stamps'; END $$;")]).unwrap();
     }
-
-    // The retained operator evidence stays immutable and denies guest writes.
-    database.execute(&[r"
-        DO $$
-        DECLARE role_name text; verb text; refusal text;
-        BEGIN
-            FOREACH role_name IN ARRAY ARRAY['wamn_app', 'wamn_scenario_author'] LOOP
-                FOREACH verb IN ARRAY ARRAY['INSERT', 'UPDATE', 'DELETE'] LOOP
-                    ASSERT NOT has_table_privilege(role_name, 'wamn_run.operator_run_actions', verb),
-                        format('%s has no action %s', role_name, verb);
-                END LOOP;
-            END LOOP;
-            FOREACH verb IN ARRAY ARRAY[
-                'UPDATE wamn_run.operator_run_actions SET evidence_ref=evidence_ref WHERE run_id=''run''',
-                'DELETE FROM wamn_run.operator_run_actions WHERE run_id=''run'''
-            ] LOOP
-                refusal := NULL;
-                BEGIN
-                    EXECUTE verb;
-                EXCEPTION WHEN object_not_in_prerequisite_state THEN refusal := SQLERRM; END;
-                ASSERT refusal = 'operator-run-action-immutable',
-                    format('operator action must stay immutable, got %s', coalesce(refusal, 'no refusal'));
-            END LOOP;
-        END $$;
-    "]).unwrap();
 }

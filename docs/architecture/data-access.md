@@ -954,7 +954,7 @@ An applier installs `record-history.sql` and then `record-history-app-grants.sql
 `platform.write_log` is the one exception: it has no stamps and no trigger.
 It is the idempotency record, and the rows that the work writes carry the actor ([app-schema.sql](../../deploy/sql/app-schema.sql#L412)).
 
-The run plane stamps `environment_policies`, `run_queue`, `effect_attempts`, `effect_attempt_dispatches`, `effect_attempt_outcomes`, and `operator_run_actions`.
+The run plane stamps `environment_policies`, `run_queue`, `effect_attempts`, `effect_attempt_dispatches`, and `effect_attempt_outcomes`.
 The three effect tables still have no production append writer.
 Their stamps apply to administrative writes and future writers that bind an actor.
 

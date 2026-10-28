@@ -175,7 +175,6 @@ pub fn select_run_plane_helper_functions_sql() -> &'static str {
      WHERE n.nspname = $1 \
        AND p.proname IN ('guard_event_lineage_immutable', \
                          'reject_immutable_effect_fact_change', \
-                         'reject_immutable_operator_run_action_change', \
                          'guard_run_admission_pins_immutable', \
                          'guard_terminal_run_delete') \
      ORDER BY p.proname"

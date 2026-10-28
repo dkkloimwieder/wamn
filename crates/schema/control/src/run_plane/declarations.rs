@@ -360,60 +360,6 @@ pub(super) const CHECK_SPECS: &[CheckSpec] = &[
         origin: CheckOrigin::Table,
     },
     CheckSpec {
-        table: "operator_run_actions",
-        name: "operator_run_actions_env_key_check",
-        definition: "CHECK (env_key <> ''::text)",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "operator_run_actions",
-        name: "operator_run_actions_correlation_check",
-        definition: "CHECK (correlation_id <> ''::text)",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "operator_run_actions",
-        name: "operator_run_actions_run_check",
-        definition: "CHECK (run_id <> ''::text)",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "operator_run_actions",
-        name: "operator_run_actions_type_check",
-        definition: "CHECK (action_type = 'terminalize-effect-uncertain'::text)",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "operator_run_actions",
-        name: "operator_run_actions_basis_check",
-        definition: "CHECK (basis = ANY (ARRAY['external-evidence'::text, 'counterparty-confirmation'::text, 'operator-judgment'::text]))",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "operator_run_actions",
-        name: "operator_run_actions_evidence_check",
-        definition: "CHECK (evidence_ref <> ''::text)",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "operator_run_actions",
-        name: "operator_run_actions_principal_check",
-        definition: "CHECK (principal <> ''::text)",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "operator_run_actions",
-        name: "operator_run_actions_principal_type_check",
-        definition: "CHECK (principal_type = 'database-role'::text)",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "operator_run_actions",
-        name: "operator_run_actions_prior_node_check",
-        definition: "CHECK (prior_started_node_frame_id IS NULL AND prior_started_node_local_node_id IS NULL AND prior_started_node_occurrence IS NULL AND prior_started_node_status IS NULL OR prior_started_node_frame_id >= 0 AND prior_started_node_local_node_id IS NOT NULL AND prior_started_node_local_node_id ~ '^[a-z0-9-]+$'::text AND prior_started_node_occurrence >= 0 AND prior_started_node_status = 'started'::text)",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
         table: "run_queue",
         name: "run_queue_env_key_check",
         definition: "CHECK (env_key <> ''::text)",
@@ -434,8 +380,6 @@ const GUARD_RUN_ADMISSION_PINS_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.
 const GUARD_TERMINAL_RUN_DELETE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_terminal_run_delete()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF OLD.status NOT IN ('completed', 'failed', 'infrastructure-failure') THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'run-delete-nonterminal';\n    END IF;\n    RETURN OLD;\nEND\n$function$\n";
 
 const REJECT_IMMUTABLE_EFFECT_FACT_CHANGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_effect_fact_change()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    RAISE EXCEPTION USING\n        ERRCODE = '55000',\n        MESSAGE = 'effect-fact-immutable';\nEND\n$function$\n";
-
-const REJECT_IMMUTABLE_OPERATOR_RUN_ACTION_CHANGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_operator_run_action_change()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    RAISE EXCEPTION USING\n        ERRCODE = '55000',\n        MESSAGE = 'operator-run-action-immutable';\nEND\n$function$\n";
 
 const RUNS_EVENT_LINEAGE_TRIGGER_DEF: &str = "CREATE TRIGGER runs_event_lineage_immutable BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable()";
 const RUNS_TERMINAL_DELETE_ONLY_TRIGGER_DEF: &str = "CREATE TRIGGER runs_terminal_delete_only BEFORE DELETE ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_terminal_run_delete()";
@@ -511,19 +455,6 @@ END
 $$;
 REVOKE ALL ON FUNCTION wamn_run.reject_immutable_effect_fact_change() FROM PUBLIC;";
 
-pub(super) const REJECT_IMMUTABLE_OPERATOR_RUN_ACTION_CHANGE_SQL: &str = r"CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_operator_run_action_change()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    RAISE EXCEPTION USING
-        ERRCODE = '55000',
-        MESSAGE = 'operator-run-action-immutable';
-END
-$$;
-REVOKE ALL ON FUNCTION wamn_run.reject_immutable_operator_run_action_change()
-    FROM PUBLIC;";
-
 const RUNS_EVENT_LINEAGE_TRIGGER_SQL: &str = "CREATE TRIGGER runs_event_lineage_immutable \
     BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth \
     ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION \
@@ -584,11 +515,6 @@ pub(super) fn helper_specs() -> Vec<HelperSpec> {
             REJECT_IMMUTABLE_EFFECT_FACT_CHANGE_DEF,
             REJECT_IMMUTABLE_EFFECT_FACT_CHANGE_SQL,
         ),
-        borrowed_helper_spec(
-            "reject_immutable_operator_run_action_change",
-            REJECT_IMMUTABLE_OPERATOR_RUN_ACTION_CHANGE_DEF,
-            REJECT_IMMUTABLE_OPERATOR_RUN_ACTION_CHANGE_SQL,
-        ),
     ]
 }
 
@@ -601,12 +527,11 @@ pub(super) struct TriggerSpec {
 }
 
 /// Run-plane tables that carry the four record history stamps (wamn-jesy3.3).
-pub(super) const RECORD_HISTORY_TABLES: [&str; 6] = [
+pub(super) const RECORD_HISTORY_TABLES: [&str; 5] = [
     "environment_policies",
     "effect_attempts",
     "effect_attempt_dispatches",
     "effect_attempt_outcomes",
-    "operator_run_actions",
     "run_queue",
 ];
 
@@ -654,24 +579,6 @@ pub(super) fn trigger_specs() -> Vec<TriggerSpec> {
                 ),
             });
         }
-    }
-    for event in ["update", "delete"] {
-        let name = format!("operator_run_actions_{event}_immutable");
-        let event_sql = event.to_ascii_uppercase();
-        specs.push(TriggerSpec {
-            table: "operator_run_actions".to_string(),
-            name: name.clone(),
-            definition: format!(
-                "CREATE TRIGGER {name} BEFORE {event_sql} ON \
-                 wamn_run.operator_run_actions FOR EACH ROW EXECUTE FUNCTION \
-                 wamn_run.reject_immutable_operator_run_action_change()"
-            ),
-            sql: format!(
-                "CREATE TRIGGER {name} BEFORE {event_sql} ON \
-                 wamn_run.operator_run_actions FOR EACH ROW EXECUTE FUNCTION \
-                 wamn_run.reject_immutable_operator_run_action_change();"
-            ),
-        });
     }
     for table in RECORD_HISTORY_TABLES {
         let definition = format!(
