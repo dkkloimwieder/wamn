@@ -15,6 +15,7 @@ import {
 } from "@wamn/web-runtime";
 import {
   create,
+  PACKAGING_CREATE_REQUEST_FIELDS,
   PACKAGING_CREATE_ROUTE,
   PACKAGING_SHAPE_DIGEST,
   type PackagingCreateRequest,
@@ -46,7 +47,7 @@ function SessionPackaging(props: { userId: string; signedIn: boolean; onRenew: (
   const transport = createTransport({ baseUrl: `${location.origin}/wamn`, cookie: true });
   const send = createSend<Record<string, PackagingCreateRequest>>({
     transport,
-    bindings: { [PACKAGING_CREATE_ROUTE.operation]: create },
+    bindings: { [PACKAGING_CREATE_ROUTE.operation]: { invoke: create, fields: PACKAGING_CREATE_REQUEST_FIELDS } },
     renew: async () => {
       const session = await renew(address.aud);
       props.onRenew(session ? { status: "signedIn", ...session } : { status: "signedOut" });

@@ -42,7 +42,7 @@ export async function run(locationId: string) {
   old.close();
   const send = createSend<Record<string, r2.PackagingCreateRequest>>({
     transport,
-    bindings: { [operation]: r2.create },
+    bindings: { [operation]: { invoke: r2.create, fields: r2.PACKAGING_CREATE_REQUEST_FIELDS } },
     renew: async () => false,
   });
   const current = outbox({ database, send, probe: () => transport.probe() });

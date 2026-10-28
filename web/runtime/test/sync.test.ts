@@ -2,13 +2,14 @@ import "fake-indexeddb/auto";
 import { outbox, type OutboxEntry, type Reply } from "@wfe/sync";
 import { describe, expect, it, vi } from "vitest";
 
-import { createSend, outboxDatabase, requestHash } from "../src/sync/index.js";
+import { createSend, idempotencyKeyPath, outboxDatabase, requestHash } from "../src/sync/index.js";
 import { createTransport } from "../src/transport.js";
 import {
   reviveOutcome,
   toWire,
   type InvokeOptions,
   type OperationRoute,
+  type FieldMap,
   type Transport,
   type WireRequest,
 } from "../src/wire.js";
@@ -43,6 +44,27 @@ const route: OperationRoute = {
   },
 };
 
+/** The generated request field map of a create: the key is a top-level input. */
+const createFields: FieldMap = {
+  idempotency_key: "idempotencyKey",
+  request_id: "requestId",
+  id: "id",
+  label: "label",
+};
+
+/** The generated request field map of a claim command: the key is inside `value`. */
+const commandFields: FieldMap = {
+  request_id: "requestId",
+  value: {
+    member: "value",
+    fields: {
+      idempotency_key: "idempotencyKey",
+      line: { member: "line", fields: { order_line_id: "orderLineId", quantity: "quantity" } },
+      order_id: "orderId",
+    },
+  },
+};
+
 /** A binding with the same signature and conversion as the generated create binding. */
 async function create(
   transport: Transport,
@@ -58,14 +80,7 @@ async function create(
     await transport.invoke(
       {
         ...route,
-        items: items.map((item) =>
-          toWire(item, {
-            idempotency_key: "idempotencyKey",
-            request_id: "requestId",
-            id: "id",
-            label: "label",
-          }),
-        ),
+        items: items.map((item) => toWire(item, createFields)),
       },
       options,
     ),
@@ -96,7 +111,7 @@ function harness(answer: (requestId: string, attempt: number) => Response | Prom
   });
   const transport = createTransport({ baseUrl: "https://app.test", fetch });
   const renew = vi.fn(async () => renewed);
-  const send = createSend({ transport, bindings: { [operation]: create }, renew });
+  const send = createSend({ transport, bindings: { [operation]: { invoke: create, fields: createFields } }, renew });
   return { send, renew, requests, fetch };
 }
 
@@ -267,7 +282,9 @@ describe("send", () => {
     });
     const transport = createTransport({ baseUrl: "https://app.test", fetch });
     const renew = vi.fn(async () => true);
-    const send = vi.fn(createSend({ transport, bindings: { [operation]: create }, renew }));
+    const send = vi.fn(
+      createSend({ transport, bindings: { [operation]: { invoke: create, fields: createFields } }, renew }),
+    );
     const database = outboxDatabase("fixture", "dev", crypto.randomUUID());
     const box = outbox({ database, send, probe: async () => true });
     try {
@@ -321,12 +338,73 @@ describe("send", () => {
         failedOutcome: null,
       }),
     };
-    const send = createSend({ transport, bindings: { [operation]: create }, renew: async () => true });
+    const send = createSend({
+      transport,
+      bindings: { [operation]: { invoke: create, fields: createFields } },
+      renew: async () => true,
+    });
     expect(await send(entry(), new AbortController().signal)).toEqual({
       ok: false,
       retriable: false,
       refusal: { code: "partial", text: "partial" },
     });
+  });
+});
+
+describe("the idempotency key", () => {
+  it("goes where each generated input type puts it", () => {
+    expect(idempotencyKeyPath(createFields)).toEqual(["idempotencyKey"]);
+    expect(idempotencyKeyPath(commandFields)).toEqual(["value", "idempotencyKey"]);
+    expect(idempotencyKeyPath({ request_id: "requestId", id: "id" })).toBeUndefined();
+  });
+
+  it("is a top-level member of a create request", async () => {
+    const { send, requests } = harness(completed);
+    await send(entry(), new AbortController().signal);
+    expect(requests[0]).toEqual({
+      id: "row-1",
+      label: "Box",
+      idempotency_key: "stored-hash",
+      request_id: expect.any(String),
+    });
+  });
+
+  it("is inside value for a claim command, and the stored request keeps no key", async () => {
+    const commandOperation = "fixture:order/record@1.0.0";
+    const items: unknown[] = [];
+    const record = async (_transport: Transport, input: readonly unknown[]) => {
+      items.push(...input.map((item) => toWire(item, commandFields)));
+      return { status: "completed", value: {} } as const;
+    };
+    const send = createSend({
+      transport: createTransport({ baseUrl: "https://app.test" }),
+      bindings: { [commandOperation]: { invoke: record, fields: commandFields } },
+      renew: async () => true,
+    });
+    const stored = { orderId: "order-1", line: [{ orderLineId: "line-1", quantity: "2" }] };
+    const command = { ...entry(), operation: commandOperation, request: { value: stored } };
+    expect(await send(command, new AbortController().signal)).toEqual({ ok: true });
+    expect(items).toEqual([
+      {
+        request_id: expect.any(String),
+        value: {
+          idempotency_key: "stored-hash",
+          order_id: "order-1",
+          line: [{ order_line_id: "line-1", quantity: "2" }],
+        },
+      },
+    ]);
+    expect(command.request).toEqual({ value: stored });
+  });
+
+  it("refuses a binding whose input takes no key", () => {
+    expect(() =>
+      createSend({
+        transport: createTransport({ baseUrl: "https://app.test" }),
+        bindings: { [operation]: { invoke: create, fields: { id: "id" } } },
+        renew: async () => true,
+      }),
+    ).toThrow(`${operation} takes no idempotency key, so the outbox cannot replay it`);
   });
 });
 

@@ -14,6 +14,7 @@ import {
 } from "@wamn/web-runtime";
 import {
   create,
+  PACKAGING_CREATE_REQUEST_FIELDS,
   PACKAGING_CREATE_ROUTE,
   PACKAGING_SHAPE_DIGEST,
   type PackagingCreateRequest,
@@ -327,7 +328,7 @@ it("treats a 403 at upload as an ordinary refusal in the panel", async () => {
   );
   const send = createSend<Record<string, PackagingCreateRequest>>({
     transport: createTransport({ baseUrl: "", cookie: true, fetch, cookies: () => "" }),
-    bindings: { [PACKAGING_CREATE_ROUTE.operation]: create },
+    bindings: { [PACKAGING_CREATE_ROUTE.operation]: { invoke: create, fields: PACKAGING_CREATE_REQUEST_FIELDS } },
     renew,
   });
   h.send.mockImplementation((..._args) => send(entry, new AbortController().signal));

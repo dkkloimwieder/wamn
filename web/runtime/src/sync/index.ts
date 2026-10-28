@@ -1,4 +1,4 @@
-export { createSend, type SendOptions } from "./send.js";
+export { createSend, idempotencyKeyPath, type SendBinding, type SendOptions } from "./send.js";
 export { requestHash } from "./hash.js";
 export { outboxDatabase, rowsDatabase, collectionKey } from "./names.js";
 export { rowsPersistence } from "./persistence.js";
