@@ -7,6 +7,7 @@ use anyhow::Context as _;
 use tracing::Instrument as _;
 use wash_runtime::host::probes::Liveness;
 
+use wamn_engine::entry_operation::postgres_types::PgError;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::{OperationRefusal, OperationRefusalType};
 use wamn_event_wire::Causation;
@@ -385,16 +386,29 @@ async fn drain_one(
                 return Ok(true);
             };
             let workflow = *workflow;
-            let caller = Some(
-                postgres
-                    .queued_run_caller(
-                        &scope.project,
-                        &scope.env_key,
-                        &workflow.execution_principal_id,
-                        Some(&workflow.execution_role),
-                    )
-                    .await?,
-            );
+            let caller = match postgres
+                .queued_run_caller(
+                    &scope.project,
+                    &scope.env_key,
+                    &workflow.execution_principal_id,
+                    Some(&workflow.execution_role),
+                )
+                .await
+            {
+                Ok(caller) => Some(caller),
+                Err(error)
+                    if matches!(
+                        error.downcast_ref::<PgError>(),
+                        Some(PgError::ConnectionUnavailable)
+                    ) =>
+                {
+                    postgres
+                        .release_claim(QUEUE_CLAIM_SCOPE, &run_id, lease_generation)
+                        .await?;
+                    return Ok(true);
+                }
+                Err(error) => return Err(error),
+            };
             let run = RouterDriverRequest {
                 env_key: scope.env_key.clone(),
                 package_id: package_id.clone(),

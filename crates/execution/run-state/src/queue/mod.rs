@@ -62,11 +62,12 @@ pub use claim::{
 pub use evt::mint_evt_run_id;
 pub use janitor::{JanitorVerdict, janitor_verdict, orphans};
 pub use lease::{lease_deadline, lease_live, should_renew};
-pub use model::{Millis, QueueEntry};
+pub use model::{MAX_RETRY_BACKOFF_MS, Millis, QueueEntry};
 pub use sql::{
     advance_claim_attempts_sql, clear_pre_effect_state_sql, grant_production_claim_sql,
-    renew_production_lease_sql, select_exhausted_production_sql, select_production_claim_sql,
-    terminalize_exhausted_production_sql,
+    release_production_claim_sql, renew_production_lease_sql, select_exhausted_production_sql,
+    select_production_claim_sql, terminalize_exhausted_production_sql,
+    terminalize_released_production_sql,
 };
 pub use workflow::{
     insert_automation_run_sql, insert_event_run_sql, insert_manual_run_sql, insert_run_queue_sql,

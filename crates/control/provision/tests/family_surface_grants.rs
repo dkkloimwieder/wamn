@@ -371,6 +371,7 @@ fn expected_executor_grants() -> Vec<String> {
         rows.push(format!("column|wamn_run|runs.{column}|UPDATE"));
     }
     for column in [
+        "available_at",
         "attempts",
         "lease_expires_at",
         "lease_generation",
@@ -641,13 +642,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
         )
         .expect("writing to a String cannot fail");
     }
-    for column in [
-        "available_at",
-        "priority",
-        "stream_seq",
-        "max_attempts",
-        "enqueued_at",
-    ] {
+    for column in ["priority", "stream_seq", "max_attempts", "enqueued_at"] {
         writeln!(
             probes,
             "  ASSERT NOT has_column_privilege(r, 'wamn_run.run_queue', '{column}', 'UPDATE'), \

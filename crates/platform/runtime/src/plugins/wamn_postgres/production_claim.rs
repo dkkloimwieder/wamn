@@ -11,9 +11,9 @@ use tokio_postgres::types::FromSql;
 use wamn_run_state::authority_class::CURRENT_USER_ROLE_MEMBERSHIP_SQL;
 use wamn_run_state::queue::{
     ProductionClaimClass, advance_claim_attempts_sql, classify_production_claim,
-    clear_pre_effect_state_sql, grant_production_claim_sql, renew_production_lease_sql,
-    select_exhausted_production_sql, select_production_claim_sql,
-    terminalize_exhausted_production_sql,
+    clear_pre_effect_state_sql, grant_production_claim_sql, release_production_claim_sql,
+    renew_production_lease_sql, select_exhausted_production_sql, select_production_claim_sql,
+    terminalize_exhausted_production_sql, terminalize_released_production_sql,
 };
 use wamn_run_state::run_store::RunStore;
 pub use wamn_run_state::run_store::{
@@ -648,6 +648,80 @@ const PINNED_BACKLOG_SQL: &str = "SELECT EXISTS ( \
         AND r.status IN ('dispatched', 'running'))";
 
 impl WamnPostgres {
+    /// Release a claim after an unavailable credential or pool, or fail it at
+    /// the shared attempt limit. Returns false when the lease fence is lost.
+    pub async fn release_claim(
+        &self,
+        component_id: &str,
+        run_id: &str,
+        lease_generation: i64,
+    ) -> Result<bool, ProductionClaimError> {
+        if lease_generation <= 0 {
+            return Err(ProductionClaimError::new(
+                ProductionClaimErrorType::Contract,
+                "validate production lease release",
+                "lease generation must be positive",
+            ));
+        }
+        let env_key = self.env_key_for(component_id).ok_or_else(|| {
+            ProductionClaimError::new(
+                ProductionClaimErrorType::Identity,
+                "resolve release tenant",
+                "component has no host-injected tenant",
+            )
+        })?;
+        let runner = self.runner_for(component_id).ok_or_else(|| {
+            ProductionClaimError::new(
+                ProductionClaimErrorType::Identity,
+                "resolve release runner",
+                "component has no host-injected runner",
+            )
+        })?;
+        let project = self.project_for(component_id);
+        let schema = self.schema_for(component_id);
+        let user_id = self.user_id_for(component_id);
+        let operation = self.operation_for(component_id);
+        let application = self.application_for(component_id);
+        let (connection, policy) = self
+            .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
+            .await
+            .map_err(|error| {
+                ProductionClaimError::new(
+                    ProductionClaimErrorType::Storage,
+                    "checkout release connection",
+                    format!("{error:?}"),
+                )
+            })?;
+        let connection = StatementConnectionGuard::new(connection, Arc::clone(&self.destroyed));
+        if let Err(error) = self
+            .begin_with_claims(
+                connection.connection(),
+                AuthorityClass::ExecutorPlatform,
+                false,
+                &env_key,
+                schema.as_deref(),
+                Some(&runner),
+                None,
+                user_id.as_deref(),
+                operation.as_deref(),
+                application.as_deref(),
+                None,
+                policy.statement_timeout_ms,
+            )
+            .await
+        {
+            return Err(ProductionClaimError::new(
+                ProductionClaimErrorType::Storage,
+                "begin release transaction",
+                format!("{error:?}"),
+            ));
+        }
+        let result =
+            release_in_transaction(connection.connection(), run_id, &runner, lease_generation)
+                .await;
+        finish_guarded_queue_transaction(connection, result, "commit production release").await
+    }
+
     /// Whether any run pinned to the release of `component_id` remains in the
     /// queue. A draining host keeps claiming while this holds (R20). A
     /// component with no injected release identity pins no run.
@@ -766,6 +840,45 @@ pub(super) async fn require_executor_authority(
         ));
     }
     Ok(())
+}
+
+async fn release_in_transaction(
+    connection: &Object,
+    run_id: &str,
+    runner: &str,
+    lease_generation: i64,
+) -> Result<bool, ProductionClaimError> {
+    require_executor_authority(connection).await?;
+    let sql = release_production_claim_sql();
+    let statement = connection
+        .prepare_cached(&sql)
+        .await
+        .map_err(|error| storage("prepare production release", &error))?;
+    let Some(row) = connection
+        .query_opt(&statement, &[&run_id, &runner, &lease_generation])
+        .await
+        .map_err(|error| storage("release production claim", &error))?
+    else {
+        return Ok(false);
+    };
+    if row_value::<bool>(&row, 0, "released run exhausted")? {
+        let identity = ExhaustedExecutionIdentity::Wiring {
+            wiring_id: row_value(&row, 1, "released wiring id")?,
+            wiring_version: row_value(&row, 2, "released wiring version")?,
+        };
+        let (body, hash) =
+            generic_failure_outcome(FailType::RetryExhausted.as_sql(), &identity, run_id)?;
+        let sql = terminalize_released_production_sql();
+        let statement = connection
+            .prepare_cached(&sql)
+            .await
+            .map_err(|error| storage("prepare release exhaustion", &error))?;
+        connection
+            .query_one(&statement, &[&run_id, &body, &hash, &SystemTime::now()])
+            .await
+            .map_err(|error| storage("terminalize release exhaustion", &error))?;
+    }
+    Ok(true)
 }
 
 async fn renew_in_transaction(
@@ -1581,6 +1694,9 @@ mod tests {
                     .await
                     .map(|_| ()),
                 reap_in_transaction(&connection, &packages, "test", 0)
+                    .await
+                    .map(|_| ()),
+                release_in_transaction(&connection, "run", "runner", 1)
                     .await
                     .map(|_| ()),
                 renew_in_transaction(&connection, "run", "runner", 1, 1000)

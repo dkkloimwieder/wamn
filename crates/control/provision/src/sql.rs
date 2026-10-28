@@ -256,20 +256,21 @@ pub const EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS: [&str; 13] = [
 /// `queue::sql::advance_claim_attempts_sql` writes `attempts`;
 /// `queue::sql::grant_production_claim_sql` writes `lease_owner`,
 /// `lease_expires_at` and `lease_generation`;
-/// `queue::sql::renew_production_lease_sql` writes `lease_expires_at`. Nothing
-/// writes `available_at`, `priority`, `stream_seq`, `max_attempts` or
-/// `enqueued_at` — the FIFO position and the crash budget are admission's, and
-/// a claim that could move them could starve or resurrect another tenant's run.
+/// `queue::sql::renew_production_lease_sql` writes `lease_expires_at`.
+/// `queue::sql::release_production_claim_sql` writes `attempts`, `available_at`,
+/// `lease_owner` and `lease_expires_at` for credential retries. Nothing writes
+/// `priority`, `stream_seq`, `max_attempts` or `enqueued_at`.
 ///
 /// SELECT stays relation grain for the same reason it does on `runs`:
 /// `transitions::FENCED_PREFIX` locks the queue row with
 /// `SELECT q.* FROM run_queue AS q`. DELETE has no column grain in PostgreSQL at
 /// all, so the two dequeue statements take it whole.
-pub const EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS: [&str; 4] = [
+pub const EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS: [&str; 5] = [
     "lease_owner",
     "lease_expires_at",
     "lease_generation",
     "attempts",
+    "available_at",
 ];
 
 /// Every `runs` column the executor-platform family INSERTs for event, schedule
@@ -1347,7 +1348,7 @@ mod tests {
              GRANT SELECT, DELETE ON TABLE \"wamn_run\".\"run_queue\" \
              TO \"wamn_executor_platform\"; \
              GRANT UPDATE (\"lease_owner\", \"lease_expires_at\", \"lease_generation\", \
-             \"attempts\") ON TABLE \"wamn_run\".\"run_queue\" TO \"wamn_executor_platform\"; \
+             \"attempts\", \"available_at\") ON TABLE \"wamn_run\".\"run_queue\" TO \"wamn_executor_platform\"; \
              GRANT INSERT (\"env_key\", \"run_id\") \
              ON TABLE \"wamn_run\".\"run_queue\" TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE \"wamn_run\".\"environment_policies\" \
@@ -1374,7 +1375,6 @@ mod tests {
             "GRANT UPDATE ON TABLE",
             "GRANT DELETE ON TABLE \"wamn_run\".\"runs\"",
             "\"binding_world_json\"",
-            "\"available_at\"",
             "\"max_attempts\"",
             "\"stream_seq\"",
             "current_tenant_key",

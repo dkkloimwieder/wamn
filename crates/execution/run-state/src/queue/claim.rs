@@ -97,10 +97,9 @@ pub fn is_claimable(entry: &QueueEntry, now: Millis) -> bool {
 pub struct Claimed {
     pub env_key: String,
     pub run_id: String,
-    /// `attempts` after the claim. Counts **crash evidence only**: bumped iff the
-    /// claim reclaimed an *expired* lease (the prior owner died holding the run);
-    /// a first claim and a queue-park→wake re-claim (the queue park releases the
-    /// lease) are free.
+    /// The shared retry count after the claim. Reclaiming an expired lease
+    /// increments it. A credential release already counted its failure, so
+    /// claiming a released row does not increment it again.
     pub attempts: i32,
     /// `now + lease_ttl` — the new visibility timeout.
     pub lease_expires_at: Millis,

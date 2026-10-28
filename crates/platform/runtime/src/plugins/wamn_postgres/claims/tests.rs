@@ -3901,3 +3901,20 @@ async fn live_sessions_refuse_unheld_service_roles_and_services_have_no_active_u
     );
     assert!(!held_grants(&service, None).roles.contains("human-reader"));
 }
+
+#[tokio::test]
+async fn queued_caller_retains_typed_connection_unavailable() -> anyhow::Result<()> {
+    let postgres = WamnPostgres::with_provider(std::sync::Arc::new(StaticCredentialProvider::new(
+        std::collections::HashMap::new(),
+        None,
+    )));
+    let error = postgres
+        .queued_run_caller("default", "tenant-a", "principal", None)
+        .await
+        .expect_err("an unavailable credential refuses the caller lookup");
+    assert!(matches!(
+        error.downcast_ref::<PgError>(),
+        Some(PgError::ConnectionUnavailable)
+    ));
+    Ok(())
+}

@@ -12,11 +12,14 @@ use serde::{Deserialize, Serialize};
 /// same instants as `timestamptz` and compares with server-side `now()`.
 pub type Millis = i64;
 
+/// The retry delay, including jitter, never exceeds five minutes.
+pub const MAX_RETRY_BACKOFF_MS: Millis = 300_000;
+
 /// One row of `run_queue`: a run waiting to be (or being) dispatched. `available_at`
 /// is when the row becomes claimable — future for a queue-parked/backed-off run;
 /// a live lease (`lease_expires_at` in the future) marks a row a runner currently
-/// owns. `attempts` counts crash evidence — it bumps only when a claim reclaims an
-/// expired lease (redelivery budget vs `max_attempts`); queue parks/wakes are free.
+/// owns. `attempts` counts expired lease reclaims and releases for unavailable
+/// credentials or pools. Operator parks and wakes do not spend this budget.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct QueueEntry {
@@ -50,13 +53,12 @@ pub struct QueueEntry {
     /// past that it is reclaimable by another replica (crash-safe failover).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lease_expires_at: Option<Millis>,
-    /// Crash-evidence count: how many times a claim has reclaimed this row's
-    /// *expired* lease (the prior owner died holding it). First claims and
-    /// park→wake re-claims do not count — parking records an active owner.
+    /// Shared count of expired lease reclaims and credential or pool releases.
+    /// First claims and operator parks and wakes do not count.
     #[serde(default)]
     pub attempts: i32,
-    /// The redelivery budget: once `attempts >= max_attempts` and the lease is
-    /// long expired, the janitor gives up (the run is `infrastructure-failure`).
+    /// The shared retry budget. A release at the limit fails with
+    /// `retry-exhausted`; an exhausted expired lease ends as `infrastructure-failure`.
     pub max_attempts: i32,
 }
 

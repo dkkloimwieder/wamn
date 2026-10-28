@@ -465,3 +465,212 @@ async fn queue_writers_stamp_existing_executor_claims() -> anyhow::Result<()> {
     .await;
     teardown(fixture).await
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mixed_retries_end_with_the_last_cause() -> anyhow::Result<()> {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_catalog::test_database::tenant();
+    let fixture = install_fixture(database.url()).await?;
+    let admin = &fixture.admin;
+    let plugin = &fixture.plugin;
+    let packages = [PACKAGE_ID.to_owned()];
+    for last_release in [true, false] {
+        let run = if last_release {
+            "last-release"
+        } else {
+            "last-expiry"
+        };
+        seed_run(admin, run, PACKAGE_ID, 1).await?;
+        admin
+            .execute(
+                "UPDATE wamn_run.run_queue SET max_attempts=3 WHERE run_id=$1",
+                &[&run],
+            )
+            .await?;
+        let claim = plugin
+            .claim_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
+            .await?;
+        let ProductionClaimResult::Ready {
+            lease_generation, ..
+        } = claim
+        else {
+            panic!("first claim missing")
+        };
+        assert!(
+            plugin
+                .release_claim(COMPONENT, run, lease_generation)
+                .await?
+        );
+        assert_eq!(queue_attempts(admin, run).await?, 1);
+        admin
+            .execute(
+                "UPDATE wamn_run.run_queue SET available_at='2000-01-01' WHERE run_id=$1",
+                &[&run],
+            )
+            .await?;
+        let claim = plugin
+            .claim_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
+            .await?;
+        assert_eq!(ready_run(claim), run);
+        assert_eq!(
+            queue_attempts(admin, run).await?,
+            1,
+            "a released claim must not count twice"
+        );
+        expire_effect_run(admin, run).await?;
+        let claim = plugin
+            .claim_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
+            .await?;
+        let ProductionClaimResult::Ready {
+            lease_generation, ..
+        } = claim
+        else {
+            panic!("expired claim missing")
+        };
+        assert_eq!(
+            queue_attempts(admin, run).await?,
+            2,
+            "expiry shares the release count"
+        );
+        if last_release {
+            assert!(
+                plugin
+                    .release_claim(COMPONENT, run, lease_generation)
+                    .await?
+            );
+            assert_terminal_status_dequeued(admin, run, "failed").await?;
+            let row = admin.query_one("SELECT fail_type,result_json::text,caller_outcome_json::text,terminal_reason FROM wamn_run.runs WHERE run_id=$1", &[&run]).await?;
+            assert_eq!(row.get::<_, String>(0), "retry-exhausted");
+            assert_eq!(row.get::<_, String>(3), "retry-exhausted");
+            let result: Value = serde_json::from_str(&row.get::<_, String>(1))?;
+            assert_eq!(result["error"]["code"], "retry-exhausted");
+            assert_eq!(
+                result,
+                serde_json::from_str::<Value>(&row.get::<_, String>(2))?
+            );
+        } else {
+            expire_effect_run(admin, run).await?;
+            assert_eq!(
+                ready_run(
+                    plugin
+                        .claim_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
+                        .await?
+                ),
+                run
+            );
+            assert_eq!(queue_attempts(admin, run).await?, 3);
+            expire_effect_run(admin, run).await?;
+            assert!(matches!(
+                plugin
+                    .claim_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
+                    .await?,
+                ProductionClaimResult::Empty
+            ));
+            assert_eq!(
+                plugin
+                    .reap_exhausted(COMPONENT, &packages, ENVIRONMENT, 0)
+                    .await?,
+                ProductionReapResult::Reaped {
+                    run_id: run.to_owned()
+                }
+            );
+            assert_terminal_status_dequeued(admin, run, "infrastructure-failure").await?;
+            let body: String = admin
+                .query_one(
+                    "SELECT caller_outcome_json::text FROM wamn_run.runs WHERE run_id=$1 AND terminal_reason='infrastructure-failure'",
+                    &[&run],
+                )
+                .await?
+                .get(0);
+            assert_eq!(
+                serde_json::from_str::<Value>(&body)?["error"]["code"],
+                "infrastructure-failure"
+            );
+        }
+        assert!(
+            !plugin
+                .release_claim(COMPONENT, run, lease_generation)
+                .await?,
+            "a terminal run cannot be released again"
+        );
+    }
+    teardown(fixture).await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn claim_release_fences_and_bounds_backoff() -> anyhow::Result<()> {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_catalog::test_database::tenant();
+    let fixture = install_fixture(database.url()).await?;
+    let admin = &fixture.admin;
+    let plugin = &fixture.plugin;
+    let packages = [PACKAGE_ID.to_owned()];
+    for attempts in [0_i32, 1, 2, 8, 9, 18] {
+        let run = format!("backoff-{attempts}");
+        seed_run(admin, &run, PACKAGE_ID, i64::from(attempts)).await?;
+        let claim = plugin
+            .claim_next(COMPONENT, &packages, ENVIRONMENT, 30_000)
+            .await?;
+        let ProductionClaimResult::Ready {
+            lease_generation, ..
+        } = claim
+        else {
+            panic!("claim missing")
+        };
+        admin
+            .execute(
+                "UPDATE wamn_run.run_queue SET attempts=$2 WHERE run_id=$1",
+                &[&run, &attempts],
+            )
+            .await?;
+        assert!(
+            !plugin
+                .release_claim(COMPONENT, &run, lease_generation + 1)
+                .await?
+        );
+        assert!(
+            !plugin
+                .release_claim(ROLLED_COMPONENT, &run, lease_generation)
+                .await?
+        );
+        assert_eq!(queue_attempts(admin, &run).await?, attempts);
+        let before: std::time::SystemTime = admin
+            .query_one("SELECT clock_timestamp()", &[])
+            .await?
+            .get(0);
+        assert!(
+            plugin
+                .release_claim(COMPONENT, &run, lease_generation)
+                .await?
+        );
+        let base = (1000_i64 << attempts).min(300_000);
+        let upper = (base * 12 / 10).min(300_000);
+        let row = admin
+            .query_one(
+                "SELECT attempts,lease_owner IS NULL AND lease_expires_at IS NULL, \
+             available_at >= $2::timestamptz + $3::bigint * interval '1 millisecond' \
+             AND available_at <= clock_timestamp() + $4::bigint * interval '1 millisecond' \
+             FROM wamn_run.run_queue WHERE run_id=$1",
+                &[&run, &before, &base, &upper],
+            )
+            .await?;
+        assert_eq!(row.get::<_, i32>(0), attempts + 1);
+        assert!(row.get::<_, bool>(1));
+        assert!(
+            row.get::<_, bool>(2),
+            "attempt {attempts} delay outside jitter bounds"
+        );
+        assert!(
+            !plugin
+                .release_claim(COMPONENT, &run, lease_generation)
+                .await?
+        );
+        admin
+            .execute(
+                "UPDATE wamn_run.run_queue SET available_at = 'infinity' WHERE run_id=$1",
+                &[&run],
+            )
+            .await?;
+    }
+    teardown(fixture).await
+}

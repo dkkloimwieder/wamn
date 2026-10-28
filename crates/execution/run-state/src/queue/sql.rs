@@ -5,12 +5,14 @@
 //! plane. The production claim is deliberately split into small statements
 //! composed by one host-owned transaction: lock, clear abandoned state, then lease.
 
-use crate::{RunStatus, sql as run_sql};
+use super::MAX_RETRY_BACKOFF_MS;
+use crate::{FailType, RunStatus, sql as run_sql};
 
 /// Lock one eligible run in exact global FIFO order without granting a lease.
 ///
-/// The crash budget excludes exhausted expired leases and leaves them for the
-/// janitor. Released leases remain eligible regardless of the crash budget.
+/// The shared retry budget excludes exhausted expired leases for the janitor.
+/// Credential releases at the limit end the run before another claim. Operator
+/// wakes remain eligible even when the budget is spent.
 /// `AS MATERIALIZED` keeps `LIMIT 1` exact under cached prepared-statement plans.
 ///
 /// The projection is exactly what the host composer decodes: the run id, prior
@@ -96,7 +98,7 @@ pub fn clear_pre_effect_state_sql() -> String {
         .to_string()
 }
 
-/// Advance the crash-evidence attempt count for the selected run.
+/// Count an expired lease against the shared retry budget.
 ///
 /// `$1` is the selected run id. This is deliberately its OWN statement, taken
 /// BEFORE the lease grant and OUTSIDE the grant's subtransaction: the grant can
@@ -105,10 +107,9 @@ pub fn clear_pre_effect_state_sql() -> String {
 /// never reach `max_attempts`, the janitor could never reap it, and it stayed
 /// the FIFO head forever (wamn-0h0g.15.69).
 ///
-/// What is counted is unchanged: attempts are CRASH EVIDENCE only, so replacing
-/// a prior non-NULL lease increments and a first claim or a released
-/// (queue-parked) row does not. Reading `q.lease_expires_at` before the grant
-/// overwrites it is what keeps that identical to the fused statement it left.
+/// A prior non-NULL lease increments the shared count. First claims and
+/// released rows do not. Credential releases spend this same count when they
+/// release the lease, so the next claim does not count that failure twice.
 pub fn advance_claim_attempts_sql() -> String {
     "UPDATE run_queue AS q \
         SET attempts = q.attempts \
@@ -177,6 +178,35 @@ pub fn renew_production_lease_sql() -> String {
         .to_string()
 }
 
+/// Release one live claim after a credential or pool failure.
+/// Binds: run id, lease owner, lease generation. The statement locks both rows
+/// until release or terminalization commits. It returns exhaustion and wiring.
+/// Live tests cover fencing, the shared count, and the delay bounds.
+pub fn release_production_claim_sql() -> String {
+    format!(
+        "WITH held AS MATERIALIZED ( \
+             SELECT q.env_key, q.run_id, r.wiring_id, r.wiring_version \
+               FROM run_queue AS q JOIN runs AS r \
+                 ON r.env_key = q.env_key AND r.run_id = q.run_id \
+              WHERE q.env_key = current_setting('app.env_key', true) \
+                AND q.run_id = $1 AND q.lease_owner = $2 \
+                AND q.lease_generation = $3 \
+                AND q.lease_expires_at > statement_timestamp() \
+                AND r.status IN ('dispatched', 'running') \
+              FOR UPDATE OF r, q \
+         ) \
+         UPDATE run_queue AS q \
+            SET attempts = q.attempts + 1, \
+                lease_owner = NULL, lease_expires_at = NULL, \
+                available_at = statement_timestamp() + \
+                    LEAST({MAX_RETRY_BACKOFF_MS}::double precision, \
+                        1000.0 * power(2.0, LEAST(q.attempts, 9)) \
+                        * (1.0 + random() * 0.2)) * interval '1 millisecond' \
+           FROM held WHERE q.env_key = held.env_key AND q.run_id = held.run_id \
+         RETURNING q.attempts >= q.max_attempts, held.wiring_id, held.wiring_version"
+    )
+}
+
 /// Lock one crash-budget-exhausted candidate for host-owned janitor handling.
 ///
 /// `$1` is the grace period in milliseconds; `$2` is the exact package-id set
@@ -220,10 +250,26 @@ pub fn select_exhausted_production_sql() -> String {
 /// and `updated_at`, take it. The status test beside them stays a literal
 /// comparison, so no comparison leaves the server.
 pub fn terminalize_exhausted_production_sql() -> String {
+    terminalize_exhausted_sql(RunStatus::InfrastructureFailure, None)
+}
+
+/// Fail a locked run that spent its last attempt on a credential release.
+/// Binds match [`terminalize_exhausted_production_sql`].
+pub fn terminalize_released_production_sql() -> String {
+    terminalize_exhausted_sql(RunStatus::Failed, Some(FailType::RetryExhausted))
+}
+
+fn terminalize_exhausted_sql(status: RunStatus, fail_type: Option<FailType>) -> String {
+    let terminal_reason = fail_type.map_or(status.as_sql(), FailType::as_sql);
+    let fail_type_sql = fail_type.map_or_else(
+        || "r.fail_type".to_owned(),
+        |kind| format!("'{}'", kind.as_sql()),
+    );
     format!(
         "WITH updated AS ( \
             UPDATE runs AS r \
-            SET status = '{infra}', \
+            SET status = '{status}', terminal_reason = '{terminal_reason}', \
+                fail_type = {fail_type_sql}, \
                 result_json = CASE \
                     WHEN {candidate_result} THEN $2::text::jsonb \
                     ELSE r.result_json END, \
@@ -258,12 +304,16 @@ pub fn terminalize_exhausted_production_sql() -> String {
          ) \
          SELECT updated.status FROM updated \
           WHERE EXISTS (SELECT 1 FROM dequeued)",
-        infra = RunStatus::InfrastructureFailure.as_sql(),
+        status = status.as_sql(),
         dispatched = RunStatus::Dispatched.as_sql(),
         running = RunStatus::Running.as_sql(),
-        candidate_result = "r.flow_id IS NULL AND r.flow_version IS NULL \
+        candidate_result = if fail_type.is_some() {
+            "true"
+        } else {
+            "r.flow_id IS NULL AND r.flow_version IS NULL \
                             AND r.wiring_hash IS NOT NULL \
-                            AND r.binding_world_json IS NOT NULL",
+                            AND r.binding_world_json IS NOT NULL"
+        },
         unreleased_attached = "r.trigger_source IN ('http','internal','studio') \
                                AND r.caller_released_at IS NULL",
     )

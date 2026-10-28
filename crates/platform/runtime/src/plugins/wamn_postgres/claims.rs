@@ -2359,8 +2359,7 @@ impl WamnPostgres {
         anyhow::ensure!(valid_env_key(env_key), "invalid queued-run tenant");
         let (connection, _policy) = self
             .checkout_platform(project, AuthorityClass::CallableHttp)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+            .await?;
         crate::plugins::route_authentication::queued_run_caller(&**connection, principal_id, role)
             .await
     }

@@ -23,8 +23,8 @@ use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{
-    AuthorityClass, ClassCredentials, ReleaseIdentity, SessionClaims, WamnPostgres,
-    WamnPostgresConfig,
+    AuthorityClass, ClassCredentials, CredentialProvider, ProjectConfig, ReleaseIdentity,
+    ResolvedCredential, SessionClaims, StaticCredentialProvider, WamnPostgres,
 };
 use wamn_schema_control::BareSchemaName;
 use wash_runtime::host::probes::Liveness;
@@ -176,6 +176,8 @@ enum Mode {
     Shutdown,
     /// A claim without a workflow, followed by a valid workflow run.
     MissingWorkflow,
+    /// One caller credential fails to resolve during the drain.
+    UnavailableCredential,
     /// The virtualized `jsonata` node with these bytes.
     Jsonata(Vec<u8>),
 }
@@ -240,7 +242,9 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
       INSERT INTO catalog.packages (env_key,package_id,package_version,artifact_digest) VALUES ('{ENV_KEY}','automation','1.0.0','{HASH}');")).await?;
     let engine = Arc::new(build_engine(&[])?);
     let node = match &mode {
-        Mode::Admission | Mode::MissingWorkflow => Node::echo(component_bytes()),
+        Mode::Admission | Mode::MissingWorkflow | Mode::UnavailableCredential => {
+            Node::echo(component_bytes())
+        }
         Mode::Shutdown => Node::echo(shutdown::component_bytes()),
         Mode::Jsonata(bytes) => jsonata::node(bytes.clone()),
     };
@@ -347,14 +351,21 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         url.set_password(Some("automation-test-only")).unwrap();
         credentials = credentials.with_class(class, url.to_string());
     }
-    let postgres = Arc::new(WamnPostgres::new(WamnPostgresConfig {
-        credentials: Some(credentials),
-        guest_pool_max_size: 2,
-        platform_pool_max_size: 2,
-        wait_timeout_ms: 5000,
-        statement_timeout_ms: 10000,
-        row_limit: 100,
-    })?);
+    let unavailable = Arc::new(UnavailableCredential {
+        inner: StaticCredentialProvider::new(
+            std::collections::HashMap::new(),
+            Some(ProjectConfig {
+                credentials,
+                guest_pool_max_size: 2,
+                platform_pool_max_size: 2,
+                wait_timeout_ms: 5000,
+                statement_timeout_ms: 10000,
+                row_limit: 100,
+            }),
+        ),
+        fail_next: std::sync::atomic::AtomicBool::new(false),
+    });
+    let postgres = Arc::new(WamnPostgres::with_provider(unavailable.clone()));
     postgres
         .bind_session_claims(
             QUEUE_CLAIM_SCOPE,
@@ -480,6 +491,57 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
             release.release().manifest_digest.as_str(),
         )
         .await;
+    }
+    if let Mode::UnavailableCredential = mode {
+        let unavailable_run = workflows.start(&request).await?;
+        request.idempotency_key = "next".into();
+        let next = workflows.start(&request).await?;
+        admin
+            .execute(
+                "UPDATE wamn_run.run_queue SET available_at='2000-01-01' WHERE run_id=$1",
+                &[&unavailable_run],
+            )
+            .await?;
+        unavailable
+            .fail_next
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        assert!(drain_one(&driver, &postgres, &jetstream, &scope, 30000, &liveness).await?);
+        let row = admin
+            .query_one(
+                "SELECT attempts,lease_owner IS NULL AND lease_expires_at IS NULL, \
+             available_at > clock_timestamp() FROM wamn_run.run_queue WHERE run_id=$1",
+                &[&unavailable_run],
+            )
+            .await?;
+        assert_eq!(row.get::<_, i32>(0), 1);
+        assert!(row.get::<_, bool>(1));
+        assert!(row.get::<_, bool>(2));
+        // The handled release lets the drain take its next turn immediately.
+        assert!(drain_one(&driver, &postgres, &jetstream, &scope, 30000, &liveness).await?);
+        let row = admin
+            .query_one(
+                "SELECT status,fail_type FROM wamn_run.runs WHERE run_id=$1",
+                &[&next],
+            )
+            .await?;
+        assert_eq!(row.get::<_, String>(0), "completed");
+        assert!(row.get::<_, Option<String>>(1).is_none());
+        assert_eq!(
+            admin
+                .query_one(
+                    "SELECT attempts FROM wamn_run.run_queue WHERE run_id=$1",
+                    &[&unavailable_run]
+                )
+                .await?
+                .get::<_, i32>(0),
+            1
+        );
+        let (_stop, stopping) = tokio::sync::watch::channel(true);
+        tokio::time::timeout(Duration::from_secs(5), first.serve(stopping))
+            .await
+            .expect("the released run also drains")?;
+        first.revoke();
+        return Ok(());
     }
     let run = workflows.start(&request).await?;
     assert!(admin.query_one(
@@ -721,4 +783,32 @@ impl WorkflowsFixture {
             .map(str::to_owned)
             .ok_or_else(|| anyhow::anyhow!("workflow.start refused: {body}"))
     }
+}
+
+struct UnavailableCredential {
+    inner: StaticCredentialProvider,
+    fail_next: std::sync::atomic::AtomicBool,
+}
+
+impl CredentialProvider for UnavailableCredential {
+    fn resolve(
+        &self,
+        project: &str,
+        class: AuthorityClass,
+        env_key: Option<&str>,
+    ) -> anyhow::Result<Option<ResolvedCredential>> {
+        if class == AuthorityClass::CallableHttp
+            && self
+                .fail_next
+                .swap(false, std::sync::atomic::Ordering::Relaxed)
+        {
+            return Ok(None);
+        }
+        self.inner.resolve(project, class, env_key)
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn drain_requeues_an_unavailable_credential_and_claims_the_next_run() -> anyhow::Result<()> {
+    run_automation(Mode::UnavailableCredential).await
 }

@@ -38,13 +38,14 @@
 -- run_queue: one row per pending/in-flight run. `available_at` gates visibility
 -- (future = a queue-parked/backed-off run); a live `lease_expires_at` marks a
 -- row a replica currently owns, and once it expires another replica may reclaim
--- it (crash-safe failover). `attempts` counts CRASH EVIDENCE only: a claim bumps
--- it iff it reclaims an expired lease (the prior owner died holding the run) — a
--- first claim and a queue-park->wake re-claim (the queue park releases the lease)
--- are free, so bounded-retry waits do not spend redelivery budget. This queue
--- eligibility operation is distinct from node execution state. Once `attempts`
--- reaches `max_attempts` and the lease is long expired, the janitor marks the run
--- `infrastructure-failure` and removes the row. The FK to `runs` ON DELETE CASCADE
+-- it (crash-safe failover). `attempts` counts expired lease reclaims and releases
+-- for unavailable credentials or pools. Operator parks and wakes are free.
+-- Both causes share `max_attempts`. A credential release at the limit fails the
+-- run with `retry-exhausted`. An exhausted expired lease ends the run with
+-- `infrastructure-failure` after the janitor grace period. Credential releases
+-- back off from one second, doubled per attempt, with up to 20 percent jitter.
+-- `queue::MAX_RETRY_BACKOFF_MS` caps the full delay at five minutes.
+-- The FK to `runs` ON DELETE CASCADE
 -- ties the claim machinery to the run's immutable history. Status/lifecycle live
 -- on `runs` (5.7) — the queue is the claim/lease layer, not a second run-state.
 -- ---------------------------------------------------------------------------
@@ -71,6 +72,7 @@ CREATE TABLE wamn_run.run_queue (
     -- generation; executor mutations join on owner + generation.
     lease_generation bigint NOT NULL DEFAULT 0 CHECK (lease_generation >= 0),
     attempts         int  NOT NULL DEFAULT 0,
+    -- Backoff cap: crates/execution/run-state/src/queue/model.rs.
     max_attempts     int  NOT NULL DEFAULT 20,
     enqueued_at      timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (env_key, run_id),
