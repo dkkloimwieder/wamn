@@ -1,50 +1,7 @@
-//! The `reconcile-run-plane` subcommand (E4/R14-migration, wamn-1wdq): the
-//! **effect shell** for the pure `wamn_schema_control` run-plane schema reconciler —
-//! THE durable migration path for provisioned run-plane schemas.
+//! Observe and reconcile the current run plane and its runtime identities.
 //!
-//! `deploy/sql/run-state.sql` / `run-queue.sql` evolve, but
-//! nothing migrated schemas instantiated from older revisions: the live demo
-//! schemas broke on the E4 `stream_seq` column (runner 42703 warn-loops), one
-//! env had NO queue table at all, and the ephemeral fixture restart wiped
-//! everything including the `catalog` metadata schema. This verb reads what ONE
-//! project-env schema actually has (tables, columns, indexes, CHECKs, user
-//! triggers, helper functions, legacy outbox-era objects, and the per-database
-//! `catalog` schema), asks the pure planner
-//! (`wamn_schema_control::plan_run_plane`) for the idempotent plan,
-//! and — unless `--dry-run` — executes it, in order:
-//!
-//! - missing tables from their record sections (from-zero restore included),
-//! - `ADD COLUMN` for record columns a present table lacks,
-//! - record indexes created / a stale-definition index (the pre-E4 claimable
-//!   index) recreated,
-//! - exact record CHECK constraints plus run-state helper functions and the
-//!   event-lineage trigger (missing/drifted definitions repaired; extra record
-//!   CHECKs/triggers removed),
-//! - the pre-l5i9.19 outbox-era teardown (tables, triggers, function, and
-//!   retired registration `state` keys) plus retired `partition-key` cleanup,
-//! - the `catalog` metadata schema when absent (or its missing tables).
-//!
-//! **Retained-data preserving:** no retained table or row is rewritten or
-//! deleted, and unknown live columns are printed rather than touched. Explicit
-//! cutovers physically remove only named retired state after locked safety
-//! preflights. The partition-plane cutover requires drained leases and refuses
-//! nonempty dead-letter history with an archive-or-environment-reprovision
-//! diagnostic. PostgreSQL validates each canonical CHECK against existing rows
-//! and fails loudly rather than fabricating incompatible history.
-//!
-//! **Ownership:** CREATE/ALTER/DROP need table ownership, and attempt-history
-//! retirement must see every tenant through forced RLS. `wamn_app` and a plain
-//! schema owner cannot safely run it, so apply requires an administrative role
-//! with `SUPERUSER` or explicit `BYPASSRLS`, like project schema installation
-//! / `reconcile-replica-identity`.
-//!
-//! **Scope:** strictly the `--schema` project-env schema plus the per-database
-//! `catalog` metadata schema; entity/floor tables in the schema are read for
-//! the legacy-trigger survey only and never altered (application schema belongs
-//! to package apply; retained content restore belongs to the ops restore verb).
-//!
-//! `--dry-run` is STRICTLY read-only: it neither ensures the `wamn_app` role
-//! nor executes any plan action.
+//! Dry runs read database facts without changing roles or schema.
+//! Apply requires SUPERUSER or BYPASSRLS to observe every tenant row.
 
 use std::collections::BTreeSet;
 use std::error::Error as StdError;
@@ -58,70 +15,19 @@ use wamn_control_provision::{
 };
 use wamn_control_registry::{DurabilityClass, Triple};
 use wamn_schema_control::{
-    BareSchemaName, RowPolicyObservation, RowSecurityObservation, RunPlaneActionKind,
-    RunPlaneObservation, RunPlanePlan, ScenarioAuthorRoleObservation, catalog_schema_present_sql,
-    count_retired_authored_ordering_rows_sql, plan_run_plane, select_app_run_queue_authority_sql,
-    select_app_scenario_author_membership_sql, select_authoring_effective_column_privileges_sql,
+    BareSchemaName, RowPolicyObservation, RowSecurityObservation, RunPlaneObservation,
+    RunPlanePlan, ScenarioAuthorRoleObservation, catalog_schema_present_sql, plan_run_plane,
+    select_app_run_queue_authority_sql, select_app_scenario_author_membership_sql,
+    select_authoring_effective_column_privileges_sql,
     select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,
     select_authoring_table_privileges_sql, select_effect_table_effective_column_privileges_sql,
     select_effect_table_effective_privileges_sql, select_effect_table_privileges_sql,
     select_environment_policy_policies_sql, select_environment_policy_row_security_sql,
-    select_outbox_function_present_sql, select_outbox_trigger_tables_sql,
     select_run_capture_privileges_sql, select_run_plane_helper_functions_sql,
     select_scenario_author_role_sql, select_scenario_author_schema_usage_sql,
     select_schema_checks_sql, select_schema_columns_sql, select_schema_foreign_keys_sql,
     select_schema_indexes_sql, select_schema_triggers_sql,
 };
-
-/// The action kinds permitted to execute BEFORE
-/// the role bootstrap in [`reconcile`].
-///
-/// **This is a permission, not an ordering assertion.** Membership never claims
-/// an action leads the plan; it says the action MAY lead it. Every member opens
-/// with an `ACCESS EXCLUSIVE` lock. Most lock-taking members preflight before
-/// migration. `FailureDetailCutover` is
-/// the deliberate exception: its one `ALTER TABLE ... DROP COLUMN ... RESTRICT`
-/// is transactional, so a dependent-object refusal rolls back both column drops.
-/// `ensure_wamn_app_role` is itself a WRITE: it creates or hardens `wamn_app`
-/// as a passwordless NOLOGIN ACL role, hardens `wamn_scenario_author`, and
-/// `REVOKE`s the membership between them. So the property this buys is
-/// **refuse before you mutate** — the reconciler must not create or re-harden
-/// cluster roles on a database it is about to refuse to touch. A refusal fails
-/// the batch, `reconcile` returns `Err`, and the bootstrap below never runs.
-///
-/// `RetireNodeRuns` and `RetireExecutionBundles` each produce a one-action
-/// plan. Their RESTRICT failure or successful discard therefore precedes role
-/// bootstrap and every unrelated target-database repair.
-///
-/// **The written order is NOT execution order.** The lookup is `contains`, which
-/// is order-insensitive, so the order here is decoration. The planner emits
-/// `FrameIdentityCutover` AFTER `PartitionPlaneCutover` and
-/// `ChildRunCutover` — the reverse of how it is listed.
-/// `pre_role_bootstrap_allowlist_is_exact` pins
-/// this array by equality and so freezes the order: it certifies the SET, and
-/// must not be read as certifying a sequence.
-///
-/// **The hazard to actually guard** lives in the planner, invisible from here:
-/// 1. A NEW refusing cutover pushed into the plan without being added to this
-///    array — the loop stops before it, `ensure_wamn_app_role` mutates roles,
-///    and only then does the new action refuse.
-/// 2. A non-allowlisted push interleaved AHEAD of allowlisted ones — the loop
-///    consumes a PREFIX, so the first non-member truncates it and silently
-///    strips the pre-bootstrap property from every allowlisted action behind it.
-const PRE_ROLE_BOOTSTRAP_ACTIONS: [RunPlaneActionKind; 12] = [
-    RunPlaneActionKind::TypeColumnCutover,
-    RunPlaneActionKind::RetireNodeRuns,
-    RunPlaneActionKind::RetireExecutionBundles,
-    RunPlaneActionKind::FrameIdentityCutover,
-    RunPlaneActionKind::RetireLegacyAdmissionSurface,
-    RunPlaneActionKind::EffectTableCutover,
-    RunPlaneActionKind::PartitionPlaneCutover,
-    RunPlaneActionKind::ChildRunCutover,
-    RunPlaneActionKind::RerunLineageCutover,
-    RunPlaneActionKind::FailureDetailCutover,
-    RunPlaneActionKind::StoredSuiteCutover,
-    RunPlaneActionKind::RetiredEffectDispositionCutover,
-];
 
 /// Inputs of one run-plane reconciliation.
 #[derive(Debug)]
@@ -133,7 +39,7 @@ pub struct ReconcileRunPlaneRequest {
 
     /// Administrative Postgres URL to the exact registry-derived project
     /// database. Observation and apply require SUPERUSER or BYPASSRLS so
-    /// forced-RLS legacy rows cannot be skipped.
+    /// forced-RLS rows cannot be skipped.
     pub admin_database_url: String,
 
     /// Registry organization owning the environment policy.
@@ -974,27 +880,14 @@ pub async fn reconcile(
         .get(0);
     anyhow::ensure!(
         bypasses_forced_rls,
-        "reconcile-run-plane requires SUPERUSER or BYPASSRLS; a plain schema owner cannot completely observe forced-RLS legacy rows"
+        "reconcile-run-plane requires SUPERUSER or BYPASSRLS; a plain schema owner cannot completely observe forced-RLS rows"
     );
 
     let obs = observe(client, schema).await?;
     let plan = plan_run_plane(schema, &obs);
     if apply {
-        let mut applied = 0;
-        while plan
-            .actions
-            .get(applied)
-            .is_some_and(|action| PRE_ROLE_BOOTSTRAP_ACTIONS.contains(&action.kind))
-        {
-            let action = &plan.actions[applied];
-            client
-                .batch_execute(&action.sql)
-                .await
-                .with_context(|| format!("apply {:?} {}", action.kind, action.target))?;
-            applied += 1;
-        }
         ensure_runtime_roles(client).await?;
-        for action in &plan.actions[applied..] {
+        for action in &plan.actions {
             client
                 .batch_execute(&action.sql)
                 .await
@@ -1242,18 +1135,7 @@ async fn observe(
                 &[],
             )
             .await
-            .context("count effect records for effect-table cutover")?
-            .get(0);
-    }
-    if obs
-        .tables
-        .get("flows")
-        .is_some_and(|columns| columns.contains("graph_json"))
-    {
-        obs.retired_authored_ordering_rows = client
-            .query_one(&count_retired_authored_ordering_rows_sql(schema), &[])
-            .await
-            .context("count persisted retired flow-ordering keys")?
+            .context("count effect records for current-schema safety")?
             .get(0);
     }
     for row in client
@@ -1292,19 +1174,6 @@ async fn observe(
     {
         obs.helper_functions.insert(row.get(0), row.get(1));
     }
-    for row in client
-        .query(select_outbox_trigger_tables_sql(), &[&schema.as_str()])
-        .await
-        .context("survey legacy outbox triggers")?
-    {
-        obs.outbox_trigger_tables.push(row.get(0));
-    }
-    obs.outbox_function_present = client
-        .query_one(select_outbox_function_present_sql(), &[&schema.as_str()])
-        .await
-        .context("survey legacy outbox function")?
-        .get(0);
-
     obs.catalog_schema_present = client
         .query_one(catalog_schema_present_sql(), &[])
         .await
@@ -1317,74 +1186,8 @@ async fn observe(
             .context("read catalog tables")?
         {
             let table: String = row.get(0);
-            let column: String = row.get(1);
-            if table == "package_definition_owners" && column == "definition_kind" {
-                obs.definition_owners_kind_column = true;
-            }
-            if table == "package_definition_owners" && column == "definition_type" {
-                obs.definition_owners_type_column = true;
-            }
             obs.catalog_tables.insert(table.clone());
         }
     }
     Ok(obs)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn schema() -> BareSchemaName {
-        BareSchemaName::new("demo").expect("test schema is valid")
-    }
-
-    /// The one POSITIVE reachability assertion behind
-    /// [`PRE_ROLE_BOOTSTRAP_ACTIONS`]: when the retired plan table is present,
-    /// the plan [`reconcile`] walks is exactly the carrier cutover, and that
-    /// kind is allowlisted — so the whole plan runs
-    /// ahead of `ensure_wamn_app_role`, which never touches a database about to
-    /// refuse.
-    ///
-    /// Two independent facts hold that up, and this is the only place in this
-    /// crate pinning either: the kind's membership above, and
-    /// `wamn_schema_control::plan_run_plane`'s early return, which is what makes
-    /// the cutover the WHOLE plan rather than the head of an 89-action one.
-    /// Deleting either turns this red.
-    #[test]
-    fn execution_bundle_retirement_leads_the_pre_bootstrap_prefix() {
-        let obs = RunPlaneObservation {
-            catalog_tables: BTreeSet::from(["execution_bundles".to_string()]),
-            ..Default::default()
-        };
-
-        let plan = plan_run_plane(&schema(), &obs);
-        assert_eq!(plan.actions.len(), 1, "actions: {:#?}", plan.actions);
-        assert_eq!(
-            plan.actions[0].kind,
-            RunPlaneActionKind::RetireExecutionBundles
-        );
-        assert!(PRE_ROLE_BOOTSTRAP_ACTIONS.contains(&plan.actions[0].kind));
-    }
-
-    #[test]
-    fn pre_role_bootstrap_allowlist_is_exact() {
-        assert_eq!(
-            PRE_ROLE_BOOTSTRAP_ACTIONS,
-            [
-                RunPlaneActionKind::TypeColumnCutover,
-                RunPlaneActionKind::RetireNodeRuns,
-                RunPlaneActionKind::RetireExecutionBundles,
-                RunPlaneActionKind::FrameIdentityCutover,
-                RunPlaneActionKind::RetireLegacyAdmissionSurface,
-                RunPlaneActionKind::EffectTableCutover,
-                RunPlaneActionKind::PartitionPlaneCutover,
-                RunPlaneActionKind::ChildRunCutover,
-                RunPlaneActionKind::RerunLineageCutover,
-                RunPlaneActionKind::FailureDetailCutover,
-                RunPlaneActionKind::StoredSuiteCutover,
-                RunPlaneActionKind::RetiredEffectDispositionCutover,
-            ]
-        );
-        assert!(!PRE_ROLE_BOOTSTRAP_ACTIONS.contains(&RunPlaneActionKind::EnsureSchema));
-    }
 }

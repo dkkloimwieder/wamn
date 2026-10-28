@@ -13,13 +13,6 @@ async fn two_plane_residency_live() {
     two_plane_residency_leg(&su).await;
 }
 
-#[tokio::test]
-async fn stored_suite_cutover_live() {
-    let url = locked_database::database(wamn_test_postgres::database);
-    let su = connect(&url).await;
-    stored_suite_cutover_leg(&su).await;
-}
-
 /// The reconciler plans NOTHING on the author's project-plane surface that the
 /// FRESH INSTALL just produced (wamn-0h0g.22.20, wamn-0h0g.22.43).
 ///
@@ -285,7 +278,7 @@ pub(super) async fn two_plane_residency_leg(su: &Client) {
     reset(su).await;
 }
 
-pub(super) async fn capture_mode_additive_leg(su: &Client, url: &str) {
+pub(super) async fn capture_mode_security_leg(su: &Client, url: &str) {
     reset(su).await;
     let schema = schema();
     su.batch_execute(CATALOG_SCHEMA_SQL)
@@ -302,35 +295,25 @@ pub(super) async fn capture_mode_additive_leg(su: &Client, url: &str) {
         "INSERT INTO {SCHEMA}.runs \
            (env_key,run_id,flow_id,flow_version,package_id,environment, \
             status) \
-         VALUES ('t1','legacy-off','f',1,'capture','dev', \
-                 'completed'); \
-         DROP TRIGGER runs_admission_pins_immutable ON {SCHEMA}.runs; \
-         ALTER TABLE {SCHEMA}.runs \
-           DROP CONSTRAINT runs_capture_mode_source_check, \
-           DROP COLUMN capture_mode;"
+         VALUES ('t1','capture-off','f',1,'capture','dev', \
+                 'completed');"
     ))
     .await
-    .expect("build populated pre-capture carrier schema");
+    .expect("seed a completed run");
 
-    let plan = reconcile_run_plane::reconcile(su, &schema, true)
-        .await
-        .expect("capture carrier reconcile applies to populated history");
-    assert!(plan.actions.iter().any(|action| {
-        action.kind == RunPlaneActionKind::AddColumn && action.target == "runs.capture_mode"
-    }));
     let mode: String = su
         .query_one(
-            &format!("SELECT capture_mode FROM {SCHEMA}.runs WHERE run_id='legacy-off'"),
+            &format!("SELECT capture_mode FROM {SCHEMA}.runs WHERE run_id='capture-off'"),
             &[],
         )
         .await
-        .expect("read legacy defaulted mode")
+        .expect("read the default capture mode")
         .get(0);
     assert_eq!(mode, "off");
 
     let immutable = su
         .execute(
-            &format!("UPDATE {SCHEMA}.runs SET capture_mode='full' WHERE run_id='legacy-off'"),
+            &format!("UPDATE {SCHEMA}.runs SET capture_mode='full' WHERE run_id='capture-off'"),
             &[],
         )
         .await
@@ -417,162 +400,6 @@ pub(super) async fn capture_mode_additive_leg(su: &Client, url: &str) {
     assert!(
         again.is_noop(),
         "capture carrier converged: {:#?}",
-        again.actions
-    );
-}
-
-pub(super) async fn stored_suite_cutover_leg(su: &Client) {
-    reset(su).await;
-    let schema = schema();
-    su.batch_execute(CATALOG_SCHEMA_SQL)
-        .await
-        .expect("apply catalog before stored-suite cutover");
-    for ddl in [RUN_STATE_SQL, RUN_QUEUE_SQL] {
-        su.batch_execute(&rewrite_schema(ddl, &schema))
-            .await
-            .expect("apply current run plane before stored-suite cutover");
-    }
-    su.batch_execute(&format!(
-        "CREATE TABLE {SCHEMA}.test_suites (id int PRIMARY KEY); \
-         CREATE TABLE {SCHEMA}.test_cases ( \
-           id int PRIMARY KEY, suite_id int REFERENCES {SCHEMA}.test_suites(id)); \
-         CREATE TABLE {SCHEMA}.authoring_report_reservations (id int PRIMARY KEY); \
-         CREATE TABLE {SCHEMA}.authoring_suite_case_facts ( \
-           id int PRIMARY KEY, reservation_id int \
-             REFERENCES {SCHEMA}.authoring_report_reservations(id)); \
-         CREATE TABLE {SCHEMA}.authoring_suite_reports ( \
-           id int PRIMARY KEY, reservation_id int \
-             REFERENCES {SCHEMA}.authoring_report_reservations(id)); \
-         CREATE FUNCTION {SCHEMA}.guard_authoring_report_write() RETURNS trigger \
-           LANGUAGE plpgsql AS $guard$ BEGIN RETURN NEW; END $guard$; \
-         CREATE FUNCTION {SCHEMA}.reject_immutable_authoring_report_change() RETURNS trigger \
-           LANGUAGE plpgsql AS $guard$ BEGIN RETURN NEW; END $guard$; \
-         CREATE TRIGGER authoring_report_reservations_guard \
-           BEFORE INSERT ON {SCHEMA}.authoring_report_reservations \
-           FOR EACH ROW EXECUTE FUNCTION {SCHEMA}.guard_authoring_report_write(); \
-         CREATE TRIGGER authoring_suite_reports_immutable \
-           BEFORE UPDATE ON {SCHEMA}.authoring_suite_reports \
-           FOR EACH ROW EXECUTE FUNCTION \
-             {SCHEMA}.reject_immutable_authoring_report_change(); \
-         CREATE TABLE catalog.publish_gate_audit (audit_id int PRIMARY KEY); \
-         INSERT INTO catalog.publish_gate_audit VALUES (1);"
-    ))
-    .await
-    .expect("install retired stored-suite persistence");
-    // The authoring-test orchestration relations left the run-plane record with
-    // wamn-0h0g.9.11.3 (805701ec) and now live only in the control database's
-    // portable store, which this verb must never apply. A legacy run plane
-    // carries them in its own schema, and that is the shape this cutover exists
-    // to reach — so synthesize it here, exactly as the stored-suite tables above
-    // are synthesized.
-    su.batch_execute(&format!(
-        "CREATE TABLE {SCHEMA}.authoring_test_run_reservations ( \
-           env_key text NOT NULL, report_id text NOT NULL, \
-           PRIMARY KEY (env_key, report_id)); \
-         CREATE TABLE {SCHEMA}.authoring_test_reports ( \
-           env_key text NOT NULL, report_id text NOT NULL, \
-           PRIMARY KEY (env_key, report_id)); \
-         CREATE TABLE {SCHEMA}.authoring_test_case_runs ( \
-           env_key text NOT NULL, report_id text NOT NULL, ordinal int NOT NULL, \
-           PRIMARY KEY (env_key, report_id, ordinal));"
-    ))
-    .await
-    .expect("synthesize the legacy run-plane authoring-test orchestration shape");
-    // The pre-wamn-0h0g.15.27 test-set store, with the live grant that made it
-    // invisible to the privilege reconciler once the relation left the record,
-    // and the two FK columns on RETAINED tables that block its drop.
-    su.batch_execute(&format!(
-        "CREATE FUNCTION {SCHEMA}.reject_immutable_authoring_test_set_change() RETURNS trigger \
-           LANGUAGE plpgsql AS $guard$ BEGIN RETURN NEW; END $guard$; \
-         CREATE TABLE {SCHEMA}.authoring_test_sets ( \
-           env_key text NOT NULL, test_set_hash text NOT NULL, \
-           PRIMARY KEY (env_key, test_set_hash)); \
-         CREATE TRIGGER authoring_test_sets_update_immutable \
-           BEFORE UPDATE ON {SCHEMA}.authoring_test_sets \
-           FOR EACH ROW EXECUTE FUNCTION \
-             {SCHEMA}.reject_immutable_authoring_test_set_change(); \
-         GRANT SELECT, INSERT ON {SCHEMA}.authoring_test_sets TO wamn_scenario_author; \
-         ALTER TABLE {SCHEMA}.authoring_test_run_reservations \
-           ADD COLUMN test_set_hash text NOT NULL, \
-           ADD CONSTRAINT authoring_test_reservation_test_set_fk \
-             FOREIGN KEY (env_key, test_set_hash) \
-             REFERENCES {SCHEMA}.authoring_test_sets (env_key, test_set_hash); \
-         ALTER TABLE {SCHEMA}.authoring_test_reports \
-           ADD COLUMN test_set_hash text NOT NULL, \
-           ADD CONSTRAINT authoring_test_report_test_set_fk \
-             FOREIGN KEY (env_key, test_set_hash) \
-             REFERENCES {SCHEMA}.authoring_test_sets (env_key, test_set_hash);"
-    ))
-    .await
-    .expect("install the retired test-set store and its FK columns");
-    let plan = reconcile_run_plane::reconcile(su, &schema, true)
-        .await
-        .expect("stored-suite cutover applies");
-    let cutovers = plan
-        .actions
-        .iter()
-        .filter(|action| action.kind == RunPlaneActionKind::StoredSuiteCutover)
-        .collect::<Vec<_>>();
-    assert_eq!(cutovers.len(), 1, "actions: {:#?}", plan.actions);
-
-    for table in [
-        "authoring_suite_reports",
-        "authoring_suite_case_facts",
-        "authoring_report_reservations",
-        "test_cases",
-        "test_suites",
-        "authoring_test_sets",
-    ] {
-        assert!(
-            !table_exists(su, SCHEMA, table).await,
-            "retired table {table} is absent"
-        );
-    }
-    // The FK columns had to go first, or the parent DROP TABLE would have
-    // refused on the dependency — and a surviving NOT NULL orphan would have
-    // refused every reservation and report INSERT (wamn-0h0g.15.78).
-    for table in ["authoring_test_run_reservations", "authoring_test_reports"] {
-        assert!(
-            !column_exists(su, table, "test_set_hash").await,
-            "{table}.test_set_hash survived the test-set retirement"
-        );
-    }
-    assert!(
-        !table_exists(su, "catalog", "publish_gate_audit").await,
-        "populated retired publish-gate audit is absent"
-    );
-    for table in [
-        "authoring_test_run_reservations",
-        "authoring_test_case_runs",
-        "authoring_test_reports",
-    ] {
-        assert!(
-            table_exists(su, SCHEMA, table).await,
-            "retained table {table} survives"
-        );
-    }
-    let retired_functions: i64 = su
-        .query_one(
-            "SELECT count(*) FROM pg_proc AS proc \
-             JOIN pg_namespace AS namespace ON namespace.oid = proc.pronamespace \
-             WHERE namespace.nspname = $1 \
-               AND proc.proname IN \
-                 ('guard_authoring_report_write', \
-                  'reject_immutable_authoring_report_change', \
-                  'reject_immutable_authoring_test_set_change')",
-            &[&SCHEMA],
-        )
-        .await
-        .expect("count retired stored-suite functions")
-        .get(0);
-    assert_eq!(retired_functions, 0);
-
-    let again = reconcile_run_plane::reconcile(su, &schema, false)
-        .await
-        .expect("stored-suite cutover second reconcile plans");
-    assert!(
-        again.is_noop(),
-        "stored-suite cutover converged: {:#?}",
         again.actions
     );
 }

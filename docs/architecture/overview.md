@@ -154,6 +154,8 @@ It applies the stage of each successor, writes the release cache row, and reconc
 It also creates the number sequence row of each package default that the environment lacks.
 With `release = none`, `apply` uninstalls the release chart instead of writing it.
 Every step is an ensure that is judged by observation, so applying again repairs a crash.
+The reconciler creates each run plane from the current SQL declarations.
+It repairs current schema and grant drift without converting older run-plane layouts.
 
 `rollback` finds the newest Helm revision that is `deployed` or `superseded` and has another digest than the current one.
 It runs `apply` on that digest and keeps the reason in the Helm description.

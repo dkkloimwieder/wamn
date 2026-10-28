@@ -68,25 +68,12 @@ async fn policy_projection_stamps_the_provisioning_actor() {
         .unwrap()
         .get(0);
     assert_eq!(before, after);
-    // The reconciler preserves the populated row while installing the same stamps.
-    client.batch_execute("DROP TRIGGER wamn_record_history_stamp ON wamn_run.environment_policies; ALTER TABLE wamn_run.environment_policies DROP COLUMN created_at, DROP COLUMN created_by, DROP COLUMN updated_at, DROP COLUMN updated_by").await.unwrap();
-    reconcile_run_plane::reconcile(&client, &schema, true)
-        .await
-        .unwrap();
-    assert_stamp(
-        &client,
-        "wamn_run.environment_policies",
-        "true",
-        &actor,
-        &actor,
-    )
-    .await;
     let plan = reconcile_run_plane::reconcile(&client, &schema, false)
         .await
         .unwrap();
     assert!(
         plan.actions.is_empty(),
-        "fresh and migrated run plane disagree: {plan:?}"
+        "current run plane requires repairs: {plan:?}"
     );
 }
 

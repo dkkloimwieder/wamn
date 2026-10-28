@@ -56,19 +56,9 @@ pub struct RowSecurityObservation {
 /// per-database `catalog` metadata schema). Everything here is a read — the
 /// pure planner turns it into the action list.
 #[derive(Debug, Clone, Default)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "each boolean is one independent fact the driver read from the live database \
-              (a role membership, a granted authority, a present role, a present function, a \
-              present schema); they are observations, not a state machine, and grouping them \
-              would hide which single query answered which"
-)]
 pub struct RunPlaneObservation {
-    /// Total immutable rows across the three effect tables that exist.
-    /// Any nonzero value makes an incompatible structural cutover refuse.
+    /// Immutable effect rows that prevent unsafe current-schema repairs.
     pub effect_record_rows: i64,
-    /// Persisted flow graphs that still carry retired top-level ordering keys.
-    pub retired_authored_ordering_rows: i64,
     /// Host-only scenario-author role attributes, or absent when the cluster
     /// has not yet provisioned the role.
     pub scenario_author_role: Option<ScenarioAuthorRoleObservation>,
@@ -107,36 +97,23 @@ pub struct RunPlaneObservation {
     /// Schemas on which the host-only author role effectively has USAGE.
     pub scenario_author_schema_usage: BTreeSet<String>,
     /// EVERY ordinary table in the target schema → its live column names.
-    /// Includes entity/floor tables (ignored by the planner) and retired
-    /// outbox/stored-suite tables (planned for teardown).
+    /// Includes entity/floor tables, which the planner ignores.
     pub tables: BTreeMap<String, BTreeSet<String>>,
     /// ENABLE/FORCE flags and every policy on the projected env-policy table.
     /// `None` means the relation itself is absent.
     pub environment_policy_row_security: Option<RowSecurityObservation>,
-    /// Live columns that still carry NOT NULL authority.
+    /// Live columns with NOT NULL constraints.
     pub non_nullable_columns: BTreeSet<(String, String)>,
-    /// PostgreSQL-formatted live column types, keyed by `(table, column)`.
+    /// PostgreSQL-formatted column types, keyed by table and column.
     pub column_types: BTreeMap<(String, String), String>,
-    /// Live columns that still synthesize values through a default.
+    /// Live columns with defaults.
     pub defaulted_columns: BTreeSet<(String, String)>,
     /// EVERY index in the target schema → its live `pg_indexes.indexdef`.
     pub indexes: BTreeMap<String, String>,
-    /// Tables in the target schema carrying the legacy `wamn_outbox_event`
-    /// trigger.
-    pub outbox_trigger_tables: Vec<String>,
-    /// Whether the legacy `wamn_outbox_event()` function exists in the target
-    /// schema.
-    pub outbox_function_present: bool,
     /// Whether the per-database `catalog` metadata schema exists.
     pub catalog_schema_present: bool,
     /// Tables present in the `catalog` schema (empty when the schema is absent).
     pub catalog_tables: BTreeSet<String>,
-    /// Whether `catalog.package_definition_owners` has the old column
-    /// `definition_kind` (docs/history/kind-to-type.md §4.3.2).
-    pub definition_owners_kind_column: bool,
-    /// Whether `catalog.package_definition_owners` has the new column
-    /// `definition_type`.
-    pub definition_owners_type_column: bool,
     /// Every CHECK constraint on a record table, keyed by `(table, name)`, with
     /// PostgreSQL's canonical `pg_get_constraintdef(..., true)` definition.
     pub checks: BTreeMap<(String, String), String>,
@@ -147,7 +124,6 @@ pub struct RunPlaneObservation {
     /// Every non-internal trigger on a record table, keyed by `(table, name)`,
     /// with PostgreSQL's canonical `pg_get_triggerdef(..., true)` definition.
     pub triggers: BTreeMap<(String, String), String>,
-    /// Canonical `pg_get_functiondef` output for retained helpers and the two
-    /// retired stored-suite helpers, keyed by function name.
+    /// Canonical `pg_get_functiondef` output for current helpers, keyed by name.
     pub helper_functions: BTreeMap<String, String>,
 }

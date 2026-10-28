@@ -1,66 +1,10 @@
-//! The run-plane schema reconciler (E4/R14-migration, wamn-1wdq).
+//! Plan run-plane creation and repair from observed database facts.
 //!
-//! `deploy/sql/run-state.sql` / `run-queue.sql` evolve, but a
-//! schema instantiated from an older revision has NO migration path: the 2jkm.41
-//! sweep found live demo schemas missing the E4 `stream_seq` column (runner
-//! drains failed 42703), the whole queue table
-//! (`poc_f1` predated per-project queue provisioning), and — after the ephemeral
-//! fixture pod restarted — everything at once, including the `catalog` metadata
-//! schema. This module is the PURE decision (the reconcile-replica-identity
-//! precedent — no DB, clock, or wasm): given what the driver OBSERVED live
-//! (tables + columns + indexes + CHECKs + user triggers + helper functions +
-//! legacy outbox-era objects + the `catalog` schema state), it produces the
-//! idempotent plan that
-//! brings one project-env's run-plane schema to the schema of record. The
-//! `wamn-ctl reconcile-run-plane` shell reads/executes; the throwaway-PG gate
-//! shows the live transitions.
-//!
-//! **The schema of record is the deploy/sql source itself**, embedded at compile
-//! time (`include_str!`) — the SAME files the wamn-gates `schema_drift` guard
-//! (wamn-9mg8) pins — and sliced per table, so the plan can never drift from
-//! what provisioning applies. Per-project schemas are the `wamn_run` → target
-//! rewrite (`rewrite_schema`, the project-environment provisioning convention).
-//!
-//! What the plan covers (the wamn-1wdq manifestation set):
-//!
-//! 1. **Additive column drift** — a present table missing record columns gains
-//!    `ALTER TABLE … ADD COLUMN <record definition>` (e.g. E4 `stream_seq
-//!    bigint NOT NULL DEFAULT 0`).
-//! 2. **Index drift** — a record index absent live is created; a present one
-//!    whose live definition lacks a record column the record definition names
-//!    (the pre-E4 `run_queue_claimable` without `stream_seq`) is dropped and
-//!    recreated from record.
-//! 3. **Wholly-missing tables** — created from their record section (DDL +
-//!    indexes + RLS + policy + grants), in file order so FKs resolve.
-//! 4. **The pre-l5i9.19 outbox era** — legacy `outbox`/`evt_shadow` tables, the
-//!    constant-named `wamn_outbox_event` trigger (per entity table) and its
-//!    function are DROPPED (trigger before function — the function drop is
-//!    RESTRICT), and stored registrations carrying the legacy `state` or
-//!    `partition-key` key are stripped (a legacy document fails parse after
-//!    the owning surface is removed).
-//! 5. **From-zero restore** — an empty database plans the full set, including
-//!    `wamn_catalog::CATALOG_SCHEMA_SQL` (the `catalog` metadata schema the
-//!    registration storage and the RI reconcile read).
-//! 6. **Exact CHECK + trigger convergence** — every record-table CHECK is
-//!    compared in PostgreSQL's canonical form; missing/drifted checks are added
-//!    or replaced and non-record checks are removed. The run-state helper
-//!    functions and lineage trigger are likewise repaired from record.
-//!
-//! **Retained-data preserving:** the plan never rewrites or deletes a retained
-//! row or drops a retained table. Unknown live columns are SURFACED
-//! (`extra_columns`) and preserved. Explicit cutovers physically remove only
-//! named retired state after locked safety preflights. The partition-plane
-//! cutover requires drained leases and refuses nonempty dead-letter history;
-//! the effect-table cutovers remove retired identity/recovery columns; the
-//! rerun-lineage cutover removes only the two retired run columns and its
-//! canonical index while preserving every run row; and the stored-test
-//! cutover removes retired persistence. PostgreSQL
-//! validates new CHECKs against existing rows and aborts on incompatible data.
+//! The reconciler creates each plane from the current deploy SQL.
+//! Current planes retain their rows while schema and privilege repairs converge.
 
 mod declarations;
 mod plan;
-mod schema_changes;
-mod type_column;
 
 #[doc(inline)]
 pub use plan::plan_run_plane;
@@ -69,25 +13,15 @@ pub use plan::plan_run_plane;
 use declarations::{
     AUTHORING_PRIVILEGE_SPECS, AuthoringTableSchema, CHECK_SPECS,
     EFFECT_ATTEMPTS_DISPATCH_IDENTITY_KEY_DEF, EFFECT_DISPATCH_ATTEMPT_FK_DEF,
-    EFFECT_DISPATCH_ATTEMPT_FK_NAME, EFFECT_DISPATCHES_OCCURRENCE_KEY_DEF, EFFECT_FRAME_COLUMNS,
+    EFFECT_DISPATCH_ATTEMPT_FK_NAME, EFFECT_DISPATCHES_OCCURRENCE_KEY_DEF,
     EFFECT_OUTCOME_DISPATCH_FK_DEF, EFFECT_OUTCOME_DISPATCH_FK_NAME,
-    RETIRED_EFFECT_ATTEMPT_COLUMNS, RUNS_ADMISSION_PINS_TRIGGER_DEF,
-    RUNS_ADMISSION_PINS_TRIGGER_SQL, RUNS_RELEASE_FK_DEF, RUNS_ROOT_INDEX_DEF, helper_specs,
-    trigger_specs,
+    RUNS_ADMISSION_PINS_TRIGGER_DEF, RUNS_ADMISSION_PINS_TRIGGER_SQL, RUNS_RELEASE_FK_DEF,
+    helper_specs, trigger_specs,
 };
 #[cfg(test)]
 use plan::environment_policy_row_security_at_record;
 #[cfg(test)]
-use schema::{index_statements, quote_ident, record_columns, record_tables, table_section};
-#[cfg(test)]
-use schema_changes::{
-    RETIRED_AUTHORED_ORDERING_REFUSAL, RETIRED_CHILD_RUN_COLUMNS, RETIRED_CHILD_RUN_INDEXES,
-    RETIRED_DEAD_LETTER_REFUSAL, RETIRED_EXECUTION_BUNDLE_COLUMN, RETIRED_FAILURE_DETAIL_COLUMNS,
-    RETIRED_PARTITION_CHECK, RETIRED_PARTITION_COLUMNS, RETIRED_PARTITION_INDEX,
-    RETIRED_RERUN_LINEAGE_COLUMNS, RETIRED_STORED_SUITE_CATALOG_TABLE,
-    RETIRED_STORED_SUITE_FUNCTIONS, RETIRED_STORED_SUITE_TABLES, RETIRED_TEST_SET_REFERENCE_COLUMN,
-    RETIRED_TEST_SET_REFERENCE_TABLES, postgres_visible_identifier,
-};
+use schema::{index_statements, record_columns, record_tables, table_section};
 #[cfg(test)]
 use std::collections::BTreeSet;
 #[cfg(test)]
@@ -104,14 +38,12 @@ pub use observation::{
 };
 #[doc(inline)]
 pub use observation_sql::{
-    catalog_schema_present_sql, count_retired_authored_ordering_rows_sql,
-    select_app_run_queue_authority_sql, select_app_scenario_author_membership_sql,
-    select_authoring_effective_column_privileges_sql,
+    catalog_schema_present_sql, select_app_run_queue_authority_sql,
+    select_app_scenario_author_membership_sql, select_authoring_effective_column_privileges_sql,
     select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,
     select_authoring_table_privileges_sql, select_effect_table_effective_column_privileges_sql,
     select_effect_table_effective_privileges_sql, select_effect_table_privileges_sql,
     select_environment_policy_policies_sql, select_environment_policy_row_security_sql,
-    select_outbox_function_present_sql, select_outbox_trigger_tables_sql,
     select_run_capture_privileges_sql, select_scenario_author_role_sql,
     select_scenario_author_schema_usage_sql, select_schema_checks_sql, select_schema_columns_sql,
     select_schema_foreign_keys_sql, select_schema_indexes_sql, select_schema_triggers_sql,
@@ -129,25 +61,14 @@ const RUN_QUEUE_SQL: &str = include_str!("../../../../deploy/sql/run-queue.sql")
 /// `runs`, which everything FKs), then the queue.
 const RUN_PLANE_FILES: [&str; 2] = [RUN_STATE_SQL, RUN_QUEUE_SQL];
 
-/// The outbox-era tables the l5i9.19 teardown retired. A pre-teardown schema
-/// (or one restored from a pre-teardown snapshot) still carries them.
-pub const LEGACY_OUTBOX_TABLES: [&str; 2] = ["outbox", "evt_shadow"];
-
-/// The constant trigger and function name the retired outbox emission used
-/// (`CREATE OR REPLACE TRIGGER wamn_outbox_event … EXECUTE FUNCTION
-/// wamn_outbox_event()`, one trigger per entity table, the function unqualified
-/// so it landed in the apply-time schema).
-pub const OUTBOX_TRIGGER_NAME: &str = "wamn_outbox_event";
-
 /// Reserved non-login project-author identity. No production credential inherits
 /// it, and the guest-visible `wamn_app` role is never a member.
 pub const SCENARIO_AUTHOR_ROLE: &str = "wamn_scenario_author";
 /// What one plan action does (for reporting; the SQL is on the action).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunPlaneActionKind {
-    /// Rename the `kind` columns of an installed database to `type`, before
-    /// every other action (docs/history/kind-to-type.md §4.3.2).
-    TypeColumnCutover,
+    /// Refuse incompatible drift on a populated current effect ledger.
+    RefuseSchemaDrift,
     /// Create or harden the host-only `wamn_scenario_author` NOLOGIN role.
     EnsureScenarioAuthorRole,
     /// `CREATE SCHEMA IF NOT EXISTS` + role usage grant (the run-state.sql
@@ -157,28 +78,6 @@ pub enum RunPlaneActionKind {
     CreateTable,
     /// Add a record column missing from a present table.
     AddColumn,
-    /// Discard the retired mutable node projection and its database-local ACLs.
-    RetireNodeRuns,
-    /// Drop the retired plan digest columns, then the plan-byte table itself.
-    RetireExecutionBundles,
-    /// Strict empty-only conversion from legacy effect identity to frames.
-    FrameIdentityCutover,
-    /// Delete retired callable/event storage and its definer lock bridge.
-    RetireLegacyAdmissionSurface,
-    /// Delete the retired partition plane after a locked drain/evidence preflight.
-    PartitionPlaneCutover,
-    /// Delete retired durable child, wait, and invoke-depth run state.
-    ChildRunCutover,
-    /// Delete retired replay/root run lineage while preserving every run row.
-    RerunLineageCutover,
-    /// Delete retired per-node failure detail while preserving every run row.
-    FailureDetailCutover,
-    /// Delete retired stored-suite tables, audit relation, and helper functions.
-    StoredSuiteCutover,
-    /// Empty-only deletion of the retired effect-disposition request/outcome plane.
-    RetiredEffectDispositionCutover,
-    /// Strict empty-only installation of the coordinate-bound effect tables.
-    EffectTableCutover,
     /// Converge exact effect-table ACLs and deny guest and author writes.
     RepairEffectTablePrivilege,
     /// Drop/re-add a drifted record CHECK, or add it when absent.
@@ -198,14 +97,8 @@ pub enum RunPlaneActionKind {
     /// Create a record index absent from a present table.
     CreateIndex,
     /// Drop + recreate a present index whose live definition lost a record
-    /// column (the pre-E4 claimable index).
+    /// column.
     RecreateIndex,
-    /// Drop a legacy outbox-era table.
-    DropLegacyTable,
-    /// Drop a legacy `wamn_outbox_event` trigger from one table.
-    DropLegacyTrigger,
-    /// Drop the legacy `wamn_outbox_event()` function (after its triggers).
-    DropLegacyFunction,
     /// Apply the complete catalog bootstrap when the `catalog` schema is absent.
     EnsureCatalogSchema,
     /// Create a missing `catalog` table from its record section.
@@ -231,8 +124,7 @@ pub struct RunPlaneAction {
 
 /// The reconcile plan: ordered actions, plus the record tables already fully at
 /// target (reported, never executed) and unknown live columns the record does
-/// not know (SURFACED and preserved). Named retired columns owned by an
-/// explicit cutover are not reported as extras. Idempotent: planning against
+/// not know (SURFACED and preserved). Idempotent: planning against
 /// the post-apply state yields no actions.
 #[derive(Debug, Clone, Default)]
 pub struct RunPlanePlan {
@@ -275,22 +167,15 @@ pub fn ensure_scenario_author_role_sql() -> &'static str {
      END $scenario_author$;"
 }
 
-/// Retained helper definitions plus retired names needed to observe cutovers
-/// in `$1`. A retired helper the observation cannot name is a helper the
-/// cutover can never be planned for.
+/// Current helper definitions in `$1`.
 pub fn select_run_plane_helper_functions_sql() -> &'static str {
     "SELECT p.proname, pg_get_functiondef(p.oid) \
      FROM pg_proc p \
      JOIN pg_namespace n ON n.oid = p.pronamespace \
      WHERE n.nspname = $1 \
-       AND p.proname IN ('lock_catalog_head', \
-                         'guard_event_lineage_immutable', \
+       AND p.proname IN ('guard_event_lineage_immutable', \
                          'reject_immutable_effect_fact_change', \
                          'reject_immutable_operator_run_action_change', \
-                         'reject_immutable_authoring_report_change', \
-                         'guard_authoring_report_write', \
-                         'reject_immutable_authoring_test_set_change', \
-                         'guard_effect_disposition_append', \
                          'guard_run_admission_pins_immutable', \
                          'guard_terminal_run_delete') \
      ORDER BY p.proname"

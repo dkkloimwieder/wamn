@@ -7,41 +7,24 @@ use std::collections::{BTreeMap, BTreeSet};
 use wamn_catalog::CATALOG_SCHEMA_SQL;
 
 use super::schema::{
-    index_definition_stale, index_statements, normalize_observed_schema, quote_ident,
-    record_columns, record_table_names, record_tables, schema_header_section, table_section,
-    table_section_carries_trigger,
+    current_effect_schema_drift, index_definition_stale, index_statements,
+    normalize_observed_schema, quote_ident, record_columns, record_table_names, record_tables,
+    schema_header_section, table_section, table_section_carries_trigger,
 };
 
 use super::{
-    BareSchemaName, LEGACY_OUTBOX_TABLES, OUTBOX_TRIGGER_NAME, RUN_PLANE_FILES, RUN_STATE_SQL,
-    RowPolicyObservation, RowSecurityObservation, RunPlaneAction, RunPlaneActionKind,
-    RunPlaneObservation, RunPlanePlan, SCENARIO_AUTHOR_ROLE, ensure_scenario_author_role_sql,
-    rewrite_schema,
+    BareSchemaName, RUN_PLANE_FILES, RUN_STATE_SQL, RowPolicyObservation, RowSecurityObservation,
+    RunPlaneAction, RunPlaneActionKind, RunPlaneObservation, RunPlanePlan, SCENARIO_AUTHOR_ROLE,
+    ensure_scenario_author_role_sql, rewrite_schema,
 };
 
 use super::declarations::{
     AUTHORING_PRIVILEGE_SPECS, AuthoringTableSchema, CHECK_SPECS, CheckOrigin,
     EFFECT_DISPATCH_ATTEMPT_FK_DEF, EFFECT_DISPATCH_ATTEMPT_FK_NAME,
-    EFFECT_DISPATCH_ATTEMPT_FK_SQL, EFFECT_FRAME_COLUMNS, EFFECT_OUTCOME_DISPATCH_FK_DEF,
+    EFFECT_DISPATCH_ATTEMPT_FK_SQL, EFFECT_OUTCOME_DISPATCH_FK_DEF,
     EFFECT_OUTCOME_DISPATCH_FK_NAME, EFFECT_OUTCOME_DISPATCH_FK_SQL,
-    ENVIRONMENT_POLICY_ENV_KEY_QUAL, RETIRED_EFFECT_ATTEMPT_COLUMNS, TABLE_PRIVILEGE_TYPES,
-    helper_specs, trigger_specs,
+    ENVIRONMENT_POLICY_ENV_KEY_QUAL, TABLE_PRIVILEGE_TYPES, helper_specs, trigger_specs,
 };
-
-use super::schema_changes::{
-    RETIRED_CHILD_RUN_COLUMNS, RETIRED_FAILURE_DETAIL_COLUMNS, RETIRED_PARTITION_CHECK,
-    RETIRED_PARTITION_COLUMNS, RETIRED_RERUN_LINEAGE_COLUMNS, RETIRED_TEST_SET_REFERENCE_COLUMN,
-    RETIRED_TEST_SET_REFERENCE_TABLES, child_run_cutover_needed, child_run_cutover_sql,
-    effect_table_cutover_needed, effect_table_cutover_owned_check, effect_table_cutover_sql,
-    execution_bundle_cutover_needed, execution_bundle_cutover_sql, failure_detail_cutover_needed,
-    failure_detail_cutover_sql, frame_identity_check, frame_identity_column,
-    frame_identity_cutover_sql, frame_identity_cutover_targets, partition_plane_cutover_needed,
-    partition_plane_cutover_sql, rerun_lineage_cutover_needed, rerun_lineage_cutover_sql,
-    retired_child_run_check, retired_effect_disposition_cutover_needed,
-    retired_effect_disposition_cutover_sql, run_queue_claim_index_ready,
-    stored_suite_cutover_needed, stored_suite_cutover_sql,
-};
-use super::type_column::{TypeColumnCutover, type_column_cutover};
 
 pub(super) fn environment_policy_row_security_at_record() -> RowSecurityObservation {
     RowSecurityObservation {
@@ -238,64 +221,31 @@ fn run_capture_privileges_drifted(schema: &BareSchemaName, obs: &RunPlaneObserva
 /// driver read; the returned plan is what it should execute, in order.
 pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> RunPlanePlan {
     let mut plan = RunPlanePlan::default();
-    // The column cutover runs first, and the rest of the plan sees the new
-    // names, so the same run adds no column and drops no check for them.
-    let renamed;
-    let obs = match type_column_cutover(schema, obs) {
-        TypeColumnCutover::None => obs,
-        TypeColumnCutover::Refuse(sql) => {
-            plan.actions.push(RunPlaneAction {
-                kind: RunPlaneActionKind::TypeColumnCutover,
-                target: "type-columns".to_string(),
-                sql,
-            });
-            return plan;
-        }
-        TypeColumnCutover::Rename { sql, renamed: next } => {
-            plan.actions.push(RunPlaneAction {
-                kind: RunPlaneActionKind::TypeColumnCutover,
-                target: "type-columns".to_string(),
-                sql,
-            });
-            renamed = next;
-            &*renamed
-        }
-    };
-    if obs.tables.contains_key("node_runs") {
-        let target = schema.quoted();
+    if obs.effect_record_rows != 0 && current_effect_schema_drift(schema, obs) {
+        let tables = [
+            "effect_attempts",
+            "effect_attempt_dispatches",
+            "effect_attempt_outcomes",
+        ]
+        .into_iter()
+        .filter(|table| obs.tables.contains_key(*table));
+        let locks = tables
+            .map(|table| {
+                format!(
+                    "LOCK TABLE {}.{} IN ACCESS EXCLUSIVE MODE;",
+                    schema.quoted(),
+                    quote_ident(table),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
         plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RetireNodeRuns,
-            target: format!("{}.node_runs", schema.as_str()),
+            kind: RunPlaneActionKind::RefuseSchemaDrift,
+            target: "effect-ledger.current-schema".to_string(),
             sql: format!(
-                r"LOCK TABLE {target}.node_runs IN ACCESS EXCLUSIVE MODE;
--- Populated rows are deliberately discarded without archive: node_runs held
--- only dead mutable projection coordinates, while runs retains run history.
-DROP TABLE IF EXISTS {target}.node_runs RESTRICT;
-DO $retire_run_projection_authority$
-BEGIN
-    IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles
-                WHERE rolname = 'wamn_run_projection_writer') THEN
-        EXECUTE pg_catalog.format(
-            'REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA %I FROM wamn_run_projection_writer',
-            '{schema}'
-        );
-        EXECUTE pg_catalog.format(
-            'REVOKE ALL PRIVILEGES ON SCHEMA %I FROM wamn_run_projection_writer',
-            '{schema}'
-        );
-    END IF;
-END
-$retire_run_projection_authority$;",
-                schema = schema.as_str(),
+                "{locks} DO $drift$ BEGIN RAISE EXCEPTION USING \
+                ERRCODE = '55000', MESSAGE = 'effect-ledger-schema-drift'; END $drift$;"
             ),
-        });
-        return plan;
-    }
-    if execution_bundle_cutover_needed(obs) {
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RetireExecutionBundles,
-            target: "catalog.execution-bundles".to_string(),
-            sql: execution_bundle_cutover_sql(schema, obs),
         });
         return plan;
     }
@@ -304,110 +254,6 @@ $retire_run_projection_authority$;",
         .get("runs")
         .is_some_and(|columns| columns.contains("capture_mode"));
     let run_capture_privileges_drifted = run_capture_privileges_drifted(schema, obs);
-
-    let effect_table_cutover_needed = effect_table_cutover_needed(schema, obs);
-    if effect_table_cutover_needed && obs.effect_record_rows != 0 {
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::EffectTableCutover,
-            target: "effect-tables.coordinate-boundary".to_string(),
-            sql: effect_table_cutover_sql(schema, obs),
-        });
-        return plan;
-    }
-
-    let failure_detail_cutover_needed = failure_detail_cutover_needed(obs);
-    let partition_plane_cutover_needed = partition_plane_cutover_needed(obs);
-    if partition_plane_cutover_needed {
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::PartitionPlaneCutover,
-            target: "run_queue.partition-plane".to_string(),
-            sql: partition_plane_cutover_sql(schema, obs),
-        });
-    }
-
-    let child_run_cutover_needed = child_run_cutover_needed(obs);
-    if child_run_cutover_needed {
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::ChildRunCutover,
-            target: "runs.durable-child-state".to_string(),
-            sql: child_run_cutover_sql(schema, obs),
-        });
-    }
-
-    let rerun_lineage_cutover_needed = rerun_lineage_cutover_needed(obs);
-    if rerun_lineage_cutover_needed {
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RerunLineageCutover,
-            target: "runs.rerun-lineage".to_string(),
-            sql: rerun_lineage_cutover_sql(schema),
-        });
-    }
-
-    let stored_suite_cutover_needed = stored_suite_cutover_needed(obs);
-    if stored_suite_cutover_needed {
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::StoredSuiteCutover,
-            target: "stored-suite-persistence".to_string(),
-            sql: stored_suite_cutover_sql(schema, obs),
-        });
-    }
-
-    if retired_effect_disposition_cutover_needed(obs) {
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RetiredEffectDispositionCutover,
-            target: "effect-disposition-persistence".to_string(),
-            sql: retired_effect_disposition_cutover_sql(schema, obs),
-        });
-    }
-
-    let frame_cutover_targets = frame_identity_cutover_targets(obs, schema);
-    if frame_cutover_targets.needed() {
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::FrameIdentityCutover,
-            target: "effect_attempts.frame-identity".to_string(),
-            sql: frame_identity_cutover_sql(schema, frame_cutover_targets),
-        });
-    }
-    if effect_table_cutover_needed {
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::EffectTableCutover,
-            target: "effect-tables.coordinate-boundary".to_string(),
-            sql: effect_table_cutover_sql(schema, obs),
-        });
-    }
-    // This is the final pre-role-bootstrap migration. Keeping it behind the
-    // older guarded cutovers preserves their refusal ordering on compound
-    // legacy schemas, while `RESTRICT` dependency failures still happen before
-    // the shell creates/hardens roles or repairs membership.
-    if failure_detail_cutover_needed {
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::FailureDetailCutover,
-            target: "runs.failure-detail".to_string(),
-            sql: failure_detail_cutover_sql(schema),
-        });
-    }
-    let retire_invocation_admissions = obs.tables.contains_key("invocation_admissions");
-    let retire_catalog_head_lock = obs.helper_functions.contains_key("lock_catalog_head");
-    if retire_invocation_admissions || retire_catalog_head_lock {
-        let mut statements = Vec::new();
-        if retire_invocation_admissions {
-            statements.push(format!(
-                "DROP TABLE {}.invocation_admissions RESTRICT",
-                schema.quoted()
-            ));
-        }
-        if retire_catalog_head_lock {
-            statements.push(format!(
-                "DROP FUNCTION {}.lock_catalog_head(text, text, text) RESTRICT",
-                schema.quoted()
-            ));
-        }
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RetireLegacyAdmissionSurface,
-            target: "legacy-admission-surface".to_string(),
-            sql: statements.join("; "),
-        });
-    }
 
     // The standalone record files grant schema visibility to this reserved
     // role, so it must exist (and remain non-login/non-bypass) before a missing
@@ -435,13 +281,6 @@ $retire_run_projection_authority$;",
             .get("runs")
             .expect("capture_mode is present only on a present runs table")
             .iter()
-            .filter(|column| {
-                (!child_run_cutover_needed || !RETIRED_CHILD_RUN_COLUMNS.contains(&column.as_str()))
-                    && (!rerun_lineage_cutover_needed
-                        || !RETIRED_RERUN_LINEAGE_COLUMNS.contains(&column.as_str()))
-                    && (!failure_detail_cutover_needed
-                        || !RETIRED_FAILURE_DETAIL_COLUMNS.contains(&column.as_str()))
-            })
             .cloned();
         plan.actions.push(RunPlaneAction {
             kind: RunPlaneActionKind::RepairRunCapturePrivilege,
@@ -523,10 +362,6 @@ $retire_run_projection_authority$;",
             .get("run_queue")
             .into_iter()
             .flatten()
-            .filter(|column| {
-                !partition_plane_cutover_needed
-                    || !RETIRED_PARTITION_COLUMNS.contains(&column.as_str())
-            })
             .map(|column| quote_ident(column))
             .collect::<Vec<_>>()
             .join(", ");
@@ -617,17 +452,6 @@ $retire_run_projection_authority$;",
             .get(table)
             .expect("present effect table")
             .iter()
-            .filter(|column| {
-                if table != "effect_attempts" {
-                    return true;
-                }
-                let frame_owned = frame_cutover_targets.effect
-                    && (column.as_str() == "node_id"
-                        || EFFECT_FRAME_COLUMNS.contains(&column.as_str()));
-                let cutover_owned = effect_table_cutover_needed
-                    && RETIRED_EFFECT_ATTEMPT_COLUMNS.contains(&column.as_str());
-                !frame_owned && !cutover_owned
-            })
             .map(|column| quote_ident(column))
             .collect::<Vec<_>>()
             .join(", ");
@@ -840,157 +664,31 @@ $retire_run_projection_authority$;",
         });
     }
 
-    // Backfill populated relations before enforcing their required stamp columns.
-    let mut history_backfilled_tables = BTreeSet::new();
-    for (tables, migration) in [
-        (
-            &[
-                "environment_policies",
-                "effect_attempts",
-                "effect_attempt_dispatches",
-                "effect_attempt_outcomes",
-                "operator_run_actions",
-            ][..],
-            include_str!(
-                "../../../../../deploy/sql/migrations/project/0043_run_state_record_history_stamp.sql"
-            ),
-        ),
-        (
-            &["run_queue"][..],
-            include_str!(
-                "../../../../../deploy/sql/migrations/project/0044_run_queue_record_history_stamp.sql"
-            ),
-        ),
-    ] {
-        if tables.iter().any(|table| {
-            obs.tables.get(*table).is_some_and(|columns| {
-                ["created_at", "created_by", "updated_at", "updated_by"]
-                    .iter()
-                    .any(|column| !columns.contains(*column))
-            })
-        }) {
-            history_backfilled_tables.extend(tables.iter().copied());
-            plan.actions.push(RunPlaneAction {
-                kind: RunPlaneActionKind::AddColumn,
-                target: format!("{}.record-history", tables[0]),
-                sql: rewrite_schema(migration, schema),
-            });
-        }
-    }
-
     // 2. Column drift on PRESENT record tables: add what the record has and the
     //    live table lacks (record order); surface unknown extras, never drop
-    //    them. Explicit cutover-owned retired columns are handled above.
+    //    them.
     for file in RUN_PLANE_FILES {
         for table in record_tables(file, "wamn_run") {
             let Some(live_cols) = obs.tables.get(&table) else {
                 continue;
             };
             let record_cols = record_columns(file, "wamn_run", &table);
-            for (record_column_index, (col, def)) in record_cols.iter().enumerate() {
-                if frame_cutover_targets.needed() && frame_identity_column(&table, col) {
-                    continue;
-                }
-                if effect_table_cutover_needed
-                    && table == "effect_attempt_dispatches"
-                    && matches!(
-                        col.as_str(),
-                        "run_id" | "frame_id" | "local_node_id" | "occurrence"
-                    )
-                {
-                    continue;
-                }
-                if super::declarations::RECORD_HISTORY_TABLES.contains(&table.as_str())
-                    && matches!(
-                        col.as_str(),
-                        "created_at" | "created_by" | "updated_at" | "updated_by"
-                    )
-                {
-                    continue;
-                }
+            for (col, def) in &record_cols {
                 if !live_cols.contains(col) {
                     let add_column_sql = format!(
                         "ALTER TABLE {}.{} ADD COLUMN {def}",
                         schema.quoted(),
                         quote_ident(&table),
                     );
-                    let sql = if table == "runs"
-                        && col == "capture_mode"
-                        && obs.app_run_capture_privileges.0
-                    {
-                        let available_columns = live_cols
-                            .iter()
-                            .cloned()
-                            .chain(
-                                record_cols[..=record_column_index]
-                                    .iter()
-                                    .map(|(column, _)| column.clone()),
-                            )
-                            .filter(|column| {
-                                (!child_run_cutover_needed
-                                    || !RETIRED_CHILD_RUN_COLUMNS.contains(&column.as_str()))
-                                    && (!failure_detail_cutover_needed
-                                        || !RETIRED_FAILURE_DETAIL_COLUMNS
-                                            .contains(&column.as_str()))
-                            });
-                        format!(
-                            "LOCK TABLE {}.runs IN ACCESS EXCLUSIVE MODE; {add_column_sql}; {}",
-                            schema.quoted(),
-                            repair_run_capture_privilege_sql(schema, available_columns),
-                        )
-                    } else {
-                        add_column_sql
-                    };
                     plan.actions.push(RunPlaneAction {
                         kind: RunPlaneActionKind::AddColumn,
                         target: format!("{table}.{col}"),
-                        sql,
+                        sql: add_column_sql,
                     });
                 }
             }
             let known: BTreeSet<&str> = record_cols.iter().map(|(c, _)| c.as_str()).collect();
             for col in live_cols {
-                if partition_plane_cutover_needed
-                    && table == "run_queue"
-                    && RETIRED_PARTITION_COLUMNS.contains(&col.as_str())
-                {
-                    continue;
-                }
-                if frame_cutover_targets.includes_table(&table)
-                    && frame_identity_column(&table, col)
-                {
-                    continue;
-                }
-                if effect_table_cutover_needed
-                    && table == "effect_attempts"
-                    && RETIRED_EFFECT_ATTEMPT_COLUMNS.contains(&col.as_str())
-                {
-                    continue;
-                }
-                if child_run_cutover_needed
-                    && table == "runs"
-                    && RETIRED_CHILD_RUN_COLUMNS.contains(&col.as_str())
-                {
-                    continue;
-                }
-                if rerun_lineage_cutover_needed
-                    && table == "runs"
-                    && RETIRED_RERUN_LINEAGE_COLUMNS.contains(&col.as_str())
-                {
-                    continue;
-                }
-                if failure_detail_cutover_needed
-                    && table == "runs"
-                    && RETIRED_FAILURE_DETAIL_COLUMNS.contains(&col.as_str())
-                {
-                    continue;
-                }
-                if stored_suite_cutover_needed
-                    && RETIRED_TEST_SET_REFERENCE_TABLES.contains(&table.as_str())
-                    && col == RETIRED_TEST_SET_REFERENCE_COLUMN
-                {
-                    continue;
-                }
                 if !known.contains(col.as_str()) {
                     plan.extra_columns.push((table.clone(), col.clone()));
                 }
@@ -1012,23 +710,10 @@ $retire_run_projection_authority$;",
         });
     }
 
-    // A broad legacy grant is narrowed after the record column exists.
-    if !capture_mode_present && run_capture_privileges_drifted && !obs.app_run_capture_privileges.0
-    {
-        let record_columns = record_columns(RUN_STATE_SQL, "wamn_run", "runs")
-            .into_iter()
-            .map(|(column, _)| column);
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RepairRunCapturePrivilege,
-            target: "runs.capture_mode".to_string(),
-            sql: repair_run_capture_privilege_sql(schema, record_columns),
-        });
-    }
-
     // 2b. Exact CHECK convergence. AddColumn carries its own inline CHECK, so
     // skip that spec when its column is absent in the observation. Table-level
     // checks run after AddColumn and therefore may safely name newly-added
-    // columns. PostgreSQL validates every ADD against existing rows; a legacy
+    // columns. PostgreSQL validates every ADD against existing rows; a stored
     // row that violates the canonical contract aborts reconciliation rather
     // than being rewritten or deleted.
     let expected_checks: BTreeSet<(&str, &str)> = CHECK_SPECS
@@ -1037,22 +722,6 @@ $retire_run_projection_authority$;",
         .collect();
     for spec in CHECK_SPECS {
         if spec.table == "runs" && spec.name == "runs_check" {
-            continue;
-        }
-        if frame_cutover_targets.includes_table(spec.table)
-            && frame_identity_check(spec.table, spec.name)
-        {
-            continue;
-        }
-        if effect_table_cutover_needed
-            && spec.table == "effect_attempt_dispatches"
-            && matches!(
-                spec.name,
-                "effect_attempt_dispatches_frame_check"
-                    | "effect_attempt_dispatches_local_node_check"
-                    | "effect_attempt_dispatches_occurrence_check"
-            )
-        {
             continue;
         }
         let Some(columns) = obs.tables.get(spec.table) else {
@@ -1086,16 +755,10 @@ $retire_run_projection_authority$;",
             ),
         });
     }
-    for ((table, name), definition) in &obs.checks {
+    for (table, name) in obs.checks.keys() {
         if obs.tables.contains_key(table)
             && record_table_names().contains(table.as_str())
             && !expected_checks.contains(&(table.as_str(), name.as_str()))
-            && !(effect_table_cutover_needed && effect_table_cutover_owned_check(table, name))
-            && !(frame_cutover_targets.includes_table(table) && frame_identity_check(table, name))
-            && !(partition_plane_cutover_needed
-                && table == "run_queue"
-                && name == RETIRED_PARTITION_CHECK)
-            && !(child_run_cutover_needed && table == "runs" && retired_child_run_check(definition))
             && !(table == "runs" && name == "runs_environment_check")
         {
             plan.actions.push(RunPlaneAction {
@@ -1127,12 +790,6 @@ $retire_run_projection_authority$;",
             EFFECT_OUTCOME_DISPATCH_FK_SQL,
         ),
     ] {
-        if effect_table_cutover_needed
-            && table == "effect_attempt_dispatches"
-            && obs.tables.contains_key("effect_attempts")
-        {
-            continue;
-        }
         if !obs.tables.contains_key(table) {
             continue;
         }
@@ -1172,12 +829,6 @@ $retire_run_projection_authority$;",
         .map(|spec| (spec.table.as_str(), spec.name.as_str()))
         .collect();
     for spec in &trigger_specs {
-        if spec.name == "wamn_record_history_stamp"
-            && history_backfilled_tables.contains(spec.table.as_str())
-        {
-            // The populated backfill installs this trigger in the same action.
-            continue;
-        }
         if !obs.tables.contains_key(&spec.table)
             && table_section_carries_trigger(&spec.table, &spec.name)
         {
@@ -1208,20 +859,6 @@ $retire_run_projection_authority$;",
     for (table, name) in obs.triggers.keys() {
         if record_table_names().contains(table.as_str())
             && !expected_triggers.contains(&(table.as_str(), name.as_str()))
-            && name != OUTBOX_TRIGGER_NAME
-            && !(effect_table_cutover_needed
-                && matches!(
-                    (table.as_str(), name.as_str()),
-                    ("effect_attempts", "effect_attempts_insert_guard")
-                        | (
-                            "effect_attempt_dispatches",
-                            "effect_attempt_dispatches_insert_guard"
-                        )
-                        | (
-                            "effect_attempt_outcomes",
-                            "effect_attempt_outcomes_insert_guard"
-                        )
-                ))
         {
             plan.actions.push(RunPlaneAction {
                 kind: RunPlaneActionKind::DropExtraTrigger,
@@ -1242,24 +879,6 @@ $retire_run_projection_authority$;",
     for file in RUN_PLANE_FILES {
         for (name, table, stmt) in index_statements(file, "wamn_run") {
             if !obs.tables.contains_key(&table) {
-                continue;
-            }
-            if matches!(name.as_str(), "runs_release" | "runs_execution_bundle") {
-                continue;
-            }
-            if effect_table_cutover_needed
-                && matches!(
-                    name.as_str(),
-                    "effect_attempts_dispatch_identity_key"
-                        | "effect_attempt_dispatches_occurrence_key"
-                )
-            {
-                continue;
-            }
-            if partition_plane_cutover_needed
-                && run_queue_claim_index_ready(obs)
-                && name == "run_queue_claimable"
-            {
                 continue;
             }
             match obs.indexes.get(&name) {
@@ -1283,43 +902,6 @@ $retire_run_projection_authority$;",
                 Some(_) => {}
             }
         }
-    }
-
-    // 4. Legacy outbox-era teardown: tables, then triggers BEFORE the function
-    //    (DROP FUNCTION is RESTRICT while a trigger still references it).
-    for legacy in LEGACY_OUTBOX_TABLES {
-        if obs.tables.contains_key(legacy) {
-            plan.actions.push(RunPlaneAction {
-                kind: RunPlaneActionKind::DropLegacyTable,
-                target: legacy.to_string(),
-                sql: format!(
-                    "DROP TABLE IF EXISTS {}.{}",
-                    schema.quoted(),
-                    quote_ident(legacy),
-                ),
-            });
-        }
-    }
-    for table in &obs.outbox_trigger_tables {
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::DropLegacyTrigger,
-            target: table.clone(),
-            sql: format!(
-                "DROP TRIGGER IF EXISTS {OUTBOX_TRIGGER_NAME} ON {}.{}",
-                schema.quoted(),
-                quote_ident(table),
-            ),
-        });
-    }
-    if obs.outbox_function_present {
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::DropLegacyFunction,
-            target: OUTBOX_TRIGGER_NAME.to_string(),
-            sql: format!(
-                "DROP FUNCTION IF EXISTS {}.{OUTBOX_TRIGGER_NAME}()",
-                schema.quoted(),
-            ),
-        });
     }
 
     // Report the run-plane tables that needed nothing at all.

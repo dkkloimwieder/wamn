@@ -30,7 +30,7 @@ async fn seed_target_guard_registry(su: &Client) {
            promotion_rank int NOT NULL, instances int NOT NULL, storage text NOT NULL, \
            cpu text NOT NULL, memory text NOT NULL, image text NOT NULL, \
            backup_cadence text NOT NULL, wal_retention text NOT NULL, \
-           hibernation text NOT NULL, PRIMARY KEY (org, name)); \
+           hibernation text NOT NULL, durability_class text NOT NULL DEFAULT 'standard', PRIMARY KEY (org, name)); \
          INSERT INTO registry.env_policies \
            (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image, \
             backup_cadence,wal_retention,hibernation) VALUES \
@@ -290,7 +290,7 @@ async fn reconcile_target_identity_guard_live() {
             assert_eq!(
                 target_guard_system_snapshot(&system_su).await,
                 system_before,
-                "{label} mutated the pre-carrier registry or cluster roles with dry_run={dry_run}"
+                "{label} mutated the registry or cluster roles with dry_run={dry_run}"
             );
             assert_eq!(
                 target_guard_database_snapshot(&primary_su).await,
@@ -340,24 +340,6 @@ async fn reconcile_target_identity_guard_live() {
         primary_before_dry_run,
         "correct-target dry-run changed the project plane"
     );
-
-    // Reconcile only reads the registry. The system migration adds the
-    // durability column before the apply (`wamn-rjtf`).
-    let migration = wamn_control_provision::schema_migrations::SYSTEM_MIGRATIONS
-        .iter()
-        .find(|migration| {
-            migration
-                .relative_path
-                .ends_with("0004_env_policy_durability.sql")
-        })
-        .expect("the durability migration is listed");
-    system_su
-        .batch_execute(&format!(
-            "SET ROLE wamn_system; {} RESET ROLE",
-            migration.sql
-        ))
-        .await
-        .expect("apply the durability migration");
 
     reconcile_run_plane::reconcile_run_plane(target_guard_args(
         &system_url,
@@ -481,10 +463,7 @@ async fn reconcile_target_identity_guard_live() {
         .await
         .expect("probe converged system durability carrier")
         .get(0);
-    assert!(
-        carrier_present,
-        "the durability migration did not add the policy carrier"
-    );
+    assert!(carrier_present, "the registry lacks the policy carrier");
 
     let system_converged = target_guard_system_snapshot(&system_su).await;
     let primary_converged = target_guard_database_snapshot(&primary_su).await;

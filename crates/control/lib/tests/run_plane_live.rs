@@ -1,82 +1,5 @@
-//! Live-apply gate for `reconcile-run-plane` (E4/R14-migration, wamn-1wdq): the
-//! durable migration path for provisioned run-plane schemas, shown against a
-//! REAL Postgres in every starting state the bead's manifestations recorded.
-//!
-//! Each entry uses a superuser connection to a database on the PostgreSQL server
-//! of its test process, and holds the process lock of that server. The legs run
-//! sequentially under the main test entry (they share the `catalog` schema and
-//! the `wamn_app` role); the execution-pin cutover has one separate test entry:
-//!
-//! - **shared-runner legacy** (wamn-l5i9.73): the deployed fixture's old
-//!   runs/run_queue shape gains canonical admission/causation
-//!   columns, CHECKs, helper functions, and lineage trigger without losing its
-//!   compatible history. The materializer catalog-head lock and immutable
-//!   lineage are exercised, then a second reconcile is a no-op.
-//! - **effect frame + table cutovers** (wamn-0h0g.4.13/.4.9): incompatible
-//!   populated immutable tables refuse before DDL. Empty tables converge to
-//!   frame-keyed, coordinate-bound attempt/dispatch/outcome facts while retired
-//!   mutable node projection columns are removed without fabricating history.
-//! - **forced-RLS owner refusal**: a plain table owner cannot observe hidden
-//!   tenant rows, so dry-run and apply both refuse before the pointer or record
-//!   schema can be activated.
-//! - **partition-plane cutover** (wamn-0h0g.4.1): a populated but unleased
-//!   legacy queue keeps its retained row while the partition columns, owner
-//!   table, dead-letter table, CHECK, and partial index are removed under fixed
-//!   locks. Active leases and nonempty dead-letter history refuse before any
-//!   schema or unrelated authority mutation. Partial legacy state converges,
-//!   the global FIFO claim index lands exactly, and a second pass is a no-op.
-//! - **v1-era drifted** (manifestations 1 + 4): a partially converged queue
-//!   predating E4 `stream_seq`, with the pre-E4 claimable index, outbox-era
-//!   tables + the `wamn_outbox_event` trigger/function, and a stored
-//!   registration carrying both retired declaration keys. The real CLI path
-//!   adds retained columns, removes remaining partition residue and outbox
-//!   objects, strips only the retired registration keys, and is idempotent.
-//! - **queue-missing** (manifestation 2, the live poc_f1 case): run-state +
-//!   flows present, queue absent → the one global FIFO queue appears and its FK
-//!   resolves.
-//! - **from-zero** (manifestations 3 + 5 + 6, the ephemeral-fixture wipe): a
-//!   database without project schemas while the cluster-scoped runtime roles
-//!   remain shared. `--dry-run` first, shown STRICTLY read-only; then the apply
-//!   provisions everything — run plane + `catalog` schema — and a functional
-//!   smoke as a MINTED GUEST GENERATION LOGIN (not the bare `wamn_app` ACL
-//!   role, under which `current_tenant_key` derives NULL and every read
-//!   matches nothing in silence) shows the sections' grants + RLS isolation
-//!   end-to-end.
-//! - **invocation retention cutover**: the legacy admission expiry column/index
-//!   are removed and the client-key carrier becomes optional; a second pass is
-//!   a no-op.
-//! - **rerun-lineage cutover**: populated runs retain their payload and trusted
-//!   event causation while only `replay_of`, `root_run_id`, and the exact
-//!   `runs_root` index disappear. A same-name foreign index refuses atomically.
-//! - **failure-detail cutover**: populated runs retain `fail_type` and their
-//!   typed caller outcome while retired per-node detail is deliberately
-//!   discarded. A dependent view refuses with `2BP01` before role bootstrap.
-//! - **stored-test cutover**: all five retired tables and both helper functions
-//!   are removed child first while the four authoring-test relations survive;
-//!   the obsolete validation dimension and command kinds converge only when
-//!   no immutable legacy identity/evidence would be rewritten; a second pass is
-//!   a no-op.
-//! - **current = no-op**: a schema at the schema of record plans NOTHING, in
-//!   both dry-run and apply mode (the idempotence contract).
-//! - **authoring additive upgrade + authority repair**: the pre-6A catalog gains
-//!   draft/grant storage and the run plane gains authoring-test storage; stale
-//!   guest grants and membership are removed; the owner-seeded draft-safe
-//!   relation is SELECT-only to management; and guest/release-write refusals
-//!   are exercised.
-//! - **retired effect-disposition cutover**: empty parent/child tables are
-//!   locked and removed child-first; populated history refuses atomically with
-//!   the exact archive-or-reprovision diagnostic.
-//! - **platform configuration** (wamn-aqd0m.3), its own entry: after the
-//!   tenant identity rows, an administration generation login writes one row
-//!   of each platform configuration table, as the control host does, and
-//!   each write appends its history entry. A guest generation reads each row
-//!   back, a second write writes none, a changed setting writes one row, and
-//!   a write of no rows removes none.
-//! - **fail_type CHECK drift** (wamn-fqg.16): a schema whose `runs.fail_type`
-//!   CHECK predates cjv.4's `'runaway-budget'` literal REJECTS a runaway
-//!   `mark_failed` UPDATE. The verb drops the observed CHECK and re-adds the
-//!   5-literal record form; the runaway UPDATE then succeeds and a re-run is a
-//!   no-op (the reconciled CHECK converges with fresh provisioning).
+//! Live tests for current run-plane creation, security, and convergence.
+//! Tests share PostgreSQL roles and hold the database process lock.
 
 #[path = "run_plane_live/catalog.rs"]
 mod catalog;
@@ -90,26 +13,11 @@ mod platform_configuration;
 mod run_history;
 #[path = "run_plane_live/target_identity.rs"]
 mod target_identity;
-#[path = "run_plane_live/type_columns.rs"]
-mod type_columns;
 
-use partition::{
-    partition_plane_active_lease_refusal_leg, partition_plane_authored_ordering_refusal_leg,
-    partition_plane_cutover_leg, partition_plane_dead_letter_refusal_leg,
-    partition_plane_unobservable_lease_refusal_leg,
-};
 use wamn_platform_identity::auth_changes::AuthChanges;
 
-use run_history::{
-    child_run_cutover_leg, failure_detail_cutover_leg, node_runs_retirement_leg,
-    persisted_literal_check_drift_leg, rerun_lineage_cutover_leg, shared_runner_legacy_leg,
-};
-
-use effect_tables::{
-    effect_table_cutover_leg, effect_table_populated_refusal_leg, frame_identity_cutover_leg,
-};
-
-use catalog::{capture_mode_additive_leg, stored_suite_cutover_leg, two_plane_residency_leg};
+use catalog::{capture_mode_security_leg, two_plane_residency_leg};
+use run_history::persisted_literal_leg;
 
 use tokio_postgres::{Client, NoTls};
 
@@ -237,40 +145,6 @@ const FIXTURE_SERVICE_ID: &str = "11111111-1111-4111-8111-111111111111";
 
 /// The one user the fixture admits to `acme/billing/dev` (`wamn-0h0g.9.18`).
 const FIXTURE_USER_ID: &str = "22222222-2222-4222-8222-222222222222";
-
-async fn seed_pre_durability_system_env_policy(su: &Client) {
-    su.batch_execute(
-        "DROP SCHEMA IF EXISTS registry CASCADE; \
-         DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') \
-           THEN CREATE ROLE wamn_system NOLOGIN; END IF; END $$; \
-         CREATE SCHEMA registry AUTHORIZATION wamn_system; \
-         SET ROLE wamn_system; \
-         CREATE TABLE registry.env_policies ( \
-           org text NOT NULL, name text NOT NULL, recovery_domain jsonb NOT NULL, \
-           promotion_rank int NOT NULL, instances int NOT NULL, storage text NOT NULL, \
-           cpu text NOT NULL, memory text NOT NULL, image text NOT NULL, \
-           backup_cadence text NOT NULL, wal_retention text NOT NULL, \
-           hibernation text NOT NULL, PRIMARY KEY (org, name)); \
-         CREATE TABLE registry.project_envs ( \
-           org text NOT NULL, project text NOT NULL, env text NOT NULL, \
-           secret_name text NOT NULL, secret_namespace text, \
-           instance_suffix text NOT NULL, policy_name text NOT NULL, \
-           PRIMARY KEY (org, project, env)); \
-         INSERT INTO registry.env_policies \
-           (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image, \
-            backup_cadence,wal_retention,hibernation) \
-         VALUES ('acme','dev','\"own\"',0,1,'1Gi','100m','128Mi','postgres','','','off'); \
-         INSERT INTO registry.project_envs \
-           (org,project,env,secret_name,instance_suffix,policy_name) \
-         VALUES ('acme','billing','dev','wamn-db-acme--billing--dev','k3m9x2p7','dev'); \
-         RESET ROLE",
-    )
-    .await
-    .expect("create pre-durability system env-policy fixture");
-    su.batch_execute(SYSTEM_IDENTITY_FIXTURE_SQL)
-        .await
-        .expect("create the system identity fixture");
-}
 
 /// The tenant identity rows one reconcile installs (`wamn-0h0g.9.15`).
 ///
@@ -561,15 +435,11 @@ async fn seed_run_admission_facts(
 
 /// Hermetic reset: drop the target schema + the shared `catalog` schema and
 /// ensure the `wamn_app` role, so every leg builds its own starting state.
-/// `wamn_app` and the projection writer role are created
-/// or hardened because the run-plane DDL and reconciler name them.
+/// The runtime roles match the current run-plane grants.
 async fn reset(su: &Client) {
     su.batch_execute(&provision_sql::ensure_app_acl_role_sql())
         .await
         .expect("harden stable app ACL role");
-    su.batch_execute(&provision_sql::drain_app_role_sessions_sql())
-        .await
-        .expect("drain retired app login sessions after hardening commit");
     su.batch_execute(&format!(
         "{CURRENT_DATABASE_PUBLIC_CONNECT_SQL} \
          DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; \
@@ -582,21 +452,11 @@ async fn reset(su: &Client) {
              ALTER ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB \
                NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
            END IF; \
-           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_run_projection_writer') THEN \
-             CREATE ROLE wamn_run_projection_writer NOLOGIN NOSUPERUSER NOCREATEDB \
-               NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
-           ELSE \
-             ALTER ROLE wamn_run_projection_writer NOLOGIN NOSUPERUSER NOCREATEDB \
-               NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
-           END IF; \
          END $$; \
          REVOKE wamn_scenario_author FROM wamn_app; \
          DO $$ BEGIN \
            EXECUTE format( \
              'REVOKE CONNECT ON DATABASE %I FROM wamn_app', current_database() \
-           ); \
-           EXECUTE format( \
-             'REVOKE CONNECT ON DATABASE %I FROM wamn_run_projection_writer', current_database() \
            ); \
          END $$;"
     ))
@@ -615,8 +475,7 @@ async fn table_exists(su: &Client, schema: &str, table: &str) -> bool {
     .get(0)
 }
 
-/// `column_exists` is fixed to the run-plane schema; catalog upgrades need the
-/// same probe against `catalog`.
+/// Probe a column in the run-plane schema.
 async fn column_exists(su: &Client, table: &str, column: &str) -> bool {
     su.query_one(
         "SELECT EXISTS ( SELECT FROM information_schema.columns \
@@ -650,27 +509,6 @@ async fn install_current_run_plane(su: &Client) {
     }
 }
 
-/// The retired flow registry (`deploy/sql/flows.sql`), deleted by
-/// wamn-0h0g.12.102 (e45ca35b). It is no longer one of the run-plane files
-/// `install_current_run_plane` applies — but `partition_plane_cutover_sql`
-/// still locks and preflights it for schemas that physically retain the table,
-/// so a leg showing that refusal must install it. Mirrors the unit-side
-/// fixture `run_plane::add_legacy_flow_registry`.
-async fn install_legacy_flow_registry(su: &Client) {
-    su.batch_execute(&format!(
-        "CREATE TABLE {SCHEMA}.flows ( \
-           env_key text NOT NULL CHECK (env_key <> ''), \
-           flow_id text NOT NULL, version int NOT NULL, \
-           active boolean NOT NULL DEFAULT false, \
-           graph_json jsonb NOT NULL, \
-           created_at timestamptz NOT NULL DEFAULT now(), \
-           updated_at timestamptz NOT NULL DEFAULT now(), \
-           PRIMARY KEY (env_key,flow_id,version));"
-    ))
-    .await
-    .expect("install retired flow registry");
-}
-
 fn assert_db_code(error: &tokio_postgres::Error, expected: &str, context: &str) {
     let actual = error
         .as_db_error()
@@ -678,84 +516,34 @@ fn assert_db_code(error: &tokio_postgres::Error, expected: &str, context: &str) 
     assert_eq!(actual, expected, "{context}: {error}");
 }
 
-fn assert_db_code_in_chain(error: &anyhow::Error, expected: &str, context: &str) {
-    let actual = error
-        .chain()
-        .find_map(|source| {
-            source
-                .downcast_ref::<tokio_postgres::Error>()
-                .and_then(tokio_postgres::Error::as_db_error)
-                .map(|database| database.code().code())
-        })
-        .unwrap_or("non-database-error");
-    assert_eq!(actual, expected, "{context}: {error:#}");
-}
-
 #[tokio::test]
 async fn run_plane_reconcile_live() {
     let url = locked_database::database(wamn_test_postgres::database);
     let su = connect(&url).await;
-    node_runs_retirement_leg(&su).await;
-    shared_runner_legacy_leg(&su).await;
-    frame_identity_cutover_leg(&su).await;
-    effect_table_cutover_leg(&su).await;
-    effect_table_populated_refusal_leg(&su).await;
+    from_zero_leg(&su, &url).await;
+    current_noop_leg(&su).await;
+    two_plane_residency_leg(&su).await;
     forced_rls_owner_refusal_leg(&su).await;
-    partition_plane_authored_ordering_refusal_leg(&su).await;
-    partition_plane_cutover_leg(&su).await;
-    partition_plane_active_lease_refusal_leg(&su).await;
-    partition_plane_unobservable_lease_refusal_leg(&su).await;
-    partition_plane_dead_letter_refusal_leg(&su).await;
+    effect_tables::effect_table_privileges_leg(&su).await;
+    partition::global_fifo_queue_leg(&su).await;
+    capture_mode_security_leg(&su, &url).await;
+    environment_policy_row_security_leg(&su, &url).await;
+    persisted_literal_leg(&su).await;
     let cli_database = project_env_database_name(CLI_ORG, CLI_PROJECT, CLI_ENV, CLI_INSTANCE);
     recreate_database(&su, &cli_database).await;
     let cli_url = database_url(&url, &cli_database);
     let cli_su = connect(&cli_url).await;
-    v1_era_drifted_leg(&cli_su, &su, &url, &cli_url).await;
+    environment_identity_leg(&cli_su, &su, &url, &cli_url).await;
     drop(cli_su);
     drop_database(&su, &cli_database).await;
-    queue_missing_leg(&su).await;
-    from_zero_leg(&su, &url).await;
-    child_run_cutover_leg(&su).await;
-    rerun_lineage_cutover_leg(&su).await;
-    failure_detail_cutover_leg(&su).await;
-    capture_mode_additive_leg(&su, &url).await;
-    stored_suite_cutover_leg(&su).await;
-    environment_policy_row_security_leg(&su, &url).await;
-    current_noop_leg(&su).await;
-    two_plane_residency_leg(&su).await;
-    retired_effect_disposition_cutover_leg(&su).await;
-    persisted_literal_check_drift_leg(&su).await;
 }
 
-/// Also a leg of `run_plane_reconcile_live`, and a separate entry for the same
-/// reason `stored_suite_cutover_live` is: so it can be run — and reached — on
-/// its own. The entries share the cluster-wide roles, so each holds the process
-/// lock.
+/// Run the row-security assertions independently under the database process lock.
 #[tokio::test]
 async fn environment_policy_row_security_live() {
     let url = locked_database::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     environment_policy_row_security_leg(&su, &url).await;
-}
-
-#[tokio::test]
-async fn registry_durability_column_migration_live() {
-    let url = locked_database::database(wamn_test_postgres::database);
-    let system_su = connect(&url).await;
-    let database = project_env_database_name(CLI_ORG, CLI_PROJECT, CLI_ENV, CLI_INSTANCE);
-    recreate_database(&system_su, &database).await;
-    let target_url = database_url(&url, &database);
-    let target_su = connect(&target_url).await;
-    registry_durability_column_migration_leg(&target_su, &system_su, &url, &target_url).await;
-    drop(target_su);
-    drop_database(&system_su, &database).await;
-}
-
-#[tokio::test]
-async fn retired_effect_disposition_cutover_live() {
-    let url = locked_database::database(wamn_test_postgres::database);
-    let su = connect(&url).await;
-    retired_effect_disposition_cutover_leg(&su).await;
 }
 
 /// A table owner remains subject to `FORCE ROW LEVEL SECURITY`. Letting that
@@ -764,6 +552,8 @@ async fn retired_effect_disposition_cutover_live() {
 async fn forced_rls_owner_refusal_leg(su: &Client) {
     reset(su).await;
     let schema = schema();
+    install_current_run_plane(su).await;
+    seed_run_admission_facts(su, "hidden", "owner", "dev", "standard").await;
     su.batch_execute(&format!(
         "DO $role$ BEGIN \
            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='rp_owner_no_bypass') THEN \
@@ -774,23 +564,10 @@ async fn forced_rls_owner_refusal_leg(su: &Client) {
          DO $temporary$ BEGIN EXECUTE format( \
            'GRANT TEMPORARY ON DATABASE %I TO rp_owner_no_bypass', current_database()); \
          END $temporary$; \
-         CREATE SCHEMA {SCHEMA} AUTHORIZATION rp_owner_no_bypass; \
-         SET ROLE rp_owner_no_bypass; \
-         CREATE TABLE {SCHEMA}.runs ( \
-           env_key text NOT NULL, run_id text NOT NULL, \
-           flow_id text NOT NULL, flow_version int NOT NULL, \
-           status text NOT NULL, \
-           created_at timestamptz NOT NULL DEFAULT now(), \
-           PRIMARY KEY (env_key,run_id)); \
-         ALTER TABLE {SCHEMA}.runs ENABLE ROW LEVEL SECURITY; \
-         ALTER TABLE {SCHEMA}.runs FORCE ROW LEVEL SECURITY; \
-         CREATE POLICY runs_env_key ON {SCHEMA}.runs \
-           USING (env_key = NULLIF(current_setting('app.env_key',true),'')) \
-           WITH CHECK (env_key = NULLIF(current_setting('app.env_key',true),'')); \
-         RESET ROLE; \
          INSERT INTO {SCHEMA}.runs \
-           (env_key,run_id,flow_id,flow_version,status) VALUES \
-           ('hidden','legacy','f',1,'running'); \
+           (env_key,run_id,flow_id,flow_version,package_id,environment,status) VALUES \
+           ('hidden','owner','f',1,'owner','dev','running'); \
+         ALTER TABLE {SCHEMA}.runs OWNER TO rp_owner_no_bypass; \
          SET ROLE rp_owner_no_bypass; \
          CREATE TEMP TABLE pg_roles \
              (rolname text, rolsuper boolean, rolbypassrls boolean); \
@@ -798,7 +575,7 @@ async fn forced_rls_owner_refusal_leg(su: &Client) {
              VALUES ('rp_owner_no_bypass',false,true);"
     ))
     .await
-    .expect("seed a forced-RLS legacy row owned by a non-bypass role");
+    .expect("seed a forced-RLS row owned by a non-bypass role");
 
     for apply in [false, true] {
         let error = reconcile_run_plane::reconcile(su, &schema, apply)
@@ -821,17 +598,9 @@ async fn forced_rls_owner_refusal_leg(su: &Client) {
     assert_eq!(
         su.query_one(&format!("SELECT count(*) FROM {SCHEMA}.runs"), &[])
             .await
-            .expect("hidden legacy row remains")
+            .expect("hidden row remains")
             .get::<_, i64>(0),
         1
-    );
-    assert!(
-        !column_exists(su, "runs", "capture_mode").await,
-        "refusal performs no schema mutation"
-    );
-    assert!(
-        !table_exists(su, SCHEMA, "effect_attempts").await,
-        "refusal occurs before record activation"
     );
 }
 
@@ -919,107 +688,18 @@ async fn mint_guest_generation(su: &Client, url: &str, env_key: &str) -> (String
     (generation, client)
 }
 
-/// Manifestations 1 + 4: the 2jkm.41-sweep drift set plus the outbox era.
-async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, target_url: &str) {
+/// Project policy and identity rows converge without changing run history.
+async fn environment_identity_leg(
+    su: &Client,
+    system_su: &Client,
+    system_url: &str,
+    target_url: &str,
+) {
     reset(su).await;
     seed_system_env_policy(system_su, "standard").await;
     let schema = schema();
-    su.batch_execute(CATALOG_SCHEMA_SQL)
-        .await
-        .expect("apply catalog-schema");
 
-    // Current-era runs/flows (the drift was queue-side)…
-    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
-        .await
-        .expect("apply run-state");
-    // …and a partially converged v1-era queue: no stream_seq or lease
-    // generation, one remaining partition-key column, the pre-E4 claimable
-    // index, no retired whole tables, plus the outbox-era objects and a stored
-    // registration carrying both retired declaration keys.
-    su.batch_execute(&format!(
-        "CREATE TABLE {SCHEMA}.run_queue ( \
-             env_key text NOT NULL CHECK (env_key <> ''), \
-             run_id text NOT NULL, \
-             partition_key text, \
-             priority int NOT NULL DEFAULT 0, \
-             available_at timestamptz NOT NULL DEFAULT now(), \
-             lease_owner text, \
-             lease_expires_at timestamptz, \
-             attempts int NOT NULL DEFAULT 0, \
-             max_attempts int NOT NULL DEFAULT 20, \
-             enqueued_at timestamptz NOT NULL DEFAULT now(), \
-             PRIMARY KEY (env_key, run_id), \
-             FOREIGN KEY (env_key, run_id) REFERENCES {SCHEMA}.runs (env_key, run_id) ON DELETE CASCADE); \
-         CREATE INDEX run_queue_claimable ON {SCHEMA}.run_queue (env_key, available_at, lease_expires_at); \
-         ALTER TABLE {SCHEMA}.run_queue ENABLE ROW LEVEL SECURITY; \
-         ALTER TABLE {SCHEMA}.run_queue FORCE ROW LEVEL SECURITY; \
-         CREATE POLICY run_queue_env_key ON {SCHEMA}.run_queue \
-             USING (env_key = NULLIF(current_setting('app.env_key', true), '')) \
-             WITH CHECK (env_key = NULLIF(current_setting('app.env_key', true), '')); \
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {SCHEMA}.run_queue TO wamn_app; \
-         CREATE TABLE {SCHEMA}.outbox ( \
-             id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, \
-             env_key text NOT NULL, event text NOT NULL, payload jsonb, \
-             held_since timestamptz); \
-         CREATE TABLE {SCHEMA}.evt_shadow ( \
-             env_key text NOT NULL, registration_id text NOT NULL, \
-             stream_seq bigint NOT NULL, \
-             PRIMARY KEY (env_key, registration_id, stream_seq)); \
-         CREATE TABLE {SCHEMA}.widgets ( \
-             id uuid PRIMARY KEY DEFAULT gen_random_uuid(), env_key text NOT NULL); \
-         CREATE FUNCTION {SCHEMA}.wamn_outbox_event() RETURNS trigger \
-             LANGUAGE plpgsql AS $f$ BEGIN RETURN NEW; END $f$; \
-         CREATE TRIGGER wamn_outbox_event AFTER INSERT OR UPDATE OR DELETE \
-             ON {SCHEMA}.widgets FOR EACH ROW EXECUTE FUNCTION {SCHEMA}.wamn_outbox_event();"
-    ))
-    .await
-    .expect("build the v1-era queue + outbox era");
-    seed_run_admission_facts(su, "acme--billing--dev", "cat", "dev", "standard").await;
-    // A pre-existing queue row: the ADD COLUMN defaults must land on it.
-    su.batch_execute(&format!(
-        "INSERT INTO {SCHEMA}.runs \
-             (env_key,run_id,flow_id,flow_version,package_id, \
-              environment) \
-             VALUES ('acme--billing--dev','r-old','f',1,'cat','dev'); \
-         INSERT INTO {SCHEMA}.run_queue (env_key, run_id) VALUES ('acme--billing--dev', 'r-old');"
-    ))
-    .await
-    .expect("seed a pre-drift queue row");
-
-    let partial = reconcile_run_plane::reconcile(su, &schema, false)
-        .await
-        .expect("partially converged partition plane plans");
-    let cutover = partial.actions.first().expect("leading partial cutover");
-    assert_eq!(cutover.kind, RunPlaneActionKind::PartitionPlaneCutover);
-    assert!(cutover.sql.contains("DROP COLUMN IF EXISTS partition_key"));
-    assert!(
-        !cutover.sql.contains("run_queue_claimable"),
-        "cutover defers the index until stream_seq exists"
-    );
-    assert!(partial.actions.iter().any(|action| {
-        action.kind == RunPlaneActionKind::AddColumn && action.target == "run_queue.stream_seq"
-    }));
-    assert!(partial.actions.iter().any(|action| {
-        action.kind == RunPlaneActionKind::RecreateIndex && action.target == "run_queue_claimable"
-    }));
-
-    su.batch_execute(&format!(
-        "DELETE FROM {SCHEMA}.environment_policies WHERE env_key='acme--billing--dev'"
-    ))
-    .await
-    .expect("remove the temporary pre-projection policy");
-    let temporary_policy_rows: i64 = su
-        .query_one(
-            &format!("SELECT count(*) FROM {SCHEMA}.environment_policies WHERE env_key='acme--billing--dev'"),
-            &[],
-        )
-        .await
-        .expect("verify the temporary pre-projection policy is absent")
-        .get(0);
-    assert_eq!(
-        temporary_policy_rows, 0,
-        "real CLI projection starts without a local policy row"
-    );
+    install_current_run_plane(su).await;
 
     // The REAL CLI path (arg validation + connect + apply).
     reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
@@ -1135,126 +815,11 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
         "policy reconciliation must not rewrite stored run classes"
     );
 
-    // Retained column drift closed, partition residue removed, and defaults
-    // landed on the pre-existing row.
-    assert!(
-        column_exists(su, "run_queue", "stream_seq").await,
-        "stream_seq added"
-    );
-    assert!(
-        column_exists(su, "run_queue", "lease_generation").await,
-        "lease_generation added"
-    );
-    assert!(!column_exists(su, "run_queue", "partition_key").await);
-    assert!(!column_exists(su, "run_queue", "partition_policy").await);
-    let row = su
-        .query_one(
-            &format!(
-                "SELECT stream_seq, lease_generation FROM {SCHEMA}.run_queue \
-                 WHERE env_key = 'acme--billing--dev' AND run_id = 'r-old'"
-            ),
-            &[],
-        )
-        .await
-        .expect("read the pre-drift row");
-    assert_eq!(row.get::<_, i64>(0), 0, "stream_seq default backfilled");
-    assert_eq!(row.get::<_, i64>(1), 0, "lease generation backfilled");
-
-    // The claimable index was recreated only after the retained columns landed.
-    let def = indexdef(su, "run_queue_claimable")
-        .await
-        .expect("claimable index present");
-    assert!(
-        def.contains("(env_key, available_at, stream_seq, run_id, lease_expires_at)"),
-        "global FIFO claimable index: {def}"
-    );
-    assert!(
-        !def.contains("WHERE"),
-        "global claim index is not partial: {def}"
-    );
-    assert!(indexdef(su, "run_queue_partition").await.is_none());
-
-    assert!(!table_exists(su, SCHEMA, "partition_owner").await);
-    assert!(!table_exists(su, SCHEMA, "run_dead_letters").await);
-
-    // The outbox era is gone: tables, trigger, function.
-    assert!(!table_exists(su, SCHEMA, "outbox").await, "outbox dropped");
-    assert!(
-        !table_exists(su, SCHEMA, "evt_shadow").await,
-        "evt_shadow dropped"
-    );
-    let triggers: i64 = su
-        .query_one(
-            "SELECT count(*) FROM pg_trigger t \
-             JOIN pg_class c ON c.oid = t.tgrelid \
-             JOIN pg_namespace n ON n.oid = c.relnamespace \
-             WHERE n.nspname = $1 AND t.tgname = 'wamn_outbox_event'",
-            &[&SCHEMA],
-        )
-        .await
-        .expect("count triggers")
-        .get(0);
-    assert_eq!(triggers, 0, "legacy trigger dropped");
-    let funcs: i64 = su
-        .query_one(
-            "SELECT count(*) FROM pg_proc p \
-             JOIN pg_namespace n ON n.oid = p.pronamespace \
-             WHERE n.nspname = $1 AND p.proname = 'wamn_outbox_event'",
-            &[&SCHEMA],
-        )
-        .await
-        .expect("count functions")
-        .get(0);
-    assert_eq!(funcs, 0, "legacy function dropped");
-    // The floor table the trigger sat on is untouched.
-    assert!(
-        table_exists(su, SCHEMA, "widgets").await,
-        "floor table left alone"
-    );
-
     // Idempotence: a second reconcile plans nothing.
     let again = reconcile_run_plane::reconcile(su, &schema, false)
         .await
         .expect("re-plan");
     assert!(again.is_noop(), "re-run is a no-op: {:#?}", again.actions);
-}
-
-/// Manifestation 2 (the live poc_f1 case): run-state + flows present, queue
-/// wholly absent — the single global FIFO queue appears and its FK resolves.
-async fn queue_missing_leg(su: &Client) {
-    reset(su).await;
-    let schema = schema();
-    su.batch_execute(CATALOG_SCHEMA_SQL)
-        .await
-        .expect("apply catalog-schema");
-    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
-        .await
-        .expect("apply run-state");
-
-    let plan = reconcile_run_plane::reconcile(su, &schema, true)
-        .await
-        .expect("reconcile applies");
-    assert!(!plan.is_noop());
-
-    assert!(table_exists(su, SCHEMA, "run_queue").await);
-    assert!(!table_exists(su, SCHEMA, "partition_owner").await);
-    assert!(!table_exists(su, SCHEMA, "run_dead_letters").await);
-    // The FK to runs resolves: a run then its queue row insert cleanly.
-    seed_run_admission_facts(su, "acme--billing--dev", "cat", "dev", "standard").await;
-    su.batch_execute(&format!(
-        "INSERT INTO {SCHEMA}.runs \
-             (env_key,run_id,flow_id,flow_version,package_id, \
-              environment) \
-             VALUES ('acme--billing--dev','r1','f',1,'cat','dev'); \
-         INSERT INTO {SCHEMA}.run_queue (env_key, run_id) VALUES ('acme--billing--dev', 'r1');"
-    ))
-    .await
-    .expect("FK insert path");
-
-    let claimable = indexdef(su, "run_queue_claimable")
-        .await
-        .expect("global FIFO claim index");
-    assert!(claimable.contains("(env_key, available_at, stream_seq, run_id, lease_expires_at)"));
 }
 
 /// Manifestations 3 + 5 + 6 (the ephemeral-fixture wipe): a database with no
@@ -1512,182 +1077,6 @@ async fn visible_environment_policy_rows(app: &Client, env_key: &str) -> i64 {
     .get(0)
 }
 
-async fn registry_durability_schema_snapshot(su: &Client) -> String {
-    su.query_one(
-        "SELECT jsonb_build_object( \
-           'type', pg_catalog.format_type(attribute.atttypid, attribute.atttypmod), \
-           'not-null', attribute.attnotnull, \
-           'default', pg_catalog.pg_get_expr(default_row.adbin, default_row.adrelid), \
-           'check', (SELECT pg_catalog.pg_get_constraintdef(constraint_row.oid, true) \
-                       FROM pg_catalog.pg_constraint AS constraint_row \
-                      WHERE constraint_row.conrelid = 'registry.env_policies'::regclass \
-                        AND constraint_row.conname = 'env_policies_durability_class_check'))::text \
-         FROM pg_catalog.pg_attribute AS attribute \
-         LEFT JOIN pg_catalog.pg_attrdef AS default_row \
-           ON default_row.adrelid = attribute.attrelid \
-          AND default_row.adnum = attribute.attnum \
-        WHERE attribute.attrelid = 'registry.env_policies'::regclass \
-          AND attribute.attname = 'durability_class'",
-        &[],
-    )
-    .await
-    .expect("snapshot registry durability schema")
-    .get(0)
-}
-
-async fn registry_env_policy_catalog_snapshot(su: &Client) -> String {
-    su.query_one(
-        "SELECT jsonb_build_object( \
-           'columns', COALESCE(( \
-             SELECT jsonb_agg(jsonb_build_array( \
-                       attribute.attname, \
-                       pg_catalog.format_type(attribute.atttypid, attribute.atttypmod), \
-                       attribute.attnotnull, \
-                       pg_catalog.pg_get_expr(default_row.adbin, default_row.adrelid)) \
-                       ORDER BY attribute.attnum) \
-               FROM pg_catalog.pg_attribute AS attribute \
-               LEFT JOIN pg_catalog.pg_attrdef AS default_row \
-                 ON default_row.adrelid = attribute.attrelid \
-                AND default_row.adnum = attribute.attnum \
-              WHERE attribute.attrelid = 'registry.env_policies'::regclass \
-                AND attribute.attnum > 0 AND NOT attribute.attisdropped), \
-             '[]'::jsonb), \
-           'constraints', COALESCE(( \
-             SELECT jsonb_agg(jsonb_build_array( \
-                       constraint_row.conname, constraint_row.contype, \
-                       pg_catalog.pg_get_constraintdef(constraint_row.oid, true)) \
-                       ORDER BY constraint_row.conname) \
-               FROM pg_catalog.pg_constraint AS constraint_row \
-              WHERE constraint_row.conrelid = 'registry.env_policies'::regclass), \
-             '[]'::jsonb))::text",
-        &[],
-    )
-    .await
-    .expect("snapshot registry env-policy catalog")
-    .get(0)
-}
-
-/// Missing-column mutant for the system migration
-/// `0004_env_policy_durability.sql` (`wamn-rjtf`). Reconcile only reads the
-/// registry: it refuses a registry without the column and never adds it. The
-/// migration adds it, and a second apply leaves the exact column + CHECK
-/// catalog unchanged.
-async fn registry_durability_column_migration_leg(
-    target_su: &Client,
-    system_su: &Client,
-    system_url: &str,
-    target_url: &str,
-) {
-    reset(target_su).await;
-    install_current_run_plane(target_su).await;
-    seed_pre_durability_system_env_policy(system_su).await;
-    let before: bool = system_su
-        .query_one(
-            "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
-              WHERE table_schema='registry' AND table_name='env_policies' \
-                AND column_name='durability_class')",
-            &[],
-        )
-        .await
-        .expect("probe missing durability column")
-        .get(0);
-    assert!(!before, "missing-column mutant was not installed");
-
-    let args = |dry_run| ReconcileRunPlaneRequest {
-        changes: AuthChanges::default(),
-        system_database_url: system_url.to_string(),
-        admin_database_url: target_url.to_string(),
-        org: "acme".to_string(),
-        project: "billing".to_string(),
-        env: "dev".to_string(),
-        schema: SCHEMA.to_string(),
-        dry_run,
-    };
-    let before_dry_run = registry_env_policy_catalog_snapshot(system_su).await;
-    reconcile_run_plane::reconcile_run_plane(args(true))
-        .await
-        .expect("dry-run observes a pre-carrier registry without migrating it");
-    assert_eq!(
-        registry_env_policy_catalog_snapshot(system_su).await,
-        before_dry_run,
-        "pre-carrier registry schema must remain byte-exact under dry-run"
-    );
-    assert!(
-        !system_su
-            .query_one(
-                "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
-              WHERE table_schema='registry' AND table_name='env_policies' \
-                AND column_name='durability_class')",
-                &[],
-            )
-            .await
-            .expect("probe carrier after dry-run")
-            .get::<_, bool>(0),
-        "dry-run must not add the registry durability carrier"
-    );
-    let projected_rows: i64 = target_su
-        .query_one(
-            &format!("SELECT count(*) FROM {SCHEMA}.environment_policies"),
-            &[],
-        )
-        .await
-        .expect("count local policy rows after dry-run")
-        .get(0);
-    assert_eq!(
-        projected_rows, 0,
-        "dry-run must not project the legacy standard policy into the run plane"
-    );
-
-    reconcile_run_plane::reconcile_run_plane(args(false))
-        .await
-        .expect_err("reconcile refuses a registry without the durability column");
-    assert_eq!(
-        registry_env_policy_catalog_snapshot(system_su).await,
-        before_dry_run,
-        "reconcile must not change the registry schema"
-    );
-
-    let migration = wamn_control_provision::schema_migrations::SYSTEM_MIGRATIONS
-        .iter()
-        .find(|migration| {
-            migration
-                .relative_path
-                .ends_with("0004_env_policy_durability.sql")
-        })
-        .expect("the durability migration is listed");
-    let apply = format!("SET ROLE wamn_system; {} RESET ROLE", migration.sql);
-    system_su
-        .batch_execute(&apply)
-        .await
-        .expect("apply the durability migration");
-    let first = registry_durability_schema_snapshot(system_su).await;
-    assert!(first.contains("\"type\": \"text\""), "{first}");
-    assert!(first.contains("\"not-null\": true"), "{first}");
-    assert!(first.contains("'standard'::text"), "{first}");
-
-    reconcile_run_plane::reconcile_run_plane(args(false))
-        .await
-        .expect("reconcile reads the migrated registry");
-    let projected_row = target_su
-        .query_one(
-            &format!(
-                "SELECT expected_environment, durability_class \
-                   FROM {SCHEMA}.environment_policies WHERE env_key='acme--billing--dev'"
-            ),
-            &[],
-        )
-        .await
-        .expect("read policy projected from the upgraded registry");
-    let projected = (projected_row.get(0), projected_row.get(1));
-    assert_eq!(projected, ("dev".to_string(), "standard".to_string()));
-
-    system_su
-        .batch_execute(&apply)
-        .await
-        .expect("apply the durability migration a second time");
-    assert_eq!(registry_durability_schema_snapshot(system_su).await, first);
-}
-
 /// Named mutants for the four independent ways an existing env-policy table
 /// can lose tenant confinement. Each repair is followed by a fresh observation
 /// showing the catalog converged, not merely that the SQL happened to run.
@@ -1819,645 +1208,5 @@ async fn current_noop_leg(su: &Client) {
         apply.is_noop(),
         "current schema apply is a no-op: {:#?}",
         apply.actions
-    );
-}
-
-/// PLAN 6A additive storage and the host/guest authority boundary. This shows
-/// both ctl provisioning paths add their retained sections, then exercises
-/// adversarial direct, inherited, membership, and ownership authority drift.
-async fn retired_effect_disposition_cutover_leg(su: &Client) {
-    reset(su).await;
-    su.batch_execute(&format!(
-        "CREATE SCHEMA {SCHEMA}; \
-         CREATE TABLE {SCHEMA}.effect_disposition_requests ( \
-             env_key text NOT NULL, request_id uuid NOT NULL, \
-             PRIMARY KEY (env_key, request_id)); \
-         CREATE TABLE {SCHEMA}.effect_dispositions ( \
-             env_key text NOT NULL, request_id uuid NOT NULL, \
-             PRIMARY KEY (env_key, request_id), \
-             FOREIGN KEY (env_key, request_id) \
-               REFERENCES {SCHEMA}.effect_disposition_requests (env_key, request_id)); \
-         CREATE FUNCTION {SCHEMA}.guard_effect_disposition_append() RETURNS trigger \
-             LANGUAGE plpgsql AS $legacy$ BEGIN RETURN NEW; END $legacy$;"
-    ))
-    .await
-    .expect("install empty retired effect-disposition pair");
-
-    let dry = reconcile_run_plane::reconcile(su, &schema(), false)
-        .await
-        .expect("empty retired pair plans cutover");
-    let cutover = dry
-        .actions
-        .iter()
-        .find(|action| action.kind == RunPlaneActionKind::RetiredEffectDispositionCutover)
-        .expect("retired effect-disposition cutover is planned");
-    assert!(cutover.sql.contains("IN ACCESS EXCLUSIVE MODE"));
-    assert!(cutover.sql.contains(
-        "retired-effect-disposition-history-requires-archive-or-environment-reprovision"
-    ));
-    reconcile_run_plane::reconcile(su, &schema(), true)
-        .await
-        .expect("empty retired pair is removed");
-    assert!(!table_exists(su, SCHEMA, "effect_disposition_requests").await);
-    assert!(!table_exists(su, SCHEMA, "effect_dispositions").await);
-    assert!(table_exists(su, SCHEMA, "operator_run_actions").await);
-    assert!(
-        reconcile_run_plane::reconcile(su, &schema(), false)
-            .await
-            .expect("post-cutover plan")
-            .is_noop()
-    );
-
-    reset(su).await;
-    su.batch_execute(&format!(
-        "CREATE SCHEMA {SCHEMA}; \
-         CREATE TABLE {SCHEMA}.effect_disposition_requests ( \
-             env_key text NOT NULL, request_id uuid NOT NULL, \
-             PRIMARY KEY (env_key, request_id)); \
-         CREATE TABLE {SCHEMA}.effect_dispositions ( \
-             env_key text NOT NULL, request_id uuid NOT NULL, \
-             PRIMARY KEY (env_key, request_id), \
-             FOREIGN KEY (env_key, request_id) \
-               REFERENCES {SCHEMA}.effect_disposition_requests (env_key, request_id)); \
-         INSERT INTO {SCHEMA}.effect_disposition_requests \
-             VALUES ('acme--billing--dev', '00000000-0000-0000-0000-000000000001');"
-    ))
-    .await
-    .expect("install populated retired effect-disposition pair");
-    let error = reconcile_run_plane::reconcile(su, &schema(), true)
-        .await
-        .expect_err("populated retired history refuses");
-    let postgres: tokio_postgres::Error = error.downcast().expect("postgres refusal");
-    let database = postgres.as_db_error().expect("typed cutover refusal");
-    assert_eq!(database.code().code(), "55000");
-    assert_eq!(
-        database.message(),
-        "retired-effect-disposition-history-requires-archive-or-environment-reprovision"
-    );
-    assert!(table_exists(su, SCHEMA, "effect_disposition_requests").await);
-    assert!(table_exists(su, SCHEMA, "effect_dispositions").await);
-    assert!(!table_exists(su, SCHEMA, "operator_run_actions").await);
-}
-
-/// Historical pre-cutover disposition hardening test, retained only as source
-/// archaeology while the replacement cutover gate above owns active coverage.
-#[allow(dead_code)]
-/// wamn-4u7p.42: repair the pre-hardening disposition table without replacing
-/// its table. The identity column is additive, the old wall-clock history index
-/// is recreated, helper authority/search-path definitions converge exactly, and
-/// the closed CHECK rejects the two SQL-NULL outcome shapes that previously
-/// passed PostgreSQL CHECK semantics.
-async fn effect_disposition_security_drift_leg(su: &Client) {
-    reset(su).await;
-    let schema = schema();
-    su.batch_execute(CATALOG_SCHEMA_SQL)
-        .await
-        .expect("apply catalog-schema");
-    for ddl in [RUN_STATE_SQL, RUN_QUEUE_SQL] {
-        su.batch_execute(&rewrite_schema(ddl, &schema))
-            .await
-            .expect("apply current run-plane record");
-    }
-
-    su.batch_execute(&format!(
-        "DROP INDEX {SCHEMA}.effect_dispositions_attempt_history; \
-         ALTER TABLE {SCHEMA}.effect_dispositions DROP COLUMN append_ordinal; \
-         CREATE INDEX effect_dispositions_attempt_history \
-             ON {SCHEMA}.effect_dispositions (env_key, attempt_id, created_at DESC); \
-         DROP INDEX {SCHEMA}.effect_dispositions_request_ordinal; \
-         CREATE INDEX effect_dispositions_request_ordinal \
-             ON {SCHEMA}.effect_dispositions \
-                (env_key, request_id, selection_ordinal); \
-         DROP INDEX {SCHEMA}.effect_dispositions_one_resolution; \
-         CREATE INDEX effect_dispositions_one_resolution \
-             ON {SCHEMA}.effect_dispositions (env_key, attempt_id) \
-             WHERE action='park'; \
-         ALTER TABLE {SCHEMA}.effect_dispositions \
-             DROP CONSTRAINT effect_dispositions_outcome_check; \
-         ALTER TABLE {SCHEMA}.effect_dispositions \
-             ADD CONSTRAINT effect_dispositions_outcome_check CHECK (true); \
-         CREATE OR REPLACE FUNCTION {SCHEMA}.guard_effect_disposition_append() \
-             RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog \
-             AS $unsafe$ BEGIN RETURN NEW; END $unsafe$;"
-    ))
-    .await
-    .expect("regress disposition table to its pre-hardening shape");
-
-    let plan = reconcile_run_plane::reconcile(su, &schema, true)
-        .await
-        .expect("reconcile disposition security drift");
-    for (kind, target) in [
-        (
-            RunPlaneActionKind::AddColumn,
-            "effect_dispositions.append_ordinal",
-        ),
-        (
-            RunPlaneActionKind::RecreateIndex,
-            "effect_dispositions_attempt_history",
-        ),
-        (
-            RunPlaneActionKind::CreateIndex,
-            "effect_dispositions_append_order",
-        ),
-        (
-            RunPlaneActionKind::RecreateIndex,
-            "effect_dispositions_request_ordinal",
-        ),
-        (
-            RunPlaneActionKind::RecreateIndex,
-            "effect_dispositions_one_resolution",
-        ),
-        (
-            RunPlaneActionKind::RepairConstraint,
-            "effect_dispositions.effect_dispositions_outcome_check",
-        ),
-        (
-            RunPlaneActionKind::RepairHelperFunction,
-            "guard_effect_disposition_append",
-        ),
-    ] {
-        assert!(
-            plan.actions
-                .iter()
-                .any(|action| action.kind == kind && action.target == target),
-            "disposition drift plans {kind:?} for {target}: {:#?}",
-            plan.actions
-        );
-    }
-
-    let identity_row = su
-        .query_one(
-            "SELECT data_type, is_identity, identity_generation \
-             FROM information_schema.columns \
-             WHERE table_schema=$1 AND table_name='effect_dispositions' \
-               AND column_name='append_ordinal'",
-            &[&SCHEMA],
-        )
-        .await
-        .expect("read reconciled append identity");
-    let identity: (String, String, String) = (
-        identity_row.get(0),
-        identity_row.get(1),
-        identity_row.get(2),
-    );
-    assert_eq!(
-        identity,
-        (
-            "bigint".to_string(),
-            "YES".to_string(),
-            "ALWAYS".to_string()
-        )
-    );
-
-    let history = indexdef(su, "effect_dispositions_attempt_history")
-        .await
-        .expect("reconciled disposition history index");
-    assert!(history.contains("append_ordinal DESC"), "{history}");
-    assert!(!history.contains("created_at"), "{history}");
-    let append_order = indexdef(su, "effect_dispositions_append_order")
-        .await
-        .expect("reconciled unique append-order index");
-    assert!(
-        append_order.starts_with("CREATE UNIQUE INDEX"),
-        "{append_order}"
-    );
-    assert!(append_order.contains("(append_ordinal)"), "{append_order}");
-    let request_order = indexdef(su, "effect_dispositions_request_ordinal")
-        .await
-        .expect("reconciled request selection-order index");
-    assert!(
-        request_order.starts_with("CREATE UNIQUE INDEX"),
-        "{request_order}"
-    );
-    let one_resolution = indexdef(su, "effect_dispositions_one_resolution")
-        .await
-        .expect("reconciled one-resolution index");
-    assert!(
-        one_resolution.starts_with("CREATE UNIQUE INDEX")
-            && one_resolution.contains("WHERE (action = 'resolve'::text)"),
-        "{one_resolution}"
-    );
-
-    let outcome_check: String = su
-        .query_one(
-            "SELECT pg_get_constraintdef(con.oid, true) FROM pg_constraint con \
-             JOIN pg_class c ON c.oid=con.conrelid \
-             JOIN pg_namespace n ON n.oid=c.relnamespace \
-             WHERE n.nspname=$1 AND c.relname='effect_dispositions' \
-               AND con.conname='effect_dispositions_outcome_check'",
-            &[&SCHEMA],
-        )
-        .await
-        .expect("read reconciled outcome CHECK")
-        .get(0);
-    assert!(outcome_check.contains("IS TRUE"), "{outcome_check}");
-    assert!(
-        outcome_check.contains("failure_detail ? 'message'::text"),
-        "{outcome_check}"
-    );
-
-    let guard_definition: String = su
-        .query_one(
-            "SELECT pg_get_functiondef(p.oid) FROM pg_proc p \
-             JOIN pg_namespace n ON n.oid=p.pronamespace \
-             WHERE n.nspname=$1 AND p.proname='guard_effect_disposition_append'",
-            &[&SCHEMA],
-        )
-        .await
-        .expect("read reconciled disposition guard")
-        .get(0);
-    assert!(
-        guard_definition.contains("SET search_path TO 'pg_catalog', 'pg_temp'"),
-        "{guard_definition}"
-    );
-    assert!(guard_definition.contains("pg_catalog.pg_class"));
-    assert!(guard_definition.contains("pg_catalog.pg_roles"));
-    assert!(!guard_definition.contains("wamn_platform_admin"));
-    assert!(!guard_definition.contains("pg_has_role"));
-
-    // Membership in the legacy platform role does not authorize direct DML.
-    // The only non-superuser crossing is a reviewed table-owner definer where
-    // CURRENT_USER differs from the authenticated SESSION_USER.
-    su.batch_execute(&format!(
-        "DO $role$ BEGIN \
-             IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_platform_admin') \
-             THEN CREATE ROLE wamn_platform_admin NOLOGIN; END IF; \
-         END $role$; \
-         GRANT wamn_platform_admin TO wamn_app; \
-         GRANT INSERT ON {SCHEMA}.effect_disposition_requests TO wamn_app; \
-         SET SESSION AUTHORIZATION wamn_app; \
-         SELECT set_config('app.env_key','acme--billing--dev',false); \
-         CREATE TEMP TABLE pg_roles \
-             (rolname text, rolsuper boolean, rolbypassrls boolean); \
-         INSERT INTO pg_temp.pg_roles VALUES ('wamn_app',true,true);"
-    ))
-    .await
-    .expect("enter a platform-member application session");
-    let direct_fact_append = su
-        .execute(
-            &format!(
-                "INSERT INTO {SCHEMA}.effect_attempts \
-                   (env_key,attempt_id,run_id,root_plan_hash,current_plan_hash,frame_id, \
-                    local_node_id,source_artifact_hash,requirement_name,occurrence,seq,generation_fact_type, \
-                    attempt_started_at,attempt_deadline_at,attempt_input_ref) \
-                 VALUES ('acme--billing--dev','00000000-0000-0000-0000-000000000509', \
-                         'forged',$${EMPTY_EXECUTION_BUNDLE_HASH}$$,$${EMPTY_EXECUTION_BUNDLE_HASH}$$,0, \
-                         'effect',$${EMPTY_EXECUTION_BUNDLE_HASH}$$,'manager',0,0,'not-required', \
-                         now(),now()+interval '1 minute','sha256:forged')"
-            ),
-            &[],
-        )
-        .await;
-    let direct_append = su
-        .execute(
-            &format!(
-                "INSERT INTO {SCHEMA}.effect_disposition_requests \
-                   (env_key,request_id,action,selection_kind,principal,effective_role,correlation_id) \
-                 VALUES ('acme--billing--dev','00000000-0000-0000-0000-000000000510', \
-                         'park','single','member','project-admin','direct-dml')"
-            ),
-            &[],
-        )
-        .await;
-    su.batch_execute(&format!(
-        "RESET SESSION AUTHORIZATION; \
-         SELECT set_config('app.env_key','',false); \
-         REVOKE wamn_platform_admin FROM wamn_app; \
-         REVOKE INSERT ON {SCHEMA}.effect_disposition_requests FROM wamn_app; \
-         DROP TABLE pg_temp.pg_roles;"
-    ))
-    .await
-    .expect("leave the platform-member application session");
-    let fact_error = direct_fact_append.expect_err("ordinary app cannot append immutable facts");
-    assert_db_code(&fact_error, "42501", "effect-table ACL refusal");
-    let error = direct_append.expect_err("platform membership cannot bypass the insert guard");
-    assert!(
-        error
-            .as_db_error()
-            .is_some_and(|db| db.message() == "effect-disposition-append-requires-trusted-adapter"),
-        "typed direct-DML refusal: {error}"
-    );
-    for (request_id, effective_role) in [
-        ("00000000-0000-0000-0000-000000000520", "system"),
-        ("00000000-0000-0000-0000-000000000521", "project-deployer"),
-    ] {
-        let invalid_resolve = su
-            .execute(
-                &format!(
-                    "INSERT INTO {SCHEMA}.effect_disposition_requests \
-                       (env_key,request_id,action,selection_kind,principal,effective_role, \
-                        basis,evidence_ref,correlation_id) \
-                     VALUES ('acme--billing--dev','{request_id}','resolve','single','actor','{effective_role}', \
-                             'external-evidence','case:role-floor','role-floor')"
-                ),
-                &[],
-            )
-            .await;
-        let role_error =
-            invalid_resolve.expect_err("storage rejects resolve outside the approved role floor");
-        assert!(
-            role_error
-                .as_db_error()
-                .and_then(|db| db.constraint())
-                .is_some_and(|constraint| {
-                    constraint == "effect_disposition_requests_role_action_check"
-                }),
-            "typed role/action refusal for {effective_role}: {role_error}"
-        );
-    }
-
-    // Two formerly nullable-invalid resolution shapes are rejected, while a
-    // complete failure lands. Earlier audit timestamps cannot reverse the
-    // append identity's history order.
-    su.batch_execute(&format!(
-        "INSERT INTO {SCHEMA}.effect_attempts \
-             (env_key,attempt_id,run_id,root_plan_hash,current_plan_hash,frame_id, \
-              local_node_id,source_artifact_hash,requirement_name,occurrence,seq,generation_fact_type, \
-              attempt_started_at,attempt_deadline_at,attempt_input_ref) \
-             VALUES \
-             ('acme--billing--dev','00000000-0000-0000-0000-000000000530', \
-                     'audit-run',$${EMPTY_EXECUTION_BUNDLE_HASH}$$,$${EMPTY_EXECUTION_BUNDLE_HASH}$$,0, \
-                     'n',$${EMPTY_EXECUTION_BUNDLE_HASH}$$,'manager',0,0,'not-required', \
-                     now(),now()+interval '1 minute','sha256:audit'), \
-             ('acme--billing--dev','00000000-0000-0000-0000-000000000540', \
-                     'audit-run',$${EMPTY_EXECUTION_BUNDLE_HASH}$$,$${EMPTY_EXECUTION_BUNDLE_HASH}$$,0, \
-                     'temporal',$${EMPTY_EXECUTION_BUNDLE_HASH}$$,'manager',0,1,'not-required', \
-                     now(),now()+interval '1 minute','sha256:temporal'); \
-         INSERT INTO {SCHEMA}.effect_attempt_dispatches \
-             (env_key,attempt_id,attempt_started_at,run_id,frame_id, \
-              local_node_id,occurrence,dispatched_at) \
-             SELECT env_key,attempt_id,attempt_started_at,run_id,frame_id, \
-                    local_node_id,occurrence, \
-                    attempt_started_at + interval '1 second' \
-               FROM {SCHEMA}.effect_attempts \
-              WHERE attempt_id='00000000-0000-0000-0000-000000000530'; \
-         INSERT INTO {SCHEMA}.effect_attempt_outcomes \
-             (env_key,attempt_id,dispatched_at,outcome_status,recorded_at) \
-             SELECT env_key,attempt_id,dispatched_at,'success', \
-                    dispatched_at + interval '1 second' \
-               FROM {SCHEMA}.effect_attempt_dispatches \
-              WHERE attempt_id='00000000-0000-0000-0000-000000000530'; \
-         INSERT INTO {SCHEMA}.effect_disposition_requests \
-             (env_key,request_id,action,selection_kind,principal,effective_role,correlation_id) \
-             VALUES \
-             ('acme--billing--dev','00000000-0000-0000-0000-000000000531','park','single','operator','project-admin','park'), \
-             ('acme--billing--dev','00000000-0000-0000-0000-000000000532','release','single','operator','project-admin','release'); \
-         INSERT INTO {SCHEMA}.effect_disposition_requests \
-             (env_key,request_id,action,selection_kind,principal,effective_role, \
-              basis,evidence_ref,correlation_id) \
-             VALUES ('acme--billing--dev','00000000-0000-0000-0000-000000000533','resolve','single', \
-                     'operator','project-admin','external-evidence','case:1','resolve'); \
-         INSERT INTO {SCHEMA}.effect_dispositions \
-             (env_key,request_id,attempt_id,selection_ordinal,action,created_at) \
-             VALUES ('acme--billing--dev','00000000-0000-0000-0000-000000000531', \
-                     '00000000-0000-0000-0000-000000000530',0,'park','2099-01-01T00:00:00Z'); \
-         INSERT INTO {SCHEMA}.effect_dispositions \
-             (env_key,request_id,attempt_id,selection_ordinal,action,created_at) \
-             VALUES ('acme--billing--dev','00000000-0000-0000-0000-000000000532', \
-                     '00000000-0000-0000-0000-000000000530',0,'release','2000-01-01T00:00:00Z');"
-    ))
-    .await
-    .expect("seed append-order and resolution audit");
-
-    let early_dispatch = su
-        .execute(
-            &format!(
-                "INSERT INTO {SCHEMA}.effect_attempt_dispatches \
-                   (env_key,attempt_id,attempt_started_at,run_id,frame_id, \
-                    local_node_id,occurrence,dispatched_at) \
-                 SELECT env_key,attempt_id,attempt_started_at,run_id,frame_id, \
-                        local_node_id,occurrence, \
-                        attempt_started_at - interval '1 second' \
-                   FROM {SCHEMA}.effect_attempts \
-                  WHERE attempt_id='00000000-0000-0000-0000-000000000540'"
-            ),
-            &[],
-        )
-        .await;
-    let dispatch_time_error =
-        early_dispatch.expect_err("dispatch cannot predate immutable attempt start");
-    assert!(
-        dispatch_time_error
-            .as_db_error()
-            .and_then(|error| error.constraint())
-            .is_some_and(|constraint| constraint == "effect_attempt_dispatches_time_check"),
-        "typed early-dispatch refusal: {dispatch_time_error}"
-    );
-    let outcome_without_dispatch = su
-        .execute(
-            &format!(
-                "INSERT INTO {SCHEMA}.effect_attempt_outcomes \
-                   (env_key,attempt_id,dispatched_at,outcome_status,recorded_at) \
-                 SELECT env_key,attempt_id,attempt_started_at,'success',attempt_started_at \
-                   FROM {SCHEMA}.effect_attempts \
-                  WHERE attempt_id='00000000-0000-0000-0000-000000000540'"
-            ),
-            &[],
-        )
-        .await;
-    let missing_dispatch_error =
-        outcome_without_dispatch.expect_err("outcome requires the exact dispatch boundary");
-    assert!(
-        missing_dispatch_error
-            .as_db_error()
-            .and_then(|error| error.constraint())
-            .is_some_and(|constraint| constraint == "effect_attempt_outcomes_dispatch_fk"),
-        "typed missing-dispatch refusal: {missing_dispatch_error}"
-    );
-    su.execute(
-        &format!(
-            "INSERT INTO {SCHEMA}.effect_attempt_dispatches \
-               (env_key,attempt_id,attempt_started_at,run_id,frame_id, \
-                local_node_id,occurrence,dispatched_at) \
-             SELECT env_key,attempt_id,attempt_started_at,run_id,frame_id, \
-                    local_node_id,occurrence, \
-                    attempt_started_at + interval '1 second' \
-               FROM {SCHEMA}.effect_attempts \
-              WHERE attempt_id='00000000-0000-0000-0000-000000000540'"
-        ),
-        &[],
-    )
-    .await
-    .expect("seed exact temporal dispatch boundary");
-    let early_outcome = su
-        .execute(
-            &format!(
-                "INSERT INTO {SCHEMA}.effect_attempt_outcomes \
-                   (env_key,attempt_id,dispatched_at,outcome_status,recorded_at) \
-                 SELECT env_key,attempt_id,dispatched_at,'success', \
-                        dispatched_at - interval '1 second' \
-                   FROM {SCHEMA}.effect_attempt_dispatches \
-                  WHERE attempt_id='00000000-0000-0000-0000-000000000540'"
-            ),
-            &[],
-        )
-        .await;
-    let outcome_time_error =
-        early_outcome.expect_err("outcome cannot predate its exact dispatch boundary");
-    assert!(
-        outcome_time_error
-            .as_db_error()
-            .and_then(|error| error.constraint())
-            .is_some_and(|constraint| constraint == "effect_attempt_outcomes_time_check"),
-        "typed early-outcome refusal: {outcome_time_error}"
-    );
-
-    let nullable_success = su
-        .execute(
-            &format!(
-                "INSERT INTO {SCHEMA}.effect_dispositions \
-                   (env_key,request_id,attempt_id,selection_ordinal,action, \
-                    resolution_status,success_payload,success_port) \
-                 VALUES ('acme--billing--dev','00000000-0000-0000-0000-000000000533', \
-                         '00000000-0000-0000-0000-000000000530',0,'resolve', \
-                         NULL,'{{}}'::jsonb,'done')"
-            ),
-            &[],
-        )
-        .await;
-    assert!(
-        nullable_success.is_err(),
-        "NULL resolution status cannot pass the complete-success branch"
-    );
-    let missing_message = su
-        .execute(
-            &format!(
-                "INSERT INTO {SCHEMA}.effect_dispositions \
-                   (env_key,request_id,attempt_id,selection_ordinal,action, \
-                    resolution_status,failure_kind,failure_detail) \
-                 VALUES ('acme--billing--dev','00000000-0000-0000-0000-000000000533', \
-                         '00000000-0000-0000-0000-000000000530',0,'resolve', \
-                         'failed','terminal','{{}}'::jsonb)"
-            ),
-            &[],
-        )
-        .await;
-    assert!(
-        missing_message.is_err(),
-        "failure detail without a string message cannot pass the failure branch"
-    );
-    su.execute(
-        &format!(
-            "INSERT INTO {SCHEMA}.effect_dispositions \
-               (env_key,request_id,attempt_id,selection_ordinal,action, \
-                resolution_status,failure_kind,failure_detail) \
-             VALUES ('acme--billing--dev','00000000-0000-0000-0000-000000000533', \
-                     '00000000-0000-0000-0000-000000000530',0,'resolve', \
-                     'failed','terminal','{{\"message\":\"confirmed\"}}'::jsonb)"
-        ),
-        &[],
-    )
-    .await
-    .expect("complete failure outcome is admitted");
-    su.execute(
-        &format!(
-            "INSERT INTO {SCHEMA}.effect_disposition_requests \
-               (env_key,request_id,action,selection_kind,principal,effective_role,correlation_id) \
-             VALUES ('acme--billing--dev','00000000-0000-0000-0000-000000000534','park','single', \
-                     'operator','project-admin','duplicate-append-order')"
-        ),
-        &[],
-    )
-    .await
-    .expect("seed request for duplicate append-order mutant");
-    let duplicate_append_order = su
-        .execute(
-            &format!(
-                "INSERT INTO {SCHEMA}.effect_dispositions \
-                   (env_key,request_id,attempt_id,append_ordinal,selection_ordinal,action) \
-                 OVERRIDING SYSTEM VALUE \
-                 SELECT 'acme--billing--dev','00000000-0000-0000-0000-000000000534', \
-                        '00000000-0000-0000-0000-000000000530', \
-                        min(append_ordinal),0,'park' \
-                   FROM {SCHEMA}.effect_dispositions \
-                  WHERE env_key='acme--billing--dev'"
-            ),
-            &[],
-        )
-        .await;
-    let duplicate_append_error =
-        duplicate_append_order.expect_err("append order is globally unique at storage");
-    assert!(
-        duplicate_append_error
-            .as_db_error()
-            .and_then(|error| error.constraint())
-            .is_some_and(|constraint| constraint == "effect_dispositions_append_order"),
-        "typed duplicate append-order refusal: {duplicate_append_error}"
-    );
-    let history_rows = su
-        .query(
-            &format!(
-                "SELECT action,append_ordinal FROM {SCHEMA}.effect_dispositions \
-                 WHERE env_key='acme--billing--dev' \
-                   AND attempt_id='00000000-0000-0000-0000-000000000530' \
-                 ORDER BY append_ordinal"
-            ),
-            &[],
-        )
-        .await
-        .expect("read identity-ordered history");
-    assert_eq!(history_rows.len(), 3);
-    assert_eq!(history_rows[0].get::<_, String>(0), "park");
-    assert_eq!(history_rows[1].get::<_, String>(0), "release");
-    assert_eq!(history_rows[2].get::<_, String>(0), "resolve");
-    assert!(
-        history_rows[0].get::<_, i64>(1) < history_rows[1].get::<_, i64>(1),
-        "identity order is monotonic"
-    );
-    let audit_time_reversed: bool = su
-        .query_one(
-            &format!(
-                "SELECT \
-                   (SELECT created_at FROM {SCHEMA}.effect_dispositions \
-                     WHERE request_id='00000000-0000-0000-0000-000000000531') \
-                   > \
-                   (SELECT created_at FROM {SCHEMA}.effect_dispositions \
-                     WHERE request_id='00000000-0000-0000-0000-000000000532')"
-            ),
-            &[],
-        )
-        .await
-        .expect("compare audit time against append order")
-        .get(0);
-    assert!(
-        audit_time_reversed,
-        "audit timestamps deliberately disagree with append order"
-    );
-
-    for table in [
-        "effect_attempts",
-        "effect_attempt_dispatches",
-        "effect_attempt_outcomes",
-        "effect_disposition_requests",
-        "effect_dispositions",
-    ] {
-        for verb in ["UPDATE", "DELETE"] {
-            let sql = if verb == "UPDATE" {
-                format!(
-                    "UPDATE {SCHEMA}.{table} SET env_key=env_key WHERE env_key='acme--billing--dev'"
-                )
-            } else {
-                format!("DELETE FROM {SCHEMA}.{table} WHERE env_key='acme--billing--dev'")
-            };
-            let error = su
-                .execute(&sql, &[])
-                .await
-                .expect_err("immutable effect facts reject mutation");
-            assert!(
-                error
-                    .as_db_error()
-                    .is_some_and(|db| db.message() == "effect-disposition-immutable"),
-                "{verb} on {table} has a typed immutability refusal: {error}"
-            );
-        }
-    }
-
-    let again = reconcile_run_plane::reconcile(su, &schema, false)
-        .await
-        .expect("re-plan hardened disposition schema");
-    assert!(
-        again.is_noop(),
-        "disposition security drift converged: {:#?}",
-        again.actions
     );
 }

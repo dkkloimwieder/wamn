@@ -17,7 +17,6 @@ const RUNS_EXECUTION_IDENTITY_CHECK_DEF: &str = "CHECK (NOT trigger_source IS DI
 #[cfg(test)]
 pub(super) const RUNS_RELEASE_FK_DEF: &str =
     "FOREIGN KEY (env_key, manifest_digest) REFERENCES catalog.releases(env_key, manifest_digest)";
-pub(super) const RUNS_ROOT_INDEX_DEF: &str = "CREATE INDEX runs_root ON wamn_run.runs USING btree (env_key, root_run_id) WHERE (root_run_id IS NOT NULL)";
 pub(super) const RUNS_ADMISSION_PINS_TRIGGER_DEF: &str = "CREATE TRIGGER runs_admission_pins_immutable BEFORE UPDATE OF flow_id, flow_version, package_id, environment, capture_mode, durability_class, wiring_id, wiring_version, wiring_hash, binding_world_json, manifest_digest, service_principal_id, execution_principal_id, execution_role, invoked_by, invoked_by_user_id, node_digests_json ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable()";
 /// The qual `wamn_run.environment_policies` must carry, as `pg_policy` renders
 /// it. Re-keyed onto `current_user` with the rest of the guest-reachable floor
@@ -711,15 +710,6 @@ pub(super) const EFFECT_OUTCOME_DISPATCH_FK_SQL: &str = "ALTER TABLE wamn_run.ef
      FOREIGN KEY (env_key, attempt_id, dispatched_at) \
      REFERENCES wamn_run.effect_attempt_dispatches \
          (env_key, attempt_id, dispatched_at)";
-pub(super) const RETIRED_EFFECT_ATTEMPT_COLUMNS: &[&str] = &[
-    "attempt_key",
-    "attempt_index",
-    "predecessor_attempt_id",
-    "legacy_imported",
-    "selected_recovery_class",
-    "recovery_class",
-];
-
 pub(super) const EFFECT_FRAME_COLUMNS: &[&str] = &[
     "root_plan_hash",
     "current_plan_hash",

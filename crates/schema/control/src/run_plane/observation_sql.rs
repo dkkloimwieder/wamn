@@ -1,7 +1,5 @@
 //! Read PostgreSQL catalog facts for run-plane reconciliation.
 
-use super::BareSchemaName;
-
 /// Security attributes of the host-only scenario-author role (zero or one row).
 pub fn select_scenario_author_role_sql() -> &'static str {
     "SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolinherit, \
@@ -323,15 +321,6 @@ pub fn select_environment_policy_policies_sql() -> &'static str {
       ORDER BY policy.polname"
 }
 
-/// Count persisted flow graphs that carry either retired top-level queue key.
-pub fn count_retired_authored_ordering_rows_sql(schema: &BareSchemaName) -> String {
-    format!(
-        "SELECT count(*) FROM {}.flows \
-          WHERE graph_json ? 'ordering' OR graph_json ? 'partition-policy'",
-        schema.quoted()
-    )
-}
-
 /// Every index in `$1`: `(indexname, indexdef)`.
 pub fn select_schema_indexes_sql() -> &'static str {
     "SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = $1"
@@ -370,21 +359,6 @@ pub fn select_schema_triggers_sql() -> &'static str {
      JOIN pg_namespace n ON n.oid = c.relnamespace \
      WHERE n.nspname = $1 AND NOT t.tgisinternal \
      ORDER BY c.relname, t.tgname"
-}
-
-/// Tables in `$1` carrying the legacy `wamn_outbox_event` trigger.
-pub fn select_outbox_trigger_tables_sql() -> &'static str {
-    "SELECT c.relname FROM pg_trigger t \
-     JOIN pg_class c ON c.oid = t.tgrelid \
-     JOIN pg_namespace n ON n.oid = c.relnamespace \
-     WHERE n.nspname = $1 AND t.tgname = 'wamn_outbox_event' AND NOT t.tgisinternal"
-}
-
-/// Whether the legacy `wamn_outbox_event()` function exists in `$1`.
-pub fn select_outbox_function_present_sql() -> &'static str {
-    "SELECT EXISTS ( SELECT FROM pg_proc p \
-     JOIN pg_namespace n ON n.oid = p.pronamespace \
-     WHERE n.nspname = $1 AND p.proname = 'wamn_outbox_event' )"
 }
 
 /// Whether the per-database `catalog` metadata schema exists.

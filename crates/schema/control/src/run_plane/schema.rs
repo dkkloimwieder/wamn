@@ -5,7 +5,12 @@ use std::fmt;
 
 use wamn_pg_core::{Identifier, InvalidIdentifier};
 
-use super::RUN_PLANE_FILES;
+use super::declarations::{
+    CHECK_SPECS, EFFECT_ATTEMPTS_DISPATCH_IDENTITY_KEY_DEF, EFFECT_ATTEMPTS_OCCURRENCE_KEY_DEF,
+    EFFECT_DISPATCH_ATTEMPT_FK_DEF, EFFECT_DISPATCH_ATTEMPT_FK_NAME,
+    EFFECT_DISPATCHES_OCCURRENCE_KEY_DEF, EFFECT_FRAME_CHECKS, EFFECT_FRAME_COLUMNS,
+};
+use super::{RUN_PLANE_FILES, RunPlaneObservation};
 
 /// A validated project schema name usable in both quoted SQL and bare DDL rewrites.
 ///
@@ -371,4 +376,120 @@ pub(super) fn index_statements(src: &str, qualifier: &str) -> Vec<(String, Strin
         }
     }
     out
+}
+
+fn expected_check_definition(table: &str, name: &str) -> Option<&'static str> {
+    CHECK_SPECS
+        .iter()
+        .find(|spec| spec.table == table && spec.name == name)
+        .map(|spec| spec.definition)
+}
+
+fn column_contract_complete(
+    obs: &RunPlaneObservation,
+    table: &str,
+    column: &str,
+    ty: &str,
+    not_null: bool,
+) -> bool {
+    let key = (table.to_string(), column.to_string());
+    obs.tables
+        .get(table)
+        .is_some_and(|columns| columns.contains(column))
+        && obs
+            .column_types
+            .get(&key)
+            .is_some_and(|actual| actual == ty)
+        && obs.non_nullable_columns.contains(&key) == not_null
+}
+
+fn check_contract_complete(obs: &RunPlaneObservation, table: &str, names: &[&str]) -> bool {
+    names.iter().all(|name| {
+        expected_check_definition(table, name).is_some_and(|expected| {
+            obs.checks
+                .get(&(table.to_string(), (*name).to_string()))
+                .is_some_and(|actual| actual == expected)
+        })
+    })
+}
+
+fn effect_frame_contract_complete(obs: &RunPlaneObservation, schema: &BareSchemaName) -> bool {
+    let Some(_) = obs.tables.get("effect_attempts") else {
+        return true;
+    };
+    column_contract_complete(obs, "effect_attempts", "root_plan_hash", "text", true)
+        && column_contract_complete(obs, "effect_attempts", "current_plan_hash", "text", true)
+        && column_contract_complete(obs, "effect_attempts", "frame_id", "bigint", true)
+        && column_contract_complete(obs, "effect_attempts", "parent_frame_id", "bigint", false)
+        && column_contract_complete(obs, "effect_attempts", "call_site_id", "text", false)
+        && column_contract_complete(obs, "effect_attempts", "local_node_id", "text", true)
+        && column_contract_complete(obs, "effect_attempts", "source_artifact_hash", "text", true)
+        && column_contract_complete(obs, "effect_attempts", "requirement_name", "text", true)
+        && check_contract_complete(obs, "effect_attempts", EFFECT_FRAME_CHECKS)
+        && (obs
+            .indexes
+            .get("effect_attempts_occurrence_key")
+            .is_some_and(|definition| {
+                normalize_observed_schema(definition, schema) == EFFECT_ATTEMPTS_OCCURRENCE_KEY_DEF
+            }))
+}
+
+/// Refuse incompatible changes to populated tables with current effect identities.
+pub(super) fn current_effect_schema_drift(
+    schema: &BareSchemaName,
+    obs: &RunPlaneObservation,
+) -> bool {
+    let attempts_drifted = obs.tables.get("effect_attempts").is_some_and(|columns| {
+        EFFECT_FRAME_COLUMNS
+            .iter()
+            .all(|column| columns.contains(*column))
+            && (!effect_frame_contract_complete(obs, schema)
+                || !obs.defaulted_columns.contains(&(
+                    "effect_attempts".to_string(),
+                    "attempt_started_at".to_string(),
+                ))
+                || obs
+                    .indexes
+                    .get("effect_attempts_dispatch_identity_key")
+                    .is_none_or(|definition| {
+                        normalize_observed_schema(definition, schema)
+                            != EFFECT_ATTEMPTS_DISPATCH_IDENTITY_KEY_DEF
+                    }))
+    });
+    let dispatches_drifted = obs
+        .tables
+        .get("effect_attempt_dispatches")
+        .is_some_and(|columns| {
+            ["run_id", "frame_id", "local_node_id", "occurrence"]
+                .iter()
+                .all(|column| columns.contains(*column))
+                && ([
+                    ("run_id", "text"),
+                    ("frame_id", "bigint"),
+                    ("local_node_id", "text"),
+                    ("occurrence", "integer"),
+                ]
+                .iter()
+                .any(|(column, ty)| {
+                    !column_contract_complete(obs, "effect_attempt_dispatches", column, ty, true)
+                }) || obs
+                    .indexes
+                    .get("effect_attempt_dispatches_occurrence_key")
+                    .is_none_or(|definition| {
+                        normalize_observed_schema(definition, schema)
+                            != EFFECT_DISPATCHES_OCCURRENCE_KEY_DEF
+                    })
+                    || (obs.tables.contains_key("effect_attempts")
+                        && obs
+                            .foreign_keys
+                            .get(&(
+                                "effect_attempt_dispatches".to_string(),
+                                EFFECT_DISPATCH_ATTEMPT_FK_NAME.to_string(),
+                            ))
+                            .is_none_or(|definition| {
+                                normalize_observed_schema(definition, schema)
+                                    != EFFECT_DISPATCH_ATTEMPT_FK_DEF
+                            })))
+        });
+    attempts_drifted || dispatches_drifted
 }
