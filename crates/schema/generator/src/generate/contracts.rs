@@ -246,6 +246,9 @@ fn emit_custom_operation_contracts(
     if let Some(lists) = &operation.lists {
         operation_contract.insert("lists".to_owned(), json!(lists));
     }
+    if operation.sync == Some(true) {
+        operation_contract.insert("sync".to_owned(), json!(true));
+    }
     if let Some((alias, dependency)) = operation_dependency(manifest, operation_name) {
         let dependency_contract = serde_json::Map::from_iter([
             ("alias".to_owned(), json!(alias)),

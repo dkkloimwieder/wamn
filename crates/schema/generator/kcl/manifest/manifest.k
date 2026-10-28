@@ -201,6 +201,7 @@ schema Command[name: str](CustomOperation):
 schema Projection[name: str](CustomOperation):
     type = "projection"
     feed?: bool
+    sync?: bool
 
 schema EventHandler[name: str](CustomOperation):
     type = "event_handler"

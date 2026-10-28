@@ -75,6 +75,10 @@ pub struct CustomOperationDeclaration {
     /// Validated catalog facts that the build writes for an authored feed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub feed_source: Option<crate::feed::FeedSource>,
+    /// Whether this read's screen follows its feed through the sync store.
+    /// Omitted means disabled. Only a read with a feed may declare it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync: Option<bool>,
     /// Whether a refusal leaves later entries for the row free to proceed.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub append_only: bool,
@@ -1158,6 +1162,12 @@ fn validate_custom_operation(
             format!(
                 "{operation_name} feed needs a read with lists, a model, and exactly one key field"
             ),
+        ));
+    }
+    if operation.sync == Some(true) && operation.feed != Some(true) {
+        return Err(GenerateError::new(
+            GenerateErrorType::InvalidOperation,
+            format!("{operation_name} screen sync needs a feed on the read"),
         ));
     }
     match (operation.visibility(), operation.permission()) {

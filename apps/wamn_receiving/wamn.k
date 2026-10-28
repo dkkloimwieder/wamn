@@ -239,6 +239,7 @@ manifest.Package {
         "receiving.load_receipt_screen" = manifest.Projection("receiving.load_receipt_screen") {
             label = "Receiving screen"
             feed = True
+            sync = True
             lists = {model = "purchase_order_line", key_field = "line_id", display_field = "item_number"}
             input: {
                 fields = [
@@ -298,6 +299,7 @@ manifest.Package {
         "receiving.load_open_receipt_lines" = manifest.Projection("receiving.load_open_receipt_lines") {
             label = "Open receipt lines"
             feed = True
+            sync = True
             lists = {model = "purchase_order_line", key_field = "line_id", display_field = "item_number"}
             input.fields = []
             result = {

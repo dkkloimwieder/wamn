@@ -1837,3 +1837,25 @@ fn authored_sql_for_a_query_generation_writes_refuses() {
     fixture::try_generate_with_sql(&fixture::catalog(), &manifest, &sources(&grouped))
         .expect("a grouped query stays authored");
 }
+
+/// A screen follows its read through the sync store only when the read has a
+/// feed. The contract carries the field, and the build names a read without one.
+#[test]
+fn a_sync_screen_needs_a_feed_on_its_read() {
+    let mut manifest = fixture::manifest();
+    manifest["custom_operations"]["feed_line.screen"]["sync"] = json!(true);
+    let package = fixture::generate_with(&fixture::catalog(), &manifest);
+    let contract = artifact(&package, "generated/contracts/feed_line/screen.operation.json");
+    assert_eq!(contract["sync"], true);
+    let silent = artifact(
+        &fixture::generate_fixture(),
+        "generated/contracts/feed_line/screen.operation.json",
+    );
+    assert_eq!(silent.get("sync"), None);
+
+    manifest["custom_operations"]["widget.list"]["sync"] = json!(true);
+    let error = fixture::try_generate_with(&fixture::catalog(), &manifest)
+        .expect_err("a read without a feed takes no sync screen");
+    assert_eq!(error.error_type(), GenerateErrorType::InvalidOperation);
+    assert_eq!(error.context(), "widget.list screen sync needs a feed on the read");
+}

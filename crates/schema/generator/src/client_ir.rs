@@ -370,6 +370,9 @@ pub struct OperationIr {
     /// What this read lists. Every read that a table shows states it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lists: Option<ListIr>,
+    /// Whether the read's screen follows its feed through the sync store.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sync: bool,
     /// Where this operation is published, when the release exposes it over
     /// HTTP.
     ///
@@ -1276,6 +1279,7 @@ fn build_operation(
                     format!("{module}/{name} lists: {error}"),
                 )
             })?,
+        sync: operation.get("sync").and_then(Value::as_bool).unwrap_or(false),
         result_class: operation
             .get("result")
             .and_then(Value::as_str)

@@ -235,6 +235,8 @@ export interface PagePresentation {{
 }}
 export interface ScreenPresentation {{
   readonly displayField?: string;
+  /** The screen reads through the sync store. Only a read with a feed declares it. */
+  readonly sync?: true;
   readonly references: Readonly<Record<string, ReferencePresentation>>;
   readonly page?: PagePresentation;
 }}
@@ -321,6 +323,9 @@ fn screen_presentation(screen: &ScreenPlan<'_>, plan: &ClientPlan<'_>) -> Value 
             "filters": page.filters,
             "sort": page.sort,
         });
+    }
+    if screen.contract.sync {
+        value["sync"] = json!(true);
     }
     value
 }
