@@ -281,6 +281,9 @@ importers:
       '@types/node':
         specifier: ^24.19.1
         version: 24.19.1
+      fake-indexeddb:
+        specifier: 6.2.5
+        version: 6.2.5
       jsdom:
         specifier: ^30.1.2
         version: 30.1.2
@@ -317,6 +320,16 @@ importers:
         version: 5.0.3(@types/node@24.19.1)(@vitest/browser-playwright@5.0.3)(@vitest/ui@5.0.3)(jsdom@30.1.2)(vite@8.3.3(@types/node@24.19.1)(esbuild@0.28.2)(jiti@2.7.0))
 
   web/shell:
+    dependencies:
+      '@solidjs/web':
+        specifier: 2.0.0-rc.18
+        version: 2.0.0-rc.18(solid-js@2.0.0-rc.18)
+      '@wfe/sync':
+        specifier: workspace:*
+        version: link:../wfe/packages/sync
+      solid-js:
+        specifier: 2.0.0-rc.18
+        version: 2.0.0-rc.18
     devDependencies:
       '@types/node':
         specifier: ^24.19.1
@@ -327,6 +340,9 @@ importers:
       typescript:
         specifier: npm:@typescript/typescript6@^6.0.2
         version: '@typescript/typescript6@6.0.2'
+      vitest:
+        specifier: ^5.0.3
+        version: 5.0.3(@types/node@24.19.1)(@vitest/browser-playwright@5.0.3)(@vitest/ui@5.0.3)(jsdom@30.1.2)(vite@8.3.3(@types/node@24.19.1)(esbuild@0.28.2)(jiti@2.7.0))
 
   web/sync-bench:
     dependencies:

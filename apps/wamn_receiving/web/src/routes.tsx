@@ -14,6 +14,7 @@ import { Actions, Records, type NavigationAction } from "./table";
 import { PurchaseOrderForm, ReceiptForm, SupplierForm } from "./forms";
 import { invoke, type RecordValue } from "./data";
 import { displayRecord, referenceLabels } from "./references";
+import { SyncReceipts } from "./sync";
 
 const recordPath = (base: string, row?: RecordValue) => `${base}/${encodeURIComponent(String(row?.id ?? ""))}`;
 const receiptAction = (fill: (row?: RecordValue) => object): NavigationAction => ({
@@ -117,19 +118,10 @@ export const SECTIONS: readonly ShellSection[] = [
         operation: d.ReceivingLoadReceiptScreenTable.id,
         label: d.ReceivingLoadReceiptScreenTable.title,
         component: (props) => (
-          <Records
+          <SyncReceipts
             screen={props}
             description={d.ReceivingLoadReceiptScreenTable}
-            route={receiving.RECEIVING_LOAD_RECEIPT_SCREEN_ROUTE}
-            input={{ purchase_order_id: props.params.id! }}
-            rowActions={[
-              receiptAction((row) => ({
-                value: {
-                  purchaseOrderId: props.params.id,
-                  line: [{ purchaseOrderLineId: row?.line_id }],
-                },
-              })),
-            ]}
+            purchaseOrderId={props.params.id!}
           />
         ),
       },
@@ -231,6 +223,18 @@ export const SECTIONS: readonly ShellSection[] = [
             rowActions={[receiptAction((row) => ({ value: { line: [{ locationId: row?.id }] } }))]}
           />
         ),
+      },
+    ],
+  },
+  {
+    label: d.ReceivingLoadOpenReceiptLinesTable.title,
+    screens: [
+      {
+        scroll: "content",
+        path: "open-receipt-lines",
+        operation: d.ReceivingLoadOpenReceiptLinesTable.id,
+        label: d.ReceivingLoadOpenReceiptLinesTable.title,
+        component: (props) => <SyncReceipts screen={props} description={d.ReceivingLoadOpenReceiptLinesTable} />,
       },
     ],
   },

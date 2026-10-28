@@ -1,19 +1,11 @@
-import { For, Show, createMemo, createSignal, createUniqueId, latest, onCleanup, untrack } from "solid-js";
-import {
-  liveRows,
-  outboxStatus,
-  syncCurrentAt,
-  syncStatus,
-  type Outbox,
-  type OutboxEntry,
-  type ShellResult,
-} from "@wfe/sync";
+import { For, Show, createMemo, createSignal, createUniqueId, latest, onCleanup } from "solid-js";
+import { liveRows, syncCurrentAt, syncStatus, type Outbox, type ShellResult } from "@wfe/sync";
+import { NotUploaded, SyncStatusLine } from "../../shell/src/sync.js";
 import type { packagingCollection } from "./generated/wamn_wms/packaging.js";
 import { orderedIds, type StatusFilter } from "./order.js";
 import { packagingWrites, type PackagingDraft } from "./packaging-writes.js";
 import { shapeA } from "./shape-a.js";
 import { PackagingView } from "./view.js";
-import { shellStatus } from "./shell-status.js";
 import { needsConnection, type OfflineResult, type packagingOffline } from "./packaging-offline.js";
 
 /** The live packaging rows, create form, and refused writes. */
@@ -32,11 +24,6 @@ export function PackagingScreen(props: {
   const source = shapeA(c, filter);
   const writes = packagingWrites(c, o);
   const current = liveRows(c);
-  const counts = outboxStatus(o);
-  const entries = createMemo(() => {
-    counts();
-    return o.entries().filter((entry) => entry.state === "refused");
-  });
   const ids = createMemo(() => orderedIds(writes.rows, filter()));
   const readAt = syncCurrentAt(c);
   const currentAt = createMemo(() => {
@@ -70,13 +57,14 @@ export function PackagingScreen(props: {
   return (
     <div data-shape="a" class="bench-column">
       <h2>Packaging</h2>
-      <p aria-label="Sync status">
-        <Show when={props.updateAvailable}>update available, reload. </Show>
-        <Show when={props.signedIn === false}>Sign in to upload. </Show>
-        Status: <output data-sync-status={source.status()}>{source.status()}</output>. Pending:{" "}
-        {counts().pending + counts().sending}. Refused: {counts().refused}. Last sent: {counts().lastSentAt ?? "never"}.
-        Current as of: {currentAt() ?? "not yet read"}. {shellStatus(props.shellResult)}
-      </p>
+      <SyncStatusLine
+        outbox={o}
+        status={source.status()}
+        currentAt={currentAt()}
+        signedIn={props.signedIn}
+        updateAvailable={props.updateAvailable}
+        shellResult={props.shellResult}
+      />
       <Show when={missing()}>
         <p>needs a connection</p>
       </Show>
@@ -127,19 +115,11 @@ export function PackagingScreen(props: {
           tentative={(id) => writes.rows[id]?.$tentative === true}
         />
       </Show>
-      <section aria-label="Not uploaded">
-        <h2>Not uploaded</h2>
-        <For each={entries()} keyed={(entry) => entry.seq}>
-          {(entry) => (
-            <RefusedPackaging
-              entry={entry()}
-              current={() => current[entry().expect.id]}
-              resubmit={(edited) => writes.resubmit(entry(), edited)}
-              discard={() => o.discard(entry().seq)}
-            />
-          )}
-        </For>
-      </section>
+      <NotUploaded
+        outbox={o}
+        current={(entry) => current[entry.expect.id]}
+        resubmit={(entry, edited) => writes.resubmit(entry, edited)}
+      />
     </div>
   );
 }
@@ -243,56 +223,5 @@ function CreatePackaging(props: { create: (request: PackagingDraft) => Promise<v
       </button>
       <output>{latest(message)}</output>
     </form>
-  );
-}
-
-function RefusedPackaging(props: {
-  entry: OutboxEntry;
-  current: () => unknown;
-  resubmit: (edited: string) => Promise<void>;
-  discard: () => Promise<void>;
-}) {
-  const [edited, setEdited] = createSignal(untrack(() => JSON.stringify(props.entry.request, null, 2)));
-  const [busy, setBusy] = createSignal(false);
-  const [error, setError] = createSignal("");
-  async function run(action: () => Promise<void>) {
-    setBusy(true);
-    setError("");
-    try {
-      await action();
-    } catch (cause) {
-      setError(String(cause));
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <article data-entry={props.entry.seq}>
-      <p>
-        Operation: {props.entry.operation}. Record id: {props.entry.expect.id}
-      </p>
-      <p>{props.entry.refusal?.text ?? "Refused"}</p>
-      <div class="bench-shapes">
-        <div>
-          <h3>Stored request</h3>
-          <pre>{JSON.stringify(props.entry.request, null, 2)}</pre>
-          <label>
-            Corrected request{" "}
-            <textarea rows={10} value={edited()} onInput={(event) => setEdited(event.currentTarget.value)} />
-          </label>
-        </div>
-        <div>
-          <h3>Current row</h3>
-          <pre>{props.current() === undefined ? "no row" : JSON.stringify(props.current(), null, 2)}</pre>
-        </div>
-      </div>
-      <button disabled={busy()} onClick={() => void run(() => props.resubmit(edited()))}>
-        Resubmit
-      </button>
-      <button disabled={busy()} onClick={() => void run(props.discard)}>
-        Discard
-      </button>
-      <p role="alert">{error()}</p>
-    </article>
   );
 }

@@ -1,9 +1,11 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022", "DOM"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "jsx": "preserve",
+    "jsxImportSource": "@solidjs/web",
     "strict": true,
     "noImplicitAny": true,
     "strictNullChecks": true,
@@ -14,5 +16,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["vite.ts"]
+  "include": ["vite.ts", "src", "test"]
 }

@@ -5,11 +5,18 @@
   "private": true,
   "sideEffects": false,
   "scripts": {
-    "check": "tsc --project tsconfig.json"
+    "check": "pnpm --workspace-root run wfe:build && tsc --project tsconfig.json",
+    "test": "pnpm --workspace-root run wfe:build && vitest run"
+  },
+  "dependencies": {
+    "@solidjs/web": "2.0.0-rc.18",
+    "@wfe/sync": "workspace:*",
+    "solid-js": "2.0.0-rc.18"
   },
   "devDependencies": {
     "@types/node": "^24.19.1",
     "playwright": "^1.63.0",
-    "typescript": "npm:@typescript/typescript6@^6.0.2"
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
+    "vitest": "^5.0.3"
   }
 }

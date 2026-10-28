@@ -47,6 +47,12 @@ export function Records(props: {
   actions?: readonly NavigationAction[];
   rowActions?: readonly NavigationAction[];
   recordLink?: NavigationAction;
+  /** A sync screen's rows. The table then reads no route, and follows these rows instead. */
+  rows?: () => readonly RecordValue[];
+  /** Whether a sync screen's row is tentative, recorded but not yet in a complete pass. */
+  tentative?: (row: RecordValue) => boolean;
+  /** One action that runs on the screen itself for a row. */
+  rowCommand?: { readonly label: string; readonly run: (row: RecordValue) => void };
 }): JSX.Element {
   const pageSize = 25;
   const [rows, setRows] = createSignal<readonly RecordValue[]>([]);
@@ -57,7 +63,8 @@ export function Records(props: {
   const [page, setPage] = createSignal(0);
   const [filters, setFilters] = createSignal<Record<string, string>>({});
   const [collapsed, setCollapsed] = createSignal(true);
-  const visible = createMemo(() => rows().slice(page() * pageSize, (page() + 1) * pageSize));
+  const source = () => props.rows?.() ?? rows();
+  const visible = createMemo(() => source().slice(page() * pageSize, (page() + 1) * pageSize));
   let active = true;
   let generation = 0;
   let acceptedInput: RecordValue = {};
@@ -122,13 +129,17 @@ export function Records(props: {
       ...Object.fromEntries(
         Object.entries(props.description.columns).map(([id, column]) => [id, { ...column, renderer: id }]),
       ),
-      ...(actions.length
+      ...(actions.length || props.rowCommand
         ? { actions: { label: "Actions", renderer: "actions", sortable: false, filterable: false } }
         : {}),
     },
     controls: { filtering: false, search: false, grouping: false },
   };
   const key = (row: RecordValue, index: number) => String(row.id ?? row.line_id ?? index);
+  // A sync row changes under the same key, so a cell reads the current row by its key.
+  const synced = createMemo(() => new Map(source().map((row, index) => [key(row, index), row])));
+  const shownRow = (cell: CustomCellProps<RecordValue, unknown>) =>
+    props.rows ? synced().get(cell.row.id) : displayRows().get(cell.row.original!);
   const table = createTable<RecordValue>({
     source: {
       ids: () => visible().map(key),
@@ -146,7 +157,7 @@ export function Records(props: {
       Object.entries(props.description.columns).map(([id, column]) => [
         id,
         (cell: CustomCellProps<RecordValue, unknown>) => {
-          const value = () => displayRows().get(cell.row.original!)?.[id];
+          const value = () => shownRow(cell)?.[id];
           const text = () =>
             column.format ? (
               <ValueDisplay value={value()} format={column.format} />
@@ -162,26 +173,38 @@ export function Records(props: {
               {text()}
             </RecordLink>
           ) : (
-            text()
+            <Show when={props.rows && props.tentative?.(shownRow(cell) ?? {})} fallback={text()}>
+              <span data-tentative="true">{text()}</span>
+            </Show>
           );
         },
       ]),
     ),
     actions: (cell: CustomCellProps<RecordValue, unknown>) => (
       <Show when={cell.row.original}>
-        {(row) => <Actions screen={{ ...props.screen, actions: undefined }} actions={actions} row={row()} />}
+        {(row) => (
+          <>
+            <Actions screen={{ ...props.screen, actions: undefined }} actions={actions} row={row()} />
+            <Show when={props.rowCommand}>
+              {(command) => <Button onClick={() => command().run(row())}>{command().label}</Button>}
+            </Show>
+          </>
+        )}
       </Show>
     ),
   };
   const ToolbarActions = () => <Actions screen={props.screen} actions={props.actions} />;
-  const unsubscribe = props.screen.transport.onWrite?.(() => void refresh());
+  // A sync screen follows its feed, so a write never reads its page again.
+  const unsubscribe = props.rows ? undefined : props.screen.transport.onWrite?.(() => void refresh());
   onCleanup(() => {
     active = false;
     unsubscribe?.();
   });
   createEffect(
     () => undefined,
-    () => void refresh(),
+    () => {
+      if (!props.rows) void refresh();
+    },
   );
   return (
     <div class="platform-table-screen">
@@ -197,10 +220,10 @@ export function Records(props: {
           toolbarActions: ToolbarActions,
           pagination: {
             hasPrevious: page() > 0,
-            hasNext: (page() + 1) * pageSize < rows().length || !!cursor(),
+            hasNext: (page() + 1) * pageSize < source().length || !!cursor(),
             pending: loading(),
             onPrevious: () => setPage(page() - 1),
-            onNext: () => ((page() + 1) * pageSize < rows().length ? setPage(page() + 1) : void refresh(true)),
+            onNext: () => ((page() + 1) * pageSize < source().length ? setPage(page() + 1) : void refresh(true)),
             status: `Page ${page() + 1}`,
           },
           headerEnd: (column) => (

@@ -140,3 +140,33 @@ export function applicationConfig(options: ApplicationOptions): ApplicationConfi
     build: { outDir: at(options.outDir), emptyOutDir: true },
   };
 }
+
+/** One output file of a bundle. Vite reads the same shape. */
+interface BundleItem {
+  readonly type: string;
+  code?: string;
+}
+
+/** A build plugin. Vite reads the same shape. */
+interface BuildPlugin {
+  readonly name: string;
+  readonly enforce: "post";
+  readonly generateBundle: (options: unknown, bundle: Record<string, BundleItem>) => void;
+}
+
+/**
+ * The @wfe/sync worker recipe: `sw.js` precaches every other bundle file and
+ * the named files that Vite does not bundle, such as public assets.
+ */
+export function precacheManifest(extra: readonly string[]): BuildPlugin {
+  return {
+    name: "precache-manifest",
+    enforce: "post",
+    generateBundle(_options, bundle) {
+      const chunk = bundle["sw.js"];
+      if (chunk?.type !== "chunk" || chunk.code === undefined) throw new Error("sw.js was not built");
+      const files = Object.keys(bundle).filter((name) => name !== "sw.js");
+      chunk.code = chunk.code.replace("__PRECACHE_MANIFEST__", JSON.stringify(["./", ...files, ...extra]));
+    },
+  };
+}

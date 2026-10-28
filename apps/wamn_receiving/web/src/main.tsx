@@ -2,7 +2,9 @@ import "@wfe/components/styles.css";
 import { render } from "@solidjs/web";
 import { Shell, readScope } from "@wamn/platform-ui";
 import { SECTIONS } from "./routes";
+import { startShell } from "./sync";
 
+startShell();
 const root = document.getElementById("root");
 if (root === null) throw new Error("the page has no root element");
 readScope().then(

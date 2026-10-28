@@ -1,4 +1,4 @@
-import { createSignal, lazy, onCleanup, Show, Loading, type Component } from "solid-js";
+import { createContext, createSignal, lazy, onCleanup, Show, Loading, useContext, type Component } from "solid-js";
 import type { JSX } from "@solidjs/web";
 import { DashboardPanel, type DashboardShellProps } from "@wfe/components/layout";
 import { permission } from "./generated/wamn_control/index.js";
@@ -27,6 +27,19 @@ import { EntryPage, Frame, NotFound, NotFoundBoundary } from "./page";
 const Layout = lazy(() => import("./layout"));
 
 export const API_BASE = "/api";
+
+/** The user of the session the shell holds. The shell provides it only while signed in. */
+export interface Session {
+  /** The session reply's `sub`. */
+  readonly userId: string;
+}
+
+const SessionContext = createContext<Session | null>(null);
+
+/** The signed-in user, or undefined outside a signed-in shell. */
+export function useSession(): Session | undefined {
+  return useContext(SessionContext) ?? undefined;
+}
 
 export interface ScreenProps {
   readonly transport: Transport;
@@ -197,6 +210,10 @@ function Session(
   const [state, setState] = createSignal<SessionState | null>(null);
   const [view, setView] = createSignal<View>();
   const [trouble, setTrouble] = createSignal<string>();
+  const userId = () => {
+    const current = state();
+    return current?.status === "signedIn" ? current.userId : undefined;
+  };
   const sections = props.kind === "control" ? (props.controlSections ?? []) : props.sections;
   const transport = createTransport({
     ...props.options,
@@ -275,19 +292,26 @@ function Session(
         }
       >
         {(shown) => (
-          <NotFoundBoundary home={`/${props.aud}`} path={props.address.url().pathname}>
-            <Layout
-              title={props.kind === "control" ? props.org : props.title}
-              aud={props.aud}
-              sections={shown().sections}
-              holds={shown().holds}
-              controlMine={shown().controlMine}
-              transport={transport}
-              address={props.address}
-              signOut={() => keeper.signOut()}
-              routes={sections}
-            />
-          </NotFoundBoundary>
+          // A different user mounts the screens again, so no screen keeps the old user's state.
+          <Show when={userId()} keyed>
+            {(id) => (
+              <SessionContext value={{ userId: id }}>
+                <NotFoundBoundary home={`/${props.aud}`} path={props.address.url().pathname}>
+                  <Layout
+                    title={props.kind === "control" ? props.org : props.title}
+                    aud={props.aud}
+                    sections={shown().sections}
+                    holds={shown().holds}
+                    controlMine={shown().controlMine}
+                    transport={transport}
+                    address={props.address}
+                    signOut={() => keeper.signOut()}
+                    routes={sections}
+                  />
+                </NotFoundBoundary>
+              </SessionContext>
+            )}
+          </Show>
         )}
       </Show>
     </Show>

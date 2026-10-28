@@ -1,7 +1,9 @@
 export {
   Shell,
   screen,
+  useSession,
   API_BASE,
+  type Session,
   type ScreenProps,
   type ShellAction,
   type ShellRoute,

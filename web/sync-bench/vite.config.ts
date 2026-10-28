@@ -2,8 +2,7 @@ import { fileURLToPath } from "node:url";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import solid from "@solidjs/vite-plugin";
 import { defineConfig } from "vitest/config";
-import type { Plugin } from "vite";
-import { applicationConfig } from "../shell/vite.js";
+import { applicationConfig, precacheManifest } from "../shell/vite.js";
 
 /** Serve the live page and install assets at the application's audience path. */
 export function livePage(request: IncomingMessage, _response: ServerResponse, next: () => void) {
@@ -15,24 +14,6 @@ export function livePage(request: IncomingMessage, _response: ServerResponse, ne
     request.url = request.url!.replace(/^\/[^/]+\//, "/");
   }
   next();
-}
-
-/** The @wfe/sync worker recipe, with both bench pages in the manifest. */
-function precacheManifest(): Plugin {
-  return {
-    name: "precache-manifest",
-    enforce: "post",
-    generateBundle(_options, bundle) {
-      const chunk = bundle["sw.js"];
-      if (chunk?.type !== "chunk") throw new Error("sw.js was not built");
-      const files = Object.keys(bundle).filter((name) => name !== "sw.js");
-      // Vite copies public assets separately from the bundle.
-      chunk.code = chunk.code.replace(
-        "__PRECACHE_MANIFEST__",
-        JSON.stringify(["./", ...files, "manifest.webmanifest", "icon.svg"]),
-      );
-    },
-  };
 }
 
 export default defineConfig(() => {
@@ -60,7 +41,7 @@ export default defineConfig(() => {
     plugins: [
       solid({ performanceTracks: false }),
       ...application.plugins,
-      precacheManifest(),
+      precacheManifest(["manifest.webmanifest", "icon.svg"]),
       {
         name: "packaging-live-page",
         configureServer(server) {
