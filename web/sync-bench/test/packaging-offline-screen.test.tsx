@@ -138,7 +138,7 @@ it.each([false, true])(
         expect: { model: "packaging", id: expected.id },
         append_only: true,
       },
-      restoreExpected ? expected : undefined,
+      restoreExpected ? { ...expected, $tentative: true } : undefined,
     );
     await previous.replay();
     previous.close();

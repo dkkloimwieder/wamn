@@ -86,7 +86,7 @@ async function mounted(restored?: { call: OperationCall; row: PackagingRow; list
   const database = `packaging-${crypto.randomUUID()}`;
   if (restored) {
     const previous = outbox({ database, send, probe: async () => false });
-    await previous.enqueue(restored.call, restored.call.request);
+    await previous.enqueue(restored.call, { ...(restored.call.request as object), $tentative: true });
     await previous.replay();
     previous.close();
   }
@@ -156,7 +156,7 @@ it("reports Recorded and enables three offline creates before any upload", async
   expect(h.send).not.toHaveBeenCalled();
 });
 
-it("records a UUIDv7 create, keeps it tentative after send, and confirms only on the feed echo", async () => {
+it("records a UUIDv7 create, keeps it tentative after send, and confirms after a later complete follow pass", async () => {
   const h = await mounted();
   const entry = await h.submit();
   const id = entry.expect.id;
@@ -225,6 +225,21 @@ it("shows a refused request beside the current row and discards it", async () =>
   expect(h.row(data.id)?.textContent).toContain("CURRENT");
 });
 
+it("waits through a failed follow pass and confirms without a result row", async () => {
+  const h = await mounted();
+  const entry = await h.submit();
+  const id = entry.expect.id;
+  h.net.up = true;
+  await h.o.replay();
+  h.failRead(new Error("offline"));
+  await h.c.utils.pull();
+  flush();
+  expect(h.row(id)?.textContent).toContain("tentative");
+  h.failRead(undefined);
+  await h.c.utils.pull();
+  await waitFor(() => expect(h.row(id)).toBeNull());
+});
+
 it("keeps a create tentative when its feed echo arrives before the successful retry", async () => {
   const h = await mounted();
   const entry = await h.submit("LOST-REPLY");
@@ -245,6 +260,9 @@ it("keeps a create tentative when its feed echo arrives before the successful re
   expect(h.send).toHaveBeenCalledOnce();
   h.answer({ ok: true });
   await h.o.replay();
+  flush();
+  expect(h.row(id)?.textContent).toContain("tentative");
+  await h.c.utils.pull();
   await waitFor(() => expect(h.row(id)?.textContent).not.toContain("tentative"));
   expect(h.send).toHaveBeenCalledTimes(2);
 });
@@ -344,7 +362,7 @@ it("keeps the refused entry if recording the correction fails", async () => {
   expect(discard).not.toHaveBeenCalled();
 });
 
-it("paints saved rows and recovered tentative creates before the list resolves, then waits for send and echo", async () => {
+it("paints saved rows and recovered tentative creates before the list resolves, then waits for send and follow", async () => {
   const row = makeRows(1)[0]!;
   const { call, id } = await createCall<PackagingCreateRequest>({
     operation: PACKAGING_CREATE_ROUTE.operation,
@@ -372,6 +390,9 @@ it("paints saved rows and recovered tentative creates before the list resolves, 
   await waitFor(() => expect(h.row(id)?.textContent).toContain("tentative"));
   h.net.up = true;
   await h.o.replay();
+  flush();
+  expect(h.row(id)?.textContent).toContain("tentative");
+  await h.c.utils.pull();
   await waitFor(() => expect(h.row(id)?.textContent).not.toContain("tentative"));
   expect(h.send).toHaveBeenCalledOnce();
   h.changes.push({ id, row_version: 2, deleted: true });

@@ -1,7 +1,7 @@
 import { type OperationCall, type Outbox, type OutboxEntry } from "@wfe/sync";
 import { createCall, requestHash } from "@wamn/web-runtime";
 import { PACKAGING_CREATE_ROUTE, type PackagingCreateRequest } from "./generated/wamn_wms/packaging.js";
-import { packagingWrite, type packagingCollection } from "./generated/wamn_wms/packaging.js";
+import { packagingWrite, type PackagingRow, type packagingCollection } from "./generated/wamn_wms/packaging.js";
 
 export type PackagingDraft = Omit<PackagingCreateRequest, "id" | "idempotencyKey" | "requestId">;
 
@@ -27,7 +27,8 @@ export function packagingWrites(c: ReturnType<typeof packagingCollection>, o: Ou
           resolve();
         }
       });
-      void record.write(call, call.request as PackagingDraft & { id: string }).catch((error: unknown) => {
+      const expected = { ...(call.request as PackagingDraft & { id: string }), $tentative: true };
+      void record.write(call, expected).catch((error: unknown) => {
         // After recording, refusal and OutboxDiscarded revert the overlay. The panel owns the refusal.
         stop();
         reject(error);
@@ -36,7 +37,7 @@ export function packagingWrites(c: ReturnType<typeof packagingCollection>, o: Ou
   }
 
   return {
-    rows: record.rows,
+    rows: record.rows as Record<string, PackagingRow & { $tentative?: boolean }>,
     async create(request: PackagingDraft): Promise<void> {
       const { call } = await createCall<PackagingCreateRequest>({
         operation: PACKAGING_CREATE_ROUTE.operation,

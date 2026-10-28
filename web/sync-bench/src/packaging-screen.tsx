@@ -124,7 +124,7 @@ export function PackagingScreen(props: {
         <PackagingView
           label="Packaging"
           source={{ ...source, ids, get: (id) => writes.rows[id] }}
-          tentative={(id) => writes.rows[id]?.rowVersion === undefined}
+          tentative={(id) => writes.rows[id]?.$tentative === true}
         />
       </Show>
       <section aria-label="Not uploaded">

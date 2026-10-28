@@ -79,6 +79,6 @@ export function $PREFIXCollection(
 }
 
 /** Record a write for this model through the supplied outbox. */
-export function $PREFIXWrite(c: ReturnType<typeof $PREFIXCollection>, o: Outbox$KEY_TYPE$TRANSPORT) {
+export function $PREFIXWrite(c: SyncCollection<$ROWRow>, o: Outbox$KEY_TYPE$TRANSPORT) {
   $WRITE_BODY
 }

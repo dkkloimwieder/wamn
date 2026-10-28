@@ -473,7 +473,7 @@ fn emit_model(package: &str, model: &ModelIr) -> Result<String, ClientTsError> {
             "import {{ collectionKey }} from \"{RUNTIME_PACKAGE}\";"
         )
         .expect("write");
-        source.push_str("import { CursorExpired, collection, recordWrite, type Change, type Feed, type Outbox, type Persistence } from \"@wfe/sync\";\n");
+        source.push_str("import { CursorExpired, collection, recordWrite, type Change, type Feed, type Outbox, type Persistence, type SyncCollection } from \"@wfe/sync\";\n");
     }
     writeln!(
         source,
