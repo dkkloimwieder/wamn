@@ -29,6 +29,7 @@ const completed = (value) => ({ status: "completed", value });
 it("invokes every public operation with its route, effects and abort options", async () => {
   expect(Object.keys(client).sort()).toEqual([
     "counter",
+    "feedLine",
     "number",
     "numberedLabel",
     "widget",
@@ -178,7 +179,7 @@ it("preserves integer keys and refuses offline creates before dispatch", async (
     const c = module.widgetCollection(feed, scope);
     const configuration = vi.mocked(collection).mock.lastCall[2];
     expect(configuration.getKey({ id })).toBe(id);
-    expect(configuration.version({ editVersion: 8 })).toBe(8);
+    expect(configuration.version({ rowVersion: "8" })).toBe(8);
     const outbox = {};
     const invoke = vi.fn(async () => completed({ ...wire, id }));
     const transport = { invoke, probe: vi.fn(async () => false) };

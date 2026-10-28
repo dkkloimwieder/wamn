@@ -45,7 +45,7 @@ fn emitted_bindings_preserve_transport_mapping_and_feed_behavior() {
         .unwrap()
         .route = None;
     let mut manifest = fixture::manifest();
-    manifest["models"]["widget"]["feed"] = false.into();
+    manifest["models"]["widget"]["operations"]["query"]["feed"] = false.into();
     let no_feed =
         fixture::client_release_of(&fixture::generate_with(&fixture::catalog(), &manifest));
     typescript::behavior(&[
