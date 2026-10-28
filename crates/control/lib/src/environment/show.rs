@@ -55,10 +55,11 @@ pub async fn show(platform: &Platform, triple: &Triple) -> anyhow::Result<Enviro
             .map(str::to_owned);
         document.applications = revision_applications(&revision.values)?;
     }
-    for binding in system.query("SELECT b.application, b.alias, c.name FROM registry.environment_connection_binding b JOIN registry.connection c ON c.id=b.connection_id WHERE b.org=$1 AND b.project=$2 AND b.env=$3", &[&document.org,&document.project,&document.env]).await? {
+    for binding in system.query("SELECT b.application, b.alias, c.name, c.integration, b.connector FROM registry.environment_connection_binding b JOIN registry.connection c ON c.id=b.connection_id WHERE b.org=$1 AND b.project=$2 AND b.env=$3", &[&document.org,&document.project,&document.env]).await? {
         let application: String = binding.get(0);
         if let Some(definition) = document.applications.get_mut(&application) {
             definition.connections.insert(binding.get(1),binding.get(2));
+            definition.connectors.insert(binding.get(3),binding.get(4));
         }
     }
     if let Some(project) = read_project(platform, &document, &row).await? {

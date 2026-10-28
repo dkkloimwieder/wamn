@@ -971,6 +971,12 @@ fn verify_connection_reader_grants(
             "EXECUTE",
         ),
         ("routine", "registry", "lookup_file_connection", "EXECUTE"),
+        (
+            "routine",
+            "registry",
+            "lookup_connector_bindings",
+            "EXECUTE",
+        ),
     ]);
     anyhow::ensure!(
         actual == expected,

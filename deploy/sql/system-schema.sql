@@ -93,7 +93,8 @@ CREATE TABLE registry.integrations (
     exclusive boolean NOT NULL
 );
 INSERT INTO registry.integrations (code, form, exclusive)
-VALUES ('http', 'host', false), ('gcs', 'host', false), ('s3', 'host', false);
+VALUES ('http', 'host', false), ('gcs', 'host', false), ('s3', 'host', false),
+       ('modbus', 'wasm', false);
 
 CREATE TABLE registry.target (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1066,6 +1067,7 @@ CREATE TABLE registry.environment_connection_binding (
     generation bigint NOT NULL,
     mode text NOT NULL CHECK (mode IN ('read', 'write')),
     exclusive boolean NOT NULL,
+    connector text NOT NULL DEFAULT 'host' CHECK (connector = 'host' OR connector ~ '^sha256:[0-9a-f]{64}$'),
     PRIMARY KEY (org, project, env, application, alias),
     FOREIGN KEY (org, project, env) REFERENCES registry.project_envs(org, project, env) ON DELETE CASCADE,
     FOREIGN KEY (org, connection_id) REFERENCES registry.connection(org, id),
@@ -1504,12 +1506,12 @@ BEGIN
  WHERE b.org = org_id AND b.project = project_id AND b.env = environment_name
   AND NOT EXISTS (SELECT FROM jsonb_array_elements(result->'bindings') r
     WHERE r->>'application' = b.application AND r->>'alias' = b.alias
-     AND (b.target_id,b.connection_id,b.generation,b.mode,b.exclusive) =
-       (target,(r->>'connection_id')::uuid,(r->>'generation')::bigint,r->>'mode',(r->>'exclusive')::boolean));
+     AND (b.target_id,b.connection_id,b.generation,b.mode,b.exclusive,b.connector) =
+       (target,(r->>'connection_id')::uuid,(r->>'generation')::bigint,r->>'mode',(r->>'exclusive')::boolean,r->>'connector'));
  INSERT INTO registry.environment_connection_binding AS b
-  (org,project,env,application,alias,target_id,connection_id,generation,mode,exclusive)
+  (org,project,env,application,alias,target_id,connection_id,generation,mode,exclusive,connector)
  SELECT org_id,project_id,environment_name,r->>'application',r->>'alias',target,
-  (r->>'connection_id')::uuid,(r->>'generation')::bigint,r->>'mode',(r->>'exclusive')::boolean
+  (r->>'connection_id')::uuid,(r->>'generation')::bigint,r->>'mode',(r->>'exclusive')::boolean,r->>'connector'
  FROM jsonb_array_elements(result->'bindings') r
  ON CONFLICT (org,project,env,application,alias) DO NOTHING;
  RETURN result;
@@ -1646,3 +1648,29 @@ DO $connector_acl$ BEGIN
   GRANT EXECUTE ON FUNCTION registry.publish_integration(text,text), registry.connector_pin_error(text,text) TO wamn_control;
  END IF;
 END $connector_acl$;
+
+-- Runtime readers see only their authenticated environment and enabled bindings.
+CREATE OR REPLACE FUNCTION registry.lookup_connector_bindings(org_id text, project_id text, environment_name text)
+RETURNS TABLE(application text, alias text, integration text, connector text, connection_name text, generation bigint, parameters jsonb)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
+BEGIN
+ RETURN QUERY SELECT b.application,b.alias,c.integration,b.connector,c.name,b.generation,g.parameters
+ FROM wamn_authority.author_login_tenants login
+ JOIN registry.environment_connection_binding b
+  ON b.org=login.org_id AND b.project=login.project_id AND b.env=login.environment
+ JOIN registry.connection c ON c.id=b.connection_id AND c.org=b.org AND c.status='active'
+ JOIN registry.integrations i ON i.code=c.integration AND i.form='wasm'
+ JOIN registry.integration_digest d ON d.integration=c.integration AND d.digest=b.connector
+ JOIN registry.project_connection p ON p.org=b.org AND p.project=b.project AND p.connection_id=c.id
+ JOIN identity.principals principal ON principal.id=c.service_principal_id AND principal.status='active'
+ JOIN registry.connection_generation g ON g.connection_id=b.connection_id AND g.generation=b.generation
+ WHERE login.login_identity=session_user AND login.org_id=$1 AND login.project_id=$2
+  AND login.environment=$3;
+END $$;
+ALTER FUNCTION registry.lookup_connector_bindings(text,text,text) OWNER TO wamn_system;
+REVOKE ALL ON FUNCTION registry.lookup_connector_bindings(text,text,text) FROM PUBLIC;
+DO $connector_reader_acl$ BEGIN
+ IF to_regrole('wamn_conn_reader') IS NOT NULL THEN
+  GRANT EXECUTE ON FUNCTION registry.lookup_connector_bindings(text,text,text) TO wamn_conn_reader;
+ END IF;
+END $connector_reader_acl$;

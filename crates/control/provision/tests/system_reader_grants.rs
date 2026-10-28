@@ -481,6 +481,7 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
         vec![
             "routine|registry|lookup_connection_binding_mode|EXECUTE|false".to_owned(),
             "routine|registry|lookup_connection_credential|EXECUTE|false".to_owned(),
+            "routine|registry|lookup_connector_bindings|EXECUTE|false".to_owned(),
             "routine|registry|lookup_file_connection|EXECUTE|false".to_owned(),
             "schema|registry|registry|USAGE|false".to_owned(),
         ],

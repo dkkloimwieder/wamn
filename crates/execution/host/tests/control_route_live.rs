@@ -1549,6 +1549,10 @@ async fn assert_definer_grantees(client: &Client) -> anyhow::Result<()> {
             &["wamn_conn_reader"],
         ),
         (
+            "registry.lookup_connector_bindings(text, text, text)",
+            &["wamn_conn_reader"],
+        ),
+        (
             "registry.lookup_file_connection(text, text, text, text, text, text, bigint)",
             &["wamn_conn_reader"],
         ),

@@ -1,0 +1,18 @@
+[package]
+name = "wamn-modbus"
+version = "0.1.0"
+edition = "2024"
+description = "Bound Modbus TCP holding-register reader."
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+std = []
+
+[dependencies]
+dlmalloc = { version = "=0.2.14", features = ["global"] }
+wit-bindgen = { version = "=0.62.0", default-features = false, features = ["macros", "realloc"] }
+
+[workspace]

@@ -1,0 +1,30 @@
+{
+  "scope": {
+    "env_key": "__ENV_KEY__",
+    "package-id": "modbus_reader"
+  },
+  "component": "modbus_reader",
+  "interface-version": "0.1.0",
+  "operations": {
+    "modbus-reader:register/read": {
+      "input-ports": [
+        {
+          "name": "input",
+          "schema": {
+            "type": "array"
+          }
+        }
+      ],
+      "output-ports": [
+        {
+          "name": "main",
+          "schema": {
+            "type": "array"
+          }
+        }
+      ],
+      "parameters": []
+    }
+  },
+  "connections": []
+}

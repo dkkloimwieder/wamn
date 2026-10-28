@@ -31,6 +31,20 @@ struct ConnectorConfig {
 pub async fn pull(registry: &PackageRegistry, code: &str, digest: &str) -> anyhow::Result<Vec<u8>> {
     ensure_digest(digest)?;
     let repository = Repository::open(registry, digest)?;
+    pull_from(&repository, code, digest).await
+}
+
+/// Read a connector through an already authenticated repository.
+pub async fn pull_from(
+    repository: &Repository,
+    code: &str,
+    digest: &str,
+) -> anyhow::Result<Vec<u8>> {
+    ensure_digest(digest)?;
+    ensure!(
+        repository.reference.digest() == Some(digest),
+        "connector repository is not pinned to the requested digest"
+    );
     let (bytes, _) = repository
         .manifest()
         .await?

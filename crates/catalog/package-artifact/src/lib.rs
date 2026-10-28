@@ -255,6 +255,23 @@ impl Repository {
     /// When the reference or the base is not valid, or the credential or the
     /// CA bundles cannot be read.
     pub fn open(registry: &PackageRegistry, reference: &str) -> anyhow::Result<Self> {
+        if reference.starts_with("sha256:") {
+            ensure_digest(reference)?;
+        } else {
+            ensure_tag(reference)?;
+        }
+        let base = parse_component_artifact_base(&registry.artifact_base)?;
+        let credentials = read_registry_credentials(&registry.registry_auth_file, base.registry())
+            .with_context(|| format!("load the credential for registry {}", base.registry()))?;
+        Self::with_auth(registry, reference, registry_auth(Some(&credentials)))
+    }
+
+    /// Open a repository with a host-resolved credential, including metadata tokens.
+    pub fn with_auth(
+        registry: &PackageRegistry,
+        reference: &str,
+        auth: RegistryAuth,
+    ) -> anyhow::Result<Self> {
         let by_digest = reference.starts_with("sha256:");
         if by_digest {
             ensure_digest(reference)?;
@@ -263,8 +280,6 @@ impl Repository {
         }
         let base = parse_component_artifact_base(&registry.artifact_base)
             .context("read the package artifact base")?;
-        let credentials = read_registry_credentials(&registry.registry_auth_file, base.registry())
-            .with_context(|| format!("load the credential for registry {}", base.registry()))?;
         let ca_bundles = read_ca_bundles(&registry.oci_ca_paths)
             .with_context(|| format!("read CA bundles for registry {}", base.registry()))?;
         let protocol = if registry.insecure_registry {
@@ -290,7 +305,7 @@ impl Repository {
         .with_context(|| format!("build the client for registry {}", base.registry()))?;
         Ok(Self {
             client,
-            auth: registry_auth(Some(&credentials)),
+            auth,
             reference: if by_digest {
                 Reference::with_digest(
                     base.registry().to_owned(),

@@ -6125,6 +6125,7 @@ dependencies = [
  "wamn-engine",
  "wamn-execution-host",
  "wamn-identity-client",
+ "wamn-package-artifact",
  "wamn-platform-identity",
  "wamn-runtime",
  "wamn-session",

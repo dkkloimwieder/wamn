@@ -39,6 +39,7 @@ pub(super) const NATIVE_POLICY_ID: &str = "wamn:native-operation-policy";
 /// Process-owned capabilities; every authority registry remains keyed by invocation scope.
 pub(super) struct NativePolicyResources {
     pub(super) files: Option<Arc<crate::file_route::FileRoutes>>,
+    pub(super) connectors: Option<Arc<wamn_runtime::connectors::Connectors>>,
     pub(super) postgres: Arc<WamnPostgres>,
     pub(super) logging: Arc<WamnLogging>,
     pub(super) connection_http: Arc<ConnectionHttp>,
@@ -582,6 +583,7 @@ impl HostPlugin for NativePolicy {
         imports.extend(self.resources.logging.world().imports);
         imports.extend(self.resources.connection_http.world().imports);
         imports.extend(self.resources.blobstore.world().imports);
+        imports.insert(WitInterface::from(wamn_engine::connector::READER));
         // The route layer of a composed entry imports these. A call enters an
         // operation export, never the HTTP handler, so none reaches them.
         imports.insert(WitInterface::from("wamn:flow-http-routing/routing@0.1.0"));
@@ -654,6 +656,24 @@ impl HostPlugin for NativePolicy {
             &["types", "container", "blobstore"],
         ) {
             blobstore::add_to_linker(linker)?;
+        }
+        if interfaces.contains("wamn", "connector", &["reader"]) {
+            let connectors = self
+                .resources
+                .connectors
+                .as_ref()
+                .context("connector reader unavailable")?;
+            let application = &policy
+                .first()
+                .context("connector component policy missing")?
+                .application;
+            anyhow::ensure!(
+                policy
+                    .iter()
+                    .all(|member| &member.application == application),
+                "connector entry has ambiguous application"
+            );
+            connectors.reader(application)?.add_to_linker(item)?;
         }
         item.add_plugin(INVOCATION_TRACES_ID, Arc::clone(&self.traces) as _);
         item.add_plugin(WAMN_POSTGRES_ID, Arc::clone(&self.resources.postgres) as _);

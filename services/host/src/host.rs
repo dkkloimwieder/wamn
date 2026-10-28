@@ -1235,6 +1235,40 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         _ => (WamnCredentials::empty(), None),
     };
     let credentials = Arc::new(credentials);
+    let connectors = application.map(|release| {
+        Arc::new(wamn_runtime::connectors::Connectors::new(
+            release.scope().applications.keys().cloned(),
+        ))
+    });
+    let connector_source = match (
+        application,
+        file_connection_reader.as_ref(),
+        args.component_artifact_base.as_deref(),
+    ) {
+        (Some(release), Some(database), Some(base)) => {
+            let registry_name = wamn_catalog::parse_component_artifact_base(base)?;
+            let registry_credentials = match RegistryPullCredential::select(args.registry_auth_file.as_deref(), args.registry_token_metadata)? {
+                RegistryPullCredential::AuthFile(path) => wamn_package_artifact::registry_credentials::RegistryCredentialSource::Fixed(
+                    wamn_package_artifact::registry_credentials::read_registry_credentials(path, registry_name.registry())?),
+                RegistryPullCredential::TokenMetadata => wamn_package_artifact::registry_credentials::RegistryCredentialSource::MetadataServer,
+            };
+            Some(wamn_runtime::connectors::ConnectorSource {
+                database: Arc::clone(database),
+                credentials: Arc::clone(&credentials),
+                registry: wamn_package_artifact::PackageRegistry {
+                    artifact_base: base.to_owned(),
+                    registry_auth_file: args.registry_auth_file.clone().unwrap_or_default(),
+                    insecure_registry: args.allow_insecure_registries,
+                    oci_ca_paths: args.oci_ca_paths.clone(),
+                },
+                registry_credentials,
+                org: args.org.clone().context("connector host org missing")?,
+                project: args.project.clone(),
+                environment: release.scope().environment.clone(),
+            })
+        }
+        _ => None,
+    };
     let operations = match application {
         Some(release) => {
             let source: Arc<dyn ArtifactSource> =
@@ -1296,6 +1330,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         }
         None => None,
     };
+    if let (Some(operations), Some(connectors)) = (&operations, &connectors) {
+        operations.set_connectors(Arc::clone(connectors))?;
+    }
     if let (Some(operations), Some(((workload, reference), _))) = (&operations, &local_workload) {
         let component = workload
             .workload
@@ -1561,6 +1598,13 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         None
     };
 
+    if let (Some(connectors), Some(release)) = (&connectors, application) {
+        plugins.push(Arc::new(wamn_runtime::connectors::ConnectorIngress {
+            connectors: Arc::clone(connectors),
+            release: Arc::clone(release),
+        }));
+    }
+
     // Count the same plugins supplied to the native host, including the optional bridge.
     let cleanup_budget = host_cleanup_budget(plugins.len())?;
     let mut host_builder = wash_runtime::host::HostBuilder::default();
@@ -1761,6 +1805,21 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     };
     // The host heartbeats from here on. The preload compiles after it, so a
     // cold compile cache delays the workload and not the heartbeat.
+    if let (Some(connectors), Some(source)) = (connectors, connector_source) {
+        let mut stopped = stopping.clone();
+        schedule_tasks.spawn(async move {
+            let mut ticks = tokio::time::interval(wamn_runtime::connectors::REFRESH_INTERVAL);
+            ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tokio::select! {
+                    _ = stopped.changed() => return,
+                    _ = ticks.tick() => {}
+                }
+                // The reader logs new pin errors and database failures.
+                let _ = connectors.refresh(&source).await;
+            }
+        });
+    }
     let preloaded = preload_release(operations.as_ref()).await;
     let started = match (preloaded, local_workload) {
         (Err(error), _) => Err(error),

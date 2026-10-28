@@ -208,6 +208,7 @@ pub struct OperationHost {
     warm_reuse: WarmReuse,
     native: tokio::sync::OnceCell<ReleasedApplication>,
     files: std::sync::OnceLock<Arc<crate::file_route::FileRoutes>>,
+    connectors: std::sync::OnceLock<Arc<wamn_runtime::connectors::Connectors>>,
 }
 
 /// Keep the validated input alive so pointer identity proves immutable reuse.
@@ -304,7 +305,22 @@ impl OperationHost {
             warm_reuse: scope.warm_reuse,
             native: tokio::sync::OnceCell::new(),
             files: std::sync::OnceLock::new(),
+            connectors: std::sync::OnceLock::new(),
         })
+    }
+
+    /// Attach retained connector readers before application stores load.
+    pub fn set_connectors(
+        &self,
+        connectors: Arc<wamn_runtime::connectors::Connectors>,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.native.get().is_none(),
+            "connectors must precede application loading"
+        );
+        self.connectors
+            .set(connectors)
+            .map_err(|_| anyhow::anyhow!("connectors already attached"))
     }
 
     /// Attach native file signing before the released application loads.
@@ -520,6 +536,7 @@ impl OperationHost {
             entry.as_ref(),
             NativePolicyResources {
                 files: self.files.get().cloned(),
+                connectors: self.connectors.get().cloned(),
                 postgres: Arc::clone(&self.postgres),
                 logging: Arc::clone(&self.logging),
                 connection_http: Arc::new(ConnectionHttp::new(

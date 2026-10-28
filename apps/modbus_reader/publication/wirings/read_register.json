@@ -1,0 +1,28 @@
+{
+  "format-version": "0.1",
+  "wiring-id": "read_register",
+  "version": 1,
+  "entry": "read",
+  "nodes": {
+    "read": {
+      "component": "modbus_reader",
+      "interface-version": "0.1.0",
+      "operation": "modbus-reader:register/read",
+      "params": {}
+    },
+    "result": {
+      "component": "jsonata",
+      "interface-version": "0.1.0",
+      "operation": "wamn:node/handler@0.1.0",
+      "params": {
+        "expression": "$"
+      }
+    }
+  },
+  "edges": [
+    {
+      "from": "read",
+      "to": "result"
+    }
+  ]
+}
