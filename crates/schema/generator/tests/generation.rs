@@ -2699,7 +2699,7 @@ fn a_logged_list_read_gets_its_change_feed() {
         "FROM (SELECT pg_current_snapshot() AS snapshot OFFSET 0) AS current",
         "AND (entry.transaction_id < bound.feed_end\n               OR (entry.transaction_id < bound.feed_max\n                   AND pg_visible_in_snapshot(entry.transaction_id::text::xid8, bound.snapshot)))",
         "FROM gadget_history AS entry",
-        "LEFT JOIN gadget AS model ON model.id = changed.change_id",
+        "LEFT JOIN result ON result.id = affected.change_id",
         "$3::int8 <= watermark.transaction_id",
     ] {
         assert!(changes.contains(part), "{part}:\n{changes}");

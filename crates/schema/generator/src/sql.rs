@@ -229,10 +229,8 @@ pub(crate) fn query(
         "    (${cursor_value_bind}::{sort_type} IS NULL OR (model.{sort_field}, model.id) {comparison} (${cursor_value_bind}::{sort_type}, ${cursor_id_bind}::{key_cast}))"
     ));
     let page = format!(
-        "SELECT\n    {}\nFROM {} AS model\nWHERE\n{}\nORDER BY model.{sort_field} {direction}, model.id {direction}\nLIMIT ${limit_bind}::int8",
-        select_columns(table),
-        table.name(),
-        predicates.join("\n    AND\n"),
+        "{}\nORDER BY model.{sort_field} {direction}, model.id {direction}\nLIMIT ${limit_bind}::int8",
+        query_select(table, &predicates),
         direction = sql_direction(direction),
     );
     if !feed {
@@ -268,19 +266,14 @@ const SNAPSHOT_XMIN: &str = "pg_snapshot_xmin(pg_current_snapshot())::text::int8
 /// the cursor id and the limit.
 pub(crate) fn changes(table: &Table, operation: &OperationDeclaration, tombstoned: bool) -> String {
     let key_cast = key_cast(table);
-    let (predicates, next_bind) = scope_predicates(table, operation, tombstoned);
+    let (mut predicates, next_bind) = scope_predicates(table, operation, tombstoned);
     let transaction = next_bind;
     let after = transaction + 1;
     let limit = after + 1;
     let history = history_table_name(table.name());
-    let present = std::iter::once("model.id IS NOT NULL".to_owned())
-        .chain(
-            predicates
-                .iter()
-                .map(|predicate| predicate.trim().to_owned()),
-        )
-        .collect::<Vec<_>>()
-        .join("\n            AND ");
+    let affected_keys = affected_root_keys(&[table], &[], transaction);
+    predicates.push("    model.id = ANY(ARRAY(SELECT change_id FROM affected))".to_owned());
+    let restricted = query_select(table, &predicates);
     let expired = format!(
         "EXISTS (SELECT FROM wamn_history.pruning_watermarks AS watermark WHERE watermark.history_table = '{history}'::regclass AND ${transaction}::int8 <= watermark.transaction_id)"
     );
@@ -301,13 +294,50 @@ FROM (
     FROM (SELECT pg_current_snapshot() AS snapshot OFFSET 0) AS current
 ) AS bound
 LEFT JOIN LATERAL (
+    WITH affected AS MATERIALIZED (
+        SELECT changed.change_id, changed.change_transaction
+        FROM (
+{affected_keys}
+        ) AS changed
+        WHERE ${after}::{key_cast} IS NULL
+           OR (changed.change_transaction, changed.change_id) > (${transaction}::int8, ${after}::{key_cast})
+        ORDER BY changed.change_transaction, changed.change_id
+        LIMIT ${limit}::int8
+    ), result AS (
+{restricted}
+    )
     SELECT
-        changed.change_id,
-        changed.change_transaction,
-        ({present}) AS present,
-        {model_columns}
-    FROM (
-        SELECT
+        affected.change_id,
+        affected.change_transaction,
+        result.id IS NOT NULL AS present,
+        {result_columns}
+    FROM affected
+    LEFT JOIN result ON result.id = affected.change_id
+) AS page ON true
+ORDER BY page.change_transaction, page.change_id;
+",
+        columns = aliased_columns(table, "page"),
+        restricted = indent(&indent(&restricted)),
+        result_columns = aliased_columns(table, "result").replace("\n    ", "\n        "),
+    )
+}
+
+/// Map history entries in the cursor window to root keys before paging.
+/// Each join path entry names a table and its linking column.
+fn affected_root_keys(
+    read_set: &[&Table],
+    join_path: &[(&Table, &str)],
+    transaction: usize,
+) -> String {
+    // Generated reads have one root table and no linking columns.
+    assert!(join_path.is_empty(), "generated reads have no joins");
+    let [root] = read_set else {
+        panic!("generated reads read one root table");
+    };
+    let key_cast = key_cast(root);
+    let history = history_table_name(root.name());
+    format!(
+        "        SELECT
             (entry.row_key->>'id')::{key_cast} AS change_id,
             max(entry.transaction_id) AS change_transaction
         FROM {history} AS entry
@@ -315,19 +345,17 @@ LEFT JOIN LATERAL (
           AND (entry.transaction_id < bound.feed_end
                OR (entry.transaction_id < bound.feed_max
                    AND pg_visible_in_snapshot(entry.transaction_id::text::xid8, bound.snapshot)))
-        GROUP BY (entry.row_key->>'id')::{key_cast}
-    ) AS changed
-    LEFT JOIN {table} AS model ON model.id = changed.change_id
-    WHERE ${after}::{key_cast} IS NULL
-       OR (changed.change_transaction, changed.change_id) > (${transaction}::int8, ${after}::{key_cast})
-    ORDER BY changed.change_transaction, changed.change_id
-    LIMIT ${limit}::int8
-) AS page ON true
-ORDER BY page.change_transaction, page.change_id;
-",
-        columns = aliased_columns(table, "page"),
-        model_columns = select_columns(table).replace("\n    ", "\n        "),
-        table = table.name(),
+        GROUP BY (entry.row_key->>'id')::{key_cast}"
+    )
+}
+
+/// The query body shared by a list page and its restricted feed run.
+fn query_select(table: &Table, predicates: &[String]) -> String {
+    format!(
+        "SELECT\n    {}\nFROM {} AS model\nWHERE\n{}",
+        select_columns(table),
+        table.name(),
+        predicates.join("\n    AND\n"),
     )
 }
 
