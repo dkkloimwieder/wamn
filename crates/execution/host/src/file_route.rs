@@ -180,6 +180,14 @@ pub struct FileConnection {
 /// The registry authority needed by native file handlers.
 #[async_trait::async_trait]
 pub trait FileConnections: Send + Sync + fmt::Debug {
+    /// Enumerate immutable store generations using the same scoped registry reader.
+    async fn generations(&self) -> Result<Vec<FileConnection>, FileError> {
+        Err(failed(
+            "collector",
+            anyhow::anyhow!("store generation listing unavailable"),
+        ))
+    }
+
     /// Resolve an application's binding, or an existing file's pinned generation.
     async fn lookup(
         &self,
@@ -213,6 +221,25 @@ impl fmt::Debug for RegistryFileConnections {
 }
 #[async_trait::async_trait]
 impl FileConnections for RegistryFileConnections {
+    async fn generations(&self) -> Result<Vec<FileConnection>, FileError> {
+        let client = self.client.as_ref().ok_or_else(|| {
+            failed(
+                "collector",
+                anyhow::anyhow!("connection reader unavailable"),
+            )
+        })?;
+        let mut generations = Vec::new();
+        for row in client.query("SELECT connection_id::text, connection_name, generation, parameters, shared FROM registry.lookup_file_generations($1,$2,$3)", &[&self.org, &self.project, &self.environment]).await? {
+            let connection = FileConnection {
+                id: row.try_get(0)?, name: row.try_get(1)?, generation: row.try_get(2)?, definition: row.try_get(3)?, read_only: false,
+            };
+            if row.try_get::<_, bool>(4)? {
+                tracing::warn!(connection_id = %connection.id, generation = connection.generation, "file collector skipped a store shared with another environment");
+            } else { generations.push(connection); }
+        }
+        Ok(generations)
+    }
+
     async fn lookup(
         &self,
         application: &str,
@@ -273,11 +300,11 @@ struct UploadQuery {
 
 /// File handlers of one released application environment.
 pub struct FileRoutes {
-    release: Arc<LoadedRelease>,
-    postgres: Arc<WamnPostgres>,
-    blobstore: Arc<WamnBlobstore>,
-    connections: Arc<dyn FileConnections>,
-    project: String,
+    pub(crate) release: Arc<LoadedRelease>,
+    pub(crate) postgres: Arc<WamnPostgres>,
+    pub(crate) blobstore: Arc<WamnBlobstore>,
+    pub(crate) connections: Arc<dyn FileConnections>,
+    pub(crate) project: String,
     administration_url: Option<String>,
 }
 impl fmt::Debug for FileRoutes {

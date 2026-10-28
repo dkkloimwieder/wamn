@@ -1590,6 +1590,42 @@ CREATE TRIGGER wamn_record_history_stamp
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
+-- The collector needs generations after their last file row disappears.
+-- This reader returns parameters only, with the same login scope as file reads.
+CREATE FUNCTION registry.lookup_file_generations(org_id text, project_id text, environment_name text)
+RETURNS TABLE(connection_id uuid, connection_name text, generation bigint, parameters jsonb, shared boolean)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
+BEGIN
+ RETURN QUERY
+ SELECT c.id, c.name, g.generation, g.parameters,
+  EXISTS (
+   SELECT FROM registry.connection_generation other
+   JOIN registry.project_connection enabled ON enabled.connection_id = other.connection_id
+   JOIN registry.project_envs env ON env.org = enabled.org AND env.project = enabled.project
+   WHERE (env.org,env.project,env.env) <> (login.org_id,login.project_id,login.environment)
+    AND coalesce(other.parameters->>'provider','s3') = coalesce(g.parameters->>'provider','s3')
+    AND rtrim(coalesce(other.parameters->>'endpoint',''),'/') = rtrim(coalesce(g.parameters->>'endpoint',''),'/')
+    AND other.parameters->>'container' = g.parameters->>'container'
+    AND regexp_replace(btrim(other.parameters->>'prefix','/'),'/+','/','g')
+      = regexp_replace(btrim(g.parameters->>'prefix','/'),'/+','/','g')
+  )
+ FROM wamn_authority.author_login_tenants login
+ JOIN registry.connection c ON c.org = login.org_id
+ JOIN registry.project_connection p ON p.org = c.org AND p.connection_id = c.id AND p.project = login.project_id
+ JOIN identity.principals principal ON principal.id = c.service_principal_id AND principal.status = 'active'
+ JOIN registry.connection_generation g ON g.connection_id = c.id
+ WHERE login.login_identity = session_user AND login.org_id = $1 AND login.project_id = $2
+  AND login.environment = $3 AND c.status = 'active' AND c.integration IN ('s3','gcs')
+ ORDER BY c.id, g.generation;
+END $$;
+ALTER FUNCTION registry.lookup_file_generations(text,text,text) OWNER TO wamn_system;
+REVOKE ALL ON FUNCTION registry.lookup_file_generations(text,text,text) FROM PUBLIC;
+DO $file_generations_acl$ BEGIN
+ IF to_regrole('wamn_conn_reader') IS NOT NULL THEN
+  GRANT EXECUTE ON FUNCTION registry.lookup_file_generations(text,text,text) TO wamn_conn_reader;
+ END IF;
+END $file_generations_acl$;
+
 -- Native file routes resolve a declared binding or the generation pinned by a file.
 -- Scope comes from the authenticated login, never caller-controlled app.* claims.
 CREATE OR REPLACE FUNCTION registry.lookup_file_connection(

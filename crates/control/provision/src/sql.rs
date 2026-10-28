@@ -936,7 +936,7 @@ pub fn grant_connection_reader_surface_sql() -> String {
     let mut sql =
         grant_system_reader_surface_sql(WorkloadRoleFamily::ConnectionReader, "registry", &[]);
     let role = quote_ident(WorkloadRoleFamily::ConnectionReader.acl_role());
-    write!(sql, " REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA registry, identity FROM {role}; GRANT EXECUTE ON FUNCTION registry.lookup_connection_credential(text,text,text,bigint) TO {role}; GRANT EXECUTE ON FUNCTION registry.lookup_connection_binding_mode(text,text,text,text,text) TO {role}; GRANT EXECUTE ON FUNCTION registry.lookup_file_connection(text,text,text,text,text,text,bigint) TO {role}; GRANT EXECUTE ON FUNCTION registry.lookup_connector_bindings(text,text,text) TO {role};")
+    write!(sql, " REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA registry, identity FROM {role}; GRANT EXECUTE ON FUNCTION registry.lookup_connection_credential(text,text,text,bigint) TO {role}; GRANT EXECUTE ON FUNCTION registry.lookup_connection_binding_mode(text,text,text,text,text) TO {role}; GRANT EXECUTE ON FUNCTION registry.lookup_file_connection(text,text,text,text,text,text,bigint) TO {role}; GRANT EXECUTE ON FUNCTION registry.lookup_file_generations(text,text,text) TO {role}; GRANT EXECUTE ON FUNCTION registry.lookup_connector_bindings(text,text,text) TO {role};")
         .expect("writing to a String cannot fail");
     sql
 }

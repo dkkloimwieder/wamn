@@ -483,6 +483,7 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
             "routine|registry|lookup_connection_credential|EXECUTE|false".to_owned(),
             "routine|registry|lookup_connector_bindings|EXECUTE|false".to_owned(),
             "routine|registry|lookup_file_connection|EXECUTE|false".to_owned(),
+            "routine|registry|lookup_file_generations|EXECUTE|false".to_owned(),
             "schema|registry|registry|USAGE|false".to_owned(),
         ],
         "the connection reader holds exactly its credential and connection read surface"

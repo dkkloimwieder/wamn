@@ -5,9 +5,15 @@
 //! Only `_wamn_files/staging/` receives an object age lifecycle rule.
 //! Public copies use `public/_wamn_files/live/<id>` beneath the same binding prefix.
 
-use std::{error::Error, fmt, sync::Arc, time::Duration};
+use std::{
+    error::Error,
+    fmt,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use bytes::Bytes;
+use futures_util::{StreamExt as _, TryStreamExt as _, stream::BoxStream};
 use object_store::{
     Attribute, Attributes, ObjectStoreExt as _, PutMultipartOptions, PutOptions, WriteMultipart,
     signer::{Method, Signer},
@@ -22,6 +28,21 @@ use super::store::{BoundContainer, StoreError};
 pub const FILE_PREFIX: &str = "_wamn_files/";
 /// Maximum lifetime of a file signed URL.
 pub const MAX_URL_LIFETIME: Duration = Duration::from_mins(15);
+
+/// One canonical live object returned by the confined collector listing.
+#[derive(Debug)]
+pub struct LiveFileObject {
+    path: object_store::path::Path,
+    pub blob_key: String,
+    pub last_modified: SystemTime,
+}
+
+impl LiveFileObject {
+    /// The exact bucket key, including the binding prefix and public namespace.
+    pub fn object_key(&self) -> &str {
+        self.path.as_ref()
+    }
+}
 
 /// Refuse raw changes to either private or public file objects.
 pub(super) fn permit_raw_mutation(key: &str) -> Result<(), StoreError> {
@@ -144,6 +165,78 @@ fn public_key(id: Uuid) -> String {
 }
 
 impl FileStore {
+    /// Stream canonical private and public live objects beneath this generation's prefix.
+    /// Malformed keys are logged and skipped. Listing never buffers the whole bucket.
+    pub async fn live_objects(
+        &self,
+    ) -> Result<BoxStream<'_, Result<LiveFileObject, FileStorageError>>, FileStorageError> {
+        self.permit("collect", true).await?;
+        let private = self.path("_wamn_files/live")?;
+        let public = self.path("public/_wamn_files/live")?;
+        Ok(futures_util::stream::iter([private, public])
+            .flat_map(move |prefix| {
+                let directory = format!("{prefix}/");
+                self.bound
+                    .store
+                    .list(Some(&prefix))
+                    .map_err(|error| backend("list live files", error))
+                    .try_filter_map(move |meta| {
+                        let key = meta.location.as_ref();
+                        let parsed = key.strip_prefix(&directory).and_then(|suffix| {
+                            suffix
+                                .parse::<Uuid>()
+                                .ok()
+                                .filter(|id| id.to_string() == suffix)
+                        });
+                        let object = parsed.map(|id| LiveFileObject {
+                            path: meta.location.clone(),
+                            blob_key: live_key(id),
+                            last_modified: meta.last_modified.into(),
+                        });
+                        if object.is_none() {
+                            tracing::warn!(
+                                object_key = key,
+                                "file collector skipped an unparseable key"
+                            );
+                        }
+                        std::future::ready(Ok(object))
+                    })
+            })
+            .boxed())
+    }
+
+    /// Delete only a listed canonical object in this store, after the caller reads its row.
+    /// Re-read its age so a replacement since listing remains protected.
+    pub async fn delete_collected(
+        &self,
+        object: &LiveFileObject,
+        cutoff: SystemTime,
+    ) -> Result<bool, FileStorageError> {
+        self.permit("collect", true).await?;
+        if object.path != self.path(&object.blob_key)?
+            && object.path != self.path(&format!("public/{}", object.blob_key))?
+        {
+            return Err(FileStorageError::new(
+                FileStorageErrorKind::Refused,
+                "collect",
+                "listed object belongs to another prefix",
+            ));
+        }
+        let meta = match self.bound.store.head(&object.path).await {
+            Ok(meta) => meta,
+            Err(object_store::Error::NotFound { .. }) => return Ok(false),
+            Err(error) => return Err(backend("head orphan", error)),
+        };
+        if SystemTime::from(meta.last_modified) >= cutoff {
+            return Ok(false);
+        }
+        match self.bound.store.delete(&object.path).await {
+            Ok(()) => Ok(true),
+            Err(object_store::Error::NotFound { .. }) => Ok(false),
+            Err(error) => Err(backend("delete orphan", error)),
+        }
+    }
+
     pub(super) fn new(
         bound: BoundContainer,
         signer: Option<Arc<dyn Signer>>,
@@ -871,6 +964,4 @@ mod tests {
             );
         }
     }
-
-    use futures_util::TryStreamExt as _;
 }

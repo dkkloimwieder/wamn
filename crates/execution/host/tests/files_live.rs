@@ -30,6 +30,8 @@ use wasmtime_wasi_http::WasiBody;
     reason = "Other host tests use the remaining application fixture helpers."
 )]
 mod application_fixture;
+#[path = "support/file_delete_proxy.rs"]
+mod file_delete_proxy;
 #[path = "../../../control/lib/tests/support/files.rs"]
 #[expect(
     dead_code,
@@ -101,7 +103,17 @@ impl FileHost {
 
     async fn start_with_release(name: &str, release: Arc<LoadedRelease>) -> anyhow::Result<Self> {
         let minio = files::Minio::start().await?;
-        let registry = files::registry(ORG, PROJECT, minio.definition()).await?;
+        let definition = minio.definition();
+        Self::start_on_store(name, release, minio, definition).await
+    }
+
+    async fn start_on_store(
+        name: &str,
+        release: Arc<LoadedRelease>,
+        minio: files::Minio,
+        definition: Value,
+    ) -> anyhow::Result<Self> {
+        let registry = files::registry(ORG, PROJECT, definition).await?;
         let (host, postgres, administration_url) =
             application_fixture::application_host_with_release(name, Arc::clone(&release)).await?;
         let writer = application_fixture::connect(&administration_url).await?;
@@ -326,6 +338,301 @@ fn body(bytes: &[u8]) -> WasiBody {
     Full::new(Bytes::copy_from_slice(bytes))
         .map_err(|never| match never {})
         .boxed_unsync()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unknown_keys()
+-> anyhow::Result<()> {
+    use object_store::{
+        ObjectStoreExt as _,
+        aws::AmazonS3Builder,
+        path::Path,
+        signer::{Method, Signer as _},
+    };
+    use std::sync::atomic::Ordering;
+
+    let minio = files::Minio::start().await?;
+    let proxy = file_delete_proxy::DeleteProxy::start(minio.endpoint.clone()).await?;
+    let mut definition = minio.definition();
+    definition["endpoint"] = json!(proxy.endpoint);
+    let fixture =
+        FileHost::start_on_store("file_orphan_collector", release()?, minio, definition).await?;
+    let generations_sql = "SELECT connection_id::text, generation, shared FROM registry.lookup_file_generations($1,$2,$3)";
+    assert!(
+        !fixture
+            .registry
+            .reader
+            .query(generations_sql, &[&ORG, &PROJECT, &"dev"])
+            .await?
+            .is_empty()
+    );
+    for reader in [&fixture.registry.unmapped, &fixture.registry.unenabled] {
+        assert!(
+            reader
+                .query(generations_sql, &[&ORG, &PROJECT, &"dev"])
+                .await?
+                .is_empty()
+        );
+    }
+    for scope in [
+        ("forged-org", PROJECT, "dev"),
+        (ORG, "forged-project", "dev"),
+        (ORG, PROJECT, "forged-env"),
+    ] {
+        assert!(
+            fixture
+                .registry
+                .reader
+                .query(generations_sql, &[&scope.0, &scope.1, &scope.2])
+                .await?
+                .is_empty()
+        );
+    }
+    let orphan = fixture.upload("files", b"orphan bytes").await?;
+    let kept = fixture.upload("files", b"kept bytes").await?;
+    fixture
+        .mutate("expose", orphan, "files", Some("public"))
+        .await?;
+    fixture
+        .mutate("expose", kept, "files", Some("public"))
+        .await?;
+    let backend = AmazonS3Builder::new()
+        .with_endpoint(&fixture.minio.endpoint)
+        .with_bucket_name("files-a")
+        .with_region("us-east-1")
+        .with_access_key_id("file-fixture")
+        .with_secret_access_key(files::STORE_PASSWORD)
+        .with_allow_http(true)
+        .build()?;
+    let client = fixture.minio.client()?;
+    let malformed = [
+        "_wamn_files/live/not-a-uuid".to_owned(),
+        format!("public/_wamn_files/live/{kept}/extra"),
+        "_wamn_files/live/AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA".to_owned(),
+    ];
+    let mut aged: Vec<(String, &[u8])> = malformed
+        .iter()
+        .map(|key| (key.clone(), b"unknown bytes".as_slice()))
+        .collect();
+    let batch_orphans: Vec<_> = (0..101)
+        .map(|_| format!("_wamn_files/live/{}", Uuid::new_v4()))
+        .collect();
+    for key in &batch_orphans {
+        aged.push((key.clone(), b"batch orphan".as_slice()));
+    }
+    for (id, bytes) in [
+        (orphan, b"orphan bytes".as_slice()),
+        (kept, b"kept bytes".as_slice()),
+    ] {
+        aged.push((format!("_wamn_files/live/{id}"), bytes));
+        aged.push((format!("public/_wamn_files/live/{id}"), bytes));
+    }
+    for (key, bytes) in &aged {
+        let path = Path::from(format!("generation-one/{key}"));
+        let response = client
+            .put(
+                backend
+                    .signed_url(Method::PUT, &path, Duration::from_secs(60))
+                    .await?,
+            )
+            .header("x-minio-source-mtime", "2000-01-01T00:00:00Z")
+            .body(bytes.to_vec())
+            .send()
+            .await?;
+        anyhow::ensure!(
+            response.status().is_success(),
+            "seed aged object: {}",
+            response.text().await?
+        );
+        anyhow::ensure!(
+            std::time::SystemTime::from(backend.head(&path).await?.last_modified)
+                < std::time::SystemTime::now()
+                    - wamn_execution_host::file_collector::MIN_OBJECT_AGE,
+            "MinIO stores the actual aged timestamp"
+        );
+    }
+    proxy.refuse.store(true, Ordering::SeqCst);
+    let deleted = fixture.mutate("delete", orphan, "files", None).await?;
+    assert_eq!(deleted["value"]["file_id"], json!(orphan));
+    assert_eq!(
+        fixture
+            .writer
+            .query_one(
+                "SELECT count(*) FROM platform.file WHERE id=$1::text::uuid",
+                &[&orphan.to_string()]
+            )
+            .await?
+            .get::<_, i64>(0),
+        0
+    );
+    backend
+        .head(&Path::from(format!(
+            "generation-one/_wamn_files/live/{orphan}"
+        )))
+        .await?;
+    backend
+        .head(&Path::from(format!(
+            "generation-one/public/_wamn_files/live/{orphan}"
+        )))
+        .await?;
+    proxy.refuse.store(false, Ordering::SeqCst);
+
+    // Hold an uncommitted row while its fresh object exists. The collector's
+    // separate SELECT-only connection cannot see this transaction's row.
+    let fresh = Uuid::new_v4();
+    let store = fixture
+        .blobstore
+        .file_store(
+            files::STORE_NAME,
+            fixture.registry.generation,
+            &fixture.registry.definition,
+            false,
+        )
+        .await?;
+    let staged = store.stage(fresh, &b"pending row"[..]).await?;
+    fixture.writer.batch_execute("BEGIN").await?;
+    fixture.writer.execute("INSERT INTO platform.file(id,application,connection_id,connection_generation,name,media_type,size,sha256,blob_key,exposure) VALUES($1::text::uuid,'files',$2::text::uuid,$3,'pending.txt','text/plain',$4,$5,$6,'application')", &[&fresh.to_string(), &fixture.registry.connection_id, &fixture.registry.generation, &i64::try_from(staged.size)?, &staged.sha256, &staged.blob_key]).await?;
+    store.finish(fresh).await?;
+    assert_eq!(
+        fixture
+            .host
+            .admin
+            .query_one(
+                "SELECT count(*) FROM platform.file WHERE id=$1::text::uuid",
+                &[&fresh.to_string()]
+            )
+            .await?
+            .get::<_, i64>(0),
+        0
+    );
+
+    // A new generation with identical coordinates must not erase the old
+    // generation's files. Later collection must still enumerate the old store.
+    let mut equivalent = fixture.registry.definition.clone();
+    equivalent["prefix"] = json!("generation-one//");
+    fixture.registry.move_store(&equivalent).await?;
+    fixture
+        .registry
+        .control
+        .query_one(
+            "SELECT registry.rotate_connection($1,$2,$3)",
+            &[
+                &ORG,
+                &files::STORE_NAME,
+                &json!({"ACCESS_KEY_ID":"file-fixture","ACCESS_SECRET_KEY":files::STORE_PASSWORD})
+                    .to_string(),
+            ],
+        )
+        .await?;
+    let mut moved = fixture.registry.definition.clone();
+    moved["container"] = json!("files-b");
+    moved["prefix"] = json!("generation-two/");
+    fixture.registry.move_store(&moved).await?;
+    let moved_backend = AmazonS3Builder::new()
+        .with_endpoint(&fixture.minio.endpoint)
+        .with_bucket_name("files-b")
+        .with_region("us-east-1")
+        .with_access_key_id("file-fixture")
+        .with_secret_access_key(files::STORE_PASSWORD)
+        .with_allow_http(true)
+        .build()?;
+    let moved_key = Path::from(format!("generation-two/_wamn_files/live/{kept}"));
+    let response = client
+        .put(
+            moved_backend
+                .signed_url(Method::PUT, &moved_key, Duration::from_secs(60))
+                .await?,
+        )
+        .header("x-minio-source-mtime", "2000-01-01T00:00:00Z")
+        .body("orphan in the moved store")
+        .send()
+        .await?;
+    anyhow::ensure!(response.status().is_success(), "seed moved-store orphan");
+
+    // A project outside this environment can retain rows in another database.
+    fixture
+        .registry
+        .configure(
+            "project_connection.enable",
+            json!({"project":"unenabled","connection":files::STORE_NAME}),
+        )
+        .await?;
+    assert_eq!(fixture.routes.collect_orphan_files().await?, 0);
+    backend
+        .head(&Path::from(format!(
+            "generation-one/_wamn_files/live/{orphan}"
+        )))
+        .await?;
+    fixture
+        .registry
+        .configure(
+            "project_connection.disable",
+            json!({"project":"unenabled","connection":files::STORE_NAME}),
+        )
+        .await?;
+
+    // A second host must skip a pass while the first host holds the lease.
+    let lease = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(lease) = fixture.postgres.file_collection(PROJECT, ENV_KEY).await? {
+                return anyhow::Ok(lease);
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await??;
+    assert_eq!(fixture.routes.collect_orphan_files().await?, 0);
+    drop(lease);
+    // Wait for PostgreSQL to observe the closed session before the next pass.
+    let deleted = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let deleted = fixture.routes.collect_orphan_files().await?;
+            if deleted != 0 {
+                return anyhow::Ok(deleted);
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await??;
+    assert_eq!(deleted, 104);
+    assert!(matches!(
+        moved_backend.head(&moved_key).await,
+        Err(object_store::Error::NotFound { .. })
+    ));
+    assert_eq!(fixture.routes.collect_orphan_files().await?, 0);
+    fixture.writer.batch_execute("ROLLBACK").await?;
+    for (key, _) in &aged {
+        let path = Path::from(format!("generation-one/{key}"));
+        if key.ends_with(&orphan.to_string()) || batch_orphans.contains(key) {
+            assert!(matches!(
+                backend.head(&path).await,
+                Err(object_store::Error::NotFound { .. })
+            ));
+        } else {
+            backend.head(&path).await?;
+        }
+    }
+    assert_eq!(
+        store.get(fresh).await?.bytes().await?.as_ref(),
+        b"pending row"
+    );
+    let read = fixture
+        .read("files", kept, Some(&fixture.token(false)))
+        .await?;
+    assert_eq!(read.0, 200);
+    assert_eq!(read.2, b"kept bytes");
+    assert_eq!(
+        fixture
+            .writer
+            .query_one(
+                "SELECT count(*) FROM platform.file WHERE id=$1::text::uuid",
+                &[&kept.to_string()]
+            )
+            .await?
+            .get::<_, i64>(0),
+        1
+    );
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

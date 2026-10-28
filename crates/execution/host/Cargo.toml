@@ -40,6 +40,8 @@ url = { workspace = true }
 uuid = { workspace = true, features = ["v4", "serde"] }
 
 [dev-dependencies]
+hyper-util = { workspace = true, features = ["tokio"] }
+object_store = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
 serde_yaml = { workspace = true }
 # `wamn_catalog::fixture_graph` is gated behind `test-util`.

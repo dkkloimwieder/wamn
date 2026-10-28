@@ -64,6 +64,7 @@ mod credential_exactness;
 /// Host admission of an event-started workflow run.
 mod event_admission;
 mod event_batch;
+mod file_collection;
 mod numbering;
 mod operation;
 mod operation_transaction;
@@ -76,6 +77,7 @@ mod types;
 mod wiring_resolution;
 mod workflow_resolution;
 pub mod write_log;
+pub use file_collection::FileCollection;
 
 pub use wiring_resolution::{RELEASE_COMPONENTS_SQL, ResolvedActiveWiring};
 pub use workflow_resolution::{

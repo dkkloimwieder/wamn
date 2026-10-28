@@ -6004,6 +6004,8 @@ dependencies = [
  "hex",
  "http-body-util",
  "hyper",
+ "hyper-util",
+ "object_store",
  "opentelemetry",
  "opentelemetry_sdk",
  "rcgen",

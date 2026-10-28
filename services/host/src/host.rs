@@ -1805,18 +1805,39 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     };
     // The host heartbeats from here on. The preload compiles after it, so a
     // cold compile cache delays the workload and not the heartbeat.
-    if let (Some(connectors), Some(source)) = (connectors, connector_source) {
+    if connectors.is_some() || files.is_some() {
         let mut stopped = stopping.clone();
+        let files = files.clone();
         schedule_tasks.spawn(async move {
             let mut ticks = tokio::time::interval(wamn_runtime::connectors::REFRESH_INTERVAL);
             ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut collection_due = tokio::time::Instant::now();
+            let mut collection = tokio::task::JoinSet::new();
             loop {
                 tokio::select! {
                     _ = stopped.changed() => return,
+                    result = collection.join_next(), if !collection.is_empty() => {
+                        match result {
+                            Some(Ok(Ok(_))) => {},
+                            result => tracing::warn!(?result, "host file orphan collection failed"),
+                        }
+                        continue;
+                    }
                     _ = ticks.tick() => {}
                 }
                 // The reader logs new pin errors and database failures.
-                let _ = connectors.refresh(&source).await;
+                if let (Some(connectors), Some(source)) = (&connectors, &connector_source) {
+                    let _ = connectors.refresh(source).await;
+                }
+                if let Some(files) = &files
+                    && tokio::time::Instant::now() >= collection_due
+                    && collection.is_empty()
+                {
+                    let files = Arc::clone(files);
+                    collection.spawn(async move { files.collect_orphan_files().await });
+                    collection_due = tokio::time::Instant::now()
+                        + wamn_execution_host::file_collector::COLLECTION_INTERVAL;
+                }
             }
         });
     }
