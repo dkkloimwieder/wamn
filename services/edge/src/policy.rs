@@ -213,3 +213,147 @@ impl HostPlugin for EdgePolicy {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::time::Duration;
+    use wamn_engine::flow_http_routing::CredentialType;
+    use wamn_engine::operation::native_workload::{
+        NativeApplication, NativeWorkloadSpec, load_native_application,
+    };
+    use wamn_engine::operation::node_types;
+    use wamn_engine::router_delivery::{OperationRefusal, OperationRefusalType};
+    use wash_runtime::observability::{MeterKind, Meters};
+    use wash_runtime::plugin::PluginBindings;
+
+    use super::*;
+    use crate::release::test_util::{OPERATION, release};
+
+    async fn request() -> NativeInvocation<EdgePolicy> {
+        let release = release().await;
+        let policy = Arc::new(EdgePolicy::new(release.components(), release.release()).unwrap());
+        let application: Arc<NativeApplication<EdgePolicy>> = load_native_application(
+            Arc::new(wamn_engine::build_engine(&[]).unwrap()),
+            NativeWorkloadSpec {
+                warm_reuse: wamn_engine::warm_reuse::WarmReuse::default(),
+                id: "edge-policy-test".into(),
+                namespace: "test".into(),
+                name: "test".into(),
+                components: Vec::new(),
+                entry: None,
+                local_resources: wash_runtime::types::LocalResources::default(),
+                host_interfaces: Vec::new(),
+            },
+            Arc::clone(&policy),
+            &HashMap::new(),
+            &PluginBindings::new(),
+            &Meters::new(MeterKind::Off),
+        )
+        .await
+        .unwrap();
+        let component = policy.components.values().next().unwrap().clone();
+        policy
+            .bindings
+            .write()
+            .unwrap()
+            .insert("bound".into(), component);
+        NativeInvocation {
+            operation: OPERATION.into(),
+            context: node_types::NodeContext {
+                wiring_id: String::new(),
+                wiring_version: 0,
+                node_id: String::new(),
+                delivery_id: "test".into(),
+                input_port: None,
+                occurrence: 0,
+                traceparent: None,
+                tracestate: None,
+                deadline_ms: Some(1000),
+                config: "null".into(),
+            },
+            input: "{}".into(),
+            deadline: Instant::now() + Duration::from_secs(60),
+            facts: EdgeFacts::entry(Some(AuthenticatedCaller::new(
+                "record-http",
+                "principal",
+                CredentialType::Session,
+                false,
+                [wamn_catalog::sealed_operation_reference(OPERATION).to_owned()].into(),
+                Some("operator".into()),
+            ))),
+            application,
+        }
+    }
+
+    #[tokio::test]
+    async fn an_expired_deadline_refuses() {
+        let mut request = request().await;
+        let policy = &request.application.policy;
+        policy.authorize("bound", &request).unwrap();
+        request.deadline = Instant::now() - Duration::from_secs(1);
+        assert_eq!(
+            policy.authorize("bound", &request).unwrap_err().to_string(),
+            "native-node-deadline-exceeded"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_operation_not_released_refuses() {
+        let request = request().await;
+        let policy = &request.application.policy;
+        policy.authorize("bound", &request).unwrap();
+        {
+            let mut bindings = policy.bindings.write().unwrap();
+            let component = bindings.get("bound").unwrap();
+            let fact = component.fact.clone();
+            bindings.insert(
+                "bound".into(),
+                Arc::new(ComponentPolicy {
+                    fact,
+                    operations: BTreeMap::new(),
+                }),
+            );
+        }
+        assert_eq!(
+            policy.authorize("bound", &request).unwrap_err().to_string(),
+            "native invocation operation is not released"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unbound_component_refuses() {
+        let request = request().await;
+        let policy = &request.application.policy;
+        policy.authorize("bound", &request).unwrap();
+        assert_eq!(
+            policy
+                .authorize("unbound", &request)
+                .unwrap_err()
+                .to_string(),
+            "native invocation component is not admitted"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_caller_without_the_grant_refuses() {
+        let mut request = request().await;
+        let policy = &request.application.policy;
+        policy.authorize("bound", &request).unwrap();
+        request.facts = EdgeFacts::entry(Some(AuthenticatedCaller::new(
+            "record-http",
+            "principal",
+            CredentialType::Session,
+            false,
+            HashSet::new(),
+            Some("viewer".into()),
+        )));
+        let error = policy.authorize("bound", &request).unwrap_err();
+        let refusal = error.downcast_ref::<OperationRefusal>().unwrap();
+        assert_eq!(
+            refusal.refusal_type(),
+            OperationRefusalType::PermissionDenied
+        );
+        assert_eq!(refusal.operation(), OPERATION);
+    }
+}

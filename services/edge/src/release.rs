@@ -259,3 +259,103 @@ impl std::error::Error for EdgeReleaseError {}
 fn rejected(detail: String) -> EdgeReleaseError {
     EdgeReleaseError::new(EdgeReleaseErrorType::Rejected, detail)
 }
+
+#[cfg(test)]
+pub(crate) mod test_util {
+    use super::*;
+    use std::collections::BTreeMap;
+    use wamn_catalog::{
+        AdmittedComponentOperation, ComponentDescriptor, ComponentPackageScope, PackageCoordinate,
+        ServingComponent, ServingComponentOperation, ServingManifest, ServingRelease,
+    };
+
+    pub(crate) const OPERATION: &str = "scale:device/record@1.0.0";
+
+    pub(crate) async fn release() -> EdgeRelease {
+        let operation = ServingComponentOperation {
+            registered_operation: Some(OPERATION.into()),
+            permissions: BTreeSet::from([OPERATION.into()]),
+            committed_result_schema: None,
+            statements: BTreeMap::new(),
+        };
+        let fact = AdmittedComponent {
+            scope: ComponentPackageScope {
+                env_key: "tenant-a".into(),
+                package_id: "scale".into(),
+                package_version: "1.0.0".into(),
+            },
+            component: "device".into(),
+            interface_version: "0.1".into(),
+            component_digest: file_digest(b"device"),
+            operations: BTreeMap::from([(
+                OPERATION.into(),
+                AdmittedComponentOperation {
+                    registered_operation: Some(OPERATION.into()),
+                    committed_result_schema: None,
+                    host_transaction: false,
+                    input_ports: Vec::new(),
+                    output_ports: Vec::new(),
+                    parameters: Vec::new(),
+                    statements: BTreeMap::new(),
+                },
+            )]),
+            imports: Vec::new(),
+            imports_fingerprint: String::new(),
+            effects: Vec::new(),
+        };
+        let manifest = ServingManifest::new(
+            ServingRelease {
+                packages: BTreeSet::from([PackageCoordinate::new("scale", "1.0.0").unwrap()]),
+            },
+            BTreeSet::from([ServingComponent {
+                runtime_schema: None,
+                statement_instances: BTreeMap::new(),
+                package_id: "scale".into(),
+                descriptor: ComponentDescriptor::named("device", "0.1", &fact.component_digest),
+                operations: BTreeMap::from([(OPERATION.into(), operation)]),
+            }]),
+            BTreeSet::new(),
+            BTreeMap::new(),
+        )
+        .unwrap();
+        let directory =
+            std::env::temp_dir().join(format!("edge-auth-bundle-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let manifest_bytes = manifest.canonical_bytes();
+        let components = serde_json::to_vec(&[&fact]).unwrap();
+        let grants = br#"{"roles":{"operator":["scale:device/record@1.0.0"]}}"#;
+        let ingress = b"ingress";
+        for (name, bytes) in [
+            (RELEASE_MANIFEST_FILE_NAME, manifest_bytes.as_slice()),
+            (COMPONENTS_FILE_NAME, components.as_slice()),
+            (GRANTS_FILE_NAME, grants.as_slice()),
+            (INGRESS_FILE_NAME, ingress.as_slice()),
+        ] {
+            std::fs::write(directory.join(name), bytes).unwrap();
+        }
+        let tag = fact.component_digest.strip_prefix("sha256:").unwrap();
+        std::fs::write(directory.join(format!("{tag}.wasm")), b"device").unwrap();
+        let bundle = serde_json::to_vec(&serde_json::json!({
+            "format": BUNDLE_FORMAT,
+            "manifest": file_digest(&manifest_bytes),
+            "components": file_digest(&components),
+            "grants": file_digest(grants),
+            "ingress": file_digest(ingress),
+        }))
+        .unwrap();
+        std::fs::write(directory.join(BUNDLE_FILE_NAME), &bundle).unwrap();
+        let scope = ReleaseScope::new("tenant-a", "edge").with_applications(BTreeMap::from([(
+            "scale".into(),
+            wamn_catalog::ApplicationDefinition {
+                packages: BTreeSet::from(["scale".into()]),
+                connectors: BTreeMap::new(),
+                connections: BTreeMap::new(),
+            },
+        )]));
+        let release = EdgeRelease::load(&directory, &file_digest(&bundle), scope)
+            .await
+            .unwrap();
+        std::fs::remove_dir_all(directory).unwrap();
+        release
+    }
+}
