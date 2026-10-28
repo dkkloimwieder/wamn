@@ -72,6 +72,9 @@ pub struct CustomOperationDeclaration {
     /// Whether this authored read requests a feed. Omitted means disabled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub feed: Option<bool>,
+    /// Validated catalog facts that the build writes for an authored feed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feed_source: Option<crate::feed::FeedSource>,
     /// Whether a refusal leaves later entries for the row free to proceed.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub append_only: bool,
@@ -1144,10 +1147,18 @@ fn validate_custom_operation(
     operation_name: &str,
     operation: &CustomOperationDeclaration,
 ) -> Result<(), GenerateError> {
-    if operation.feed == Some(true) {
+    if operation.feed == Some(true)
+        && (operation.type_ != CustomOperationType::Projection
+            || operation
+                .lists
+                .as_ref()
+                .is_none_or(|lists| lists.model.is_none() || lists.key_field.len() != 1))
+    {
         return Err(GenerateError::new(
             GenerateErrorType::InvalidOperation,
-            format!("{operation_name} authored read feed is not supported yet: remove feed = true"),
+            format!(
+                "{operation_name} feed needs a read with lists, a model, and exactly one key field"
+            ),
         ));
     }
     match (operation.visibility(), operation.permission()) {

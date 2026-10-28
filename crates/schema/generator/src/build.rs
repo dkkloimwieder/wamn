@@ -287,6 +287,13 @@ async fn pass_one_and_two(
     // Pass two: every consumer from the canonical bytes.
     let manifest =
         PackageManifest::from_slice(&canonical).context("parse the canonical manifest")?;
+    for (name, operation) in &manifest.custom_operations {
+        if let Some(source) = &operation.feed_source {
+            for warning in crate::feed::missing_indexes(&catalog, name, source) {
+                eprintln!("warning: {warning}");
+            }
+        }
+    }
     let (corpus, grants) =
         statement_corpus_from_manifest(&catalog, &canonical, &manifest, package_root, bases)?;
     let schemas = application_schemas(&manifest).context("resolve application schemas")?;

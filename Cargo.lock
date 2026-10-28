@@ -6553,6 +6553,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "hex",
+ "pg_query",
  "proptest",
  "serde",
  "serde_json",

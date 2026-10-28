@@ -296,6 +296,220 @@ fn projection_view_workspace(name: &str) -> Workspace {
     workspace
 }
 
+fn authored_feed_workspace(name: &str, definition: &str) -> Workspace {
+    let workspace = Workspace::new(name);
+    workspace.edit_manifest(
+        "\"widget.list\" = manifest.Projection(\"widget.list\") {",
+        "\"widget.list\" = manifest.Projection(\"widget.list\") {\n            feed = True",
+    );
+    workspace.edit_manifest(
+        "audit_log = {columns = [\"created_at\"]}",
+        "audit_log = {columns = [\"created_at\"], retention = \"P30D\"}",
+    );
+    fs::write(workspace.package().join("migrations/0003_feed.sql"), format!(
+        "ALTER TABLE inventory.widget ADD COLUMN tag_id uuid CONSTRAINT widget_tag_id_fkey REFERENCES inventory.widget_tag(id);\n\
+         ALTER TABLE inventory.widget_maker ADD COLUMN supplier_id uuid CONSTRAINT widget_maker_supplier_id_fkey REFERENCES inventory.widget_tag(id);\n\
+         CREATE VIEW inventory.widget_screen AS {definition};\n"
+    )).unwrap();
+    fs::write(
+        workspace.package().join("query/widget_list.sql"),
+        "SELECT id, code, edit_version, attributes FROM widget_screen ORDER BY id;\n",
+    )
+    .unwrap();
+    workspace
+}
+
+const RECEIPT_FEED_VIEW: &str = "SELECT line.id, line.code, line.edit_version,
+    to_jsonb(line) AS attributes, line.maker_id, line.tag_id
+    FROM inventory.widget AS line
+    JOIN inventory.widget_maker AS orders ON orders.id = line.maker_id
+    JOIN inventory.widget_tag AS items ON items.id = line.tag_id";
+
+async fn authored_feed_build(workspace: &Workspace) -> anyhow::Result<Value> {
+    let database = wamn_test_postgres::database();
+    let output_root = workspace.root.join("target/wamn");
+    generate_package(&BuildRequest::new(
+        &workspace.package(),
+        &output_root,
+        database.url(),
+    ))
+    .await?;
+    let bytes =
+        fs::read(package_output(&output_root, wamn_fixture_package::PACKAGE_ID).join("wamn.json"))?;
+    Ok(
+        serde_json::from_slice::<Value>(&bytes)?["custom_operations"]["widget.list"]["feed_source"]
+            .clone(),
+    )
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn authored_feed_receipt_screen_records_its_join_path() {
+    let workspace = authored_feed_workspace("feed-receipt", RECEIPT_FEED_VIEW);
+    let source = authored_feed_build(&workspace).await.unwrap();
+    assert_eq!(
+        source["root"],
+        serde_json::json!({"schema": "inventory", "table": "widget"})
+    );
+    assert_eq!(
+        source["read_set"],
+        serde_json::json!([
+            {"schema": "inventory", "table": "widget"},
+            {"schema": "inventory", "table": "widget_maker"},
+            {"schema": "inventory", "table": "widget_tag"}
+        ])
+    );
+    assert_eq!(
+        source["join_path"],
+        serde_json::json!([
+            {"table": {"schema": "inventory", "table": "widget_maker"},
+             "linking_column": "maker_id", "direction": "referenced_by_link",
+             "foreign_key_table": {"schema": "inventory", "table": "widget"},
+             "foreign_key_columns": [{"column": "maker_id", "referenced_column": "id"}]},
+            {"table": {"schema": "inventory", "table": "widget_tag"},
+             "linking_column": "tag_id", "direction": "referenced_by_link",
+             "foreign_key_table": {"schema": "inventory", "table": "widget"},
+             "foreign_key_columns": [{"column": "tag_id", "referenced_column": "id"}]}
+        ])
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn authored_feed_grouped_summary_records_both_link_directions() {
+    let workspace = authored_feed_workspace("feed-grouped", "SELECT orders.id, orders.name AS code,
+        orders.edit_version::int4 AS edit_version, jsonb_build_object('lines', count(line.id)) AS attributes,
+        orders.supplier_id FROM inventory.widget_maker AS orders
+        JOIN inventory.widget_tag AS supplier ON supplier.id = orders.supplier_id
+        LEFT JOIN inventory.widget AS line ON line.maker_id = orders.id
+        GROUP BY orders.id, supplier.label");
+    workspace.edit_manifest(
+        "lists = {model = \"widget\", key_field = \"id\", display_field = \"code\"}",
+        "lists = {model = \"widget_maker\", key_field = \"id\", display_field = \"code\"}",
+    );
+    let source = authored_feed_build(&workspace).await.unwrap();
+    assert_eq!(source["root"]["table"], "widget_maker");
+    assert_eq!(source["join_path"][0]["direction"], "references_root");
+    assert_eq!(
+        source["join_path"][0]["foreign_key_columns"],
+        serde_json::json!([{"column": "maker_id", "referenced_column": "id"}])
+    );
+    assert_eq!(source["join_path"][1]["linking_column"], "supplier_id");
+    assert_eq!(source["join_path"][1]["direction"], "referenced_by_link");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn authored_feed_refuses_a_one_to_many_view_without_grouping() {
+    let workspace = authored_feed_workspace("feed-many", "SELECT orders.id, orders.name AS code,
+        orders.edit_version::int4 AS edit_version, to_jsonb(orders) AS attributes
+        FROM inventory.widget_maker AS orders JOIN inventory.widget AS line ON line.maker_id = orders.id");
+    workspace.edit_manifest(
+        "lists = {model = \"widget\", key_field = \"id\", display_field = \"code\"}",
+        "lists = {model = \"widget_maker\", key_field = \"id\", display_field = \"code\"}",
+    );
+    let error = authored_feed_build(&workspace).await.unwrap_err();
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("widget.list")
+            && message.contains("view inventory.widget_screen")
+            && message.contains("primary key"),
+        "{message}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn authored_feed_refuses_a_base_table_without_a_link() {
+    let workspace = authored_feed_workspace("feed-no-link", "SELECT line.id, line.code, line.edit_version,
+        to_jsonb(items) AS attributes FROM inventory.widget AS line CROSS JOIN inventory.widget_tag AS items");
+    let message = format!("{:#}", authored_feed_build(&workspace).await.unwrap_err());
+    assert!(
+        message.contains("widget.list") && message.contains("widget_tag has no link"),
+        "{message}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn authored_feed_refuses_statement_tables_and_joins() {
+    for (name, sql) in [
+        (
+            "table",
+            "SELECT id, code, edit_version, to_jsonb(widget) AS attributes FROM widget",
+        ),
+        (
+            "join",
+            "SELECT screen.id, screen.code, screen.edit_version, screen.attributes FROM widget_screen AS screen JOIN widget ON widget.id = screen.id",
+        ),
+    ] {
+        let workspace =
+            authored_feed_workspace(&format!("feed-statement-{name}"), RECEIPT_FEED_VIEW);
+        fs::write(workspace.package().join("query/widget_list.sql"), sql).unwrap();
+        let message = format!("{:#}", authored_feed_build(&workspace).await.unwrap_err());
+        assert!(
+            message.contains("widget.list")
+                && message.contains("relation widget is not an authored view"),
+            "{message}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn authored_feed_refuses_statement_grouping_windows_and_limits() {
+    for (name, sql, reason) in [
+        (
+            "group",
+            "SELECT id, code, edit_version, attributes FROM widget_screen GROUP BY id, code, edit_version, attributes",
+            "GROUP BY",
+        ),
+        (
+            "limit",
+            "SELECT id, code, edit_version, attributes FROM widget_screen LIMIT 5",
+            "LIMIT",
+        ),
+        (
+            "window",
+            "SELECT id, code, edit_version, to_jsonb(row_number() OVER ()) AS attributes FROM widget_screen",
+            "window",
+        ),
+    ] {
+        let workspace =
+            authored_feed_workspace(&format!("feed-statement-{name}"), RECEIPT_FEED_VIEW);
+        fs::write(workspace.package().join("query/widget_list.sql"), sql).unwrap();
+        let message = format!("{:#}", authored_feed_build(&workspace).await.unwrap_err());
+        assert!(
+            message.contains("widget.list") && message.contains(reason),
+            "{message}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn authored_feed_refuses_a_base_table_without_history() {
+    let workspace = authored_feed_workspace("feed-no-history", RECEIPT_FEED_VIEW);
+    workspace.edit_manifest(
+        "audit_log = {columns = [], retention = \"P30D\"}",
+        "audit_log = {columns = [], retention = \"none\"}",
+    );
+    let message = format!("{:#}", authored_feed_build(&workspace).await.unwrap_err());
+    assert!(
+        message.contains("widget.list")
+            && message.contains("table inventory.widget_tag needs history with retention"),
+        "{message}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn authored_feed_refuses_a_key_other_than_the_root_id() {
+    let workspace = authored_feed_workspace("feed-wrong-key", RECEIPT_FEED_VIEW);
+    workspace.edit_manifest(
+        "lists = {model = \"widget\", key_field = \"id\", display_field = \"code\"}",
+        "lists = {model = \"widget\", key_field = \"code\", display_field = \"code\"}",
+    );
+    let message = format!("{:#}", authored_feed_build(&workspace).await.unwrap_err());
+    assert!(
+        message.contains("widget.list")
+            && message.contains("key field code must select the root inventory.widget.id"),
+        "{message}"
+    );
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn projection_view_keeps_non_null_and_nullable_declarations() {
     for nullable in [false, true] {

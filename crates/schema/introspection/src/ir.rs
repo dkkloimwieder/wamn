@@ -61,6 +61,10 @@ pub struct View {
     name: Box<str>,
     columns: Box<[ViewColumn]>,
     base_tables: Box<[ViewBaseTable]>,
+    #[serde(default, skip_serializing_if = "str::is_empty")]
+    definition: Box<str>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    has_set_returning_functions: bool,
 }
 
 impl View {
@@ -78,6 +82,8 @@ impl View {
             name: name.into(),
             columns: columns.into_boxed_slice(),
             base_tables: base_tables.into_boxed_slice(),
+            definition: Box::default(),
+            has_set_returning_functions: false,
         }
     }
 
@@ -100,6 +106,28 @@ impl View {
     pub fn base_tables(&self) -> &[ViewBaseTable] {
         &self.base_tables
     }
+
+    /// Attach the server's printed definition and target function metadata.
+    #[must_use]
+    pub fn with_definition(
+        mut self,
+        definition: String,
+        has_set_returning_functions: bool,
+    ) -> Self {
+        self.definition = definition.into();
+        self.has_set_returning_functions = has_set_returning_functions;
+        self
+    }
+
+    /// The definition from `pg_get_viewdef`.
+    pub fn definition(&self) -> &str {
+        &self.definition
+    }
+
+    /// Whether a target expression can return several rows.
+    pub const fn has_set_returning_functions(&self) -> bool {
+        self.has_set_returning_functions
+    }
 }
 
 /// One view column with its PostgreSQL type mapped to the transport vocabulary.
@@ -108,6 +136,8 @@ pub struct ViewColumn {
     name: Box<str>,
     #[serde(rename = "type")]
     ty: ColumnType,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    origin: Option<ViewColumnOrigin>,
 }
 
 impl ViewColumn {
@@ -116,6 +146,7 @@ impl ViewColumn {
         Self {
             name: name.into(),
             ty: column_type,
+            origin: None,
         }
     }
 
@@ -128,6 +159,26 @@ impl ViewColumn {
     pub const fn column_type(&self) -> ColumnType {
         self.ty
     }
+
+    /// Attach the plain base column reported by PostgreSQL's statement description.
+    #[must_use]
+    pub fn with_origin(mut self, origin: ViewColumnOrigin) -> Self {
+        self.origin = Some(origin);
+        self
+    }
+
+    /// Plain base column, absent for a computed expression.
+    pub fn origin(&self) -> Option<&ViewColumnOrigin> {
+        self.origin.as_ref()
+    }
+}
+
+/// The base column of a plain view column.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ViewColumnOrigin {
+    pub schema: String,
+    pub table: String,
+    pub column: String,
 }
 
 /// A schema-qualified base table of a view.

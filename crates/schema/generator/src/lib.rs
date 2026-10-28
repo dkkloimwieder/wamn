@@ -31,6 +31,8 @@ mod cursor;
 mod data_access;
 mod describe;
 mod error;
+/// Catalog facts for authored query feeds.
+pub mod feed;
 mod generate;
 mod inheritance;
 mod key;

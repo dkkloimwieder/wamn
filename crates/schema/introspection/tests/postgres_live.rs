@@ -53,7 +53,31 @@ async fn authored_views_preserve_column_order_types_and_base_tables() {
         .await
         .unwrap();
     let catalog = read_catalog(&client, &["application"]).await.unwrap();
-    let json = serde_json::to_value(&catalog).unwrap();
+    let mut json = serde_json::to_value(&catalog).unwrap();
+    let view = &catalog.views()[0];
+    let definition: String = client
+        .query_one(
+            "SELECT pg_catalog.pg_get_viewdef('application.item_view'::regclass, false)",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(view.definition(), definition);
+    assert!(!view.has_set_returning_functions());
+    for column in view.columns() {
+        let origin = column.origin().expect("a plain column has a base origin");
+        assert_eq!(origin.schema, "application");
+        assert_eq!(origin.table, "item");
+        assert_eq!(origin.column, column.name());
+    }
+    json["views"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("definition");
+    for column in json["views"][0]["columns"].as_array_mut().unwrap() {
+        column.as_object_mut().unwrap().remove("origin");
+    }
     assert_eq!(
         json["views"],
         serde_json::json!([{
@@ -93,8 +117,12 @@ async fn authored_views_follow_nested_views_and_retain_external_base_tables() {
     let views = json["views"].as_array().unwrap();
     assert_eq!(views.len(), 2);
     for view in views {
+        let mut columns = view["columns"].clone();
+        for column in columns.as_array_mut().unwrap() {
+            column.as_object_mut().unwrap().remove("origin");
+        }
         assert_eq!(
-            view["columns"],
+            columns,
             serde_json::json!([{"name": "total", "type": "int64"}])
         );
         assert_eq!(
@@ -102,6 +130,21 @@ async fn authored_views_follow_nested_views_and_retain_external_base_tables() {
             serde_json::json!([{"schema": "external", "name": "item"}])
         );
     }
+}
+
+#[tokio::test]
+async fn authored_views_distinguish_plain_columns_computed_columns_and_row_expansion() {
+    let database = wamn_test_postgres::database();
+    let client = connect(database.url().parse().unwrap()).await;
+    client.batch_execute("CREATE SCHEMA application;
+        CREATE TABLE application.item (id bigint);
+        CREATE VIEW application.item_view AS SELECT id, id + 1 AS computed, generate_series(1, 2) AS expanded FROM application.item").await.unwrap();
+    let catalog = read_catalog(&client, &["application"]).await.unwrap();
+    let view = &catalog.views()[0];
+    assert_eq!(view.columns()[0].origin().unwrap().column, "id");
+    assert!(view.columns()[1].origin().is_none());
+    assert!(view.columns()[2].origin().is_none());
+    assert!(view.has_set_returning_functions());
 }
 
 #[tokio::test]

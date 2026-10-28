@@ -3527,7 +3527,7 @@ fn a_feed_refuses_authored_list_sql() {
 }
 
 #[test]
-fn an_authored_list_defaults_to_no_feed_and_refuses_opt_in() {
+fn an_authored_list_defaults_to_no_feed_and_refuses_a_table() {
     let mut value = manifest();
     let mut operation = projection_operation();
     operation["result"]["class"] = json!("bounded_list");
@@ -3547,7 +3547,7 @@ fn an_authored_list_defaults_to_no_feed_and_refuses_opt_in() {
     assert_eq!(refusal.error_type(), GenerateErrorType::InvalidOperation);
     assert_eq!(
         refusal.context(),
-        "quality.load_gadget_part authored read feed is not supported yet: remove feed = true"
+        "quality.load_gadget_part feed: relation gadget is not an authored view"
     );
 }
 

@@ -12,7 +12,7 @@ use crate::ir::{
     CatalogIr, Column, ColumnGeneration, Constraint, Exclusion, ExclusionAccessMethod,
     ExclusionElement, ExclusionKey, ForeignKeyAction, ForeignKeyColumn, IdentityMode, Index,
     IndexColumn, IndexDirection, IrError, IrErrorType, Table, View, ViewBaseTable, ViewColumn,
-    postgres_default, postgres_type,
+    ViewColumnOrigin, postgres_default, postgres_type,
 };
 
 mod synchronization;
@@ -906,15 +906,58 @@ async fn load_views(
             .or_default()
             .push(ViewBaseTable::new(base_schema, base_name));
     }
-    Ok(columns
-        .into_iter()
-        .map(|((schema, name), columns)| {
-            let dependencies = base_tables
-                .remove(&(schema.clone(), name.clone()))
-                .unwrap_or_default();
-            View::new(schema, name, columns, dependencies)
-        })
-        .collect())
+    let mut views = Vec::new();
+    for ((schema, name), columns) in columns {
+        let row = client
+            .query_one(
+                "SELECT pg_catalog.pg_get_viewdef(rewrite.ev_class, false),
+                    rewrite.ev_action::text LIKE '%:hasTargetSRFs true%' AS target_srfs
+               FROM pg_catalog.pg_rewrite AS rewrite
+               JOIN pg_catalog.pg_class AS relation ON relation.oid = rewrite.ev_class
+               JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+              WHERE namespace.nspname = $1 AND relation.relname = $2
+                AND rewrite.rulename = '_RETURN'",
+                &[&schema, &name],
+            )
+            .await
+            .map_err(|error| database_error("read the view definition", error))?;
+        let definition: String = row.get(0);
+        let target_srfs: bool = row.get(1);
+        let statement = client
+            .prepare(&definition)
+            .await
+            .map_err(|error| database_error("describe the view definition", error))?;
+        let mut origins = Vec::new();
+        for (column, described) in columns.into_iter().zip(statement.columns()) {
+            let origin = match (described.table_oid(), described.column_id()) {
+                (Some(table), Some(number)) => client.query_opt(
+                    "SELECT namespace.nspname::text, relation.relname::text, attribute.attname::text
+                       FROM pg_catalog.pg_attribute AS attribute
+                       JOIN pg_catalog.pg_class AS relation ON relation.oid = attribute.attrelid
+                       JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+                      WHERE attribute.attrelid = $1 AND attribute.attnum = $2",
+                    &[&table, &number],
+                ).await.map_err(|error| database_error("read a view column origin", error))?,
+                _ => None,
+            };
+            origins.push(if let Some(origin) = origin {
+                column.with_origin(ViewColumnOrigin {
+                    schema: origin.get(0),
+                    table: origin.get(1),
+                    column: origin.get(2),
+                })
+            } else {
+                column
+            });
+        }
+        let dependencies = base_tables
+            .remove(&(schema.clone(), name.clone()))
+            .unwrap_or_default();
+        views.push(
+            View::new(schema, name, origins, dependencies).with_definition(definition, target_srfs),
+        );
+    }
+    Ok(views)
 }
 
 async fn load_relations(

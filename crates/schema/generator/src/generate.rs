@@ -302,6 +302,22 @@ pub fn derive_manifest(
                 source,
             )
         })?;
+    let mut feed_sources = BTreeMap::new();
+    for (name, operation) in &manifest.custom_operations {
+        if operation.feed_source.is_some() {
+            return Err(GenerateError::new(
+                GenerateErrorType::InvalidOperation,
+                format!("{name} states feed_source, which generation derives from its view"),
+            ));
+        }
+        if let Some(source) =
+            crate::feed::derive(catalog, &manifest, authored_sql, name, operation)?
+        {
+            feed_sources.insert(name.clone(), source);
+        }
+    }
+    let compiled = crate::authoring::with_derived_feed_sources(&compiled, &feed_sources)
+        .expect("compiled manifest serializes");
     PackageManifest::from_slice(&compiled)?;
     Ok(compiled)
 }

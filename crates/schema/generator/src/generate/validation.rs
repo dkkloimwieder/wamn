@@ -154,6 +154,23 @@ pub(super) fn validate(
         )?;
         validate_count_text(operation_name, operation)?;
         validate_lists(manifest, operation_name, operation)?;
+        let feed_source = crate::feed::derive(
+            input.catalog,
+            manifest,
+            input.authored_sql,
+            operation_name,
+            operation,
+        )?;
+        if operation
+            .feed_source
+            .as_ref()
+            .is_some_and(|source| Some(source) != feed_source.as_ref())
+        {
+            return Err(GenerateError::new(
+                GenerateErrorType::InvalidOperation,
+                format!("{operation_name} feed_source differs from its statement and view catalog"),
+            ));
+        }
     }
     Ok(())
 }

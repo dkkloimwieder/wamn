@@ -352,7 +352,7 @@ fn without_terminal_colors(text: &str) -> String {
 /// The members of a custom operation that generation derives, so `wamn.k`
 /// states none of them
 /// (docs/architecture/data-access.md#application-declarations).
-const DERIVED_OPERATION_MEMBERS: [&str; 1] = ["relations"];
+const DERIVED_OPERATION_MEMBERS: [&str; 2] = ["relations", "feed_source"];
 
 /// Refuse an authored manifest that states a member generation derives.
 fn refuse_derived_members(package_root: &Path, authored: &[u8]) -> Result<()> {
@@ -411,8 +411,29 @@ pub(crate) fn with_derived_relations(
     document.to_bytes()
 }
 
-/// The authored compile of a compiled manifest: the bytes without the members
-/// generation derived.
+/// Attach feed facts while preserving the authored member order.
+pub(crate) fn with_derived_feed_sources(
+    compiled: &[u8],
+    sources: &BTreeMap<String, crate::feed::FeedSource>,
+) -> serde_json::Result<Vec<u8>> {
+    if sources.is_empty() {
+        return Ok(compiled.to_vec());
+    }
+    let mut document: OrderedJson = serde_json::from_slice(compiled)?;
+    if let Some(OrderedJson::Object(operations)) = document.member_mut("custom_operations") {
+        for (operation, declaration) in operations {
+            if let (Some(source), OrderedJson::Object(members)) =
+                (sources.get(operation), declaration)
+            {
+                let value = serde_json::from_slice(&serde_json::to_vec(source)?)?;
+                members.push(("feed_source".to_owned(), value));
+            }
+        }
+    }
+    document.to_bytes()
+}
+
+/// The authored compile without the members that generation derives.
 fn without_derived_members(compiled: &[u8]) -> serde_json::Result<Vec<u8>> {
     let mut document: OrderedJson = serde_json::from_slice(compiled)?;
     if let Some(OrderedJson::Object(operations)) = document.member_mut("custom_operations") {
