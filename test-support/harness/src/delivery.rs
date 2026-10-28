@@ -409,6 +409,7 @@ async fn apply(app: &Application<'_>, platform: &Platform) -> anyhow::Result<Str
         document.applications.insert(
             app.triple.project.clone(),
             wamn_catalog::ApplicationDefinition {
+                connectors: std::collections::BTreeMap::new(),
                 connections: std::collections::BTreeMap::new(),
                 packages: manifest
                     .release

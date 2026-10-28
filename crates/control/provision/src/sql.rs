@@ -943,6 +943,8 @@ pub fn grant_connection_reader_surface_sql() -> String {
 
 /// Non-secret connection functions available to the control host.
 pub const CONTROL_CONNECTION_FUNCTIONS: &[&str] = &[
+    "publish_integration(text,text)",
+    "connector_pin_error(text,text)",
     "connection_org_exists(text)",
     "connection_integration_exists(text)",
     "connection_system_rows(text)",

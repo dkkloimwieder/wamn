@@ -1359,6 +1359,49 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
 $$;
 
 -- Requests contain application, alias, name, integration and mode. Results contain no secret.
+-- Published connectors carry no credentials.
+CREATE TABLE registry.integration_digest (
+    integration text NOT NULL REFERENCES registry.integrations(code),
+    digest text NOT NULL CHECK (digest ~ '^sha256:[0-9a-f]{64}$'),
+    PRIMARY KEY (integration, digest)
+);
+
+CREATE OR REPLACE FUNCTION registry.publish_integration(integration_code text, artifact_digest text)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+BEGIN
+ IF integration_code !~ '^[a-z][a-z0-9_-]*$' OR artifact_digest !~ '^sha256:[0-9a-f]{64}$'
+    OR integration_code IS NULL OR artifact_digest IS NULL THEN
+  RAISE EXCEPTION 'invalid_connector_artifact';
+ END IF;
+ IF NOT EXISTS (SELECT FROM registry.integrations WHERE code=integration_code) THEN
+  RAISE EXCEPTION 'integration_not_found';
+ END IF;
+ IF NOT EXISTS (SELECT FROM registry.integrations WHERE code=integration_code AND form='wasm') THEN
+  RAISE EXCEPTION 'integration_form_mismatch';
+ END IF;
+ INSERT INTO registry.integration_digest(integration,digest) VALUES(integration_code,artifact_digest)
+ ON CONFLICT DO NOTHING;
+END $$;
+
+CREATE OR REPLACE FUNCTION registry.connector_pin_error(integration_code text, pin text)
+RETURNS text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE connector_form text;
+BEGIN
+ SELECT form INTO connector_form FROM registry.integrations WHERE code=integration_code;
+ IF NOT FOUND THEN RETURN 'integration_not_found'; END IF;
+ IF pin IS NULL THEN RETURN 'connector_unpinned'; END IF;
+ IF connector_form = 'host' THEN
+  IF pin <> 'host' THEN RETURN 'connector_form_mismatch'; END IF;
+  RETURN NULL;
+ END IF;
+ IF pin = 'host' THEN RETURN 'connector_form_mismatch'; END IF;
+ IF connector_form <> 'wasm' THEN RETURN 'integration_unavailable'; END IF;
+ IF NOT EXISTS (SELECT FROM registry.integration_digest WHERE integration=integration_code AND digest=pin) THEN
+  RETURN 'connector_digest_unpublished';
+ END IF;
+ RETURN NULL;
+END $$;
+
 CREATE OR REPLACE FUNCTION registry.analyse_connection_bindings(
  org_id text, project_id text, environment_name text, target_name text, requests jsonb)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
@@ -1369,6 +1412,7 @@ DECLARE
  request jsonb;
  c registry.connection;
  exclusive_medium boolean;
+ pin_error text;
  seen_exclusive uuid[] := '{}';
  seen_bindings text[] := '{}';
  binding_key text;
@@ -1415,6 +1459,10 @@ BEGIN
     RETURN jsonb_build_object('error','integration_not_allowed','context',binding_key || ': ' || scope || ' ' || scope_id);
    END IF;
   END LOOP;
+  pin_error := registry.connector_pin_error(c.integration,request->>'connector');
+  IF pin_error IS NOT NULL THEN
+   RETURN jsonb_build_object('error',pin_error,'context',binding_key || ': ' || c.integration);
+  END IF;
   SELECT exclusive INTO exclusive_medium FROM registry.integrations WHERE code = c.integration;
   IF exclusive_medium THEN
    IF c.id = ANY(seen_exclusive) OR EXISTS (SELECT FROM registry.environment_connection_binding
@@ -1427,6 +1475,8 @@ BEGIN
    'application',request->>'application','alias',request->>'alias','name',c.name,
    'connection_id',c.id,'generation',c.current_generation,'integration',c.integration,
    'mode',request->>'mode','exclusive',exclusive_medium,
+   'form',(SELECT form FROM registry.integrations WHERE code = c.integration),
+   'connector',request->>'connector',
    'parameters',(SELECT parameters FROM registry.connection_generation WHERE connection_id = c.id AND generation = c.current_generation)));
  END LOOP;
  RETURN jsonb_build_object('bindings',result);
@@ -1503,7 +1553,7 @@ END $credential_reader_acl$;
 
 DO $control_surface$ BEGIN
   IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_control') THEN
-    REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; REVOKE ALL PRIVILEGES ON SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; GRANT USAGE ON SCHEMA "identity", "registry" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_roles" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."password_logins" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."principals" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_env_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_roles" TO "wamn_control"; GRANT SELECT ON TABLE "registry"."project_envs" TO "wamn_control"; GRANT SELECT, INSERT ON TABLE "registry"."projects" TO "wamn_control"; GRANT UPDATE ("status") ON TABLE "registry"."project_envs" TO "wamn_control"; DO $connection_acl$ BEGIN IF to_regprocedure('registry.connection_org_exists(text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.connection_org_exists(text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.connection_integration_exists(text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.connection_integration_exists(text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.connection_system_rows(text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.connection_system_rows(text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.connection_rows(text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.connection_rows(text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.connection_project_rows(text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.connection_project_rows(text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.connection_allow_rows(text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.connection_allow_rows(text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.connection_principal_rows(text,text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.connection_principal_rows(text,text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.configure_connection(text,text,jsonb)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.configure_connection(text,text,jsonb) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.rotate_connection(text,text,text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.rotate_connection(text,text,text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.import_connection_credentials(text,jsonb)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.import_connection_credentials(text,jsonb) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.connection_integrations()') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.connection_integrations() TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.connection_binding_rows(text,text,text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.connection_binding_rows(text,text,text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.analyse_connection_bindings(text,text,text,text,jsonb)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.analyse_connection_bindings(text,text,text,text,jsonb) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.reserve_connection_bindings(text,text,text,text,jsonb)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.reserve_connection_bindings(text,text,text,text,jsonb) TO "wamn_control"; END IF; END $connection_acl$;
+    REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; REVOKE ALL PRIVILEGES ON SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; GRANT USAGE ON SCHEMA "identity", "registry" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_roles" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."password_logins" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."principals" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_env_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_roles" TO "wamn_control"; GRANT SELECT ON TABLE "registry"."project_envs" TO "wamn_control"; GRANT SELECT, INSERT ON TABLE "registry"."projects" TO "wamn_control"; GRANT UPDATE ("status") ON TABLE "registry"."project_envs" TO "wamn_control"; DO $connection_acl$ BEGIN IF to_regprocedure('registry.publish_integration(text,text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.publish_integration(text,text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.connector_pin_error(text,text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.connector_pin_error(text,text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.connection_org_exists(text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.connection_org_exists(text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.connection_integration_exists(text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.connection_integration_exists(text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.connection_system_rows(text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.connection_system_rows(text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.connection_rows(text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.connection_rows(text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.connection_project_rows(text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.connection_project_rows(text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.connection_allow_rows(text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.connection_allow_rows(text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.connection_principal_rows(text,text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.connection_principal_rows(text,text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.configure_connection(text,text,jsonb)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.configure_connection(text,text,jsonb) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.rotate_connection(text,text,text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.rotate_connection(text,text,text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.import_connection_credentials(text,jsonb)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.import_connection_credentials(text,jsonb) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.connection_integrations()') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.connection_integrations() TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.connection_binding_rows(text,text,text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.connection_binding_rows(text,text,text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.analyse_connection_bindings(text,text,text,text,jsonb)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.analyse_connection_bindings(text,text,text,text,jsonb) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.reserve_connection_bindings(text,text,text,text,jsonb)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.reserve_connection_bindings(text,text,text,text,jsonb) TO "wamn_control"; END IF; END $connection_acl$;
   END IF;
 END $control_surface$;
 
@@ -1587,3 +1637,12 @@ DO $file_connection_reader_acl$ BEGIN
   GRANT EXECUTE ON FUNCTION registry.lookup_file_connection(text,text,text,text,text,text,bigint) TO wamn_conn_reader;
  END IF;
 END $file_connection_reader_acl$;
+
+ALTER FUNCTION registry.publish_integration(text,text) OWNER TO wamn_system;
+ALTER FUNCTION registry.connector_pin_error(text,text) OWNER TO wamn_system;
+REVOKE ALL ON FUNCTION registry.publish_integration(text,text), registry.connector_pin_error(text,text) FROM PUBLIC;
+DO $connector_acl$ BEGIN
+ IF to_regrole('wamn_control') IS NOT NULL THEN
+  GRANT EXECUTE ON FUNCTION registry.publish_integration(text,text), registry.connector_pin_error(text,text) TO wamn_control;
+ END IF;
+END $connector_acl$;

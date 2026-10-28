@@ -137,6 +137,9 @@ pub async fn expand(
                             && binding.alias == requirement.store_alias
                     })
                     .context("connection_unbound")?;
+                if binding.resolved.is_none() {
+                    continue;
+                }
                 targets.push(ConnectionTarget {
                     instance_id: super::bindings::key(application, &binding.alias),
                     manifest_digest: release.digest.clone(),
@@ -150,11 +153,13 @@ pub async fn expand(
     }
     let connections = bindings
         .into_iter()
-        .map(|binding| {
-            (
-                super::bindings::key(&binding.application, &binding.alias),
-                binding.resolved,
-            )
+        .filter_map(|binding| {
+            binding.resolved.map(|resolved| {
+                (
+                    super::bindings::key(&binding.application, &binding.alias),
+                    resolved,
+                )
+            })
         })
         .collect();
     materialize_connections(&project_url, document, &connections, &targets).await?;

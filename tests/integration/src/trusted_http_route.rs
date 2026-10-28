@@ -270,6 +270,7 @@ async fn build_with_credentials(
                     [(
                         "orders".to_owned(),
                         wamn_catalog::ApplicationDefinition {
+                            connectors: std::collections::BTreeMap::new(),
                             connections: std::collections::BTreeMap::new(),
                             packages: [PACKAGE.to_owned()].into(),
                         },

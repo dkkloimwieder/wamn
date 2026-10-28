@@ -614,6 +614,12 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         .get_mut(PACKAGE)
         .context("application")?
         .connections = [("upstream".into(), "upstream".into())].into();
+    document
+        .applications
+        .get_mut(PACKAGE)
+        .context("application")?
+        .connectors
+        .insert("http".into(), "host".into());
     // Match the write mode declared by org_bindings::publish_declarations.
     let package =
         wamn_schema_generator::PackageManifest::from_slice(&serde_json::to_vec(&json!({
@@ -627,10 +633,12 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     let reserved = wamn_control::environment::bindings::reserve(&tx, &document, &[package]).await?;
     tx.commit().await?;
     seed_task.abort();
-    let upstream = &reserved
+    let upstream = reserved
         .first()
         .context("reserved upstream connection")?
-        .resolved;
+        .resolved
+        .as_ref()
+        .context("host HTTP fixture")?;
     let input = wamn_control::bind_connection::prepare_org_instance(upstream)?;
     let mut bindings = Vec::new();
     for component in &published.manifest.components {

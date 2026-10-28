@@ -73,6 +73,7 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
             [(
                 "purchasing".to_owned(),
                 wamn_catalog::ApplicationDefinition {
+                    connectors: std::collections::BTreeMap::new(),
                     connections: std::collections::BTreeMap::new(),
                     packages: ["status_test".to_owned()].into(),
                 },

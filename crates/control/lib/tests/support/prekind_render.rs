@@ -295,6 +295,7 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
         applications: [(
             project.into(),
             wamn_catalog::ApplicationDefinition {
+                connectors: std::collections::BTreeMap::new(),
                 connections: std::collections::BTreeMap::new(),
                 packages: manifest
                     .release

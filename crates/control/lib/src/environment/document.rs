@@ -146,6 +146,15 @@ impl EnvironmentDocument {
         }
         ensure!(!self.target.trim().is_empty(), "target is empty");
         for (application, definition) in &self.applications {
+            for (integration, pin) in &definition.connectors {
+                ensure!(
+                    !integration.is_empty(),
+                    "application {application} has an empty connector code"
+                );
+                if pin != "host" {
+                    wamn_package_artifact::ensure_digest(pin)?;
+                }
+            }
             for (alias, name) in &definition.connections {
                 ensure!(
                     !alias.is_empty(),
@@ -207,8 +216,14 @@ impl EnvironmentDocument {
                 .map(|(alias, name)| format!("{} = {}", quote(alias), quote(name)))
                 .collect::<Vec<_>>()
                 .join(", ");
+            let connectors = application
+                .connectors
+                .iter()
+                .map(|(code, pin)| format!("{} = {}", quote(code), quote(pin)))
+                .collect::<Vec<_>>()
+                .join(", ");
             lines.push(format!(
-                "        {} = {{packages = [{}], connections = {{{bindings}}}}}",
+                "        {} = {{packages = [{}], connections = {{{bindings}}}, connectors = {{{connectors}}}}}",
                 quote(name),
                 packages.join(", ")
             ));
@@ -242,9 +257,25 @@ mod tests {
             "route_host": "wms.acme.example",
             "policy": "prod",
             "target": "cloud",
-            "applications": {"wms": {"packages": ["wamn_wms"], "connections": {"erp": "shared_erp", "files": "files"}}},
+            "applications": {"wms": {"packages": ["wamn_wms"], "connections": {"erp": "shared_erp", "files": "files"}, "connectors": {"http":"host", "fixture":format!("sha256:{}", "c".repeat(64))}}},
             "floors": {"wamn_wms": "2.4.0"}
         })
+    }
+
+    #[test]
+    fn connector_pins_refuse_partial_digests_and_values() {
+        for pin in [
+            json!("latest"),
+            json!("sha256:abcd"),
+            json!({"digest":"host"}),
+            json!(42),
+        ] {
+            let mut input = document();
+            input["applications"]["wms"]["connectors"]["http"] = pin;
+            assert!(EnvironmentDocument::from_json(input.to_string().as_bytes()).is_err());
+        }
+        let parsed = EnvironmentDocument::from_json(document().to_string().as_bytes()).unwrap();
+        assert_eq!(parsed.applications["wms"].connectors["http"], "host");
     }
 
     #[test]

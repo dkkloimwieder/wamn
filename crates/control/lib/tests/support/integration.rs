@@ -968,6 +968,7 @@ async fn publish(
         applications: [(
             connector.to_owned(),
             wamn_catalog::ApplicationDefinition {
+                connectors: std::collections::BTreeMap::new(),
                 connections: std::collections::BTreeMap::new(),
                 packages: manifests.iter().map(|m| m.package.id.clone()).collect(),
             },
@@ -1089,6 +1090,7 @@ pub(super) fn fixture_document(connector: &str) -> EnvironmentDocument {
         applications: BTreeMap::from([(
             connector.to_owned(),
             wamn_catalog::ApplicationDefinition {
+                connectors: std::collections::BTreeMap::new(),
                 connections: std::collections::BTreeMap::new(),
                 packages: [connector, "wamn_integration", CONSUMER]
                     .map(str::to_owned)

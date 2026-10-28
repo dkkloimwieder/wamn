@@ -274,6 +274,7 @@ fn publication_composes_only_the_application_that_covers_the_routes() {
     let applications = [(
         "fixture".into(),
         wamn_catalog::ApplicationDefinition {
+            connectors: std::collections::BTreeMap::new(),
             connections: std::collections::BTreeMap::new(),
             packages: [fact.scope.package_id.clone()].into(),
         },

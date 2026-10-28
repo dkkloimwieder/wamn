@@ -1556,6 +1556,14 @@ async fn assert_definer_grantees(client: &Client) -> anyhow::Result<()> {
             "catalog.connection_upgrade_bindings(text, text)",
             &["wamn_administration"],
         ),
+        (
+            "registry.publish_integration(text, text)",
+            &["wamn_control"],
+        ),
+        (
+            "registry.connector_pin_error(text, text)",
+            &["wamn_control"],
+        ),
         ("registry.connection_org_exists(text)", CONNECTION),
         ("registry.connection_integration_exists(text)", CONNECTION),
         ("registry.connection_system_rows(text)", CONNECTION),
@@ -1883,7 +1891,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
     let applied_document = wamn_control::environment::document::EnvironmentDocument::from_json(
         &serde_json::to_vec(&json!({
             "org": ORG,"project":"billing","env":"dev","target":"cloud","release":"none","route_host":"billing.example","policy":"dev",
-            "applications":{"fixture":{"packages":["fixture"],"connections":{"upstream":"erp"}}}
+            "applications":{"fixture":{"packages":["fixture"],"connectors":{"http":"host"},"connections":{"upstream":"erp"}}}
         }))?,
     )?;
     let package = wamn_schema_generator::PackageManifest::from_slice(&serde_json::to_vec(

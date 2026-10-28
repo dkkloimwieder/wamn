@@ -419,6 +419,7 @@ async fn install_release(
             applications: [(
                 "receiving".to_owned(),
                 wamn_catalog::ApplicationDefinition {
+                    connectors: std::collections::BTreeMap::new(),
                     connections: std::collections::BTreeMap::new(),
                     packages: manifest
                         .release

@@ -27,6 +27,7 @@ pub mod event_streams;
 pub mod git_source;
 pub mod ident;
 pub mod identity_issuer;
+pub mod integration;
 pub mod invite;
 pub mod kubectl;
 pub mod org_connection;

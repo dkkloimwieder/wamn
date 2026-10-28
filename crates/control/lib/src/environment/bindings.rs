@@ -54,7 +54,10 @@ pub struct Binding {
     pub integration: String,
     pub mode: ConnectionMode,
     pub exclusive: bool,
-    pub resolved: crate::org_connection::ResolvedConnection,
+    /// The selected artifact digest, or `host`.
+    pub connector: String,
+    /// Host adapters use the existing connection materialization path.
+    pub resolved: Option<crate::org_connection::ResolvedConnection>,
 }
 
 /// Check target identity, declarations, project enablement and all three scopes.
@@ -104,6 +107,7 @@ async fn requests(
             requests.push(serde_json::json!({
                 "application": application, "alias": alias, "name": name,
                 "integration": declaration.integration, "mode": declaration.mode,
+                "connector": definition.connectors.get(&declaration.integration),
             }));
         }
     }
@@ -136,6 +140,10 @@ async fn resolve(
     let result: serde_json::Value = serde_json::from_str(row.get(0)).expect("PostgreSQL JSON");
     if let Some(code) = result["error"].as_str() {
         let code = match code {
+            "connector_unpinned" => "connector_unpinned",
+            "connector_form_mismatch" => "connector_form_mismatch",
+            "connector_digest_unpublished" => "connector_digest_unpublished",
+            "integration_unavailable" => "integration_unavailable",
             "target_not_found" => "target_not_found",
             "environment_target_changed" => "environment_target_changed",
             "invalid_input" => "invalid_input",
@@ -153,18 +161,45 @@ async fn resolve(
             result["context"].as_str().unwrap_or("bindings"),
         ));
     }
+    for (application, definition) in &document.applications {
+        for (integration, pin) in &definition.connectors {
+            let row = system
+                .query_one(
+                    "SELECT registry.connector_pin_error($1,$2)",
+                    &[integration, pin],
+                )
+                .await?;
+            if let Some(code) = row.get::<_, Option<String>>(0) {
+                let code = match code.as_str() {
+                    "integration_not_found" => "integration_not_found",
+                    "connector_form_mismatch" => "connector_form_mismatch",
+                    "connector_digest_unpublished" => "connector_digest_unpublished",
+                    _ => "integration_unavailable",
+                };
+                return Err(refuse(code, format!("{application}.{integration}")));
+            }
+        }
+    }
     result["bindings"]
         .as_array()
         .expect("database returns bindings")
         .iter()
         .map(|row| {
             let integration = row["integration"].as_str().expect("integration");
-            let requirement_type = wamn_catalog::RequirementType::for_integration(integration)
-                .ok_or_else(|| refuse("integration_unavailable", integration))?;
+            let requirement_type = if row["form"] == "wasm" {
+                None
+            } else {
+                Some(
+                    wamn_catalog::RequirementType::for_integration(integration)
+                        .ok_or_else(|| refuse("integration_unavailable", integration))?,
+                )
+            };
             let parameters = row["parameters"].clone();
-            requirement_type
-                .check_definition(&parameters)
-                .map_err(|error| refuse("connection_definition_invalid", error))?;
+            if let Some(requirement_type) = requirement_type {
+                requirement_type
+                    .check_definition(&parameters)
+                    .map_err(|error| refuse("connection_definition_invalid", error))?;
+            }
             let generation = row["generation"].as_i64().expect("generation");
             let name = row["name"].as_str().expect("connection name");
             Ok(Binding {
@@ -179,13 +214,19 @@ async fn resolve(
                     ConnectionMode::Write
                 },
                 exclusive: row["exclusive"].as_bool().expect("exclusive"),
-                resolved: crate::org_connection::ResolvedConnection {
-                    requirement_type,
-                    definition: parameters,
-                    credential_handle: (integration != "gcs")
-                        .then(|| format!("org:{}:{name}@{generation}", document.org)),
-                    org_connection_name: Some(name.into()),
-                },
+                connector: row["connector"]
+                    .as_str()
+                    .expect("validated connector pin")
+                    .into(),
+                resolved: requirement_type.map(|requirement_type| {
+                    crate::org_connection::ResolvedConnection {
+                        requirement_type,
+                        definition: parameters,
+                        credential_handle: (integration != "gcs")
+                            .then(|| format!("org:{}:{name}@{generation}", document.org)),
+                        org_connection_name: Some(name.into()),
+                    }
+                }),
             })
         })
         .collect()

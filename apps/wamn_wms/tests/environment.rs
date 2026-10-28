@@ -721,6 +721,7 @@ pub async fn publish(
             applications: BTreeMap::from([(
                 package.package_id().to_owned(),
                 wamn_catalog::ApplicationDefinition {
+                    connectors: std::collections::BTreeMap::new(),
                     connections: std::collections::BTreeMap::new(),
                     packages: BTreeSet::from([package.package_id().to_owned()]),
                 },
@@ -814,6 +815,7 @@ async fn author_event_workflow(
     let declared = BTreeMap::from([(
         "wamn_wms".into(),
         wamn_catalog::ApplicationDefinition {
+            connectors: std::collections::BTreeMap::new(),
             connections: std::collections::BTreeMap::new(),
             packages: BTreeSet::from(["wamn_wms".into()]),
         },

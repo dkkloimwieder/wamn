@@ -18,7 +18,7 @@ fn document() -> EnvironmentDocument {
         &serde_json::to_vec(&json!({
             "org":"acme", "project":"one", "env":"dev", "target":"cloud",
             "release":"none", "route_host":"one.example", "policy":"dev",
-            "applications":{"app":{"packages":["fixture"], "connections":{"upstream":"erp"}}}
+            "applications":{"app":{"packages":["fixture"], "connectors":{"http":"host", "gcs":"host"}, "connections":{"upstream":"erp"}}}
         }))
         .unwrap(),
     )
@@ -381,8 +381,16 @@ async fn apply_refuses_each_invalid_binding_and_target_change() {
     let files = bindings::analyse(&authority, &doc, &[package("gcs")])
         .await
         .unwrap();
-    assert!(files[0].resolved.credential_handle.is_none());
-    wamn_control::bind_connection::prepare_org_instance(&files[0].resolved).unwrap();
+    assert!(
+        files[0]
+            .resolved
+            .as_ref()
+            .unwrap()
+            .credential_handle
+            .is_none()
+    );
+    wamn_control::bind_connection::prepare_org_instance(files[0].resolved.as_ref().unwrap())
+        .unwrap();
     authority_driver.abort();
     driver.abort();
 }
@@ -479,7 +487,7 @@ async fn two_packages_bind_distinct_aliases_to_one_shared_org_connection() {
         assert_eq!(binding.application, "app");
         assert_eq!(binding.connection_id, id);
     }
-    let snapshot = [("erp".into(), resolved[0].resolved.clone())].into();
+    let snapshot = [("erp".into(), resolved[0].resolved.clone().unwrap())].into();
     let local = wamn_control::environment::analyse::resolve_connections(&doc, &snapshot).unwrap();
     assert_eq!(local.len(), 2);
     assert_eq!(local["app/netsuite"], local["app/upstream"]);
@@ -668,4 +676,142 @@ async fn projection_retains_references_and_reapply_repairs_without_history_write
             .get::<_, i64>(0),
         history
     );
+}
+
+async fn connector_pin_case(pin: Option<&str>, expected: Option<&str>) {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_control_provision::test_database::system();
+    let mut system = connect(database.url()).await.unwrap();
+    system
+        .batch_execute(&format!(
+            "SET ROLE wamn_system; BEGIN; {} INSERT INTO registry.integrations(code,form,exclusive) VALUES ('fixture','wasm',false); COMMIT;",
+            wamn_control_provision::test_database::seed_org_project_env_sql("acme", "one", "dev"),
+        ))
+        .await
+        .unwrap();
+    let digest = format!("sha256:{}", "a".repeat(64));
+    let tx = system.transaction().await.unwrap();
+    tx.batch_execute("SET LOCAL ROLE wamn_control")
+        .await
+        .unwrap();
+    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+        wamn_control_provision::PlatformComponent::Provisioning,
+    ))
+    .await
+    .unwrap();
+    tx.query_one(
+        "SELECT registry.publish_integration('fixture',$1)",
+        &[&digest],
+    )
+    .await
+    .unwrap();
+    connections::write_connection(
+        &tx,
+        "acme",
+        &ConnectionWrite {
+            integration: "fixture".into(),
+            external_system: None,
+            name: "erp".into(),
+            transport: "tcp".into(),
+            exchange: "request".into(),
+            parameters: json!({"port":502}),
+            status: "active".into(),
+        },
+        &mut AuthDrops::default(),
+    )
+    .await
+    .unwrap();
+    connections::enable_connection(&tx, "acme", "one", "erp")
+        .await
+        .unwrap();
+    for (scope, name) in [
+        ("org", "acme"),
+        ("project", "one"),
+        ("environment", "one/dev"),
+    ] {
+        connections::allow_integration(&tx, "acme", scope, name, "fixture")
+            .await
+            .unwrap();
+    }
+    tx.commit().await.unwrap();
+    let mut doc = document();
+    let pins = &mut doc.applications.get_mut("app").unwrap().connectors;
+    pins.clear();
+    if let Some(pin) = pin {
+        pins.insert("fixture".into(), pin.into());
+    }
+    let packages = [package("fixture")];
+    let before = system
+        .query_one(
+            "SELECT count(*) FROM registry.environment_connection_binding",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get::<_, i64>(0);
+    let tx = system.transaction().await.unwrap();
+    tx.batch_execute("SET LOCAL ROLE wamn_control")
+        .await
+        .unwrap();
+    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+        wamn_control_provision::PlatformComponent::Provisioning,
+    ))
+    .await
+    .unwrap();
+    let result = bindings::analyse(&tx, &doc, &packages).await;
+    if let Some(expected) = expected {
+        assert_eq!(result.unwrap_err().code, expected);
+        assert_eq!(
+            bindings::reserve(&tx, &doc, &packages)
+                .await
+                .unwrap_err()
+                .code,
+            expected
+        );
+    } else {
+        let binding = result.unwrap().remove(0);
+        assert_eq!(binding.connector, digest);
+        assert!(binding.resolved.is_none());
+        let reserved = bindings::reserve(&tx, &doc, &packages).await.unwrap();
+        assert_eq!(reserved[0].connector, digest);
+    }
+    tx.commit().await.unwrap();
+    let count = system
+        .query_one(
+            "SELECT count(*) FROM registry.environment_connection_binding",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get::<_, i64>(0);
+    assert_eq!(
+        count,
+        if expected.is_some() {
+            before
+        } else {
+            before + 1
+        }
+    );
+}
+
+#[tokio::test]
+async fn apply_refuses_a_bound_connection_without_a_connector_pin() {
+    connector_pin_case(None, Some("connector_unpinned")).await;
+}
+
+#[tokio::test]
+async fn apply_refuses_a_host_pin_for_a_wasm_integration() {
+    connector_pin_case(Some("host"), Some("connector_form_mismatch")).await;
+}
+
+#[tokio::test]
+async fn apply_refuses_an_unpublished_connector_digest() {
+    let digest = format!("sha256:{}", "b".repeat(64));
+    connector_pin_case(Some(&digest), Some("connector_digest_unpublished")).await;
+}
+
+#[tokio::test]
+async fn apply_accepts_and_reserves_a_published_connector_pin() {
+    let digest = format!("sha256:{}", "a".repeat(64));
+    connector_pin_case(Some(&digest), None).await;
 }

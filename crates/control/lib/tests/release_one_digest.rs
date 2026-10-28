@@ -196,6 +196,7 @@ async fn publish_through_publish_release(
             applications: [(
                 "device".into(),
                 wamn_catalog::ApplicationDefinition {
+                    connectors: std::collections::BTreeMap::new(),
                     connections: std::collections::BTreeMap::new(),
                     packages: [manifest.package.id.clone()].into(),
                 },

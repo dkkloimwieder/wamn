@@ -113,6 +113,8 @@ pub struct FloorArtifact {
 pub struct Authorities {
     pub release_name: String,
     pub connections: BTreeMap<String, crate::org_connection::ResolvedConnection>,
+    /// Application-qualified aliases resolved to published wasm connectors.
+    pub connector_bindings: BTreeSet<String>,
     pub policy: Policy,
     pub row: Option<EnvironmentRow>,
     pub project: Option<ProjectState>,
@@ -182,15 +184,22 @@ pub async fn analyse(
     let bindings = super::bindings::analyse(&binding_system, document, &packages).await?;
     let connections = bindings
         .iter()
-        .map(|binding| {
-            (
-                super::bindings::key(&binding.application, &binding.alias),
-                binding.resolved.clone(),
-            )
+        .filter_map(|binding| {
+            binding.resolved.clone().map(|resolved| {
+                (
+                    super::bindings::key(&binding.application, &binding.alias),
+                    resolved,
+                )
+            })
         })
         .collect();
     let authorities = Authorities {
         release_name,
+        connector_bindings: bindings
+            .iter()
+            .filter(|binding| binding.resolved.is_none())
+            .map(|binding| super::bindings::key(&binding.application, &binding.alias))
+            .collect(),
         connections,
         policy,
         row,
@@ -912,7 +921,9 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
             .unwrap_or("");
             for requirement in &component.descriptor.connections {
                 let key = super::bindings::key(application, &requirement.store_alias);
-                if !authorities.connections.contains_key(&key) {
+                if !authorities.connections.contains_key(&key)
+                    && !authorities.connector_bindings.contains(&key)
+                {
                     refusals.push(format!(
                         "connection_unbound: {key} is required by release {}",
                         release.digest
@@ -1173,6 +1184,7 @@ mod tests {
         Authorities {
             release_name: "r-prod-0".to_owned(),
             connections: BTreeMap::new(),
+            connector_bindings: BTreeSet::new(),
             policy: Policy {
                 name: "prod".to_owned(),
                 readiness_budget_seconds: 600,
@@ -1229,6 +1241,7 @@ mod tests {
         document.applications.insert(
             "app".into(),
             wamn_catalog::ApplicationDefinition {
+                connectors: std::collections::BTreeMap::new(),
                 packages: ["fixture".into()].into(),
                 connections: [("erp".into(), "shared".into())].into(),
             },
@@ -1366,6 +1379,7 @@ mod tests {
                 (
                     (*name).to_owned(),
                     wamn_catalog::ApplicationDefinition {
+                        connectors: std::collections::BTreeMap::new(),
                         connections: std::collections::BTreeMap::new(),
                         packages: packages.iter().map(|id| (*id).to_owned()).collect(),
                     },

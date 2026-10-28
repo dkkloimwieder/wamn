@@ -178,6 +178,7 @@ pub fn declared(
     [(
         application.to_owned(),
         wamn_catalog::ApplicationDefinition {
+            connectors: std::collections::BTreeMap::new(),
             connections: std::collections::BTreeMap::new(),
             packages: manifest
                 .release

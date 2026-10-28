@@ -2301,6 +2301,7 @@ fn fixture_document(env: &str, route_host: &str, digest: &str) -> EnvironmentDoc
         applications: std::collections::BTreeMap::from([(
             PACKAGE.to_owned(),
             wamn_catalog::ApplicationDefinition {
+                connectors: [("s3".into(), "host".into())].into(),
                 connections: [("labels".to_owned(), format!("labels-{env}"))].into(),
                 packages: std::collections::BTreeSet::from([
                     PACKAGE.to_owned(),

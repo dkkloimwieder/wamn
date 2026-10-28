@@ -108,10 +108,8 @@ async fn binding_inputs(
     Ok(bindings
         .into_iter()
         .map(|binding| {
-            (
-                binding.resolved.org_connection_name.clone().unwrap(),
-                binding.resolved,
-            )
+            let resolved = binding.resolved.expect("host HTTP fixture");
+            (resolved.org_connection_name.clone().unwrap(), resolved)
         })
         .collect())
 }
@@ -197,7 +195,7 @@ fn document(project: &str) -> EnvironmentDocument {
         json!({
             "org": "acme", "project": project, "env": "dev", "release": "none",
             "target": "cloud", "route_host": "app.acme.example", "policy": "dev",
-            "applications": {"erp": {"packages": ["org_fixture"], "connections": {"erp": "shared_erp"}}}
+            "applications": {"erp": {"packages": ["org_fixture"], "connectors": {"http":"host"}, "connections": {"erp": "shared_erp"}}}
         })
         .to_string()
         .as_bytes(),

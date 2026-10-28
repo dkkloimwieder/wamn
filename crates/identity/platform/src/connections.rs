@@ -259,20 +259,31 @@ pub async fn write_connection(
         &row.status,
     )
     .await?;
-    let requirement = wamn_catalog::RequirementType::for_integration(&row.integration)
-        .ok_or_else(|| refuse("integration_unavailable", "integration"))?;
-    requirement
-        .check_definition(&row.parameters)
-        .map_err(|_| refuse("invalid_input", "parameters"))?;
-    if requirement == wamn_catalog::RequirementType::Blobstore
-        && row
-            .parameters
-            .get("provider")
-            .and_then(Value::as_str)
-            .unwrap_or("s3")
-            != row.integration
-    {
-        return Err(refuse("integration_mismatch", "parameters"));
+    let form: String = tx
+        .query_one(
+            "SELECT form FROM registry.connection_integrations() WHERE code=$1",
+            &[&row.integration],
+        )
+        .await?
+        .get(0);
+    if form == "host" {
+        let requirement = wamn_catalog::RequirementType::for_integration(&row.integration)
+            .ok_or_else(|| refuse("integration_unavailable", "integration"))?;
+        requirement
+            .check_definition(&row.parameters)
+            .map_err(|_| refuse("invalid_input", "parameters"))?;
+        if requirement == wamn_catalog::RequirementType::Blobstore
+            && row
+                .parameters
+                .get("provider")
+                .and_then(Value::as_str)
+                .unwrap_or("s3")
+                != row.integration
+        {
+            return Err(refuse("integration_mismatch", "parameters"));
+        }
+    } else if form != "wasm" {
+        return Err(refuse("integration_unavailable", "integration"));
     }
     if !matches!(row.exchange.as_str(), "request" | "event") || row.transport.is_empty() {
         return Err(refuse("invalid_input", "transport"));

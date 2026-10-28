@@ -105,6 +105,12 @@ pub async fn bind(
         .context("fixture application")?
         .connections
         .insert(alias.into(), name.into());
+    document
+        .applications
+        .get_mut(application)
+        .context("fixture application")?
+        .connectors
+        .insert(integration.into(), "host".into());
     driver.abort();
     Ok(())
 }

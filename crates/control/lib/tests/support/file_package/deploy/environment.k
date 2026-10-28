@@ -11,6 +11,7 @@ environment.Environment {
     applications = {
         files = {
             packages = ["file_fixture"]
+            connectors = {s3 = "host"}
             connections = {
                 files = "file-store"
                 files_read = "file-store"

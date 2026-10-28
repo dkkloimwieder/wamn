@@ -17,6 +17,7 @@
 //! the host's included. It depends on neither `wamn-runtime` nor `wamn-engine`,
 //! so it stays small; the artifact reference rule is in `wamn-catalog`.
 
+pub mod connector;
 pub mod registry_credentials;
 pub mod registry_pull;
 

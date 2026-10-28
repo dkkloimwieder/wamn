@@ -16,6 +16,7 @@ pub mod delivery_verbs;
 pub mod dev;
 pub mod env_verbs;
 pub mod identity_verbs;
+pub mod integration_verbs;
 #[cfg(feature = "ops")]
 pub mod ops_verbs;
 pub mod package_verbs;

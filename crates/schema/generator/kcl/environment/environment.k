@@ -13,6 +13,10 @@ schema Application:
     """An application of the environment: the packages of the release that belong to it."""
     packages: [str]
     connections: {str:str} = {}
+    connectors: {str:str} = {}
+
+    check:
+        all code, pin in connectors {len(code) > 0 and (pin == "host" or regex.match(pin, r"^sha256:[0-9a-f]{64}$"))}, "connectors require host or a full sha256: digest"
 
 schema Environment:
     org: str

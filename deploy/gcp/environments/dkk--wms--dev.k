@@ -9,8 +9,8 @@ environment.Environment {
     route_host = "wms.wamn.dev"
     policy = "dev"
     applications = {
-        "wamn_wms" = {packages = ["wamn_wms"], connections = {labels = "wms-labels"}}
-        rest = {packages = ["rest_connector", "rest_consumer_fixture", "wamn_integration"], connections = {upstream = "rest-fixture"}}
+        "wamn_wms" = {packages = ["wamn_wms"], connections = {labels = "wms-labels"}, connectors = {gcs = "host"}}
+        rest = {packages = ["rest_connector", "rest_consumer_fixture", "wamn_integration"], connections = {upstream = "rest-fixture"}, connectors = {http = "host"}}
     }
     floors = {
     }

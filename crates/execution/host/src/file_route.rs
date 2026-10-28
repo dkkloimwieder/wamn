@@ -1255,6 +1255,7 @@ mod tests {
                 ReleaseScope::new("acme", "dev").with_applications(BTreeMap::from([(
                     "orders".into(),
                     ApplicationDefinition {
+                        connectors: std::collections::BTreeMap::new(),
                         packages: BTreeSet::from(["app".into()]),
                         connections: BTreeMap::from([("documents".into(), "store".into())]),
                     },

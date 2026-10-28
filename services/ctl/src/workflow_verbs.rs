@@ -552,6 +552,7 @@ mod tests {
         let applications = std::collections::BTreeMap::from([(
             "overlay".to_owned(),
             wamn_catalog::ApplicationDefinition {
+                connectors: std::collections::BTreeMap::new(),
                 connections: std::collections::BTreeMap::new(),
                 packages: ["base".to_owned(), "overlay".to_owned()].into(),
             },

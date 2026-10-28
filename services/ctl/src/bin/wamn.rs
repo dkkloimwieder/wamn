@@ -18,6 +18,8 @@ struct Cli {
 enum Command {
     /// Build packages: generate every output from wamn.k into target/wamn.
     Build(wamn_ctl::build_verbs::BuildArgs),
+    /// Build or publish a wasm connector.
+    Integration(wamn_ctl::integration_verbs::IntegrationArgs),
     /// Run the package development loop, or stand up the environment it needs.
     #[command(args_conflicts_with_subcommands = true)]
     Dev(Box<DevArgs>),
@@ -78,6 +80,7 @@ async fn main() -> anyhow::Result<()> {
     }
     match Cli::parse().command {
         Command::Build(args) => wamn_ctl::build_verbs::run(args).await,
+        Command::Integration(args) => wamn_ctl::integration_verbs::run(args).await,
         Command::Web(args) => wamn_ctl::web::run(args).await,
         Command::Inspect(args) => wamn_ctl::artifact_verbs::inspect(args).await,
         Command::Diff(args) => wamn_ctl::artifact_verbs::diff(args).await,
@@ -106,6 +109,34 @@ fn main() -> anyhow::Result<()> {
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn integration_build_and_publish_parse() {
+        assert!(matches!(
+            Cli::try_parse_from(["wamn", "integration", "build", "fixture"])
+                .unwrap()
+                .command,
+            Command::Integration(_)
+        ));
+        assert!(matches!(
+            Cli::try_parse_from([
+                "wamn",
+                "integration",
+                "publish",
+                "fixture",
+                "--artifact-base",
+                "localhost/connectors",
+                "--registry-auth-file",
+                "/tmp/auth.json",
+                "--database-url",
+                "postgresql://control/system",
+            ])
+            .unwrap()
+            .command,
+            Command::Integration(_)
+        ));
+        assert!(Cli::try_parse_from(["wamn", "integration", "build"]).is_err());
+    }
 
     #[test]
     fn reset_parses_without_run_inputs() {

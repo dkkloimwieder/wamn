@@ -1603,8 +1603,12 @@ async fn prepare_local_bindings(
                         requirement.store_alias()
                     )
                 })?;
+            let resolved = binding
+                .resolved
+                .as_ref()
+                .context("local binding requires a host integration")?;
             anyhow::ensure!(
-                &binding.resolved.requirement_type.descriptor() == requirement.requirement(),
+                &resolved.requirement_type.descriptor() == requirement.requirement(),
                 "local instance type differs from the declared requirement"
             );
             prepared.push(PreparedLocalBinding {
@@ -1613,9 +1617,7 @@ async fn prepare_local_bindings(
                 requirement: requirement.clone(),
                 // A candidate pins an immutable org generation, including across rotation.
                 instance_id: format!("{}@{}", binding.connection_id, binding.generation),
-                instance: Some(crate::bind_connection::prepare_org_instance(
-                    &binding.resolved,
-                )?),
+                instance: Some(crate::bind_connection::prepare_org_instance(resolved)?),
             });
         }
     }
