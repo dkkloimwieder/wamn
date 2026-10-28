@@ -325,20 +325,22 @@ fn paths<'a>(fields: &[&'a FieldIr]) -> Vec<&'a str> {
 fn columns_are_the_served_result_leaves_in_contract_order() {
     let ir = release();
     let plan = ClientPlan::from_ir(&ir);
-    for name in ["create", "get", "query", "update"] {
-        assert_eq!(
-            paths(&screen(&plan, name).columns),
-            [
-                "code",
-                "created_at",
-                "edit_version",
-                "id",
-                "maker_id",
-                "note"
-            ],
-            "{name}"
-        );
+    let fields = [
+        "code",
+        "created_at",
+        "edit_version",
+        "id",
+        "maker_id",
+        "note",
+    ];
+    for name in ["create", "get", "update"] {
+        assert_eq!(paths(&screen(&plan, name).columns), fields, "{name}");
     }
+    // A feeding list read also serves the snapshot version of each row.
+    assert_eq!(
+        paths(&screen(&plan, "query").columns),
+        [&fields[..], &["row_version"]].concat()
+    );
     assert_eq!(paths(&screen(&plan, "delete").columns), ["outcome"]);
     assert_eq!(
         paths(&screen(&plan, "archive").columns),
