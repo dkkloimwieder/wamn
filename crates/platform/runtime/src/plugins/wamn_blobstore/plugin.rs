@@ -228,6 +228,11 @@ impl WamnBlobstore {
         let refused = |message: &str| {
             FileStorageError::new(FileStorageErrorKind::Refused, "open", message.to_owned())
         };
+        let release = self
+            .release
+            .as_ref()
+            .filter(|release| release.scope().env_key == self.env_key.as_ref())
+            .ok_or_else(|| refused("file storage requires this environment's loaded release"))?;
         if generation < 1 {
             return Err(refused("connection generation must be positive"));
         }
@@ -321,6 +326,7 @@ impl WamnBlobstore {
             Some(signer),
             bound.cdn_host.as_deref(),
             generation,
+            &release.scope().environment,
         )
     }
 

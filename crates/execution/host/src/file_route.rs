@@ -229,13 +229,10 @@ impl FileConnections for RegistryFileConnections {
             )
         })?;
         let mut generations = Vec::new();
-        for row in client.query("SELECT connection_id::text, connection_name, generation, parameters, shared FROM registry.lookup_file_generations($1,$2,$3)", &[&self.org, &self.project, &self.environment]).await? {
-            let connection = FileConnection {
+        for row in client.query("SELECT connection_id::text, connection_name, generation, parameters FROM registry.lookup_file_generations($1,$2,$3)", &[&self.org, &self.project, &self.environment]).await? {
+            generations.push(FileConnection {
                 id: row.try_get(0)?, name: row.try_get(1)?, generation: row.try_get(2)?, definition: row.try_get(3)?, read_only: false,
-            };
-            if row.try_get::<_, bool>(4)? {
-                tracing::warn!(connection_id = %connection.id, generation = connection.generation, "file collector skipped a store shared with another environment");
-            } else { generations.push(connection); }
+            });
         }
         Ok(generations)
     }
@@ -502,7 +499,7 @@ impl FileRoutes {
             )
             .await?;
         let body = store
-            .get(id)
+            .get(&row.blob_key)
             .await?
             .into_stream()
             .map_ok(Frame::data)
@@ -544,7 +541,7 @@ impl FileRoutes {
                 if deleted != 1 { return Err(refused(FileRefusal::NotFound, "file_id")); }
                 Ok::<_, FileError>(())
             }).await.map_err(|error| failed("catalog", error))??;
-        if let Err(error) = store.delete(request.file_id).await {
+        if let Err(error) = store.delete(&row.blob_key).await {
             // Metadata deletion is committed. The collector (wamn-2wdsf.4)
             // owns orphan cleanup, so this path does not retry object deletion.
             tracing::warn!(%error, file_id = %request.file_id, connection_id = %row.connection_id,
@@ -586,7 +583,7 @@ impl FileRoutes {
         let published = request.exposure == Exposure::Public && row.exposure != Exposure::Public;
         let url = change_exposure(
             &store,
-            request.file_id,
+            &row.blob_key,
             row.exposure,
             row.url,
             request.exposure,
@@ -601,7 +598,7 @@ impl FileRoutes {
         if let Err(error) = written {
             // A confirmed rollback can remove a newly copied public object.
             // A lost COMMIT answer remains uncertain and reaches the caller above.
-            if published && let Err(cleanup) = store.unexpose(request.file_id).await {
+            if published && let Err(cleanup) = store.unexpose(&row.blob_key).await {
                 tracing::warn!(%cleanup, file_id = %request.file_id, "public copy cleanup after catalog rollback failed");
             }
             return Err(error);
@@ -674,7 +671,10 @@ impl FileRoutes {
                 connection.read_only,
             )
             .await?;
-        store.signed_url(id, lifetime).await.map_err(Into::into)
+        store
+            .signed_url(&row.blob_key, lifetime)
+            .await
+            .map_err(Into::into)
     }
 
     pub(crate) async fn handle(
@@ -808,21 +808,21 @@ impl FileRoutes {
 
 #[async_trait::async_trait]
 trait FilePublication: Send + Sync {
-    async fn publish(&self, id: Uuid) -> Result<String, FileError>;
-    async fn unpublish(&self, id: Uuid) -> Result<(), FileError>;
+    async fn publish(&self, blob_key: &str) -> Result<String, FileError>;
+    async fn unpublish(&self, blob_key: &str) -> Result<(), FileError>;
 }
 #[async_trait::async_trait]
 impl FilePublication for FileStore {
-    async fn publish(&self, id: Uuid) -> Result<String, FileError> {
-        self.expose(id).await.map_err(Into::into)
+    async fn publish(&self, blob_key: &str) -> Result<String, FileError> {
+        self.expose(blob_key).await.map_err(Into::into)
     }
-    async fn unpublish(&self, id: Uuid) -> Result<(), FileError> {
-        self.unexpose(id).await.map_err(Into::into)
+    async fn unpublish(&self, blob_key: &str) -> Result<(), FileError> {
+        self.unexpose(blob_key).await.map_err(Into::into)
     }
 }
 async fn change_exposure(
     store: &impl FilePublication,
-    id: Uuid,
+    blob_key: &str,
     current: Exposure,
     url: Option<String>,
     requested: Exposure,
@@ -836,10 +836,10 @@ async fn change_exposure(
                 )
             });
         }
-        Ok(Some(store.publish(id).await?))
+        Ok(Some(store.publish(blob_key).await?))
     } else {
         // Repeat deletion after a prior failed metadata update as well.
-        store.unpublish(id).await?;
+        store.unpublish(blob_key).await?;
         Ok(None)
     }
 }
@@ -1594,11 +1594,11 @@ mod tests {
     }
     #[async_trait::async_trait]
     impl FilePublication for Publication {
-        async fn publish(&self, _: Uuid) -> Result<String, FileError> {
+        async fn publish(&self, _: &str) -> Result<String, FileError> {
             self.calls.lock().unwrap().push("publish");
             Ok("https://new.test/file".into())
         }
-        async fn unpublish(&self, _: Uuid) -> Result<(), FileError> {
+        async fn unpublish(&self, _: &str) -> Result<(), FileError> {
             self.calls.lock().unwrap().push("unpublish");
             Ok(())
         }
@@ -1606,14 +1606,14 @@ mod tests {
     #[tokio::test]
     async fn exposure_transitions_retain_public_urls_and_repeat_origin_deletion() {
         let store = Publication::default();
-        let id = Uuid::new_v4();
-        let url = change_exposure(&store, id, Exposure::Application, None, Exposure::Public)
+        let key = "dev/_wamn_files/live/fixture";
+        let url = change_exposure(&store, key, Exposure::Application, None, Exposure::Public)
             .await
             .unwrap();
         assert_eq!(url.as_deref(), Some("https://new.test/file"));
         let url = change_exposure(
             &store,
-            id,
+            key,
             Exposure::Public,
             Some("https://old.test/file".into()),
             Exposure::Public,
@@ -1622,13 +1622,13 @@ mod tests {
         .unwrap();
         assert_eq!(url.as_deref(), Some("https://old.test/file"));
         assert!(
-            change_exposure(&store, id, Exposure::Public, url, Exposure::Private)
+            change_exposure(&store, key, Exposure::Public, url, Exposure::Private)
                 .await
                 .unwrap()
                 .is_none()
         );
         assert!(
-            change_exposure(&store, id, Exposure::Private, None, Exposure::Private)
+            change_exposure(&store, key, Exposure::Private, None, Exposure::Private)
                 .await
                 .unwrap()
                 .is_none()
@@ -1638,7 +1638,7 @@ mod tests {
             ["publish", "unpublish", "unpublish"]
         );
         assert!(
-            change_exposure(&store, id, Exposure::Public, None, Exposure::Public)
+            change_exposure(&store, key, Exposure::Public, None, Exposure::Public)
                 .await
                 .is_err()
         );

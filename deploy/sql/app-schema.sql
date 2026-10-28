@@ -511,7 +511,8 @@ CREATE TABLE platform.file (
     updated_at            timestamptz NOT NULL,
     updated_by            uuid NOT NULL,
     PRIMARY KEY (id),
-    CHECK (blob_key = '_wamn_files/live/' || id::text),
+    CHECK (blob_key = '_wamn_files/live/' || id::text
+        OR blob_key ~ ('^[a-z0-9-]+/_wamn_files/live/' || id::text || '$')),
     CHECK ((exposure = 'public') = (url IS NOT NULL)),
     CHECK (url IS NULL OR url <> '')
 );

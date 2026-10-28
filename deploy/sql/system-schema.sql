@@ -1593,22 +1593,11 @@ CREATE TRIGGER wamn_record_history_stamp
 -- The collector needs generations after their last file row disappears.
 -- This reader returns parameters only, with the same login scope as file reads.
 CREATE FUNCTION registry.lookup_file_generations(org_id text, project_id text, environment_name text)
-RETURNS TABLE(connection_id uuid, connection_name text, generation bigint, parameters jsonb, shared boolean)
+RETURNS TABLE(connection_id uuid, connection_name text, generation bigint, parameters jsonb)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
 BEGIN
  RETURN QUERY
- SELECT c.id, c.name, g.generation, g.parameters,
-  EXISTS (
-   SELECT FROM registry.connection_generation other
-   JOIN registry.project_connection enabled ON enabled.connection_id = other.connection_id
-   JOIN registry.project_envs env ON env.org = enabled.org AND env.project = enabled.project
-   WHERE (env.org,env.project,env.env) <> (login.org_id,login.project_id,login.environment)
-    AND coalesce(other.parameters->>'provider','s3') = coalesce(g.parameters->>'provider','s3')
-    AND rtrim(coalesce(other.parameters->>'endpoint',''),'/') = rtrim(coalesce(g.parameters->>'endpoint',''),'/')
-    AND other.parameters->>'container' = g.parameters->>'container'
-    AND regexp_replace(btrim(other.parameters->>'prefix','/'),'/+','/','g')
-      = regexp_replace(btrim(g.parameters->>'prefix','/'),'/+','/','g')
-  )
+ SELECT c.id, c.name, g.generation, g.parameters
  FROM wamn_authority.author_login_tenants login
  JOIN registry.connection c ON c.org = login.org_id
  JOIN registry.project_connection p ON p.org = c.org AND p.connection_id = c.id AND p.project = login.project_id

@@ -502,7 +502,8 @@ impl Minio {
                 {"Effect":"Allow","Principal":"*","Action":["s3:ListBucket","s3:GetBucketLocation"],
                     "Resource":[format!("arn:aws:s3:::{file_bucket}")]},
                 {"Effect":"Allow","Principal":"*","Action":["s3:GetObject"],
-                    "Resource":[format!("arn:aws:s3:::{file_bucket}/{file_prefix}/public/*")]}
+                    "Resource":[format!("arn:aws:s3:::{file_bucket}/{file_prefix}/public/*"),
+                        format!("arn:aws:s3:::{file_bucket}/{file_prefix}/dev/public/*")]}
             ]});
             fixture.mc(&format!("printf '%s' '{policy}' > /tmp/file-public-policy.json; mc anonymous set-json /tmp/file-public-policy.json file/{file_bucket}")).await?;
         }

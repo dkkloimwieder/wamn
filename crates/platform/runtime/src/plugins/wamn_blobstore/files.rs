@@ -1,9 +1,9 @@
 //! Streaming, generation-pinned storage for native file routes.
 //!
 //! The native caller authorizes the application binding before opening this store.
-//! Upload to `_wamn_files/staging/<id>`, commit the metadata row, then call `finish`.
-//! Only `_wamn_files/staging/` receives an object age lifecycle rule.
-//! Public copies use `public/_wamn_files/live/<id>` beneath the same binding prefix.
+//! Upload to `<environment>/_wamn_files/staging/<id>`, commit metadata, then call `finish`.
+//! Only the environment staging namespace receives an object age lifecycle rule.
+//! Public copies use `<environment>/public/_wamn_files/live/<id>` beneath the binding prefix.
 
 use std::{
     error::Error,
@@ -24,7 +24,7 @@ use uuid::Uuid;
 
 use super::store::{BoundContainer, StoreError};
 
-/// The file namespace, relative to the binding prefix.
+/// The file namespace beneath the environment segment or a legacy binding prefix.
 pub const FILE_PREFIX: &str = "_wamn_files/";
 /// Maximum lifetime of a file signed URL.
 pub const MAX_URL_LIFETIME: Duration = Duration::from_mins(15);
@@ -49,11 +49,13 @@ pub(super) fn permit_raw_mutation(key: &str) -> Result<(), StoreError> {
     // Object-store Path removes empty segments. Apply the reservation to that spelling.
     let canonical = object_store::path::Path::from(key);
     let key = canonical.as_ref();
-    if key == "_wamn_files"
-        || key.starts_with(FILE_PREFIX)
-        || key == "public/_wamn_files"
-        || key.starts_with("public/_wamn_files/")
-    {
+    let reserved = |key: &str| {
+        key == "_wamn_files"
+            || key.starts_with(FILE_PREFIX)
+            || key == "public/_wamn_files"
+            || key.starts_with("public/_wamn_files/")
+    };
+    if reserved(key) || key.split_once('/').is_some_and(|(_, key)| reserved(key)) {
         return Err(StoreError::Refused {
             verb: "raw mutation",
             reason: "file-managed keys are reserved for native file operations",
@@ -129,6 +131,7 @@ pub struct FileStore {
     signer: Option<Arc<dyn Signer>>,
     cdn_host: Option<url::Url>,
     generation: i64,
+    environment: String,
 }
 impl fmt::Debug for FileStore {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -154,14 +157,14 @@ impl Drop for UploadGuard {
 }
 
 /// The live key stored in `platform.file.blob_key`.
-pub fn live_key(id: Uuid) -> String {
-    format!("{FILE_PREFIX}live/{id}")
+pub fn live_key(environment: &str, id: Uuid) -> String {
+    format!("{environment}/{FILE_PREFIX}live/{id}")
 }
-fn staging_key(id: Uuid) -> String {
-    format!("{FILE_PREFIX}staging/{id}")
+fn staging_key(blob_key: &str) -> String {
+    blob_key.replacen("_wamn_files/live/", "_wamn_files/staging/", 1)
 }
-fn public_key(id: Uuid) -> String {
-    format!("public/{}", live_key(id))
+fn public_key(blob_key: &str) -> String {
+    blob_key.replacen(FILE_PREFIX, "public/_wamn_files/", 1)
 }
 
 impl FileStore {
@@ -171,8 +174,8 @@ impl FileStore {
         &self,
     ) -> Result<BoxStream<'_, Result<LiveFileObject, FileStorageError>>, FileStorageError> {
         self.permit("collect", true).await?;
-        let private = self.path("_wamn_files/live")?;
-        let public = self.path("public/_wamn_files/live")?;
+        let private = self.path(&format!("{}/{FILE_PREFIX}live", self.environment))?;
+        let public = self.path(&format!("{}/public/{FILE_PREFIX}live", self.environment))?;
         Ok(futures_util::stream::iter([private, public])
             .flat_map(move |prefix| {
                 let directory = format!("{prefix}/");
@@ -190,7 +193,7 @@ impl FileStore {
                         });
                         let object = parsed.map(|id| LiveFileObject {
                             path: meta.location.clone(),
-                            blob_key: live_key(id),
+                            blob_key: live_key(&self.environment, id),
                             last_modified: meta.last_modified.into(),
                         });
                         if object.is_none() {
@@ -213,8 +216,11 @@ impl FileStore {
         cutoff: SystemTime,
     ) -> Result<bool, FileStorageError> {
         self.permit("collect", true).await?;
-        if object.path != self.path(&object.blob_key)?
-            && object.path != self.path(&format!("public/{}", object.blob_key))?
+        if !object
+            .blob_key
+            .starts_with(&format!("{}/{FILE_PREFIX}live/", self.environment))
+            || (object.path != self.path(&object.blob_key)?
+                && object.path != self.path(&public_key(&object.blob_key))?)
         {
             return Err(FileStorageError::new(
                 FileStorageErrorKind::Refused,
@@ -242,7 +248,15 @@ impl FileStore {
         signer: Option<Arc<dyn Signer>>,
         cdn_host: Option<&str>,
         generation: i64,
+        environment: &str,
     ) -> Result<Self, FileStorageError> {
+        if let Some(reason) = wamn_control_registry::identifiers::project_id_reason(environment) {
+            return Err(FileStorageError::new(
+                FileStorageErrorKind::Refused,
+                "environment",
+                reason,
+            ));
+        }
         if generation < 1 {
             return Err(FileStorageError::new(
                 FileStorageErrorKind::Refused,
@@ -282,6 +296,7 @@ impl FileStore {
             signer,
             cdn_host,
             generation,
+            environment: environment.to_owned(),
         })
     }
 
@@ -314,7 +329,7 @@ impl FileStore {
         mut body: impl AsyncRead + Unpin,
     ) -> Result<StagedFile, FileStorageError> {
         self.permit("put", true).await?;
-        let path = self.path(&staging_key(id))?;
+        let path = self.path(&staging_key(&live_key(&self.environment, id)))?;
         // Server-side copies retain this attribute, including the public copy.
         let attributes: Attributes = [(
             Attribute::CacheControl,
@@ -392,7 +407,7 @@ impl FileStore {
         }
         Ok(StagedFile {
             id,
-            blob_key: live_key(id),
+            blob_key: live_key(&self.environment, id),
             size,
             sha256: hex::encode(hash.finalize()),
             connection_generation: self.generation,
@@ -406,11 +421,11 @@ impl FileStore {
         }
     }
 
-    async fn repair(&self, id: Uuid) -> Result<(), FileStorageError> {
-        let live = self.path(&live_key(id))?;
-        let staged = self.path(&staging_key(id))?;
+    async fn repair(&self, blob_key: &str) -> Result<(), FileStorageError> {
+        let live = self.path(blob_key)?;
+        let staged = self.path(&staging_key(blob_key))?;
         match self.bound.store.copy(&staged, &live).await {
-            Ok(()) => self.remove_key(&staging_key(id)).await,
+            Ok(()) => self.remove_key(&staging_key(blob_key)).await,
             Err(object_store::Error::NotFound { .. }) => self
                 .bound
                 .store
@@ -422,10 +437,10 @@ impl FileStore {
         }
     }
 
-    async fn require_live(&self, id: Uuid) -> Result<(), FileStorageError> {
-        match self.bound.store.head(&self.path(&live_key(id))?).await {
+    async fn require_live(&self, blob_key: &str) -> Result<(), FileStorageError> {
+        match self.bound.store.head(&self.path(blob_key)?).await {
             Ok(_) => Ok(()),
-            Err(object_store::Error::NotFound { .. }) => self.repair(id).await,
+            Err(object_store::Error::NotFound { .. }) => self.repair(blob_key).await,
             Err(error) => Err(backend("head", error)),
         }
     }
@@ -433,23 +448,23 @@ impl FileStore {
     /// After metadata commit, copy staging to live and remove staging. Retries are safe.
     pub async fn finish(&self, id: Uuid) -> Result<(), FileStorageError> {
         self.permit("put", true).await?;
-        self.repair(id).await
+        self.repair(&live_key(&self.environment, id)).await
     }
 
     /// Return a streaming read, with repair when the committed row still names staged bytes.
-    pub async fn get(&self, id: Uuid) -> Result<object_store::GetResult, FileStorageError> {
+    pub async fn get(&self, blob_key: &str) -> Result<object_store::GetResult, FileStorageError> {
         self.permit("get", false).await?;
-        match self.bound.store.get(&self.path(&live_key(id))?).await {
+        match self.bound.store.get(&self.path(blob_key)?).await {
             Ok(result) => Ok(result),
             Err(object_store::Error::NotFound { .. }) => {
                 let staged = self
                     .bound
                     .store
-                    .get(&self.path(&staging_key(id))?)
+                    .get(&self.path(&staging_key(blob_key))?)
                     .await
                     .map_err(|error| backend("get staging", error))?;
                 // Repair is a storage recovery action, also permitted for a read binding.
-                self.repair(id).await?;
+                self.repair(blob_key).await?;
                 Ok(staged)
             }
             Err(error) => Err(backend("get", error)),
@@ -457,15 +472,15 @@ impl FileStore {
     }
 
     /// Delete public, live, and staged objects after the metadata deletion succeeds.
-    pub async fn delete(&self, id: Uuid) -> Result<(), FileStorageError> {
+    pub async fn delete(&self, blob_key: &str) -> Result<(), FileStorageError> {
         self.permit("delete", true).await?;
-        self.remove_key(&public_key(id)).await?;
-        self.remove_key(&live_key(id)).await?;
-        self.remove_key(&staging_key(id)).await
+        self.remove_key(&public_key(blob_key)).await?;
+        self.remove_key(blob_key).await?;
+        self.remove_key(&staging_key(blob_key)).await
     }
 
     /// Copy to the public namespace and return its generation's CDN URL.
-    pub async fn expose(&self, id: Uuid) -> Result<String, FileStorageError> {
+    pub async fn expose(&self, blob_key: &str) -> Result<String, FileStorageError> {
         self.permit("expose", true).await?;
         let mut url = self.cdn_host.clone().ok_or_else(|| {
             FileStorageError::new(
@@ -475,11 +490,11 @@ impl FileStore {
             )
         })?;
         // Establish the live object through the same staging recovery path.
-        self.require_live(id).await?;
-        let key = public_key(id);
+        self.require_live(blob_key).await?;
+        let key = public_key(blob_key);
         self.bound
             .store
-            .copy(&self.path(&live_key(id))?, &self.path(&key)?)
+            .copy(&self.path(blob_key)?, &self.path(&key)?)
             .await
             .map_err(|error| backend("expose", error))?;
         url.set_path(self.path(&key)?.as_ref());
@@ -487,15 +502,15 @@ impl FileStore {
     }
 
     /// Remove the public origin object immediately. Retries are safe.
-    pub async fn unexpose(&self, id: Uuid) -> Result<(), FileStorageError> {
+    pub async fn unexpose(&self, blob_key: &str) -> Result<(), FileStorageError> {
         self.permit("unexpose", true).await?;
-        self.remove_key(&public_key(id)).await
+        self.remove_key(&public_key(blob_key)).await
     }
 
     /// Sign a confined GET using the pinned generation, for at most fifteen minutes.
     pub async fn signed_url(
         &self,
-        id: Uuid,
+        blob_key: &str,
         lifetime: Duration,
     ) -> Result<String, FileStorageError> {
         self.permit("signed URL", false).await?;
@@ -513,11 +528,11 @@ impl FileStore {
                 "store has no signer",
             )
         })?;
-        self.require_live(id).await?;
+        self.require_live(blob_key).await?;
         signer
             .signed_url(
                 Method::GET,
-                &self.path(&live_key(id))?,
+                &self.path(blob_key)?,
                 lifetime.min(MAX_URL_LIFETIME),
             )
             .await
@@ -546,7 +561,7 @@ mod tests {
             "tenant/app/",
         )
         .with_read_only(read_only);
-        (FileStore::new(bound, None, cdn, 7).unwrap(), backend)
+        (FileStore::new(bound, None, cdn, 7, "dev").unwrap(), backend)
     }
 
     #[tokio::test]
@@ -560,9 +575,9 @@ mod tests {
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
         assert_eq!(staged.connection_generation, 7);
-        assert_eq!(staged.blob_key, live_key(id));
-        let staging = Path::from(format!("tenant/app/{}", staging_key(id)));
-        let live = Path::from(format!("tenant/app/{}", live_key(id)));
+        assert_eq!(staged.blob_key, format!("dev/_wamn_files/live/{id}"));
+        let staging = Path::from(format!("tenant/app/dev/_wamn_files/staging/{id}"));
+        let live = Path::from(format!("tenant/app/{}", live_key("dev", id)));
         assert!(backend.head(&staging).await.is_ok());
         assert!(backend.head(&live).await.is_err());
         let reader = FileStore {
@@ -570,19 +585,28 @@ mod tests {
             ..files.clone()
         };
         assert_eq!(
-            reader.get(id).await.unwrap().bytes().await.unwrap(),
+            reader
+                .get(&live_key("dev", id))
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap(),
             b"abc"[..]
         );
         assert!(backend.head(&staging).await.is_err());
         assert!(backend.head(&live).await.is_ok());
         files.finish(id).await.unwrap();
-        let url = files.expose(id).await.unwrap();
+        let url = files.expose(&live_key("dev", id)).await.unwrap();
         assert_eq!(
             url,
-            format!("https://cdn.example.com/tenant/app/{}", public_key(id))
+            format!(
+                "https://cdn.example.com/tenant/app/{}",
+                public_key(&live_key("dev", id))
+            )
         );
-        files.expose(id).await.unwrap();
-        let public = Path::from(format!("tenant/app/{}", public_key(id)));
+        files.expose(&live_key("dev", id)).await.unwrap();
+        let public = Path::from(format!("tenant/app/{}", public_key(&live_key("dev", id))));
         assert_eq!(
             backend
                 .get(&public)
@@ -594,18 +618,72 @@ mod tests {
                 .as_ref(),
             "max-age=3600"
         );
-        files.unexpose(id).await.unwrap();
-        files.unexpose(id).await.unwrap();
+        files.unexpose(&live_key("dev", id)).await.unwrap();
+        files.unexpose(&live_key("dev", id)).await.unwrap();
         assert!(matches!(
             backend.get(&public).await,
             Err(object_store::Error::NotFound { .. })
         ));
-        files.delete(id).await.unwrap();
-        files.delete(id).await.unwrap();
+        files.delete(&live_key("dev", id)).await.unwrap();
+        files.delete(&live_key("dev", id)).await.unwrap();
         assert_eq!(
-            files.get(id).await.unwrap_err().kind,
+            files.get(&live_key("dev", id)).await.unwrap_err().kind,
             FileStorageErrorKind::NotFound
         );
+    }
+
+    #[tokio::test]
+    async fn collection_refuses_objects_from_another_environment_on_the_same_store() {
+        let (files, backend) = store(false, None);
+        let other = FileStore {
+            environment: "prod".into(),
+            ..files.clone()
+        };
+        let id = Uuid::new_v4();
+        files.stage(id, &b"dev"[..]).await.unwrap();
+        files.finish(id).await.unwrap();
+        other.stage(id, &b"prod"[..]).await.unwrap();
+        other.finish(id).await.unwrap();
+        let objects = other
+            .live_objects()
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+        assert_eq!(objects.len(), 1);
+        assert_eq!(objects[0].blob_key, format!("prod/_wamn_files/live/{id}"));
+        assert_eq!(
+            files
+                .delete_collected(&objects[0], SystemTime::now() + Duration::from_secs(1))
+                .await
+                .unwrap_err()
+                .kind,
+            FileStorageErrorKind::Refused
+        );
+        assert_eq!(
+            files
+                .live_objects()
+                .await
+                .unwrap()
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            backend
+                .list(None)
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+        for environment in ["", "../prod", "dev/prod"] {
+            assert!(FileStore::new(files.bound.clone(), None, None, 7, environment).is_err());
+        }
     }
 
     #[tokio::test]
@@ -618,7 +696,14 @@ mod tests {
             assert_eq!(metadata.sha256, hex::encode(Sha256::digest(&data)));
             files.finish(id).await.unwrap();
             assert_eq!(
-                files.get(id).await.unwrap().bytes().await.unwrap().as_ref(),
+                files
+                    .get(&live_key("dev", id))
+                    .await
+                    .unwrap()
+                    .bytes()
+                    .await
+                    .unwrap()
+                    .as_ref(),
                 data
             );
         }
@@ -655,13 +740,16 @@ mod tests {
         tokio::task::yield_now().await;
         assert!(
             backend
-                .head(&Path::from(format!("tenant/app/{}", staging_key(id))))
+                .head(&Path::from(format!(
+                    "tenant/app/{}",
+                    staging_key(&live_key("dev", id))
+                )))
                 .await
                 .is_err()
         );
         assert!(
             backend
-                .head(&Path::from(format!("tenant/app/{}", live_key(id))))
+                .head(&Path::from(format!("tenant/app/{}", live_key("dev", id))))
                 .await
                 .is_err()
         );
@@ -674,10 +762,16 @@ mod tests {
         files.bound.put("ordinary", vec![1]).await.unwrap();
         files.stage(id, &b"original"[..]).await.unwrap();
         for key in [
-            staging_key(id),
-            live_key(id),
-            public_key(id),
-            format!("public//{}", live_key(id)),
+            staging_key(&live_key("dev", id)),
+            live_key("dev", id),
+            public_key(&live_key("dev", id)),
+            format!("dev//public//_wamn_files/live/{id}"),
+            format!("_wamn_files/staging/{id}"),
+            format!("_wamn_files/live/{id}"),
+            format!("public/_wamn_files/live/{id}"),
+            format!("public//_wamn_files/live/{id}"),
+            format!("prod/_wamn_files/live/{id}"),
+            format!("prod/public/_wamn_files/live/{id}"),
         ] {
             assert!(matches!(
                 files.bound.put(&key, vec![2]).await,
@@ -692,10 +786,16 @@ mod tests {
         assert_eq!(files.bound.get("ordinary").await.unwrap(), vec![1]);
         assert!(files.path("../other/secret").is_err());
         files.finish(id).await.unwrap();
-        files.expose(id).await.unwrap();
+        files.expose(&live_key("dev", id)).await.unwrap();
         assert!(files.bound.clear().await.is_err());
         assert_eq!(
-            files.get(id).await.unwrap().bytes().await.unwrap(),
+            files
+                .get(&live_key("dev", id))
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap(),
             b"original"[..]
         );
         // Similar author keys remain legal.
@@ -715,9 +815,9 @@ mod tests {
             FileStorageErrorKind::Refused
         );
         assert!(files.finish(id).await.is_err());
-        assert!(files.delete(id).await.is_err());
-        assert!(files.expose(id).await.is_err());
-        assert!(files.unexpose(id).await.is_err());
+        assert!(files.delete(&live_key("dev", id)).await.is_err());
+        assert!(files.expose(&live_key("dev", id)).await.is_err());
+        assert!(files.unexpose(&live_key("dev", id)).await.is_err());
         assert!(
             backend
                 .list(None)
@@ -831,11 +931,12 @@ mod tests {
                 Some(Arc::new(RecordingSigner::default())),
                 Some("cdn.example.com"),
                 7,
+                "dev",
             )
             .unwrap();
             let id = Uuid::new_v4();
-            let live = files.path(&live_key(id)).unwrap();
-            let staged = files.path(&staging_key(id)).unwrap();
+            let live = files.path(&live_key("dev", id)).unwrap();
+            let staged = files.path(&staging_key(&live_key("dev", id))).unwrap();
             backend
                 .inner
                 .put(&staged, Bytes::from_static(b"staged").into())
@@ -848,8 +949,11 @@ mod tests {
                     .await
                     .unwrap();
             }
-            files.signed_url(id, Duration::from_secs(30)).await.unwrap();
-            files.expose(id).await.unwrap();
+            files
+                .signed_url(&live_key("dev", id), Duration::from_secs(30))
+                .await
+                .unwrap();
+            files.expose(&live_key("dev", id)).await.unwrap();
             {
                 let calls = backend.calls.lock().unwrap();
                 assert_eq!(calls.iter().filter(|(verb, _)| *verb == "head").count(), 2);
@@ -863,7 +967,7 @@ mod tests {
             assert_eq!(backend.inner.head(&staged).await.is_err(), missing_live);
             let bytes = backend
                 .inner
-                .get(&files.path(&public_key(id)).unwrap())
+                .get(&files.path(&public_key(&live_key("dev", id))).unwrap())
                 .await
                 .unwrap()
                 .bytes()
@@ -888,16 +992,22 @@ mod tests {
             .store(true, std::sync::atomic::Ordering::SeqCst);
         let bound = BoundContainer::new(backend.clone(), "bucket", "tenant/app");
         let signer = Arc::new(RecordingSigner::default());
-        let files =
-            FileStore::new(bound, Some(signer.clone()), Some("cdn.example.com"), 7).unwrap();
+        let files = FileStore::new(
+            bound,
+            Some(signer.clone()),
+            Some("cdn.example.com"),
+            7,
+            "dev",
+        )
+        .unwrap();
         let id = Uuid::new_v4();
         assert_eq!(
-            files.expose(id).await.unwrap_err().kind,
+            files.expose(&live_key("dev", id)).await.unwrap_err().kind,
             FileStorageErrorKind::Backend
         );
         assert_eq!(
             files
-                .signed_url(id, Duration::from_secs(30))
+                .signed_url(&live_key("dev", id), Duration::from_secs(30))
                 .await
                 .unwrap_err()
                 .kind,
@@ -921,14 +1031,25 @@ mod tests {
         files.signer = Some(signer.clone());
         let id = Uuid::new_v4();
         files.stage(id, &b"x"[..]).await.unwrap();
-        files.signed_url(id, Duration::from_secs(30)).await.unwrap();
-        files.signed_url(id, Duration::from_hours(1)).await.unwrap();
-        assert!(files.signed_url(id, Duration::ZERO).await.is_err());
+        files
+            .signed_url(&live_key("dev", id), Duration::from_secs(30))
+            .await
+            .unwrap();
+        files
+            .signed_url(&live_key("dev", id), Duration::from_hours(1))
+            .await
+            .unwrap();
+        assert!(
+            files
+                .signed_url(&live_key("dev", id), Duration::ZERO)
+                .await
+                .is_err()
+        );
         let calls = signer.0.lock().unwrap();
         assert_eq!(
             calls[0],
             (
-                Path::from(format!("tenant/app/{}", live_key(id))),
+                Path::from(format!("tenant/app/{}", live_key("dev", id))),
                 Duration::from_secs(30)
             )
         );
@@ -940,7 +1061,11 @@ mod tests {
         use futures_util::TryStreamExt as _;
         let (files, backend) = store(false, None);
         assert_eq!(
-            files.expose(Uuid::new_v4()).await.unwrap_err().kind,
+            files
+                .expose(&live_key("dev", Uuid::new_v4()))
+                .await
+                .unwrap_err()
+                .kind,
             FileStorageErrorKind::Refused
         );
         assert!(
@@ -959,7 +1084,7 @@ mod tests {
             "https://cdn.example.com?query",
         ] {
             assert!(
-                FileStore::new(files.bound.clone(), None, Some(origin), 1).is_err(),
+                FileStore::new(files.bound.clone(), None, Some(origin), 1, "dev").is_err(),
                 "{origin}"
             );
         }

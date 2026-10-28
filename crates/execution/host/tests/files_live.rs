@@ -357,7 +357,8 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
     definition["endpoint"] = json!(proxy.endpoint);
     let fixture =
         FileHost::start_on_store("file_orphan_collector", release()?, minio, definition).await?;
-    let generations_sql = "SELECT connection_id::text, generation, shared FROM registry.lookup_file_generations($1,$2,$3)";
+    let generations_sql =
+        "SELECT connection_id::text, generation FROM registry.lookup_file_generations($1,$2,$3)";
     assert!(
         !fixture
             .registry
@@ -406,16 +407,23 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
         .build()?;
     let client = fixture.minio.client()?;
     let malformed = [
-        "_wamn_files/live/not-a-uuid".to_owned(),
-        format!("public/_wamn_files/live/{kept}/extra"),
-        "_wamn_files/live/AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA".to_owned(),
+        "dev/_wamn_files/live/not-a-uuid".to_owned(),
+        format!("dev/public/_wamn_files/live/{kept}/extra"),
+        "dev/_wamn_files/live/AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA".to_owned(),
+    ];
+    let outside = [
+        format!("_wamn_files/live/{}", Uuid::new_v4()),
+        format!("public/_wamn_files/live/{}", Uuid::new_v4()),
+        format!("prod/_wamn_files/live/{}", Uuid::new_v4()),
+        format!("prod/public/_wamn_files/live/{}", Uuid::new_v4()),
     ];
     let mut aged: Vec<(String, &[u8])> = malformed
         .iter()
+        .chain(&outside)
         .map(|key| (key.clone(), b"unknown bytes".as_slice()))
         .collect();
     let batch_orphans: Vec<_> = (0..101)
-        .map(|_| format!("_wamn_files/live/{}", Uuid::new_v4()))
+        .map(|_| format!("dev/_wamn_files/live/{}", Uuid::new_v4()))
         .collect();
     for key in &batch_orphans {
         aged.push((key.clone(), b"batch orphan".as_slice()));
@@ -424,8 +432,8 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
         (orphan, b"orphan bytes".as_slice()),
         (kept, b"kept bytes".as_slice()),
     ] {
-        aged.push((format!("_wamn_files/live/{id}"), bytes));
-        aged.push((format!("public/_wamn_files/live/{id}"), bytes));
+        aged.push((format!("dev/_wamn_files/live/{id}"), bytes));
+        aged.push((format!("dev/public/_wamn_files/live/{id}"), bytes));
     }
     for (key, bytes) in &aged {
         let path = Path::from(format!("generation-one/{key}"));
@@ -467,12 +475,12 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
     );
     backend
         .head(&Path::from(format!(
-            "generation-one/_wamn_files/live/{orphan}"
+            "generation-one/dev/_wamn_files/live/{orphan}"
         )))
         .await?;
     backend
         .head(&Path::from(format!(
-            "generation-one/public/_wamn_files/live/{orphan}"
+            "generation-one/dev/public/_wamn_files/live/{orphan}"
         )))
         .await?;
     proxy.refuse.store(false, Ordering::SeqCst);
@@ -536,7 +544,7 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
         .with_secret_access_key(files::STORE_PASSWORD)
         .with_allow_http(true)
         .build()?;
-    let moved_key = Path::from(format!("generation-two/_wamn_files/live/{kept}"));
+    let moved_key = Path::from(format!("generation-two/dev/_wamn_files/live/{kept}"));
     let response = client
         .put(
             moved_backend
@@ -549,7 +557,7 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
         .await?;
     anyhow::ensure!(response.status().is_success(), "seed moved-store orphan");
 
-    // A project outside this environment can retain rows in another database.
+    // Collection stays complete when another environment shares the store.
     fixture
         .registry
         .configure(
@@ -557,20 +565,6 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
             json!({"project":"unenabled","connection":files::STORE_NAME}),
         )
         .await?;
-    assert_eq!(fixture.routes.collect_orphan_files().await?, 0);
-    backend
-        .head(&Path::from(format!(
-            "generation-one/_wamn_files/live/{orphan}"
-        )))
-        .await?;
-    fixture
-        .registry
-        .configure(
-            "project_connection.disable",
-            json!({"project":"unenabled","connection":files::STORE_NAME}),
-        )
-        .await?;
-
     // A second host must skip a pass while the first host holds the lease.
     let lease = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
@@ -613,7 +607,7 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
         }
     }
     assert_eq!(
-        store.get(fresh).await?.bytes().await?.as_ref(),
+        store.get(&staged.blob_key).await?.bytes().await?.as_ref(),
         b"pending row"
     );
     let read = fixture
@@ -678,7 +672,10 @@ async fn native_upload_streams_more_than_64_mib_and_hashes_the_stored_bytes() ->
         expected.update(vec![42; count]);
     }
     assert_eq!(row.get::<_, String>(1), hex::encode(expected.finalize()));
-    assert_eq!(row.get::<_, String>(2), format!("_wamn_files/live/{id}"));
+    assert_eq!(
+        row.get::<_, String>(2),
+        format!("dev/_wamn_files/live/{id}")
+    );
     assert_eq!(row.get::<_, i64>(3), fixture.registry.generation);
     let store = fixture
         .blobstore
@@ -689,12 +686,106 @@ async fn native_upload_streams_more_than_64_mib_and_hashes_the_stored_bytes() ->
             false,
         )
         .await?;
-    let stored = store.get(id).await?.bytes().await?;
+    let stored = store.get(&row.get::<_, String>(2)).await?.bytes().await?;
     assert_eq!(stored.len(), size);
     assert!(stored.iter().all(|byte| *byte == 42));
     assert_eq!(
         hex::encode(Sha256::digest(&stored)),
         row.get::<_, String>(1)
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn legacy_unsegmented_file_still_reads_signs_exposes_and_deletes() -> anyhow::Result<()> {
+    let fixture = FileHost::start("file_legacy_key").await?;
+    let id = Uuid::new_v4();
+    let key = format!("_wamn_files/live/{id}");
+    fixture
+        .minio
+        .mc(&format!(
+            "printf 'legacy bytes' | mc pipe file/files-a/generation-one/{key}"
+        ))
+        .await?;
+    fixture.writer.execute(
+        "INSERT INTO platform.file(id,application,connection_id,connection_generation,name,media_type,size,sha256,blob_key) \
+         VALUES ($1::text::uuid,'files',$2::text::uuid,$3,'legacy.txt','text/plain',12,$4,$5)",
+        &[&id.to_string(), &fixture.registry.connection_id, &fixture.registry.generation,
+          &hex::encode(Sha256::digest(b"legacy bytes")), &key],
+    ).await?;
+    let read = fixture
+        .read("files", id, Some(&fixture.token(false)))
+        .await?;
+    assert_eq!(read.0, 200);
+    assert_eq!(read.2, b"legacy bytes");
+    let caller = fixture.bind_operation()?;
+    let signed = fixture
+        .routes
+        .signed_url(
+            &fixture.blobstore,
+            "file-operation",
+            &caller,
+            id,
+            Duration::from_secs(60),
+        )
+        .await?;
+    assert_eq!(
+        url::Url::parse(&signed)?.path(),
+        format!("/files-a/generation-one/{key}")
+    );
+    let client = fixture.minio.client()?;
+    assert_eq!(
+        client.get(signed).send().await?.bytes().await?.as_ref(),
+        b"legacy bytes"
+    );
+    let exposed = fixture
+        .mutate("expose", id, "files", Some("public"))
+        .await?;
+    let url = exposed["value"]["url"]
+        .as_str()
+        .context("legacy public URL")?;
+    assert_eq!(
+        url::Url::parse(url)?.path(),
+        format!("/generation-one/public/{key}")
+    );
+    assert_eq!(
+        client.get(url).send().await?.bytes().await?.as_ref(),
+        b"legacy bytes"
+    );
+    fixture
+        .mutate("expose", id, "files", Some("application"))
+        .await?;
+    assert_eq!(client.get(url).send().await?.status(), 404);
+    fixture
+        .mutate("expose", id, "files", Some("public"))
+        .await?;
+    assert_eq!(
+        fixture
+            .writer
+            .query_one(
+                "SELECT blob_key FROM platform.file WHERE id=$1::text::uuid",
+                &[&id.to_string()],
+            )
+            .await?
+            .get::<_, String>(0),
+        key
+    );
+    let deleted = fixture.mutate("delete", id, "files", None).await?;
+    assert_eq!(deleted["value"]["file_id"], json!(id));
+    assert_eq!(
+        fixture
+            .read("files", id, Some(&fixture.token(false)))
+            .await?
+            .0,
+        404
+    );
+    assert_eq!(client.get(url).send().await?.status(), 404);
+    assert!(
+        fixture
+            .minio
+            .mc(&format!("mc stat file/files-a/generation-one/{key}"))
+            .await
+            .is_err()
     );
     Ok(())
 }
@@ -768,7 +859,7 @@ async fn committed_staging_bytes_repair_a_missing_live_object_on_native_get() ->
         fixture
             .minio
             .mc(&format!(
-                "mc stat file/files-a/generation-one/_wamn_files/live/{id}"
+                "mc stat file/files-a/generation-one/dev/_wamn_files/live/{id}"
             ))
             .await
             .is_err()
@@ -776,7 +867,7 @@ async fn committed_staging_bytes_repair_a_missing_live_object_on_native_get() ->
     fixture
         .minio
         .mc(&format!(
-            "mc stat file/files-a/generation-one/_wamn_files/staging/{id}"
+            "mc stat file/files-a/generation-one/dev/_wamn_files/staging/{id}"
         ))
         .await?;
     let response = fixture
@@ -787,14 +878,14 @@ async fn committed_staging_bytes_repair_a_missing_live_object_on_native_get() ->
     fixture
         .minio
         .mc(&format!(
-            "mc stat file/files-a/generation-one/_wamn_files/live/{id}"
+            "mc stat file/files-a/generation-one/dev/_wamn_files/live/{id}"
         ))
         .await?;
     assert!(
         fixture
             .minio
             .mc(&format!(
-                "mc stat file/files-a/generation-one/_wamn_files/staging/{id}"
+                "mc stat file/files-a/generation-one/dev/_wamn_files/staging/{id}"
             ))
             .await
             .is_err()
@@ -880,7 +971,7 @@ async fn public_origin_returns_bytes_then_404_after_idempotent_unexpose() -> any
     assert_eq!(
         anonymous
             .get(format!(
-                "{}/generation-one/_wamn_files/live/{id}",
+                "{}/generation-one/dev/_wamn_files/live/{id}",
                 fixture.minio.cdn_origin
             ))
             .send()
@@ -893,6 +984,10 @@ async fn public_origin_returns_bytes_then_404_after_idempotent_unexpose() -> any
         .mutate("expose", id, "files", Some("public"))
         .await?;
     let url = exposed["value"]["url"].as_str().context("public URL")?;
+    assert_eq!(
+        url::Url::parse(url)?.path(),
+        format!("/generation-one/dev/public/_wamn_files/live/{id}")
+    );
     let mut next_cdn = fixture.registry.definition.clone();
     next_cdn["cdn_host"] = json!("https://next-cdn.example.invalid");
     fixture.registry.move_store(&next_cdn).await?;
@@ -1034,7 +1129,7 @@ async fn files_read_and_delete_through_the_generation_that_wrote_them_after_relo
         fixture
             .minio
             .mc(&format!(
-                "mc stat file/files-a/generation-one/_wamn_files/live/{old}"
+                "mc stat file/files-a/generation-one/dev/_wamn_files/live/{old}"
             ))
             .await
             .is_err()
@@ -1042,7 +1137,7 @@ async fn files_read_and_delete_through_the_generation_that_wrote_them_after_relo
     fixture
         .minio
         .mc(&format!(
-            "mc stat file/files-b/generation-two/_wamn_files/live/{new}"
+            "mc stat file/files-b/generation-two/dev/_wamn_files/live/{new}"
         ))
         .await?;
     assert_eq!(

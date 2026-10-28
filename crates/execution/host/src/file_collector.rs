@@ -49,6 +49,7 @@ fn namespace(connection: &FileConnection) -> (String, String, String, String) {
 
 impl FileRoutes {
     /// Collect old canonical live objects with no exact row in their physical store.
+    /// Listing stays within this environment's segment, including shared stores.
     /// Failed reads refuse deletion. Each store failure is logged and other stores continue.
     pub async fn collect_orphan_files(&self) -> anyhow::Result<u64> {
         let Some(reader) = self
