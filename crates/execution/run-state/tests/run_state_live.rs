@@ -426,12 +426,7 @@ fn run_state_live() {
     );
     success(&url, &source_terminal_script);
 
-    // `release-1` is terminal AND already caller-released, so the typed answer is
-    // the stored CAS winner, not the bare terminal refusal: `classified` reads
-    // `run-terminal AND caller_released_at IS NOT NULL` as `already-released`, the
-    // arm `terminal_caller_replay_still_returns_the_stored_cas_winner` pins in
-    // src/transitions.rs. The bare `run-terminal` code is what a terminal run with
-    // no caller to release returns, and no leg here observes it.
+    // A terminal caller replay returns the first stored outcome.
     let post_terminal_script = format!(
         "{} DO $test$ DECLARE refused record; BEGIN \
            EXECUTE $statement${}$statement$ INTO STRICT refused \
@@ -440,6 +435,10 @@ fn run_state_live() {
                    NULL::text,'sha256:two'::text,'{released_at}'::timestamptz; \
            ASSERT refused.result_code = 'already-released', \
                   'post-terminal transition is typed'; \
+           ASSERT refused.outcome_type = 'responded' \
+              AND refused.outcome_json::jsonb = '{{\"ok\":true}}'::jsonb \
+              AND refused.http_status = 200 AND refused.release_node_id = 'respond' \
+              AND refused.outcome_hash = 'sha256:one', 'the stored winner survives'; \
          END $test$; COMMIT;",
         executor_preamble(),
         release
@@ -539,6 +538,39 @@ fn run_state_live() {
          END $$;",
     );
 
+    // Both transitions refuse foreign runs, owners and generations without writes.
+    success(
+        &url,
+        &format!(
+            "{} DO $test$ DECLARE target text; owner text; generation bigint; \
+             expected text; released record; terminal record; before_run jsonb; before_queue jsonb; \
+             BEGIN \
+               SELECT to_jsonb(r) INTO before_run FROM runs AS r WHERE run_id='fault-1'; \
+               SELECT to_jsonb(q) INTO before_queue FROM run_queue AS q WHERE run_id='fault-1'; \
+               FOR target, owner, generation, expected IN VALUES \
+                 ('release-1','worker-f',9::bigint,'cross-run-authority'), \
+                 ('fault-1','other-worker',9::bigint,'fence-lost'), \
+                 ('fault-1','worker-f',8::bigint,'fence-lost') LOOP \
+                 EXECUTE $release${release}$release$ INTO STRICT released \
+                   USING 'fault-1'::text,target,owner,generation,'failed'::text, \
+                         '{{}}'::text,500::int,NULL::text,'sha256:refused'::text, \
+                         '{terminal_at}'::timestamptz; \
+                 ASSERT released.result_code=expected, 'caller authority refusal'; \
+                 EXECUTE $terminal${terminalize}$terminal$ INTO STRICT terminal \
+                   USING 'fault-1'::text,target,owner,generation,'failed'::text, \
+                         'node-failed'::text,'null'::text,'terminal'::text, \
+                         '{terminal_at}'::timestamptz; \
+                 ASSERT terminal.result_code=expected, 'terminal authority refusal'; \
+                 ASSERT (SELECT to_jsonb(r) FROM runs AS r WHERE run_id='fault-1')=before_run, \
+                   'a refused transition changed the run'; \
+                 ASSERT (SELECT to_jsonb(q) FROM run_queue AS q WHERE run_id='fault-1')=before_queue, \
+                   'a refused transition changed the queue'; \
+               END LOOP; \
+             END $test$; COMMIT;",
+            executor_preamble()
+        ),
+    );
+
     // The admission pin is the release's manifest digest (platform-deploy.md
     // R1). A claim verifies that the claiming pod carries the pinned release,
     // on the EXISTING claim write, and never writes the pin. Covered here
@@ -564,7 +596,7 @@ fn run_state_live() {
 
     let claim = grant_production_claim_sql();
     let record_script = format!(
-        "{} PREPARE claim_stmt (text,text,bigint,text) AS {}; \
+        "{} SELECT pg_sleep(0.05); PREPARE claim_stmt (text,text,bigint,text) AS {}; \
          EXECUTE claim_stmt('record-claim','worker-record',30000, \
            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'); \
          EXECUTE claim_stmt('record-foreign','worker-foreign',30000, \
@@ -577,6 +609,11 @@ fn run_state_live() {
                   'the claim marks the run on its one write'; \
            ASSERT (SELECT lease_generation FROM run_queue WHERE run_id='record-claim') = 1, \
                   'the verifying claim is the one that took the lease'; \
+           ASSERT (SELECT lease_expires_at FROM run_queue WHERE run_id='record-claim') \
+                    > transaction_timestamp() + interval '30.025 seconds', \
+                  'a grant uses the fresh statement clock after waiting'; \
+           ASSERT (SELECT attempts FROM run_queue WHERE run_id='record-claim') = 0, \
+                  'a lease grant spends no crash budget'; \
            ASSERT (SELECT status FROM runs WHERE run_id='record-foreign') = 'dispatched', \
                   'a pod of another release claimed the run'; \
          END $$; COMMIT;",
@@ -818,7 +855,7 @@ fn run_state_live() {
     let clear = clear_pre_effect_state_sql();
     let reclaim_script = format!(
         "{} \
-         DO $probe$ DECLARE spent int; reopened text; touched int; BEGIN \
+         DO $probe$ DECLARE spent int; reopened text; touched int; before_run jsonb; BEGIN \
            EXECUTE $advance${}$advance$ INTO spent USING 'reclaim-dead'::text; \
            GET DIAGNOSTICS touched = ROW_COUNT; \
            ASSERT touched = 1 AND spent = 2, \
@@ -830,6 +867,8 @@ fn run_state_live() {
            EXECUTE $advance${}$advance$ INTO spent USING 'reclaim-other-tenant'::text; \
            GET DIAGNOSTICS touched = ROW_COUNT; \
            ASSERT touched = 0, 'the advance reached another tenant queue row'; \
+           SELECT to_jsonb(r)-'state_json' INTO before_run FROM runs AS r \
+             WHERE run_id='reclaim-dead'; \
            EXECUTE $clear${}$clear$ INTO reopened USING 'reclaim-dead'::text; \
            GET DIAGNOSTICS touched = ROW_COUNT; \
            ASSERT touched = 1 AND reopened = 'reclaim-dead', 'the reclaim reopened no run'; \
@@ -838,6 +877,8 @@ fn run_state_live() {
            ASSERT touched = 0, 'the reclaim reached another tenant run'; \
            ASSERT (SELECT q.attempts FROM run_queue AS q WHERE q.run_id='reclaim-dead') = 2, \
                   'the advanced crash evidence did not persist'; \
+           ASSERT (SELECT to_jsonb(r)-'state_json' FROM runs AS r WHERE run_id='reclaim-dead') \
+                  = before_run, 'the reclaim changed a preserved column'; \
            ASSERT (SELECT r.state_json FROM runs AS r WHERE r.run_id='reclaim-dead') IS NULL, \
                   'the reclaim kept the dead attempt state'; \
            ASSERT (SELECT r.manifest_digest FROM runs AS r WHERE r.run_id='reclaim-dead') \
@@ -870,6 +911,35 @@ fn run_state_live() {
                   = 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
                   'the executor erased another tenant release pin'; \
          END $$;",
+    );
+
+    // A refused grant rolls back its lease, but preserves prior crash evidence.
+    success(
+        &url,
+        &format!(
+            "CREATE FUNCTION wamn_run.refuse_test_grant() RETURNS trigger LANGUAGE plpgsql AS $$ \
+             BEGIN RAISE EXCEPTION 'injected-grant-failure'; END $$; \
+             CREATE TRIGGER refuse_test_grant BEFORE UPDATE OF status ON wamn_run.runs \
+               FOR EACH ROW WHEN (OLD.run_id='reclaim-dead') \
+               EXECUTE FUNCTION wamn_run.refuse_test_grant(); \
+             {} DO $test$ BEGIN \
+               BEGIN \
+                 EXECUTE $grant${claim}$grant$ USING 'reclaim-dead'::text, \
+                   'new-worker'::text,30000::bigint,NULL::text; \
+                 ASSERT false, 'the injected grant fault did not fire'; \
+               EXCEPTION WHEN raise_exception THEN \
+                 ASSERT SQLERRM='injected-grant-failure', SQLERRM; \
+               END; \
+               ASSERT (SELECT attempts FROM run_queue WHERE run_id='reclaim-dead')=2, \
+                 'a failed grant erased prior crash evidence'; \
+               ASSERT (SELECT lease_owner='dead-worker' AND lease_generation=5 \
+                         FROM run_queue WHERE run_id='reclaim-dead'), \
+                 'a failed grant leaked lease changes'; \
+             END $test$; COMMIT; \
+             DROP TRIGGER refuse_test_grant ON wamn_run.runs; \
+             DROP FUNCTION wamn_run.refuse_test_grant();",
+            executor_preamble()
+        ),
     );
 
     // The janitor. `select_exhausted_production_sql` is a plain SELECT, so it
@@ -930,7 +1000,9 @@ fn run_state_live() {
            ASSERT (SELECT caller_outcome_hash FROM runs WHERE run_id='reap-exhausted') \
                   = 'sha256:reaped', 'the reap stored the wrong caller body hash'; \
            ASSERT (SELECT caller_released_at FROM runs WHERE run_id='reap-exhausted') \
-                  IS NOT NULL, 'the reap released no caller'; \
+                  = '{terminal_at}'::timestamptz, 'the reap uses the caller instant'; \
+           ASSERT (SELECT updated_at FROM runs WHERE run_id='reap-exhausted') \
+                  = '{terminal_at}'::timestamptz, 'the reap stamps the same instant'; \
            ASSERT (SELECT result_json FROM runs WHERE run_id='reap-exhausted') IS NULL, \
                   'a flow-grain run stored a manufactured result'; \
          END $test$; COMMIT;",
@@ -939,6 +1011,34 @@ fn run_state_live() {
         terminalize_exhausted,
     );
     success(&url, &reap_script);
+
+    // A component candidate has a result, but no durable caller to release.
+    success(
+        &url,
+        &format!(
+            "INSERT INTO wamn_run.runs \
+               (env_key,run_id,package_id,environment,wiring_id,wiring_version, \
+                wiring_hash,binding_world_json,status,trigger_source) \
+             VALUES ('t1','reap-candidate','cat','prod','fixture-wiring',1, \
+               'sha256:' || repeat('a',64),'[]','running','test-case'); \
+             INSERT INTO wamn_run.run_queue(env_key,run_id) VALUES ('t1','reap-candidate'); \
+             {} DO $test$ DECLARE reaped record; BEGIN \
+               EXECUTE $reap${terminalize_exhausted}$reap$ INTO STRICT reaped \
+                 USING 'reap-candidate'::text,'{{\"error\":{{\"code\":\"infrastructure-failure\"}}}}'::text, \
+                   'sha256:candidate'::text,'{terminal_at}'::timestamptz; \
+               ASSERT reaped.status='infrastructure-failure', 'the candidate terminalizes'; \
+               ASSERT (SELECT result_json FROM runs WHERE run_id='reap-candidate') \
+                 = '{{\"error\":{{\"code\":\"infrastructure-failure\"}}}}'::jsonb, \
+                 'the component candidate stores its failure result'; \
+               ASSERT (SELECT caller_released_at IS NULL AND caller_outcome_json IS NULL \
+                         FROM runs WHERE run_id='reap-candidate'), \
+                 'a callerless candidate stays callerless'; \
+               ASSERT NOT EXISTS (SELECT FROM run_queue WHERE run_id='reap-candidate'), \
+                 'the candidate is dequeued'; \
+             END $test$; COMMIT;",
+            executor_preamble()
+        ),
+    );
 
     // The executor now stamps `updated_at` from its own host clock (D2b), while
     // `created_at` keeps the server default. A worker running behind the

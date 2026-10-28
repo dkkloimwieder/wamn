@@ -5,7 +5,9 @@ use std::process::{Command, Output, Stdio};
 
 use wamn_control_provision::{WorkloadRoleFamily, sql};
 use wamn_run_state::authority_class::CURRENT_USER_ROLE_MEMBERSHIP_SQL;
-use wamn_run_state::queue::select_production_claim_sql;
+use wamn_run_state::queue::{
+    park_queued_run_sql, release_parked_run_sql, select_production_claim_sql,
+};
 
 const EXECUTOR_LOGIN: &str = "wamn_matrix_executor_login";
 const MANAGEMENT_LOGIN: &str = "wamn_matrix_management_login";
@@ -489,6 +491,91 @@ fn release_scoped_queue_claim_skips_another_releases_head_live() {
         head_for("'sha256:3333333333333333333333333333333333333333333333333333333333333333'"),
         "",
         "a release with no pinned run claims nothing"
+    );
+
+    // The selector supplies trusted event ancestry without rewriting author input.
+    success(
+        &url,
+        &format!(
+            "INSERT INTO wamn_run.runs \
+               (env_key,run_id,flow_id,flow_version,package_id,manifest_digest,environment, \
+                wiring_id,wiring_version,status,trigger_source,input_json, \
+                event_source_run_id,event_root_run_id,event_depth, \
+                execution_principal_id,execution_role,node_digests_json) \
+             VALUES ('t1','projection','f',1,'cat',{RELEASE_1},'dev','w',1,'dispatched','event', \
+               '{{\"value\":7,\"causation\":{{\"root\":\"forged\"}}}}', \
+               'source','trusted-root',2,'00000000-0000-0000-0000-000000000002', \
+               'workflow','{{\"node\":\"sha256:frozen\"}}'); \
+             INSERT INTO wamn_run.run_queue(env_key,run_id,available_at) \
+             VALUES ('t1','projection','2000-01-01'); \
+             BEGIN; SET LOCAL app.env_key='t1'; SET LOCAL search_path=wamn_run; \
+             DO $test$ DECLARE selected record; untouched jsonb; parked text; BEGIN \
+               SELECT to_jsonb(q) INTO untouched FROM run_queue AS q WHERE run_id='projection'; \
+               EXECUTE $claim${claim}$claim$ INTO STRICT selected USING ARRAY['cat'],'dev',{RELEASE_1}; \
+               ASSERT selected.run_id='projection', 'the earliest eligible row wins'; \
+               ASSERT selected.input_json::jsonb = \
+                 '{{\"value\":7,\"causation\":{{\"run\":\"projection\",\"root\":\"trusted-root\",\"depth\":2}}}}'::jsonb, \
+                 'trusted ancestry replaces author causation for execution'; \
+               ASSERT (SELECT input_json FROM runs WHERE run_id='projection') = \
+                 '{{\"value\":7,\"causation\":{{\"root\":\"forged\"}}}}'::jsonb, \
+                 'execution input is transient'; \
+               ASSERT selected.execution_principal_id='00000000-0000-0000-0000-000000000002' \
+                 AND selected.execution_role='workflow' \
+                 AND selected.node_digests_json::jsonb='{{\"node\":\"sha256:frozen\"}}'::jsonb, \
+                 'the selector carries frozen execution identity'; \
+               ASSERT NOT selected.router_caller_attached AND NOT selected.durable_caller_attached, \
+                 'an event has no waiting caller'; \
+               ASSERT (SELECT to_jsonb(q) FROM run_queue AS q WHERE run_id='projection')=untouched, \
+                 'selection grants no lease'; \
+               ASSERT (SELECT lease_generation FROM run_queue WHERE run_id='projection')=0, \
+                 'an unclaimed queue row starts at generation zero'; \
+               EXECUTE $park${park}$park$ INTO STRICT parked USING 'projection','dev'; \
+               ASSERT parked='projection', 'the queue row parks'; \
+               ASSERT (SELECT status FROM runs WHERE run_id='projection')='dispatched', \
+                 'parking preserves run status'; \
+               EXECUTE $claim${claim}$claim$ INTO STRICT selected USING ARRAY['cat'],'dev',{RELEASE_1}; \
+               ASSERT selected.run_id='run-a', 'the selector skips a parked head'; \
+               ASSERT selected.input_json::jsonb='{{}}'::jsonb, 'non-event input stays unchanged'; \
+               ASSERT selected.service_principal_id='00000000-0000-0000-0000-000000000001', \
+                 'the selector carries the automation principal'; \
+               EXECUTE $park${park}$park$ INTO STRICT parked USING 'run-a','dev'; \
+               EXECUTE $wake${wake}$wake$ INTO STRICT parked USING 'projection','dev'; \
+               EXECUTE $claim${claim}$claim$ INTO STRICT selected USING ARRAY['cat'],'dev',{RELEASE_1}; \
+               ASSERT selected.run_id='projection', 'a released park is eligible again'; \
+             END $test$; ROLLBACK;",
+            park = park_queued_run_sql(),
+            wake = release_parked_run_sql(),
+        ),
+    );
+    success(
+        &url,
+        &format!(
+            "BEGIN; SET LOCAL app.env_key='t1'; SET LOCAL search_path=wamn_run; \
+             UPDATE run_queue SET available_at='infinity'; \
+             DO $test$ DECLARE source text; component bool; router bool; durable bool; \
+               selected record; identity text; BEGIN \
+               FOR source, component, router, durable IN VALUES \
+                 ('http',false,true,true),('internal',false,true,true),('studio',false,true,true), \
+                 ('scenario-draft',true,true,false),('test-case',true,true,false), \
+                 ('test-case',false,false,false) LOOP \
+                 identity := source || '-' || component::text; \
+                 INSERT INTO runs (env_key,run_id,flow_id,flow_version,package_id,manifest_digest, \
+                   environment,wiring_id,wiring_version,wiring_hash,binding_world_json, \
+                   status,trigger_source) \
+                 VALUES ('t1',identity,CASE WHEN component THEN NULL ELSE 'f' END, \
+                   CASE WHEN component THEN NULL ELSE 1 END,'cat',{RELEASE_1},'dev','w',1, \
+                   CASE WHEN component THEN 'sha256:' || repeat('d',64) END, \
+                   CASE WHEN component THEN '[]'::jsonb END,'dispatched',source); \
+                 INSERT INTO run_queue(env_key,run_id) VALUES ('t1',identity); \
+                 EXECUTE $claim${claim}$claim$ INTO STRICT selected USING ARRAY['cat'],'dev',{RELEASE_1}; \
+                 ASSERT selected.run_id=identity, 'one eligible row is selected'; \
+                 ASSERT selected.router_caller_attached=router \
+                    AND selected.durable_caller_attached=durable, \
+                   format('caller classification differs for %s',identity); \
+                 DELETE FROM run_queue WHERE run_id=identity; \
+               END LOOP; \
+             END $test$; ROLLBACK;"
+        ),
     );
 }
 

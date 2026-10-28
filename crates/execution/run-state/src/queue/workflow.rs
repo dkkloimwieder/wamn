@@ -6,8 +6,7 @@
 //! unqualified, so the caller's transaction `search_path` selects the run plane,
 //! and every statement reads its tenant from the `app.env_key` claim.
 //!
-//! The pure tests cover the statement text only. The live half is the workflow
-//! contract test in `wamn-workflow`, over a disposable database.
+//! Live workflow tests exercise these statements over a disposable database.
 
 use crate::RunStatus;
 
@@ -225,22 +224,4 @@ pub fn select_run_queue_state_sql() -> String {
           WHERE r.env_key = current_setting('app.env_key', true) \
             AND r.run_id = $1 AND r.environment = $2"
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_park_is_the_claims_visibility_gate_and_never_a_run_status() {
-        let park = park_queued_run_sql();
-        assert!(park.contains("SET available_at = 'infinity'::timestamptz"));
-        assert!(park.contains("r.status = 'dispatched'"));
-        let claim = super::super::select_production_claim_sql();
-        assert!(
-            claim.contains("q.available_at <= now()"),
-            "the claim must skip a row whose available_at is infinity"
-        );
-        assert!(release_parked_run_sql().contains("SET available_at = now()"));
-    }
 }

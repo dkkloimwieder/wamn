@@ -268,31 +268,3 @@ pub fn terminalize_exhausted_production_sql() -> String {
                                AND r.caller_released_at IS NULL",
     )
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn production_turns_filter_one_global_fifo_by_the_release_package_set() {
-        let claim = select_production_claim_sql();
-        assert!(claim.contains("selected_run.package_id = ANY($1::text[])"));
-        // R20: no NULL on either side skips the release filter.
-        assert!(claim.contains("selected_run.manifest_digest IS NOT DISTINCT FROM $3::text"));
-        assert!(!claim.contains("IS NULL OR selected_run.manifest_digest"));
-        // A manual workflow run carries its executing identity and frozen
-        // node digests to the queue request.
-        assert!(claim.contains(
-            "r.service_principal_id::text, r.trigger_source, \
-             r.execution_principal_id::text, r.execution_role, \
-             r.node_digests_json::text"
-        ));
-        assert!(claim.contains("ORDER BY q.available_at, q.stream_seq, q.run_id"));
-        assert_eq!(claim.matches("LIMIT 1").count(), 1);
-
-        let reap = select_exhausted_production_sql();
-        assert!(reap.contains("selected_run.package_id = ANY($2::text[])"));
-        assert!(reap.contains("ORDER BY q.available_at, q.stream_seq, q.run_id"));
-        assert_eq!(reap.matches("LIMIT 1").count(), 1);
-    }
-}
