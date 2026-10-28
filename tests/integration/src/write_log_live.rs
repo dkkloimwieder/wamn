@@ -352,6 +352,55 @@ async fn a_retry_with_reordered_lines_is_the_same_request() -> anyhow::Result<()
         .get(0);
     anyhow::ensure!(logged == 1, "one key logs one row, not {logged}");
 
+    let element = |request_id: &str, key: &str, amount: &str| {
+        json!({
+            "request_id": request_id,
+            "value": {
+                "idempotency_key": key,
+                "note": null,
+                "maker_id": null,
+                "expected_edit_version": "1",
+                "grade": "first",
+                "inspector_id": null,
+                "line": [{"widget_id": first, "amount": amount}],
+            }
+        })
+    };
+    let response = routes
+        .client
+        .post(format!("{}/widget/record_batch", routes.endpoint))
+        .header("Host", &routes.host)
+        .bearer_auth(&routes.bearer)
+        .json(&json!([
+            element("sibling-before", "sibling-before", "1"),
+            element("refused-element", "refused-element", "-1"),
+            element("sibling-after", "sibling-after", "2"),
+        ]))
+        .send()
+        .await?;
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let answer: Value = response.json().await?;
+    assert_eq!(answer.as_array().unwrap().len(), 3);
+    for (index, request_id) in [(0, "sibling-before"), (2, "sibling-after")] {
+        assert_eq!(answer[index]["request_id"], request_id);
+        assert!(answer[index].get("value").is_some(), "{answer}");
+    }
+    assert_eq!(answer[1]["request_id"], "refused-element");
+    assert_eq!(answer[1]["error"]["code"], "invalid_input");
+    let committed: Vec<String> = database
+        .query(
+            "SELECT idempotency_key FROM platform.write_log
+         WHERE operation = 'platform-fixture:widget/record-batch'
+         AND idempotency_key IN ('sibling-before', 'refused-element', 'sibling-after')
+         ORDER BY idempotency_key",
+            &[],
+        )
+        .await?
+        .into_iter()
+        .map(|row| row.get(0))
+        .collect();
+    assert_eq!(committed, ["sibling-after", "sibling-before"]);
+
     application.shutdown().await?;
     Ok(())
 }

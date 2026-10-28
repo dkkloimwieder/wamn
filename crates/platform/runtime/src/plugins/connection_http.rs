@@ -2309,6 +2309,29 @@ mod tests {
         }
     }
 
+    #[test]
+    fn guest_headers_cannot_supply_transport_or_proxy_authority() {
+        for name in [
+            "host",
+            "content-length",
+            "transfer-encoding",
+            "proxy-authorization",
+            "connection",
+        ] {
+            for name in [name.to_owned(), name.to_ascii_uppercase()] {
+                let request = effect_request(vec![Header {
+                    name,
+                    value: b"guest".to_vec(),
+                }]);
+                assert!(matches!(
+                    outbound_headers(&request, HashMap::new()),
+                    Err(ConnectionError::AuthorityDenied)
+                ));
+            }
+        }
+        assert!(outbound_headers(&effect_request(Vec::new()), HashMap::new()).is_ok());
+    }
+
     /// A `tracing` subscriber whose OTel layer gives the effect span a real,
     /// injectable span context — the only way to observe what leaves the host.
     fn with_effect_span<T>(body: impl FnOnce() -> T) -> (T, opentelemetry::trace::SpanContext) {

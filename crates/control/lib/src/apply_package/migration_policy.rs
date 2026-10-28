@@ -524,3 +524,49 @@ fn explicit_definition_owner<'a>(
         DefinitionType::Constraint => model.constraint_owners.get(definition).map(String::as_str),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn definition_owners_must_name_the_package_or_a_declared_base() {
+        let mut manifest = PackageManifest::from_slice(include_bytes!(
+            "../../tests/fixtures/observer_package/wamn.json"
+        ))
+        .unwrap();
+        let model = manifest.models.get_mut("item").unwrap();
+        model
+            .field_owners
+            .insert("note".into(), "source_fixture".into());
+        model
+            .constraint_owners
+            .insert("item_note_key".into(), "source_fixture".into());
+        validate_manifest_definition_owners(&manifest).unwrap();
+        for definition in ["relation", "field", "constraint"] {
+            let mut manifest = manifest.clone();
+            let model = manifest.models.get_mut("item").unwrap();
+            match definition {
+                "relation" => model.owner = "undeclared".into(),
+                "field" => {
+                    model
+                        .field_owners
+                        .insert("note".into(), "undeclared".into());
+                }
+                "constraint" => {
+                    model
+                        .constraint_owners
+                        .insert("item_note_key".into(), "undeclared".into());
+                }
+                _ => unreachable!(),
+            }
+            let error = validate_manifest_definition_owners(&manifest).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .starts_with("definition-owner-undeclared:"),
+                "{error}"
+            );
+        }
+    }
+}

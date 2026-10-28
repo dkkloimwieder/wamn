@@ -242,3 +242,129 @@ pub fn statement_instances(component_bytes: &[u8]) -> anyhow::Result<BTreeMap<St
     );
     Ok(record)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const NAMED: &str =
+        r#"(import "sql-0" (implements "wamn:postgres/statements@0.4.0") (instance))"#;
+
+    fn member(import: &str, label: &str) -> String {
+        format!(r#"(component (import "{import}" (instance)) (@custom "member" "{label}"))"#)
+    }
+
+    fn record(member: &str) -> String {
+        let digest = component_digest(&wat::parse_str(member).unwrap());
+        let json = serde_json::to_string(&BTreeMap::from([("sql-0", digest)])).unwrap();
+        format!(
+            r#"(@custom "{STATEMENT_INSTANCES_SECTION}" {})"#,
+            serde_json::to_string(&json).unwrap()
+        )
+    }
+
+    fn inspect(parts: &str) -> anyhow::Result<BTreeMap<String, String>> {
+        statement_instances(&wat::parse_str(format!("(component {parts})")).unwrap())
+    }
+
+    fn refuses(parts: &str, reason: &str) {
+        let error = inspect(parts).unwrap_err();
+        assert!(error.to_string().contains(reason), "{error:#}");
+    }
+
+    #[test]
+    fn named_statement_imports_and_the_record_must_agree() {
+        let leaf = member(STATEMENTS_INTERFACE, "leaf");
+        refuses(NAMED, "differ from the record");
+        refuses(&record(&leaf), "differ from the record");
+        assert!(inspect("").unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_statement_import_must_reach_its_recorded_member() {
+        let leaf = member(STATEMENTS_INTERFACE, "leaf");
+        let other = member(STATEMENTS_INTERFACE, "other");
+        let wiring = format!(
+            r#"{NAMED} {leaf}
+            (instance (instantiate 0 (with "{STATEMENTS_INTERFACE}" (instance 0)))) {}"#,
+            record(&leaf)
+        );
+        assert_eq!(inspect(&wiring).unwrap().len(), 1);
+        refuses(
+            &format!(
+                r#"{NAMED} {other}
+            (instance (instantiate 0 (with "{STATEMENTS_INTERFACE}" (instance 0)))) {}"#,
+                record(&leaf)
+            ),
+            "but the record names",
+        );
+    }
+
+    #[test]
+    fn a_member_cannot_receive_statements_from_an_unnamed_import() {
+        let leaf = member(STATEMENTS_INTERFACE, "leaf");
+        refuses(
+            &format!(
+                r#"{NAMED} (import "other" (instance)) {leaf}
+            (instance (instantiate 0 (with "{STATEMENTS_INTERFACE}" (instance 1)))) {}"#,
+                record(&leaf)
+            ),
+            "from no named import",
+        );
+    }
+
+    #[test]
+    fn a_statement_import_cannot_reach_a_member_under_another_name() {
+        let leaf = member("renamed", "leaf");
+        refuses(
+            &format!(
+                r#"{NAMED} {leaf}
+            (instance (instantiate 0 (with "renamed" (instance 0)))) {}"#,
+                record(&leaf)
+            ),
+            "reaches a member as",
+        );
+    }
+
+    #[test]
+    fn a_statement_import_must_reach_exactly_one_member() {
+        let leaf = member(STATEMENTS_INTERFACE, "leaf");
+        refuses(
+            &format!("{NAMED} {leaf} {}", record(&leaf)),
+            "reach no member",
+        );
+        refuses(
+            &format!(
+                r#"{NAMED} {leaf}
+            (instance (instantiate 0 (with "{STATEMENTS_INTERFACE}" (instance 0))))
+            (instance (instantiate 0 (with "{STATEMENTS_INTERFACE}" (instance 0)))) {}"#,
+                record(&leaf)
+            ),
+            "reaches more than one member",
+        );
+    }
+
+    #[test]
+    fn shared_and_named_statement_imports_cannot_coexist() {
+        let leaf = member(STATEMENTS_INTERFACE, "leaf");
+        refuses(
+            &format!(
+                r#"{NAMED} (import "{STATEMENTS_INTERFACE}" (instance)) {}"#,
+                record(&leaf)
+            ),
+            "unnamed beside named instances",
+        );
+    }
+
+    #[test]
+    fn functions_and_instances_cannot_be_aliased_out_of_a_named_import() {
+        let import = r#"(import "sql-0" (implements "wamn:postgres/statements@0.4.0")
+            (instance (export "run" (func)) (export "nested" (instance))))"#;
+        for (name, kind) in [("run", "func"), ("nested", "instance")] {
+            refuses(
+                &format!(r#"{import} (alias export 0 "{name}" ({kind}))"#),
+                "composition aliases",
+            );
+        }
+    }
+}

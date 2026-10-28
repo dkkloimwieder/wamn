@@ -972,6 +972,23 @@ mod tests {
     }
 
     #[test]
+    fn each_pending_migration_is_applied_before_its_record() {
+        let plan = plan_package_migrations(&directory(), None).unwrap();
+        assert_eq!(
+            plan.statements
+                .iter()
+                .map(|statement| statement.summary.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "apply migrations/0001_initial.sql",
+                "record migrations/0001_initial.sql",
+                "apply migrations/0002_add_tag.sql",
+                "record migrations/0002_add_tag.sql",
+            ]
+        );
+    }
+
+    #[test]
     fn package_application_refuses_invalid_custom_operation_semantics() {
         let mut directory = directory();
         let mut manifest: serde_json::Value =

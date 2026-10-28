@@ -777,6 +777,7 @@ async fn environment_identity_leg(
     // A second apply writes no second copy of any identity row.
     env_key_identity_leg(su).await;
     stale_user_leg(su, system_su, system_url, target_url).await;
+    user_role_email_refusal_leg(target_url).await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
            (env_key,run_id,flow_id,flow_version,package_id, \
@@ -812,6 +813,83 @@ async fn environment_identity_leg(
         .await
         .expect("re-plan");
     assert!(again.is_noop(), "re-run is a no-op: {:#?}", again.actions);
+}
+
+async fn user_role_email_refusal_leg(target_url: &str) {
+    use wamn_control::user_role::{grant_role_on, revoke_role_on};
+
+    let mut client = connect(target_url).await;
+    let env_key = "acme--billing--dev";
+    let auth = AuthChanges::default();
+    let before: i64 = client
+        .query_one("SELECT count(*) FROM platform.user_role", &[])
+        .await
+        .unwrap()
+        .get(0);
+    for grant in [true, false] {
+        let result = if grant {
+            grant_role_on(
+                &mut client,
+                env_key,
+                "missing-role-user@example.invalid",
+                "admin",
+                &auth,
+            )
+            .await
+        } else {
+            revoke_role_on(
+                &mut client,
+                env_key,
+                "missing-role-user@example.invalid",
+                "admin",
+                &auth,
+            )
+            .await
+        };
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("no user with email")
+        );
+    }
+    client
+        .batch_execute(
+            "INSERT INTO platform.\"user\" (id, type, email) VALUES
+         ('e5500000-0000-4000-8000-000000000001', 'user', 'role-gap@example.invalid'),
+         ('e5500000-0000-4000-8000-000000000002', 'user', 'ROLE-GAP@example.invalid')",
+        )
+        .await
+        .unwrap();
+    for grant in [true, false] {
+        let result = if grant {
+            grant_role_on(
+                &mut client,
+                env_key,
+                "Role-Gap@example.invalid",
+                "admin",
+                &auth,
+            )
+            .await
+        } else {
+            revoke_role_on(
+                &mut client,
+                env_key,
+                "Role-Gap@example.invalid",
+                "admin",
+                &auth,
+            )
+            .await
+        };
+        assert!(result.unwrap_err().to_string().contains("names 2 users"));
+    }
+    let after: i64 = client
+        .query_one("SELECT count(*) FROM platform.user_role", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(after, before);
+    client.batch_execute("DELETE FROM platform.\"user\" WHERE id IN ('e5500000-0000-4000-8000-000000000001', 'e5500000-0000-4000-8000-000000000002')").await.unwrap();
 }
 
 /// Manifestations 3 + 5 + 6 (the ephemeral-fixture wipe): a database with no

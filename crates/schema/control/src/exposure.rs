@@ -138,6 +138,15 @@ mod tests {
     }
 
     #[test]
+    fn malformed_route_segments_are_refused() {
+        for path in ["/a/{*rest}/b", "/a//b", "/a/{id}x"] {
+            let error = normalize_http_route(&route(path, "POST"), "create").unwrap_err();
+            assert_eq!(error.code, "invalid-http-path-template", "{path}");
+            assert_eq!(error.subject, "create");
+        }
+    }
+
+    #[test]
     fn the_collision_key_drops_parameter_names() {
         assert_eq!(canonical_http_route_template("/{id}"), "/{}");
         assert_eq!(

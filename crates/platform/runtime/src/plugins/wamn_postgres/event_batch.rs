@@ -279,3 +279,34 @@ async fn history_actor(
     }
     Ok(None)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::plugins::wamn_postgres::StaticCredentialProvider;
+
+    #[test]
+    fn event_materialization_refuses_the_wrong_workload_authority() {
+        let postgres = WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::new(
+            HashMap::new(),
+            None,
+        )));
+        let release = LoadedRelease::control_root();
+        postgres
+            .set_env_key("guest", &release.scope().env_key)
+            .unwrap();
+        let error = postgres
+            .require_event_materializer("guest", &release)
+            .unwrap_err();
+        assert_eq!(error.error_type(), ProductionClaimErrorType::Identity);
+        postgres
+            .bind_workload_authority("guest", "event-materializer")
+            .unwrap();
+        postgres
+            .require_event_materializer("guest", &release)
+            .unwrap();
+    }
+}

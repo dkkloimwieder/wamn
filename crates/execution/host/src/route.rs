@@ -139,3 +139,109 @@ fn authorized_component<'a>(
     authorize_registered_operation(route.caller.as_ref(), fact.registered_operation.as_deref())?;
     Ok(component)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeMap, HashSet};
+
+    use wamn_catalog::{AdmittedComponentOperation, ComponentPackageScope};
+    use wamn_engine::flow_http_routing::CredentialType;
+    use wamn_engine::router_delivery::{OperationRefusal, OperationRefusalType};
+
+    use super::*;
+
+    const OPERATION: &str = "fixture:widget/create@1.0.0";
+
+    fn component() -> AdmittedComponent {
+        AdmittedComponent {
+            scope: ComponentPackageScope {
+                env_key: "tenant-a".into(),
+                package_id: "fixture".into(),
+                package_version: "1.0.0".into(),
+            },
+            component: "widget".into(),
+            interface_version: "1.0.0".into(),
+            operations: BTreeMap::from([(
+                OPERATION.into(),
+                AdmittedComponentOperation {
+                    registered_operation: Some(OPERATION.into()),
+                    committed_result_schema: None,
+                    host_transaction: false,
+                    input_ports: Vec::new(),
+                    output_ports: Vec::new(),
+                    parameters: Vec::new(),
+                    statements: BTreeMap::new(),
+                },
+            )]),
+            component_digest: format!("sha256:{}", "a".repeat(64)),
+            imports: Vec::new(),
+            imports_fingerprint: String::new(),
+            effects: Vec::new(),
+        }
+    }
+
+    fn route(payload: &serde_json::Value) -> RouteCall<'_> {
+        RouteCall {
+            attachment_id: "widget-http",
+            package_id: "fixture",
+            component: "widget",
+            operation: OPERATION,
+            delivery_id: "delivery-1",
+            payload,
+            caller: Some(AuthenticatedCaller::new(
+                "widget-http",
+                "user-a",
+                CredentialType::Pat,
+                false,
+                HashSet::from(["fixture:widget/create".into()]),
+                None,
+            )),
+            traceparent: None,
+            tracestate: None,
+            causation: Causation {
+                run: "attachment:delivery-1".into(),
+                root: "attachment:delivery-1".into(),
+                depth: 0,
+            },
+        }
+    }
+
+    #[test]
+    fn a_route_without_a_caller_refuses_its_registered_operation() {
+        let components = [component()];
+        let payload = serde_json::Value::Null;
+        let mut route = route(&payload);
+        assert!(authorized_component(&components, &route).is_ok());
+        route.caller = None;
+        let error = authorized_component(&components, &route).unwrap_err();
+        let refusal = error.downcast_ref::<OperationRefusal>().unwrap();
+        assert_eq!(
+            refusal.refusal_type(),
+            OperationRefusalType::PermissionDenied
+        );
+        assert_eq!(refusal.operation(), OPERATION);
+    }
+
+    #[test]
+    fn a_route_whose_component_lacks_the_operation_is_refused() {
+        let mut components = [component()];
+        let payload = serde_json::Value::Null;
+        let route = route(&payload);
+        assert!(authorized_component(&components, &route).is_ok());
+        components[0].operations.clear();
+        let error = authorized_component(&components, &route).unwrap_err();
+        // The later route-operation-fact-missing arm is unreachable.
+        assert_eq!(error.to_string(), "route-component-missing");
+    }
+
+    #[test]
+    fn a_route_cannot_select_another_packages_component() {
+        let components = [component()];
+        let payload = serde_json::Value::Null;
+        let mut route = route(&payload);
+        assert!(authorized_component(&components, &route).is_ok());
+        route.package_id = "other";
+        let error = authorized_component(&components, &route).unwrap_err();
+        assert_eq!(error.to_string(), "route-component-missing");
+    }
+}
