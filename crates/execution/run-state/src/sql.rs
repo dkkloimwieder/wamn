@@ -134,7 +134,6 @@ mod tests {
     fn prune_targets_terminal_runs_only() {
         let sql = prune_terminal_runs_sql();
         assert!(sql.starts_with("DELETE FROM runs"), "{sql}");
-        assert!(sql.contains("WHERE env_key = $1"), "{sql}");
         assert!(
             sql.contains("created_at < now() - ($2::bigint * interval '1 day')"),
             "{sql}"

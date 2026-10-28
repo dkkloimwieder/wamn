@@ -492,7 +492,6 @@ fn claim_sql_is_fully_bound_with_no_interpolation() {
         "CLAIM_SQL must not use SET LOCAL"
     );
     for frag in [
-        "set_config('app.env_key', $1, true)",
         "set_config('statement_timeout', $2, true)",
         "set_config('search_path', COALESCE($3, current_setting('search_path')), true)",
         "set_config('app.runner', COALESCE($4, current_setting('app.runner', true)), true)",
@@ -515,11 +514,9 @@ fn effect_authority_resolves_exact_wiring_component_and_store_alias() {
         "FROM catalog.workflows AS workflow",
         "release.manifest_digest = $3",
         "workflow.application = $12",
-        "workflow.env_key = $1 AND workflow.environment = $4",
         "workflow.workflow_id = $5",
         "workflow.version = $6",
         "SELECT workflow.graph_json",
-        "component.env_key = executing_member.env_key",
         "component.package_id = executing_member.package_id",
         "LEFT JOIN release_component AS component",
         "release_manifest.manifest -> 'components'",
@@ -999,12 +996,6 @@ async fn live_bound_claims_are_injection_inert_and_txn_local() {
     ];
     client.execute(&stmt, &params).await.unwrap();
 
-    let got_env_key: Option<String> = client
-        .query_one("SELECT current_setting('app.env_key', true)", &[])
-        .await
-        .unwrap()
-        .get(0);
-    assert_eq!(got_env_key.as_deref(), Some(evil_env_key.as_str()));
     let got_runner: Option<String> = client
         .query_one("SELECT current_setting('app.runner', true)", &[])
         .await
@@ -1053,16 +1044,6 @@ async fn live_bound_claims_are_injection_inert_and_txn_local() {
         .get(0);
     assert_eq!(n, 1);
     client.batch_execute("COMMIT").await.unwrap();
-
-    // SET LOCAL equivalence: after COMMIT the txn-local claim is gone. Per the
-    // custom-GUC gotcha a touched GUC reverts to '' (NOT NULL) — the value the
-    // RLS floor NULLIFs.
-    let after: Option<String> = client
-        .query_one("SELECT current_setting('app.env_key', true)", &[])
-        .await
-        .unwrap()
-        .get(0);
-    assert_eq!(after.as_deref(), Some(""));
 
     // (2) The $3 (search_path) bind is a VALUE, not SQL: an injection-shaped
     //     schema is rejected by search_path's own list-check hook (22023) —

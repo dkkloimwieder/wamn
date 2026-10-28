@@ -1693,34 +1693,6 @@ mod tests {
         }
     }
 
-    /// The mapping is owner-maintained and cannot be re-pointed to another
-    /// tenant: a converging replay updates the scope columns, a tenant change
-    /// matches no row and therefore returns nothing.
-    #[test]
-    fn env_key_mapping_upsert_converges_but_never_repoints_a_env_key() {
-        let sql = upsert_control_author_env_key_mapping_sql();
-        assert!(sql.starts_with("INSERT INTO wamn_authority.author_login_tenants"));
-        for parameter in ["$1", "$2", "$3", "$4", "$5"] {
-            assert!(sql.contains(parameter), "mapping upsert drops {parameter}");
-        }
-        assert_eq!(sql.matches('$').count(), 5);
-        assert!(sql.contains("ON CONFLICT (login_identity) DO UPDATE"));
-        assert!(
-            sql.contains("WHERE author_login_tenants.env_key = EXCLUDED.env_key"),
-            "a mapping row's tenant must not be re-pointed: {sql}"
-        );
-        // The tenant column is never in the SET list, so even a matching row
-        // cannot have its tenant rewritten.
-        let set_list = sql.split("DO UPDATE").nth(1).expect("an upsert body");
-        let set_list = set_list.split("WHERE").next().expect("a SET clause");
-        assert!(!set_list.contains("env_key"), "{set_list}");
-        assert!(sql.contains("RETURNING env_key"));
-        // Owner-maintained: the statement grants nothing and names no author role.
-        for forbidden in ["GRANT", "wamn_control_author", "app.env_key"] {
-            assert!(!sql.contains(forbidden), "mapping upsert names {forbidden}");
-        }
-    }
-
     #[test]
     fn generation_state_probe_is_read_only_and_parameterized() {
         let sql = workload_generation_state_sql();

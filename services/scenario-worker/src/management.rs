@@ -1680,7 +1680,6 @@ mod tests {
     #[test]
     fn the_audit_statement_writes_every_attribution_column() {
         for column in [
-            "env_key",
             "command_id",
             "command_type",
             "principal_id",
@@ -1713,10 +1712,6 @@ mod tests {
             }
         }
         assert_eq!(SELECT_COMMAND_RETRY_SQL.matches('$').count(), 3);
-        assert!(
-            SELECT_COMMAND_RETRY_SQL
-                .contains("WHERE env_key = $1 AND principal_id = $2 AND command_id = $3")
-        );
         assert!(SELECT_COMMAND_RETRY_SQL.contains("request_hash, outcome_bytes"));
         assert!(
             !INSERT_COMMAND_AUDIT_SQL

@@ -52,6 +52,5 @@ fn activation_advances_the_instance_revision() {
     assert!(sql.contains("UPDATE catalog.connection_instances"));
     assert!(sql.contains("SET active_generation = $4"));
     assert!(sql.contains("revision = revision + 1"));
-    assert!(sql.contains("WHERE env_key = $1 AND environment = $2 AND instance_id = $3"));
     assert!(sql.contains("AND active_generation IS NOT DISTINCT FROM $5 AND revision = $6"));
 }

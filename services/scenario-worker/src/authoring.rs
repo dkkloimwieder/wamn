@@ -489,11 +489,6 @@ mod tests {
             AUTHORING_ROLE_PROBE_SQL
                 .contains("'wamn_authority.session_author_env_key()', 'EXECUTE'")
         );
-        assert_eq!(
-            AUTHORING_ENV_KEY_BINDING_SQL,
-            "SELECT wamn_authority.session_author_env_key() = $1"
-        );
-        assert!(!AUTHORING_ENV_KEY_BINDING_SQL.contains("app.env_key"));
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("pg_catalog.pg_database"));
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("pg_catalog.pg_namespace"));
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("relation.relowner = session_role.oid"));

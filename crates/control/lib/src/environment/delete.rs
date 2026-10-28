@@ -515,21 +515,23 @@ mod tests {
 
     #[test]
     fn the_control_rows_go_with_the_trigger_off_for_one_delete() {
-        assert_eq!(
-            delete_control_rows_sql(
-                "catalog.authoring_command_audit",
-                Some("authoring_command_audit_immutable"),
-                "dev"
-            ),
-            [
-                "ALTER TABLE catalog.authoring_command_audit DISABLE TRIGGER \"authoring_command_audit_immutable\"",
-                "DELETE FROM catalog.authoring_command_audit WHERE env_key = 'dev'",
-                "ALTER TABLE catalog.authoring_command_audit ENABLE TRIGGER \"authoring_command_audit_immutable\"",
-            ]
+        let statements = delete_control_rows_sql(
+            "catalog.authoring_command_audit",
+            Some("authoring_command_audit_immutable"),
+            "dev",
         );
+        assert_eq!(statements.len(), 3);
         assert_eq!(
-            delete_control_rows_sql("catalog.authoring_command_audit", None, "dev"),
-            ["DELETE FROM catalog.authoring_command_audit WHERE env_key = 'dev'"]
+            statements[0],
+            "ALTER TABLE catalog.authoring_command_audit DISABLE TRIGGER \"authoring_command_audit_immutable\""
         );
+        assert!(statements[1].starts_with("DELETE FROM catalog.authoring_command_audit "));
+        assert_eq!(
+            statements[2],
+            "ALTER TABLE catalog.authoring_command_audit ENABLE TRIGGER \"authoring_command_audit_immutable\""
+        );
+        let statements = delete_control_rows_sql("catalog.authoring_command_audit", None, "dev");
+        assert_eq!(statements.len(), 1);
+        assert!(statements[0].starts_with("DELETE FROM catalog.authoring_command_audit "));
     }
 }

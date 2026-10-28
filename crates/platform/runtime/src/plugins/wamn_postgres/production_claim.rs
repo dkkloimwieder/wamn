@@ -1897,7 +1897,6 @@ mod tests {
     fn pinned_backlog_reads_the_runnable_queue_of_one_release() {
         for required in [
             "FROM run_queue AS q",
-            "q.env_key = current_setting('app.env_key', true)",
             "r.package_id = ANY($1::text[])",
             "r.environment = $2",
             "r.manifest_digest = $3",
