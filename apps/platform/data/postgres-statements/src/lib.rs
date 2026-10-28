@@ -19,8 +19,11 @@ use std::error::Error;
 use std::fmt;
 use std::pin::Pin;
 
+#[cfg(not(test))]
 use bindings::wamn::postgres::statements as host;
 use bindings::wamn::postgres::types as wire;
+#[cfg(test)]
+use tests::host;
 use wit_bindgen::rt::async_support::{FutureReader, StreamReader, StreamResult};
 
 pub use bindings::wamn::postgres::types::{RowSet, SqlValue};
@@ -683,6 +686,188 @@ fn decode_row<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[expect(
+        clippy::unused_async,
+        clippy::unused_async_trait_impl,
+        reason = "test methods match the asynchronous WIT imports"
+    )]
+    pub(super) mod host {
+        pub use crate::bindings::wamn::postgres::statements::*;
+        use std::cell::Cell;
+
+        std::thread_local! {
+            pub static BEGINS: Cell<usize> = const { Cell::new(0) };
+            pub static COMMITS: Cell<usize> = const { Cell::new(0) };
+        }
+
+        pub struct Transaction;
+
+        pub async fn begin() -> Result<Transaction, StatementError> {
+            BEGINS.set(BEGINS.get() + 1);
+            Ok(Transaction)
+        }
+
+        pub async fn operation_transaction() -> Result<Transaction, StatementError> {
+            begin().await
+        }
+
+        impl Transaction {
+            pub async fn run(
+                &self,
+                _: String,
+                _: Vec<super::SqlValue>,
+            ) -> Result<super::RowSet, StatementError> {
+                panic!("transaction tests do not run statements");
+            }
+
+            pub async fn commit(self) -> Result<(), StatementError> {
+                COMMITS.set(COMMITS.get() + 1);
+                Ok(())
+            }
+
+            pub async fn rollback(self) -> Result<(), StatementError> {
+                Ok(())
+            }
+        }
+    }
+
+    fn ready<T>(future: impl Future<Output = T>) -> T {
+        let mut future = std::pin::pin!(future);
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        match future.as_mut().poll(&mut context) {
+            std::task::Poll::Ready(value) => value,
+            std::task::Poll::Pending => panic!("the test host must complete immediately"),
+        }
+    }
+
+    #[test]
+    fn callback_error_does_not_commit_or_retry_serialization_failure() {
+        host::BEGINS.set(0);
+        host::COMMITS.set(0);
+        let mut calls = 0;
+        let result: Result<(), StatementError> =
+            ready(run_transaction(&mut Connection::new(), |_| {
+                calls += 1;
+                Box::pin(async {
+                    Err(StatementError::from_wire(host::StatementError::Postgres(
+                        wire::PgError::SerializationFailure,
+                    )))
+                })
+            }));
+        assert_eq!(
+            result.unwrap_err().type_(),
+            StatementErrorType::SerializationFailure
+        );
+        assert_eq!(calls, 1);
+        assert_eq!(host::BEGINS.get(), 1);
+        assert_eq!(host::COMMITS.get(), 0);
+    }
+
+    #[test]
+    fn callback_success_commits_exactly_once() {
+        host::BEGINS.set(0);
+        host::COMMITS.set(0);
+        let result: Result<_, StatementError> =
+            ready(run_transaction(&mut Connection::new(), |_| {
+                Box::pin(async { Ok(42) })
+            }));
+        assert_eq!(result.unwrap(), 42);
+        assert_eq!(host::BEGINS.get(), 1);
+        assert_eq!(host::COMMITS.get(), 1);
+    }
+
+    fn rows(name: &str, count: usize) -> RowSet {
+        RowSet {
+            columns: vec![wire::Column {
+                name: name.into(),
+                type_name: "int4".into(),
+            }],
+            rows: vec![vec![SqlValue::Int32(42)]; count],
+            wal_position: None,
+        }
+    }
+
+    fn decode_id(row: &mut RowDecoder<'_>) -> Result<i32, StatementError> {
+        row.decode("id")
+    }
+
+    #[test]
+    fn decode_one_refuses_zero_or_two_rows() {
+        for count in [0, 2] {
+            let error = decode_one("read-id", rows("id", count), decode_id).unwrap_err();
+            assert_eq!(error.type_(), StatementErrorType::InvalidResult);
+            assert_eq!(error.statement(), Some("read-id"));
+        }
+    }
+
+    #[test]
+    fn decoders_refuse_a_column_name_mismatch() {
+        let error = decode_one("read-id", rows("other", 1), decode_id).unwrap_err();
+        assert_eq!(error.type_(), StatementErrorType::InvalidResult);
+        let error = decode_all("read-id", rows("other", 2), decode_id).unwrap_err();
+        assert_eq!(error.type_(), StatementErrorType::InvalidResult);
+    }
+
+    #[test]
+    fn postgres_wire_errors_keep_their_type_and_constraint() {
+        for (wire, expected, constraint) in [
+            (
+                wire::PgError::SerializationFailure,
+                StatementErrorType::SerializationFailure,
+                None,
+            ),
+            (
+                wire::PgError::ConnectionUnavailable,
+                StatementErrorType::ConnectionUnavailable,
+                None,
+            ),
+            (
+                wire::PgError::StatementTimeout,
+                StatementErrorType::StatementTimeout,
+                None,
+            ),
+            (
+                wire::PgError::RowLimitExceeded(1),
+                StatementErrorType::RowLimitExceeded,
+                None,
+            ),
+            (
+                wire::PgError::UniqueViolation("unique".into()),
+                StatementErrorType::UniqueViolation,
+                Some("unique"),
+            ),
+            (
+                wire::PgError::ForeignKeyViolation("foreign".into()),
+                StatementErrorType::ForeignKeyViolation,
+                Some("foreign"),
+            ),
+            (
+                wire::PgError::CheckViolation("check".into()),
+                StatementErrorType::CheckViolation,
+                Some("check"),
+            ),
+            (
+                wire::PgError::ExclusionViolation("exclusion".into()),
+                StatementErrorType::ExclusionViolation,
+                Some("exclusion"),
+            ),
+            (
+                wire::PgError::PermissionDenied,
+                StatementErrorType::PermissionDenied,
+                None,
+            ),
+            (
+                wire::PgError::QueryError(("42P01".into(), "missing relation".into())),
+                StatementErrorType::QueryError,
+                None,
+            ),
+        ] {
+            let error = StatementError::from_wire(host::StatementError::Postgres(wire));
+            assert_eq!(error.type_(), expected);
+            assert_eq!(error.constraint(), constraint);
+        }
+    }
 
     #[test]
     fn query_errors_keep_the_sqlstate_and_database_message() {

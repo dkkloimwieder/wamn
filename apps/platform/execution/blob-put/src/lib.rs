@@ -173,6 +173,7 @@ impl Guest for Component {
 }
 
 /// Resolve the alias, write the body, and report the container written to.
+#[cfg(not(test))]
 async fn write_object(
     store_alias: String,
     key: String,
@@ -209,6 +210,7 @@ async fn write_object(
 /// Drive two futures to completion together. Dependency-free on purpose:
 /// wit-bindgen's `async-spawn` would reach every guest in this workspace
 /// through feature unification and move their digests for one node's need.
+#[cfg(not(test))]
 async fn join2<A, B>(a: A, b: B) -> (A::Output, B::Output)
 where
     A: std::future::Future,
@@ -255,3 +257,97 @@ fn terminal(code: &str, message: impl Into<String>) -> NodeError {
 }
 
 bindings::export!(Component with_types_in bindings);
+
+#[cfg(test)]
+use tests::write_object;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::task::{Context, Poll, Waker};
+
+    std::thread_local! {
+        static WRITES: RefCell<Vec<(String, String, Vec<u8>)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub(super) async fn write_object(
+        store: String,
+        key: String,
+        body: Vec<u8>,
+    ) -> Result<String, NodeError> {
+        WRITES.with_borrow_mut(|writes| writes.push((store.clone(), key, body)));
+        Ok(store)
+    }
+
+    fn context() -> NodeContext {
+        NodeContext {
+            wiring_id: "test".into(),
+            wiring_version: 1,
+            node_id: "blob".into(),
+            delivery_id: "delivery".into(),
+            input_port: None,
+            occurrence: 0,
+            traceparent: None,
+            tracestate: None,
+            deadline_ms: None,
+            config: serde_json::json!({
+                "store_alias": "files", "key_field": "/key", "body_field": "/body"
+            })
+            .to_string(),
+        }
+    }
+
+    fn run(value: &serde_json::Value) -> Result<Emission, NodeError> {
+        let input = serde_json::json!([{ "request_id": "test", "value": value }]).to_string();
+        let mut future = std::pin::pin!(Component::run(context(), input));
+        let Poll::Ready(result) = future
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+        else {
+            panic!("the test store must complete immediately");
+        };
+        result
+    }
+
+    #[test]
+    fn empty_or_non_string_key_refuses_without_writing() {
+        for key in [serde_json::json!(""), serde_json::json!(7)] {
+            WRITES.with_borrow_mut(Vec::clear);
+            let error = run(&serde_json::json!({ "key": key, "body": "content" })).unwrap_err();
+            let NodeError::InvalidInput(detail) = error else {
+                panic!("an invalid key must refuse as invalid input");
+            };
+            assert_eq!(detail.code.as_deref(), Some("missing_key"));
+            WRITES.with_borrow(|writes| assert!(writes.is_empty()));
+        }
+    }
+
+    #[test]
+    fn missing_body_refuses_without_writing() {
+        WRITES.with_borrow_mut(Vec::clear);
+        let NodeError::InvalidInput(detail) =
+            run(&serde_json::json!({ "key": "file" })).unwrap_err()
+        else {
+            panic!("a missing body must refuse as invalid input");
+        };
+        assert_eq!(detail.code.as_deref(), Some("missing_body"));
+        WRITES.with_borrow(|writes| assert!(writes.is_empty()));
+    }
+
+    #[test]
+    fn pointer_param_accepts_the_document_and_refuses_invalid_pointers() {
+        assert_eq!(
+            pointer_param(&serde_json::json!({ "key_field": "" }), "key_field").unwrap(),
+            ""
+        );
+        for pointer in [serde_json::json!("key"), serde_json::json!(7)] {
+            let config = serde_json::json!({ "key_field": pointer });
+            let NodeError::Terminal(detail) = pointer_param(&config, "key_field").unwrap_err()
+            else {
+                panic!("an invalid pointer must refuse as invalid configuration");
+            };
+            assert_eq!(detail.code.as_deref(), Some("invalid_config"));
+        }
+    }
+}

@@ -29,11 +29,17 @@ use wamn_materializer::{
     verified_derived_source_event_id, verified_source_event_id,
 };
 
-use bindings::events::MessageHandle as Message;
+#[cfg(not(test))]
+use bindings::events::{self, MessageHandle as Message};
+#[cfg(test)]
+use bindings::wamn::jetstream::registration::ConsumerConfig;
+#[cfg(not(test))]
 use bindings::wamn::jetstream::registration::{self, ConsumerConfig};
 use bindings::wamn::postgres::client;
 use bindings::wamn::postgres::types::{PgError, SqlValue};
 use bindings::wasmcloud::nats::types::HeaderEntry as Header;
+#[cfg(test)]
+use tests::{events, events::MessageHandle as Message, registration};
 
 struct Component;
 
@@ -521,8 +527,7 @@ async fn serve(
         );
         return;
     }
-    let consumer = match bindings::events::open_pull_consumer(config.stream.clone(), durable).await
-    {
+    let consumer = match events::open_pull_consumer(config.stream.clone(), durable).await {
         Ok(consumer) => consumer,
         Err(error) => {
             eprintln!(
@@ -697,6 +702,231 @@ async fn run_service() {
 mod tests {
     use super::*;
     use wamn_event_wire::{Causation, Op};
+
+    #[expect(
+        clippy::unused_async,
+        clippy::unused_async_trait_impl,
+        reason = "test methods match the asynchronous WIT imports"
+    )]
+    pub(super) mod events {
+        use crate::bindings::wasmcloud::nats::types::{NatsError, NatsMessage};
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        std::thread_local! {
+            pub static MESSAGES: RefCell<Vec<MessageHandle>> = const { RefCell::new(Vec::new()) };
+        }
+
+        #[derive(Debug, PartialEq)]
+        pub enum Settlement {
+            Ack,
+            Nack(Option<u32>),
+            Terminate,
+        }
+
+        #[derive(Clone)]
+        pub struct MessageHandle {
+            pub contents: NatsMessage,
+            pub sequence: u64,
+            pub settlements: Rc<RefCell<Vec<Settlement>>>,
+        }
+
+        impl MessageHandle {
+            pub fn message(&self) -> NatsMessage {
+                self.contents.clone()
+            }
+
+            pub fn sequence(&self) -> u64 {
+                self.sequence
+            }
+
+            pub async fn ack_sync(&self) -> Result<(), NatsError> {
+                self.settlements.borrow_mut().push(Settlement::Ack);
+                Ok(())
+            }
+
+            pub async fn nak(&self, delay: Option<u32>) -> Result<(), NatsError> {
+                self.settlements.borrow_mut().push(Settlement::Nack(delay));
+                Ok(())
+            }
+
+            pub async fn term(&self) -> Result<(), NatsError> {
+                self.settlements.borrow_mut().push(Settlement::Terminate);
+                Ok(())
+            }
+        }
+
+        pub struct Consumer;
+
+        pub struct Batch {
+            pub messages: Vec<MessageHandle>,
+        }
+
+        pub async fn open_pull_consumer(_: String, _: String) -> Result<Consumer, NatsError> {
+            Ok(Consumer)
+        }
+
+        impl Consumer {
+            pub async fn fetch(&self, _: u32, _: u32) -> Result<Batch, NatsError> {
+                Ok(Batch {
+                    messages: MESSAGES.take(),
+                })
+            }
+        }
+    }
+
+    #[expect(
+        clippy::unused_async,
+        reason = "test functions match the asynchronous WIT imports"
+    )]
+    pub(super) mod registration {
+        use crate::bindings::wamn::jetstream::registration::ConsumerConfig;
+        pub use crate::bindings::wamn::jetstream::registration::triggers;
+        use crate::bindings::wamn::jetstream::types::JsError;
+        use std::cell::Cell;
+
+        std::thread_local! {
+            pub static TRANSIENT: Cell<bool> = const { Cell::new(false) };
+            pub static ADMITS: Cell<usize> = const { Cell::new(0) };
+        }
+
+        pub async fn prepare(_: String, _: String, _: ConsumerConfig) -> Result<(), JsError> {
+            Ok(())
+        }
+
+        pub async fn admit(
+            _: String,
+            _: String,
+            _: String,
+            _: u64,
+            _: String,
+        ) -> Result<(), JsError> {
+            ADMITS.set(ADMITS.get() + 1);
+            if TRANSIENT.get() {
+                Err(JsError::ConnectionUnavailable)
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    fn ready<T>(future: impl std::future::Future<Output = T>) -> T {
+        let mut future = std::pin::pin!(future);
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        match future.as_mut().poll(&mut context) {
+            std::task::Poll::Ready(value) => value,
+            std::task::Poll::Pending => panic!("the test host must complete immediately"),
+        }
+    }
+
+    fn config() -> Config {
+        Config {
+            stream: "events".into(),
+            org: "org".into(),
+            project: "app".into(),
+            env: "dev".into(),
+            env_key: "tenant".into(),
+            batch: 1,
+            fetch_ms: 1,
+            sweep_ms: 1,
+            max_sweeps: 1,
+            max_depth: MAX_CAUSATION_DEPTH,
+            ack_wait_ms: 30000,
+            nack_delay_ms: 1234,
+            max_deliver: 5,
+            report_path: None,
+        }
+    }
+
+    fn message() -> Message {
+        Message {
+            contents: bindings::wasmcloud::nats::types::NatsMessage {
+                subject: "evt.org.app.dev.receipts.insert".into(),
+                body: serde_json::to_vec(&envelope()).unwrap(),
+                reply_to: None,
+                headers: Some(vec![Header {
+                    name: "Nats-Msg-Id".into(),
+                    value: "app_dev:42".into(),
+                }]),
+            },
+            sequence: 42,
+            settlements: std::rc::Rc::default(),
+        }
+    }
+
+    fn serve_message(serving: &Serving, known: &BTreeSet<String>, message: Message) -> Counters {
+        events::MESSAGES.set(vec![message]);
+        registration::ADMITS.set(0);
+        let mut counters = Counters::default();
+        ready(serve(&config(), &[serving], known, &mut counters));
+        counters
+    }
+
+    #[test]
+    fn refused_message_terminates_without_admission() {
+        let serving = serving();
+        let message = message();
+        let known = BTreeSet::new();
+        assert!(matches!(
+            prepare_message(
+                &config(),
+                &serving,
+                &known,
+                &message,
+                &mut Counters::default()
+            ),
+            Preparation::Terminate("source-package-identity-unknown")
+        ));
+        let counters = serve_message(&serving, &known, message.clone());
+        assert_eq!(
+            *message.settlements.borrow(),
+            vec![events::Settlement::Terminate]
+        );
+        assert_eq!(registration::ADMITS.get(), 0);
+        assert_eq!(counters.terminated, 1);
+    }
+
+    #[test]
+    fn transient_admission_failure_nacks_with_delay() {
+        registration::TRANSIENT.set(true);
+        let message = message();
+        let counters = serve_message(
+            &serving(),
+            &BTreeSet::from(["receiving".into()]),
+            message.clone(),
+        );
+        assert_eq!(
+            *message.settlements.borrow(),
+            vec![events::Settlement::Nack(Some(1234))]
+        );
+        assert_eq!(registration::ADMITS.get(), 1);
+        assert_eq!(counters.retry, 1);
+        assert_eq!(counters.acked, 0);
+        registration::TRANSIENT.set(false);
+    }
+
+    #[test]
+    fn skipped_message_is_acked_after_host_admission() {
+        let mut serving = serving();
+        serving.registration.entity = "other".into();
+        let message = message();
+        let known = BTreeSet::from(["receiving".into()]);
+        assert!(matches!(
+            prepare_message(
+                &config(),
+                &serving,
+                &known,
+                &message,
+                &mut Counters::default()
+            ),
+            Preparation::Ack
+        ));
+        let counters = serve_message(&serving, &known, message.clone());
+        assert_eq!(*message.settlements.borrow(), vec![events::Settlement::Ack]);
+        assert_eq!(registration::ADMITS.get(), 1);
+        assert_eq!(counters.skip_entity, 1);
+        assert_eq!(counters.acked, 1);
+    }
 
     #[test]
     fn a_batch_above_the_declared_max_batch_is_refused() {
