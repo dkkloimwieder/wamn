@@ -896,6 +896,11 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         )
         .await?;
 
+    // Connection writes run as the control role, which lock_org requires.
+    system
+        .batch_execute(&wamn_control_provision::sql::grant_control_surface_sql())
+        .await?;
+
     // Use the deployment inputs before an environment enables either connection.
     for (operation, file) in [
         ("external_system.write", "rest-fixture.external-system.json"),

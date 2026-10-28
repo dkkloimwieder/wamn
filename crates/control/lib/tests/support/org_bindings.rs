@@ -115,7 +115,7 @@ pub async fn bind(
     Ok(())
 }
 
-/// Publish declaration-only fixtures beside the real edge package.
+/// Publish connection fixtures with one unused stateless operation each.
 pub async fn publish_declarations(
     root: &std::path::Path,
     registry: &wamn_control::package_artifact::PackageRegistry,
@@ -123,6 +123,7 @@ pub async fn publish_declarations(
     database_url: &str,
 ) -> anyhow::Result<()> {
     use serde_json::json;
+    use wamn_schema_generator::receipt::{RECEIPT_FILE, ReceiptComponent};
     for (name, connections) in [
         (
             "label_fixture",
@@ -139,15 +140,45 @@ pub async fn publish_declarations(
         ),
     ] {
         let package = root.join(name);
-        std::fs::create_dir_all(&package)?;
+        let declarations = package.join("publication/components");
+        std::fs::create_dir_all(&declarations)?;
+        let operation = format!("{}:fixture/run", name.replace('_', "-"));
         std::fs::write(
-            package.join("wamn.json"),
+            declarations.join("fixture.json.in"),
             serde_json::to_vec(&json!({
-                "package":{"id":name,"version":"1.0.0"},"required_platform_policy_contract":{"id":"fixture_data_access","state":"satisfied"},
-                "models":{},"components":{},"connections":connections
+                "scope":{"env_key":"__ENV_KEY__","package-id":name},
+                "component":"fixture","interface-version":"0.1.0",
+                "operations":{&operation:{"registered-operation":operation,
+                    "input-ports":[],"output-ports":[],"parameters":[]}},
+                "connections":[]
             }))?,
         )?;
-        Box::pin(wamn_schema_generator::build::build_package(
+        std::fs::write(
+            package.join("wamn.k"),
+            format!(
+                r#"import manifest
+manifest.Package {{
+    package = {{id = "{name}", version = "1.0.0"}}
+    required_platform_policy_contract = {{id = "fixture_data_access", state = "satisfied"}}
+    models = {{}}
+    components = {{fixture = {{connections = []}}}}
+    connections = {connections}
+    custom_operations = {{
+        "fixture.run" = manifest.Command("fixture.run") {{
+            connection = None
+            transaction = None
+            automatic_retry = None
+            idempotent_by = "stateless"
+            input.fields = []
+            result = {{class = "one", fields = [{{path = "value", type = "text"}}]}}
+            errors = ["invalid_input", "permission_denied", "internal_error"]
+        }}
+    }}
+}}
+"#
+            ),
+        )?;
+        let mut receipt = Box::pin(wamn_schema_generator::build::build_package(
             &wamn_schema_generator::build::BuildRequest::new(
                 &package,
                 &root.join("target/wamn"),
@@ -155,6 +186,37 @@ pub async fn publish_declarations(
             ),
         ))
         .await?;
+        // These packages live outside the app workspace, so build_package
+        // generates their contracts but does not compile a guest. Encode an
+        // unused guest with those exact exports for the normal admission path.
+        let output = wamn_schema_generator::output_root(&package);
+        let mut resolve = wit_parser::Resolve::new();
+        resolve.push_str(
+            "node.wit",
+            include_str!("../../../../../crates/execution/workflow/router/wit/package.wit"),
+        )?;
+        let (wit_package, _) = resolve.push_dir(output.join("wit"))?;
+        let world = resolve.select_world(&[wit_package], Some("generated"))?;
+        let mut module =
+            wit_component::dummy_module(&resolve, world, wit_parser::ManglingAndAbi::Standard32);
+        wit_component::embed_component_metadata(
+            &mut module,
+            &resolve,
+            world,
+            wit_component::StringEncoding::UTF8,
+        )?;
+        let bytes = wit_component::ComponentEncoder::default()
+            .module(&module)?
+            .validate(true)
+            .encode()?;
+        std::fs::create_dir_all(output.join("components"))?;
+        std::fs::write(output.join("components/fixture.wasm"), &bytes)?;
+        receipt.outputs.components = vec![ReceiptComponent {
+            name: "fixture".into(),
+            path: "components/fixture.wasm".into(),
+            sha256: wamn_engine::component_admission::component_digest(&bytes),
+        }];
+        std::fs::write(output.join(RECEIPT_FILE), receipt.to_bytes())?;
         Box::pin(wamn_control::package_artifact::push_package(
             &wamn_control::package_artifact::PushPackageRequest {
                 package,
