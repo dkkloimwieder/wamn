@@ -124,6 +124,7 @@ wamn_dry_run() {
   printf ' %q' "$WAMN_CARGO" "${WAMN_NO_STD_NATIVE_CLIPPY[@]}"
   printf '\n'
   wamn_print_plan 'no-std-wasm-clippy' "${WAMN_NO_STD_WASM_CLIPPY[@]}"
+  printf 'dependency-boundaries: python3 %q %q\n' "$WAMN_TOOL_DIRECTORY/repo-lint-dependencies" "$WAMN_CARGO"
   wamn_print_plan 'repository-policy' "${WAMN_REPOSITORY_POLICY[@]}"
 }
 
@@ -176,6 +177,14 @@ wamn_run_no_std_native_clippy() {
   local exit_code=0
   RUSTFLAGS="$WAMN_NO_STD_NATIVE_RUSTFLAGS" \
     "$WAMN_CARGO" "${WAMN_NO_STD_NATIVE_CLIPPY[@]}" || exit_code=$?
+  wamn_report_leg "$label" "$exit_code"
+}
+
+wamn_dependency_boundaries() {
+  local -r label='dependency boundaries'
+  printf 'repo-lint: %s\n' "$label" >&2
+  local exit_code=0
+  python3 "$WAMN_TOOL_DIRECTORY/repo-lint-dependencies" "$WAMN_CARGO" || exit_code=$?
   wamn_report_leg "$label" "$exit_code"
 }
 
@@ -307,6 +316,7 @@ case "$WAMN_COMMAND" in
     wamn_run 'components wasm Clippy' "${WAMN_COMPONENT_WASM_CLIPPY[@]}"
     wamn_run_no_std_native_clippy
     wamn_run 'no-std wasm Clippy' "${WAMN_NO_STD_WASM_CLIPPY[@]}"
+    wamn_dependency_boundaries
     wamn_run 'repository policy' "${WAMN_REPOSITORY_POLICY[@]}"
     ((WAMN_ANY_LEG_FAILED == 0))
     ;;

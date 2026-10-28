@@ -22,7 +22,7 @@
 //!
 //! This crate sits above `wamn-execution-host` and below `services/host`. It
 //! depends on the host crate, and the host crate never depends on it.
-//! `tests/dependency_boundary.rs` checks that `wamn-engine`, `wamn-runtime`,
+//! `tools/repo-lint-dependencies` makes sure that `wamn-engine`, `wamn-runtime`,
 //! and `wamn-execution-host` link neither this crate nor `wamn-router`.
 
 mod contract;

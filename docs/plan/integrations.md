@@ -30,7 +30,7 @@ Email through Resend serves identity only. Guest email, MQTT, AMQP, Kafka, SFTP,
 | SQLite intents and samples in one file; HTTPS forward with a 0600 PAT file; refusal, backoff and credential stop rules. | `crates/execution/run-state-sqlite/src/lib.rs::SqliteIntentStore`, `services/edge/src/forward.rs::send` |
 | A LAN HTTP listener already serves the release routes on `[http].listen`. No TLS. PAT on local routes answers 503. | `services/edge/src/serve.rs::serve`, `authenticator.rs::EdgeAuthenticator` |
 | Guests import `wamn:node/types` only. | `services/edge/src/policy.rs::EdgePolicy::world` |
-| The edge never links `wamn-runtime`; the dependency test refuses it. | `services/edge/Cargo.toml`, `services/edge/tests/dependency_boundary.rs` |
+| The edge never links `wamn-runtime`; the dependency lint refuses it. | `services/edge/Cargo.toml`, `tools/repo-lint-dependencies` |
 | A host-driven device (write, poll with handshake) needs a host plugin and a WIT import; ruled, not built. | edge spec ruling §4.2 |
 | Release bundle pinned by digest, copied by hand, unsigned. No cloud→edge channel. | `services/edge/src/release.rs::EdgeRelease::load` |
 

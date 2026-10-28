@@ -955,14 +955,38 @@ async fn no_enabled_schedule_version_refuses_with_no_row() {
     assert_eq!(fixture.runs().await, 0);
 }
 
-/// The first minute boundary strictly after `after`.
-fn next_minute(after: DateTime<Utc>) -> DateTime<Utc> {
-    DateTime::from_timestamp(after.timestamp().div_euclid(60) * 60 + 60, 0).unwrap()
+#[derive(Clone)]
+struct ScheduleClock {
+    now: tokio::sync::watch::Sender<DateTime<Utc>>,
+    waiting: tokio::sync::mpsc::UnboundedSender<DateTime<Utc>>,
+}
+
+impl ScheduleClock {
+    fn new() -> (Self, tokio::sync::mpsc::UnboundedReceiver<DateTime<Utc>>) {
+        let (now, _) = tokio::sync::watch::channel(due("2026-10-20T10:15:23Z"));
+        let (waiting, ticks) = tokio::sync::mpsc::unbounded_channel();
+        (Self { now, waiting }, ticks)
+    }
+
+    async fn wait_until(&self, tick: DateTime<Utc>) {
+        let mut clock = self.now.subscribe();
+        self.waiting.send(tick).unwrap();
+        clock.wait_for(|now| *now >= tick).await.unwrap();
+    }
+}
+
+async fn next_tick(
+    ticks: &mut tokio::sync::mpsc::UnboundedReceiver<DateTime<Utc>>,
+) -> DateTime<Utc> {
+    tokio::time::timeout(Duration::from_secs(10), ticks.recv())
+        .await
+        .expect("the schedule task reaches its next wait")
+        .expect("the schedule task keeps serving")
 }
 
 /// The host's schedule task reads the enabled rows at each tick: a row
 /// enabled after the task started fires at its next tick, and a row disabled
-/// fires at no later tick. It runs in real time, one or two minute ticks.
+/// fires at no later tick. The test controls each minute boundary.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_schedule_task_fires_a_row_enabled_after_start_and_stops_after_disable() {
     let _lock = wamn_test_postgres::lock();
@@ -987,44 +1011,35 @@ async fn the_schedule_task_fires_a_row_enabled_after_start_and_stops_after_disab
         &fixture.digest,
     );
     let (stop, stopping) = tokio::sync::watch::channel(false);
-    let task =
-        tokio::spawn(async move { wamn_workflow::schedule::serve(&schedules, stopping).await });
+    let (clock, mut ticks) = ScheduleClock::new();
+    let serving_clock = clock.clone();
+    let task = tokio::spawn(async move {
+        wamn_workflow::schedule::serve_with_clock(
+            &schedules,
+            stopping,
+            || *serving_clock.now.borrow(),
+            |tick| serving_clock.wait_until(tick),
+        )
+        .await
+    });
 
+    let first = next_tick(&mut ticks).await;
+    assert_eq!(first, due("2026-10-20T10:16:00Z"));
     fixture
         .enable("minutely", READER)
         .await
         .expect("an enabler holding the role enables");
-    let enabled = Utc::now();
-    let fired = tokio::time::timeout(Duration::from_secs(130), async {
-        loop {
-            let dues = fixture.dues("minutely").await;
-            if !dues.is_empty() {
-                return dues;
-            }
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
-    })
-    .await
-    .expect("the enabled row fires within two ticks");
-    assert_eq!(fired.len(), 1, "{fired:?}");
-    assert!(
-        fired[0] > enabled - chrono::Duration::seconds(5)
-            && fired[0] <= next_minute(next_minute(enabled)),
-        "the first run is due at a tick after the enable: {fired:?}, enabled at {enabled}"
-    );
+    clock.now.send_replace(first);
+    let second = next_tick(&mut ticks).await;
+    assert_eq!(fixture.dues("minutely").await, [first]);
 
     fixture
         .disable("minutely")
         .await
         .expect("the enabled version disables");
-    let disabled = Utc::now();
-    let quiet = next_minute(disabled) + chrono::Duration::seconds(10);
-    tokio::time::sleep((quiet - Utc::now()).to_std().unwrap_or_default()).await;
-    let dues = fixture.dues("minutely").await;
-    assert!(
-        dues.iter().all(|due| *due <= disabled),
-        "a disabled row fires at no later tick: {dues:?}, disabled at {disabled}"
-    );
+    clock.now.send_replace(second);
+    next_tick(&mut ticks).await;
+    assert_eq!(fixture.dues("minutely").await, [first]);
     assert!(!task.is_finished(), "the schedule task keeps serving");
 
     stop.send(true).unwrap();
@@ -1050,8 +1065,7 @@ async fn the_schedule_task_fires_a_row_enabled_after_start_and_stops_after_disab
 /// up. The enable after start and the disable are the case above. A missed tick
 /// during a slow admission is the schedule task's unit test
 /// `ticks_missed_during_a_slow_admission_are_skipped`. Here the task's read of
-/// the rows waits on a lock across a whole minute, in real time: about three
-/// minutes.
+/// the rows waits on a database lock while the test advances the clock.
 #[tokio::test(flavor = "multi_thread")]
 async fn schedules_run_from_rows_and_a_missed_tick_is_skipped() {
     let _lock = wamn_test_postgres::lock();
@@ -1084,19 +1098,20 @@ async fn schedules_run_from_rows_and_a_missed_tick_is_skipped() {
         .await
         .expect("an enabler holding the role enables");
 
-    // Start clear of a minute boundary, so the task's first tick is `first`.
-    if Utc::now().timestamp().rem_euclid(60) > 50 {
-        tokio::time::sleep(Duration::from_secs(15)).await;
-    }
     // Hold the rows from before the first tick until after the second.
     let mut locker = connect(&fixture.url).await;
     let hold = locker.transaction().await.unwrap();
     hold.batch_execute("LOCK TABLE catalog.workflows IN ACCESS EXCLUSIVE MODE")
         .await
         .unwrap();
-    let first = next_minute(Utc::now());
+    let connection = connect(&fixture.executor_url).await;
+    let reader_pid: i32 = connection
+        .query_one("SELECT pg_backend_pid()", &[])
+        .await
+        .unwrap()
+        .get(0);
     let schedules = wamn_workflow::schedule::PostgresSchedules::new(
-        connect(&fixture.executor_url).await,
+        connection,
         Arc::clone(&fixture.postgres),
         PROJECT,
         ENV_KEY,
@@ -1105,18 +1120,44 @@ async fn schedules_run_from_rows_and_a_missed_tick_is_skipped() {
         &fixture.digest,
     );
     let (stop, stopping) = tokio::sync::watch::channel(false);
-    let task =
-        tokio::spawn(async move { wamn_workflow::schedule::serve(&schedules, stopping).await });
-    let second = next_minute(first);
-    let third = next_minute(second);
-    let until = |moment: DateTime<Utc>| (moment - Utc::now()).to_std().unwrap_or_default();
-    tokio::time::sleep(until(second + chrono::Duration::seconds(5))).await;
+    let (clock, mut ticks) = ScheduleClock::new();
+    let serving_clock = clock.clone();
+    let task = tokio::spawn(async move {
+        wamn_workflow::schedule::serve_with_clock(
+            &schedules,
+            stopping,
+            || *serving_clock.now.borrow(),
+            |tick| serving_clock.wait_until(tick),
+        )
+        .await
+    });
+    let first = next_tick(&mut ticks).await;
+    assert_eq!(first, due("2026-10-20T10:16:00Z"));
+    clock.now.send_replace(first);
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let blocked: bool = fixture.admin.query_one(
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = $1 AND wait_event_type = 'Lock')",
+                &[&reader_pid],
+            ).await.unwrap().get(0);
+            if blocked {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    }).await.expect("the schedule read waits on the held database lock");
+    clock
+        .now
+        .send_replace(first + chrono::Duration::seconds(65));
     assert!(
         fixture.dues("minutely").await.is_empty(),
         "no run is admitted while the rows are locked"
     );
     hold.commit().await.unwrap();
-    tokio::time::sleep(until(third + chrono::Duration::seconds(15))).await;
+    let third = next_tick(&mut ticks).await;
+    assert_eq!(third, first + chrono::Duration::minutes(2));
+    clock.now.send_replace(third);
+    next_tick(&mut ticks).await;
     stop.send(true).unwrap();
     task.await
         .unwrap()

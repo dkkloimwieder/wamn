@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""Enforce native dependency boundaries with package-local Cargo features."""
+
+import subprocess
+import sys
+
+EDGE_REFUSED = {
+    "wamn-runtime": "the edge never links the cloud plugin set",
+    "wamn-workflow": "the edge links no workflow layer",
+    "wamn-router": "routes-router rule 7: the base platform and the edge do not link the router",
+    "wamn-execution-host": "the cloud execution host depends on wamn-runtime",
+    "wamn-platform-identity": "it links tokio-postgres; the edge verifies sessions through wamn-session",
+    "tokio-postgres": "the edge links no Postgres",
+    "deadpool-postgres": "the edge links no Postgres",
+    "postgres-types": "the edge links no Postgres",
+    "async-nats": "the edge links no NATS",
+    "object_store": "the edge links no network service",
+    "redis": "the edge links no network service",
+    "oci-client": "the edge links no OCI registry client",
+    "oci-wasm": "the edge links no OCI registry client",
+    "opentelemetry-otlp": "the edge links no OTLP gRPC exporter",
+    "tonic": "the edge links no OTLP gRPC exporter"
+}
+
+EDGE_WASH = [
+    "async-nats",
+    "opentelemetry-otlp",
+    "redis",
+    "tonic"
+]
+
+ENGINE_REFUSED = {
+    "tokio-postgres": "the engine links no Postgres",
+    "deadpool-postgres": "the engine links no Postgres",
+    "postgres-types": "the engine links no Postgres",
+    "async-nats": "the engine links no network service",
+    "object_store": "the engine links no network service",
+    "redis": "the engine links no network service",
+    "oci-client": "the engine links no OCI registry client",
+    "oci-wasm": "the engine links no OCI registry client",
+    "hyper-util": "the engine links no HTTP client",
+    "hyper-rustls": "the engine links no HTTP client",
+    "reqwest": "the engine links no HTTP client",
+    "opentelemetry-otlp": "the engine links no OTLP gRPC exporter",
+    "tonic": "the engine links no OTLP gRPC exporter",
+    "wamn-router": "routes-router rule 7: the base platform and the edge do not link the router",
+    "wamn-runtime": "the plugin set sits above the engine and the edge never links it"
+}
+
+ENGINE_WASH = [
+    "async-nats",
+    "hyper-rustls",
+    "hyper-util",
+    "opentelemetry-otlp",
+    "redis",
+    "tonic"
+]
+
+ENGINE_ACCEPTED = {
+    "anyhow": "error context",
+    "async-trait": "the host traits the engine declares",
+    "boon": "route input schemas: a pure schema check with no I/O",
+    "data-encoding": "the base32 wamn.release label of a release digest (platform-deploy.md §9.2)",
+    "hex": "the route CSRF digest",
+    "hyper": "the expected-host router's request types, with no client or server feature",
+    "opentelemetry": "the route limiter's gauges",
+    "serde": "wire and manifest types",
+    "serde_json": "wire and manifest types",
+    "sha2": "component digests",
+    "tokio": "timers, files and channels",
+    "tracing": "spans and events",
+    "tracing-opentelemetry": "OpenTelemetrySpanExt sets an invocation span's remote parent",
+    "wamn-catalog": "the release manifest and admitted components",
+    "wamn-component-policy": "component admission",
+    "wamn-event-wire": "the causation a route delivery derives",
+    "wamn-execution-contract": "canonical JSON",
+    "wamn-project-state": "the platform component a registration delivery runs as",
+    "wamn-run-state": "the intent store trait",
+    "wamn-session": "the PAT prefix that selects a route credential",
+    "wash-runtime": "the native runtime",
+    "wasmparser": "component admission",
+    "wasmtime": "the native runtime",
+    "wasmtime-wasi-http": "the expected-host router's native HTTP types"
+}
+
+
+def dependencies(package, *extra):
+    command = [sys.argv[1], "tree", "-p", package, "-e", "normal", *extra,
+               "--prefix", "none", "--locked", "--offline"]
+    result = subprocess.run(command, check=True, capture_output=True, text=True)
+    return {line.split()[0] for line in result.stdout.splitlines() if line.split()}
+
+
+def require(condition, reason):
+    if not condition:
+        raise ValueError(reason)
+
+
+def boundary(package, refused, accepted, *target):
+    outside = dependencies(package, *target, "--prune", "wash-runtime")
+    violations = {name: rule for name, rule in refused.items() if name in outside}
+    require(not violations, f"{package} {target} links forbidden dependencies: {violations}")
+    linked = dependencies(package, *target)
+    present = set(refused) & linked
+    require(present == set(accepted),
+            f"{package} {target} wash-runtime exceptions changed: {present}, expected {accepted}")
+    return linked
+
+
+try:
+    for target in [(), ("--target", "aarch64-unknown-linux-gnu")]:
+        boundary("wamn-edge", EDGE_REFUSED, EDGE_WASH, *target)
+    engine = boundary("wamn-engine", ENGINE_REFUSED, ENGINE_WASH)
+    direct = dependencies("wamn-engine", "--depth", "1") - {"wamn-engine"}
+    require(direct == set(ENGINE_ACCEPTED),
+            f"wamn-engine direct dependencies changed: {direct}; give each dependency a reason in ENGINE_ACCEPTED")
+    require("wamn-workflow" not in engine, "wamn-engine links wamn-workflow")
+    for package in ["wamn-runtime", "wamn-execution-host"]:
+        linked = dependencies(package)
+        require(not ({"wamn-workflow", "wamn-router"} & linked),
+                f"{package} links the workflow layer or router")
+    require("wamn-workflow" in dependencies("wamn-host"), "wamn-host must link wamn-workflow")
+except (subprocess.CalledProcessError, ValueError) as error:
+    print(f"repo-lint: dependency boundaries: {error}", file=sys.stderr)
+    if isinstance(error, subprocess.CalledProcessError):
+        print(error.stderr, file=sys.stderr)
+    sys.exit(65)

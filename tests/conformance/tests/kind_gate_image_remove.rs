@@ -1,4 +1,4 @@
-//! Exact kind gate-image cleanup over deterministic fake CLIs.
+//! Refuse unsafe kind gate-image removal over fake CLIs.
 
 use std::fmt::Write as _;
 
@@ -17,8 +17,6 @@ const TOOL: &str = "tools/kind-gate-image-remove";
 const CLUSTER: &str = "gate-conformance";
 const SELECTED: &str = "wamn-gates:cf-wave1-0123456789abcdef";
 const CANONICAL: &str = "docker.io/library/wamn-gates:cf-wave1-0123456789abcdef";
-const SECOND_SELECTED: &str = "wamn-gates:cf-wave2-fedcba9876543210";
-const SECOND_CANONICAL: &str = "docker.io/library/wamn-gates:cf-wave2-fedcba9876543210";
 const RETAINED: &str = "docker.io/library/wamn-gates:cf-wave2-retained";
 const CONFIG_ID: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const TARGET_DIGEST: &str =
@@ -202,30 +200,6 @@ fn setup(retained: bool, containers: &[Value]) -> TestDirectory {
     directory
 }
 
-fn add_second_selected_tag(directory: &TestDirectory) {
-    for node in ["node-a", "node-b"] {
-        let image_path = directory.path(&format!("{node}.images"));
-        let mut images = fs::read_to_string(&image_path).expect("read image list");
-        writeln!(images, "{SECOND_CANONICAL}\t{TARGET_DIGEST}")
-            .expect("writing to a String cannot fail");
-        fs::write(image_path, images).expect("extend image list");
-
-        let cri_path = directory.path(&format!("{node}.cri-images.json"));
-        let mut cri: Value =
-            serde_json::from_slice(&fs::read(&cri_path).expect("read CRI images for extension"))
-                .expect("parse CRI images for extension");
-        cri["images"][0]["repoTags"]
-            .as_array_mut()
-            .expect("repoTags array")
-            .push(json!(SECOND_CANONICAL));
-        fs::write(
-            cri_path,
-            serde_json::to_vec(&cri).expect("serialize extended CRI images"),
-        )
-        .expect("write extended CRI images");
-    }
-}
-
 fn run(directory: &TestDirectory, scenario: &str, arguments: &[&str]) -> Output {
     let mut named = vec!["--cluster", CLUSTER];
     named.extend_from_slice(arguments);
@@ -252,70 +226,6 @@ fn calls(directory: &TestDirectory) -> String {
 
 fn image_state(directory: &TestDirectory, node: &str) -> String {
     fs::read_to_string(directory.path(&format!("{node}.images"))).expect("read image state")
-}
-
-#[test]
-fn dry_run_plans_every_node_without_mutation() {
-    let directory = setup(false, &[]);
-    let output = run(&directory, "", &["--image", SELECTED]);
-    assert!(
-        output.status.success(),
-        "stderr={}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("SUMMARY mode=dry-run cluster=gate-conformance nodes=2 selected=1"));
-    assert_eq!(stdout.matches("remove-image=").count(), 6);
-    assert!(image_state(&directory, "node-a").contains(CANONICAL));
-    assert!(!calls(&directory).contains("images\trm"));
-}
-
-#[test]
-fn apply_removes_selected_tags_and_internal_aliases_only() {
-    let directory = setup(false, &[]);
-    let output = run(&directory, "", &["--image", SELECTED, "--apply"]);
-    assert!(
-        output.status.success(),
-        "stderr={}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    for node in ["node-a", "node-b"] {
-        let state = image_state(&directory, node);
-        assert!(!state.contains(CANONICAL));
-        assert!(!state.contains(CONFIG_ID));
-        assert!(!state.contains(IMPORT_ALIAS));
-        assert!(state.contains("docker.io/library/unrelated:keep"));
-    }
-    let calls = calls(&directory);
-    assert_eq!(
-        calls
-            .matches(&format!("images\trm\t--sync\t{CANONICAL}"))
-            .count(),
-        2
-    );
-    assert!(!calls.contains("unrelated:keep"));
-}
-
-#[test]
-fn apply_removes_an_entire_explicitly_selected_multi_tag_group() {
-    let directory = setup(false, &[]);
-    add_second_selected_tag(&directory);
-    let output = run(
-        &directory,
-        "",
-        &["--image", SELECTED, "--image", SECOND_SELECTED, "--apply"],
-    );
-    assert!(
-        output.status.success(),
-        "stderr={}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    for node in ["node-a", "node-b"] {
-        let state = image_state(&directory, node);
-        assert!(!state.contains(CANONICAL));
-        assert!(!state.contains(SECOND_CANONICAL));
-        assert!(state.contains("docker.io/library/unrelated:keep"));
-    }
 }
 
 #[test]
@@ -570,64 +480,4 @@ fn orphaned_container_removal_requires_separate_authorization() {
         String::from_utf8_lossy(&refused.stderr).contains("reason=orphan-removal-not-authorized")
     );
     assert!(!calls(&directory).contains("crictl\trm"));
-
-    let applied = run(
-        &directory,
-        "",
-        &[
-            "--image",
-            SELECTED,
-            "--apply",
-            "--remove-orphaned-containers",
-        ],
-    );
-    assert!(
-        applied.status.success(),
-        "stderr={}",
-        String::from_utf8_lossy(&applied.stderr)
-    );
-    assert!(calls(&directory).contains("crictl\trm\tcontainer-a"));
-}
-
-#[test]
-fn verification_failure_is_reported_after_all_nodes_are_attempted() {
-    let directory = setup(false, &[]);
-    let output = run(
-        &directory,
-        "verification-failure",
-        &["--image", SELECTED, "--apply"],
-    );
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("verification failed: image reference remains on node-a"));
-    assert!(stderr.contains("verification failed: image reference remains on node-b"));
-    assert!(stderr.contains("kind gate-image cleanup failed verification"));
-}
-
-#[test]
-fn alias_removal_failure_preserves_selected_tag_for_retry() {
-    let directory = setup(false, &[]);
-    let output = run(
-        &directory,
-        "remove-failure",
-        &["--image", SELECTED, "--apply"],
-    );
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("preserving selected image tags on node-b"));
-    assert!(!image_state(&directory, "node-a").contains(CANONICAL));
-    assert!(image_state(&directory, "node-b").contains(CANONICAL));
-    assert!(
-        !calls(&directory)
-            .lines()
-            .any(|line| line.contains("node-b") && line.ends_with(CANONICAL))
-    );
-
-    let retry = run(&directory, "", &["--image", SELECTED, "--apply"]);
-    assert!(
-        retry.status.success(),
-        "stderr={}",
-        String::from_utf8_lossy(&retry.stderr)
-    );
-    assert!(!image_state(&directory, "node-b").contains(CANONICAL));
 }

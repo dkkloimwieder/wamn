@@ -20,7 +20,7 @@ host ──OTLP──▶ collector ──Parquet──▶ gs://wamn-<project>-ot
 
 - The host instruments every effect with `tracing` spans through `effect_span!` (`crates/platform/runtime/src/plugins/effect_span.rs`): `wamn.component.invoke`, `wamn.router.resolve`, `wamn.auth.identity`, `wamn.auth.permissions`, `wamn.postgres.{begin,execute,query,commit,decode_rows,session_settings}`, `wamn.queue.delivery`, `wamn.connection_http`, plus `record_query_ms` timings. Span fields carry org, project, operation, component and run id.
 - The host calls `wash_runtime::observability::initialize_observability` (`services/host/src/main.rs:67`); OTLP trace, metric and log exporters activate when `OTEL_EXPORTER_OTLP_ENDPOINT` is set and are no-ops otherwise. `wasi-otel` is on (`services/host/Cargo.toml:19`), so guest spans join the host trace.
-- The edge links no exporter by test (`services/edge/tests/dependency_boundary.rs:35`). Unchanged.
+- The edge links no exporter by lint (`tools/repo-lint-dependencies`). Unchanged.
 - On wamn-dev nothing is set: no `OTEL_*` in `deploy/gcp/host-group-*.yaml` or the release chart; the cluster runs `--logging=SYSTEM --monitoring=SYSTEM` (gcp.md §2.4). Traces drop. Observability today is `kubectl logs` and the run tables.
 
 ## 3. Rulings

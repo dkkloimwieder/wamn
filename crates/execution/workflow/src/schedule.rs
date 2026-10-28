@@ -167,24 +167,28 @@ pub async fn serve(
     rows: &dyn ScheduleRows,
     stopping: tokio::sync::watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
-    serve_with_clock(rows, stopping, Utc::now).await
+    serve_with_clock(rows, stopping, Utc::now, |tick| {
+        tokio::time::sleep((tick - Utc::now()).to_std().unwrap_or_default())
+    })
+    .await
 }
 
-async fn serve_with_clock(
+/// Serve schedules with a supplied clock and a wait for each minute boundary.
+pub async fn serve_with_clock<F: std::future::Future<Output = ()>>(
     rows: &dyn ScheduleRows,
     mut stopping: tokio::sync::watch::Receiver<bool>,
     now: impl Fn() -> DateTime<Utc>,
+    wait_until: impl Fn(DateTime<Utc>) -> F,
 ) -> anyhow::Result<()> {
     let mut tick = next_minute(now());
     loop {
         if *stopping.borrow() {
             return Ok(());
         }
-        let wait = (tick - now()).to_std().unwrap_or_default();
         tokio::select! {
             biased;
             _ = stopping.changed() => return Ok(()),
-            () = tokio::time::sleep(wait) => {}
+            () = wait_until(tick) => {}
         }
         if next_minute(tick) <= now() {
             tracing::warn!(due = %due_text(tick), "missed workflow schedule tick");
@@ -303,8 +307,9 @@ mod tests {
         let start = utc(start);
         let instant = tokio::time::Instant::now();
         let (stop, stopped) = tokio::sync::watch::channel(false);
-        let serving = serve_with_clock(recorded, stopped, || {
-            start + chrono::Duration::from_std(instant.elapsed()).unwrap()
+        let now = || start + chrono::Duration::from_std(instant.elapsed()).unwrap();
+        let serving = serve_with_clock(recorded, stopped, now, |tick| {
+            tokio::time::sleep((tick - now()).to_std().unwrap_or_default())
         });
         tokio::pin!(serving);
         tokio::select! {
