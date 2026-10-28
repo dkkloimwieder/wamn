@@ -1,5 +1,5 @@
 // Run after `cargo run -p wamn-schema-generator --example emit_client_ts` and `pnpm install`.
-// From web/sync-bench: npx vitest run --config ../../crates/schema/generator/tests/client_ts_sync.config.mjs
+// From web/sync-bench: pnpm exec vitest run --config ../../crates/schema/generator/tests/client_ts_sync.config.mjs
 import "fake-indexeddb/auto";
 import { expect, it, vi } from "vitest";
 import { render } from "@solidjs/testing-library";
@@ -23,7 +23,15 @@ import {
 import type { Int64, JsonValue, Transport, WireRequest } from "../../../../web/runtime/src/index.js";
 
 const id = "00000000-0000-7000-8000-000000000001";
-const wire = { id, code: "priority", note: null, maker_id: null, edit_version: 4, created_at: "2026-01-01T00:00:00Z" };
+const wire = {
+  row_version: "4000",
+  id,
+  code: "priority",
+  note: null,
+  maker_id: null,
+  edit_version: 4,
+  created_at: "2026-01-01T00:00:00Z",
+};
 
 it("round-trips widget list pages, changes, signal and cursor expiry", async () => {
   const seen: WireRequest[] = [];
@@ -33,8 +41,8 @@ it("round-trips widget list pages, changes, signal and cursor expiry", async () 
     { item: [{ ...wire, id: "second" }], next_cursor: null, cursor: "c2" },
     {
       rows: [
-        { id, row_version: 5, deleted: false, data: { ...wire, edit_version: 5 } },
-        { id: "second", row_version: 6, deleted: true },
+        { id, row_version: "4001", deleted: false, data: { ...wire, row_version: "4001", edit_version: 5 } },
+        { id: "second", row_version: "4001", deleted: true },
       ],
       next_cursor: "c3",
       complete: false,
@@ -64,8 +72,8 @@ it("round-trips widget list pages, changes, signal and cursor expiry", async () 
   const changes = await feed.changes(scope, page.cursor, 50, signal);
   expect(seen[2]?.items).toEqual([{ ...scope, feed: { cursor: "c1", limit: 50 } }]);
   expect(changes).toMatchObject({ next_cursor: "c3", complete: false });
-  expect(changes.rows[0]).toMatchObject({ id, row_version: 5, data: { editVersion: 5 } });
-  expect(changes.rows[1]).toEqual({ id: "second", row_version: 6, deleted: true });
+  expect(changes.rows[0]).toMatchObject({ id, row_version: 4001, data: { rowVersion: "4001", editVersion: 5 } });
+  expect(changes.rows[1]).toEqual({ id: "second", row_version: 4001, deleted: true });
   expect(signals).toEqual([signal, signal, signal]);
   await expect(feed.changes(scope, "expired")).rejects.toMatchObject({ name: "CursorExpired" });
 });
@@ -82,17 +90,19 @@ it("reports an incomplete widget list at the cap", async () => {
   expect(await feed.list({})).toMatchObject({ cursor: "c1", complete: false, rows: [{ id }] });
 });
 
-it("uses the declared revision when rejecting a stale update", async () => {
+it("replaces equal snapshots and ignores lower snapshots for pulls and refills", async () => {
   const row: WidgetQueryRow = {
     id,
     code: "priority",
     note: null,
     makerId: null,
     editVersion: 4,
+    rowVersion: "9007199254740993",
     createdAt: wire.created_at,
   };
-  const rows = [row];
+  let rows = [row];
   let next = row;
+  let batch: WidgetQueryRow[] | undefined;
   const c = widgetCollection(
     {
       async list() {
@@ -100,7 +110,12 @@ it("uses the declared revision when rejecting a stale update", async () => {
       },
       async changes() {
         return {
-          rows: [{ id, row_version: next.editVersion, deleted: false, data: next }],
+          rows: (batch ?? [next]).map((data) => ({
+            id,
+            row_version: Number(data.rowVersion),
+            deleted: false as const,
+            data,
+          })),
           next_cursor: "c2",
           complete: true,
         };
@@ -112,12 +127,27 @@ it("uses the declared revision when rejecting a stale update", async () => {
   try {
     await c.preload();
     expect(c.get(id)).toMatchObject(row);
-    next = { ...row, editVersion: 3, code: "standard" };
+    next = { ...row, rowVersion: "9007199254740992", code: "standard" };
     await c.utils.pull();
     expect(c.get(id)).toMatchObject(row);
-    next = { ...row, editVersion: 5, code: "standard" };
+    next = { ...row, code: "standard" };
     await c.utils.pull();
     expect(c.get(id)).toMatchObject(next);
+    rows = [{ ...next, note: "equal refill" }];
+    await c.utils.refill();
+    expect(c.get(id)?.note).toBe("equal refill");
+    rows = [{ ...row, rowVersion: "9007199254740992" }];
+    await c.utils.refill();
+    expect(c.get(id)?.note).toBe("equal refill");
+    next = { ...row, rowVersion: "9007199254740994", note: "newer" };
+    await c.utils.pull();
+    expect(c.get(id)).toMatchObject(next);
+    batch = [
+      { ...row, rowVersion: "9007199254740995", note: "held in batch" },
+      { ...row, rowVersion: "9007199254740994", note: "lower in batch" },
+    ];
+    await c.utils.pull();
+    expect(c.get(id)?.note).toBe("held in batch");
     expect(widgetKey({ filter: { code: ["priority"], note: ["a"] } })).toBe(
       widgetKey({ filter: { note: ["a"], code: ["priority"] } }),
     );
@@ -128,7 +158,13 @@ it("uses the declared revision when rejecting a stale update", async () => {
 
 const counterId: Int64 = "9007199254740992";
 const nextCounterId: Int64 = "9007199254740993";
-const counterWire = { id: counterId, label: "first", edit_version: 1, created_at: wire.created_at };
+const counterWire = {
+  row_version: "4000",
+  id: counterId,
+  label: "first",
+  edit_version: 1,
+  created_at: wire.created_at,
+};
 
 it("fills counter pages and renders changes by their exact Int64 ids", async () => {
   const seen: WireRequest[] = [];
@@ -137,8 +173,13 @@ it("fills counter pages and renders changes by their exact Int64 ids", async () 
     { item: [{ ...counterWire, id: nextCounterId, label: "second" }], next_cursor: null, cursor: "c2" },
     {
       rows: [
-        { id: counterId, row_version: 2, deleted: false, data: { ...counterWire, label: "updated", edit_version: 2 } },
-        { id: nextCounterId, row_version: 2, deleted: true },
+        {
+          id: counterId,
+          row_version: "4001",
+          deleted: false,
+          data: { ...counterWire, row_version: "4001", label: "updated", edit_version: 2 },
+        },
+        { id: nextCounterId, row_version: "4001", deleted: true },
       ],
       next_cursor: "c3",
       complete: true,
@@ -200,7 +241,10 @@ it("fills counter pages and renders changes by their exact Int64 ids", async () 
 
 it("refuses an offline counter create and sends an online create without an outbox entry", async () => {
   let online = false;
-  const invoke = vi.fn<Transport["invoke"]>(async () => ({ status: "completed", value: counterWire }));
+  const invoke = vi.fn<Transport["invoke"]>(async () => ({
+    status: "completed",
+    value: { id: counterId, label: "first", edit_version: 1, created_at: wire.created_at },
+  }));
   const probe = vi.fn(async (_signal?: AbortSignal) => online);
   const transport: Transport = { invoke, probe };
   const c = counterCollection(
@@ -267,7 +311,13 @@ it("refuses an offline counter create and sends an online create without an outb
 it.each([COUNTER_UPDATE_ROUTE, COUNTER_DELETE_ROUTE])(
   "records $operation through recordWrite with the Int64 id",
   async (route) => {
-    const row: CounterRow = { id: counterId, label: "first", editVersion: 1, createdAt: wire.created_at };
+    const row: CounterRow = {
+      rowVersion: "4000",
+      id: counterId,
+      label: "first",
+      editVersion: 1,
+      createdAt: wire.created_at,
+    };
     const c = counterCollection(
       {
         async list() {

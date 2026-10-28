@@ -24,7 +24,13 @@ afterEach(async () => {
 function fixture() {
   const rows = makeRows(3).map((row, i) => ({ ...row, status: i === 0 ? ("held" as const) : ("available" as const) }));
   let locations = [
-    { id: rows[0]!.locationId, locationCode: "LOC-A", rowVersion: 1, description: null, createdAt: rows[0]!.createdAt },
+    {
+      id: rows[0]!.locationId,
+      locationCode: "LOC-A",
+      rowVersion: "1",
+      description: null,
+      createdAt: rows[0]!.createdAt,
+    },
   ] as LocationRow[];
   const packaging: Feed<PackagingRow, PackagingScope> = {
     list: vi.fn(async (scope) => ({
@@ -123,11 +129,11 @@ it("refills locations through row_version without deleting the saved entry", asy
   await model.takeOffline();
   const row = model.location!.c.toArray[0]!;
   const c = model.location!.c;
-  h.locations([{ ...row, locationCode: "NEW", rowVersion: 2 }]);
+  h.locations([{ ...row, locationCode: "NEW", rowVersion: "2" }]);
   await model.takeOffline();
   expect(model.location!.c).toBe(c);
   expect(c.toArray[0]?.locationCode).toBe("NEW");
-  h.locations([{ ...row, locationCode: "OLD", rowVersion: 1 }]);
+  h.locations([{ ...row, locationCode: "OLD", rowVersion: "1" }]);
   await model.takeOffline();
   expect(c.toArray[0]?.locationCode).toBe("NEW");
   expect(h.persistence.remove).not.toHaveBeenCalled();

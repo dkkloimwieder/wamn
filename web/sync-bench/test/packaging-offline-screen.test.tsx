@@ -116,7 +116,7 @@ it.each([false, true])(
     const location: LocationRow = {
       id: row.locationId,
       locationCode: "SAVED-LOCATION",
-      rowVersion: 1,
+      rowVersion: "1",
       description: null,
       createdAt: "2026-01-01T00:00:00Z",
     };
@@ -227,14 +227,14 @@ it.each([true, false])("records the selected local location when online=%s", asy
     {
       id: "00000000-0000-4000-8000-000000000001",
       locationCode: "A",
-      rowVersion: 1,
+      rowVersion: "1",
       description: null,
       createdAt: "2026-01-01T00:00:00Z",
     },
     {
       id: "00000000-0000-4000-8000-000000000002",
       locationCode: "B",
-      rowVersion: 1,
+      rowVersion: "1",
       description: null,
       createdAt: "2026-01-01T00:00:00Z",
     },

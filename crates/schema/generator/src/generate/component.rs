@@ -75,7 +75,7 @@ pub(super) fn emit_model_component(
             *action,
             &contract,
             operation,
-            model.feed_revision().is_some(),
+            model.feed_enabled(),
             crate::key::key_type(table)?,
         );
         // A change works in the host's operation transaction, so its export

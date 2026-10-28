@@ -1,5 +1,5 @@
 import { createMemo, onCleanup, type Accessor } from "solid-js";
-import { count, createLiveQueryCollection, sum } from "@tanstack/db";
+import { count, createLiveQueryCollection, multiply, sum } from "@tanstack/db";
 import { liveRows, syncStatus } from "@wfe/sync";
 import type { packagingCollection } from "./generated/wamn_wms/packaging.js";
 import { orderedIds, type StatusFilter } from "./order.js";
@@ -15,15 +15,20 @@ export function shapeA(
 ): ViewSource & { status: Accessor<"loading" | "ready" | "error"> } {
   const rows = liveRows(c);
   // wfe finding (iii): the built-in sum is a float sum. It is exact here only
-  // because row_version is int32 and the total stays below 2^53.
+  // because the synthetic versions and their total stay below 2^53.
   const grouped = createLiveQueryCollection((q) =>
     q
       .from({ p: c })
       .groupBy(({ p }) => [p.status, p.type])
-      .select(({ p }) => ({ status: p.status, type: p.type, count: count(p.id), total: sum(p.rowVersion) })),
+      .select(({ p }) => ({
+        status: p.status,
+        type: p.type,
+        count: count(p.id),
+        total: sum(multiply(p.rowVersion, 1)),
+      })),
   );
   const whole = createLiveQueryCollection((q) =>
-    q.from({ p: c }).select(({ p }) => ({ count: count(p.id), total: sum(p.rowVersion) })),
+    q.from({ p: c }).select(({ p }) => ({ count: count(p.id), total: sum(multiply(p.rowVersion, 1)) })),
   );
   onCleanup(() => {
     void grouped.cleanup();

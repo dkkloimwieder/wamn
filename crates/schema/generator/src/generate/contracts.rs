@@ -579,7 +579,7 @@ fn emit_operation_sql(
                 .collect());
         }
         let variants = query_variants(operation);
-        let feed = model.feed_revision();
+        let feed = model.feed_enabled();
         let mut statements = Vec::with_capacity(variants.len() + 1);
         for (field, direction) in variants {
             statements.push((
@@ -587,21 +587,14 @@ fn emit_operation_sql(
                     "generated/sql/{model_name}/query_{field}_{}.sql",
                     sql::direction_name(direction)
                 ),
-                sql::query(
-                    table,
-                    operation,
-                    field,
-                    direction,
-                    tombstoned,
-                    feed.is_some(),
-                ),
+                sql::query(table, operation, field, direction, tombstoned, feed),
             ));
         }
         // The change feed is the last statement of the list read.
-        if let Some(revision) = feed {
+        if feed {
             statements.push((
                 format!("generated/sql/{model_name}/{CHANGES_STATEMENT}.sql"),
-                sql::changes(table, operation, revision, tombstoned),
+                sql::changes(table, operation, tombstoned),
             ));
         }
         let mut paths = Vec::with_capacity(statements.len());
@@ -686,7 +679,7 @@ fn emit_operation_contracts(
     // A public create or update succeeds with the model row, and a delete
     // with its outcome. The observed revision of an update or a delete
     // remains an SQL accessor column.
-    let columns = if action == CrudAction::Delete {
+    let mut columns = if action == CrudAction::Delete {
         accessors.first().map_or_else(Vec::new, |accessor| {
             operation_row_columns(wamn_api, &accessor.row)
                 .into_iter()
@@ -696,6 +689,14 @@ fn emit_operation_contracts(
     } else {
         model_columns.clone()
     };
+    if action == CrudAction::Query && model.feed_enabled() {
+        columns.retain(|column| column.name != "row_version");
+        columns.push(statement_value_contract(
+            "row_version",
+            ColumnType::Int64,
+            false,
+        ));
+    }
     let statements = accessors
         .iter()
         .map(|accessor| {
@@ -821,7 +822,7 @@ fn emit_operation_contracts(
     // request: the cursor a page or a previous feed read returned, and the
     // limit of the page (docs/architecture/execution.md#change-feed).
     if action == CrudAction::Query
-        && model.feed_revision().is_some()
+        && model.feed_enabled()
         && let Some(limit) = &operation.limit
     {
         input["feed"] = json!({
@@ -972,7 +973,10 @@ fn crud_result_contract(
                 ty: column.ty,
                 nullable: column.nullable,
                 revision: crate::manifest::Revision::Flag(
-                    model.revision_field() == Some(column.name.as_str()),
+                    model.revision_field() == Some(column.name.as_str())
+                        && !(action == CrudAction::Query
+                            && model.feed_enabled()
+                            && column.name == "row_version"),
                 ),
                 values: if action == CrudAction::Delete && column.name == "outcome" {
                     vec![sql::OUTCOME_DELETED.to_owned()]
@@ -1231,7 +1235,7 @@ fn error_contract(
             json!({"literal": "concurrency_conflict"}),
         ));
     }
-    if action == CrudAction::Query && model.feed_revision().is_some() {
+    if action == CrudAction::Query && model.feed_enabled() {
         cases.push((Code::CursorExpired, json!({"literal": "cursor_expired"})));
     }
     if action == CrudAction::Create {

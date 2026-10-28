@@ -502,7 +502,6 @@ fn write_sync(
         .expect("a sync feed has a route")
         .response
         .fields;
-    let revision = feed_revision(fields);
     let id = fields
         .iter()
         .find(|field| field.path == "id")
@@ -553,7 +552,6 @@ fn write_sync(
             .replace("$PREFIX", &prefix)
             .replace("$ROW", &row)
             .replace("$STEM", &stem)
-            .replace("$REVISION", &revision)
             .replace("$QUERY", &query)
             .replace("$MODEL", &model.name)
             .replace(
@@ -562,17 +560,6 @@ fn write_sync(
             ),
     );
     Ok(())
-}
-
-/// Read the revision marker derived from the model's declared revision field.
-fn feed_revision(fields: &[FieldIr]) -> String {
-    to_camel(
-        &fields
-            .iter()
-            .find(|field| field.revision.is_revision())
-            .expect("a feed row carries its declared revision")
-            .path,
-    )
 }
 
 fn emit_operation(
@@ -798,11 +785,11 @@ fn write_changes(
     if ALIASES.contains(&id_type) {
         used.insert(id_type);
     }
+    used.insert("Int64");
     let stem = route_const.trim_end_matches("_ROUTE");
-    let revision = feed_revision(fields);
     writeln!(
         source,
-        "\n/** One change of `{operation}`. A deleted change is a row that was deleted or\n * left the scope of the read, and it carries no data. */\nexport interface {type_stem}Change {{\n  readonly id: {id_type};\n  readonly {revision}: number;\n  readonly deleted: boolean;\n  readonly data?: {type_stem}Row;\n}}\n\n/** The changes of `{operation}` since a cursor, one per row. */\nexport interface {type_stem}Changes {{\n  readonly rows: readonly {type_stem}Change[];\n  /** The cursor the next read continues from. */\n  readonly nextCursor: string;\n  /** False when more changes follow `nextCursor`. */\n  readonly complete: boolean;\n}}\n\n/** What the change feed of `{operation}` calls its result members. */\nexport const {stem}_CHANGES_FIELDS: FieldMap = {{\n  \"rows\": {{\n    member: \"rows\",\n    fields: {{\n      \"id\": \"id\",\n      \"row_version\": \"{revision}\",\n      \"deleted\": \"deleted\",\n      \"data\": {{\n        member: \"data\",\n        fields: {{"
+        "\n/** One change of `{operation}`. A deleted change is a row that was deleted or\n * left the scope of the read, and it carries no data. */\nexport interface {type_stem}Change {{\n  readonly id: {id_type};\n  readonly rowVersion: Int64;\n  readonly deleted: boolean;\n  readonly data?: {type_stem}Row;\n}}\n\n/** The changes of `{operation}` since a cursor, one per row. */\nexport interface {type_stem}Changes {{\n  readonly rows: readonly {type_stem}Change[];\n  /** The cursor the next read continues from. */\n  readonly nextCursor: string;\n  /** False when more changes follow `nextCursor`. */\n  readonly complete: boolean;\n}}\n\n/** What the change feed of `{operation}` calls its result members. */\nexport const {stem}_CHANGES_FIELDS: FieldMap = {{\n  \"rows\": {{\n    member: \"rows\",\n    fields: {{\n      \"id\": \"id\",\n      \"row_version\": \"rowVersion\",\n      \"deleted\": \"deleted\",\n      \"data\": {{\n        member: \"data\",\n        fields: {{"
     )
     .expect("write");
     write_map_members(source, fields, 5)?;

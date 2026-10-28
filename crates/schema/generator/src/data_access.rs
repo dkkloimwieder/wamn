@@ -715,7 +715,7 @@ fn derive_data_access_overlay_for_manifest(
     // The change feed of a list read reads the history of its relation: the
     // range of transactions, the row key, and the image a delete leaves.
     for model in manifest.models.values() {
-        if model.feed_revision().is_some() {
+        if model.feed_enabled() {
             let history = history_table_name(&model.table);
             let relation = desired_relation(&mut desired, &model.schema, &history)?;
             relation.select.extend(

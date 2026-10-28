@@ -836,6 +836,51 @@ async fn widget_changes(paths: &Paths, filter: &Value, cursor: &str) -> anyhow::
     Ok(value(&answer)?.clone())
 }
 
+/// The snapshot xmin in the opaque cursor that the host returns.
+fn feed_xmin(cursor: &str) -> anyhow::Result<i64> {
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(cursor)?;
+    let cursor = std::str::from_utf8(&bytes)?;
+    cursor
+        .split(':')
+        .nth(1)
+        .context("a cursor transaction")?
+        .parse()
+        .context("snapshot xmin")
+}
+
+/// All changes, including deletions, carry the statement's one snapshot xmin.
+fn feed_versions(changes: &Value) -> anyhow::Result<Option<i64>> {
+    let rows = changes["rows"].as_array().context("feed rows")?;
+    let mut snapshot = None;
+    for row in rows {
+        let version: i64 = row["row_version"]
+            .as_str()
+            .context("an int64 row_version")?
+            .parse()?;
+        anyhow::ensure!(
+            snapshot.is_none_or(|xmin| xmin == version),
+            "one snapshot per statement: {changes}"
+        );
+        snapshot = Some(version);
+        if let Some(data) = row.get("data") {
+            anyhow::ensure!(
+                data["row_version"] == row["row_version"],
+                "data uses the same snapshot: {row}"
+            );
+        }
+    }
+    if changes["complete"] == true
+        && let Some(version) = snapshot
+    {
+        let cursor = changes["next_cursor"].as_str().context("a next cursor")?;
+        anyhow::ensure!(
+            version == feed_xmin(cursor)?,
+            "the version and cursor share xmin: {changes}"
+        );
+    }
+    Ok(snapshot)
+}
+
 /// The change of one id in a feed answer, which must carry it once.
 fn change_of<'a>(changes: &'a Value, id: &Value) -> anyhow::Result<&'a Value> {
     let rows = changes["rows"]
@@ -873,7 +918,7 @@ async fn note_widget(paths: &Paths, id: &Value, version: i64, note: &str) -> any
             "/widget/update",
             &json!([{
                 "request_id": format!("note-{note}-{version}"), "id": id,
-                "expected_edit_version": version.to_string(),
+                "expected_edit_version": version,
                 "change": {"note": note},
             }]),
         )
@@ -885,8 +930,8 @@ async fn note_widget(paths: &Paths, id: &Value, version: i64, note: &str) -> any
 /// The fixture allows two widget codes, so the test works with two rows.
 ///
 /// A feed read right after a list returns no rows, because every write came
-/// before the list. Two writes after the list arrive with their revisions. A
-/// row changed three times appears once, at its latest revision. An unchanged
+/// before the list. Two writes after the list arrive with the statement snapshot. A
+/// row changed three times appears once, with its latest data. An unchanged
 /// feed keeps its cursor, and its weak tag answers 304. A row that leaves the
 /// list's filter, and a deleted row, arrive as deleted with no data. A cursor
 /// of another model is refused. After a real pruning run of the P30D
@@ -918,6 +963,12 @@ async fn the_feed_of_a_list_read_follows_its_snapshot() -> anyhow::Result<()> {
             .as_str()
             .with_context(|| format!("a list page carries its feed cursor: {page}"))?
             .to_owned();
+        for row in value(&page)?["item"].as_array().context("list rows")? {
+            anyhow::ensure!(
+                row["row_version"] == json!(feed_xmin(&cursor)?.to_string()),
+                "list rows carry their statement xmin: {row}"
+            );
+        }
         let before = widget_changes(&paths, &all, &cursor).await?;
         anyhow::ensure!(
             before["rows"] == json!([]) && before["complete"] == json!(true),
@@ -926,20 +977,21 @@ async fn the_feed_of_a_list_read_follows_its_snapshot() -> anyhow::Result<()> {
         let w1 = note_widget(&paths, &first, first_version, "w1").await?;
         let w2 = note_widget(&paths, &second, second_version, "w2").await?;
         let changes = widget_changes(&paths, &all, &cursor).await?;
+        feed_versions(&changes)?;
         let one = change_of(&changes, &first)?;
         anyhow::ensure!(
-            one["row_version"] == json!(w1)
+            one["data"]["edit_version"] == json!(w1)
                 && one["deleted"] == json!(false)
                 && one["data"]["note"] == json!("w1"),
-            "W1 arrives with its revision and data: {one}"
+            "W1 arrives with its snapshot version and data: {one}"
         );
         anyhow::ensure!(
-            change_of(&changes, &second)?["row_version"] == json!(w2),
-            "W2 arrives with its revision: {changes}"
+            change_of(&changes, &second)?["data"]["edit_version"] == json!(w2),
+            "W2 arrives with its latest data: {changes}"
         );
 
-        // FEED COLLAPSES. A row changed three times appears once, at its
-        // latest revision.
+        // FEED COLLAPSES. A row changed three times appears once, with its
+        // latest data.
         let next = changes["next_cursor"]
             .as_str()
             .context("a next cursor")?
@@ -949,10 +1001,12 @@ async fn the_feed_of_a_list_read_follows_its_snapshot() -> anyhow::Result<()> {
             version = note_widget(&paths, &first, version, note).await?;
         }
         let collapsed = widget_changes(&paths, &all, &next).await?;
+        feed_versions(&collapsed)?;
         let latest = change_of(&collapsed, &first)?;
         anyhow::ensure!(
-            latest["row_version"] == json!(version) && latest["data"]["note"] == json!("kept-c3"),
-            "a row changed three times appears once, at its latest revision: {collapsed}"
+            latest["data"]["edit_version"] == json!(version)
+                && latest["data"]["note"] == json!("kept-c3"),
+            "a row changed three times appears once, with its latest data: {collapsed}"
         );
 
         // UNCHANGED. A feed with nothing new returns its cursor unchanged, and
@@ -993,18 +1047,17 @@ async fn the_feed_of_a_list_read_follows_its_snapshot() -> anyhow::Result<()> {
             .as_str()
             .context("a cursor")?
             .to_owned();
-        let left = note_widget(&paths, &first, version, "gone").await?;
+        note_widget(&paths, &first, version, "gone").await?;
         let scope_changes = widget_changes(&paths, &kept, &scoped_cursor).await?;
+        feed_versions(&scope_changes)?;
         let gone = change_of(&scope_changes, &first)?;
         anyhow::ensure!(
-            gone["deleted"] == json!(true)
-                && gone.get("data").is_none()
-                && gone["row_version"] == json!(left),
+            gone["deleted"] == json!(true) && gone.get("data").is_none(),
             "a row that left the filter arrives as deleted: {gone}"
         );
 
         // DELETE. A deleted row arrives as deleted, with no data and the
-        // revision it had.
+        // statement snapshot.
         let deleted_cursor = scope_changes["next_cursor"]
             .as_str()
             .context("a cursor")?
@@ -1015,17 +1068,16 @@ async fn the_feed_of_a_list_read_follows_its_snapshot() -> anyhow::Result<()> {
                     "/widget/delete",
                     &json!([{
                         "request_id": "feed-delete", "id": second,
-                        "expected_edit_version": w2.to_string(),
+                        "expected_edit_version": w2,
                     }]),
                 )
                 .await?,
         )?;
         let removed = widget_changes(&paths, &all, &deleted_cursor).await?;
+        feed_versions(&removed)?;
         let removal = change_of(&removed, &second)?;
         anyhow::ensure!(
-            removal["deleted"] == json!(true)
-                && removal.get("data").is_none()
-                && removal["row_version"] == json!(w2),
+            removal["deleted"] == json!(true) && removal.get("data").is_none(),
             "a deleted row arrives as deleted with no data: {removal}"
         );
 
@@ -1136,11 +1188,11 @@ async fn the_feed_delivers_visible_rows_while_a_transaction_stays_open() -> anyh
             .await
             .context("update the held standard row")?;
         let xmin: i64 = held_row.get(2);
-        let held_version: i64 = held_row.get(1);
+        let held_version = i64::from(held_row.get::<_, i32>(1));
         anyhow::ensure!(held_version == version + 1, "the held row advances its version");
         let mut expected = BTreeMap::from([(held_row.get::<_, String>(0), (held_version, false))]);
         let mut live_id = String::new();
-        for version in 1_i64..=200 {
+        for version in 1_i32..=200 {
             let transaction = writer.transaction().await.with_context(|| format!("begin priority transaction {version}"))?;
             transaction.batch_execute(stamp).await.with_context(|| format!("stamp priority transaction {version}"))?;
             let deleted = transaction
@@ -1158,7 +1210,7 @@ async fn the_feed_delivers_visible_rows_while_a_transaction_stays_open() -> anyh
                 .with_context(|| format!("insert the priority row in transaction {version}"))?;
             live_id = row.get(0);
             anyhow::ensure!(
-                expected.insert(live_id.clone(), (version, version < 200)).is_none(),
+                expected.insert(live_id.clone(), (i64::from(version), version < 200)).is_none(),
                 "each transaction inserts a new id"
             );
             transaction.commit().await.with_context(|| format!("commit priority transaction {version}"))?;
@@ -1177,6 +1229,7 @@ async fn the_feed_delivers_visible_rows_while_a_transaction_stays_open() -> anyh
                 && first["complete"] == json!(true),
             "the first page fills with visible rows above xmin: {first}"
         );
+        anyhow::ensure!(feed_versions(&first)? == Some(xmin), "visible changes use the held xmin");
         let next = first["next_cursor"].as_str().context("a next cursor")?;
         anyhow::ensure!(
             base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(next)?
@@ -1200,11 +1253,11 @@ async fn the_feed_delivers_visible_rows_while_a_transaction_stays_open() -> anyh
         held.commit().await.context("commit the held standard row")?;
 
         let mut applied = BTreeMap::<String, i64>::new();
-        let mut applications = BTreeMap::<String, usize>::new();
         let mut page = first;
         let mut empty = false;
         // One repeated page plus three pages can carry all 201 ids after commit.
         for _ in 0..5 {
+            let snapshot = feed_versions(&page)?;
             let rows = page["rows"].as_array().context("feed rows")?;
             if rows.is_empty() {
                 empty = true;
@@ -1213,11 +1266,11 @@ async fn the_feed_delivers_visible_rows_while_a_transaction_stays_open() -> anyh
             anyhow::ensure!(rows.len() <= 100, "pages stay bounded");
             for row in rows {
                 let id = row["id"].as_str().context("a change id")?;
-                let version = row["row_version"].as_i64().context("a row_version")?;
+                let version = snapshot.context("a page snapshot")?;
                 let &(final_version, deleted) = expected.get(id).context("an expected id")?;
                 anyhow::ensure!(
-                    version == final_version && row["deleted"] == json!(deleted),
-                    "{id} arrives with its final row_version and deletion: {row}"
+                    version >= xmin && row["deleted"] == json!(deleted),
+                    "{id} arrives with its snapshot and deletion: {row}"
                 );
                 if deleted {
                     anyhow::ensure!(row.get("data").is_none(), "a deleted row has no data");
@@ -1232,13 +1285,12 @@ async fn the_feed_delivers_visible_rows_while_a_transaction_stays_open() -> anyh
                         row["data"]["id"] == row["id"]
                             && row["data"]["code"] == json!(code)
                             && row["data"]["note"] == json!(note)
-                            && row["data"]["edit_version"] == json!(version.to_string()),
+                            && row["data"]["edit_version"] == json!(final_version),
                         "the live row carries its final data: {row}"
                     );
                 }
-                if applied.get(id).is_none_or(|previous| version > *previous) {
+                if applied.get(id).is_none_or(|previous| version >= *previous) {
                     applied.insert(id.to_owned(), version);
-                    *applications.entry(id.to_owned()).or_default() += 1;
                 }
             }
             let next = page["next_cursor"].as_str().context("a next cursor")?;
@@ -1247,7 +1299,6 @@ async fn the_feed_delivers_visible_rows_while_a_transaction_stays_open() -> anyh
         }
         anyhow::ensure!(empty, "the feed reaches an empty page after the held commit");
         anyhow::ensure!(applied.len() == 201, "every written id arrives: {}", applied.len());
-        anyhow::ensure!(applications.values().all(|count| *count == 1), "each id applies once");
         drop(holder);
         drop(writer);
         holder_connection.await.context("join the held connection")?.context("close the held connection")?;
@@ -1528,12 +1579,12 @@ async fn integer_identity_operations(paths: &Paths, database_url: &str) -> anyho
         .route(
             "/counter/update",
             &json!([{
-                "request_id": "counter-update", "id": ids[0], "expected_edit_version": "1",
+                "request_id": "counter-update", "id": ids[0], "expected_edit_version": 1,
                 "change": {"label": "updated"},
             }]),
         )
         .await?;
-    anyhow::ensure!(value(&updated)?["id"] == ids[0] && value(&updated)?["edit_version"] == "2");
+    anyhow::ensure!(value(&updated)?["id"] == ids[0] && value(&updated)?["edit_version"] == 2);
     let read = paths
         .route("/counter/get", &json!([{"id": ids[0]}]))
         .await?;
@@ -1543,7 +1594,7 @@ async fn integer_identity_operations(paths: &Paths, database_url: &str) -> anyho
             .route(
                 "/counter/delete",
                 &json!([{
-                    "request_id": "counter-delete", "id": ids[1], "expected_edit_version": "1",
+                    "request_id": "counter-delete", "id": ids[1], "expected_edit_version": 1,
                 }]),
             )
             .await?,
@@ -1560,12 +1611,13 @@ async fn integer_identity_operations(paths: &Paths, database_url: &str) -> anyho
         )
         .await?;
     let changes = value(&changes)?;
+    feed_versions(changes)?;
     let update = change_of(changes, &ids[0])?;
     anyhow::ensure!(
         update["deleted"] == false
             && update["data"]["id"] == ids[0]
             && update["data"]["label"] == "updated"
-            && update["data"]["edit_version"] == "2"
+            && update["data"]["edit_version"] == 2
     );
     let delete = change_of(changes, &ids[1])?;
     anyhow::ensure!(delete["deleted"] == true && delete.get("data").is_none());

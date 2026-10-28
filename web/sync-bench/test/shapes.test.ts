@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { createRoot, createSignal, flush } from "solid-js";
+import { collection } from "@wfe/sync";
 import { applyChanges } from "@wfe/sync/internal";
 import { fakeFeed, makeRows, randomChanges, seeded } from "../src/fake.js";
-import { packagingCollection, type PackagingRow } from "../src/generated/wamn_wms/packaging.js";
+import type { PackagingRow } from "../src/generated/wamn_wms/packaging.js";
 import type { StatusFilter } from "../src/order.js";
 import { shapeA } from "../src/shape-a.js";
 import { shapeB } from "../src/shape-b.js";
@@ -30,9 +31,10 @@ describe("shapes A and B", () => {
     const rows = makeRows(1_000, 7);
     const [filter, setFilter] = createSignal<StatusFilter>("all");
     const { a, b, c, dispose } = createRoot((dispose) => {
-      const c = packagingCollection(
+      const c = collection(
         fakeFeed(() => rows),
         {},
+        { key: "shapes", version: (row) => Number(row.rowVersion) },
       );
       return {
         a: shapeA(c, filter),
@@ -86,10 +88,10 @@ describe("shapes A and B", () => {
     }));
     await settle();
     const row = rows[0]!;
-    b.apply([{ id: row.id, row_version: 3, deleted: false, data: { ...row, rowVersion: 3 } }]);
-    b.apply([{ id: row.id, row_version: 2, deleted: false, data: { ...row, rowVersion: 2 } }]);
+    b.apply([{ id: row.id, row_version: 3, deleted: false, data: { ...row, rowVersion: "3" } }]);
+    b.apply([{ id: row.id, row_version: 2, deleted: false, data: { ...row, rowVersion: "2" } }]);
     await settle();
-    expect(b.get(row.id)?.rowVersion).toBe(3);
+    expect(b.get(row.id)?.rowVersion).toBe("3");
     b.apply([{ id: "missing", row_version: 1, deleted: true }]);
     await settle();
     expect(b.totals().count).toBe(3);

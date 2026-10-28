@@ -2761,27 +2761,6 @@ impl ModelDeclaration {
             .filter(|retention| *retention != NO_LOG_RETENTION)
     }
 
-    /// The revision field of the change feed on the model's list read.
-    ///
-    /// Validation refuses an enabled feed without generated SQL,
-    /// a history table, or a revision field.
-    pub fn feed_revision(&self) -> Option<&str> {
-        if !self.feed_enabled() {
-            return None;
-        }
-        self.log_retention()?;
-        // An authored list statement returns no feed cursor.
-        if self
-            .operations
-            .get(&CrudAction::Query)?
-            .authored_sql
-            .is_some()
-        {
-            return None;
-        }
-        self.revision_field()
-    }
-
     /// Whether the generated list read requests a feed. Omitted means enabled.
     pub fn feed_enabled(&self) -> bool {
         self.operations

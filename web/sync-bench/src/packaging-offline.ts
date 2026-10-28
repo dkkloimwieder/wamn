@@ -1,7 +1,7 @@
-import { collection, type Feed, type Persistence, type Row } from "@wfe/sync";
+import type { Feed, Persistence, Row, SyncCollection } from "@wfe/sync";
 import type { PackagingRow, PackagingScope } from "./generated/wamn_wms/packaging.js";
-import { packagingKey } from "./generated/wamn_wms/packaging.js";
-import { locationKey, type LocationRow } from "./generated/wamn_wms/location.js";
+import { packagingCollection, packagingKey } from "./generated/wamn_wms/packaging.js";
+import { locationCollection, locationKey, type LocationRow } from "./generated/wamn_wms/location.js";
 import type { StatusFilter } from "./order.js";
 
 export function packagingScope(filter: StatusFilter): PackagingScope {
@@ -39,13 +39,18 @@ function modelRows<T extends Row>(rows: T[]): T[] {
 /** Keep offline reads local, including a saved empty collection.
  * wfe gaps wamn-qio9a (network list after restore when offline) and
  * wamn-4qimg (empty saved collection and saved_at not restored). */
-function storedCollection<T extends Row & { rowVersion: number }, S>(
+function storedCollection<T extends Row, S>(
   feed: Feed<T, S>,
   scope: S,
   key: string,
   persistence: Persistence,
   pollMs: number,
   online: () => boolean,
+  makeCollection: (
+    feed: Feed<T, S>,
+    scope: S,
+    follow: { persistence: Persistence; pollMs: number },
+  ) => SyncCollection<T>,
   initial?: Page<T>,
 ) {
   let staged = initial;
@@ -68,7 +73,7 @@ function storedCollection<T extends Row & { rowVersion: number }, S>(
       }
     },
   };
-  const c = collection<T, S>(
+  const c = makeCollection(
     {
       async list(scope, signal) {
         let page = staged;
@@ -95,7 +100,7 @@ function storedCollection<T extends Row & { rowVersion: number }, S>(
       },
     },
     scope,
-    { key, persistence: saved, pollMs, version: (row) => row.rowVersion },
+    { persistence: saved, pollMs },
   );
   return {
     c,
@@ -136,7 +141,7 @@ export function packagingOffline(options: {
   const online = options.online ?? (() => navigator.onLine);
   const pollMs = options.pollMs ?? 10_000;
   const key = packagingKey(scope);
-  const packaging = storedCollection(options.packaging, scope, key, persistence, pollMs, online);
+  const packaging = storedCollection(options.packaging, scope, key, persistence, pollMs, online, packagingCollection);
   type Locations = ReturnType<typeof storedCollection<LocationRow, Record<string, never>>>;
   let location: Locations | undefined;
   let closed = false;
@@ -144,7 +149,15 @@ export function packagingOffline(options: {
     .load(locationKey({}))
     .then((entry) => {
       if (entry && !closed)
-        location = storedCollection(options.location, {}, locationKey({}), persistence, pollMs, online);
+        location = storedCollection(
+          options.location,
+          {},
+          locationKey({}),
+          persistence,
+          pollMs,
+          online,
+          locationCollection,
+        );
     })
     .catch(() => undefined);
   return {
@@ -169,7 +182,16 @@ export function packagingOffline(options: {
       if (closed) throw new Error("The screen closed before fill.");
       await packaging.fill(p);
       if (closed) throw new Error("The screen closed before fill.");
-      location ??= storedCollection(options.location, {}, locationKey({}), persistence, pollMs, online, l);
+      location ??= storedCollection(
+        options.location,
+        {},
+        locationKey({}),
+        persistence,
+        pollMs,
+        online,
+        locationCollection,
+        l,
+      );
       await location.fill(l);
       return {
         packaging: { count: packaging.c.size, bytes: packagingBytes, asOf: packaging.currentAt()! },

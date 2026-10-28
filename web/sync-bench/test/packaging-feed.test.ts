@@ -11,7 +11,7 @@ const wireRow = {
   located_at: "2026-01-01T00:00:00Z",
   location_id: "00000000-0000-7000-8000-000000000003",
   packaging_code: "PK-1",
-  row_version: 4,
+  row_version: "4",
   status: "available",
   type: "pallet",
   updated_at: "2026-01-01T00:00:00Z",
@@ -45,7 +45,7 @@ describe("packagingFeed", () => {
     const page = await feed.list({ filter: { status: ["available"] } });
     expect(page.cursor).toBe("c1");
     expect(page.rows).toHaveLength(2);
-    expect(page.rows[0]).toMatchObject({ id: wireRow.id, rowVersion: 4, packagingCode: "PK-1" });
+    expect(page.rows[0]).toMatchObject({ id: wireRow.id, rowVersion: "4", packagingCode: "PK-1" });
     expect(page.complete).toBe(true);
     expect(seen.map((request) => request.items)).toEqual([
       [{ filter: { status: ["available"] }, limit: 100 }],
@@ -78,8 +78,8 @@ describe("packagingFeed", () => {
         [
           {
             rows: [
-              { id: wireRow.id, row_version: 5, deleted: false, data: { ...wireRow, row_version: 5 } },
-              { id: "00000000-0000-7000-8000-000000000009", row_version: 2, deleted: true },
+              { id: wireRow.id, row_version: "5", deleted: false, data: { ...wireRow, row_version: "5" } },
+              { id: "00000000-0000-7000-8000-000000000009", row_version: "2", deleted: true },
             ],
             next_cursor: "c2",
             complete: true,
@@ -93,7 +93,7 @@ describe("packagingFeed", () => {
     expect(seen[0]?.contract.resultClass).toBe("changes");
     expect(page.next_cursor).toBe("c2");
     expect(page.complete).toBe(true);
-    expect(page.rows[0]).toMatchObject({ id: wireRow.id, row_version: 5, deleted: false, data: { rowVersion: 5 } });
+    expect(page.rows[0]).toMatchObject({ id: wireRow.id, row_version: 5, deleted: false, data: { rowVersion: "5" } });
     expect(page.rows[1]).toEqual({ id: "00000000-0000-7000-8000-000000000009", row_version: 2, deleted: true });
   });
 

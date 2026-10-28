@@ -11,10 +11,16 @@ export const RECORD_CAP = 1000;
 /** The largest page the list read serves. */
 const PAGE_MAXIMUM = 100;
 
+// Part of the wamn-nsufz workaround: the exact snapshot version of a change.
+const snapshotVersions = new WeakMap<Change<$ROWRow>, Int64>();
+
 function toChange(change: $STEMChange): Change<$ROWRow> {
-  return change.deleted || change.data === undefined
-    ? { id: change.id, row_version: change.$REVISION, deleted: true }
-    : { id: change.id, row_version: change.$REVISION, deleted: false, data: change.data };
+  const converted: Change<$ROWRow> =
+    change.deleted || change.data === undefined
+      ? { id: change.id, row_version: Number(change.rowVersion), deleted: true }
+      : { id: change.id, row_version: Number(change.rowVersion), deleted: false, data: change.data };
+  snapshotVersions.set(converted, change.rowVersion);
+  return converted;
 }
 
 /** Read pages up to the cap and follow changes from the first page's cursor. */
@@ -27,7 +33,11 @@ export function $PREFIXFeed(transport: Transport, cap: number = RECORD_CAP): Fee
       let page: string | undefined;
       for (;;) {
         const limit = Math.min(PAGE_MAXIMUM, cap - rows.length);
-        const outcome = await $QUERY(transport, [page === undefined ? { ...scope, limit } : { ...scope, limit, cursor: page }], signal === undefined ? undefined : { signal });
+        const outcome = await $QUERY(
+          transport,
+          [page === undefined ? { ...scope, limit } : { ...scope, limit, cursor: page }],
+          signal === undefined ? undefined : { signal },
+        );
         if (outcome.status !== "completed") throw new Error(`$MODEL $QUERY ${outcome.status}`);
         cursor ??= outcome.value.cursor;
         rows.push(...outcome.value.item);
@@ -75,7 +85,50 @@ export function $PREFIXCollection(
   scope: $ROWScope,
   follow: { readonly pollMs?: number; readonly persistence?: Persistence } = {},
 ) {
-  return collection(feed, scope, { key: $PREFIXKey(scope), $GET_KEYversion: (row) => row.$REVISION, ...follow });
+  // Workaround for wamn-nsufz until the wfe pin carries its fix: the package
+  // ignores an equal version, so accepted deliveries get a local order.
+  const delivery = Symbol();
+  type Delivered = $ROWRow & { readonly [delivery]?: number };
+  type Batch = Map<string | number, Delivered | null>;
+  let serial = 0;
+  const accept = (row: $ROWRow, pending: Batch): Delivered => {
+    const held = pending.has(row.id) ? pending.get(row.id) : c.get(row.id);
+    const accepted =
+      held != null && BigInt(row.rowVersion) < BigInt(held.rowVersion) ? held : { ...row, [delivery]: ++serial };
+    pending.set(row.id, accepted);
+    return accepted;
+  };
+  const ordered: Feed<$ROWRow, $ROWScope> = {
+    ...feed,
+    async list(...args) {
+      const page = await feed.list(...args);
+      const pending: Batch = new Map();
+      return { ...page, rows: page.rows.map((row) => accept(row, pending)) };
+    },
+    async changes(...args) {
+      const page = await feed.changes(...args);
+      const pending: Batch = new Map();
+      return {
+        ...page,
+        rows: page.rows.flatMap<Change<$ROWRow>>((change) => {
+          const held = pending.has(change.id) ? pending.get(change.id) : c.get(change.id);
+          if (change.deleted) {
+            if (held != null && BigInt(snapshotVersions.get(change) ?? change.row_version) < BigInt(held.rowVersion))
+              return [];
+            pending.set(change.id, null);
+            return [change];
+          }
+          return [{ ...change, data: accept(change.data, pending) }];
+        }),
+      };
+    },
+  };
+  const c: SyncCollection<$ROWRow> = collection(ordered, scope, {
+    key: $PREFIXKey(scope),
+    $GET_KEYversion: (row) => (row as Delivered)[delivery] ?? 0,
+    ...follow,
+  });
+  return c;
 }
 
 /** Record a write for this model through the supplied outbox. */

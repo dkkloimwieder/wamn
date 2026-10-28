@@ -548,7 +548,7 @@ fn feed_rows(
     table: &Table,
     projection: Projection,
 ) -> Vec<RustRow> {
-    if model.feed_revision().is_none() {
+    if !model.feed_enabled() {
         return Vec::new();
     }
     let member = |name: &str, ty: ColumnType| RustMember {
@@ -564,6 +564,26 @@ fn feed_rows(
         nullable: true,
     });
     let model_type = rust_type_identifier(model_name);
+    let mut fields = table
+        .columns()
+        .iter()
+        .map(|column| RustMember {
+            name: if column.name() == "row_version" {
+                "model_row_version".to_owned()
+            } else {
+                rust_identifier(column.name()).expect("validated model field")
+            },
+            rust_type: rust_type(column, projection),
+            statement_type: column.column_type(),
+            nullable: column.nullable(),
+        })
+        .collect::<Vec<_>>();
+    fields.push(RustMember {
+        name: "row_version".to_owned(),
+        rust_type: "i64".to_owned(),
+        statement_type: ColumnType::Int64,
+        nullable: false,
+    });
     vec![
         RustRow {
             name: format!("{model_type}QueryFeedRow"),
@@ -586,11 +606,15 @@ fn feed_rows(
                 ),
                 member("change_transaction", ColumnType::Int64),
                 member("present", ColumnType::Boolean),
-                member("deleted_version", ColumnType::Int32),
             ]
             .into_iter()
             .chain(model_members)
             .collect(),
+        },
+        RustRow {
+            name: format!("{model_type}FeedRow"),
+            visibility: RustVisibility::Public,
+            fields,
         },
     ]
 }

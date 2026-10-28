@@ -260,18 +260,13 @@ const SNAPSHOT_XMIN: &str = "pg_snapshot_xmin(pg_current_snapshot())::text::int8
 /// below xmax, from one snapshot. It collapses entries to one row per id in
 /// transaction and id order. Each row carries the live row when it is still
 /// in the scope of the list's filters. Otherwise it is a deletion, and it
-/// carries the revision the delete entry left. The outer row carries the
-/// snapshot xmin, and whether pruning removed a transaction at or above the
+/// carries no data. The outer row carries the snapshot xmin and whether
+/// pruning removed a transaction at or above the
 /// cursor xmin, even when no entry remains.
 ///
 /// The binds are the list's filters and search, then the cursor transaction,
 /// the cursor id and the limit.
-pub(crate) fn changes(
-    table: &Table,
-    operation: &OperationDeclaration,
-    revision: &str,
-    tombstoned: bool,
-) -> String {
+pub(crate) fn changes(table: &Table, operation: &OperationDeclaration, tombstoned: bool) -> String {
     let key_cast = key_cast(table);
     let (predicates, next_bind) = scope_predicates(table, operation, tombstoned);
     let transaction = next_bind;
@@ -296,7 +291,6 @@ pub(crate) fn changes(
     page.change_id,
     page.change_transaction,
     page.present,
-    page.deleted_version,
     {columns}
 FROM (
     SELECT
@@ -311,13 +305,11 @@ LEFT JOIN LATERAL (
         changed.change_id,
         changed.change_transaction,
         ({present}) AS present,
-        changed.deleted_version,
         {model_columns}
     FROM (
         SELECT
             (entry.row_key->>'id')::{key_cast} AS change_id,
-            max(entry.transaction_id) AS change_transaction,
-            max((entry.before->>'{revision}')::int4) FILTER (WHERE entry.type = 'delete') AS deleted_version
+            max(entry.transaction_id) AS change_transaction
         FROM {history} AS entry
         WHERE entry.transaction_id >= ${transaction}::int8
           AND (entry.transaction_id < bound.feed_end
@@ -581,7 +573,7 @@ mod tests {
                         assert!(page.contains(&format!("($1::{cast} IS NULL OR (model.id, model.id) {comparison} ($1::{cast}, $2::{cast}))")), "{page}");
                     }
                 }
-                let feed = changes(&table, &operation, "version", tombstoned);
+                let feed = changes(&table, &operation, tombstoned);
                 for expected in [
                     format!("(entry.row_key->>'id')::{cast} AS change_id"),
                     format!("GROUP BY (entry.row_key->>'id')::{cast}\n"),

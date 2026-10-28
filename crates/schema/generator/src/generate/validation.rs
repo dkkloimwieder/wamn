@@ -246,19 +246,6 @@ fn validate_model(
                 "{model_name} feed needs a history table: declare audit_log.retention other than none"
             )));
         }
-        if model.revision_field().is_none() {
-            return Err(refuse(format!(
-                "{model_name} feed needs a revision field: declare revision_field on an operation"
-            )));
-        }
-        if let Some(revision) = model.feed_revision()
-            && let Some(table) = relation(catalog, model)
-            && validate_field(table, model_name, revision)?.column_type() != ColumnType::Int32
-        {
-            return Err(refuse(format!(
-                "{model_name} feed needs an int32 revision field: use an int32 revision field or feed = false"
-            )));
-        }
     }
     validate_identifier(model_name, "model")?;
     validate_identifier(&model.schema, "schema")?;

@@ -197,7 +197,7 @@ pub(super) fn emit_model_data(
                 &model_type,
                 table,
                 operation,
-                model.feed_revision(),
+                model.feed_enabled(),
             ),
             CrudAction::Create => {
                 let number = model.number_field().map(|(field, sequence)| {
@@ -545,8 +545,13 @@ fn emit_query(
     model_type: &str,
     table: &Table,
     operation: &OperationDeclaration,
-    feed: Option<&str>,
+    feed: bool,
 ) {
+    let row_type = if feed {
+        format!("{model_type}FeedRow")
+    } else {
+        format!("{model_type}Row")
+    };
     let pagination = operation
         .pagination
         .as_ref()
@@ -588,7 +593,7 @@ fn emit_query(
     }
     let arguments = arguments.join(", ");
     // A list read with a feed reads the feed cursor with its page.
-    let (feed_split, feed_wrap) = if feed.is_some() {
+    let (feed_split, feed_wrap) = if feed {
         (
             "let (feed_cursor, rows) = feed_page(rows)?;\n",
             ".map(|page| page.with_feed_cursor(feed_cursor))",
@@ -607,7 +612,11 @@ fn emit_query(
         };
         let key_column = column(table, field).expect("validation resolved the sort field");
         let key_type = cursor_key_type(key_column.column_type());
-        let key_member = field_name(field);
+        let key_member = if feed && field == "row_version" {
+            "model_row_version".to_owned()
+        } else {
+            field_name(field)
+        };
         let decode_cursor = format!(
             "id::decode_with_id::<{key_type}, {}>",
             cursor_key_type(id_type.column_type())
@@ -667,7 +676,7 @@ fn emit_query(
          ///\n/// The contract's order holds: the sort and the cursor first, then the\n\
          /// statement. The codec checked the limit.\n\
          ///\n/// # Errors\n///\n/// [`Error`] carrying the literal the operation contract declares.\n\
-         pub async fn query(connection: &mut Connection, input: QueryInput) -> Result<Page<{model_type}Row>, Error> {{\n\
+         pub async fn query(connection: &mut Connection, input: QueryInput) -> Result<Page<{row_type}>, Error> {{\n\
          let sort = match (input.sort_field.as_deref(), input.sort_direction.as_deref()) {{\n\
          (None, None) => ({default_field:?}, {default_direction}),\n\
          (Some(field), Some(\"ascending\")) => (field, Direction::Ascending),\n\
@@ -684,10 +693,8 @@ fn emit_query(
         default_field = default.field,
     )
     .expect("writing to a String cannot fail");
-    if let Some(revision) = feed {
-        emit_feed(
-            source, model_name, model_type, table, revision, &binds, &arguments,
-        );
+    if feed {
+        emit_feed(source, model_name, model_type, table, &binds, &arguments);
     }
 }
 
@@ -699,7 +706,6 @@ fn emit_feed(
     model_name: &str,
     model_type: &str,
     table: &Table,
-    revision: &str,
     binds: &str,
     arguments: &str,
 ) {
@@ -717,17 +723,22 @@ fn emit_feed(
         .iter()
         .map(|column| {
             let name = field_name(column.name());
+            let member = if name == "row_version" {
+                "model_row_version"
+            } else {
+                &name
+            };
             // The match took the id.
             if name == "id" {
                 "id,\n".to_owned()
             } else if column.nullable() {
-                format!("{name}: $row.{name},\n")
+                format!("{member}: $row.{name},\n")
             } else {
-                format!("{name}: $row.{name}.ok_or_else(Error::internal)?,\n")
+                format!("{member}: $row.{name}.ok_or_else(Error::internal)?,\n")
             }
         })
         .collect::<String>();
-    let version = format!("data.{}", field_name(revision));
+
     let comma = if arguments.is_empty() { "" } else { "," };
     writeln!(
         source,
@@ -736,22 +747,24 @@ fn emit_feed(
          /// The model row of one row of a feed statement, or `None` for the row\n\
          /// that only carries the snapshot.\n\
          macro_rules! live_row {{\n\
-         ($row:expr) => {{\n\
+         ($row:expr, $version:expr) => {{\n\
          match $row.id {{\n\
          None => None,\n\
-         Some(id) => Some({model_type}Row {{\n\
+         Some(id) => Some({model_type}FeedRow {{\n\
+         row_version: $version,\n\
          {members}\
          }}),\n\
          }}\n\
          }};\n\
          }}\n\n\
          /// The rows of one list page, and the cursor its change feed starts from.\n\
-         fn feed_page(rows: Vec<sql::{model_type}QueryFeedRow>) -> Result<(String, Vec<{model_type}Row>), Error> {{\n\
+         fn feed_page(rows: Vec<sql::{model_type}QueryFeedRow>) -> Result<(String, Vec<{model_type}FeedRow>), Error> {{\n\
          let mut end = None;\n\
          let mut page = Vec::with_capacity(rows.len());\n\
          for row in rows {{\n\
-         end = end.or(row.feed_cursor);\n\
-         if let Some(data) = live_row!(row) {{\n\
+         let row_version = row.feed_cursor.ok_or_else(Error::internal)?;\n\
+         end = Some(row_version);\n\
+         if let Some(data) = live_row!(row, row_version) {{\n\
          page.push(data);\n\
          }}\n\
          }}\n\
@@ -770,7 +783,7 @@ fn emit_feed(
          /// scope of the list's filters since the cursor, one entry per row.\n\
          ///\n/// A row that left the scope, or was deleted, is a change with no data.\n\
          ///\n/// # Errors\n///\n/// [`Error`] carrying the literal the operation contract declares.\n\
-         pub async fn changes(connection: &mut Connection, {input}: QueryInput, part: FeedInput) -> Result<feed::id::Changes<{model_type}Row, {id_type}>, Error> {{\n\
+         pub async fn changes(connection: &mut Connection, {input}: QueryInput, part: FeedInput) -> Result<feed::id::Changes<{model_type}FeedRow, {id_type}>, Error> {{\n\
          let cursor = part.cursor.as_deref().map(|encoded| feed::id::decode::<{id_type}>(encoded, MODEL)).transpose().map_err(|Invalid| Error::invalid(\"cursor\"))?;\n\
          {binds}\
          let (cursor_transaction, cursor_id) = match cursor {{\n\
@@ -784,18 +797,14 @@ fn emit_feed(
          if row.expired == Some(true) {{\n\
          return Err(Error::cursor_expired());\n\
          }}\n\
-         end = end.or(row.feed_end);\n\
+         let row_version = row.feed_end.ok_or_else(Error::internal)?;\n\
+         end = Some(row_version);\n\
          let (Some(id), Some(transaction)) = (row.change_id, row.change_transaction) else {{\n\
          continue;\n\
          }};\n\
          let present = row.present == Some(true);\n\
-         let deleted_version = row.deleted_version;\n\
-         let change = match live_row!(row) {{\n\
-         Some(data) if present => feed::id::Change {{ {id}, row_version: {version}, data: Some(data) }},\n\
-         // A row that left the scope carries its live revision, and a\n\
-         // deleted row the revision its delete entry left.\n\
-         live => feed::id::Change {{ {id}, row_version: live.map_or(deleted_version, |data| Some({version})).unwrap_or_default(), data: None }},\n\
-         }};\n\
+         let data = live_row!(row, row_version).filter(|_| present);\n\
+         let change = feed::id::Change {{ {id}, row_version, data }};\n\
          changed.push(feed::id::Changed {{ transaction, id, change }});\n\
          }}\n\
          let end = end.ok_or_else(Error::internal)?;\n\

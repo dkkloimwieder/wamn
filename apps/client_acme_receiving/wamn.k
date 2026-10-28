@@ -15,7 +15,7 @@ manifest.Package {
         base_receiving = {
             package = "wamn_receiving"
             version = "2.2.8"
-            digest = "sha256:6428750687b335328169bd647fe6fedca896d8a759e2ca962d863bd9eb922593"
+            digest = "sha256:d006d63ec8c38ac616652148101aafeee6b14bf6423448dc2a9e06488b1ad654"
             operations = ["receiving.record_receipt"]
         }
     }

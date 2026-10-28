@@ -27,7 +27,8 @@ export function shapeB(
         const stored = draft[change.id];
         if (change.deleted) {
           if (stored) delete draft[change.id];
-        } else if (!stored || change.row_version > stored.rowVersion) draft[change.id] = change.data;
+        } else if (!stored || BigInt(change.data.rowVersion) > BigInt(stored.rowVersion))
+          draft[change.id] = change.data;
       }
     });
   feed.list(scope).then(
@@ -37,7 +38,7 @@ export function shapeB(
         for (const row of page.rows) {
           incoming.add(row.id);
           const stored = draft[row.id];
-          if (!stored || row.rowVersion > stored.rowVersion) draft[row.id] = row;
+          if (!stored || BigInt(row.rowVersion) > BigInt(stored.rowVersion)) draft[row.id] = row;
         }
         for (const id of Object.keys(draft)) if (!incoming.has(id)) delete draft[id];
       });
@@ -47,7 +48,7 @@ export function shapeB(
   );
   const ids = createMemo(() => orderedIds(rows, filter()));
   const groups = createMemo(() => {
-    const found = new Map<string, { status: string; type: string; versions: number[] }>();
+    const found = new Map<string, { status: string; type: string; versions: string[] }>();
     for (const row of Object.values(rows)) {
       const key = `${row.status}|${row.type}`;
       let group = found.get(key);

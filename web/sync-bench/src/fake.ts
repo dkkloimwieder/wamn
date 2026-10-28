@@ -35,7 +35,7 @@ function row(index: number, random: () => number): PackagingRow {
   const time = at(index);
   return {
     id: uuid(index + 1, 0x504b47),
-    rowVersion: 1,
+    rowVersion: "1",
     createdAt: time,
     createdBy: actor,
     locatedAt: time,
@@ -85,18 +85,18 @@ export function randomChanges(
   const changes: Change<PackagingRow>[] = [];
   for (let step = 0; step < 70; step++) {
     const old = pick();
-    const version = old.rowVersion + 1;
+    const version = (BigInt(old.rowVersion) + 1n).toString();
     const data = {
       ...old,
       rowVersion: version,
       status: statuses[Math.floor(random() * statuses.length)]!,
       updatedAt: at(next + step),
     } as PackagingRow;
-    changes.push({ id: old.id, row_version: version, deleted: false, data });
+    changes.push({ id: old.id, row_version: Number(version), deleted: false, data });
   }
   for (let step = 0; step < 10; step++) {
     const old = pick();
-    changes.push({ id: old.id, row_version: old.rowVersion + 1, deleted: true });
+    changes.push({ id: old.id, row_version: Number(old.rowVersion) + 1, deleted: true });
   }
   for (let step = 0; step < 20; step++) {
     const data = row(next + step, random);

@@ -1096,7 +1096,9 @@ The [native alignment page](native-alignment.md#current-limits) retains the unre
 
 ## Change feed
 
-A generated `query` of a model with a history table and a revision column has a change feed ([wamn offline and sync](../plan/wamn-sync.md)).
+A generated `query` with history defaults to a change feed.
+Its operation can opt out with `feed = false` ([wamn offline and sync](../plan/wamn-sync.md)).
+Authored reads do not support feeds yet.
 The feed is the `query` operation with its feed part, `feed: { cursor, limit }`, on the same GET route, so it has the list's grant and no permission row of its own.
 Its value is `{ rows, next_cursor, complete }`. Each row carries `id`, `row_version` and `deleted`, and a row that is not deleted carries `data`.
 The page of such a `query` also carries `cursor`, which starts the feed at the page's snapshot.
@@ -1106,6 +1108,19 @@ It reads rows below xmin first, then fills remaining page space with visible row
 Rows follow transaction and id order, with one change per id.
 A cut page below xmin continues after its last transaction and id.
 Any returned row at or above xmin sets `next_cursor` to xmin without an id and `complete` to true.
-These rows repeat on later calls until xmin advances, and the client ignores an equal `row_version`.
+These rows repeat on later calls until xmin advances.
+Every list row and change carries the statement's snapshot xmin as `row_version`, from the same value that supplies the cursor.
+A deletion carries that snapshot version too.
+The int64 wire format uses a decimal string.
+The generated client exposes it as `rowVersion`.
+A declared revision column remains the write guard for operations that name it.
+A feed needs no revision column.
+If a model column is named `row_version`, the feeding list replaces that result member with the snapshot version.
+The page cursor still uses the model column when the list sorts by it.
+Other operations keep the model column.
+The generated collection replaces a held row when the incoming snapshot version is equal or greater, and ignores a lower version.
+The pinned `@wfe/sync` ignores equal versions.
+The wamn adapter compares snapshot versions and gives accepted deliveries a local order through the package's version accessor.
+The adapter keeps the snapshot value in each row and leaves `@wfe/sync` unchanged.
 An empty page keeps its incoming cursor, so an unchanged feed still answers 304.
 A cursor of another model, or one that does not decode, refuses with `invalid_input` on `cursor`. A cursor whose transaction is at or below the pruning watermark of the history table refuses with `cursor_expired`, because pruning removed a change that the cursor did not see.

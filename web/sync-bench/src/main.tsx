@@ -2,10 +2,11 @@ import { For, Show, createSignal, flush, onCleanup } from "solid-js";
 import { render } from "@solidjs/web";
 import { Button, Theme } from "@wfe/components";
 import "@wfe/components/styles.css";
+import { collection } from "@wfe/sync";
 import { applyChanges } from "@wfe/sync/internal";
 import type { Change, Feed } from "@wfe/sync";
 import { fakeFeed, makeRows, randomChanges, seeded } from "./fake.js";
-import { packagingCollection, type PackagingRow, type PackagingScope } from "./generated/wamn_wms/packaging.js";
+import type { PackagingRow, PackagingScope } from "./generated/wamn_wms/packaging.js";
 import type { StatusFilter } from "./order.js";
 import { shapeA } from "./shape-a.js";
 import { shapeB } from "./shape-b.js";
@@ -87,7 +88,7 @@ function App() {
   function mount(shape: Shape) {
     const { feed, listed } = timedFeed(rows);
     if (shape === "a") {
-      const c = packagingCollection(feed, scope);
+      const c = collection(feed, scope, { key: "bench", version: (row) => Number(row.rowVersion) });
       onCleanup(() => queueMicrotask(() => void c.cleanup()));
       const source = shapeA(c, filter);
       mounted.push({

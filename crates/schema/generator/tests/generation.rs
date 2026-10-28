@@ -2668,7 +2668,7 @@ fn a_logged_relation_keeps_the_schema_description_and_grants_its_history_insert(
     );
 }
 
-/// A logged model with a generated list read and a revision field gets the
+/// A logged model with a generated list read gets the
 /// change feed of its list read (docs/architecture/execution.md#change-feed):
 /// the changes statement, the feed part of the input, `cursor_expired` for a
 /// retention that prunes, and the App role's read of the history columns the
@@ -2683,8 +2683,7 @@ fn a_logged_list_read_gets_its_change_feed() {
             .as_object_mut()
             .unwrap()
             .remove("authored_sql");
-        run(&feed_catalog(&all_stamps_catalog()), &manifest, &[])
-            .expect("a generated list read generates")
+        run(&all_stamps_catalog(), &manifest, &[]).expect("a generated list read generates")
     };
     let pruned = generated("P30D");
     let changes = std::str::from_utf8(
@@ -3271,7 +3270,7 @@ fn generated_update_counts_a_numeric_scale_only_change() {
 
 #[test]
 fn integer_keys_reach_contracts_routes_and_feed_bindings() {
-    let base = feed_catalog(&all_stamps_catalog());
+    let base = all_stamps_catalog();
     let model = table(&base, "gadget");
     for (ty, rust, wit, json_type) in [
         (ColumnType::Int32, "i32", "s32", "integer"),
@@ -3314,7 +3313,7 @@ fn integer_keys_reach_contracts_routes_and_feed_bindings() {
         let text = |path| std::str::from_utf8(package.file(path).unwrap().bytes()).unwrap();
         let data = text("generated/data/gadget.rs");
         assert!(
-            data.contains(&format!("feed::id::Changes<GadgetRow, {rust}>")),
+            data.contains(&format!("feed::id::Changes<GadgetFeedRow, {rust}>")),
             "{data}"
         );
         assert!(
@@ -3377,31 +3376,6 @@ fn integer_keys_reach_contracts_routes_and_feed_bindings() {
     }
 }
 
-fn feed_catalog(base: &CatalogIr) -> CatalogIr {
-    let model = table(base, "gadget");
-    let columns = model
-        .columns()
-        .iter()
-        .map(|column| {
-            if column.name() == "row_version" {
-                Column::new(
-                    "row_version",
-                    ColumnType::Int32,
-                    false,
-                    Some(ColumnDefault::int32(1)),
-                    None,
-                )
-            } else {
-                column.clone()
-            }
-        })
-        .collect();
-    replacing_table(
-        base,
-        rebuilt_table(model, columns, model.constraints().to_vec()),
-    )
-}
-
 fn feed_manifest() -> Value {
     let mut value = manifest();
     let model = &mut value["models"]["gadget"];
@@ -3418,16 +3392,8 @@ fn feed_manifest() -> Value {
 }
 
 #[test]
-fn a_feed_refuses_an_int64_revision_and_accepts_opt_out() {
-    let mut value = feed_manifest();
-    let refusal = run(&catalog(false), &value, &[]).unwrap_err();
-    assert_eq!(refusal.error_type(), GenerateErrorType::InvalidModel);
-    assert_eq!(
-        refusal.context(),
-        "gadget feed needs an int32 revision field: use an int32 revision field or feed = false"
-    );
-    value["models"]["gadget"]["operations"]["query"]["feed"] = json!(false);
-    run(&catalog(false), &value, &[]).unwrap();
+fn a_feed_accepts_an_int64_write_revision() {
+    run(&catalog(false), &feed_manifest(), &[]).unwrap();
 }
 
 #[test]
@@ -3450,19 +3416,54 @@ fn a_feed_refuses_missing_history() {
 }
 
 #[test]
-fn a_feed_refuses_a_missing_revision_field() {
+fn a_feed_can_page_by_the_model_revision() {
     let mut value = feed_manifest();
-    value["models"]["gadget"]["operations"]["query"]["feed"] = json!(true);
-    value["models"]["gadget"]["operations"]["update"]
-        .as_object_mut()
+    let query = &mut value["models"]["gadget"]["operations"]["query"];
+    query["sort"]["fields"] = json!(["created_at", "row_version"]);
+    let package = run(&catalog(false), &value, &[]).unwrap();
+    let data =
+        std::str::from_utf8(package.file("generated/data/gadget.rs").unwrap().bytes()).unwrap();
+    assert!(data.contains("&row.model_row_version"));
+    assert!(data.contains("model_row_version: $row.row_version"));
+    assert!(data.contains("row_version: $version"));
+}
+
+#[test]
+fn a_feed_needs_no_revision_column() {
+    let mut value = feed_manifest();
+    value["models"]["gadget"]["server_owned_fields"]
+        .as_array_mut()
         .unwrap()
-        .remove("revision_field");
-    let refusal = run(&catalog(false), &value, &[]).unwrap_err();
-    assert_eq!(refusal.error_type(), GenerateErrorType::InvalidModel);
-    assert_eq!(
-        refusal.context(),
-        "gadget feed needs a revision field: declare revision_field on an operation"
+        .retain(|field| field != "row_version");
+    let query = value["models"]["gadget"]["operations"]["query"].clone();
+    value["models"]["gadget"]["operations"] = json!({"query": query});
+    let base = catalog(false);
+    let model = table(&base, "gadget");
+    let columns = model
+        .columns()
+        .iter()
+        .filter(|column| column.name() != "row_version")
+        .cloned()
+        .collect();
+    let catalog = replacing_table(
+        &base,
+        rebuilt_table(model, columns, model.constraints().to_vec()),
     );
+    let package = run(&catalog, &value, &[]).unwrap();
+    let result = artifact_json(&package, "generated/contracts/gadget/query.result.json");
+    let version = result["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|field| field["path"] == "row_version")
+        .unwrap();
+    assert_eq!(version["type"], "int64");
+    assert_eq!(version["nullable"], false);
+    let data =
+        std::str::from_utf8(package.file("generated/data/gadget.rs").unwrap().bytes()).unwrap();
+    assert!(data.contains("let row_version = row.feed_cursor.ok_or_else(Error::internal)?;"));
+    assert!(data.contains("let row_version = row.feed_end.ok_or_else(Error::internal)?;"));
+    assert!(data.contains("row_version: $version"));
 }
 
 #[test]
@@ -3572,14 +3573,11 @@ fn the_model_level_feed_is_refused() {
 #[test]
 fn feed_false_removes_feed_emission() {
     let mut value = feed_manifest();
-    let default = run(&feed_catalog(&catalog(false)), &value, &[]).unwrap();
+    let default = run(&catalog(false), &value, &[]).unwrap();
     value["models"]["gadget"]["operations"]["query"]["feed"] = json!(true);
-    assert_eq!(
-        default,
-        run(&feed_catalog(&catalog(false)), &value, &[]).unwrap()
-    );
+    assert_eq!(default, run(&catalog(false), &value, &[]).unwrap());
     value["models"]["gadget"]["operations"]["query"]["feed"] = json!(false);
-    let disabled = run(&feed_catalog(&catalog(false)), &value, &[]).unwrap();
+    let disabled = run(&catalog(false), &value, &[]).unwrap();
     for (package, enabled) in [(&default, true), (&disabled, false)] {
         assert_eq!(
             package.file("generated/sql/gadget/changes.sql").is_some(),

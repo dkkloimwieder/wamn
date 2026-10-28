@@ -529,7 +529,7 @@ fn operation_error_details(
     if action == CrudAction::Create {
         codes.insert(Code::IdempotencyConflict);
     }
-    if action == CrudAction::Query && model.feed_revision().is_some() {
+    if action == CrudAction::Query && model.feed_enabled() {
         codes.insert(Code::CursorExpired);
     }
     codes.extend(

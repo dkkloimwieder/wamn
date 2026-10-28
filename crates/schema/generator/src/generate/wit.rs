@@ -62,7 +62,7 @@ pub(super) fn emit_model_wit(
             *action,
             table,
             operation,
-            model.feed_revision().is_some(),
+            model.feed_enabled(),
             &results[action].fields,
             &model.min_lengths,
             &details,
@@ -98,7 +98,7 @@ fn emit_model_package_wit(
             *action,
             table,
             operation,
-            model.feed_revision().is_some(),
+            model.feed_enabled(),
             &results[action].fields,
             &details,
         );
@@ -250,7 +250,7 @@ fn emit_query_page(
         // A list read with a feed answers a page, with the cursor its feed
         // starts from, or the changes since a cursor
         // (docs/architecture/execution.md#change-feed).
-        source.push_str(&"  /// One page. A next cursor means more rows follow. The cursor starts\n  /// the change feed at this page's snapshot.\n  record query-page {\n    item: list<query-row>,\n    next-cursor: option<string>,\n    cursor: string,\n  }\n\n  /// One changed row. A change with no data is a row that was deleted or\n  /// left the scope of the read.\n  record query-change {\n    id: string,\n    row-version: s32,\n    data: option<query-row>,\n  }\n\n  /// The changes since a cursor, one per row. Not complete means more\n  /// changes follow the next cursor.\n  record query-changes {\n    rows: list<query-change>,\n    next-cursor: string,\n    complete: bool,\n  }\n\n  variant query-result {\n    page(query-page),\n    changes(query-changes),\n  }\n\n  record query-outcome {\n    outcome: result<query-result, query-error>,\n  }\n\n".replace("id: string", &format!("id: {}", wit_type(crate::key::key_type(table).expect("validated model key").column_type()))));
+        source.push_str(&"  /// One page. A next cursor means more rows follow. The cursor starts\n  /// the change feed at this page's snapshot.\n  record query-page {\n    item: list<query-row>,\n    next-cursor: option<string>,\n    cursor: string,\n  }\n\n  /// One changed row. A change with no data is a row that was deleted or\n  /// left the scope of the read.\n  record query-change {\n    id: string,\n    row-version: s64,\n    data: option<query-row>,\n  }\n\n  /// The changes since a cursor, one per row. Not complete means more\n  /// changes follow the next cursor.\n  record query-changes {\n    rows: list<query-change>,\n    next-cursor: string,\n    complete: bool,\n  }\n\n  variant query-result {\n    page(query-page),\n    changes(query-changes),\n  }\n\n  record query-outcome {\n    outcome: result<query-result, query-error>,\n  }\n\n".replace("id: string", &format!("id: {}", wit_type(crate::key::key_type(table).expect("validated model key").column_type()))));
     } else {
         source.push_str("  /// One page. A cursor means more rows follow.\n  record query-result {\n    item: list<query-row>,\n    next-cursor: option<string>,\n  }\n\n  record query-outcome {\n    outcome: result<query-result, query-error>,\n  }\n\n");
     }
@@ -639,7 +639,7 @@ fn emit_query_codec(
     emit_json_row_fields(&mut source, fields, "row");
     source.push_str("    })\n}\n\n");
     if feed {
-        source.push_str(&"fn change_json(change: &contract::QueryChange) -> Value {\n    let mut value = json!({ \"id\": change.id, \"row_version\": change.row_version, \"deleted\": change.data.is_none() });\n    if let Some(row) = &change.data {\n        value[\"data\"] = row_json(row);\n    }\n    value\n}\n\n".replace("change.id,", if crate::key::key_type(table).expect("validated model key").column_type() == ColumnType::Int64 { "change.id.to_string()," } else { "change.id," }));
+        source.push_str(&"fn change_json(change: &contract::QueryChange) -> Value {\n    let mut value = json!({ \"id\": change.id, \"row_version\": change.row_version.to_string(), \"deleted\": change.data.is_none() });\n    if let Some(row) = &change.data {\n        value[\"data\"] = row_json(row);\n    }\n    value\n}\n\n".replace("change.id,", if crate::key::key_type(table).expect("validated model key").column_type() == ColumnType::Int64 { "change.id.to_string()," } else { "change.id," }));
         source.push_str("/// The page or the changes, or the error, as the outcome list a read reply\n/// carries.\npub(crate) fn encode(outcome: &Result<contract::QueryResult, contract::QueryError>) -> String {\n    match outcome {\n        Ok(contract::QueryResult::Page(page)) => json!([{ \"value\": { \"item\": page.item.iter().map(row_json).collect::<Vec<_>>(), \"next_cursor\": page.next_cursor, \"cursor\": page.cursor } }]),\n        Ok(contract::QueryResult::Changes(changes)) => json!([{ \"value\": { \"rows\": changes.rows.iter().map(change_json).collect::<Vec<_>>(), \"next_cursor\": changes.next_cursor, \"complete\": changes.complete } }]),\n        Err(error) => json!([{ \"error\": error_value(error) }]),\n    }.to_string()\n}\n\n");
     } else {
         source.push_str("/// The page, or the error, as the outcome list a read reply carries.\npub(crate) fn encode(outcome: &Result<contract::QueryResult, contract::QueryError>) -> String {\n    match outcome {\n        Ok(page) => json!([{ \"value\": { \"item\": page.item.iter().map(row_json).collect::<Vec<_>>(), \"next_cursor\": page.next_cursor } }]),\n        Err(error) => json!([{ \"error\": error_value(error) }]),\n    }.to_string()\n}\n\n");
