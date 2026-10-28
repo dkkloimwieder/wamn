@@ -424,16 +424,16 @@ fn emit_model(package: &str, model: &ModelIr) -> Result<String, ClientTsError> {
         emit_operation(&mut body, model, operation, &function, &mut used)?;
     }
 
-    let sync = operations.iter().find(|operation| {
-        operation.paging.as_ref().is_some_and(|paging| paging.feed)
-            && operation.route.as_ref().is_some_and(|route| {
-                route.response.fields.iter().any(|field| {
-                    field.path == "id"
-                        && matches!(field.type_name.as_str(), "uuid" | "int32" | "int64")
+    let sync: Vec<_> = operations
+        .iter()
+        .filter(|operation| {
+            operation.paging.as_ref().is_some_and(|paging| paging.feed)
+                && feed_key(operation).is_some_and(|field| {
+                    matches!(field.type_name.as_str(), "uuid" | "int32" | "int64")
                 })
-            })
-    });
-    if let Some(operation) = sync {
+        })
+        .collect();
+    for operation in &sync {
         write_sync(&mut body, model, operation)?;
     }
 
@@ -467,7 +467,7 @@ fn emit_model(package: &str, model: &ModelIr) -> Result<String, ClientTsError> {
             .expect("writing to a String cannot fail");
         }
     }
-    if sync.is_some() {
+    if !sync.is_empty() {
         writeln!(
             source,
             "import {{ collectionKey }} from \"{RUNTIME_PACKAGE}\";"
@@ -486,26 +486,62 @@ fn emit_model(package: &str, model: &ModelIr) -> Result<String, ClientTsError> {
     Ok(source)
 }
 
+fn feed_key(operation: &OperationIr) -> Option<&FieldIr> {
+    let [key] = operation.lists.as_ref()?.key_field.as_slice() else {
+        return None;
+    };
+    operation
+        .route
+        .as_ref()?
+        .response
+        .fields
+        .iter()
+        .find(|field| field.path == *key)
+}
+
+fn changes_name(operation: &OperationIr) -> Result<String, ClientTsError> {
+    if operation.type_ == "query" {
+        Ok("changes".into())
+    } else {
+        Ok(format!("{}Changes", ts_name(&operation.name)?))
+    }
+}
+
 /// Emit the feed, collection and write helper beside a model's bindings.
 fn write_sync(
     source: &mut String,
     model: &ModelIr,
     operation: &OperationIr,
 ) -> Result<(), ClientTsError> {
-    let prefix = ts_name(&model.name)?;
-    let row = type_stem(&model.name, "");
     let query = ts_name(&operation.name)?;
     let stem = type_stem(&model.name, &operation.name);
-    let fields = &operation
-        .route
+    let generated = operation.type_ == "query";
+    let prefix = if generated {
+        ts_name(&model.name)?
+    } else {
+        query.clone()
+    };
+    let row = if generated {
+        type_stem(&model.name, "")
+    } else {
+        stem.clone()
+    };
+    let collection_name = if generated {
+        model.name.clone()
+    } else {
+        format!("{}.{}", model.name, operation.name)
+    };
+    let alias = if generated {
+        format!("/** The row returned by the list binding. */\nexport type {row}Row = {stem}Row;")
+    } else {
+        String::new()
+    };
+    let id = feed_key(operation).expect("a feed row has its declared key");
+    let key = to_camel(&id.path);
+    let paged = operation
+        .paging
         .as_ref()
-        .expect("a sync feed has a route")
-        .response
-        .fields;
-    let id = fields
-        .iter()
-        .find(|field| field.path == "id")
-        .expect("a feed row has its model key");
+        .is_some_and(|paging| paging.limit.is_some());
     let integer = matches!(id.type_name.as_str(), "int32" | "int64");
     let key_type = if integer {
         format!("<{}>", ts_type(&id.type_name)?)
@@ -513,7 +549,12 @@ fn write_sync(
         String::new()
     };
     let mut transport = "";
-    let mut write_body = format!("return recordWrite(c, o, {{ model: {:?} }});", model.name);
+    let owner = operation
+        .lists
+        .as_ref()
+        .and_then(|lists| lists.model.as_ref())
+        .unwrap_or(&model.name);
+    let mut write_body = format!("return recordWrite(c, o, {{ model: {owner:?} }});");
     if integer
         && let Some(create) = model
             .operations
@@ -524,7 +565,7 @@ fn write_sync(
         let create_stem = type_stem(&model.name, &create.name);
         let create_binding = ts_name(&create.name)?;
         write_body = format!(
-            r#"const record = recordWrite(c, o, {{ model: {model:?} }});
+            r#"const record = recordWrite(c, o, {{ model: {owner:?} }});
   return {{
     ...record,
     async create(items: readonly {create_stem}Request[], options?: {{ signal?: AbortSignal }}): Promise<Outcome<{create_stem}Result>> {{
@@ -532,28 +573,107 @@ fn write_sync(
       return {create_binding}(transport, items, options);
     }},
   }};"#,
-            model = model.name
         );
     }
     let template = include_str!("client_ts_sync.ts");
     source.push_str(
         &template
+            .replace("$ROW_ALIAS;", &alias)
+            .replace("$ID", &key)
+            .replace("$CHANGES", &changes_name(operation)?)
             .replace(
-                "$GET_KEY",
-                if integer {
-                    "getKey: (row) => row.id, "
+                "$CAP",
+                &if generated {
+                    "RECORD_CAP".into()
+                } else {
+                    format!("{}_RECORD_CAP", operation.name.to_uppercase())
+                },
+            )
+            .replace(
+                "$REQUEST",
+                if paged {
+                    "page === undefined ? { ...scope, limit } : { ...scope, limit, cursor: page }"
+                } else {
+                    "scope"
+                },
+            )
+            .replace(
+                "$PAGE_DECLARATION\n",
+                if paged {
+                    "/** The largest page the list read serves. */\nconst $PAGE_MAXIMUM = 100;\n\n"
                 } else {
                     ""
                 },
             )
+            .replace(
+                "$PAGE_STATE\n",
+                if paged {
+                    "      let page: string | undefined;\n"
+                } else {
+                    ""
+                },
+            )
+            .replace(
+                "$PAGE_LIMIT\n",
+                if paged {
+                    "        const limit = Math.min($PAGE_MAXIMUM, cap - rows.length);\n"
+                } else {
+                    ""
+                },
+            )
+            .replace(
+                "$PAGE_ADVANCE\n",
+                if paged { "        page = next;\n" } else { "" },
+            )
+            .replace(
+                "$PAGE_MAXIMUM",
+                &if generated {
+                    "PAGE_MAXIMUM".into()
+                } else {
+                    format!("{}_PAGE_MAXIMUM", operation.name.to_uppercase())
+                },
+            )
+            .replace(
+                "$SNAPSHOTS",
+                &if generated {
+                    "snapshotVersions".into()
+                } else {
+                    format!("{query}SnapshotVersions")
+                },
+            )
+            .replace(
+                "$TO_CHANGE",
+                &if generated {
+                    "toChange".into()
+                } else {
+                    format!("{query}ToChange")
+                },
+            )
+            .replace(
+                "$CANONICAL",
+                &if generated {
+                    "canonicalJson".into()
+                } else {
+                    format!("{query}CanonicalJson")
+                },
+            )
+            .replace(
+                "$GET_KEY",
+                &if integer || key != "id" {
+                    format!("getKey: (row) => row.{key}, ")
+                } else {
+                    String::new()
+                },
+            )
             .replace("$KEY_TYPE", &key_type)
             .replace("$TRANSPORT", transport)
-            .replace("$WRITE_BODY", &write_body)
+            .replace("$WRITE_BODY;", &write_body)
             .replace("$PREFIX", &prefix)
             .replace("$ROW", &row)
             .replace("$STEM", &stem)
             .replace("$QUERY", &query)
             .replace("$MODEL", &model.name)
+            .replace("$COLLECTION", &collection_name)
             .replace(
                 "$DIGEST",
                 &format!("{}_SHAPE_DIGEST", model.name.to_uppercase()),
@@ -746,15 +866,7 @@ fn emit_operation(
     )
     .expect("write");
     if feed {
-        write_changes(
-            source,
-            &type_stem,
-            &operation.operation,
-            &route_const,
-            &request_fields,
-            result_fields,
-            used,
-        )?;
+        write_changes(source, model, operation, used)?;
     }
     Ok(())
 }
@@ -768,18 +880,28 @@ fn emit_operation(
 /// class.
 fn write_changes(
     source: &mut String,
-    type_stem: &str,
-    operation: &str,
-    route_const: &str,
-    request_fields: &str,
-    fields: &[FieldIr],
+    model: &ModelIr,
+    read: &OperationIr,
     used: &mut BTreeSet<&'static str>,
 ) -> Result<(), ClientTsError> {
+    let type_stem = type_stem(&model.name, &read.name);
+    let operation = &read.operation;
+    let function = changes_name(read)?;
+    let route_const = format!(
+        "{}_{}_ROUTE",
+        model.name.to_uppercase(),
+        read.name.to_uppercase()
+    );
+    let request_fields = format!("{}_REQUEST_FIELDS", route_const.trim_end_matches("_ROUTE"));
+    let fields = &read
+        .route
+        .as_ref()
+        .expect("a feed has a route")
+        .response
+        .fields;
     let id_type = ts_type(
-        &fields
-            .iter()
-            .find(|field| field.path == "id")
-            .expect("a feed row has its model key")
+        &feed_key(read)
+            .expect("a feed row has its declared key")
             .type_name,
     )?;
     if ALIASES.contains(&id_type) {
@@ -795,7 +917,7 @@ fn write_changes(
     write_map_members(source, fields, 5)?;
     writeln!(
         source,
-        "        }},\n      }},\n    }},\n  }},\n  \"next_cursor\": \"nextCursor\",\n  \"complete\": \"complete\",\n}};\n\n/** The list route of `{operation}`, read with its feed part. */\nexport const {stem}_CHANGES_ROUTE: OperationRoute = {{\n  ...{route_const},\n  contract: {{ ...{route_const}.contract, resultClass: \"changes\" }},\n}};\n\n/**\n * Read the changes of `{operation}` in the scope of `request` since `cursor`,\n * at most `limit` of them. A list page returns the first cursor.\n */\nexport async function changes(\n  transport: Transport,\n  request: Omit<{type_stem}Request, \"cursor\" | \"limit\" | \"sort\" | \"feed\">,\n  cursor: string,\n  limit?: number,\n  options?: {{ signal?: AbortSignal }},\n): Promise<Outcome<{type_stem}Changes>> {{\n  const feed = limit === undefined ? {{ cursor }} : {{ cursor, limit }};\n  return reviveOutcome<{type_stem}Changes>(\n    await transport.invoke({{\n      ...{stem}_CHANGES_ROUTE,\n      items: [toWire({{ ...request, feed }}, {request_fields})],\n    }}, options),\n    {stem}_CHANGES_FIELDS,\n  );\n}}"
+        "        }},\n      }},\n    }},\n  }},\n  \"next_cursor\": \"nextCursor\",\n  \"complete\": \"complete\",\n}};\n\n/** The list route of `{operation}`, read with its feed part. */\nexport const {stem}_CHANGES_ROUTE: OperationRoute = {{\n  ...{route_const},\n  contract: {{ ...{route_const}.contract, resultClass: \"changes\" }},\n}};\n\n/**\n * Read the changes of `{operation}` in the scope of `request` since `cursor`,\n * at most `limit` of them. A list page returns the first cursor.\n */\nexport async function {function}(\n  transport: Transport,\n  request: Omit<{type_stem}Request, \"cursor\" | \"limit\" | \"sort\" | \"feed\">,\n  cursor: string,\n  limit?: number,\n  options?: {{ signal?: AbortSignal }},\n): Promise<Outcome<{type_stem}Changes>> {{\n  const feed = limit === undefined ? {{ cursor }} : {{ cursor, limit }};\n  return reviveOutcome<{type_stem}Changes>(\n    await transport.invoke({{\n      ...{stem}_CHANGES_ROUTE,\n      items: [toWire({{ ...request, feed }}, {request_fields})],\n    }}, options),\n    {stem}_CHANGES_FIELDS,\n  );\n}}"
     )
     .expect("write");
     Ok(())

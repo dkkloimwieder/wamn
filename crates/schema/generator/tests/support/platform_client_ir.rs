@@ -245,7 +245,7 @@ fn platform_release_routes_are_exact_and_contracts_alone_invent_none() {
             .flat_map(|model| &model.operations)
             .filter(|operation| operation.route.is_some())
             .count(),
-        16
+        17
     );
 
     let contracts = fixture::contracts(&fixture::generate_fixture());

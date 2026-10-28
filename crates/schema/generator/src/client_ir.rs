@@ -1416,7 +1416,8 @@ fn bind_served_contracts(models: &mut [ModelIr]) {
 fn paging_of(input: &Value) -> Option<PagingIr> {
     let filters = input.get("filters").and_then(Value::as_array);
     let pagination = input.get("pagination");
-    if filters.is_none() && pagination.is_none() {
+    if filters.is_none() && pagination.is_none() && !input.get("feed").is_some_and(Value::is_object)
+    {
         return None;
     }
     let mut filters: Vec<FilterIr> = filters

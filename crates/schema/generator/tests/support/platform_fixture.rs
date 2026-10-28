@@ -94,6 +94,7 @@ pub(crate) fn client_release_of(package: &GeneratedPackage) -> ClientContractIr 
         ("counter", "query"),
         ("counter", "update"),
         ("counter", "delete"),
+        ("feed-line", "screen"),
         ("widget", "archive"),
         ("widget", "create"),
         ("widget", "delete"),
@@ -118,8 +119,18 @@ pub(crate) fn client_release_of(package: &GeneratedPackage) -> ClientContractIr 
             identity.clone(),
             RouteIr {
                 method: "POST".to_owned(),
-                template: format!("/{model}/{name}"),
+                template: if model == "feed-line" {
+                    format!("/feed_line/{name}")
+                } else {
+                    format!("/{model}/{name}")
+                },
                 input_schema: match name {
+                    "screen" if model == "feed-line" => {
+                        let attachments: Value = serde_json::from_slice(&std::fs::read(
+                            wamn_fixture_package::package_root().join("publication/attachments.json"),
+                        ).unwrap()).unwrap();
+                        Some(attachments["feed-line-screen-http"]["definition"]["input-schema"].clone())
+                    }
                     _ if model == "counter" => Some(serde_json::from_slice(
                         package.files().iter()
                             .find(|file| file.path() == format!("generated/routes/counter/{name}.json"))

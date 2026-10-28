@@ -20,6 +20,12 @@ import {
   widgetKey,
   type WidgetQueryRow,
 } from "../../../../web/sync-bench/src/generated/sync_fixture/widget.js";
+import {
+  screenCollection,
+  screenFeed,
+  screenKey,
+  FEED_LINE_SCREEN_ROUTE,
+} from "../../../../web/sync-bench/src/generated/sync_fixture/feed_line.js";
 import type { Int64, JsonValue, Transport, WireRequest } from "../../../../web/runtime/src/index.js";
 
 const id = "00000000-0000-7000-8000-000000000001";
@@ -88,6 +94,67 @@ it("reports an incomplete widget list at the cap", async () => {
     1,
   );
   expect(await feed.list({})).toMatchObject({ cursor: "c1", complete: false, rows: [{ id }] });
+});
+
+it("lists an authored view, follows an equal snapshot and deletes by the root id", async () => {
+  const seen: WireRequest[] = [];
+  const signals: (AbortSignal | undefined)[] = [];
+  const scope = { orderId: id };
+  const line = {
+    id,
+    order_id: id,
+    item_id: "item-1",
+    label: "line",
+    order_label: "order",
+    item_label: "item",
+    row_version: "4000",
+  };
+  const values: JsonValue[] = [
+    { item: [line, { ...line, id: "second" }], next_cursor: null, cursor: "c1" },
+    {
+      rows: [{ id, row_version: "4000", deleted: false, data: { ...line, order_label: "updated" } }],
+      next_cursor: "c2",
+      complete: true,
+    },
+    { rows: [{ id, row_version: "4001", deleted: true }], next_cursor: "c3", complete: true },
+  ];
+  const transport = {
+    async invoke(request, options) {
+      seen.push(request);
+      signals.push(options?.signal);
+      const value = values.shift();
+      return value === undefined
+        ? { status: "refused", code: "cursor_expired", detail: null }
+        : { status: "completed", value };
+    },
+  } as Transport;
+  const feed = screenFeed(transport, 1);
+  const c = screenCollection(feed, scope, { pollMs: 60_000 });
+  try {
+    await c.preload();
+    expect(c.size).toBe(2);
+    expect(c.utils.complete()).toBe(true);
+    expect(c.get(id)).toMatchObject({ id, orderLabel: "order", itemLabel: "item", rowVersion: "4000" });
+    await c.utils.pull();
+    expect(c.get(id)?.orderLabel).toBe("updated");
+    await c.utils.pull();
+    expect(c.has(id)).toBe(false);
+    expect(c.has("second")).toBe(true);
+    expect(seen.map((request) => request.operation)).toEqual(Array(3).fill(FEED_LINE_SCREEN_ROUTE.operation));
+    expect(seen.map((request) => request.items)).toEqual([
+      [{ order_id: id }],
+      [{ order_id: id, feed: { cursor: "c1" } }],
+      [{ order_id: id, feed: { cursor: "c2" } }],
+    ]);
+    expect(signals.every((signal) => signal instanceof AbortSignal)).toBe(true);
+    expect(screenKey(scope)).not.toBe(screenKey({ orderId: "other" }));
+    const signal = new AbortController().signal;
+    await expect(feed.changes(scope, "expired", 50, signal)).rejects.toMatchObject({ name: "CursorExpired" });
+    expect(seen[3]?.items).toEqual([{ order_id: id, feed: { cursor: "expired", limit: 50 } }]);
+    expect(signals[3]).toBe(signal);
+  } finally {
+    await c.cleanup();
+  }
 });
 
 it("replaces equal snapshots and ignores lower snapshots for pulls and refills", async () => {
