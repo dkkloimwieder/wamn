@@ -1,6 +1,26 @@
 use super::*;
 
 #[test]
+fn pat_prefix_accepts_only_sixteen_lowercase_hex_digits() {
+    assert_eq!(
+        parse_pat_prefix("0123456789abcdef").unwrap(),
+        "0123456789abcdef"
+    );
+    for prefix in [
+        "0123456789abcde",
+        "0123456789abcdef0",
+        "0123456789ABCDEF",
+        "0123456789abcdeg",
+        "",
+    ] {
+        assert_eq!(
+            parse_pat_prefix(prefix).unwrap_err(),
+            "PAT prefix must be 16 lowercase hex digits"
+        );
+    }
+}
+
+#[test]
 fn bootstrap_checks_the_role_the_operator_secret_carries() {
     let script = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy/mvp/bootstrap.sh"),

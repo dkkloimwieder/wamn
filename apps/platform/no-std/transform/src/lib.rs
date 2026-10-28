@@ -2,11 +2,15 @@
 
 #![no_std]
 
+#[cfg(any(test, feature = "std"))]
+extern crate std;
+
 extern crate alloc;
 
 use alloc::format;
 use alloc::string::{String, ToString as _};
 
+#[cfg(not(any(test, feature = "std")))]
 #[path = "../../guest_runtime.rs"]
 mod guest_runtime;
 
@@ -69,3 +73,52 @@ fn terminal(code: &str, message: impl Into<String>) -> NodeError {
 }
 
 bindings::export!(Component with_types_in bindings);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn context(config: &str) -> NodeContext {
+        NodeContext {
+            wiring_id: "test".into(),
+            wiring_version: 1,
+            node_id: "transform".into(),
+            delivery_id: "delivery".into(),
+            input_port: None,
+            occurrence: 0,
+            traceparent: None,
+            tracestate: None,
+            deadline_ms: None,
+            config: config.into(),
+        }
+    }
+
+    #[test]
+    fn missing_pointer_refuses_with_pointer_not_found() {
+        let error = Component::run(context(r#"{"pointer":"/absent"}"#), "{}".into()).unwrap_err();
+        let NodeError::Terminal(detail) = error else {
+            panic!("a missing pointer must refuse as terminal");
+        };
+        assert_eq!(detail.code.as_deref(), Some("pointer-not-found"));
+    }
+
+    #[test]
+    fn invalid_json_refuses_as_invalid_input() {
+        let error = Component::run(context(r#"{"pointer":""}"#), "{".into()).unwrap_err();
+        let NodeError::InvalidInput(detail) = error else {
+            panic!("invalid JSON must refuse as invalid input");
+        };
+        assert_eq!(detail.code.as_deref(), Some("invalid-json"));
+    }
+
+    #[test]
+    fn invalid_configuration_refuses_as_terminal() {
+        for config in ["{", "{}", r#"{"pointer":7}"#] {
+            let error = Component::run(context(config), "{}".into()).unwrap_err();
+            let NodeError::Terminal(detail) = error else {
+                panic!("invalid configuration must refuse as terminal");
+            };
+            assert_eq!(detail.code.as_deref(), Some("invalid-config"));
+        }
+    }
+}

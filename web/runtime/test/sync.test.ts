@@ -38,6 +38,7 @@ const route: OperationRoute = {
         text: "This row already exists.",
       },
       { literal: "check_violation", required: ["constraint"], sources: ["check_violation"], text: null },
+      { literal: "idempotency_conflict", required: ["field"], sources: [], text: null },
     ],
   },
 };
@@ -109,6 +110,71 @@ describe("send", () => {
   it("maps a completed reply to ok", async () => {
     const { send } = harness(completed);
     expect(await send(entry(), new AbortController().signal)).toEqual({ ok: true });
+  });
+
+  it("replays one outbox entry with the same key and hash", async () => {
+    const stored = entry();
+    stored.request_hash = await requestHash(stored.request);
+    const { send, requests, fetch } = harness((requestId, attempt) =>
+      attempt === 1 ? new Response(null, { status: 503 }) : completed(requestId),
+    );
+    const box = outbox({
+      database: outboxDatabase("fixture", "dev", crypto.randomUUID()),
+      send,
+      probe: async () => true,
+    });
+    try {
+      const queued = await box.enqueue(stored);
+      await vi.waitFor(() => {
+        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(box.entries()).toEqual([{ ...queued, state: "pending" }]);
+      });
+      await box.replay();
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(box.entries()).toEqual([]);
+      expect(requests[0]?.["idempotency_key"]).toBe(stored.request_hash);
+      expect(requests[1]?.["idempotency_key"]).toBe(stored.request_hash);
+      expect(requests[0]?.["request_id"]).not.toBe(requests[1]?.["request_id"]);
+      for (const request of requests) {
+        const { request_id: _requestId, idempotency_key: _key, ...body } = request;
+        expect(await requestHash(body)).toBe(stored.request_hash);
+      }
+    } finally {
+      box.close();
+    }
+  });
+
+  it("keeps the outbox entry refused when the same key carries a different hash", async () => {
+    const stored = entry();
+    stored.request_hash = await requestHash(stored.request);
+    stored.request = { ...(stored.request as object), label: "Changed" };
+    expect(await requestHash(stored.request)).not.toBe(stored.request_hash);
+    const { send, requests, fetch } = harness((requestId) =>
+      Response.json([
+        { request_id: requestId, error: { code: "idempotency_conflict", detail: { field: "idempotency_key" } } },
+      ]),
+    );
+    const box = outbox({
+      database: outboxDatabase("fixture", "dev", crypto.randomUUID()),
+      send,
+      probe: async () => true,
+    });
+    try {
+      const queued = await box.enqueue(stored);
+      await vi.waitFor(() => expect(box.entries()[0]?.state).toBe("refused"));
+      await box.replay();
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(requests[0]?.["idempotency_key"]).toBe(stored.request_hash);
+      expect(box.entries()).toEqual([
+        {
+          ...queued,
+          state: "refused",
+          refusal: { code: "idempotency_conflict", text: '{"detail":{"field":"idempotency_key"}}' },
+        },
+      ]);
+    } finally {
+      box.close();
+    }
   });
 
   it.each([

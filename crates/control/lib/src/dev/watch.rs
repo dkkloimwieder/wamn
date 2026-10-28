@@ -1075,6 +1075,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn git_snapshot_refuses_an_initial_repository() {
+        let repository = TempRepository::new();
+        let error = crate::git_source::read_status(&repository.root)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.error_type(),
+            crate::git_source::GitSourceErrorType::Inspect
+        );
+        assert!(error.to_string().contains("committed HEAD"));
+    }
+
+    #[tokio::test]
     async fn git_snapshot_covers_the_whole_worktree_and_excludes_ignored_files() {
         let repository = TempRepository::new();
         repository.write_fixture();

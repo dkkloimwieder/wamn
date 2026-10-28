@@ -916,4 +916,16 @@ mod tests {
         r.schema_version = "1.0".into();
         assert!(codes(&r).contains(&"unsupported-schema-version"));
     }
+
+    #[test]
+    fn malformed_and_future_minor_schema_versions_have_distinct_refusals() {
+        for (version, expected) in [
+            ("abc", "bad-schema-version"),
+            ("0.2", "unsupported-schema-version"),
+        ] {
+            let mut registry = minimal();
+            registry.schema_version = version.into();
+            assert_eq!(codes(&registry), vec![expected]);
+        }
+    }
 }

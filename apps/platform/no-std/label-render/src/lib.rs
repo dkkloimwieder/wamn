@@ -7,10 +7,9 @@
 //! the gate's effect-free-case path. Nothing here declares that; it follows
 //! from the imports.
 //!
-//! The rendering itself lives in `label-template` so it can be gated by golden
-//! vectors: a `no_std` cdylib guest has no test target (wamn-6i30). This file
-//! is the WIT boundary and nothing else — parse, delegate, translate the error
-//! exactly once.
+//! The rendering lives in `label-template`, whose golden vectors test the ZPL
+//! bytes. Native unit tests in this crate cover the WIT boundary: parse,
+//! delegate, and translate the error exactly once.
 //!
 //! **The output ENRICHES the input**: every field the record arrived with, plus
 //! `zpl`. Edges carry payloads verbatim, so a node that replaced its payload
@@ -42,10 +41,14 @@
 
 #![no_std]
 
+#[cfg(any(test, feature = "std"))]
+extern crate std;
+
 extern crate alloc;
 
 use alloc::string::{String, ToString as _};
 
+#[cfg(not(any(test, feature = "std")))]
 #[path = "../../guest_runtime.rs"]
 mod guest_runtime;
 
@@ -140,3 +143,48 @@ fn terminal(code: &str, message: &str) -> NodeError {
 }
 
 bindings::export!(Component with_types_in bindings);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run(template: &str, fields: &serde_json::Value) -> NodeError {
+        let context = NodeContext {
+            wiring_id: "test".into(),
+            wiring_version: 1,
+            node_id: "label".into(),
+            delivery_id: "delivery".into(),
+            input_port: None,
+            occurrence: 0,
+            traceparent: None,
+            tracestate: None,
+            deadline_ms: None,
+            config: serde_json::json!({"template_id": template}).to_string(),
+        };
+        let input = serde_json::json!([{ "request_id": "test", "value": fields }]).to_string();
+        Component::run(context, input).unwrap_err()
+    }
+
+    #[test]
+    fn render_refusals_reach_the_node_as_invalid_input() {
+        for (template, fields, code) in [
+            ("unknown", serde_json::json!({}), "unknown_template"),
+            ("packaging", serde_json::json!({}), "missing_field"),
+            (
+                "packaging",
+                serde_json::json!({"packaging_id": "^XA", "location_id": "LOC"}),
+                "invalid_field",
+            ),
+            (
+                "packaging",
+                serde_json::json!({"packaging_id": "~JA", "location_id": "LOC"}),
+                "invalid_field",
+            ),
+        ] {
+            let NodeError::InvalidInput(detail) = run(template, &fields) else {
+                panic!("a render refusal must reach the node as invalid input");
+            };
+            assert_eq!(detail.code.as_deref(), Some(code));
+        }
+    }
+}
