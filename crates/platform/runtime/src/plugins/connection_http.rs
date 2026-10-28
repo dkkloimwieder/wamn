@@ -2399,20 +2399,20 @@ mod tests {
 
         assert_eq!(
             harness.attributes("wamn.connection_http"),
-            expected_attributes(&[
-                ("effect.operation", "send"),
-                ("wamn.env_key", "tenant-a"),
-                ("wamn.project", "project-a"),
-                ("wamn.component", component_id),
-                ("wamn.package_id", "package_a"),
-                ("wamn.wiring_id", "orders"),
-                ("wamn.wiring_version", "3"),
-                ("wamn.node_id", "notify"),
-                ("wamn.occurrence", "2"),
-                ("wamn.component_digest", component_digest.as_str()),
-                ("wamn.component_name", "notifier"),
-                ("wamn.operation", "orders:notify/dispatch@1.0.0"),
-            ]),
+            expected_attributes(
+                ["tenant-a", "project-a", component_id],
+                [
+                    "package_a",
+                    "orders",
+                    "3",
+                    "notify",
+                    "2",
+                    component_digest.as_str(),
+                    "notifier",
+                    "orders:notify/dispatch@1.0.0",
+                ],
+                &[("effect.operation", "send")],
+            ),
         );
     }
 
@@ -2438,20 +2438,20 @@ mod tests {
         let component_id = "component-store-7";
         let component_digest = digest('a');
         let shared = |package: &str, occurrence: &str| {
-            expected_attributes(&[
-                ("effect.operation", "send"),
-                ("wamn.env_key", "tenant-a"),
-                ("wamn.project", "project-a"),
-                ("wamn.component", component_id),
-                ("wamn.package_id", package),
-                ("wamn.wiring_id", "orders"),
-                ("wamn.wiring_version", "3"),
-                ("wamn.node_id", "notify"),
-                ("wamn.occurrence", occurrence),
-                ("wamn.component_digest", component_digest.as_str()),
-                ("wamn.component_name", "notifier"),
-                ("wamn.operation", "orders:notify/dispatch@1.0.0"),
-            ])
+            expected_attributes(
+                ["tenant-a", "project-a", component_id],
+                [
+                    package,
+                    "orders",
+                    "3",
+                    "notify",
+                    occurrence,
+                    component_digest.as_str(),
+                    "notifier",
+                    "orders:notify/dispatch@1.0.0",
+                ],
+                &[("effect.operation", "send")],
+            )
         };
 
         let harness = SpanHarness::install("connection-http-two-wirings-test");
@@ -2488,20 +2488,11 @@ mod tests {
 
         assert_eq!(
             harness.attributes("wamn.connection_http"),
-            expected_attributes(&[
-                ("effect.operation", "send"),
-                ("wamn.env_key", "tenant-a"),
-                ("wamn.project", "project-a"),
-                ("wamn.component", component_id),
-                ("wamn.package_id", ""),
-                ("wamn.wiring_id", ""),
-                ("wamn.wiring_version", "0"),
-                ("wamn.node_id", ""),
-                ("wamn.occurrence", "0"),
-                ("wamn.component_digest", ""),
-                ("wamn.component_name", ""),
-                ("wamn.operation", ""),
-            ]),
+            expected_attributes(
+                ["tenant-a", "project-a", component_id],
+                ["", "", "0", "", "0", "", "", ""],
+                &[("effect.operation", "send")],
+            ),
         );
     }
 
@@ -2665,21 +2656,20 @@ mod tests {
 
         assert_eq!(
             harness.attributes("wamn.connection_http"),
-            expected_attributes(&[
-                ("effect.operation", "send"),
-                ("effect.outcome", "timeout"),
-                ("wamn.env_key", "tenant-a"),
-                ("wamn.project", "project-a"),
-                ("wamn.component", component_id),
-                ("wamn.package_id", "package_a"),
-                ("wamn.wiring_id", "orders"),
-                ("wamn.wiring_version", "3"),
-                ("wamn.node_id", "notify"),
-                ("wamn.occurrence", "2"),
-                ("wamn.component_digest", component_digest.as_str()),
-                ("wamn.component_name", "notifier"),
-                ("wamn.operation", "orders:notify/dispatch@1.0.0"),
-            ]),
+            expected_attributes(
+                ["tenant-a", "project-a", component_id],
+                [
+                    "package_a",
+                    "orders",
+                    "3",
+                    "notify",
+                    "2",
+                    component_digest.as_str(),
+                    "notifier",
+                    "orders:notify/dispatch@1.0.0",
+                ],
+                &[("effect.operation", "send"), ("effect.outcome", "timeout")],
+            ),
         );
     }
 
@@ -2705,20 +2695,20 @@ mod tests {
         let attributes = harness.attributes("wamn.connection_http");
         assert_eq!(
             attributes,
-            expected_attributes(&[
-                ("effect.operation", "send"),
-                ("wamn.env_key", "tenant-a"),
-                ("wamn.project", "project-a"),
-                ("wamn.component", component_id),
-                ("wamn.package_id", "package_a"),
-                ("wamn.wiring_id", "orders"),
-                ("wamn.wiring_version", "3"),
-                ("wamn.node_id", "notify"),
-                ("wamn.occurrence", "2"),
-                ("wamn.component_digest", component_digest.as_str()),
-                ("wamn.component_name", "notifier"),
-                ("wamn.operation", "orders:notify/dispatch@1.0.0"),
-            ]),
+            expected_attributes(
+                ["tenant-a", "project-a", component_id],
+                [
+                    "package_a",
+                    "orders",
+                    "3",
+                    "notify",
+                    "2",
+                    component_digest.as_str(),
+                    "notifier",
+                    "orders:notify/dispatch@1.0.0",
+                ],
+                &[("effect.operation", "send")],
+            ),
         );
 
         let value = |key: &str| {
@@ -2760,20 +2750,20 @@ mod tests {
         let component_id = "component-store-7";
         let component_digest = digest('a');
         let shared = |operation: &str| {
-            expected_attributes(&[
-                ("effect.operation", "send"),
-                ("wamn.env_key", "tenant-a"),
-                ("wamn.project", "project-a"),
-                ("wamn.component", component_id),
-                ("wamn.package_id", "package_a"),
-                ("wamn.wiring_id", "orders"),
-                ("wamn.wiring_version", "3"),
-                ("wamn.node_id", "notify"),
-                ("wamn.occurrence", "2"),
-                ("wamn.component_digest", component_digest.as_str()),
-                ("wamn.component_name", "notifier"),
-                ("wamn.operation", operation),
-            ])
+            expected_attributes(
+                ["tenant-a", "project-a", component_id],
+                [
+                    "package_a",
+                    "orders",
+                    "3",
+                    "notify",
+                    "2",
+                    component_digest.as_str(),
+                    "notifier",
+                    operation,
+                ],
+                &[("effect.operation", "send")],
+            )
         };
 
         let harness = SpanHarness::install("connection-http-two-operations-test");

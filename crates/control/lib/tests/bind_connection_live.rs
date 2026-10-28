@@ -903,6 +903,34 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
         .unwrap();
     assert_eq!(old_snapshot.active_generation, Some(2));
     assert_eq!(old_snapshot.generation, Some(1));
+    for candidate in [
+        CandidateConnectionBinding {
+            instance_id: "another-instance".to_owned(),
+            ..pinned.clone()
+        },
+        CandidateConnectionBinding {
+            generation: 99,
+            ..pinned.clone()
+        },
+    ] {
+        let snapshot = postgres
+            .connection_effect_snapshot(
+                COMPONENT_ID,
+                DEFAULT_PROJECT,
+                ENV_KEY,
+                &ConnectionEffectLookup {
+                    candidate_binding: Some(&candidate),
+                    ..lookup
+                },
+            )
+            .await
+            .expect("load a mismatched candidate snapshot")
+            .expect("the released wiring still exists");
+        assert!(
+            binding::resolve(&snapshot).is_err(),
+            "a candidate must not fall back to another instance or generation"
+        );
+    }
     let old_binding =
         binding::resolve(&old_snapshot).expect("the pinned generation remains usable");
     assert_eq!(

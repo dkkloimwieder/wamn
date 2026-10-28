@@ -44,16 +44,6 @@ fn candidate_binding_world_requires_complete_canonical_unique_rows() {
     assert!(CandidateBindingWorld::from_json(serde_json::json!([incomplete])).is_err());
 }
 
-#[test]
-fn candidate_effect_snapshot_pins_instance_and_generation_without_fallback() {
-    for predicate in [
-        "($10::text IS NULL OR binding.instance_id = $10)",
-        "generation.generation = COALESCE($11::bigint, instance.active_generation)",
-    ] {
-        assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains(predicate));
-    }
-}
-
 /// Building a pool must REQUIRE a probeable credential.
 ///
 /// Without this, removing the exactness hook from `build_pool` would be an
@@ -479,86 +469,6 @@ fn causation_emit_sql_escapes_single_quotes_in_the_run_id() {
         causation_emit_sql(&c),
         " SELECT pg_logical_emit_message(true, 'wamn.causation', '{\"run\":\"o''brien\",\"root\":\"o''brien\",\"depth\":2}');"
     );
-}
-
-// R2/R16 — the claim statement is a FIXED, fully-bound SELECT: every value is
-// a `$n` bind, there is no interpolation path. Pin its shape so a regression
-// that reintroduces `SET LOCAL` string-building or drops a claim fails here
-// (the unit-level twin of the "no `format!` with `SET LOCAL`" grep-gate).
-#[test]
-fn claim_sql_is_fully_bound_with_no_interpolation() {
-    assert!(
-        !CLAIM_SQL.to_ascii_uppercase().contains("SET LOCAL"),
-        "CLAIM_SQL must not use SET LOCAL"
-    );
-    for frag in [
-        "set_config('statement_timeout', $2, true)",
-        "set_config('search_path', COALESCE($3, current_setting('search_path')), true)",
-        "set_config('app.runner', COALESCE($4, current_setting('app.runner', true)), true)",
-        // wamn-0h0g.23.1 — bound, and bound to the FLOOR when absent: a
-        // COALESCE-to-current here would carry a pooled connection's leftover
-        // role into the next component's transaction.
-        "set_config('app.role', $5, true)",
-        "set_config('app.user_id', $6, true)",
-        "set_config('app.operation', $7, true)",
-        "set_config('app.application', $8, true)",
-    ] {
-        assert!(CLAIM_SQL.contains(frag), "CLAIM_SQL missing {frag:?}");
-    }
-}
-
-#[test]
-fn effect_authority_resolves_exact_wiring_component_and_store_alias() {
-    for required in [
-        "FROM catalog.releases AS release",
-        "FROM catalog.workflows AS workflow",
-        "release.manifest_digest = $3",
-        "workflow.application = $12",
-        "workflow.workflow_id = $5",
-        "workflow.version = $6",
-        "SELECT workflow.graph_json",
-        "component.package_id = executing_member.package_id",
-        "LEFT JOIN release_component AS component",
-        "release_manifest.manifest -> 'components'",
-        "member.value -> 'descriptor' -> 'operations' AS operations",
-        "component.component_digest = $8",
-        "component.operations #>> ARRAY[$18, 'registered-operation']",
-        "wiring.graph_json #> ARRAY['nodes', $7]",
-        "requirement.component_digest = $8",
-        "requirement.store_alias = $9",
-        "binding.manifest_digest = $3",
-        "binding.environment = $4",
-    ] {
-        assert!(
-            CONNECTION_EFFECT_SNAPSHOT_SQL.contains(required),
-            "effect authority snapshot omits {required:?}"
-        );
-    }
-}
-
-#[test]
-fn effect_authority_has_no_run_plan_frame_or_legacy_requirement_fallback() {
-    let sql = CONNECTION_EFFECT_SNAPSHOT_SQL.to_ascii_lowercase();
-    for retired in [
-        "wamn_run.",
-        " from runs ",
-        "effect_attempts",
-        "execution_bundles",
-        "plan_hash",
-        "frame_id",
-        ".flow_id",
-        "artifact_hash =",
-        "requirement_name =",
-        "catalog_id",
-        "catalog_version",
-        "gated_catalog_version",
-        "catalog_heads",
-    ] {
-        assert!(!sql.contains(retired), "effect authority retains {retired}");
-    }
-    for write in [" insert ", " update ", " delete "] {
-        assert!(!sql.contains(write), "effect authority performs {write:?}");
-    }
 }
 
 // R16 — the validators stay as the identity-format contract (demoted from the

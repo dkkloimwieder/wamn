@@ -1091,20 +1091,20 @@ mod tests {
 
         assert_eq!(
             harness.attributes("wamn.blobstore"),
-            expected_attributes(&[
-                ("effect.operation", "get-data"),
-                ("wamn.env_key", "tenant-a"),
-                ("wamn.project", "project-a"),
-                ("wamn.component", component_id),
-                ("wamn.package_id", "package_a"),
-                ("wamn.wiring_id", "orders"),
-                ("wamn.wiring_version", "3"),
-                ("wamn.node_id", "archive"),
-                ("wamn.occurrence", "1"),
-                ("wamn.component_digest", component_digest.as_str()),
-                ("wamn.component_name", "archiver"),
-                ("wamn.operation", "orders:archive/store@1.0.0"),
-            ]),
+            expected_attributes(
+                ["tenant-a", "project-a", component_id],
+                [
+                    "package_a",
+                    "orders",
+                    "3",
+                    "archive",
+                    "1",
+                    component_digest.as_str(),
+                    "archiver",
+                    "orders:archive/store@1.0.0",
+                ],
+                &[("effect.operation", "get-data")],
+            ),
         );
     }
 }

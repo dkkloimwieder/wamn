@@ -546,11 +546,30 @@ pub(crate) mod span_tests {
         }
     }
 
-    /// One expected attribute set, sorted the way [`SpanHarness`] sorts.
-    pub(crate) fn expected_attributes(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
-        let mut pairs: Vec<(String, String)> = pairs
-            .iter()
-            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+    /// Expected identity and wiring fields, plus the fields of one surface.
+    pub(crate) fn expected_attributes(
+        identity: [&str; 3],
+        wiring: [&str; 8],
+        extra: &[(&str, &str)],
+    ) -> Vec<(String, String)> {
+        let keys = [
+            "wamn.env_key",
+            "wamn.project",
+            "wamn.component",
+            "wamn.package_id",
+            "wamn.wiring_id",
+            "wamn.wiring_version",
+            "wamn.node_id",
+            "wamn.occurrence",
+            "wamn.component_digest",
+            "wamn.component_name",
+            "wamn.operation",
+        ];
+        let mut pairs: Vec<(String, String)> = keys
+            .into_iter()
+            .zip(identity.into_iter().chain(wiring))
+            .chain(extra.iter().copied())
+            .map(|(key, value)| (key.to_owned(), value.to_owned()))
             .collect();
         pairs.sort();
         pairs
@@ -636,73 +655,21 @@ mod tests {
             .1
     }
 
-    /// An effect the platform declined reads as refused before dispatch, which
-    /// says the platform sent nothing.
     #[test]
-    fn an_effect_the_platform_declined_records_refused_before_dispatch() {
-        assert_eq!(
-            observed_outcome(
-                "outcome-refused-test",
-                Some(EffectOutcome::RefusedBeforeDispatch)
+    fn every_effect_outcome_reaches_the_exported_span() {
+        for (settled, expected) in [
+            (
+                Some(EffectOutcome::RefusedBeforeDispatch),
+                "refused-before-dispatch",
             ),
-            "refused-before-dispatch",
-        );
-    }
-
-    /// An effect the far side answered reads as responded, whatever that answer
-    /// said.
-    #[test]
-    fn an_effect_the_far_side_answered_records_responded() {
-        assert_eq!(
-            observed_outcome("outcome-responded-test", Some(EffectOutcome::Responded)),
-            "responded",
-        );
-    }
-
-    /// An effect whose deadline really elapsed reads as timeout, and a reader
-    /// learns nothing about the far side from it.
-    #[test]
-    fn an_effect_whose_deadline_elapsed_records_timeout() {
-        assert_eq!(
-            observed_outcome("outcome-timeout-test", Some(EffectOutcome::Timeout)),
-            "timeout",
-        );
-    }
-
-    /// An effect abandoned before it settled reads as cancelled. Nothing calls
-    /// `settle` on that path, so the guard's own `Drop` is what records it.
-    #[test]
-    fn an_effect_abandoned_before_it_settled_records_cancelled() {
-        assert_eq!(
-            observed_outcome("outcome-cancelled-test", None),
-            "cancelled"
-        );
-    }
-
-    /// An attempt the platform sent and holds no outcome for reads as
-    /// effect-uncertain, which is the state the durable shelf contract names.
-    #[test]
-    fn an_attempt_with_no_recorded_outcome_records_effect_uncertain() {
-        assert_eq!(
-            observed_outcome(
-                "outcome-uncertain-test",
-                Some(EffectOutcome::EffectUncertain)
-            ),
-            "effect-uncertain",
-        );
-    }
-
-    /// An answer the far side sent and the guest never received reads as
-    /// response-lost, the word whose remedy is to re-read.
-    #[test]
-    fn an_answer_that_never_reached_the_guest_records_response_lost() {
-        assert_eq!(
-            observed_outcome(
-                "outcome-response-lost-test",
-                Some(EffectOutcome::ResponseLost)
-            ),
-            "response-lost",
-        );
+            (Some(EffectOutcome::Responded), "responded"),
+            (Some(EffectOutcome::Timeout), "timeout"),
+            (None, "cancelled"),
+            (Some(EffectOutcome::EffectUncertain), "effect-uncertain"),
+            (Some(EffectOutcome::ResponseLost), "response-lost"),
+        ] {
+            assert_eq!(observed_outcome("outcome-table-test", settled), expected);
+        }
     }
 
     /// The six words are the whole set. None of them names a rollback, an undo

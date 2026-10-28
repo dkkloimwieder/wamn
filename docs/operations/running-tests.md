@@ -942,8 +942,13 @@ One test composes Acme over Receiving into a copy of their build output and chec
 
 ### Generated TypeScript bindings
 
-The generated TypeScript is type-checked by hand, not by a test and not by a build.
-Nothing in `cargo build` needs Node, and the ignored `control_client_live` tests run it.
+The client emitter tests run the emitted bindings through the web runtime and compile them with the workspace TypeScript compiler.
+Run `pnpm install --offline` at the repository root first.
+The compilation test skips with a message only when the workspace `tsc` executable is absent.
+
+```bash
+cargo test --locked --offline -p wamn-schema-generator --test client_ts_emitter
+```
 To type-check the bindings for the platform fixture, run:
 
 ```bash

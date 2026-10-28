@@ -1185,22 +1185,21 @@ mod tests {
 
         assert_eq!(
             harness.attributes("wamn.jetstream"),
-            expected_attributes(&[
-                ("effect.operation", "publish-derived"),
-                ("wamn.env_key", "fixture-route-auth"),
-                ("wamn.project", "database-project"),
-                ("wamn.component", "component-1"),
-                ("wamn.package_id", "platform_fixture"),
-                ("wamn.wiring_id", "fixture-orders"),
-                ("wamn.wiring_version", "7"),
-                ("wamn.node_id", "publish"),
-                // The publish path stands in no guest component scope, so it
-                // holds no bound invocation to source these four from.
-                ("wamn.occurrence", "0"),
-                ("wamn.component_digest", ""),
-                ("wamn.component_name", ""),
-                ("wamn.operation", ""),
-            ]),
+            expected_attributes(
+                ["fixture-route-auth", "database-project", "component-1"],
+                [
+                    "platform_fixture",
+                    "fixture-orders",
+                    "7",
+                    "publish",
+                    // The publish path holds no guest invocation for these fields.
+                    "0",
+                    "",
+                    "",
+                    "",
+                ],
+                &[("effect.operation", "publish-derived")],
+            ),
             "a derived event must name the wiring node that produced it"
         );
     }

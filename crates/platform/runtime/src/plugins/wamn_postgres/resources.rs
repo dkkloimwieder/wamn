@@ -1992,25 +1992,26 @@ mod tests {
 
         assert_eq!(
             harness.attributes("wamn.postgres"),
-            expected_attributes(&[
-                ("db.system", "postgresql"),
-                ("db.operation", "query"),
-                ("wamn.env_key", "tenant-a"),
-                ("wamn.project", "project-a"),
-                ("wamn.component", COMPONENT_ID),
-                ("wamn.package_id", "package_a"),
-                ("wamn.wiring_id", "orders"),
-                ("wamn.wiring_version", "3"),
-                ("wamn.node_id", "record"),
-                ("wamn.occurrence", "2"),
-                ("wamn.component_digest", COMPONENT_DIGEST),
-                ("wamn.component_name", "recorder"),
-                ("wamn.operation", "orders:notify/dispatch@1.0.0"),
-                ("wamn.run_id", "run-42"),
-                // A DB call is admitted by its statement set, not by a named
-                // connection requirement, so this surface holds no such claim.
-                ("wamn.requirement", ""),
-            ]),
+            expected_attributes(
+                ["tenant-a", "project-a", COMPONENT_ID],
+                [
+                    "package_a",
+                    "orders",
+                    "3",
+                    "record",
+                    "2",
+                    COMPONENT_DIGEST,
+                    "recorder",
+                    "orders:notify/dispatch@1.0.0",
+                ],
+                &[
+                    ("db.system", "postgresql"),
+                    ("db.operation", "query"),
+                    ("wamn.run_id", "run-42"),
+                    // A DB call uses its statement set, not a named connection requirement.
+                    ("wamn.requirement", ""),
+                ],
+            ),
         );
     }
 
@@ -2031,21 +2032,11 @@ mod tests {
 
         assert_eq!(
             harness.attributes("wamn.postgres"),
-            expected_attributes(&[
-                ("db.system", "postgresql"),
-                ("db.operation", "query"),
-                ("wamn.env_key", "tenant-a"),
-                ("wamn.project", "project-a"),
-                ("wamn.component", COMPONENT_ID),
-                ("wamn.package_id", ""),
-                ("wamn.wiring_id", ""),
-                ("wamn.wiring_version", "0"),
-                ("wamn.node_id", ""),
-                ("wamn.occurrence", "0"),
-                ("wamn.component_digest", ""),
-                ("wamn.component_name", ""),
-                ("wamn.operation", ""),
-            ]),
+            expected_attributes(
+                ["tenant-a", "project-a", COMPONENT_ID],
+                ["", "", "0", "", "0", "", "", ""],
+                &[("db.system", "postgresql"), ("db.operation", "query")],
+            ),
         );
     }
 
