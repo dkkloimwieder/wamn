@@ -77,7 +77,7 @@ pub(super) const CHECK_SPECS: &[CheckSpec] = &[
     CheckSpec {
         table: "runs",
         name: "runs_status_check",
-        definition: "CHECK (status = ANY (ARRAY['dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'infrastructure-failure'::text, 'effect-uncertain'::text]))",
+        definition: "CHECK (status = ANY (ARRAY['dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'infrastructure-failure'::text]))",
         origin: CheckOrigin::Inline("status"),
     },
     CheckSpec {
@@ -113,7 +113,7 @@ pub(super) const CHECK_SPECS: &[CheckSpec] = &[
     CheckSpec {
         table: "runs",
         name: "runs_fail_type_check",
-        definition: "CHECK (fail_type = ANY (ARRAY['terminal'::text, 'retry-exhausted'::text, 'invalid-input'::text, 'runaway-budget'::text, 'effect-uncertain'::text, 'depth-budget'::text, 'dispatch-budget'::text, 'unresolvable-name'::text, 'hash-invalid-bytes'::text, 'foreign-revision'::text, 'incompatible-contract'::text, 'unbound-requirement'::text]))",
+        definition: "CHECK (fail_type = ANY (ARRAY['terminal'::text, 'retry-exhausted'::text, 'invalid-input'::text, 'runaway-budget'::text, 'depth-budget'::text, 'dispatch-budget'::text, 'unresolvable-name'::text, 'hash-invalid-bytes'::text, 'foreign-revision'::text, 'incompatible-contract'::text, 'unbound-requirement'::text]))",
         origin: CheckOrigin::Inline("fail_type"),
     },
     CheckSpec {
@@ -405,12 +405,6 @@ pub(super) const CHECK_SPECS: &[CheckSpec] = &[
         table: "operator_run_actions",
         name: "operator_run_actions_principal_type_check",
         definition: "CHECK (principal_type = 'database-role'::text)",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "operator_run_actions",
-        name: "operator_run_actions_prior_run_status_check",
-        definition: "CHECK (prior_run_status = 'effect-uncertain'::text)",
         origin: CheckOrigin::Table,
     },
     CheckSpec {

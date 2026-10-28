@@ -709,10 +709,7 @@ async fn run_manual_inner(
             return Ok((200, row.get::<_, Value>(1).to_string()));
         }
         ensure!(
-            !matches!(
-                status.as_str(),
-                "failed" | "infrastructure-failure" | "effect-uncertain"
-            ),
+            !matches!(status.as_str(), "failed" | "infrastructure-failure"),
             "workflow {workflow} failed: {status}, fail_type {:?}, result {:?}",
             row.get::<_, Option<String>>(2),
             row.get::<_, Option<Value>>(1)
@@ -792,7 +789,7 @@ async fn scheduled_runs_inner(
                 ensure!(
                     !matches!(
                         row["status"].as_str(),
-                        Some("failed" | "infrastructure-failure" | "effect-uncertain")
+                        Some("failed" | "infrastructure-failure")
                     ),
                     "scheduled workflow failed: {row}"
                 );

@@ -9,10 +9,9 @@ use serde::{Deserialize, Serialize};
 use wamn_execution_contract::node_contract::NodeError;
 
 /// A run's lifecycle status. `Dispatched` is the write-ahead pre-state (a run row
-/// exists before the runner picks it up); `InfrastructureFailure` is a janitor
-/// verdict for a run that never reported back; `EffectUncertain` is an unresolved
-/// operator state after an effectful crash. The storage layer owns those three;
-/// the engine only produces the other three.
+/// exists before the runner picks it up). `InfrastructureFailure` is a janitor
+/// verdict for a run that never reported back. The storage layer owns those two.
+/// The engine only produces the other three.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RunStatus {
@@ -21,19 +20,15 @@ pub enum RunStatus {
     Completed,
     Failed,
     InfrastructureFailure,
-    /// An effectful attempt may have escaped without a durable outcome, so the
-    /// platform cannot safely dispatch it again or claim whether it occurred.
-    EffectUncertain,
 }
 
 impl RunStatus {
-    pub const ALL: [RunStatus; 6] = [
+    pub const ALL: [RunStatus; 5] = [
         RunStatus::Dispatched,
         RunStatus::Running,
         RunStatus::Completed,
         RunStatus::Failed,
         RunStatus::InfrastructureFailure,
-        RunStatus::EffectUncertain,
     ];
 
     pub fn as_sql(self) -> &'static str {
@@ -43,7 +38,6 @@ impl RunStatus {
             RunStatus::Completed => "completed",
             RunStatus::Failed => "failed",
             RunStatus::InfrastructureFailure => "infrastructure-failure",
-            RunStatus::EffectUncertain => "effect-uncertain",
         }
     }
 
@@ -59,7 +53,7 @@ impl RunStatus {
     }
 }
 
-/// Why a run failed, including engine failures and unresolved effects.
+/// Why a run failed, including engine failures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum FailType {
@@ -69,9 +63,6 @@ pub enum FailType {
     /// The run spent its per-invocation node-execution budget (cjv.4) — a
     /// permitted loop that never terminated.
     RunawayBudget,
-    /// An effect may have escaped before its durable completion
-    /// record was written, so repeating it would be unsafe.
-    EffectUncertain,
     /// The root run exhausted its maximum call depth.
     DepthBudget,
     /// The root run exhausted its total-dispatched-node budget.
@@ -89,12 +80,11 @@ pub enum FailType {
 }
 
 impl FailType {
-    pub const ALL: [FailType; 12] = [
+    pub const ALL: [FailType; 11] = [
         FailType::Terminal,
         FailType::RetryExhausted,
         FailType::InvalidInput,
         FailType::RunawayBudget,
-        FailType::EffectUncertain,
         FailType::DepthBudget,
         FailType::DispatchBudget,
         FailType::UnresolvableName,
@@ -110,7 +100,6 @@ impl FailType {
             FailType::RetryExhausted => "retry-exhausted",
             FailType::InvalidInput => "invalid-input",
             FailType::RunawayBudget => "runaway-budget",
-            FailType::EffectUncertain => "effect-uncertain",
             FailType::DepthBudget => "depth-budget",
             FailType::DispatchBudget => "dispatch-budget",
             FailType::UnresolvableName => "unresolvable-name",

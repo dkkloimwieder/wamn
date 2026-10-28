@@ -55,7 +55,6 @@ pub mod release_chart;
 pub mod release_composition;
 pub mod role_permission;
 pub mod sql_params;
-pub mod terminalize_effect_uncertain;
 pub mod upgrade_environment;
 pub mod upgrade_schema;
 pub mod user_role;

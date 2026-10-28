@@ -73,9 +73,6 @@ wamn-control-registry = { workspace = true }
 # independently issued/revoked PATs for provision-project-env.
 wamn-platform-identity = { workspace = true }
 wamn-runtime = { workspace = true }
-# 9.6 prune-run-history: the single-source run-state SQL builder
-# (`prune_terminal_runs_sql`) the retention verb uses.
-wamn-run-state = { workspace = true }
 # The `workflow` verbs call the workflow contract over a project-admin
 # connection.
 wamn-workflow = { workspace = true }

@@ -1,5 +1,4 @@
-//! Arguments and output of the `publish-release` and
-//! `terminalize-effect-uncertain` verbs.
+//! Arguments and output of the `publish-release` verb.
 
 use std::path::PathBuf;
 
@@ -8,8 +7,6 @@ use wamn_catalog::PackageCoordinate;
 use wamn_control::environment::document::EnvironmentDocument;
 use wamn_control::package_artifact::PackageRegistry;
 use wamn_control::publish_release::{self, PublishReleaseRequest, parse_package};
-use wamn_control::terminalize_effect_uncertain::{self, TerminalizeEffectUncertainRequest};
-use wamn_run_state::operator_action::OperatorActionBasis;
 use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;
 
 /// Arguments for the release publish verb. Each package is the artifact that
@@ -67,42 +64,6 @@ pub(crate) const PUBLISH_RELEASE_INSTALL_ENV: crate::install_job_tests::Environm
         optional: &["WAMN_KCL", "WAMN_FLOW_HTTP_COMPONENT", "WASH_OCI_CA_PATHS"],
     };
 
-/// Exact operator input; effect identity and asserted outcome are absent by construction.
-#[derive(Debug, Args)]
-pub struct TerminalizeEffectUncertainArgs {
-    /// Project-admin PostgreSQL URL for the project database.
-    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
-    pub admin_database_url: String,
-
-    /// Project run-plane schema.
-    #[arg(long, default_value = "wamn_run")]
-    pub schema: String,
-
-    #[arg(long)]
-    pub org: String,
-    /// Exact project whose environment owns the run.
-    #[arg(long)]
-    pub project: String,
-    #[arg(long)]
-    pub environment: String,
-
-    /// Exact effect-uncertain run.
-    #[arg(long)]
-    pub run: String,
-
-    /// Evidence basis: external-evidence, counterparty-confirmation, or operator-judgment.
-    #[arg(long)]
-    pub basis: OperatorActionBasis,
-
-    /// Opaque non-empty reference to the evidence used.
-    #[arg(long)]
-    pub evidence_ref: String,
-
-    /// Opaque non-empty idempotency correlation.
-    #[arg(long)]
-    pub correlation_id: String,
-}
-
 /// Publish one effective release and print its manifest digest.
 pub async fn publish(args: PublishReleaseArgs) -> anyhow::Result<()> {
     let environment = EnvironmentDocument::compile(&args.file)?;
@@ -134,26 +95,6 @@ pub async fn publish(args: PublishReleaseArgs) -> anyhow::Result<()> {
     )
     .await?;
     println!("{digest}");
-    Ok(())
-}
-
-/// Terminalize one effect-uncertain run and print its result.
-pub async fn terminalize(args: TerminalizeEffectUncertainArgs) -> anyhow::Result<()> {
-    let result = terminalize_effect_uncertain::terminalize_effect_uncertain(
-        TerminalizeEffectUncertainRequest {
-            admin_database_url: args.admin_database_url,
-            schema: args.schema,
-            org: args.org.clone(),
-            project: args.project.clone(),
-            environment: args.environment.clone(),
-            run: args.run,
-            basis: args.basis,
-            evidence_ref: args.evidence_ref,
-            correlation_id: args.correlation_id,
-        },
-    )
-    .await?;
-    println!("{result}");
     Ok(())
 }
 

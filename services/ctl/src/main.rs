@@ -105,8 +105,6 @@ enum Command {
     PrintPlatformPrincipals(print_platform_principals::PrintPlatformPrincipalsArgs),
     /// Detect or repair REPLICA IDENTITY drift on captured models.
     ReconcileReplicaIdentity(package_verbs::ReconcileReplicaIdentityArgs),
-    /// Terminalize one effect-uncertain run from explicit external evidence.
-    TerminalizeEffectUncertain(release_verbs::TerminalizeEffectUncertainArgs),
     /// Author, enable, disable and list workflows, and start, park, release and list runs.
     #[command(subcommand)]
     Workflow(workflow_verbs::WorkflowCommand),
@@ -182,7 +180,6 @@ async fn main() -> anyhow::Result<()> {
         Command::ReconcileReplicaIdentity(args) => {
             package_verbs::reconcile_replica_identity(args).await
         }
-        Command::TerminalizeEffectUncertain(args) => release_verbs::terminalize(args).await,
         Command::Workflow(command) => workflow_verbs::run(command).await,
         Command::Env(command) => Box::pin(env_verbs::run(command)).await,
         Command::Platform(command) => platform_verbs::run(command, std::io::stdout().lock()).await,

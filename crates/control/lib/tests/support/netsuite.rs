@@ -66,7 +66,7 @@ async fn completed_inner(
     ensure!(
         runs.iter().all(|r| !matches!(
             r["status"].as_str(),
-            Some("failed" | "infrastructure-failure" | "effect-uncertain")
+            Some("failed" | "infrastructure-failure")
         )),
         "{wiring} failed: {runs:?}"
     );
@@ -306,7 +306,7 @@ async fn assertions_inner(
     ensure!(
         pulls.iter().all(|r| !matches!(
             r["status"].as_str(),
-            Some("failed" | "infrastructure-failure" | "effect-uncertain")
+            Some("failed" | "infrastructure-failure")
         )) && pulls.iter().any(|r| r["status"] == "completed"),
         "a pull did not complete: {pulls:?}"
     );

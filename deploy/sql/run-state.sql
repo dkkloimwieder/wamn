@@ -223,10 +223,7 @@ $$;
 -- `wamn_run_retention` holds DELETE for history pruning, and `wamn_app` still
 -- retains it pending the guest-login retirement. The table grant cannot express
 -- the prune statement's terminal-state predicate, so this ordinary
--- invoker-rights trigger makes that predicate caller-independent. An
--- `effect-uncertain` run is deliberately not terminal: its operator resolution
--- remains part of the durable audit floor and cannot be pruned as history
--- (wamn-0h0g.12.128).
+-- invoker-rights trigger makes that predicate caller-independent.
 --
 -- THE TRIGGER AND THE ROLE ARE INDEPENDENT LAYERS AND STAY THAT WAY
 -- (wamn-0h0g.12.69): the grant bounds WHO may delete, this trigger bounds WHAT
@@ -321,7 +318,7 @@ CREATE TABLE wamn_run.runs (
     event_depth      int CHECK (event_depth BETWEEN 0 AND 16),
     status          text NOT NULL DEFAULT 'running'
         CHECK (status IN ('dispatched', 'running', 'completed', 'failed',
-                          'infrastructure-failure', 'effect-uncertain')),
+                          'infrastructure-failure')),
     trigger_source  text,
     -- The service identity of an operator-admitted automation run.
     service_principal_id uuid,
@@ -381,7 +378,7 @@ CREATE TABLE wamn_run.runs (
     run_deadline_at timestamptz,
     terminal_reason text,
     fail_type       text CHECK (fail_type IN ('terminal', 'retry-exhausted', 'invalid-input',
-                                              'runaway-budget', 'effect-uncertain', 'depth-budget',
+                                              'runaway-budget', 'depth-budget',
                                               'dispatch-budget', 'unresolvable-name',
                                               'hash-invalid-bytes', 'foreign-revision',
                                               'incompatible-contract', 'unbound-requirement')),
@@ -862,8 +859,7 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change();
 -- ---------------------------------------------------------------------------
 -- Immutable operator resolution evidence. There is deliberately no FK to run
 -- or node history: terminal history can be pruned without erasing the action.
--- The project-admin transaction supplies SESSION_USER as database-role
--- attribution and appends before changing the mutable terminal projections.
+-- Retained after the operator terminalization writer was removed.
 -- ---------------------------------------------------------------------------
 CREATE TABLE wamn_run.operator_run_actions (
     env_key         text NOT NULL,
@@ -875,7 +871,6 @@ CREATE TABLE wamn_run.operator_run_actions (
     evidence_ref    text NOT NULL,
     principal       text NOT NULL,
     principal_type  text NOT NULL,
-    prior_run_status text NOT NULL,
     prior_started_node_frame_id bigint,
     prior_started_node_local_node_id text,
     prior_started_node_occurrence int,
@@ -896,8 +891,6 @@ CREATE TABLE wamn_run.operator_run_actions (
     CONSTRAINT operator_run_actions_principal_check CHECK (principal <> ''),
     CONSTRAINT operator_run_actions_principal_type_check
         CHECK (principal_type = 'database-role'),
-    CONSTRAINT operator_run_actions_prior_run_status_check
-        CHECK (prior_run_status = 'effect-uncertain'),
     CONSTRAINT operator_run_actions_prior_node_check CHECK (
         (prior_started_node_frame_id IS NULL
          AND prior_started_node_local_node_id IS NULL

@@ -84,7 +84,7 @@ fn runs_stand_in() -> String {
         event_source_run_id text, event_root_run_id text, event_depth int, \
         status text NOT NULL DEFAULT 'running' \
           CHECK (status IN ('dispatched', 'running', 'completed', 'failed', \
-                            'infrastructure-failure', 'effect-uncertain')), \
+                            'infrastructure-failure')), \
         trigger_source text, capture_mode text NOT NULL DEFAULT 'off', \
         durability_class text NOT NULL DEFAULT 'standard' \
           CHECK (durability_class IN ('standard')), \

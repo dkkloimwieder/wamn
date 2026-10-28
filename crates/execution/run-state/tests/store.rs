@@ -33,20 +33,17 @@ fn status_sql_literals_round_trip() {
         RunStatus::InfrastructureFailure.as_sql(),
         "infrastructure-failure"
     );
-    assert_eq!(RunStatus::EffectUncertain.as_sql(), "effect-uncertain");
-    assert!(!RunStatus::EffectUncertain.is_terminal());
     assert_eq!(FailType::RetryExhausted.as_sql(), "retry-exhausted");
     assert_eq!(FailType::RunawayBudget.as_sql(), "runaway-budget");
 }
 
 #[test]
 fn persisted_fail_kind_vocabulary_is_exact_and_alias_free() {
-    const EXPECTED: [&str; 12] = [
+    const EXPECTED: [&str; 11] = [
         "terminal",
         "retry-exhausted",
         "invalid-input",
         "runaway-budget",
-        "effect-uncertain",
         "depth-budget",
         "dispatch-budget",
         "unresolvable-name",
@@ -86,14 +83,6 @@ fn persisted_fail_kind_vocabulary_is_exact_and_alias_free() {
         );
     }
 }
-
-// `canonical_status_ddl_mirrors_include_effect_uncertain_without_run_level_parked` lived here.
-// It pinned the run-status CHECK as a substring of two checked-in files and went red the moment
-// one of them — `deploy/sql/postgres-init.sql`, which declares no `runs` table at all — stopped
-// carrying that text: a formatting-shaped false red proving neither the installed constraint nor
-// its vocabulary. Its successor is the server-answer arm of
-// `run_state_schema_applies_and_isolates_on_postgres` below, which asks the installed constraint
-// itself.
 
 // ---- live-apply gate (optional) --------------------------------------------
 
@@ -518,10 +507,10 @@ BEGIN
   END LOOP;
 END $$;
 
--- Only terminal history is deletable: effect-uncertain stays, and each
+-- Only terminal history is deletable: a running run stays, and each
 -- terminal status goes. The guard runs with its caller's rights and PUBLIC
 -- cannot call it.
-UPDATE wamn_run.runs SET status = 'effect-uncertain'
+UPDATE wamn_run.runs SET status = 'running'
  WHERE env_key = 't3' AND run_id = 'record-probe';
 DO $$
 DECLARE refusal text;
@@ -530,7 +519,7 @@ BEGIN
     DELETE FROM wamn_run.runs WHERE env_key = 't3' AND run_id = 'record-probe';
   EXCEPTION WHEN object_not_in_prerequisite_state THEN refusal := SQLERRM; END;
   ASSERT refusal = 'run-delete-nonterminal',
-    format('an effect-uncertain run must not be deletable, got %s', coalesce(refusal, 'a delete'));
+    format('a running run must not be deletable, got %s', coalesce(refusal, 'a delete'));
 END $$;
 DO $$
 DECLARE terminal text;

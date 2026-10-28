@@ -1397,7 +1397,7 @@ async fn assert_schema_triggers_inner(
                 ensure!(
                     !matches!(
                         row["status"].as_str(),
-                        Some("failed" | "infrastructure-failure" | "effect-uncertain")
+                        Some("failed" | "infrastructure-failure")
                     ),
                     "capture workflow failed: {rows}"
                 );
@@ -1471,7 +1471,7 @@ async fn assertions_inner(
         ensure!(
             runs.iter().all(|r| !matches!(
                 r["status"].as_str(),
-                Some("failed" | "infrastructure-failure" | "effect-uncertain")
+                Some("failed" | "infrastructure-failure")
             )),
             "integration schedule failed: {rows}"
         );

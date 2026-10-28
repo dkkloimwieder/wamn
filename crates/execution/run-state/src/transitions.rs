@@ -462,7 +462,6 @@ mod tests {
         assert!(!run.contains("CREATE TABLE wamn_run.invocation_admissions"));
         assert!(run.contains("frame_id bigint"));
         assert!(run.contains("CREATE TRIGGER runs_event_lineage_immutable"));
-        assert!(run.contains("'effect-uncertain'"));
 
         let queue = include_str!("../../../../deploy/sql/run-queue.sql");
         assert!(queue.contains("lease_generation bigint NOT NULL DEFAULT 0"));

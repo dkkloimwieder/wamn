@@ -318,7 +318,7 @@ async fn outcome(project: &tokio_postgres::Client, run: &str) -> anyhow::Result<
             let status: String = row.get(0);
             if matches!(
                 status.as_str(),
-                "completed" | "failed" | "infrastructure-failure" | "effect-uncertain"
+                "completed" | "failed" | "infrastructure-failure"
             ) {
                 return Ok((
                     status,

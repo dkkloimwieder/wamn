@@ -310,7 +310,6 @@ fn multi_line_column_definitions_parse_whole() {
     );
     let status = &cols.iter().find(|(c, _)| c == "status").unwrap().1;
     assert!(status.contains("'infrastructure-failure'"), "{status}");
-    assert!(status.contains("'effect-uncertain'"), "{status}");
     assert!(
         status.ends_with("))"),
         "CHECK closes inside the definition: {status}"
@@ -319,7 +318,7 @@ fn multi_line_column_definitions_parse_whole() {
 
 #[test]
 fn runs_failure_and_outcome_check_mirrors_are_exact_and_frozen() {
-    let expected_fail_kind = "CHECK (fail_type = ANY (ARRAY['terminal'::text, 'retry-exhausted'::text, 'invalid-input'::text, 'runaway-budget'::text, 'effect-uncertain'::text, 'depth-budget'::text, 'dispatch-budget'::text, 'unresolvable-name'::text, 'hash-invalid-bytes'::text, 'foreign-revision'::text, 'incompatible-contract'::text, 'unbound-requirement'::text]))";
+    let expected_fail_kind = "CHECK (fail_type = ANY (ARRAY['terminal'::text, 'retry-exhausted'::text, 'invalid-input'::text, 'runaway-budget'::text, 'depth-budget'::text, 'dispatch-budget'::text, 'unresolvable-name'::text, 'hash-invalid-bytes'::text, 'foreign-revision'::text, 'incompatible-contract'::text, 'unbound-requirement'::text]))";
     let fail_type = CHECK_SPECS
         .iter()
         .find(|spec| spec.table == "runs" && spec.name == "runs_fail_type_check")
@@ -332,7 +331,7 @@ fn runs_failure_and_outcome_check_mirrors_are_exact_and_frozen() {
         .expect("runs.status CHECK mirror exists");
     assert_eq!(
         status.definition,
-        "CHECK (status = ANY (ARRAY['dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'infrastructure-failure'::text, 'effect-uncertain'::text]))"
+        "CHECK (status = ANY (ARRAY['dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'infrastructure-failure'::text]))"
     );
 
     let caller_outcome = CHECK_SPECS
@@ -1011,7 +1010,7 @@ fn drifted_and_missing_checks_plan_exact_repairs() {
             && action
                 .sql
                 .contains("DROP CONSTRAINT \"runs_fail_type_check\"")
-            && action.sql.contains("effect-uncertain")
+            && action.sql.contains("unbound-requirement")
     }));
     assert!(repairs.iter().any(|action| {
         action.target == "effect_attempts.effect_attempts_deadline_check"
@@ -1263,7 +1262,6 @@ fn missing_helpers_and_record_triggers_are_repaired() {
             .sql
             .contains("MESSAGE = 'run-delete-nonterminal'")
     );
-    assert!(!terminal_delete_guard.sql.contains("effect-uncertain"));
     assert!(!terminal_delete_guard.sql.contains("SECURITY DEFINER"));
     assert!(plan.actions.iter().any(|action| {
         action.kind == RunPlaneActionKind::RepairTrigger

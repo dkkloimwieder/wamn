@@ -42,7 +42,7 @@ pub mod intent_store;
 pub mod invariants;
 /// Versioned identity shared by persisted admission and trusted effect calls.
 pub mod invocation_context;
-/// Operator resolution of an effect-uncertain run.
+/// Evidence basis for operator resolution of intents.
 pub mod operator_action;
 /// Durable global queue, lease, timer, and terminal decisions and SQL.
 pub mod queue;

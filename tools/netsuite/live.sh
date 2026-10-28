@@ -83,7 +83,7 @@ SQL
     status=$(jq -er '.status' <<< "$result")
     case $status in
       completed) printf '%s: %s\n' "$wiring" "$result"; break ;;
-      failed|infrastructure-failure|effect-uncertain|cancelled|expired)
+      failed|infrastructure-failure|cancelled|expired)
         printf '%s: %s\n' "$wiring" "$result" >&2; exit 1 ;;
     esac
     if (( SECONDS >= deadline )); then
