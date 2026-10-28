@@ -53,6 +53,7 @@
 pub mod artifact_source;
 pub mod component_admission;
 pub mod component_artifact;
+pub mod connector;
 pub mod engine;
 pub mod entry_operation;
 pub mod expected_router;

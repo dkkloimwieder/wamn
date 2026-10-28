@@ -48,6 +48,84 @@ pub enum ComponentAdmissionErrorType {
     OperationSignatureMismatch,
     InvalidComponentFacts,
     StatementInstanceMismatch,
+    ConnectorExportMismatch,
+}
+
+/// Exact bytes admitted for an isolated connector store.
+#[derive(Debug)]
+pub struct AdmittedConnector {
+    pub(crate) component: Component,
+    digest: String,
+}
+
+impl AdmittedConnector {
+    /// The digest of the admitted bytes.
+    pub fn digest(&self) -> &str {
+        &self.digest
+    }
+}
+
+/// Admit a connector with bound sockets and the exact reader contract.
+pub fn validate_connector_admission(
+    engine: &Engine,
+    component_bytes: &[u8],
+    label: &str,
+) -> Result<AdmittedConnector, ComponentAdmissionError> {
+    let refuse = |kind, source: anyhow::Error| ComponentAdmissionError::new(kind, label, source);
+    let component = Component::new(engine.inner(), component_bytes).map_err(|source| {
+        refuse(
+            ComponentAdmissionErrorType::InvalidComponentBytes,
+            source.into(),
+        )
+    })?;
+    let ty = component.component_type();
+    let raw = component.engine();
+    let imports =
+        wamn_component_policy::ComponentImports::new(ty.imports(raw).map(|(name, item)| {
+            wamn_component_policy::instance_type(name, item.implements).to_owned()
+        }));
+    wamn_component_policy::analyze(
+        &imports,
+        wamn_component_policy::PolicyProfile::Connector,
+        label,
+    )
+    .map_err(|source| {
+        refuse(
+            ComponentAdmissionErrorType::ImportPolicyRefused,
+            source.into(),
+        )
+    })?;
+    let signature = || -> anyhow::Result<()> {
+        let exports = ty.exports(raw).collect::<Vec<_>>();
+        anyhow::ensure!(
+            exports.len() == 1 && exports[0].0 == crate::connector::READER,
+            "connector must export only {}",
+            crate::connector::READER
+        );
+        let ComponentItem::ComponentInstance(reader) = &exports[0].1.ty else {
+            anyhow::bail!("connector reader is not an interface instance");
+        };
+        let get = reader
+            .get_export(raw, "get")
+            .ok_or_else(|| anyhow::anyhow!("connector reader has no get function"))?;
+        let ComponentItem::ComponentFunc(get) = get.ty else {
+            anyhow::bail!("connector get is not a function");
+        };
+        anyhow::ensure!(
+            !get.async_(),
+            "connector reader uses the synchronous component ABI"
+        );
+        get.typecheck::<(&str, &[u8]), (Result<Vec<u8>, crate::connector::ConnectorError>,)>(
+            &ty.instance_type(),
+        )?;
+        Ok(())
+    };
+    signature()
+        .map_err(|source| refuse(ComponentAdmissionErrorType::ConnectorExportMismatch, source))?;
+    Ok(AdmittedConnector {
+        component,
+        digest: component_digest(component_bytes),
+    })
 }
 
 /// Contextual refusal from the byte-to-catalog-fact boundary.
@@ -548,7 +626,11 @@ mod tests {
     // like any other non-dependency import.
     const NODE_TYPES_IMPORT: &str = "wamn:node/types@0.1.0";
 
-    const DEPENDENCY_WITS: [(&str, &str); 5] = [
+    const DEPENDENCY_WITS: [(&str, &str); 6] = [
+        (
+            "wamn-connector.wit",
+            include_str!("../../runtime/wit/deps/wamn-connector/package.wit"),
+        ),
         (
             "wasi-clocks.wit",
             "package wasi:clocks@0.2.12; interface monotonic-clock { now: func() -> u64; }",
@@ -687,6 +769,31 @@ mod tests {
             admitted_platform_packages: BTreeSet::new(),
             base_digests: BTreeSet::new(),
         }
+    }
+
+    #[test]
+    fn application_byte_admission_grants_reader_but_refuses_private_binding() {
+        let engine = crate::build_engine(&[]).expect("engine");
+        let bytes = component_bytes("import wamn:connector/reader@0.1.0;");
+        let mut granted = request();
+        granted
+            .admitted_platform_packages
+            .insert("wamn:connector".to_owned());
+        validate_component_admission(&engine, &bytes, granted.clone())
+            .expect("reader grant admits");
+        let error = validate_component_admission(&engine, &bytes, request())
+            .expect_err("reader needs a grant");
+        assert_eq!(
+            error.error_type(),
+            ComponentAdmissionErrorType::ImportPolicyRefused
+        );
+        let bytes = component_bytes("import wamn:connector/bound@0.1.0;");
+        let error = validate_component_admission(&engine, &bytes, granted)
+            .expect_err("private binding never reaches applications");
+        assert_eq!(
+            error.error_type(),
+            ComponentAdmissionErrorType::ImportPolicyRefused
+        );
     }
 
     /// The request with `base` pinned as a base of the package.

@@ -179,6 +179,7 @@ mod tests {
                 );
             }
             Ok(()) => panic!("guard ADMITTED a wasi:sockets importer — the bypass is open"),
+            Err(error) => panic!("application imports reached the connector policy: {error}"),
         }
     }
 

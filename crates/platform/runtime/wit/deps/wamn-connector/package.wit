@@ -1,0 +1,30 @@
+package wamn:connector@0.1.0;
+
+/// Values cross stores by value. A reader never returns resource handles.
+interface reader {
+  variant connector-error {
+    unbound,
+    unavailable,
+    authority-denied,
+    credential-unavailable,
+    timeout,
+    transport(string),
+  }
+
+  /// The connection names the application binding.
+  /// The request and response follow the protocol of the selected integration.
+  /// A request names no endpoint and carries no binding credential.
+  get: func(connection: string, request: list<u8>) -> result<list<u8>, connector-error>;
+}
+
+/// Only the connector store receives these values.
+interface bound {
+  /// One exact host and port, with brackets around an IPv6 address.
+  authority: func() -> string;
+  credential: func() -> option<string>;
+}
+
+world connector {
+  import bound;
+  export reader;
+}

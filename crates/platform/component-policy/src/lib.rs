@@ -2,11 +2,12 @@
 //!
 //! MVP outcome: egress confinement (import allowlist, tested with mutations).
 //!
-//! This admission rule rejects every P2 or P3 `wasi:sockets` interface before
+//! Application admission rejects every P2 or P3 `wasi:sockets` interface before
 //! publication. WAMN installs the runtime's `SocketPolicy` with
 //! `EgressMode::Count`, which records policy refusals and allows traffic.
 //! Tenant artifacts never reach that path because admission rejects the
-//! package outright. There is no WAMN raw-socket opt-in.
+//! package outright. The connector profile admits pinned sockets and refuses
+//! every other effect. Connector stores enforce their bound authority.
 //! `AllowedIPNameLookups`, `allowed_hosts`, and
 //! the vanilla address-range defaults remain runtime policy layers; none grants
 //! publication authority. See
@@ -66,24 +67,46 @@ pub fn instance_type<'a>(name: &'a str, implements: Option<&'a str>) -> &'a str 
     implements.unwrap_or(name)
 }
 
-/// The retained policy population: first-party platform components.
+/// The production admission profiles for platform components and connectors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PolicyProfile {
     FirstParty,
+    Connector,
 }
 
 /// A successful policy analysis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PolicyReport;
 
-/// Analyze one first-party component import list.
+/// Analyze imports under the selected production admission profile.
 pub fn analyze(
     imports: &ComponentImports,
-    _profile: PolicyProfile,
+    profile: PolicyProfile,
     label: &str,
 ) -> Result<PolicyReport, EgressGuardError> {
-    screen_imports(imports, label)?;
+    if profile == PolicyProfile::Connector {
+        let denied = imports
+            .iter()
+            .filter(|name| !connector_import(name))
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        if !denied.is_empty() {
+            return Err(EgressGuardError::ConnectorImport {
+                component: label.to_owned(),
+                imports: denied,
+            });
+        }
+    } else {
+        screen_imports(imports, label)?;
+    }
     Ok(PolicyReport)
+}
+
+fn connector_import(name: &str) -> bool {
+    match (import_pkg(name), import_version(name)) {
+        ("wasi:sockets" | "wasi:io" | "wasi:clocks" | "wasi:random", Some("0.2.12")) => true,
+        _ => name == "wamn:connector/bound@0.1.0",
+    }
 }
 
 /// Whether importing a capability reaches outside the host.
@@ -155,8 +178,13 @@ pub struct CapabilityRow {
 /// version Rust std's `wasm32-wasip2` target links: `0.2.12` on toolchain
 /// 1.99.0, measured on the `jsonata` node (wamn-upl3.2, wamn-ro7m). The host
 /// links it by semver. A toolchain bump moves this row.
-pub const CAPABILITY_REGISTRY: [CapabilityRow; 9] = [
+pub const CAPABILITY_REGISTRY: [CapabilityRow; 10] = [
     // Versions we author.
+    CapabilityRow {
+        package: "wamn:connector",
+        version: "0.1.0",
+        posture: Posture::Effect,
+    },
     CapabilityRow {
         package: "wamn:node",
         version: "0.1.0",
@@ -214,7 +242,8 @@ pub const CAPABILITY_REGISTRY: [CapabilityRow; 9] = [
 /// would step around each member's own statements instance
 /// (docs/architecture/capabilities.md#import-admission). Platform components
 /// keep it: they are admitted by [`analyze`], which this list does not reach.
-pub const APPLICATION_DENIED_INTERFACES: [&str; 1] = ["wamn:postgres/client"];
+pub const APPLICATION_DENIED_INTERFACES: [&str; 2] =
+    ["wamn:postgres/client", "wamn:connector/bound"];
 
 /// Whether an application component may not import this interface instance type.
 fn is_denied_to_applications(import_name: &str) -> bool {
@@ -380,6 +409,11 @@ pub const DENIED_EGRESS_PKG: &str = "wasi:sockets";
 /// Refusal of a component whose world imports a denied egress surface.
 #[derive(Debug)]
 pub enum EgressGuardError {
+    /// A connector imports an effect outside its bound sockets.
+    ConnectorImport {
+        component: String,
+        imports: Vec<String>,
+    },
     /// The component imports one or more `wasi:sockets` interfaces.
     RawSocketImport {
         /// Caller-supplied label for the offending component.
@@ -392,6 +426,10 @@ pub enum EgressGuardError {
 impl std::fmt::Display for EgressGuardError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            EgressGuardError::ConnectorImport { component, imports } => write!(
+                formatter,
+                "connector {component:?} imports unadmitted interface(s) {imports:?}"
+            ),
             EgressGuardError::RawSocketImport { component, imports } => write!(
                 formatter,
                 "component {component:?} imports raw-socket interface(s) {imports:?} \
@@ -442,6 +480,39 @@ pub fn screen_imports(imports: &ComponentImports, label: &str) -> Result<(), Egr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connector_profile_grants_only_bound_sockets_and_ambient_imports() {
+        let imports = ComponentImports::new(
+            [
+                "wamn:connector/bound@0.1.0",
+                "wasi:sockets/tcp@0.2.12",
+                "wasi:io/streams@0.2.12",
+            ]
+            .map(str::to_owned),
+        );
+        analyze(&imports, PolicyProfile::Connector, "connector").expect("bound sockets");
+        analyze_tenant(
+            &imports,
+            &BTreeSet::from(["wamn:connector".to_owned()]),
+            "application",
+        )
+        .expect_err("application has no sockets or binding");
+        for effect in [
+            "wamn:postgres/statements@0.4.0",
+            "wasmcloud:blobstore/blobstore@0.1.0",
+            "wasi:http/outgoing-handler@0.2.12",
+            "wasi:sockets/tcp@0.2.9",
+            "wamn:connector/reader@0.1.0",
+        ] {
+            analyze(
+                &ComponentImports::new([effect.to_owned()]),
+                PolicyProfile::Connector,
+                "connector",
+            )
+            .expect_err("unlisted effect");
+        }
+    }
 
     /// Drift guard: the one load-bearing literal is the denied package. If this
     /// string moves, the guard silently stops matching the interface the
