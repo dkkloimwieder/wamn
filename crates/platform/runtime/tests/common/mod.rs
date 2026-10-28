@@ -1,21 +1,9 @@
-//! Fixture scaffolding shared by the two production-claim live suites.
-//!
-//! wamn-0h0g.20.4 split the one live claim test into a SURVIVING SPINE
-//! (`production_claim_live.rs`, the default `standard` class) and a SHELVED
-//! FLOOR (`production_claim_durable_live.rs`, the premium `durable` class).
-//! Both build the identical fixture, so the fixture lives here exactly once and
-//! neither suite can drift into showing a different schema than the other.
-//!
-//! Rust compiles this module separately into each test binary, so items only
-//! one suite uses are dead in the other; `dead_code` is allowed for that reason
-//! and no other.
-#![allow(dead_code)]
+//! Shared fixtures for production queue tests.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use serde_json::{Value, json};
-use tokio_postgres::{Client, GenericClient, NoTls};
+use tokio_postgres::{Client, NoTls};
 use url::Url;
 use wamn_run_state::AuthorityClass;
 use wamn_runtime::plugins::wamn_postgres::{
@@ -59,28 +47,6 @@ pub async fn connect(url: &str) -> anyhow::Result<Client> {
 
 pub fn quote_literal(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
-}
-
-/// Record one attributed effect attempt for `run_id`, as the fixture superuser.
-pub async fn insert_effect_attempt(
-    client: &impl GenericClient,
-    run_id: &str,
-    local_node_id: &str,
-) -> anyhow::Result<()> {
-    client
-        .execute(
-            &format!(
-                "INSERT INTO {SCHEMA}.effect_attempts \
-                   (env_key,run_id,root_plan_hash,current_plan_hash,frame_id, \
-                    local_node_id,source_artifact_hash,requirement_name,occurrence,seq, \
-                    generation_fact_type,attempt_deadline_at,attempt_input_ref) \
-                 VALUES ($1,$2,$3,$3,0,$4,$3,'manager',0,1, \
-                         'not-required','2099-01-01T00:00:00Z','sha256:claim-live-effect-input')"
-            ),
-            &[&ENV_KEY, &run_id, &EMPTY_HASH, &local_node_id],
-        )
-        .await?;
-    Ok(())
 }
 
 const RUN_STATE_SQL: &str = include_str!("../../../../../deploy/sql/run-state.sql");
@@ -155,70 +121,12 @@ pub fn url_with_application_name(url: &str, name: &str) -> anyhow::Result<String
     Ok(parsed.into())
 }
 
-pub async fn wait_for_advisory_wait(
-    client: &Client,
-    application_name: Option<&str>,
-    role: Option<&str>,
-) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        application_name.is_some() ^ role.is_some(),
-        "select exactly one blocked backend identity"
-    );
-    for _ in 0..1_000 {
-        let waiting: bool = client
-            .query_one(
-                "SELECT EXISTS ( \
-                    SELECT 1 FROM pg_stat_activity \
-                     WHERE datname=current_database() \
-                       AND ($1::text IS NULL OR application_name=$1) \
-                       AND ($2::text IS NULL OR usename=$2) \
-                       AND wait_event_type='Lock' AND wait_event='advisory')",
-                &[&application_name, &role],
-            )
-            .await?
-            .get(0);
-        if waiting {
-            return Ok(());
-        }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
-    anyhow::bail!(
-        "backend application={application_name:?} role={role:?} never waited on the advisory lock"
-    )
-}
-
-/// Seed an admitted, queued run on the DEFAULT `standard` class.
+/// Seed an admitted, queued run on the `standard` class.
 pub async fn seed_run(
     client: &Client,
     run_id: &str,
     package_id: &str,
     stream_seq: i64,
-) -> anyhow::Result<()> {
-    seed_run_of_class(client, run_id, package_id, stream_seq, "standard").await
-}
-
-/// Seed an admitted, queued run on the PREMIUM `durable` class.
-///
-/// The class is written by the ADMITTING INSERT, never by a later UPDATE: it is
-/// an admission pin, and `wamn_run.guard_run_admission_pins_immutable` names
-/// `durability_class` in both its trigger column list and its pin arm
-/// (`deploy/sql/run-state.sql`), so promoting a run after admission is a
-/// `run-admission-pin-immutable` refusal in production.
-pub async fn seed_durable_run(
-    client: &Client,
-    run_id: &str,
-    package_id: &str,
-    stream_seq: i64,
-) -> anyhow::Result<()> {
-    seed_run_of_class(client, run_id, package_id, stream_seq, "durable").await
-}
-
-async fn seed_run_of_class(
-    client: &Client,
-    run_id: &str,
-    package_id: &str,
-    stream_seq: i64,
-    durability_class: &str,
 ) -> anyhow::Result<()> {
     client
         .execute(
@@ -228,16 +136,9 @@ async fn seed_run_of_class(
                     environment,wiring_id,wiring_version,input_json,trigger_source, \
                     durability_class) \
                  VALUES ($1,$2,'root',1,'dispatched',$3,'{POD_MANIFEST_DIGEST}','test',$4,$5, \
-                         '{{\"input\":true}}','http',$6)"
+                         '{{\"input\":true}}','http','standard')"
             ),
-            &[
-                &ENV_KEY,
-                &run_id,
-                &package_id,
-                &WIRING_ID,
-                &WIRING_VERSION,
-                &durability_class,
-            ],
+            &[&ENV_KEY, &run_id, &package_id, &WIRING_ID, &WIRING_VERSION],
         )
         .await?;
     client
@@ -248,38 +149,6 @@ async fn seed_run_of_class(
                  VALUES ($1,$2,'2000-01-01 00:00:00+00',$3)"
             ),
             &[&ENV_KEY, &run_id, &stream_seq],
-        )
-        .await?;
-    Ok(())
-}
-
-/// Seed a live-leased run ON THE PREMIUM TIER.
-///
-/// Every caller of this helper goes on to write an effect attempt, and the
-/// crash floor that reads those attempts is class-gated (wamn-0h0g.20.2): on
-/// the default `standard` class the claim takes no advisory fence, reads no
-/// effect snapshot, and never classifies `ExpiredWithAttempt`, so an
-/// effect-uncertain test seeded `standard` would not exercise that class. Saying
-/// `durable` here is what keeps these legs pointed at the tier they belong to.
-pub async fn seed_live_effect_run(
-    client: &Client,
-    run_id: &str,
-    stream_seq: i64,
-) -> anyhow::Result<()> {
-    seed_durable_run(client, run_id, PACKAGE_ID, stream_seq).await?;
-    client
-        .execute(
-            &format!(
-                "WITH running AS ( \
-                    UPDATE {SCHEMA}.runs SET status='running' \
-                     WHERE env_key=$1 AND run_id=$2 \
-                     RETURNING env_key,run_id) \
-                 UPDATE {SCHEMA}.run_queue AS q \
-                    SET lease_owner='runner-a', lease_expires_at='2099-01-01' \
-                   FROM running \
-                  WHERE q.env_key=running.env_key AND q.run_id=running.run_id"
-            ),
-            &[&ENV_KEY, &run_id],
         )
         .await?;
     Ok(())
@@ -450,7 +319,7 @@ pub async fn assert_terminal_status_dequeued(
 pub fn ready_run(result: ProductionClaimResult) -> String {
     match result {
         ProductionClaimResult::Ready { run_id, .. } => run_id,
-        other => panic!("expected ready claim, got {other:?}"),
+        ProductionClaimResult::Empty => panic!("expected ready claim, got Empty"),
     }
 }
 
@@ -468,10 +337,6 @@ pub struct LiveFixture {
 }
 
 /// Install the schema, the executor credential, and pod identities.
-///
-/// Both suites call this with the same setup. Testing the queue
-/// against a different schema than the shelved floor would show nothing about
-/// the floor's removal.
 pub async fn install_fixture(url: &str) -> anyhow::Result<LiveFixture> {
     let admin = connect(url).await?;
     install_schema(&admin).await?;

@@ -922,7 +922,7 @@ async fn mint_guest_generation(su: &Client, url: &str, env_key: &str) -> (String
 /// Manifestations 1 + 4: the 2jkm.41-sweep drift set plus the outbox era.
 async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, target_url: &str) {
     reset(su).await;
-    seed_system_env_policy(system_su, "durable").await;
+    seed_system_env_policy(system_su, "standard").await;
     let schema = schema();
     su.batch_execute(CATALOG_SCHEMA_SQL)
         .await
@@ -974,7 +974,7 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
     ))
     .await
     .expect("build the v1-era queue + outbox era");
-    seed_run_admission_facts(su, "acme--billing--dev", "cat", "dev", "durable").await;
+    seed_run_admission_facts(su, "acme--billing--dev", "cat", "dev", "standard").await;
     // A pre-existing queue row: the ADD COLUMN defaults must land on it.
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
@@ -1046,25 +1046,23 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
             &[],
         )
         .await
-        .expect("read projected durable policy")
+        .expect("read projected standard policy")
         .get(0);
-    assert_eq!(projected, "durable");
+    assert_eq!(projected, "standard");
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
            (env_key,run_id,flow_id,flow_version,package_id, \
             environment,durability_class) \
-         VALUES ('acme--billing--dev','r-policy-durable','f',1,'cat','dev','durable')"
+         VALUES ('acme--billing--dev','r-policy-before','f',1,'cat','dev','standard')"
     ))
     .await
-    .expect("seed an explicitly durable run");
+    .expect("seed a run before reconciliation");
 
-    system_su
-        .batch_execute(
-            "UPDATE registry.env_policies SET durability_class='standard' \
-          WHERE org='acme' AND name='dev'",
-        )
-        .await
-        .expect("change the system env policy");
+    su.batch_execute(&format!(
+        "DELETE FROM {SCHEMA}.environment_policies WHERE env_key='acme--billing--dev'"
+    ))
+    .await
+    .expect("remove the local policy before testing projection repair");
     reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
         changes: AuthChanges::default(),
         system_database_url: system_url.to_string(),
@@ -1076,11 +1074,11 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
         dry_run: true,
     })
     .await
-    .expect("dry-run observes changed environment policy");
-    let after_dry_run: String = su
+    .expect("dry-run observes the missing local policy");
+    let after_dry_run: i64 = su
         .query_one(
             &format!(
-                "SELECT durability_class FROM {SCHEMA}.environment_policies \
+                "SELECT count(*) FROM {SCHEMA}.environment_policies \
                  WHERE env_key='acme--billing--dev'"
             ),
             &[],
@@ -1088,7 +1086,10 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
         .await
         .expect("read policy after dry-run")
         .get(0);
-    assert_eq!(after_dry_run, "durable", "dry-run mutated local policy");
+    assert_eq!(
+        after_dry_run, 0,
+        "dry-run projected the missing local policy"
+    );
     reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
         changes: AuthChanges::default(),
         system_database_url: system_url.to_string(),
@@ -1100,7 +1101,7 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
         dry_run: false,
     })
     .await
-    .expect("reconcile changed environment policy");
+    .expect("reconcile restores the missing local policy");
     // A second apply writes no second copy of any identity row.
     env_key_identity_leg(su).await;
     stale_user_leg(su, system_su, system_url, target_url).await;
@@ -1108,15 +1109,15 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
         "INSERT INTO {SCHEMA}.runs \
            (env_key,run_id,flow_id,flow_version,package_id, \
             environment,durability_class) \
-         VALUES ('acme--billing--dev','r-policy-standard','f',1,'cat','dev','standard')"
+         VALUES ('acme--billing--dev','r-policy-after','f',1,'cat','dev','standard')"
     ))
     .await
-    .expect("seed an explicitly standard run");
+    .expect("seed a run after reconciliation");
     let classes: Vec<(String, String)> = su
         .query(
             &format!(
                 "SELECT run_id,durability_class FROM {SCHEMA}.runs \
-                 WHERE run_id IN ('r-policy-durable','r-policy-standard') ORDER BY run_id"
+                 WHERE run_id IN ('r-policy-before','r-policy-after') ORDER BY run_id DESC"
             ),
             &[],
         )
@@ -1128,10 +1129,10 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
     assert_eq!(
         classes,
         [
-            ("r-policy-durable".to_string(), "durable".to_string()),
-            ("r-policy-standard".to_string(), "standard".to_string()),
+            ("r-policy-before".to_string(), "standard".to_string()),
+            ("r-policy-after".to_string(), "standard".to_string()),
         ],
-        "policy changes must not rewrite stored run classes"
+        "policy reconciliation must not rewrite stored run classes"
     );
 
     // Retained column drift closed, partition residue removed, and defaults
@@ -1663,7 +1664,6 @@ async fn registry_durability_column_migration_leg(
     assert!(first.contains("\"type\": \"text\""), "{first}");
     assert!(first.contains("\"not-null\": true"), "{first}");
     assert!(first.contains("'standard'::text"), "{first}");
-    assert!(first.contains("'durable'::text"), "{first}");
 
     reconcile_run_plane::reconcile_run_plane(args(false))
         .await
@@ -1698,7 +1698,7 @@ async fn environment_policy_row_security_leg(su: &Client, url: &str) {
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.environment_policies \
            (env_key, expected_environment, durability_class) \
-         VALUES ('acme--billing--dev', 'dev', 'durable')"
+         VALUES ('acme--billing--dev', 'dev', 'standard')"
     ))
     .await
     .expect("seed projected environment policy");

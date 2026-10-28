@@ -54,9 +54,8 @@ The [deployment procedure](../operations/deployment.md#package-upgrades) defines
 ## Runtime claim coverage
 
 The [standard claim test](../../crates/platform/runtime/tests/production_claim_live.rs) exercises claims with a declared executor credential.
-The [durable claim test](../../crates/platform/runtime/tests/production_claim_durable_live.rs) exercises the durable class with the same executor credential.
-No effect writer exists, so the fixture superuser records each effect attempt.
-In the reaper race, it takes the effect-intent fence before it records the attempt.
+It includes an effect attempt to show that standard claims and reaping ignore it.
+The fixture superuser records the attempt because no effect writer exists.
 
 ## Record history
 

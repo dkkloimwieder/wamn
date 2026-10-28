@@ -340,7 +340,7 @@ async fn drain_one(
         ProductionReapResult::Reaped { run_id } => {
             tracing::info!(run_id, "executor reaped exhausted queue run");
         }
-        ProductionReapResult::Empty | ProductionReapResult::EffectAttempt { .. } => {}
+        ProductionReapResult::Empty => {}
     }
 
     match postgres
@@ -353,19 +353,6 @@ async fn drain_one(
         .await?
     {
         ProductionClaimResult::Empty => Ok(false),
-        ProductionClaimResult::Terminalized {
-            run_id,
-            status,
-            fail_type,
-        } => {
-            tracing::info!(
-                run_id,
-                status = status.as_sql(),
-                fail_type = fail_type.as_sql(),
-                "executor terminalized queue claim without execution"
-            );
-            Ok(true)
-        }
         ProductionClaimResult::Ready {
             run_id,
             package_id,

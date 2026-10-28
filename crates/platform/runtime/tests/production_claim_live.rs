@@ -1,23 +1,8 @@
-//! THE SURVIVING SPINE of the production claim, live on the DEFAULT tier.
+//! Live tests of standard queue claims, leases, and exhausted-run reaping.
 //!
-//! wamn-0h0g.20.4. Every test here runs on the `standard` durability class —
-//! the class every admitted run carries unless it asks otherwise
-//! (`deploy/sql/run-state.sql`, `durability_class ... DEFAULT 'standard'`).
-//! FIFO, SKIP LOCKED, the lease grant, the pre-effect reclaim, crash-evidence
-//! accounting, the janitor, the claim-time release record, park/wake and
-//! dequeue are all shown here, and NONE of them writes an effect attempt.
-//! That is the point: this file is the green signal that the crash floor
-//! wamn-0h0g.20.2 shelved carried none of the queue with it.
-//!
-//! THE EFFECT TABLE IS NOT ABSENT, ONLY UNPOPULATED BY THE RUNS UNDER TEST.
-//! `select_production_claim_sql` names `FROM effect_attempts AS effect`
-//! unconditionally — the class gate is a conjunct INSIDE that `EXISTS`, not a
-//! removal of the relation — so a fixture without the table would fail at PLAN
-//! TIME (42P01) on the queue's hottest statement. The relation is installed and
-//! one leg deliberately POPULATES it, to show a `standard` run's claim path
-//! ignores evidence it may not act on.
-//!
-//! The effect-uncertain floor itself lives in `production_claim_durable_live.rs`.
+//! The fixture includes an effect attempt to show that claims and reaping
+//! ignore it. FIFO order, lease recovery, crash accounting, caller outcomes,
+//! and release pins retain their standard behavior.
 
 use std::collections::BTreeSet;
 
@@ -284,29 +269,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     );
     assert_terminal_status_dequeued(admin, "grant-refused", "infrastructure-failure").await?;
 
-    // ---- the default class ignores a POPULATED effect table (wamn-0h0g.20.2,
-    // shown live by wamn-0h0g.20.4) ----------------------------------------
-    //
-    // This is the one leg that seeds an effect attempt on this tier, and it
-    // seeds it precisely to show the claim path does not act on it. The run is
-    // `standard`, its lease is expired and its crash budget is spent, and an
-    // attributed effect attempt exists for it. Both class gates must hold:
-    //
-    //   * the eligibility predicate's effect disjunct carries
-    //     `AND selected_run.durability_class = 'durable'`, so the run is NOT
-    //     claimable and the claim sees an empty queue; and
-    //   * the janitor's fresh-snapshot classification is skipped entirely, so
-    //     the reaper returns `Reaped`, never `EffectAttempt`.
-    //
-    // The `effect-race` run in `production_claim_durable_live.rs` is this exact
-    // shape on the other class — budget spent, lease expired, one attributed
-    // attempt — and BOTH results flip there: the claim reaches the row and
-    // returns `Terminalized`, and the reaper returns `EffectAttempt`. The two
-    // legs together are the class gate, live.
-    //
-    // Nothing else in this file is downstream of the row: it is dequeued by the
-    // reap, and the effect row it leaves behind is correlated by `run_id` in
-    // every statement that reads one.
+    // An effect attempt does not bypass the crash budget or prevent reaping.
     seed_exhausted_run(admin, "standard-effect", 66).await?;
     admin
         .execute(
@@ -326,7 +289,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
             .claim_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
             .await?,
         ProductionClaimResult::Empty,
-        "the default class was let into the shelved crash floor by its effect record"
+        "an effect record bypassed the standard crash budget"
     );
     assert_eq!(
         plugin

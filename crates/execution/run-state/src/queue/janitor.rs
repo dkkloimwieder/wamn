@@ -17,29 +17,12 @@ pub enum JanitorVerdict {
     /// The lease expired more than `grace` ago and the redelivery budget is spent
     /// — give up: the run is `infrastructure-failure`, the queue row removed.
     Orphaned,
-    /// An immutable effect attempt exists, so reclaim must classify the run as
-    /// `effect-uncertain`; the janitor must not win that race.
-    EffectAttempt,
 }
 
 /// Classify a queue row for the janitor. `grace` is how long past lease expiry to
 /// wait before declaring an exhausted row orphaned (absorbs clock skew / a late
-/// heartbeat). A row with immutable effect-attempt evidence is never reaped;
-/// the production claim classifier owns its `effect-uncertain` transition.
+/// heartbeat).
 pub fn janitor_verdict(entry: &QueueEntry, now: Millis, grace: Millis) -> JanitorVerdict {
-    janitor_verdict_with_attempt(entry, false, now, grace)
-}
-
-/// Classify a queue row with its separate immutable effect records.
-pub fn janitor_verdict_with_attempt(
-    entry: &QueueEntry,
-    has_effect_attempt: bool,
-    now: Millis,
-    grace: Millis,
-) -> JanitorVerdict {
-    if has_effect_attempt {
-        return JanitorVerdict::EffectAttempt;
-    }
     match entry.lease_expires_at {
         Some(t) if t > now => JanitorVerdict::Live,
         Some(t) if t + grace <= now && entry.attempts >= entry.max_attempts => {

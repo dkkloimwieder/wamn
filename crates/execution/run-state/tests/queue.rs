@@ -1,43 +1,13 @@
-//! Pure tests of the global run queue: the SURVIVING SPINE and, beside it, the
-//! SHELVED CRASH FLOOR.
-//!
-//! wamn-0h0g.20.4 partitions the live claim tests into two suites, one per
-//! durability class. Nothing here needs that treatment — every test in this
-//! file is pure, hermetic and free, so there is no fixture to drop and no tier
-//! to gate. The distinction is still worth naming, because it decides what a
-//! future deletion of the crash floor may take with it:
-//!
-//! * SPINE — the queue as it runs on the DEFAULT `standard` class: FIFO order,
-//!   SKIP LOCKED, lease arithmetic and renewal, crash-evidence accounting, the
-//!   park's release-record reset, the exhausted-run janitor, the enqueue
-//!   builders, and the dispatcher's wake hint. None of it may change.
-//! * SHELF — reachable only when `DurabilityClass::admits_effect_evidence()`
-//!   is true (wamn-0h0g.20.2): `ProductionClaimClass::ExpiredWithAttempt`,
-//!   `JanitorVerdict::EffectAttempt`, `terminalize_effect_uncertain_claim_sql`,
-//!   `select_claim_effect_attempt_sql`, `serialize_effect_intent_sql`, and the
-//!   effect disjunct inside `select_production_claim_sql`'s eligibility
-//!   predicate. Unreachable by default, NOT deleted.
-//! * THE GATE ITSELF — the `the_default_class_*` and `the_class_gate_*` tests,
-//!   which show exactly that the shelf is closed on the default class and
-//!   that closing it changed nothing else.
-//!
-//! A test asserting on both sides is not a filing error: the gate is a
-//! conjunct inside statements the spine also owns, so showing the spine
-//! unchanged and showing the shelf closed is often one assertion apart. The
-//! live counterparts are `crates/platform/runtime/tests/production_claim_live.rs`
-//! (spine) and `production_claim_durable_live.rs` (shelf).
+//! Pure tests of queue eligibility, FIFO order, leases, and exhausted-run reaping.
 
 use serde_json::json;
-use wamn_run_state::DurabilityClass;
 use wamn_run_state::invariants::{self, QueueState};
 use wamn_run_state::queue::{
     ClaimPlan, ClaimState, JanitorVerdict, Millis, ProductionClaimClass, QueueEntry,
     advance_claim_attempts_sql, claim_state, classify_production_claim, clear_pre_effect_state_sql,
-    grant_production_claim_sql, janitor_verdict_with_attempt, lease_deadline, lease_live,
-    mint_evt_run_id, plan_claim, production_claim_state, renew_production_lease_sql,
-    select_claim_effect_attempt_sql, select_exhausted_production_sql, select_production_claim_sql,
-    serialize_effect_intent_sql, should_renew, terminalize_effect_uncertain_claim_sql,
-    terminalize_exhausted_production_sql,
+    grant_production_claim_sql, janitor_verdict, lease_deadline, lease_live, mint_evt_run_id,
+    plan_claim, renew_production_lease_sql, select_exhausted_production_sql,
+    select_production_claim_sql, should_renew, terminalize_exhausted_production_sql,
 };
 
 // ---- D8a: the RUN-* invariant sweep (wamn-54b0.2) --------------------------
@@ -68,7 +38,7 @@ fn run_invariants_hold(rows: &[QueueEntry], plan: Option<(&ClaimPlan, usize)>, n
 }
 
 #[test]
-fn claim_state_preserves_budget_and_effect_attempt_escape() {
+fn claim_state_preserves_budget() {
     let ready = QueueEntry::ready("t1", "ready", 50, 2);
     assert_eq!(claim_state(&ready, 100), ClaimState::Ready);
     run_invariants_hold(std::slice::from_ref(&ready), None, 100);
@@ -94,127 +64,19 @@ fn claim_state_preserves_budget_and_effect_attempt_escape() {
         ..ready
     };
     assert_eq!(claim_state(&exhausted, 100), ClaimState::Exhausted);
-    assert_eq!(
-        production_claim_state(&exhausted, DurabilityClass::Durable, true, 100),
-        ClaimState::Ready
-    );
     run_invariants_hold(std::slice::from_ref(&exhausted), None, 100);
 }
 
 #[test]
-fn reclaim_classifier_has_exact_three_actions() {
+fn reclaim_classifier_has_exact_two_actions() {
     assert_eq!(
-        classify_production_claim(DurabilityClass::Durable, false, false),
+        classify_production_claim(false),
         ProductionClaimClass::Ordinary
     );
     assert_eq!(
-        classify_production_claim(DurabilityClass::Durable, false, true),
-        ProductionClaimClass::ExpiredWithAttempt
-    );
-    assert_eq!(
-        classify_production_claim(DurabilityClass::Durable, true, false),
+        classify_production_claim(true),
         ProductionClaimClass::ExpiredPreEffect
     );
-    assert_eq!(
-        classify_production_claim(DurabilityClass::Durable, true, true),
-        ProductionClaimClass::ExpiredWithAttempt
-    );
-}
-
-#[test]
-fn the_default_class_takes_plain_lock_then_lease() {
-    // wamn-0h0g.20.2 (a): the eligibility predicate's effect-evidence disjunct
-    // opens ONLY for the premium class. A budget-spent expired lease is the
-    // janitor's on the default tier no matter what the effect table holds.
-    let exhausted = QueueEntry {
-        lease_expires_at: Some(90),
-        attempts: 2,
-        ..QueueEntry::ready("t1", "spent", 50, 2)
-    };
-    assert_eq!(
-        production_claim_state(&exhausted, DurabilityClass::Standard, true, 100),
-        ClaimState::Exhausted,
-        "the default class was let into the shelved crash floor"
-    );
-    assert_eq!(
-        production_claim_state(&exhausted, DurabilityClass::Durable, true, 100),
-        ClaimState::Ready,
-        "the premium class no longer reaches the floor it pays for"
-    );
-
-    // With the gate closed, the class-carrying predicate is EXACTLY the
-    // no-effect view — the shelf changes nothing else about eligibility.
-    for entry in [
-        QueueEntry::ready("t1", "ready", 50, 2),
-        QueueEntry {
-            available_at: 101,
-            ..QueueEntry::ready("t1", "parked", 50, 2)
-        },
-        QueueEntry {
-            lease_owner: Some("runner-a".into()),
-            lease_expires_at: Some(200),
-            ..QueueEntry::ready("t1", "leased", 50, 2)
-        },
-        exhausted.clone(),
-    ] {
-        assert_eq!(
-            production_claim_state(&entry, DurabilityClass::Standard, true, 100),
-            claim_state(&entry, 100),
-            "the default class diverged from the no-effect predicate on {}",
-            entry.run_id
-        );
-        run_invariants_hold(std::slice::from_ref(&entry), None, 100);
-    }
-}
-
-#[test]
-fn the_default_class_never_classifies_expired_with_attempt() {
-    // (b), (c) and (d) of wamn-0h0g.20.2 are UNREACHABLE, not deleted: this is
-    // the only producer of the variant that reaches them.
-    for had_prior_lease in [false, true] {
-        assert_ne!(
-            classify_production_claim(DurabilityClass::Standard, had_prior_lease, true),
-            ProductionClaimClass::ExpiredWithAttempt,
-            "the default class reached the shelved floor \
-             (had_prior_lease={had_prior_lease})"
-        );
-    }
-    assert_eq!(
-        classify_production_claim(DurabilityClass::Standard, true, true),
-        ProductionClaimClass::ExpiredPreEffect
-    );
-    assert_eq!(
-        classify_production_claim(DurabilityClass::Standard, false, true),
-        ProductionClaimClass::Ordinary
-    );
-}
-
-#[test]
-fn the_class_gate_carries_one_sql_literal_at_every_gated_statement() {
-    // One spelling, one place to audit. `select_production_claim_sql` gates its
-    // eligibility disjunct.
-    let predicate = "durability_class = 'durable'";
-    let candidate = select_production_claim_sql();
-    assert_eq!(
-        candidate.matches(predicate).count(),
-        1,
-        "the claim's class gate is not exactly one predicate"
-    );
-    assert!(candidate.contains(&format!("AND selected_run.{predicate}")));
-    // The gate rides the row the statement already joins and locks: no second
-    // relation, no second lookup.
-    assert_eq!(candidate.matches("JOIN runs").count(), 2);
-
-    // The class rides both host-decoded projections.
-    assert!(candidate.contains("r.durability_class"));
-    let exhausted = select_exhausted_production_sql();
-    assert!(exhausted.contains("selected_run.durability_class"));
-    for claim in [&candidate, &exhausted] {
-        assert!(
-            !claim.contains("environment_policies") && !claim.contains("registry."),
-            "claim reads the frozen run carrier only: {claim}"
-        );
-    }
 }
 
 #[test]
@@ -247,27 +109,6 @@ fn global_fifo_uses_available_stream_run_tie_break() {
     assert!(sql.contains("AS router_caller_attached"));
     assert!(sql.contains("AS durable_caller_attached"));
     assert!(sql.contains("r.flow_id IS NULL AND r.flow_version IS NULL"));
-}
-
-#[test]
-fn effect_attempt_escape_is_classified_before_any_plan_read() {
-    let candidate = select_production_claim_sql();
-    assert!(candidate.contains("OR EXISTS ("));
-    assert!(candidate.contains("FROM effect_attempts AS effect"));
-    assert!(!candidate.contains("AS has_effect_attempt"));
-    assert!(!candidate.contains("catalog."));
-    assert!(!candidate.contains("execution_bundles"));
-
-    let classification = select_claim_effect_attempt_sql();
-    assert!(classification.contains("SELECT EXISTS"));
-    assert!(classification.contains("effect.run_id = $1"));
-    assert!(!classification.contains("run_queue"));
-
-    let fence = serialize_effect_intent_sql();
-    assert!(fence.contains("pg_advisory_xact_lock"));
-    assert!(fence.contains("hashtextextended"));
-    assert!(fence.contains("current_setting('app.env_key', true)"));
-    assert!(fence.contains("$1::text"));
 }
 
 #[test]
@@ -324,32 +165,15 @@ fn crash_evidence_advances_in_a_statement_the_grant_cannot_roll_back() {
 }
 
 #[test]
-fn effect_uncertain_terminalization_dequeues_and_persists_exact_attached_shape() {
-    let sql = terminalize_effect_uncertain_claim_sql();
-    assert!(sql.contains("status = 'effect-uncertain'"));
-    assert!(sql.contains("fail_type = 'effect-uncertain'"));
-    assert!(sql.contains("THEN $2::text::jsonb"));
-    assert!(sql.contains("THEN 500"));
-    assert!(sql.contains("THEN NULL"));
-    assert!(sql.contains("THEN $3"));
-    assert!(sql.contains("DELETE FROM run_queue"));
-    assert!(sql.contains("caller_released_at IS NULL"));
-}
-
-#[test]
-fn janitor_excludes_effect_attempts() {
+fn janitor_reaps_exhausted_runs() {
     let exhausted = QueueEntry {
         lease_expires_at: Some(100),
         attempts: 3,
         ..QueueEntry::ready("t1", "run-1", 0, 3)
     };
     assert_eq!(
-        janitor_verdict_with_attempt(&exhausted, false, 200, 50),
+        janitor_verdict(&exhausted, 200, 50),
         JanitorVerdict::Orphaned
-    );
-    assert_eq!(
-        janitor_verdict_with_attempt(&exhausted, true, 200, 50),
-        JanitorVerdict::EffectAttempt
     );
     run_invariants_hold(std::slice::from_ref(&exhausted), None, 200);
     let select = select_exhausted_production_sql();
@@ -376,21 +200,17 @@ fn janitor_excludes_effect_attempts() {
 ///
 /// The split is authority, not taste. A caller-supplied instant inside a lease
 /// or visibility test would let a worker decide whether its own lease had
-/// expired, which moves that decision out of the database. So the two queue
-/// terminalizations lose `now()` from every column they write, and the claim,
+/// expired, which moves that decision out of the database. Queue
+/// terminalization takes the caller instant, and the claim,
 /// renewal, and wake predicates keep it.
 #[test]
 fn queue_stamps_take_the_caller_instant_and_comparisons_keep_the_server_clock() {
-    for sql in [
-        terminalize_effect_uncertain_claim_sql(),
-        terminalize_exhausted_production_sql(),
-    ] {
-        assert!(sql.contains("caller_released_at = CASE"), "{sql}");
-        assert!(sql.contains("THEN $4::timestamptz"), "{sql}");
-        assert!(sql.contains("updated_at = $4::timestamptz"), "{sql}");
-        assert!(!sql.contains("now()"), "{sql}");
-        assert!(!sql.contains("statement_timestamp()"), "{sql}");
-    }
+    let sql = terminalize_exhausted_production_sql();
+    assert!(sql.contains("caller_released_at = CASE"), "{sql}");
+    assert!(sql.contains("THEN $4::timestamptz"), "{sql}");
+    assert!(sql.contains("updated_at = $4::timestamptz"), "{sql}");
+    assert!(!sql.contains("now()"), "{sql}");
+    assert!(!sql.contains("statement_timestamp()"), "{sql}");
 
     // The comparisons the ruling protects. Each is a read, not a write.
     let claim = select_production_claim_sql();

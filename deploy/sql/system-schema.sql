@@ -231,7 +231,7 @@ CREATE TABLE registry.env_policies (
     hibernation     text  NOT NULL DEFAULT 'off',
     durability_class text NOT NULL DEFAULT 'standard'
         CONSTRAINT env_policies_durability_class_check
-        CHECK (durability_class IN ('standard', 'durable')),
+        CHECK (durability_class IN ('standard')),
     -- The readiness budget and drain bound of `env apply`
     -- (docs/plan/platform-deploy.md §10.1).
     readiness_budget_seconds int NOT NULL DEFAULT 600

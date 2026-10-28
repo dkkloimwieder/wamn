@@ -1,6 +1,6 @@
 //! # wamn-run-state — the durable execution lifecycle
 //!
-//! MVP outcome: crash floor · M0 execution · flow composition.
+//! Queue recovery, execution state, and flow composition.
 //!
 //! This crate owns the transactionally coupled `runs`, `run_queue`, lease,
 //! timer, and terminal lifecycle. It contains decisions, parameterized SQL,
@@ -26,17 +26,11 @@
 //! pure tests do NOT cover; the live half is the throwaway-PG gates over the
 //! real prepared-statement path (SR12b).
 
-/// Capture-independent effect-attempt generation facts.
-///
-/// Durable-tier shelf (`wamn-hopk` R1): behind `durable-tier`, off by default,
-/// so a live path referencing it fails to compile instead of being grepped for.
-#[cfg(feature = "durable-tier")]
-pub mod attempt;
 /// The closed authority a trusted caller selects its credential under.
 pub mod authority_class;
 /// The two reusable credential-generation slots.
 mod credential_generation;
-/// The durability class a run was admitted under, and the crash-floor gate.
+/// The durability class a run was admitted under.
 pub mod durability;
 /// The intent store case set that every store runs.
 #[cfg(feature = "test-util")]
@@ -70,12 +64,9 @@ pub mod transitions;
 
 pub use authority_class::AuthorityClass;
 pub use credential_generation::CredentialGeneration;
-pub use durability::{DURABLE_CLASS_SQL_PREDICATE, DurabilityClass};
+pub use durability::DurabilityClass;
 pub use intent_store::IntentStore;
 pub use run_store::RunStore;
-pub use status::{
-    EffectUncertainFailure, FailType, InvalidEffectUncertainRunId, NodeErrorType, NodeRunStatus,
-    RunStatus,
-};
+pub use status::{FailType, NodeErrorType, NodeRunStatus, RunStatus};
 #[cfg(feature = "tenant-key")]
 pub use tenant_scope::app_scope_hash;

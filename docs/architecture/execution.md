@@ -407,6 +407,7 @@ The [queue](../../crates/execution/workflow/src/queue.rs) in `wamn-workflow` own
 The queue owner binds these transactions to `wamn_run`, independently of the application data schema and database default search path.
 HTTP admission and queue delivery use separate concurrency bounds, so one workload cannot consume the other's capacity.
 Each host replica polls the durable queue and claims work through database leases. Replicas need no wake service or process-local handoff.
+The only durability class is `standard`. Claims and exhausted-run reaping ignore effect-attempt records.
 
 The host opens each claims transaction with `BEGIN ISOLATION LEVEL READ COMMITTED`, so a session default cannot change the level that the [write log](data-access.md#the-write-log) retry depends on.
 The guest transaction of a read (get, query or projection) opens with `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY`, so its statements read one snapshot.

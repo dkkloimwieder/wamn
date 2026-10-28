@@ -1,6 +1,6 @@
 //! # wamn-router — the host-side graph walk
 //!
-//! MVP outcome: crash floor · M0 execution · flow composition.
+//! MVP outcome: M0 execution · flow composition.
 //!
 //! Per delivery: walk a resolved [`Wiring`] in frontier order, invoke each
 //! node's admitted component through the caller's [`NodeInvoker`], route the
@@ -23,9 +23,7 @@
 //!
 //! ## Consumer
 //! The only consumer of this crate is `wamn-workflow`, which drives the walk.
-//! The crate stays separate from it, so the walk links no run plane:
-//! `crates/execution/run-state/tests/shelving_contract.rs` makes sure that this
-//! manifest names no `wamn-run-state`, no `wamn-runtime`, and no Postgres client.
+//! The crate stays separate from it, so the walk links no run plane.
 //!
 //! ## Driving the walk
 //! [`route`] is the synchronous entry point and drives the loop for you. A host

@@ -14,12 +14,6 @@ tenant-key = [
     "dep:sha2",
 ]
 test-util = []
-# wamn-hopk R1: the durable-tier shelf, OFF by default. Live crates never enable
-# it, so a reference from a live path is E0433 at build time rather than a
-# source scan's problem. Membership is measured, not assumed: only modules with
-# zero internal AND zero external references qualify. `durability` does NOT --
-# it threads through live `queue/claim.rs` and `queue/sql.rs`.
-durable-tier = []
 
 [dependencies]
 # Canonical JSON hashing and node-error taxonomy.

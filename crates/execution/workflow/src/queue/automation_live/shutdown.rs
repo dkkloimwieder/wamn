@@ -193,7 +193,9 @@ pub(super) async fn run(
             assert_eq!(run_id, run);
             assert!(lease_generation > generation, "recovery owns a new fence");
         }
-        other => panic!("aborted run must be reclaimable: {other:?}"),
+        super::super::ProductionClaimResult::Empty => {
+            panic!("aborted run must be reclaimable: Empty")
+        }
     }
     let stale = execution
         .postgres

@@ -42,16 +42,13 @@ pub type ProjectId = String;
 
 /// The durability floor selected by one environment policy.
 ///
-/// `standard` is deliberately the default: a missing field in an older registry
-/// document must never enroll an environment in the premium crash floor.
+/// `standard` is the only class and the default for a missing field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DurabilityClass {
     /// At-least-once execution without claim-time effect classification.
     #[default]
     Standard,
-    /// The premium crash floor with claim-time effect classification.
-    Durable,
 }
 
 impl DurabilityClass {
@@ -59,7 +56,6 @@ impl DurabilityClass {
     pub fn from_sql(value: &str) -> Option<Self> {
         match value {
             "standard" => Some(Self::Standard),
-            "durable" => Some(Self::Durable),
             _ => None,
         }
     }
@@ -68,7 +64,6 @@ impl DurabilityClass {
     pub const fn as_sql(self) -> &'static str {
         match self {
             Self::Standard => "standard",
-            Self::Durable => "durable",
         }
     }
 }
@@ -190,7 +185,7 @@ pub struct EnvPolicy {
     /// so the off-hours scheduler may hibernate it) or `off` (never).
     #[serde(default)]
     pub hibernation: String,
-    /// Execution durability bought for future admissions in this environment.
+    /// The durability class for future admissions in this environment.
     /// Existing run rows retain the class they were admitted under.
     #[serde(default)]
     pub durability_class: DurabilityClass,
@@ -655,12 +650,8 @@ mod tests {
             DurabilityClass::from_sql("standard"),
             Some(DurabilityClass::Standard)
         );
-        assert_eq!(
-            DurabilityClass::from_sql("durable"),
-            Some(DurabilityClass::Durable)
-        );
         assert_eq!(DurabilityClass::from_sql("premium"), None);
-        assert_eq!(DurabilityClass::Durable.as_sql(), "durable");
+        assert_eq!(DurabilityClass::Standard.as_sql(), "standard");
 
         let mut old_policy = serde_json::to_value(EnvPolicy::dev()).expect("serialize policy");
         old_policy

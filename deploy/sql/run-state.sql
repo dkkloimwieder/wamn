@@ -265,7 +265,7 @@ CREATE TABLE wamn_run.environment_policies (
     expected_environment text NOT NULL CHECK (expected_environment <> ''),
     durability_class    text NOT NULL
         CONSTRAINT environment_policies_durability_class_check
-        CHECK (durability_class IN ('standard', 'durable')),
+        CHECK (durability_class IN ('standard')),
     source_policy_org   text,
     source_policy_hash  text,
     PRIMARY KEY (env_key)
@@ -337,18 +337,11 @@ CREATE TABLE wamn_run.runs (
     node_digests_json jsonb,
     capture_mode    text NOT NULL DEFAULT 'off'
         CONSTRAINT runs_capture_mode_check CHECK (capture_mode IN ('full', 'off')),
-    -- The DURABILITY CLASS the run was admitted under (wamn-0h0g.20.1). The
-    -- carrier is per-run; the SOURCE is the env/org policy consulted at
-    -- admission, never a caller parameter — the same authority rationale that
-    -- keeps `capture_mode` off the admission parameter list. `standard` is R2's
-    -- default crash floor (plain lock-then-lease, no claim-time effect
-    -- classification); `durable` re-enables the premium floor at path 3's
-    -- claim. The default is FAIL-OPEN TO THE CHEAP TIER: an admission that
-    -- omits the column (every admission today — the column is withheld from
-    -- `wamn_app`'s INSERT set below) takes `standard`, never `durable`.
+    -- The environment policy selects the class at admission. The only class,
+    -- `standard`, uses queue leases without claim-time effect classification.
     durability_class text NOT NULL DEFAULT 'standard'
         CONSTRAINT runs_durability_class_check
-        CHECK (durability_class IN ('standard', 'durable')),
+        CHECK (durability_class IN ('standard')),
     -- Immutable execution identity selected from the trusted active-wiring
     -- pointer by the admission transaction. Legacy rows remain NULL until the
     -- post-drain cutover; admission never backfills them.

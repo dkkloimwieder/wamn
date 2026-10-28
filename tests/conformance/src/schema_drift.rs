@@ -87,7 +87,7 @@ fn runs_stand_in() -> String {
                             'infrastructure-failure', 'effect-uncertain')), \
         trigger_source text, capture_mode text NOT NULL DEFAULT 'off', \
         durability_class text NOT NULL DEFAULT 'standard' \
-          CHECK (durability_class IN ('standard', 'durable')), \
+          CHECK (durability_class IN ('standard')), \
         wiring_id text, wiring_version int, wiring_hash text, \
         binding_world_json jsonb, \
         manifest_digest text, service_principal_id uuid, \

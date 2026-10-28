@@ -60,7 +60,7 @@ pub(super) const CHECK_SPECS: &[CheckSpec] = &[
     CheckSpec {
         table: "environment_policies",
         name: "environment_policies_durability_class_check",
-        definition: "CHECK (durability_class = ANY (ARRAY['standard'::text, 'durable'::text]))",
+        definition: "CHECK (durability_class = 'standard'::text)",
         origin: CheckOrigin::Inline("durability_class"),
     },
     CheckSpec {
@@ -90,7 +90,7 @@ pub(super) const CHECK_SPECS: &[CheckSpec] = &[
     CheckSpec {
         table: "runs",
         name: "runs_durability_class_check",
-        definition: "CHECK (durability_class = ANY (ARRAY['standard'::text, 'durable'::text]))",
+        definition: "CHECK (durability_class = 'standard'::text)",
         origin: CheckOrigin::Inline("durability_class"),
     },
     CheckSpec {

@@ -18,7 +18,7 @@ pub trait RunStore: Send + Sync {
     /// The result of one claim turn.
     type ClaimResult: Send;
 
-    /// Take the next claimable run: grant a lease and serialize its effect intent.
+    /// Grant a lease to the next claimable run.
     async fn claim_next(
         &self,
         component_id: &str,
@@ -45,8 +45,7 @@ pub trait RunStore: Send + Sync {
         completion: &ProductionCompletion,
     ) -> Result<ProductionCompletionResult, ProductionClaimError>;
 
-    /// Reap at most one crash-budget-exhausted run. A run with effect evidence
-    /// is left for the claimant to end as effect-uncertain. It is never replayed.
+    /// Reap at most one run whose crash budget is exhausted.
     async fn reap_exhausted(
         &self,
         component_id: &str,
@@ -288,10 +287,7 @@ pub enum ProductionLeaseRenewal {
 pub enum ProductionReapResult {
     /// No exhausted row was visible to this tenant.
     Empty,
-    /// Immutable effect evidence owns this row; the ordinary claimant must
-    /// terminalize it as effect-uncertain.
-    EffectAttempt { run_id: String },
-    /// The selected pre-effect row was marked infrastructure-failure and
+    /// The selected row was marked infrastructure-failure and
     /// dequeued with exact caller compare-and-set semantics.
     Reaped { run_id: String },
 }

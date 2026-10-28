@@ -216,14 +216,11 @@ pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 6] = [
 /// Every `runs` column the executor-platform family WRITES, and no other
 /// (`wamn-0h0g.22.37`).
 ///
-/// Read as a compiler off the SIX statements that `UPDATE runs` under
-/// [`crate::workload_role::WorkloadRoleFamily::ExecutorPlatform`] — the bead's
-/// premise said five, and the sixth is real:
+/// The statements below update `runs` under
+/// [`crate::workload_role::WorkloadRoleFamily::ExecutorPlatform`]:
 ///
 /// * `queue::sql::clear_pre_effect_state_sql` — `state_json`
 /// * `queue::sql::grant_production_claim_sql` — `status`
-/// * `queue::sql::terminalize_effect_uncertain_claim_sql` — `status`,
-///   `fail_type`, the caller-outcome family, `updated_at`
 /// * `queue::sql::terminalize_exhausted_production_sql` — `status`,
 ///   `result_json`, the caller-outcome family, `updated_at`
 /// * `transitions::release_caller_sql` — the caller-outcome family, `updated_at`

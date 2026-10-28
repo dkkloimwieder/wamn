@@ -3,30 +3,19 @@
 //! Identifiers are static, runtime values are bound, and table names remain
 //! unqualified so the host-injected transaction `search_path` selects the run
 //! plane. The production claim is deliberately split into small statements
-//! composed by one host-owned transaction: lock, classify, then grant a lease.
+//! composed by one host-owned transaction: lock, clear abandoned state, then lease.
 
-use crate::durability::DURABLE_CLASS_SQL_PREDICATE;
 use crate::{RunStatus, sql as run_sql};
 
 /// Lock one eligible run in exact global FIFO order without granting a lease.
 ///
-/// Classification occurs from the returned queue evidence before any catalog
-/// read. The ordinary/pre-effect crash budget remains in force; an immutable
-/// effect-attempt row escapes it only so the host can dequeue the run as
-/// `effect-uncertain`. `AS MATERIALIZED` is the evaluation fence that makes
-/// `LIMIT 1` exact under cached prepared-statement plans.
-///
-/// The effect-attempt disjunct is CLASS-GATED (wamn-0h0g.20.2): it fires only
-/// for a `durable` run. On the default `standard` class the crash budget is the
-/// whole eligibility story, so a budget-spent expired lease is left for the
-/// janitor exactly as it would be with no effect table at all. The predicate is
-/// correlated to `selected_run`, the row this statement already joins and locks,
-/// so the gate costs no extra relation and no extra lookup.
+/// The crash budget excludes exhausted expired leases and leaves them for the
+/// janitor. Released leases remain eligible regardless of the crash budget.
+/// `AS MATERIALIZED` keeps `LIMIT 1` exact under cached prepared-statement plans.
 ///
 /// The projection is exactly what the host composer decodes: the run id, prior
 /// lease evidence, the status it validates, the authoritative input it hands
-/// the router, the durability class it gates the rest of the turn on, and the
-/// immutable wiring pair admission froze, plus the existing trigger-source
+/// the router, and the immutable wiring pair admission froze, plus the trigger-source
 /// classification that tells the router whether a caller is waiting, and the
 /// selected row's package id. A manual workflow run adds what its queue request
 /// needs: its trigger source, its executing principal and active role, and the
@@ -66,12 +55,6 @@ pub fn select_production_claim_sql() -> String {
                 AND ( \
                     q.attempts < q.max_attempts \
                     OR q.lease_expires_at IS NULL \
-                    OR EXISTS ( \
-                        SELECT 1 FROM effect_attempts AS effect \
-                         WHERE effect.env_key = q.env_key \
-                           AND effect.run_id = q.run_id \
-                           AND selected_run.{durable} \
-                    ) \
                 ) \
               ORDER BY q.available_at, q.stream_seq, q.run_id \
               FOR UPDATE OF selected_run, q SKIP LOCKED \
@@ -79,7 +62,7 @@ pub fn select_production_claim_sql() -> String {
          ) \
          SELECT candidate.run_id, candidate.had_prior_lease, r.status, \
                 ({execution_input})::text AS input_json, \
-                r.durability_class, r.wiring_id, r.wiring_version, \
+                r.wiring_id, r.wiring_version, \
                 COALESCE( \
                     r.trigger_source IN ('http','internal','studio') \
                     OR (r.flow_id IS NULL AND r.flow_version IS NULL \
@@ -96,39 +79,7 @@ pub fn select_production_claim_sql() -> String {
            JOIN runs AS r \
              ON r.env_key = candidate.env_key AND r.run_id = candidate.run_id",
         execution_input = run_sql::execution_input_sql("r"),
-        durable = DURABLE_CLASS_SQL_PREDICATE,
     )
-}
-
-/// Classify immutable effect-attempt evidence after the candidate locks are held.
-///
-/// `$1` is the selected run id. This deliberately runs as a second statement:
-/// under READ COMMITTED it receives a fresh snapshot after any lock wait, so an
-/// effect attempt committed before classification cannot be missed.
-///
-/// The Rust operation checks executor membership before it reads these facts.
-pub fn select_claim_effect_attempt_sql() -> String {
-    "SELECT EXISTS ( \
-         SELECT 1 FROM effect_attempts AS effect \
-          WHERE effect.env_key = current_setting('app.env_key', true) \
-            AND effect.run_id = $1 \
-     )"
-    .to_string()
-}
-
-/// Serialize effect-attempt creation against claim-time classification.
-///
-/// `$1` is the run id. The `env_key` claim and run id form one transaction-scoped
-/// advisory-lock key. Hash collisions can only add harmless contention. This
-/// must be its own statement: the following effect-evidence query needs a fresh
-/// READ COMMITTED snapshot after any wait on a concurrent writer.
-pub fn serialize_effect_intent_sql() -> String {
-    "SELECT pg_catalog.pg_advisory_xact_lock( \
-         pg_catalog.hashtextextended( \
-             pg_catalog.current_setting('app.env_key', true) \
-                 || E'\\x1f' || $1::text, \
-             0::bigint))"
-        .to_string()
 }
 
 /// Replace the abandoned attempt's run-level state. `$1` is the selected run id.
@@ -226,72 +177,15 @@ pub fn renew_production_lease_sql() -> String {
         .to_string()
 }
 
-/// Store exact effect uncertainty and dequeue without granting execution.
-///
-/// Params: run id, exact flat body JSON, RFC 8785 body hash, terminal instant.
-/// An attached, unreleased caller stores HTTP 500; caller adapters map this
-/// fixed persisted identity to HTTP 502. Callerless fields remain NULL and a
-/// released winner is preserved exactly.
-///
-/// The caller supplies the instant (D2b). Both stamps here, `caller_released_at`
-/// and `updated_at`, take it. The eligibility test beside them stays
-/// `caller_released_at IS NULL`, so no comparison leaves the server.
-pub fn terminalize_effect_uncertain_claim_sql() -> String {
-    format!(
-        "WITH updated AS ( \
-             UPDATE runs AS r \
-                SET status = '{uncertain}', fail_type = '{uncertain}', \
-                    caller_outcome_type = CASE \
-                        WHEN {unreleased_attached} THEN 'failed' \
-                        ELSE r.caller_outcome_type END, \
-                    caller_outcome_json = CASE \
-                        WHEN {unreleased_attached} THEN $2::text::jsonb \
-                        ELSE r.caller_outcome_json END, \
-                    caller_http_status = CASE \
-                        WHEN {unreleased_attached} THEN 500 \
-                        ELSE r.caller_http_status END, \
-                    caller_release_node_id = CASE \
-                        WHEN {unreleased_attached} THEN NULL \
-                        ELSE r.caller_release_node_id END, \
-                    caller_outcome_hash = CASE \
-                        WHEN {unreleased_attached} THEN $3 \
-                        ELSE r.caller_outcome_hash END, \
-                    caller_released_at = CASE \
-                        WHEN {unreleased_attached} THEN $4::timestamptz \
-                        ELSE r.caller_released_at END, \
-                    updated_at = $4::timestamptz \
-              WHERE r.env_key = current_setting('app.env_key', true) \
-                AND r.run_id = $1 \
-              RETURNING r.env_key, r.run_id, r.status \
-         ), \
-         dequeued AS ( \
-             DELETE FROM run_queue AS q USING updated \
-              WHERE q.env_key = updated.env_key AND q.run_id = updated.run_id \
-              RETURNING q.run_id \
-         ) \
-         SELECT updated.status FROM updated \
-          WHERE EXISTS (SELECT 1 FROM dequeued)",
-        uncertain = RunStatus::EffectUncertain.as_sql(),
-        unreleased_attached = "r.trigger_source IN ('http','internal','studio') \
-                               AND r.caller_released_at IS NULL",
-    )
-}
-
 /// Lock one crash-budget-exhausted candidate for host-owned janitor handling.
 ///
 /// `$1` is the grace period in milliseconds; `$2` is the exact package-id set
-/// in the mounted release and `$3` is the environment scope. Effect evidence is
-/// deliberately not read in this statement: the host performs the same fresh-snapshot
-/// classification used by the ordinary production claimant after these locks
-/// are held, so a concurrent committed effect attempt cannot be missed. The
-/// durability class rides the projection for the same reason the claim's does —
-/// the reaper gates that fresh-snapshot classification on it, and the run row is
-/// already joined and locked here.
+/// in the mounted release and `$3` is the environment scope.
 pub fn select_exhausted_production_sql() -> String {
     format!(
         "SELECT q.env_key, q.run_id, selected_run.status, \
                 selected_run.flow_id, selected_run.flow_version, \
-                selected_run.durability_class, selected_run.wiring_id, \
+                selected_run.wiring_id, \
                 selected_run.wiring_version \
            FROM run_queue AS q \
            JOIN runs AS selected_run \
@@ -313,7 +207,7 @@ pub fn select_exhausted_production_sql() -> String {
     )
 }
 
-/// Mark one already locked, effect-free exhausted run and dequeue it.
+/// Mark one already locked exhausted run and dequeue it.
 ///
 /// Params: run id, exact generic failure JSON, RFC 8785 body hash, terminal
 /// instant. Caller outcome compare-and-set semantics match claim refusals:

@@ -616,13 +616,13 @@ fn run_state_live() {
     // The class is defended TWICE, and the two guards are independent.
     //
     // First, by the column grant: `wamn_app` holds neither INSERT nor UPDATE on
-    // `durability_class`, so the guest-visible role cannot buy the premium tier
-    // at all — the refusal is `insufficient_privilege`, before any trigger runs.
+    // `durability_class`, so the guest role cannot write the class.
+    // The grant refuses the write before any trigger runs.
     let class_grant_script = format!(
         "{} \
          DO $$ DECLARE refusal text; BEGIN \
            BEGIN \
-             UPDATE runs SET durability_class = 'durable' \
+             UPDATE runs SET durability_class = 'standard' \
               WHERE run_id = 'record-standard-effect'; \
              ASSERT false, 'the app role holds write authority over the class'; \
            EXCEPTION WHEN insufficient_privilege THEN \
@@ -642,7 +642,7 @@ fn run_state_live() {
         &url,
         "DO $$ DECLARE refusal text; BEGIN \
            BEGIN \
-             UPDATE wamn_run.runs SET durability_class = 'durable' \
+             UPDATE wamn_run.runs SET durability_class = NULL \
               WHERE run_id = 'record-standard-effect'; \
              ASSERT false, 'an admitted run changed its durability class'; \
            EXCEPTION WHEN object_not_in_prerequisite_state THEN \
@@ -656,7 +656,7 @@ fn run_state_live() {
     );
 
     // The ruled literal set against the INSTALLED DDL: the converged standard
-    // policy selected the cheap tier, and nothing outside the pair is storable.
+    // policy selected standard, and no other class is storable.
     // The pin trigger normally overwrites every supplied class; the
     // superuser-only replica session disables it for this one transaction so
     // this remains a narrow test of the independent stored-row CHECK.
@@ -665,7 +665,7 @@ fn run_state_live() {
         "BEGIN; SET LOCAL session_replication_role = replica; DO $$ BEGIN \
            ASSERT (SELECT durability_class FROM wamn_run.runs \
                     WHERE run_id='record-claim') = 'standard', \
-                  'the standard policy did not select the cheap tier'; \
+                  'the policy did not select standard'; \
            BEGIN \
              INSERT INTO wamn_run.runs \
                (env_key,run_id,flow_id,flow_version,package_id,manifest_digest, \
@@ -913,8 +913,6 @@ fn run_state_live() {
                   'the janitor locked the wrong candidate'; \
            ASSERT reap_candidate.status = 'running', \
                   'the janitor projection lost the run status'; \
-           ASSERT reap_candidate.durability_class = 'standard', \
-                  'the janitor projection lost the durability class'; \
            ASSERT reap_candidate.wiring_id = 'fixture-wiring', \
                   'the janitor projection lost the frozen wiring identity'; \
            ASSERT other_scope_count = 0, \

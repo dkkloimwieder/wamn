@@ -9,7 +9,7 @@ use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql as provision_sql,
     workload_generation_role,
 };
-use wamn_run_state::{EffectUncertainFailure, FailType, RunStatus};
+use wamn_run_state::{FailType, RunStatus};
 
 // ---- status vocabularies ---------------------------------------------------
 
@@ -85,51 +85,6 @@ fn persisted_fail_kind_vocabulary_is_exact_and_alias_free() {
             "wire alias {alias:?} parsed"
         );
     }
-}
-
-#[test]
-fn effect_uncertain_failure_has_one_exact_non_committal_shape() {
-    let failure = EffectUncertainFailure::new("run-17").unwrap();
-    let bytes = failure.canonical_json_bytes();
-
-    assert_eq!(failure.code(), "effect-uncertain");
-    assert_eq!(failure.run_id(), "run-17");
-    assert_eq!(bytes, br#"{"code":"effect-uncertain","run_id":"run-17"}"#);
-    assert_eq!(
-        failure.canonical_json_hash(),
-        "sha256:3a751d2bbfd752e219d547bfbc1de84bf3e69baebad45b268c622b4dea0c87d1"
-    );
-    assert_eq!(
-        serde_json::from_slice::<EffectUncertainFailure>(&bytes).unwrap(),
-        failure
-    );
-
-    for malformed in [
-        br#"{"code":"unknown","run_id":"run-17"}"#.as_slice(),
-        br#"{"code":"effect-uncertain"}"#.as_slice(),
-        br#"{"code":"effect-uncertain","run_id":""}"#.as_slice(),
-        br#"{"code":"effect-uncertain","run_id":"run-17","occurred":true}"#.as_slice(),
-        br#"{"code":"effect-uncertain","run_id":17}"#.as_slice(),
-    ] {
-        assert!(serde_json::from_slice::<EffectUncertainFailure>(malformed).is_err());
-    }
-
-    let empty = EffectUncertainFailure::new("").unwrap_err();
-    assert_eq!(empty.run_id(), "");
-    assert_eq!(
-        empty.to_string(),
-        "effect-uncertain failure run_id must not be empty"
-    );
-
-    let whitespace = EffectUncertainFailure::new(" ").unwrap();
-    assert_eq!(whitespace.run_id(), " ");
-    assert_eq!(
-        serde_json::from_str::<EffectUncertainFailure>(
-            r#"{"code":"effect-uncertain","run_id":" "}"#,
-        )
-        .unwrap(),
-        whitespace
-    );
 }
 
 // `canonical_status_ddl_mirrors_include_effect_uncertain_without_run_level_parked` lived here.
@@ -548,7 +503,7 @@ BEGIN
     'flow_id = ''g''', 'flow_version = 2', 'package_id = ''other''',
     'manifest_digest = ''sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855''', 'manifest_digest = NULL',
     'environment = ''other''', 'capture_mode = ''full''',
-    'durability_class = ''durable''', 'wiring_id = ''other''', 'wiring_version = 2',
+    'durability_class = NULL', 'wiring_id = ''other''', 'wiring_version = 2',
     'wiring_hash = ''other''', 'binding_world_json = ''{}''::jsonb',
     'service_principal_id = ''00000000-0000-4000-8000-000000000001''::uuid'
   ] LOOP
@@ -612,7 +567,7 @@ END $$;
 DO $$ BEGIN
   BEGIN
     INSERT INTO wamn_run.environment_policies (env_key, expected_environment, durability_class)
-      VALUES ('t1', 'test', 'durable');
+      VALUES ('t1', 'test', 'standard');
     ASSERT false, 'a second environment policy for one tenant must be refused';
   EXCEPTION WHEN unique_violation THEN NULL; END;
   ASSERT (SELECT relrowsecurity AND relforcerowsecurity FROM pg_class

@@ -1879,7 +1879,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
                 durability_class) \
              VALUES ($1, 'drain-claimable', 'orders', 1, $2, $3, 'dev', 'orders', 1, \
                      'running', 'automation', '{}', '00000000-0000-0000-0000-000000000001', \
-                     'durable')",
+                     'standard')",
             &[&env_key, &PACKAGE, &digest],
         )
         .await?;

@@ -12,8 +12,7 @@ use wamn_run_state::authority_class::CURRENT_USER_ROLE_MEMBERSHIP_SQL;
 use wamn_run_state::queue::{
     ProductionClaimClass, advance_claim_attempts_sql, classify_production_claim,
     clear_pre_effect_state_sql, grant_production_claim_sql, renew_production_lease_sql,
-    select_claim_effect_attempt_sql, select_exhausted_production_sql, select_production_claim_sql,
-    serialize_effect_intent_sql, terminalize_effect_uncertain_claim_sql,
+    select_exhausted_production_sql, select_production_claim_sql,
     terminalize_exhausted_production_sql,
 };
 use wamn_run_state::run_store::RunStore;
@@ -24,9 +23,7 @@ pub use wamn_run_state::run_store::{
 use wamn_run_state::transitions::{
     CallerReleaseResult, TerminalizeResult, release_caller_sql, terminalize_sql,
 };
-use wamn_run_state::{
-    AuthorityClass, DurabilityClass, EffectUncertainFailure, FailType, RunStatus,
-};
+use wamn_run_state::{AuthorityClass, FailType, RunStatus};
 
 use super::{CandidateBindingWorld, ReleaseIdentity, WamnPostgres};
 
@@ -48,12 +45,6 @@ pub enum ProductionClaimResult {
         candidate: Option<ProductionCandidate>,
         service_principal_id: Option<String>,
         workflow: Option<Box<ProductionWorkflow>>,
-    },
-    /// Claim-time classification removed the row without execution.
-    Terminalized {
-        run_id: String,
-        status: RunStatus,
-        fail_type: FailType,
     },
 }
 
@@ -101,10 +92,6 @@ struct SelectedClaim {
     had_prior_lease: bool,
     status: RunStatus,
     payload: serde_json::Value,
-    /// The class the run was admitted under, read off the row this turn already
-    /// locked. Everything the crash floor does in this transaction is gated on
-    /// it (wamn-0h0g.20.2).
-    durability_class: DurabilityClass,
     wiring_id: String,
     wiring_version: i32,
     router_caller_attached: bool,
@@ -119,7 +106,6 @@ struct ExhaustedClaim {
     run_id: String,
     status: RunStatus,
     identity: ExhaustedExecutionIdentity,
-    durability_class: DurabilityClass,
 }
 
 #[derive(Debug)]
@@ -256,11 +242,10 @@ impl RunStore for WamnPostgres {
         }
     }
 
-    /// Reap at most one crash-budget-exhausted pre-effect run.
+    /// Reap at most one run whose crash budget is exhausted.
     ///
-    /// The candidate and run rows are locked before a fresh effect-evidence
-    /// snapshot. Caller JSON and its RFC 8785 hash are computed by the host,
-    /// never from PostgreSQL's non-canonical `jsonb::text` rendering. The
+    /// The host locks the queue and run rows. It computes caller JSON and its
+    /// RFC 8785 hash without PostgreSQL's `jsonb::text` rendering. The
     /// mounted release's exact package-id set is filtered in the same single
     /// global-FIFO turn as ordinary claims.
     async fn reap_exhausted(
@@ -1039,39 +1024,7 @@ async fn claim_in_transaction(
         ));
     }
 
-    // THE CLASS GATE (wamn-0h0g.20.2). The default class takes plain
-    // lock-then-lease: no advisory fence, no effect snapshot, no classification
-    // — the two statements below exist ONLY to read immutable effect evidence,
-    // and evidence a `standard` run's claim path may not act on is evidence it
-    // must not pay to read on the queue's hottest turn. The premium class takes
-    // today's lock-then-classify-then-lease, unchanged, byte for byte.
-    let has_effect_attempt = if selected.durability_class.admits_effect_evidence() {
-        serialize_effect_intent(connection, &selected.run_id, "production claim").await?;
-
-        let effect_sql = select_claim_effect_attempt_sql();
-        let effect_statement = connection
-            .prepare_cached(&effect_sql)
-            .await
-            .map_err(|error| storage("prepare effect-attempt classification", &error))?;
-        let effect_row = connection
-            .query_one(&effect_statement, &[&selected.run_id])
-            .await
-            .map_err(|error| storage("classify effect-attempt evidence", &error))?;
-        row_value(&effect_row, 0, "effect-attempt evidence")?
-    } else {
-        false
-    };
-
-    match classify_production_claim(
-        selected.durability_class,
-        selected.had_prior_lease,
-        has_effect_attempt,
-    ) {
-        ProductionClaimClass::ExpiredWithAttempt => {
-            return terminalize_effect_uncertain(connection, &selected)
-                .await
-                .map(ClaimTurn::Claimed);
-        }
+    match classify_production_claim(selected.had_prior_lease) {
         ProductionClaimClass::ExpiredPreEffect => {
             let clear_sql = clear_pre_effect_state_sql();
             let clear = connection
@@ -1090,9 +1043,8 @@ async fn claim_in_transaction(
         ProductionClaimClass::Ordinary => {}
     }
 
-    // Crash evidence advances on every path that reaches the grant, in its own
-    // statement OUTSIDE the grant's subtransaction. Terminalization returns
-    // above and still does not count.
+    // Crash evidence advances in its own statement outside the grant's
+    // subtransaction.
     let advance_sql = advance_claim_attempts_sql();
     let advance = connection
         .prepare_cached(&advance_sql)
@@ -1188,11 +1140,10 @@ async fn reap_in_transaction(
             format!("unknown run status {status_text:?}"),
         )
     })?;
-    let class_text: String = row_value(&row, 5, "exhausted run durability class")?;
     let flow_id: Option<String> = row_value(&row, 3, "exhausted root flow id")?;
     let flow_version: Option<i32> = row_value(&row, 4, "exhausted root flow version")?;
-    let wiring_id: Option<String> = row_value(&row, 6, "exhausted wiring id")?;
-    let wiring_version: Option<i32> = row_value(&row, 7, "exhausted wiring version")?;
+    let wiring_id: Option<String> = row_value(&row, 5, "exhausted wiring id")?;
+    let wiring_version: Option<i32> = row_value(&row, 6, "exhausted wiring version")?;
     let identity = match (flow_id, flow_version, wiring_id, wiring_version) {
         (Some(flow_id), Some(flow_version), _, _) if !flow_id.is_empty() && flow_version > 0 => {
             ExhaustedExecutionIdentity::Flow {
@@ -1220,7 +1171,6 @@ async fn reap_in_transaction(
         run_id: row_value(&row, 1, "exhausted run id")?,
         status,
         identity,
-        durability_class: DurabilityClass::from_sql_or_default(&class_text),
     };
     if !matches!(selected.status, RunStatus::Dispatched | RunStatus::Running) {
         return Err(ProductionClaimError::new(
@@ -1228,29 +1178,6 @@ async fn reap_in_transaction(
             "validate exhausted candidate",
             format!("non-runnable status {}", selected.status.as_sql()),
         ));
-    }
-
-    // The same class gate the claim turn applies (wamn-0h0g.20.2). A `standard`
-    // run has no effect-uncertain hand-off to make, so the janitor reaps it to
-    // `infrastructure-failure` directly and `ProductionReapResult::EffectAttempt`
-    // is unreachable — the variant survives for the premium tier.
-    if selected.durability_class.admits_effect_evidence() {
-        serialize_effect_intent(connection, &selected.run_id, "exhausted-run reaper").await?;
-
-        let effect_sql = select_claim_effect_attempt_sql();
-        let effect = connection
-            .prepare_cached(&effect_sql)
-            .await
-            .map_err(|error| storage("prepare exhausted effect classification", &error))?;
-        let row = connection
-            .query_one(&effect, &[&selected.run_id])
-            .await
-            .map_err(|error| storage("classify exhausted effect evidence", &error))?;
-        if row_value(&row, 0, "exhausted effect-attempt evidence")? {
-            return Ok(ProductionReapResult::EffectAttempt {
-                run_id: selected.run_id,
-            });
-        }
     }
 
     let (body, body_hash) = generic_failure_outcome(
@@ -1289,81 +1216,6 @@ async fn reap_in_transaction(
     }
     Ok(ProductionReapResult::Reaped {
         run_id: selected.run_id,
-    })
-}
-
-async fn serialize_effect_intent(
-    connection: &Object,
-    run_id: &str,
-    owner: &'static str,
-) -> Result<(), ProductionClaimError> {
-    let sql = serialize_effect_intent_sql();
-    let statement = connection
-        .prepare_cached(&sql)
-        .await
-        .map_err(|error| storage("prepare effect-intent fence", &error))?;
-    connection
-        .query_one(&statement, &[&run_id])
-        .await
-        .map_err(|error| {
-            ProductionClaimError::new(
-                ProductionClaimErrorType::Storage,
-                "acquire effect-intent fence",
-                format!("{owner}: {error}"),
-            )
-        })?;
-    Ok(())
-}
-
-async fn terminalize_effect_uncertain(
-    connection: &Object,
-    selected: &SelectedClaim,
-) -> Result<ProductionClaimResult, ProductionClaimError> {
-    let failure = EffectUncertainFailure::new(selected.run_id.clone()).map_err(|error| {
-        ProductionClaimError::new(
-            ProductionClaimErrorType::Contract,
-            "build effect-uncertain outcome",
-            error.to_string(),
-        )
-    })?;
-    let body = serde_json::to_string(&failure.as_json()).map_err(|error| {
-        ProductionClaimError::new(
-            ProductionClaimErrorType::Contract,
-            "serialize effect-uncertain outcome",
-            error.to_string(),
-        )
-    })?;
-    let hash = failure.canonical_json_hash();
-    let sql = terminalize_effect_uncertain_claim_sql();
-    let statement = connection
-        .prepare_cached(&sql)
-        .await
-        .map_err(|error| storage("prepare effect-uncertain terminalization", &error))?;
-    // D2b: this host owns the instant the effect-uncertain hand-off stamps.
-    let uncertain_at = SystemTime::now();
-    let row = connection
-        .query_opt(&statement, &[&selected.run_id, &body, &hash, &uncertain_at])
-        .await
-        .map_err(|error| storage("terminalize effect uncertainty", &error))?
-        .ok_or_else(|| {
-            ProductionClaimError::new(
-                ProductionClaimErrorType::Contract,
-                "terminalize effect uncertainty",
-                "selected run or queue row disappeared while locked",
-            )
-        })?;
-    let status: String = row_value(&row, 0, "effect-uncertain status")?;
-    if status != RunStatus::EffectUncertain.as_sql() {
-        return Err(ProductionClaimError::new(
-            ProductionClaimErrorType::Contract,
-            "terminalize effect uncertainty",
-            format!("unexpected status {status:?}"),
-        ));
-    }
-    Ok(ProductionClaimResult::Terminalized {
-        run_id: selected.run_id.clone(),
-        status: RunStatus::EffectUncertain,
-        fail_type: FailType::EffectUncertain,
     })
 }
 
@@ -1413,19 +1265,14 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
             format!("unknown run status {status:?}"),
         )
     })?;
-    // An unknown literal decodes to the CHEAP tier, never to `durable`
-    // (wamn-0h0g.20.1): a claim must not enroll a run in premium machinery on
-    // the strength of data it could not parse, and it must not fail the queue
-    // either.
-    let class_text: String = row_value(row, 4, "durability class")?;
-    let wiring_id: Option<String> = row_value(row, 5, "wiring id")?;
-    let wiring_version: Option<i32> = row_value(row, 6, "wiring version")?;
-    let router_caller_attached: bool = row_value(row, 7, "router caller attachment")?;
-    let durable_caller_attached: bool = row_value(row, 8, "durable caller attachment")?;
-    let flow_id: Option<String> = row_value(row, 9, "legacy flow id")?;
-    let flow_version: Option<i32> = row_value(row, 10, "legacy flow version")?;
-    let wiring_hash: Option<String> = row_value(row, 11, "candidate wiring hash")?;
-    let binding_world: Option<String> = row_value(row, 12, "candidate binding world")?;
+    let wiring_id: Option<String> = row_value(row, 4, "wiring id")?;
+    let wiring_version: Option<i32> = row_value(row, 5, "wiring version")?;
+    let router_caller_attached: bool = row_value(row, 6, "router caller attachment")?;
+    let durable_caller_attached: bool = row_value(row, 7, "durable caller attachment")?;
+    let flow_id: Option<String> = row_value(row, 8, "legacy flow id")?;
+    let flow_version: Option<i32> = row_value(row, 9, "legacy flow version")?;
+    let wiring_hash: Option<String> = row_value(row, 10, "candidate wiring hash")?;
+    let binding_world: Option<String> = row_value(row, 11, "candidate binding world")?;
     let payload_text: String = row_value(row, 3, "authoritative input")?;
     let payload = serde_json::from_str(&payload_text).map_err(|error| {
         ProductionClaimError::new(
@@ -1435,7 +1282,7 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
         )
     })?;
     let (wiring_id, wiring_version) = decode_wiring_identity(wiring_id, wiring_version)?;
-    let service_principal_id: Option<String> = row_value(row, 14, "service principal")?;
+    let service_principal_id: Option<String> = row_value(row, 13, "service principal")?;
     let workflow_hash = wiring_hash.clone();
     let candidate = match (flow_id, flow_version, wiring_hash, binding_world) {
         // A released wiring: an automation run under its service principal,
@@ -1486,14 +1333,14 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
     }
     let mut workflow = decode_workflow(
         workflow_hash,
-        row_value::<Option<String>>(row, 15, "trigger source")?.as_deref(),
-        row_value(row, 16, "execution principal")?,
-        row_value(row, 17, "execution role")?,
-        row_value(row, 18, "node digests")?,
+        row_value::<Option<String>>(row, 14, "trigger source")?.as_deref(),
+        row_value(row, 15, "execution principal")?,
+        row_value(row, 16, "execution role")?,
+        row_value(row, 17, "node digests")?,
     )?;
     if let Some(workflow) = workflow.as_mut() {
-        let root: Option<String> = row_value(row, 19, "event root")?;
-        let depth: Option<i32> = row_value(row, 20, "event depth")?;
+        let root: Option<String> = row_value(row, 18, "event root")?;
+        let depth: Option<i32> = row_value(row, 19, "event depth")?;
         if let (Some(root), Some(depth)) = (root, depth) {
             workflow.causation = Some(wamn_event_wire::Causation {
                 run: row_value(row, 0, "run id")?,
@@ -1517,11 +1364,10 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
     }
     Ok(SelectedClaim {
         run_id: row_value(row, 0, "run id")?,
-        package_id: row_value(row, 13, "package id")?,
+        package_id: row_value(row, 12, "package id")?,
         had_prior_lease: row_value(row, 1, "prior lease evidence")?,
         status,
         payload,
-        durability_class: DurabilityClass::from_sql_or_default(&class_text),
         wiring_id,
         wiring_version,
         router_caller_attached,
@@ -1926,7 +1772,6 @@ mod tests {
             "candidate.had_prior_lease",
             "r.status",
             "AS input_json",
-            "r.durability_class",
             "r.wiring_id",
             "r.wiring_version",
             "AS router_caller_attached",
@@ -1968,34 +1813,5 @@ mod tests {
         assert!(sql.contains("statement_timestamp()"));
         assert!(sql.contains("q.lease_expires_at > statement_timestamp()"));
         assert!(!sql.contains("execution_bundle_hash"));
-    }
-
-    #[test]
-    fn the_default_class_never_reaches_the_crash_floor_arms() {
-        // (b), (c) and (d) of wamn-0h0g.20.2 are made UNREACHABLE by the gate at
-        // (a) rather than deleted: `classify_production_claim` is the only
-        // producer of `ExpiredWithAttempt`, which is the only path to
-        // `terminalize_effect_uncertain` and so to `ProductionClaimResult::
-        // Terminalized` and its drain-loop arm.
-        for had_prior_lease in [false, true] {
-            for has_effect_attempt in [false, true] {
-                let class = classify_production_claim(
-                    DurabilityClass::Standard,
-                    had_prior_lease,
-                    has_effect_attempt,
-                );
-                assert_ne!(
-                    class,
-                    ProductionClaimClass::ExpiredWithAttempt,
-                    "the default class reached the shelved floor \
-                     (had_prior_lease={had_prior_lease}, attempt={has_effect_attempt})"
-                );
-            }
-        }
-        assert_eq!(
-            classify_production_claim(DurabilityClass::Durable, true, true),
-            ProductionClaimClass::ExpiredWithAttempt,
-            "the premium class no longer reaches the floor it pays for"
-        );
     }
 }
