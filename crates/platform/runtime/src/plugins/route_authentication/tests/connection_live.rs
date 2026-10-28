@@ -178,7 +178,7 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     )
     .with_authenticator(Arc::new(
         PlatformRouteAuthenticator::default()
-            .with_authentication(authentication)
+            .with_authentication(Arc::clone(&authentication))
             .with_signature_authentication(credentials, "host-project"),
     ));
     let signature = super::signature::signed(super::signature::BODY);
@@ -204,6 +204,92 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     assert!(caller.permits("fixture:item/read@1.0.0"));
     assert!(!caller.permits("fixture:item/write@1.0.0"));
     assert!(caller.active_role().is_none());
+    let mut authority = connect(system.url()).await;
+    let tx = authority.transaction().await.unwrap();
+    tx.batch_execute("SET LOCAL ROLE wamn_system")
+        .await
+        .unwrap();
+    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+        wamn_control_provision::PlatformComponent::Provisioning,
+    ))
+    .await
+    .unwrap();
+    let service = wamn_platform_identity::create_service(
+        &tx,
+        "wrong-subject",
+        "Wrong subject",
+        &mut AuthDrops::default(),
+    )
+    .await
+    .unwrap();
+    wamn_platform_identity::assign_project_role(
+        &tx,
+        service.id(),
+        "acme",
+        "host-project",
+        "admin",
+        &mut AuthDrops::default(),
+    )
+    .await
+    .unwrap();
+    let pat = wamn_platform_identity::issue_pat(
+        &tx,
+        service.id(),
+        "wrong subject",
+        std::time::Duration::from_secs(3600),
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    let authenticated = authentication
+        .prepared
+        .authenticate_route_pat(
+            authentication.identity_reader.as_ref(),
+            pat.token(),
+            "acme",
+            "host-project",
+            "prod",
+            &[ADMIN_ROLE],
+        )
+        .await
+        .unwrap()
+        .expect("the PAT is valid for this project");
+    assert_eq!(authenticated.principal().id(), service.id());
+    let bearer = format!("Bearer {}", pat.token());
+    let pat_routing = super::routing(&json!(["pat"])).with_authenticator(Arc::new(
+        PlatformRouteAuthenticator::default().with_authentication(authentication),
+    ));
+    assert_eq!(
+        pat_routing
+            .authenticate_headers_for_test("orders", &[("Authorization", &bearer)])
+            .await
+            .unwrap_err()
+            .0,
+        401
+    );
+    project
+        .execute(
+            "UPDATE platform.\"user\" SET status='disabled' WHERE id=$1::text::uuid",
+            &[&principal],
+        )
+        .await
+        .unwrap();
+    postgres.auth_cache().clear();
+    assert_eq!(
+        routing
+            .authenticate_request_for_test("orders", &headers, super::signature::BODY)
+            .await
+            .unwrap_err()
+            .0,
+        401
+    );
+    project
+        .execute(
+            "UPDATE platform.\"user\" SET status='active' WHERE id=$1::text::uuid",
+            &[&principal],
+        )
+        .await
+        .unwrap();
     project
         .execute(
             "UPDATE platform.\"user\" SET type='user' WHERE id=$1::text::uuid",
@@ -217,5 +303,55 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
             .authenticate_request_for_test("orders", &headers, super::signature::BODY)
             .await
             .is_err()
+    );
+}
+
+#[tokio::test]
+async fn queued_run_without_a_selected_role_uses_only_active_services_and_all_their_roles() {
+    const SERVICE: &str = "5345555a-335c-49e4-917b-a187b134cf8c";
+    const USER: &str = "c6d14132-207e-4c8b-a8f3-2ad242c10dc1";
+    const ABSENT: &str = "13e42097-1f19-4e5b-a79a-5c333c57f677";
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_project_state::test_database::tenant_platform();
+    let client = connect(database.url()).await;
+    client.execute("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:queued-caller-fixture',false)", &[&SERVICE]).await.unwrap();
+    client.execute("INSERT INTO platform.\"user\"(id,type,email) VALUES ($1::text::uuid,'service','queued-service@example.test'),($2::text::uuid,'user','queued-user@example.test')", &[&SERVICE, &USER]).await.unwrap();
+    client.batch_execute("INSERT INTO platform.role(name) VALUES ('reader'),('writer'); INSERT INTO platform.permission(role_name,permission) VALUES ('reader','fixture:item/read'),('writer','fixture:item/write')").await.unwrap();
+    client.execute("INSERT INTO platform.user_role(user_id,role_name) VALUES ($1::text::uuid,'reader'),($1::text::uuid,'writer')", &[&SERVICE]).await.unwrap();
+    let caller = queued_run_caller(&client, SERVICE, None).await.unwrap();
+    assert_eq!(caller.principal_id(), SERVICE);
+    assert_eq!(caller.credential_type(), CredentialType::QueuedService);
+    assert!(caller.permits("fixture:item/read@1.0.0"));
+    assert!(caller.permits("fixture:item/write@1.0.0"));
+    assert!(!caller.permits("fixture:item/delete@1.0.0"));
+    assert!(!caller.admin());
+    assert!(caller.active_role().is_none());
+    assert_eq!(
+        queued_run_caller(&client, USER, None)
+            .await
+            .unwrap_err()
+            .to_string(),
+        "queued service principal is absent or inactive"
+    );
+    assert_eq!(
+        queued_run_caller(&client, ABSENT, None)
+            .await
+            .unwrap_err()
+            .to_string(),
+        "queued principal is absent or inactive"
+    );
+    client
+        .execute(
+            "UPDATE platform.\"user\" SET status='disabled' WHERE id=$1::text::uuid",
+            &[&SERVICE],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        queued_run_caller(&client, SERVICE, None)
+            .await
+            .unwrap_err()
+            .to_string(),
+        "queued principal is absent or inactive"
     );
 }
