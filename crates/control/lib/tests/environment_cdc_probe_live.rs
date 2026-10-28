@@ -156,25 +156,4 @@ async fn the_publication_alone_is_the_observation_and_the_reader_is_recorded_onc
         .unwrap()
         .get(0);
     assert_eq!(registered, schemas);
-    db.batch_execute(
-        "ALTER TABLE registry.event_readers ALTER COLUMN schema TYPE text USING schema[1]",
-    )
-    .await
-    .unwrap();
-    db.batch_execute(include_str!(
-        "../../../../deploy/sql/migrations/system/0028_event_reader_schemas.sql"
-    ))
-    .await
-    .unwrap();
-    let migrated: Vec<String> = db
-        .query_one(
-            "SELECT schema FROM registry.event_readers WHERE org = $1",
-            &[&ORG],
-        )
-        .await
-        .unwrap()
-        .get(0);
-    assert_eq!(migrated, ["app"]);
-    record().await.unwrap();
-    assert_eq!(readers().await, 1);
 }

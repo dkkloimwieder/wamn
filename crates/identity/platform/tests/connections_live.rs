@@ -384,34 +384,6 @@ async fn fresh_connections_keep_principals_generations_and_enabled_projections()
 }
 
 #[tokio::test]
-async fn migration_preserves_every_org_connection_and_its_definition() {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_control_provision::test_database::system();
-    let mut client = connect(database.url()).await;
-    client.batch_execute("SET ROLE wamn_system; SET app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'; DROP TABLE registry.credential_import, registry.integration_allow, registry.project_connection, registry.connection_generation, identity.credential, registry.connection, registry.external_system CASCADE; DROP FUNCTION registry.reject_connection_generation_change(); INSERT INTO registry.orgs(id, placement_type) VALUES ('acme','dedicated'); INSERT INTO registry.org_connections(org,name,type,definition) VALUES ('acme','first','http','{\"primary-authority\":\"https://one.invalid\"}'), ('acme','second','http','{\"primary-authority\":\"https://two.invalid\"}')").await.unwrap();
-    let tx = client.transaction().await.unwrap();
-    bind(&tx).await;
-    tx.batch_execute("SET LOCAL ROLE wamn_system")
-        .await
-        .unwrap();
-    tx.batch_execute(include_str!(
-        "../../../../deploy/sql/migrations/system/0030_org_connection_authority.sql"
-    ))
-    .await
-    .unwrap();
-    let row = tx.query_one("SELECT (SELECT count(*) FROM registry.org_connections), (SELECT count(*) FROM registry.connection c JOIN registry.org_connections o ON (o.org,o.name,o.definition) = (c.org,c.name,c.parameters)), (SELECT count(DISTINCT service_principal_id) FROM registry.connection)", &[]).await.unwrap();
-    assert_eq!(
-        (
-            row.get::<_, i64>(0),
-            row.get::<_, i64>(1),
-            row.get::<_, i64>(2)
-        ),
-        (2, 2, 2)
-    );
-    tx.commit().await.unwrap();
-}
-
-#[tokio::test]
 async fn a_catalog_row_without_a_connector_refuses_as_unavailable() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_control_provision::test_database::system();
@@ -438,79 +410,6 @@ async fn a_catalog_row_without_a_connector_refuses_as_unavailable() {
         "integration_unavailable"
     );
     assert!(drops.is_empty());
-}
-
-#[tokio::test]
-async fn package_binding_backfill_preserves_each_release_owner_and_refuses_conflicts() {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_project_state::test_database::tenant_platform();
-    let mut client = connect(database.url()).await;
-    let tx = client.transaction().await.unwrap();
-    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_control_provision::PlatformComponent::Provisioning,
-    ))
-    .await
-    .unwrap();
-    tx.batch_execute("CREATE SCHEMA IF NOT EXISTS wamn_run; ALTER TABLE catalog.connection_bindings DROP CONSTRAINT connection_bindings_package_id_nonempty; ALTER TABLE catalog.connection_bindings ALTER COLUMN package_id SET DEFAULT '';").await.unwrap();
-    let component = format!("sha256:{}", "a".repeat(64));
-    let release = json!({"components":[
-        {"package-id":"first","descriptor":{"component-digest":component}},
-        {"package-id":"second","descriptor":{"component-digest":component}},
-    ]})
-    .to_string();
-    let manifest: String = tx.query_one("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES ('t1','sha256:' || encode(sha256(convert_to($1,'UTF8')),'hex'),convert_to($1,'UTF8')) RETURNING manifest_digest", &[&release]).await.unwrap().get(0);
-    tx.execute("INSERT INTO catalog.connection_requirements(env_key,component_digest,store_alias,requirement_json,requirement_hash) VALUES ('t1',$1,'upstream','{}',$1)", &[&component]).await.unwrap();
-    tx.batch_execute("INSERT INTO catalog.connection_instances(env_key,environment,instance_id,requirement_type,contract) VALUES ('t1','dev','chosen','http','http'),('t1','dev','conflict','http','http')").await.unwrap();
-    tx.execute("INSERT INTO catalog.connection_bindings(env_key,manifest_digest,component_digest,store_alias,environment,instance_id,mode,binding_status,validation_status,validation_hash) VALUES ('t1',$1,$2,'upstream','dev','chosen','read','active','valid',$2)", &[&manifest,&component]).await.unwrap();
-    let migration = wamn_control_provision::schema_migrations::PROJECT_MIGRATIONS
-        .iter()
-        .find(|migration| {
-            migration
-                .relative_path
-                .ends_with("_c35_connection_bindings.sql")
-        })
-        .expect("the package binding migration exists");
-    let migration_sql = migration
-        .sql
-        .replace("tenant_id", "env_key")
-        .replace("(tenant text,", "(env_key text,")
-        .replace("= tenant AND", "= $1 AND");
-    // A scoped row with a different selection must refuse the whole backfill.
-    tx.batch_execute("SAVEPOINT conflict").await.unwrap();
-    tx.execute("INSERT INTO catalog.connection_bindings(env_key,manifest_digest,component_digest,store_alias,environment,instance_id,package_id,mode,binding_status,validation_status,validation_hash) VALUES ('t1',$1,$2,'upstream','dev','conflict','second','read','active','valid',$2)", &[&manifest,&component]).await.unwrap();
-    assert_eq!(
-        tx.batch_execute(&migration_sql).await.unwrap_err().code(),
-        Some(&tokio_postgres::error::SqlState::OBJECT_NOT_IN_PREREQUISITE_STATE)
-    );
-    tx.batch_execute("ROLLBACK TO SAVEPOINT conflict")
-        .await
-        .unwrap();
-    // A release with no matching component owner must also refuse atomically.
-    tx.batch_execute("SAVEPOINT missing_owner").await.unwrap();
-    let other_release = json!({"components":[{"package-id":"unrelated","descriptor":{"component-digest":format!("sha256:{}", "b".repeat(64))}}]}).to_string();
-    let other_manifest: String = tx.query_one("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES ('t1','sha256:' || encode(sha256(convert_to($1,'UTF8')),'hex'),convert_to($1,'UTF8')) RETURNING manifest_digest", &[&other_release]).await.unwrap().get(0);
-    tx.execute("INSERT INTO catalog.connection_bindings(env_key,manifest_digest,component_digest,store_alias,environment,instance_id,mode,binding_status,validation_status,validation_hash) VALUES ('t1',$1,$2,'upstream','dev','chosen','read','active','valid',$2)", &[&other_manifest,&component]).await.unwrap();
-    assert_eq!(
-        tx.batch_execute(&migration_sql).await.unwrap_err().code(),
-        Some(&tokio_postgres::error::SqlState::OBJECT_NOT_IN_PREREQUISITE_STATE)
-    );
-    tx.batch_execute("ROLLBACK TO SAVEPOINT missing_owner")
-        .await
-        .unwrap();
-    tx.batch_execute(&migration_sql).await.unwrap();
-    let rows = tx.query("SELECT package_id,instance_id,mode,manifest_digest FROM catalog.connection_bindings ORDER BY package_id", &[]).await.unwrap();
-    assert_eq!(rows.len(), 2);
-    for (row, package) in rows.iter().zip(["first", "second"]) {
-        assert_eq!(row.get::<_, String>(0), package);
-        assert_eq!(row.get::<_, String>(1), "chosen");
-        assert_eq!(row.get::<_, String>(2), "read");
-        assert_eq!(row.get::<_, String>(3), manifest);
-    }
-    tx.batch_execute("SAVEPOINT unscoped_write").await.unwrap();
-    assert!(tx.execute("INSERT INTO catalog.connection_bindings(env_key,manifest_digest,component_digest,store_alias,environment,instance_id,mode,binding_status,validation_status,validation_hash) VALUES ('t1',$1,$2,'upstream','dev','chosen','read','active','valid',$2)", &[&manifest,&component]).await.is_err());
-    tx.batch_execute("ROLLBACK TO SAVEPOINT unscoped_write")
-        .await
-        .unwrap();
 }
 
 #[tokio::test]

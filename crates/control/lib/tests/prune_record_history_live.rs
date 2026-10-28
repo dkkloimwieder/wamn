@@ -212,38 +212,6 @@ async fn write_log_retention_removes_old_successes_and_keeps_uncertain_claims() 
 async fn pruning_every_entry_expires_the_cursor() {
     let _lock = wamn_test_postgres::lock();
     let (_database, mut client, changes) = fixture().await;
-    // Start from the old storage and grants, then apply the upgrade.
-    client
-        .batch_execute(
-            "DROP TABLE wamn_history.pruning_watermarks; \
-                        GRANT USAGE ON SCHEMA inventory TO wamn_audit_retention; \
-                        GRANT DELETE, SELECT (row_key, position, changed_at) \
-                          ON inventory.widget_history TO wamn_audit_retention;",
-        )
-        .await
-        .unwrap();
-    client
-        .batch_execute(include_str!(
-            "../../../../deploy/sql/migrations/project/0041_history_pruning_watermarks.sql"
-        ))
-        .await
-        .expect("upgrade the history storage and retention grants");
-    let upgraded: bool = client
-        .query_one(
-            "SELECT has_table_privilege('wamn_audit_retention', \
-                       'wamn_history.pruning_watermarks', 'INSERT') \
-                     AND has_table_privilege('wamn_audit_retention', \
-                       'wamn_history.pruning_watermarks', 'UPDATE') \
-                     AND has_table_privilege('wamn_audit_retention', \
-                       'wamn_history.pruning_watermarks', 'SELECT') \
-                     AND has_column_privilege('wamn_audit_retention', \
-                       'inventory.widget_history', 'transaction_id', 'SELECT')",
-            &[],
-        )
-        .await
-        .unwrap()
-        .get(0);
-    assert!(upgraded);
     let before = cursor(&client).await;
     assert!(!changes_expired(&client, &changes, before).await);
     client

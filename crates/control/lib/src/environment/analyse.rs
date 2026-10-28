@@ -354,7 +354,7 @@ pub(crate) async fn read_policy(system: &Client, org: &str, name: &str) -> anyho
             &[&org, &name],
         )
         .await
-        .context("read the environment policy; apply system migration 0017 with upgrade-schema")?
+        .context("read the environment policy")?
         .with_context(|| format!("refused: org {org} has no environment policy {name}"))?;
     Ok(Policy {
         name: name.to_owned(),

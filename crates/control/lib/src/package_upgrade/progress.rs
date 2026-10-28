@@ -260,9 +260,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn migration_installs_matching_carrier_and_guards_platform_updates() {
+    async fn fresh_carrier_guards_platform_updates() {
         let mut server = wamn_test_postgres::start(&[]).unwrap();
-        let database = server.create_database("stage_migration").unwrap();
+        let database = server.create_database("stage_carrier").unwrap();
         let (mut client, connection) = tokio_postgres::connect(database.url(), NoTls)
             .await
             .unwrap();
@@ -277,22 +277,6 @@ mod tests {
             .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
             .await
             .unwrap();
-        let catalog = "SELECT jsonb_build_object(            'columns', (SELECT jsonb_agg(jsonb_build_array(attname,format_type(atttypid,atttypmod),attnotnull) ORDER BY attnum) FROM pg_attribute WHERE attrelid='catalog.package_upgrade_stages'::regclass AND attnum>0 AND NOT attisdropped AND attname NOT IN ('created_at','created_by','updated_at','updated_by')),            'constraints', (SELECT jsonb_agg(pg_get_constraintdef(oid) ORDER BY conname) FROM pg_constraint WHERE conrelid='catalog.package_upgrade_stages'::regclass AND NOT (contype='n' AND conkey && ARRAY(SELECT attnum FROM pg_attribute WHERE attrelid=conrelid AND attname IN ('created_at','created_by','updated_at','updated_by')))),            'policies', (SELECT jsonb_agg(jsonb_build_array(polname,polroles,pg_get_expr(polqual,polrelid),pg_get_expr(polwithcheck,polrelid)) ORDER BY polname) FROM pg_policy WHERE polrelid='catalog.package_upgrade_stages'::regclass),            'security', (SELECT jsonb_build_array(relrowsecurity,relforcerowsecurity,relowner::regrole::text,relacl::text) FROM pg_class WHERE oid='catalog.package_upgrade_stages'::regclass),            'triggers', (SELECT jsonb_agg(pg_get_triggerdef(oid) ORDER BY tgname) FROM pg_trigger WHERE tgrelid='catalog.package_upgrade_stages'::regclass AND NOT tgisinternal AND tgname <> 'wamn_record_history_stamp'))";
-        // Historical migrations retain their prior carrier; stamps belong to fresh databases.
-        let fresh: Value = client.query_one(catalog, &[]).await.unwrap().get(0);
-        client.batch_execute("DROP TABLE catalog.package_upgrade_stages; DROP FUNCTION catalog.guard_package_upgrade_stage_change(); DROP INDEX catalog.package_definition_owners_synchronization_function; ALTER TABLE catalog.package_upgrade_qualifications DROP COLUMN package_artifact_digest; ALTER TABLE catalog.connection_requirements ADD CONSTRAINT connection_requirements_component_fkey CHECK (true);").await.unwrap();
-        for migration in [
-            include_str!(
-                "../../../../../deploy/sql/migrations/project/0010_package_upgrade_stages.sql"
-            ),
-            include_str!("../../../../../deploy/sql/migrations/project/0014_stage_digests.sql"),
-        ] {
-            // The historical carrier uses the current greenfield key in this fixture.
-            let migration = migration.replace("tenant_id", "env_key");
-            client.batch_execute(&migration).await.unwrap();
-        }
-        let migrated: Value = client.query_one(catalog, &[]).await.unwrap().get(0);
-        assert_eq!(fresh, migrated);
         let identity = identity("2.0.0");
         let tx = client.transaction().await.unwrap();
         crate::apply_package::bind_apply_package_principal(&tx)

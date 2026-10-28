@@ -341,13 +341,12 @@ const PLATFORM_TRIGGER_CLAIMS: [&str; 2] = ["app.user_id", "app.operation"];
 /// Each entry names a file and the function whose body holds the read. The
 /// owner narrowing of 2026-09-13 admits these readers by name. They record
 /// attribution and take no authorization decision. `wamn_history.log_row_change`
-/// is the level-2 log function that owner ruling 29 admits. The kind → type
-/// migrations replace the same two functions with the text of
-/// `record-history.sql` (wamn-ld93.7). apply-package generates the stamp and
+/// is the level-2 log function that owner ruling 29 admits.
+/// apply-package generates the stamp and
 /// log function of each package relation from the two templates in
 /// `apply_package/record_history.rs`, whose header names the function
 /// `wamn_history.{name}` (wamn-c8a5v.2).
-const PLATFORM_TRIGGER_READERS: [(&str, &str); 7] = [
+const PLATFORM_TRIGGER_READERS: [(&str, &str); 3] = [
     ("deploy/sql/record-history.sql", "wamn_history.stamp_row"),
     (
         "crates/control/lib/src/apply_package/record_history.rs",
@@ -355,22 +354,6 @@ const PLATFORM_TRIGGER_READERS: [(&str, &str); 7] = [
     ),
     (
         "deploy/sql/record-history.sql",
-        "wamn_history.log_row_change",
-    ),
-    (
-        "deploy/sql/migrations/system/0003_kind_to_type.sql",
-        "wamn_history.stamp_row",
-    ),
-    (
-        "deploy/sql/migrations/system/0003_kind_to_type.sql",
-        "wamn_history.log_row_change",
-    ),
-    (
-        "deploy/sql/migrations/project/0001_kind_to_type.sql",
-        "wamn_history.stamp_row",
-    ),
-    (
-        "deploy/sql/migrations/project/0001_kind_to_type.sql",
         "wamn_history.log_row_change",
     ),
 ];

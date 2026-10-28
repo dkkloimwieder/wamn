@@ -1005,9 +1005,7 @@ pub fn grant_control_surface_sql() -> String {
 
 /// The grants of [`grant_control_surface_sql`] without the role bootstrap.
 ///
-/// The latest system migration that changes them, `remove_package_copies`,
-/// runs these as `wamn_system`, which owns the tables and cannot create a
-/// role, so it carries the grants alone.
+/// The control owner can apply these grants without permission to create roles.
 pub fn control_surface_grants_sql() -> String {
     let role = quote_ident(WorkloadRoleFamily::Control.acl_role());
     let plane = SYSTEM_PLANE_SCHEMAS

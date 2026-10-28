@@ -1,9 +1,5 @@
-
--- The platform migrations that this system database holds
--- (docs/plan/schema-upgrade.md). provision-system records every file of
--- deploy/sql/migrations/system/ here, because the full schema files already
--- hold them. upgrade-schema applies and records the rest. The first run of
--- upgrade-schema on a database installed before this table runs this block.
+-- Platform migration records. The full schema files own fresh installations.
+-- The migration lists stay empty until development is stable.
 CREATE TABLE registry.schema_migrations (
     ordinal integer PRIMARY KEY CHECK (ordinal > 0),
     relative_path text NOT NULL UNIQUE

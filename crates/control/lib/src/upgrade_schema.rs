@@ -18,9 +18,7 @@ use wamn_control_provision::schema_migrations::{Migration, MigrationTarget};
 /// The name of the system database.
 const SYSTEM_DATABASE: &str = "wamn_system";
 
-/// The name of schema `platform` in a project database installed before
-/// project migration `0024_platform_schema.sql` renamed it. Its record table
-/// is the one the run reads until that file runs.
+/// The former name of schema `platform` in a legacy project database.
 const LEGACY_PROJECT_SCHEMA: &str = "app_system"; // rename-app-system: keep
 
 /// Inputs of one `upgrade-schema` run.
@@ -126,6 +124,9 @@ async fn upgrade(
     migrations: &[Migration],
     request: &UpgradeSchemaRequest,
 ) -> anyhow::Result<()> {
+    if migrations.is_empty() {
+        return Ok(());
+    }
     let transaction = client
         .transaction()
         .await
@@ -218,8 +219,7 @@ async fn upgrade(
             .batch_execute(migration.sql)
             .await
             .with_context(|| format!("apply {}", migration.relative_path))?;
-        // 0024_platform_schema.sql moves the record table of a database
-        // installed before it.
+        // A migration can move the record table.
         let table = record_table(&transaction, target)
             .await?
             .with_context(|| format!("{} moved the record table away", migration.relative_path))?;
@@ -231,8 +231,7 @@ async fn upgrade(
 }
 
 /// The record table of `target` in this database, if it has one: in the
-/// legacy schema for a project database installed before
-/// `0024_platform_schema.sql`.
+/// legacy schema for an older project database.
 async fn record_table(
     transaction: &Transaction<'_>,
     target: MigrationTarget,
@@ -253,7 +252,7 @@ async fn record_table(
 }
 
 /// Whether the project database of `client` holds the schema under the name
-/// it had before `0024_platform_schema.sql`.
+/// it had in a legacy installation.
 ///
 /// # Errors
 ///
@@ -332,4 +331,79 @@ pub async fn record_fresh_install(
             .with_context(|| format!("record {}", migration.relative_path))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn upgrade_schema_on_current_databases_is_a_no_op() {
+        let _lock = wamn_test_postgres::lock();
+        let system = wamn_control_provision::test_database::system();
+        let project = wamn_project_state::test_database::tenant_platform();
+        project
+            .execute(&[MigrationTarget::Project.record_table_sql()])
+            .unwrap();
+        for (database, target) in [
+            (&system, MigrationTarget::System),
+            (&project, MigrationTarget::Project),
+        ] {
+            let (mut client, task) = connect(database.url(), "the current database")
+                .await
+                .unwrap();
+            let snapshot = async |client: &Client| -> Vec<(String, String)> {
+                client.query(
+                    "SELECT n.nspname, c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%' ORDER BY 1,2",
+                    &[],
+                ).await.unwrap().iter().map(|row| (row.get(0), row.get(1))).collect()
+            };
+            let retired = Migration {
+                relative_path: match target {
+                    MigrationTarget::System => "migrations/system/0001_retired.sql",
+                    MigrationTarget::Project => "migrations/project/0001_retired.sql",
+                },
+                sql: "SELECT 1",
+            };
+            let transaction = client.transaction().await.unwrap();
+            record(&transaction, target.record_table(), &retired)
+                .await
+                .unwrap();
+            transaction.commit().await.unwrap();
+            let before = snapshot(&client).await;
+            let request = UpgradeSchemaRequest {
+                system_database_url: String::new(),
+                admin_database_url: None,
+                baseline: None,
+                confirm: true,
+            };
+            upgrade(&mut client, target, target.migrations(), &request)
+                .await
+                .unwrap();
+            assert_eq!(snapshot(&client).await, before);
+            let records: i64 = client
+                .query_one(
+                    &format!("SELECT count(*) FROM {}", target.record_table()),
+                    &[],
+                )
+                .await
+                .unwrap()
+                .get(0);
+            assert_eq!(records, 1);
+            let row = client
+                .query_one(
+                    &format!(
+                        "SELECT relative_path, sha256 FROM {}",
+                        target.record_table()
+                    ),
+                    &[],
+                )
+                .await
+                .unwrap();
+            assert_eq!(row.get::<_, String>(0), retired.relative_path);
+            assert_eq!(row.get::<_, String>(1), retired.sha256());
+            drop(client);
+            task.await.unwrap();
+        }
+    }
 }

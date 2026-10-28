@@ -1,10 +1,5 @@
-
--- The platform migrations that this project database holds
--- (docs/plan/schema-upgrade.md). reconcile-run-plane records every file of
--- deploy/sql/migrations/project/ here when it installs app-schema.sql, because
--- the full schema files already hold them. upgrade-schema applies and records
--- the rest. The first run of upgrade-schema on a database installed before
--- this table runs this block. wamn_app has no privilege on it.
+-- Platform migration records. The full schema files own fresh installations.
+-- The migration lists stay empty until development is stable.
 CREATE TABLE platform.schema_migrations (
     ordinal integer PRIMARY KEY CHECK (ordinal > 0),
     relative_path text NOT NULL UNIQUE

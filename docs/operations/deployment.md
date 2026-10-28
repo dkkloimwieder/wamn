@@ -43,7 +43,7 @@ The fixture Service must run in the host namespace on port 8080.
 The host signs GCS requests through its workload identity, the Google service account attached to its Kubernetes account.
 The [Google Cloud prerequisites](gcp.md#1-owner-inputs) describe the labels bucket and its grants.
 Keep endpoint credentials and database URLs outside `deploy/`.
-For installed databases, apply the migrations in [the cutover procedure](#credential-import-and-cutover) first.
+The [cutover procedure](#credential-import-and-cutover) describes credential import for databases with the current full schema.
 
 Set `WAMN_CONTROL_DATABASE_URL` to the control database URL for org `dkk`.
 The CLI publishes messages that remove cached permissions through the authorization broker.
@@ -105,13 +105,13 @@ done
 Before upgrading an installed environment, back up its system database and each project database.
 Keep the previous mounted credential maps in private files until the import succeeds.
 Stop the serving hosts before changing their credential reader.
-Apply pending system migrations first:
+The platform migration lists are empty. This command makes no changes to a current system database:
 
 ```bash
 wamn-ctl upgrade-schema --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --confirm
 ```
 
-Apply pending project migrations to every registered environment before the import:
+This command also makes no changes to a current project database:
 
 ```bash
 wamn-ctl upgrade-schema --system-database-url "$WAMN_SYSTEM_ADMIN_URL" \
@@ -119,7 +119,7 @@ wamn-ctl upgrade-schema --system-database-url "$WAMN_SYSTEM_ADMIN_URL" \
 ```
 
 Use the registered project database URL for each invocation.
-Project migrations retain package bindings and their org connection names for the upgrade importer.
+The catalog retains package bindings and their org connection names for the upgrade importer.
 Write each required non-secret connection through `connection write --file` before importing its credential.
 Use the deployment requests above for `rest-fixture` and `wms-labels`.
 Keep existing connection names when converting other installed bindings.
@@ -500,35 +500,11 @@ Use the environment's identity Deployment and require its readiness before issui
 
 ## Platform schema upgrades
 
-`wamn-ctl upgrade-schema` applies a platform schema change to an installed database.
-A platform schema change is a numbered file under `deploy/sql/migrations/system/` or `deploy/sql/migrations/project/`.
-Package migrations of an application are not platform migrations.
-
-Upgrade the system database before you apply an environment on a new platform version:
-
-```bash
-wamn-ctl upgrade-schema --system-database-url "$SYSTEM_ADMIN_URL"
-wamn-ctl upgrade-schema --system-database-url "$SYSTEM_ADMIN_URL" --confirm
-```
-
-You do not upgrade a project-environment database by hand.
-The package stage of `wamn-ctl env apply` applies the pending project files of its binary first, and a refusal stops the apply before any Kubernetes write.
-
-Without `--confirm`, the verb prints the pending files and changes nothing.
-One run applies the pending files in one transaction and records them in `registry.schema_migrations` or `platform.schema_migrations`.
-A failure leaves the database as it was.
-The verb refuses a recorded file that differs from the file of the binary, with `schema-migration-drift`.
-It runs system files as `wamn_system` and project files as the admin connection.
-
-Project migration `0037_package_owners.sql` creates package owner roles and transfers existing application objects, including history tables and synchronization functions.
-It preserves application and retention grants. The database owner retains platform objects.
-Apply this migration before direct package apply or upgrade qualification on an existing database.
-The project migration step of `env apply` runs it automatically.
-
-`provision-system` and `env apply` record every file in a fresh install, so a new target needs no upgrade run.
-A database installed before its record table existed takes `--baseline <ordinal>` on its first run only.
-The verb then records the files up to that ordinal without running them, and applies the rest in the same run.
-If a change breaks a running binary, stop that binary before the run.
+The full schema files under `deploy/sql/` own each platform schema and build fresh installations.
+The system and project migration lists stay empty until development is stable.
+`wamn-ctl upgrade-schema` makes no changes to a current database.
+The migration record tables and the verb remain available so real migrations can start again at 0001.
+Application package migrations retain their own streams.
 
 ## Package upgrades
 
@@ -567,7 +543,8 @@ Each SQL-bearing package must declare one application schema. Predecessor SQL pl
 A schema change makes predecessor SQL fail to plan and refuses qualification.
 Packages with no SQL need no application schema.
 
-Apply pending [platform schema migrations](#platform-schema-upgrades) before application upgrade, including the `catalog.package_upgrade_qualifications` carrier.
+The full schema files install the `catalog.package_upgrade_qualifications` carrier.
+The [platform migration lists](#platform-schema-upgrades) stay empty until development is stable.
 Keep the exact predecessor release available for recovery.
 `upgrade-environment` reads installed package artifacts from the environment's `registry` value plus `/packages`.
 It reads the application map from the sibling `.k` environment document for publication.

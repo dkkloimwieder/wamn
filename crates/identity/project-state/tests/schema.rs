@@ -68,7 +68,7 @@ fn wamn_app_privileges(table: &str) -> &'static str {
     match table {
         "user" | "role" | "user_role" | "permission" | "environment" | "external_system"
         | "connection" | "integration_allow" | "project_connection" | "number_sequence"
-        | "number_counter" | "setting" => "SELECT",
+        | "number_counter" | "setting" | "file" => "SELECT",
         "api_key"
         | "user_history"
         | "role_history"
@@ -81,7 +81,8 @@ fn wamn_app_privileges(table: &str) -> &'static str {
         | "integration_allow_history"
         | "project_connection_history"
         | "number_sequence_history"
-        | "setting_history" => "",
+        | "setting_history"
+        | "file_history" => "",
         // The write log: a claim, its read, its result, and the delete of a
         // refused two-step claim, and nothing else.
         "write_log" => "SELECT, INSERT, DELETE, UPDATE (result)",

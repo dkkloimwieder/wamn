@@ -802,7 +802,7 @@ fn credential_lookup_uses_the_login_scope_and_current_generation() {
 
 #[cfg(feature = "test-util")]
 #[test]
-fn file_connection_lookup_scopes_bindings_and_pins_on_fresh_and_upgrade() {
+fn file_connection_lookup_scopes_bindings_and_pins_on_fresh_install() {
     let _serialized = wamn_test_postgres::lock();
     let database = wamn_control_provision::test_database::system();
     let admin = database.url();
@@ -913,29 +913,9 @@ fn file_connection_lookup_scopes_bindings_and_pins_on_fresh_and_upgrade() {
         fresh.ends_with("wamn_system|s|t|{search_path=pg_catalog}\n"),
         "{fresh}"
     );
-    for upgrade in [false, true] {
-        if upgrade {
-            let migration = wamn_control_provision::schema_migrations::MigrationTarget::System
-                .migrations()
-                .iter()
-                .find(|migration| migration.ordinal() == 35)
-                .unwrap();
-            run_admin(
-                admin,
-                "apply file lookup migration as its owner",
-                &format!(
-                    "SET ROLE wamn_system; DROP FUNCTION registry.lookup_file_connection(text,text,text,text,text,text,bigint); {}",
-                    migration.sql
-                ),
-            );
-            let (ok, upgraded, error) = psql_tuples(admin, definition);
-            assert!(ok, "{error}");
-            assert_eq!(upgraded, fresh);
-        }
-        lookup(&reader, &binding, "files|1|old/|write");
-        lookup(&reader, &pin, "files|1|old/|write");
-        lookup(&reader, &binding_pin, "files|1|old/|write");
-    }
+    lookup(&reader, &binding, "files|1|old/|write");
+    lookup(&reader, &pin, "files|1|old/|write");
+    lookup(&reader, &binding_pin, "files|1|old/|write");
     let (ok, columns, error) = psql_tuples(
         &reader,
         &format!(

@@ -8,9 +8,6 @@ with platform. It is idempotent, so a lane that rebases its own new code over
 the rename runs it again, then cargo fmt. History stays as it is: see
 EXCLUDED and KEEP.
 
-Project migration 0024_platform_schema.sql renames the schema in an existing
-database.
-
 usage: tools/rename-app-system-to-platform [run|dry-run]
 """
 
@@ -33,9 +30,6 @@ KEEP = "rename-app-system: keep"
 # Paths that stay byte-identical: a path equal to an entry, or under an entry
 # that ends with "/".
 EXCLUDED = (
-    # Applied migrations, as installed databases recorded them, and the
-    # migration that renames the schema, which names the old name.
-    "deploy/sql/migrations/",
     # Applied one-off corrections.
     "deploy/sql/corrections/",
     # History documents.

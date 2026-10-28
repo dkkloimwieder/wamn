@@ -269,8 +269,7 @@ pub fn close_capture_gap_sql() -> &'static str {
 /// Read one project-env's CDC reader registration — what the reader service
 /// (l5i9.10) streams by. Params: `$1` org, `$2` project, `$3` env. Columns:
 /// `publication, slot, stream, replication_secret_name,
-/// replication_secret_namespace, enabled, schema` (`schema` is null on a row
-/// from before `migrations/system/0002_event_reader_schema.sql`).
+/// replication_secret_namespace, enabled, schema`.
 pub fn select_event_reader_sql() -> &'static str {
     "SELECT publication, slot, stream, \
             replication_secret_name, replication_secret_namespace, enabled, schema \

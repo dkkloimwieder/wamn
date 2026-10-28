@@ -183,8 +183,7 @@ $wamn_authority_bootstrap$;
 --
 -- The database is the org boundary (owner ruling of 2026-10-23 on
 -- wamn-83eth.6), so the table has no tenant_id, no row policy and no
--- tenant_key index. Project migration 0031 drops them from an installed
--- database.
+-- tenant_key index.
 -- ---------------------------------------------------------------------------
 CREATE TABLE platform."user" (
     id           uuid NOT NULL,
@@ -451,8 +450,6 @@ GRANT DELETE ON platform.write_log TO wamn_app;
 -- and project_id are text. A role scope names a role by name, and an
 -- application scope names an application by name.
 --
--- Project migration 0025 created these tables under the tenant floor, and
--- project migration 0031 drops the floor from an installed database.
 -- ---------------------------------------------------------------------------
 CREATE TABLE platform.external_system (
     id          uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -658,10 +655,6 @@ END $platform_configuration_history$;
 -- the plugin's statement admission refuses guest SQL that names these
 -- functions or writes a platform relation, so only the plugin calls them.
 --
--- CREATE OR REPLACE, so that project migration 0031 replaces the functions
--- of 0025, 0029 and 0030 in an installed database. 0031 carries this section
--- verbatim, and a test in crates/control/provision/src/schema_migrations.rs
--- compares the bytes.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION platform.bump_counter(target_sequence uuid, target_counter text,
                                                  target_key text)

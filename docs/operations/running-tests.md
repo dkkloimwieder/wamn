@@ -132,7 +132,9 @@ The application READMEs identify additional tests and binary owners.
 Use `tools/repo-lint dry-run` to see its exact commands without executing them.
 `tools/repo-lint run` runs the source guard, formatting, and Clippy across all three workspaces, and then the repository policy lints of the `repo-policy` binary.
 It reports each command and returns a nonzero status if any command fails.
-The policy lints reject duplicate numeric prefixes among `NNNN_[a-z0-9_]+.sql` files within each directory under `deploy/sql/migrations`.
+The full schema files own fresh platform installations.
+The system and project migration lists stay empty until development is stable.
+The upgrade no-op test keeps coverage of `upgrade-schema` on current databases.
 
 Before integration, the train runs `cargo run -p wamn-submodule-check -- main` with Git history and initialized submodules.
 Changed pins require a commit subject that names the submodule path or its last segment and says `bump` or `pin`, plus `revert` when the pin does not descend from main.
@@ -807,7 +809,7 @@ cargo test --locked --offline -p wamn-schema-introspection --test file_reference
 
 The file fixture declares read and write S3 bindings, including a binding for a store without a CDN host.
 Its document migration references `platform.file(id)`.
-The metadata tests cover grants, stamps, history, migration parity, connection disablement, and referenced deletion refusal.
+The metadata tests cover grants, stamps, history, connection disablement, and referenced deletion refusal.
 Registry tests use real scoped logins for `registry.lookup_file_connection`.
 They refuse unmapped logins, forged scope, disabled connections, and projects without enablement.
 They also read the recorded generation after a bucket and prefix change.

@@ -2815,7 +2815,7 @@ async fn apply_created_then_added(relation: &str) {
     std::fs::remove_dir_all(package).expect("remove created-then-added package fixture");
 }
 
-/// Application writers share no counter row, including after an installed upgrade.
+/// Application writers share no counter row.
 #[tokio::test]
 async fn model_versions_use_wal_without_counter_triggers() {
     let url = locked_database::database(wamn_test_postgres::database);
@@ -2825,29 +2825,6 @@ async fn model_versions_use_wal_without_counter_triggers() {
         fixture_root().with_file_name(format!("apply-package-wal-{}", std::process::id()));
     copy_base_fixture(&package);
     apply(&url, &package).await.expect("apply the base fixture");
-    // Model the retired schema and dependent application triggers on an installed database.
-    client
-        .batch_execute(
-            "CREATE SCHEMA wamn_cache;
-         CREATE TABLE wamn_cache.model_versions (version bigint);
-         CREATE FUNCTION wamn_cache.note_change() RETURNS trigger LANGUAGE plpgsql AS
-           $$ BEGIN RETURN NULL; END $$;
-         CREATE FUNCTION wamn_cache.bump_changed() RETURNS trigger LANGUAGE plpgsql AS
-           $$ BEGIN RETURN NULL; END $$;
-         CREATE TRIGGER wamn_cache_note AFTER INSERT OR UPDATE OR DELETE OR TRUNCATE
-           ON inventory.dock FOR EACH STATEMENT EXECUTE FUNCTION wamn_cache.note_change();
-         CREATE CONSTRAINT TRIGGER wamn_cache_bump AFTER INSERT OR UPDATE OR DELETE
-           ON inventory.dock DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
-           EXECUTE FUNCTION wamn_cache.bump_changed();",
-        )
-        .await
-        .expect("install retired counter dependencies");
-    client
-        .batch_execute(include_str!(
-            "../../../../deploy/sql/migrations/project/0021_remove_model_versions.sql"
-        ))
-        .await
-        .expect("remove the installed counter and triggers");
     apply(&url, &package)
         .await
         .expect("a package replay does not recreate counters");
@@ -2883,35 +2860,27 @@ async fn model_versions_use_wal_without_counter_triggers() {
 }
 
 #[tokio::test]
-async fn package_owner_migration_preserves_grants_and_excludes_platform_tables() {
+async fn fresh_package_owners_preserve_grants_and_exclude_platform_tables() {
     let url = locked_database::database(wamn_test_postgres::database);
     let client = connect(&url).await;
     install(&client).await;
+    let platform_owner: String = client
+        .query_one("SELECT pg_get_userbyid(relowner)::text FROM pg_class WHERE oid='platform.setting'::regclass", &[])
+        .await
+        .unwrap()
+        .get(0);
     let package =
-        fixture_root().with_file_name(format!("package-owner-migration-{}", std::process::id()));
+        fixture_root().with_file_name(format!("package-owner-fresh-{}", std::process::id()));
     copy_base_fixture_as(&package, "owner_migration", "inventory");
     set_audit_log_columns(&package, "panel", &["created_at"]);
     set_audit_log_retention(&package, "panel", "unlimited");
     apply(&url, &package).await.unwrap();
     let role = wamn_control_provision::package_owner_role("owner_migration");
-    // Recreate the installed ownership from before this change, with a live grant.
     client
-        .batch_execute(&format!(
-            "GRANT USAGE ON SCHEMA inventory TO wamn_app; \
-         GRANT SELECT (id) ON inventory.panel TO wamn_app; \
-         REASSIGN OWNED BY {role} TO wamn_db_owner; \
-         DROP OWNED BY {role}; DROP ROLE {role}; \
-         ALTER TABLE platform.setting OWNER TO wamn_db_owner;"
-        ))
+        .batch_execute("GRANT USAGE ON SCHEMA inventory TO wamn_app; GRANT SELECT (id) ON inventory.panel TO wamn_app;")
         .await
         .unwrap();
-    // Replay the owner changes with the current greenfield catalog key.
-    let migration =
-        include_str!("../../../../deploy/sql/migrations/project/0037_package_owners.sql")
-            .replace("tenant_id", "env_key");
-    client.batch_execute(&migration).await.unwrap();
-    client.batch_execute(&migration).await.unwrap();
-    // Reprovisioning uses the same identity as the numbered SQL migration.
+    // Reprovisioning preserves existing package grants and ownership.
     client
         .batch_execute(&wamn_control_provision::sql::ensure_package_owner_role_sql(
             "owner_migration",
@@ -2929,7 +2898,7 @@ async fn package_owner_migration_preserves_grants_and_excludes_platform_tables()
     assert_eq!(facts.get::<_, String>(1), role);
     assert!(facts.get::<_, bool>(2));
     assert_eq!(facts.get::<_, String>(3), role);
-    assert_eq!(facts.get::<_, String>(4), "wamn_db_owner");
+    assert_eq!(facts.get::<_, String>(4), platform_owner);
     let generated = client
         .query_one(
             "SELECT pg_get_userbyid(p.proowner)::text, pg_get_userbyid(c.relowner)::text \

@@ -371,28 +371,7 @@ async fn org_connection_materializes_once_per_environment() {
     let a = connect(database_a.url()).await;
     let b = connect(database_b.url()).await;
 
-    // Exercise the upgrade DDL as well as the fresh floors, on these same databases.
-    control
-        .batch_execute("SET ROLE wamn_system; DROP TABLE IF EXISTS registry.org_connections")
-        .await
-        .unwrap();
-    let migration = wamn_control_provision::schema_migrations::SYSTEM_MIGRATIONS
-        .iter()
-        .find(|m| m.ordinal() == 27)
-        .unwrap();
-    control
-        .batch_execute(&format!("BEGIN; {}; COMMIT", migration.sql))
-        .await
-        .unwrap();
-    b.batch_execute("ALTER TABLE catalog.connection_instances DROP COLUMN org_connection_name")
-        .await
-        .unwrap();
-    let migration = wamn_control_provision::schema_migrations::PROJECT_MIGRATIONS
-        .iter()
-        .find(|m| m.ordinal() == 23)
-        .unwrap();
-    b.batch_execute(migration.sql).await.unwrap();
-    control.batch_execute("SET app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'; INSERT INTO registry.orgs (id, placement_type) VALUES ('acme', 'dedicated'), ('other', 'dedicated')").await.unwrap();
+    control.batch_execute("SET ROLE wamn_system; SET app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'; INSERT INTO registry.orgs (id, placement_type) VALUES ('acme', 'dedicated'), ('other', 'dedicated')").await.unwrap();
 
     control.batch_execute("INSERT INTO registry.projects(org,id) VALUES ('acme','alpha'),('acme','beta'); INSERT INTO registry.env_policies(org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('acme','dev','{}',0,1,'1Gi','1','1Gi','image'); INSERT INTO registry.project_envs(org,project,env,secret_name,instance_suffix,policy_name) VALUES ('acme','alpha','dev','secret','aaaaaaaa','dev'),('acme','beta','dev','secret','bbbbbbbb','dev')").await.unwrap();
     let doc_a = document("alpha");

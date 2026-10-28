@@ -2,7 +2,6 @@
 //! Object transfer and HTTP exposure require the integrated native file routes.
 
 use tokio_postgres::error::SqlState;
-use wamn_control_provision::schema_migrations::MigrationTarget;
 
 #[path = "support/files.rs"]
 #[expect(
@@ -12,7 +11,7 @@ use wamn_control_provision::schema_migrations::MigrationTarget;
 mod files;
 
 #[test]
-fn file_fixture_declares_each_binding_mode_and_the_file_migration_is_registered() {
+fn file_fixture_declares_each_binding_mode() {
     wamn_schema_generator::PackageManifest::from_slice(files::PACKAGE.as_bytes())
         .expect("the file fixture uses the current package manifest");
     let package: serde_json::Value = serde_json::from_str(files::PACKAGE).unwrap();
@@ -33,15 +32,6 @@ fn file_fixture_declares_each_binding_mode_and_the_file_migration_is_registered(
     assert_eq!(package["connections"]["files"]["mode"], "write");
     assert_eq!(package["connections"]["files_read"]["mode"], "read");
     assert_eq!(package["connections"]["files_no_cdn"]["mode"], "write");
-    assert!(
-        MigrationTarget::Project
-            .migrations()
-            .iter()
-            .any(|migration| {
-                migration.ordinal() == 45
-                    && migration.relative_path == "migrations/project/0045_c4_files.sql"
-            })
-    );
 }
 
 #[tokio::test]
@@ -163,50 +153,6 @@ async fn disabling_a_connection_preserves_file_references_and_referenced_delete_
         )
         .await?;
     assert!(!privilege.get::<_, bool>(0));
-    Ok(())
-}
-
-#[tokio::test]
-async fn migrated_file_schema_and_grants_match_a_fresh_install() -> anyhow::Result<()> {
-    let fixture = files::fixture("file_upgrade").await?;
-    let shape = async || -> anyhow::Result<Vec<serde_json::Value>> {
-        let mut entries: Vec<serde_json::Value> = fixture.observer.query(
-            "SELECT to_jsonb(a) FROM (SELECT table_name,column_name,data_type,is_nullable,column_default \
-             FROM information_schema.columns WHERE table_schema='platform' \
-             AND table_name IN ('file','file_history') ORDER BY table_name,ordinal_position) a \
-             UNION ALL SELECT to_jsonb(g) FROM (SELECT table_name,grantee,privilege_type \
-             FROM information_schema.role_table_grants WHERE table_schema='platform' \
-             AND table_name IN ('file','file_history') ORDER BY table_name,grantee,privilege_type) g \
-             UNION ALL SELECT to_jsonb(t) FROM (SELECT c.relname,t.tgname,pg_get_triggerdef(t.oid) AS definition \
-             FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid \
-             WHERE t.tgrelid='platform.file'::regclass AND NOT t.tgisinternal ORDER BY t.tgname) t \
-             UNION ALL SELECT to_jsonb(k) FROM (SELECT conname,pg_get_constraintdef(oid) AS definition \
-             FROM pg_constraint WHERE conrelid IN ('platform.file'::regclass,'platform.file_history'::regclass)) k \
-             UNION ALL SELECT to_jsonb(p) FROM (SELECT table_name,column_name,grantee,privilege_type \
-             FROM information_schema.column_privileges WHERE table_schema='platform' \
-             AND table_name IN ('file','file_history')) p",
-            &[],
-        ).await?.iter().map(|row| row.get(0)).collect();
-        entries.sort_by_key(serde_json::Value::to_string);
-        Ok(entries)
-    };
-    let fresh = shape().await?;
-    fixture
-        .observer
-        .batch_execute(
-            "DROP TABLE file_fixture.document; DROP TABLE platform.file,platform.file_history",
-        )
-        .await?;
-    let migration = MigrationTarget::Project
-        .migrations()
-        .iter()
-        .find(|migration| migration.ordinal() == 45)
-        .expect("C4 project migration 0045");
-    fixture
-        .observer
-        .batch_execute(&format!("BEGIN; {} COMMIT", migration.sql))
-        .await?;
-    assert_eq!(shape().await?, fresh);
     Ok(())
 }
 

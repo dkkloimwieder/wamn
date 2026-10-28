@@ -63,12 +63,10 @@ The engine finishes active work and cleans up its owned processes.
 Rust decides package registration and wiring activation from stored facts within the caller's transaction.
 PostgreSQL enforces uniqueness, row isolation, immutable records, release sealing, and required locks.
 Package registration retains its lineage lock, exact retry behavior, and first timestamp.
-A fresh install creates the platform schema, including the control database.
-`wamn-ctl upgrade-schema` applies the pending numbered migrations to an installed database.
-One run is one transaction.
-It makes sure that the recorded files match the files of the binary.
-Then it applies the pending files in order and records them.
-Without `--confirm`, it prints the pending files and rolls back.
+A fresh install creates the platform schema, including the control database, from the full schema files.
+The system and project migration lists stay empty until development is stable.
+`wamn-ctl upgrade-schema` keeps its record tables and makes no changes to a current database.
+Real migrations can then start at 0001.
 
 The provisioning owner locks and compares environment identity before refreshing its `env_key` projection.
 That refresh clears the instance claim even when the suffix stays unchanged.

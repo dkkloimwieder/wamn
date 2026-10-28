@@ -69,7 +69,6 @@ Provisioning creates one `NOLOGIN` role per package ID before package migrations
 The role owns the package schemas, tables, sequences, and generated history functions.
 An overlay keeps its own role and uses the base relation owner for admitted changes to that relation.
 The database owner, `wamn_db_owner`, retains platform objects.
-Project migration `0037_package_owners.sql` transfers existing package objects and preserves their grants.
 Publication parses backfill SQL with the same statement checks as declared component SQL.
 
 Each managed relation, field, and constraint records its owning package.
@@ -925,9 +924,7 @@ The database separates environments. The platform account and configuration tabl
 Their foreign keys reference one column. `api_key` keys on `id`, and `key_hash` is unique in the database.
 `environment` uses a boolean `id` primary key constrained to `true`. Its default is `true`, so it holds at most one status row.
 No status row means active. The application login reads that row from its selected environment database.
-Project migration `0038_administration_database_boundary` removes the remaining tenant columns and rebuilds these keys.
-The migration preserves rows and history images. It removes `tenant_id` from history keys and gives environment history the key `{"id": true}`.
-A duplicate resulting key refuses the whole migration. Historical migrations stay unchanged.
+History keys contain no `tenant_id`. Environment history uses the key `{"id": true}`.
 The shared control, catalog, and run tables store the composed `org--project--env` key in `env_key`.
 The separate `environment` field stores the short name, such as `dev`.
 Qualification JSON, target JSON, catalog identities, run keys, and manifest scopes use `env_key`.
@@ -939,10 +936,6 @@ Auth invalidation keys still include the environment key, so equal principal IDs
 `platform.bump_counter(sequence, counter, key)` is `SECURITY DEFINER`. It inserts the counter row at 1 when the row is absent, returns the value, and increments it, under the row lock. It checks no tenant and reads no claim. It refuses an id that is not a sequence with `undefined_object`. The `wamn:postgres` plugin decides which sequences a caller reaches: it takes the application from host state and resolves the sequence id by that application and the sequence name. Component admission parses each statement a package declares with PostgreSQL's grammar (`pg_query`). It refuses a statement that names a counter function, writes a `platform.*` relation, or holds a `DO` block, a function body, a SQL `EXECUTE`, `SET`, `RESET`, `set_config`, `pg_logical_emit_message`, `query_to_xml*`, `cursor_to_xml*` or a `U&` escape (`crates/control/lib/src/component_admission/declared_sql.rs`). Publish checks the pushed descriptors again. Application guests run only declared statements, so only the plugin calls these functions. The host also runs a text guard (`reject_claim_mutation`) on every statement it runs: on declared statements, which covers a release admitted before the parsed check, and on the raw `wamn:postgres/client` interface, which only platform components import.
 `platform.assign_counter(sequence, counter, key)` is `SECURITY DEFINER` and checks the sequence id in the same way. It gives a `per=` counter one value for each key: under a transaction advisory lock on the key, it returns the value of the key row, or takes the next value of the `''` allocator row and inserts the key row with it. It refuses the `''` key with `invalid_parameter_value`.
 `platform.set_counter(sequence, counter, key, value)` is `SECURITY DEFINER` and checks the sequence id in the same way. It is the write of the `number_counter.set` host route: under the row lock, it inserts the counter row with the value or sets the value of the row. It refuses a value below 1 with `invalid_parameter_value`.
-Project migrations 0024 to 0031 bring an installed database to the schema of `app-schema.sql`.
-They rename the schema `app_system` to `platform` and the account tables to their singular names.
-They add the platform configuration tables and the three counter functions, and they drop the tenant floor of `user` and the configuration tables.
-`upgrade-schema` applies each migration once in one transaction. A fresh install records them as applied.
 The administration family role `wamn_administration` holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on `user`, `role`, `user_role`, `permission` and `environment`, and on the platform configuration tables `external_system`, `connection`, `project_connection`, `integration_allow`, `number_sequence` and `setting`.
 It holds no grant on `number_counter`: only `platform.bump_counter`, `platform.assign_counter` and `platform.set_counter` write it.
 It holds `INSERT` on the entry columns of their eleven history tables, `USAGE` on `wamn_history`, and `EXECUTE` on `wamn_history.row_image`. No entry column names a tenant, and administration holds no tenant derivation grant.
@@ -974,7 +967,7 @@ These tables keep stamps only, with no history table.
 Package application binds `wamn:apply-package`, including migrations, definition ownership, accepted qualifications, and stage progress.
 Environment staging, connection administration, local development bindings, and floor recording bind `wamn:provisioning`, as the platform configuration projection does.
 `connection_instances` and `workflows` keep their existing metadata and carry no record history trigger.
-Project migration `0036_retire_released_workflows` removes `wirings` and `event_registrations`; fresh databases create neither table.
+Fresh databases create neither `wirings` nor `event_registrations`.
 
 ### Files
 
@@ -1018,10 +1011,15 @@ Expose and unexpose are idempotent.
 If an object delete fails after the row deletion commits, the host logs the object key and does not retry.
 Collector follow-up belongs to `wamn-2wdsf.4`.
 
+The full schema files own the platform schemas and build fresh installations.
+The system and project migration lists stay empty until development is stable.
+The migration record tables and `upgrade-schema` remain available for real migrations that start at 0001.
+The verb makes no changes to a current database.
+
 ### System database
 
 The system database owns `registry.integrations`, the connector catalog, and `registry.target`, the deployment target identities.
-System migration `0029_integrations_and_target` installs both tables. A fresh install records the same migration as applied.
+The full system schema files install both tables.
 The catalog seeds `http`, `gcs`, and `s3`, each with `form = host` and `exclusive = false`.
 The target table stores `id`, unique `name`, `type` (`local` or `cloud`), `status`, and nullable `last_seen_at`.
 It seeds one active target named `cloud`, with no check-in time. Repeated schema upgrades create no additional seeds.
@@ -1031,10 +1029,9 @@ An environment stores its target identity on first apply. The target cannot chan
 The system database (`wamn_system`) stamps its identity authority relations.
 These relations are `identity.principals`, `identity.org_memberships`, `identity.org_roles`, `identity.project_roles`, `identity.project_env_memberships`, and `identity.pats`.
 Each relation carries the four stamp columns as `NOT NULL` with no default, and a static `wamn_record_history_stamp` trigger.
-System migration `0033_record_history_stamp` also stamps `registry.meta`, `orgs`, `env_policies`, `projects`, `project_envs`, `retired_project_envs`, `capture_gap`, and `generation_passwords`.
+The full system schema also stamps `registry.meta`, `orgs`, `env_policies`, `projects`, `project_envs`, `retired_project_envs`, `capture_gap`, and `generation_passwords`.
 It stamps `identity.session_keys`, `session_signing_state`, and `password_attempts` too.
-System migration `0034_control_record_history_stamp` stamps the control store relations `catalog.tenant_environments`, `catalog.authoring_command_audit`, `wamn_run.gate_reports`, and `wamn_authority.author_login_tenants`.
-Both migrations attribute existing rows to `wamn:provisioning` and keep each available row time, or use migration transaction time.
+The full control schema stamps the control store relations `catalog.tenant_environments`, `catalog.authoring_command_audit`, `wamn_run.gate_reports`, and `wamn_authority.author_login_tenants`.
 The system operations tables carry no stamps.
 In the system database, the actor is an `identity.principals` id.
 The system identity tables record the actor only. A control route binds `app.operation` to its sealed operation id, and no column stores it.
@@ -1186,7 +1183,6 @@ An admitted read-only call emits no causation message, so it does not invalidate
 The read uses the callable-HTTP connection and needs no application-table grant.
 The list reads this position before it runs the query, as [execution](execution.md) describes.
 A failed position read leaves the response without an ETag.
-Project migration `0021_remove_model_versions.sql` removes `wamn_cache`, its counter table, its functions, and their dependent application triggers.
 Fresh databases install none of these objects, and apply-package installs only the record history triggers.
 
 ## Canonical values and SQL names
@@ -1221,7 +1217,6 @@ Test database isolation has one definition in [running tests](../operations/runn
 ### Org connections and credentials
 
 The system database owns `registry.external_system` and `registry.connection`.
-System migration 0030 copies every `registry.org_connections` row and preserves the source rows.
 Each connection names one `registry.integrations` entry: `http`, `gcs`, or `s3`.
 The writer refuses an integration change or an external system with a different integration.
 The name of a connection and the name of an external system are their identity, fixed at creation.
@@ -1273,10 +1268,10 @@ The control role keeps its existing table grants. Connection administration uses
 These functions return only non-secret authority. The write function creates a service principal only with its connection and returns its id for `AuthDrops`.
 The upgrade import reads retained bindings through `catalog.connection_upgrade_bindings(text,text)`, without reading the catalog tables.
 Catalog bootstrap installs this function after its tables. Application schema installation does not require the catalog schema.
-Provisioning grants execution to `wamn_administration`, matching project migration 0042.
+Provisioning grants execution to `wamn_administration`.
 Each function is `SECURITY DEFINER`, is owned by `wamn_system`, and pins `search_path` to `pg_catalog`.
 PUBLIC holds no execute grant. Only the control or administration role receives the execute grant that it needs.
-Migration and provisioning install the same grants. Registry reads and writes remain unavailable through direct control table grants.
+Registry reads and writes remain unavailable through direct control table grants.
 
 A PAT-authenticated service can start an invoker workflow with its own held role.
 The host derives that role from current grants, with the existing single-role or held-admin selection rule.

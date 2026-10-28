@@ -495,19 +495,13 @@ async fn converge_env_key_identity(
 ) -> anyhow::Result<EnvKeyIdentityOutcome> {
     anyhow::ensure!(!env_key.is_empty(), "tenant must not be empty");
     let mut outcome = EnvKeyIdentityOutcome::default();
-    // A database installed before project migration 0024 holds the platform
-    // schema under its old name. The rename runs first, or app-schema.sql
-    // would install a second, empty platform schema beside it.
-    if crate::upgrade_schema::holds_legacy_project_schema(&*client).await? {
-        anyhow::ensure!(
-            apply,
-            "legacy-project-schema: this database holds the platform schema under its name \
-             before project migration 0024_platform_schema.sql; run upgrade-schema on it first"
-        );
-        crate::upgrade_schema::upgrade_project(client)
-            .await
-            .context("apply the pending project migrations before the tenant identity rows")?;
-    }
+    // The retired rename cannot move a legacy schema to the current name.
+    // Refuse before installing a second platform schema beside it.
+    anyhow::ensure!(
+        !crate::upgrade_schema::holds_legacy_project_schema(&*client).await?,
+        "legacy-project-schema: this database holds the platform schema under its name \
+         from a legacy installation; install the current full schema first"
+    );
     let app_schema_present: bool = client
         .query_one(
             "SELECT EXISTS ( SELECT FROM pg_namespace WHERE nspname = 'platform' )",
