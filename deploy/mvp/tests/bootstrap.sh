@@ -207,7 +207,7 @@ write_record() {
 
 [[ -z $management ]] || write_record management-author "$management" 1111111111111111 project-author wamn-management-author
 [[ ${MOCK_CTL_FAIL_AFTER_MANAGEMENT:-0} == 0 ]] || exit 1
-[[ -z $operator ]] || write_record operator "$operator" 2222222222222222 operator wamn-operator
+[[ -z $operator ]] || write_record operator "$operator" 2222222222222222 admin wamn-operator
 echo provisioned
 MOCK
 
@@ -294,7 +294,7 @@ assert_no_pending() {
 
 # Stable exact metadata with a canonical future UTC expiry skips both PATs.
 record management-author aaaaaaaaaaaaaaaa 2099-01-01T00:00:00Z project-author wamn-management-author
-record operator bbbbbbbbbbbbbbbb 2099-01-01T00:00:00Z operator wamn-operator
+record operator bbbbbbbbbbbbbbbb 2099-01-01T00:00:00Z admin wamn-operator
 output=$(run_bootstrap 2>&1)
 assert_log 'issue:none'
 assert_no_secret_output "$output"
@@ -316,7 +316,7 @@ fi
 # WAMN_NAMESPACE overrides the wamn-system default used above.
 TEST_NAMESPACE=tenant-space
 record management-author aaaaaaaaaaaaaaaa 2099-01-01T00:00:00Z project-author wamn-management-author
-record operator bbbbbbbbbbbbbbbb 2099-01-01T00:00:00Z operator wamn-operator
+record operator bbbbbbbbbbbbbbbb 2099-01-01T00:00:00Z admin wamn-operator
 output=$(run_bootstrap 2>&1)
 assert_log 'issue:none'
 unset TEST_NAMESPACE
@@ -333,21 +333,21 @@ assert_no_secret_output "$output"
 
 # Semantically impossible UTC expiry rotates instead of comparing lexically.
 record management-author aaaaaaaaaaaaaaaa 2099-01-01T00:00:00Z project-author wamn-management-author
-record operator cccccccccccccccc 2099-02-29T00:00:00Z operator wamn-operator
+record operator cccccccccccccccc 2099-02-29T00:00:00Z admin wamn-operator
 output=$(run_bootstrap 2>&1)
 assert_log $'issue:operator\ndecorate:operator\nstage:operator\napply:operator\nrevoke:cccccccccccccccc\nclear:operator'
 assert_no_pending wamn-pat-operator-acme--billing--dev
 
 # Wrong stable identity metadata rotates only that credential.
 record management-author dddddddddddddddd 2099-01-01T00:00:00Z project-author wrong-management-author
-record operator bbbbbbbbbbbbbbbb 2099-01-01T00:00:00Z operator wamn-operator
+record operator bbbbbbbbbbbbbbbb 2099-01-01T00:00:00Z admin wamn-operator
 output=$(run_bootstrap 2>&1)
 assert_log $'issue:management-author\ndecorate:management-author\nstage:management-author\napply:management-author\nrevoke:dddddddddddddddd\nclear:management-author'
 
 # Failure before the ambiguous apply cannot install new token material, so the
 # EXIT cleanup revokes that newly issued PAT and leaves the old Secret untouched.
 record management-author aaaaaaaaaaaaaaaa 2099-01-01T00:00:00Z project-author wamn-management-author
-record operator 6767676767676767 2000-01-01T00:00:00Z operator wamn-operator
+record operator 6767676767676767 2000-01-01T00:00:00Z admin wamn-operator
 if MOCK_STAGE_FAIL=operator run_bootstrap >/dev/null 2>&1; then
     echo 'expected pre-apply staging failure' >&2
     exit 1
@@ -358,7 +358,7 @@ assert_no_pending wamn-pat-operator-acme--billing--dev
 # Non-installing apply failure is still indeterminate: retain new PAT + markers;
 # rerun observes the old Secret, safely revokes new, then retries rotation.
 record management-author aaaaaaaaaaaaaaaa 2099-01-01T00:00:00Z project-author wamn-management-author
-record operator eeeeeeeeeeeeeeee 2000-01-01T00:00:00Z operator wamn-operator
+record operator eeeeeeeeeeeeeeee 2000-01-01T00:00:00Z admin wamn-operator
 if MOCK_APPLY_FAIL=operator run_bootstrap >/dev/null 2>&1; then
     echo 'expected apply failure' >&2
     exit 1
@@ -370,7 +370,7 @@ assert_log $'revoke:2222222222222222\nclear:operator\nissue:operator\ndecorate:o
 
 # Ambiguous apply copies the desired Secret then fails. Rerun recognizes the
 # installed valid replacement and revokes only the old fallback.
-record operator ffffffffffffffff 2000-01-01T00:00:00Z operator wamn-operator
+record operator ffffffffffffffff 2000-01-01T00:00:00Z admin wamn-operator
 if MOCK_APPLY_AMBIGUOUS=operator run_bootstrap >/dev/null 2>&1; then
     echo 'expected ambiguous apply failure' >&2
     exit 1
@@ -382,7 +382,7 @@ assert_log $'revoke:ffffffffffffffff\nclear:operator\nissue:none'
 assert_no_pending wamn-pat-operator-acme--billing--dev
 
 # Reread failure has the same installed-new recovery and converges on rerun.
-record operator abababababababab 2000-01-01T00:00:00Z operator wamn-operator
+record operator abababababababab 2000-01-01T00:00:00Z admin wamn-operator
 if MOCK_REREAD_FAIL=operator run_bootstrap >/dev/null 2>&1; then
     echo 'expected reread failure' >&2
     exit 1
@@ -392,7 +392,7 @@ output=$(run_bootstrap 2>&1)
 assert_log $'revoke:abababababababab\nclear:operator\nissue:none'
 
 # Revoke failure retains both markers; rerun retries before accepting steady state.
-record operator cdcdcdcdcdcdcdcd 2000-01-01T00:00:00Z operator wamn-operator
+record operator cdcdcdcdcdcdcdcd 2000-01-01T00:00:00Z admin wamn-operator
 if MOCK_REVOKE_FAIL_PREFIX=cdcdcdcdcdcdcdcd run_bootstrap >/dev/null 2>&1; then
     echo 'expected revoke failure' >&2
     exit 1
@@ -402,7 +402,7 @@ output=$(run_bootstrap 2>&1)
 assert_log $'revoke:cdcdcdcdcdcdcdcd\nclear:operator\nissue:none'
 
 # Cleanup failure after successful revoke repeats idempotent revoke, then clears.
-record operator dededededededede 2000-01-01T00:00:00Z operator wamn-operator
+record operator dededededededede 2000-01-01T00:00:00Z admin wamn-operator
 if MOCK_CLEAR_FAIL=operator run_bootstrap >/dev/null 2>&1; then
     echo 'expected pending-marker cleanup failure' >&2
     exit 1
@@ -414,7 +414,7 @@ assert_log $'revoke:dededededededede\nclear:operator\nissue:none'
 # Global preflight validates both credentials before mutating pending management.
 record management-author 3333333333333333 2099-01-01T00:00:00Z project-author \
     wamn-management-author 3333333333333333 aaaaaaaaaaaaaaaa present
-record operator bbbbbbbbbbbbbbbb 2099-01-01T00:00:00Z operator \
+record operator bbbbbbbbbbbbbbbb 2099-01-01T00:00:00Z admin \
     wamn-operator malformed bbbbbbbbbbbbbbbb present
 if run_bootstrap >/dev/null 2>&1; then
     echo 'expected global corrupt-metadata refusal' >&2
@@ -425,7 +425,7 @@ assert_log ''
 # An expired installed replacement retains the old fallback. Failed issuance
 # performs no revoke; success installs a fresh replacement before old revoke.
 record management-author aaaaaaaaaaaaaaaa 2099-01-01T00:00:00Z project-author wamn-management-author
-record operator 4444444444444444 2000-01-01T00:00:00Z operator \
+record operator 4444444444444444 2000-01-01T00:00:00Z admin \
     wamn-operator 4444444444444444 5555555555555555 present
 if MOCK_CTL_FAIL_BEFORE_WRITE=1 run_bootstrap >/dev/null 2>&1; then
     echo 'expected fresh replacement issuance failure' >&2
@@ -447,7 +447,7 @@ assert_log $'issue:both\nrevoke:1111111111111111'
 
 # Missing/malformed prior revoke metadata fails before issuance or mutation.
 record management-author aaaaaaaaaaaaaaaa 2099-01-01T00:00:00Z project-author wamn-management-author
-record operator not-a-prefix 2000-01-01T00:00:00Z operator wamn-operator
+record operator not-a-prefix 2000-01-01T00:00:00Z admin wamn-operator
 if run_bootstrap >/dev/null 2>&1; then
     echo 'expected malformed prior prefix refusal' >&2
     exit 1

@@ -278,12 +278,14 @@ management_name=wamn-pat-management-author-$org--$project--$env_name
 management_subject=wamn-management-author-$org--$project--$env_name
 operator_name=wamn-pat-operator-$org--$project--$env_name
 operator_subject=wamn-operator-$org--$project--$env_name
+# pat_secrets.rs::OPERATOR assigns this role. Its tests read this line.
+operator_role=admin
 
 # Global read-only preflight: neither credential may mutate until both current
 # Secrets and both recovery-marker sets have been inspected and classified.
 inspect_secret management-author "$management_name" "$management_subject" project-author
 capture_management
-inspect_secret operator "$operator_name" "$operator_subject" operator
+inspect_secret operator "$operator_name" "$operator_subject" "$operator_role"
 capture_operator
 if [[ $management_state == corrupt || $operator_state == corrupt ]]; then
     echo "bootstrap: corrupt PAT Secret or recovery metadata; refusing all mutation" >&2
@@ -298,7 +300,7 @@ reconcile_recovery "$operator_state" "$operator_name" "$operator_prefix" \
 # Re-read after recovery actions to establish the issuance inputs.
 inspect_secret management-author "$management_name" "$management_subject" project-author
 capture_management
-inspect_secret operator "$operator_name" "$operator_subject" operator
+inspect_secret operator "$operator_name" "$operator_subject" "$operator_role"
 capture_operator
 for state in "$management_state" "$operator_state"; do
     case $state in
@@ -393,7 +395,7 @@ stage_recovery() {
             inspect_secret "$purpose" "$secret_name" "$management_subject" project-author
             ;;
         operator)
-            inspect_secret "$purpose" "$secret_name" "$operator_subject" operator
+            inspect_secret "$purpose" "$secret_name" "$operator_subject" "$operator_role"
             ;;
     esac
     if [[ $state == absent ]]; then
@@ -447,5 +449,5 @@ if [[ $management_state != valid ]]; then
 fi
 if [[ $operator_state != valid ]]; then
     apply_verify_revoke operator "$operator_path" "$operator_name" \
-        "$operator_subject" operator "$operator_state" "$operator_old_prefix" operator_new_prefix
+        "$operator_subject" "$operator_role" "$operator_state" "$operator_old_prefix" operator_new_prefix
 fi

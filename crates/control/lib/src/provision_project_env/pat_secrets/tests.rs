@@ -5,6 +5,19 @@ use wamn_runtime::auth_cache::{
     test_util::{nats, until, watched},
 };
 
+#[test]
+fn bootstrap_checks_the_role_the_operator_secret_carries() {
+    let script = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy/mvp/bootstrap.sh"),
+    )
+    .unwrap();
+    let roles: Vec<&str> = script
+        .lines()
+        .filter_map(|line| line.strip_prefix("operator_role="))
+        .collect();
+    assert_eq!(roles, [OPERATOR.role]);
+}
+
 const PRINCIPAL: &str = "a792950e-150c-4c6e-8000-000000000004";
 const TOKEN: &str = "cached-identity";
 
