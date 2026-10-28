@@ -546,12 +546,35 @@ With many changed rows, the page limit bounds each call to 100 root keys.
 So each call does at most one restricted run over 100 keys.
 If PostgreSQL pushes the key predicate into the statement, the restricted run costs about as much as the query for those keys.
 
-The first query to measure is `receiving.load_receipt_screen` over the view `receiving.receipt_screen_line`, the order lines with their order and item.
+The measured query is `receiving.load_open_receipt_lines` over the view `receiving.receipt_screen_line`, the order lines with their order and item.
 [Authored views](authored-views.md#receipt-screen) defines that view.
-Collect these numbers:
+The read returns every line of every open order, so it is the read-heavy case.
+The test `open_receipt_lines_feed_measurement` in [`receiving_data_access.rs`](../../apps/wamn_receiving/tests/receiving_data_access.rs) seeds 10,000 lines.
+It times the prepared `changes` statement against PostgreSQL 18, without HTTP.
+Each row is the median and the maximum of 7 runs.
+The first call returns one page of at most 100 keys.
+The drain repeats the call until the feed is complete.
+The measurement ran on 2026-10-28 with the other lanes idle and a load average of about 2.4.
 
-- `changes` latency with 0, 10, and 1,000 changed rows, on lines, on orders, and on items.
-- The plan (`EXPLAIN (ANALYZE, BUFFERS)`) of the restricted run, to show whether the key predicate reaches the joins.
+| Changed table | Changed rows | First call median (max) | Drain median (max) |
+| --- | --- | --- | --- |
+| `purchase_order_line` | 0 | 1.37 ms (2.28) | 1.38 ms (2.29) |
+| `purchase_order_line` | 10 | 1.55 ms (1.76) | 1.57 ms (1.79) |
+| `purchase_order_line` | 1,000 | 3.95 ms (5.09) | 37.5 ms (44.1) |
+| `purchase_order` | 0 | 0.94 ms (1.22) | 0.95 ms (1.23) |
+| `purchase_order` | 10 | 1.81 ms (1.87) | 1.84 ms (1.92) |
+| `purchase_order` | 1,000 | 5.13 ms (5.69) | 48.5 ms (49.8) |
+| `item` | 0 | 0.99 ms (1.12) | 0.99 ms (1.13) |
+| `item` | 10 | 1.18 ms (1.33) | 1.19 ms (1.36) |
+| `item` | 1,000 | 5.49 ms (6.91) | 52.3 ms (58.2) |
+
+The plans (`EXPLAIN (ANALYZE, BUFFERS)`) confirm the inference.
+The affected-ids statement reads each history table through its `transaction_id` index.
+It maps an order change through the `purchase_order_id` index of the lines, and an item change through the `item_id` index.
+It runs in 0.05 to 0.17 ms for 0 or 10 changed rows, and in 2.1 to 3.9 ms for 1,000.
+The restricted run reads the lines through their primary key with `id = ANY(...)`, and it joins the order and the item through their primary keys.
+So the key predicate reaches the joins.
+It runs in 0.08 to 0.09 ms for 10 keys, and in 2.8 to 3.2 ms for a page of 100 keys.
 
 
 ## Browser store and live queries
