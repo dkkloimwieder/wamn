@@ -44,8 +44,8 @@
 //!    backlog it can claim finishes the run and exits with code 0 before
 //!    `terminationGracePeriodSeconds`, and leaves queued the run of another
 //!    release that is ahead of it in the queue (R20 (1), (2)). The run is a
-//!    standard run whose lease expired, so the draining host claims it again
-//!    and runs it to a terminal status.
+//!    standard manual workflow in the HTTP environment. Its expired lease
+//!    permits reclaim, and its unprivileged role produces a terminal failure.
 //! 9. release = none: no host pod remains, the declared instance stays
 //!    enabled, no binding remains.
 //! 10. delete with a run pinned to a release with no pod refuses.
@@ -1569,122 +1569,6 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     }.await;
     run.collect("4 HTTP connections and triggers", result);
     run.retain_failure_diagnostics("http").await?;
-    http_task.abort();
-    drop(http_project);
-    environment::delete::delete(&platform, &http.triple(), true).await?;
-    Box::pin(integration::exercise(
-        run,
-        repository,
-        &platform,
-        &package_registry,
-        &set,
-        &admin_url,
-        "rest_connector",
-    ))
-    .await
-    .with_context(|| "4 rest_connector setup or cleanup")?;
-    Box::pin(integration::exercise(
-        run,
-        repository,
-        &platform,
-        &package_registry,
-        &set,
-        &admin_url,
-        "netsuite",
-    ))
-    .await
-    .with_context(|| "4 netsuite setup or cleanup")?;
-    system_task.abort();
-
-    // 5. A12: a second environment in the same namespace.
-    let qa = document("qa", "qa.orders.example");
-    apply(&qa, "qa-first").await?;
-    let qa_name = release_name(ORG, PROJECT, "qa")?;
-    let result = async {
-    let mut names = std::collections::BTreeMap::<String, Vec<String>>::new();
-    for kind in [
-        "deployments",
-        "services",
-        "workloaddeployments",
-        "secrets",
-        "configmaps",
-    ] {
-        for object in run
-            .run("kubectl", &["-n", NAMESPACE, "get", kind, "-o", "name"])
-            .await?
-            .lines()
-        {
-            for (env, release) in [("dev", &name), ("qa", &qa_name)] {
-                let coordinate = format!("{ORG}--{PROJECT}--{env}");
-                if object.contains(release.as_str()) || object.contains(&coordinate) {
-                    names
-                        .entry(env.to_owned())
-                        .or_default()
-                        .push(object.to_owned());
-                }
-            }
-        }
-    }
-    let dev_names = names.get("dev").cloned().unwrap_or_default();
-    let qa_names = names.get("qa").cloned().unwrap_or_default();
-    let shared: Vec<&String> = dev_names
-        .iter()
-        .filter(|name| qa_names.contains(name))
-        .collect();
-    let mut mounts = serde_json::Map::new();
-    let mut own = true;
-    for (env, release) in [("dev", &name), ("qa", &qa_name)] {
-        let pods = run
-            .json(
-                "kubectl",
-                &[
-                    "-n",
-                    NAMESPACE,
-                    "get",
-                    "pods",
-                    "-l",
-                    &format!("wasmcloud.com/hostgroup={release}"),
-                    "-o",
-                    "json",
-                ],
-            )
-            .await?;
-        let other = if env == "dev" { "qa" } else { "dev" };
-        let referenced: Vec<String> = pods["items"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .flat_map(|pod| {
-                let text = pod["spec"].to_string();
-                text.match_indices(&format!("--{other}"))
-                    .map(|(at, _)| text[at.saturating_sub(40)..at + 4].to_owned())
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        own &= referenced.is_empty();
-        mounts.insert(
-            env.to_owned(),
-            json!({"other environment references": referenced}),
-        );
-    }
-    run.pass(
-        "A12 two environments in one namespace",
-        &format!("kubectl -n {NAMESPACE} get deployments,services,workloaddeployments,secrets,configmaps -o name; kubectl get pods -l wasmcloud.com/hostgroup=<release> -o json"),
-        json!({"dev": dev_names, "qa": qa_names, "shared": shared, "mounts": mounts,
-            "review": "Shared in the namespace, by design: the operator release's TLS Secrets \
-                (wasmcloud-runtime-tls, wasmcloud-data-tls, the CA), which every host mounts by \
-                fixed name (R6); the platform ServiceAccount wamn-host, which every host runs as; the registry Secret apply-registry of this \
-                test. Every environment Secret is <family prefix><org>--<project>--<env>, every \
-                chart object is named after r-<slug>-<hash>."}),
-        !dev_names.is_empty() && !qa_names.is_empty() && shared.is_empty() && own,
-    );
-
-    Ok(())
-    }.await;
-    run.collect("5 / A12 environment isolation", result);
-
-    // The checks of wamn-snz0.4: rollback, release none, the host's one
-    // shutdown budget, and delete.
     let digest_b = push_manifest_bytes(
         &manifest_b,
         &format!("{local}/wamn/releases"),
@@ -1697,104 +1581,12 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     .digest
     .as_str()
     .to_owned();
-    let dev_triple = Triple::new(ORG, PROJECT, "dev");
-    let qa_triple = Triple::new(ORG, PROJECT, "qa");
-    let project_database = async |env: &str| -> anyhow::Result<(String, String)> {
-        let (system, task) = connect(&system_url).await?;
-        let suffix: String = system
-            .query_one(
-                "SELECT instance_suffix FROM registry.project_envs \
-                  WHERE org = $1 AND project = $2 AND env = $3",
-                &[&ORG, &PROJECT, &env],
-            )
-            .await?
-            .get(0);
-        task.abort();
-        let database =
-            wamn_control_provision::project_env_database_name(ORG, PROJECT, env, &suffix);
-        let url = format!("postgresql://postgres:{password}@127.0.0.1:{port}/{database}");
-        Ok((database, url))
-    };
 
     let result = async {
-    // 6. R8: apply B, then rollback. The live set is A again, the route host
-    // and the connections are unchanged, and no `helm rollback` ran: every
-    // revision is an apply's.
-    let mut dev_b = shown.clone();
-    dev_b.release = DeclaredRelease::Digest(digest_b.clone());
-    apply(&dev_b, "dev-b").await?;
-    let after_b = run.live_digests(&name).await?;
-    // A rollback renders the host group as an apply does, so it takes the
-    // event host group the dev applies wrote. Without it the dev host has no
-    // events binding, and its materializer cannot start.
-    let mut events_platform = platform.clone();
-    events_platform.host_group = Some(rollback_host_group(&work));
-    let rolled =
-        Box::pin(environment::rollback::rollback(&events_platform, &dev_triple, "kind check")).await?;
-    let after_rollback = run.live_digests(&name).await?;
-    let shown_after = environment::show::show(&platform, &dev_triple).await?;
-    let history = run
-        .json(
-            "helm",
-            &[
-                "-n", NAMESPACE, "history", &name, "--max", "50", "-o", "json",
-            ],
-        )
-        .await?;
-    let descriptions: Vec<String> = history
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|entry| entry["description"].as_str().map(str::to_owned))
-        .collect();
-    let no_helm_rollback = descriptions
-        .iter()
-        .all(|description| !description.starts_with("Rollback to"));
-    run.pass(
-        "rollback is an apply of the previous intended release",
-        &format!("wamn-ctl env rollback {dev_triple} --reason 'kind check'; helm -n {NAMESPACE} history {name}"),
-        json!({"after_b": after_b, "after_rollback": after_rollback, "plan": rolled.plan,
-            "descriptions": descriptions, "shown_before": shown.to_kcl(), "shown_after": shown_after.to_kcl()}),
-        after_b == [digest_b.clone()]
-            && after_rollback == [digest.clone()]
-            && shown_after == shown
-            && no_helm_rollback
-            && descriptions
-                .last()
-                .is_some_and(|description| description.starts_with("rollback by")),
-    );
-
-    Ok(())
-    }.await;
-    run.collect("6 rollback to previous release", result);
-
-    let result = async {
-        // 7. R8 (3): one retained revision refuses and writes nothing.
-        let qa_before = run.revisions(&qa_name).await?;
-        let refused = Box::pin(environment::rollback::rollback(
-            &platform,
-            &qa_triple,
-            "kind check",
-        ))
-        .await;
-        let qa_after = run.revisions(&qa_name).await?;
-        let message = refused.as_ref().err().map(|error| format!("{error:#}"));
-        run.pass(
-            "rollback with one retained revision refuses",
-            &format!("wamn-ctl env rollback {qa_triple} --reason 'kind check'"),
-            json!({"error": message, "revisions": [qa_before, qa_after]}),
-            message.as_deref().is_some_and(|message| {
-                message.contains(environment::rollback::NO_RETAINED_PRIOR_RELEASE)
-            }) && qa_before == qa_after,
-        );
-
-        Ok(())
-    }
-    .await;
-    run.collect("7 rollback refusal", result);
-
-    let (_, dev_url) = project_database("dev").await?;
-    let (project, project_task) = connect(&dev_url).await?;
+    let name = &http_name;
+    let env_key = http_env_key.clone();
+    let project = &http_project;
+    // The run rows below are stamped, as the dev client binds its actor.
     project
         .execute(
             "SELECT set_config('app.user_id', $1, false)",
@@ -1803,15 +1595,15 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
                 .to_string()],
         )
         .await?;
-    let env_key = wamn_control_registry::project_env_key(ORG, PROJECT, "dev");
-    let result = async {
+    let digest = &http_digest;
     // 8. host_exits_before_its_grace_period: a host pod with a pinned backlog
     // it can claim finishes the run and exits with code 0 before its grace
     // period (R20 (2)). The run turns claimable ten seconds after it is
-    // seeded, once the pod is draining. The manual workflow is authored
-    // against H's real device, but this run pins A, which lacks that node.
-    // Reclaim resolves the workflow and terminalizes the release mismatch
-    // without fetching A's fake component. A run of release B,
+    // seeded, once the pod is draining. Use the HTTP environment: its
+    // connection requirements retain the callable-HTTP credential needed to
+    // refresh the queued caller before workflow resolution. The manual device
+    // workflow executes with a role that lacks its operation permission, so
+    // the host records a terminal failure without invoking the guest. A run of release B,
     // claimable and ahead of it in the queue, stays queued: the draining host
     // claims no run of another release (R20 (1), (2)).
     let (system, system_task) = connect(&system_url).await?;
@@ -1824,16 +1616,12 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         )
         .await?;
     system_task.abort();
-    apply(&shown, "dev-short-drain").await?;
-    // A has no descriptor operations, so no workflow can gate against it.
-    // Cache H without deploying it, then use the normal authoring path.
+    apply(&http, "http-short-drain").await?;
     let (drain_release, drain_digest) =
-        wamn_catalog::ServingManifest::from_canonical_bytes(&manifest_h)?;
-    environment::stage::write_release(&dev_url, &env_key, drain_digest.as_str(), &drain_release)
-        .await?;
+        wamn_catalog::ServingManifest::from_canonical_bytes(&manifest_http)?;
     let device = drain_release.components.iter()
         .find(|component| component.descriptor.component == "device")
-        .context("H carries the real device")?;
+        .context("the HTTP release carries the real device")?;
     let drain_workflow: wamn_catalog::WiringDocument = serde_json::from_value(json!({
         "format-version":"0.1", "wiring-id":"drain-claimable", "version":1,
         "entry":"device", "nodes":{"device":{
@@ -1845,11 +1633,11 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     integration::enable_trigger(
         &integration::WorkflowEnvironment {
             system_url: &platform.system_database_url,
-            project_url: &dev_url,
-            scope: &dev_triple,
+            project_url: &http_project_url,
+            scope: &http.triple(),
             env_key: &env_key,
             digest: drain_digest.as_str(),
-            applications: &shown.applications,
+            applications: &http.applications,
             auth: &auth,
         },
         PACKAGE,
@@ -1862,10 +1650,8 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     let drain_hash = drain_workflow.wiring_hash();
     let drain_nodes = json!({"device":device.descriptor.component_digest}).to_string();
     let drain_principal = wamn_project_state::workflow_user_id().to_string();
-    // The new drain bound rolls the host pod, and both pods carry release A,
-    // so apply's live set is A before the old pod is gone. Run 5 deleted the
-    // old pod, already draining with no backlog, and read the run before it
-    // turned claimable. Seed and delete only once the one pod is the new one.
+    // Both the old and new pods carry the HTTP release. Wait for the old
+    // pod to disappear, so only the pod that we delete can claim the backlog.
     let deadline = Instant::now() + Duration::from_secs(180);
     let pods = loop {
         let pods = run
@@ -1893,17 +1679,27 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         }
         ensure!(
             Instant::now() < deadline,
-            "the dev host group did not settle on one pod with the 30-second drain bound: {}",
+            "the HTTP host group did not settle on one pod with the 30-second drain bound: {}",
             items.len()
         );
         tokio::time::sleep(Duration::from_secs(2)).await;
     };
+    // The other-release run needs release B in this environment's catalog.
+    let (other_release, other_digest) =
+        wamn_catalog::ServingManifest::from_canonical_bytes(&manifest_b)?;
+    environment::stage::write_release(
+        &http_project_url,
+        &env_key,
+        other_digest.as_str(),
+        &other_release,
+    )
+    .await?;
     project
         .execute(
             "INSERT INTO wamn_run.runs \
                (env_key, run_id, flow_id, flow_version, package_id, manifest_digest, environment, \
                 wiring_id, wiring_version, status, trigger_source, input_json, service_principal_id) \
-             VALUES ($1, 'drain-other-release', 'orders', 1, $2, $3, 'dev', 'orders', 1, \
+             VALUES ($1, 'drain-other-release', 'orders', 1, $2, $3, 'http', 'orders', 1, \
                      'dispatched', 'automation', '{}', '00000000-0000-0000-0000-000000000001')",
             &[&env_key, &PACKAGE, &digest_b],
         )
@@ -1922,7 +1718,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
                 wiring_id, wiring_version, wiring_hash, status, trigger_source, input_json, \
                 durability_class, execution_principal_id, execution_role, invoked_by, \
                 invoked_by_user_id, node_digests_json) \
-             VALUES ($1, 'drain-claimable', $2, $3, 'dev', 'drain-claimable', 1, $4, \
+             VALUES ($1, 'drain-claimable', $2, $3, 'http', 'drain-claimable', 1, $4, \
                      'running', 'manual', '{}', 'standard', $5::text::uuid, 'drain', 'manual', \
                      $5::text::uuid, $6::text::jsonb)",
             &[&env_key, &PACKAGE, &digest, &drain_hash.as_str(), &drain_principal, &drain_nodes],
@@ -1939,7 +1735,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         .await?;
     let pod = pods["items"][0]["metadata"]["name"]
         .as_str()
-        .context("a dev host pod")?
+        .context("an HTTP host pod")?
         .to_owned();
     let grace = pods["items"][0]["spec"]["terminationGracePeriodSeconds"]
         .as_u64()
@@ -2105,6 +1901,230 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     Ok(())
     }.await;
     run.collect("8 host drain", result);
+    run.retain_failure_diagnostics("http").await?;
+    http_task.abort();
+    drop(http_project);
+    environment::delete::delete(&platform, &http.triple(), true).await?;
+    Box::pin(integration::exercise(
+        run,
+        repository,
+        &platform,
+        &package_registry,
+        &set,
+        &admin_url,
+        "rest_connector",
+    ))
+    .await
+    .with_context(|| "4 rest_connector setup or cleanup")?;
+    Box::pin(integration::exercise(
+        run,
+        repository,
+        &platform,
+        &package_registry,
+        &set,
+        &admin_url,
+        "netsuite",
+    ))
+    .await
+    .with_context(|| "4 netsuite setup or cleanup")?;
+    system_task.abort();
+
+    // 5. A12: a second environment in the same namespace.
+    let qa = document("qa", "qa.orders.example");
+    apply(&qa, "qa-first").await?;
+    let qa_name = release_name(ORG, PROJECT, "qa")?;
+    let result = async {
+    let mut names = std::collections::BTreeMap::<String, Vec<String>>::new();
+    for kind in [
+        "deployments",
+        "services",
+        "workloaddeployments",
+        "secrets",
+        "configmaps",
+    ] {
+        for object in run
+            .run("kubectl", &["-n", NAMESPACE, "get", kind, "-o", "name"])
+            .await?
+            .lines()
+        {
+            for (env, release) in [("dev", &name), ("qa", &qa_name)] {
+                let coordinate = format!("{ORG}--{PROJECT}--{env}");
+                if object.contains(release.as_str()) || object.contains(&coordinate) {
+                    names
+                        .entry(env.to_owned())
+                        .or_default()
+                        .push(object.to_owned());
+                }
+            }
+        }
+    }
+    let dev_names = names.get("dev").cloned().unwrap_or_default();
+    let qa_names = names.get("qa").cloned().unwrap_or_default();
+    let shared: Vec<&String> = dev_names
+        .iter()
+        .filter(|name| qa_names.contains(name))
+        .collect();
+    let mut mounts = serde_json::Map::new();
+    let mut own = true;
+    for (env, release) in [("dev", &name), ("qa", &qa_name)] {
+        let pods = run
+            .json(
+                "kubectl",
+                &[
+                    "-n",
+                    NAMESPACE,
+                    "get",
+                    "pods",
+                    "-l",
+                    &format!("wasmcloud.com/hostgroup={release}"),
+                    "-o",
+                    "json",
+                ],
+            )
+            .await?;
+        let other = if env == "dev" { "qa" } else { "dev" };
+        let referenced: Vec<String> = pods["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|pod| {
+                let text = pod["spec"].to_string();
+                text.match_indices(&format!("--{other}"))
+                    .map(|(at, _)| text[at.saturating_sub(40)..at + 4].to_owned())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        own &= referenced.is_empty();
+        mounts.insert(
+            env.to_owned(),
+            json!({"other environment references": referenced}),
+        );
+    }
+    run.pass(
+        "A12 two environments in one namespace",
+        &format!("kubectl -n {NAMESPACE} get deployments,services,workloaddeployments,secrets,configmaps -o name; kubectl get pods -l wasmcloud.com/hostgroup=<release> -o json"),
+        json!({"dev": dev_names, "qa": qa_names, "shared": shared, "mounts": mounts,
+            "review": "Shared in the namespace, by design: the operator release's TLS Secrets \
+                (wasmcloud-runtime-tls, wasmcloud-data-tls, the CA), which every host mounts by \
+                fixed name (R6); the platform ServiceAccount wamn-host, which every host runs as; the registry Secret apply-registry of this \
+                test. Every environment Secret is <family prefix><org>--<project>--<env>, every \
+                chart object is named after r-<slug>-<hash>."}),
+        !dev_names.is_empty() && !qa_names.is_empty() && shared.is_empty() && own,
+    );
+
+    Ok(())
+    }.await;
+    run.collect("5 / A12 environment isolation", result);
+
+    // The checks of wamn-snz0.4: rollback, release none, the host's one
+    // shutdown budget, and delete.
+    let dev_triple = Triple::new(ORG, PROJECT, "dev");
+    let qa_triple = Triple::new(ORG, PROJECT, "qa");
+    let project_database = async |env: &str| -> anyhow::Result<(String, String)> {
+        let (system, task) = connect(&system_url).await?;
+        let suffix: String = system
+            .query_one(
+                "SELECT instance_suffix FROM registry.project_envs \
+                  WHERE org = $1 AND project = $2 AND env = $3",
+                &[&ORG, &PROJECT, &env],
+            )
+            .await?
+            .get(0);
+        task.abort();
+        let database =
+            wamn_control_provision::project_env_database_name(ORG, PROJECT, env, &suffix);
+        let url = format!("postgresql://postgres:{password}@127.0.0.1:{port}/{database}");
+        Ok((database, url))
+    };
+
+    let result = async {
+    // 6. R8: apply B, then rollback. The live set is A again, the route host
+    // and the connections are unchanged, and no `helm rollback` ran: every
+    // revision is an apply's.
+    let mut dev_b = shown.clone();
+    dev_b.release = DeclaredRelease::Digest(digest_b.clone());
+    apply(&dev_b, "dev-b").await?;
+    let after_b = run.live_digests(&name).await?;
+    // A rollback renders the host group as an apply does, so it takes the
+    // event host group the dev applies wrote. Without it the dev host has no
+    // events binding, and its materializer cannot start.
+    let mut events_platform = platform.clone();
+    events_platform.host_group = Some(rollback_host_group(&work));
+    let rolled =
+        Box::pin(environment::rollback::rollback(&events_platform, &dev_triple, "kind check")).await?;
+    let after_rollback = run.live_digests(&name).await?;
+    let shown_after = environment::show::show(&platform, &dev_triple).await?;
+    let history = run
+        .json(
+            "helm",
+            &[
+                "-n", NAMESPACE, "history", &name, "--max", "50", "-o", "json",
+            ],
+        )
+        .await?;
+    let descriptions: Vec<String> = history
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry["description"].as_str().map(str::to_owned))
+        .collect();
+    let no_helm_rollback = descriptions
+        .iter()
+        .all(|description| !description.starts_with("Rollback to"));
+    run.pass(
+        "rollback is an apply of the previous intended release",
+        &format!("wamn-ctl env rollback {dev_triple} --reason 'kind check'; helm -n {NAMESPACE} history {name}"),
+        json!({"after_b": after_b, "after_rollback": after_rollback, "plan": rolled.plan,
+            "descriptions": descriptions, "shown_before": shown.to_kcl(), "shown_after": shown_after.to_kcl()}),
+        after_b == [digest_b.clone()]
+            && after_rollback == [digest.clone()]
+            && shown_after == shown
+            && no_helm_rollback
+            && descriptions
+                .last()
+                .is_some_and(|description| description.starts_with("rollback by")),
+    );
+
+    Ok(())
+    }.await;
+    run.collect("6 rollback to previous release", result);
+
+    let result = async {
+        // 7. R8 (3): one retained revision refuses and writes nothing.
+        let qa_before = run.revisions(&qa_name).await?;
+        let refused = Box::pin(environment::rollback::rollback(
+            &platform,
+            &qa_triple,
+            "kind check",
+        ))
+        .await;
+        let qa_after = run.revisions(&qa_name).await?;
+        let message = refused.as_ref().err().map(|error| format!("{error:#}"));
+        run.pass(
+            "rollback with one retained revision refuses",
+            &format!("wamn-ctl env rollback {qa_triple} --reason 'kind check'"),
+            json!({"error": message, "revisions": [qa_before, qa_after]}),
+            message.as_deref().is_some_and(|message| {
+                message.contains(environment::rollback::NO_RETAINED_PRIOR_RELEASE)
+            }) && qa_before == qa_after,
+        );
+
+        Ok(())
+    }
+    .await;
+    run.collect("7 rollback refusal", result);
+
+    let (_, dev_url) = project_database("dev").await?;
+    let (project, project_task) = connect(&dev_url).await?;
+    project
+        .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string()],
+        )
+        .await?;
+    let env_key = wamn_control_registry::project_env_key(ORG, PROJECT, "dev");
 
     // The run that check 10 finds stranded: pinned to A and never claimable.
     project
