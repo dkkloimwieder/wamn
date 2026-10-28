@@ -538,14 +538,6 @@ async fn run_plane_reconcile_live() {
     drop_database(&su, &cli_database).await;
 }
 
-/// Run the row-security assertions independently under the database process lock.
-#[tokio::test]
-async fn environment_policy_row_security_live() {
-    let url = locked_database::database(wamn_test_postgres::database);
-    let su = connect(&url).await;
-    environment_policy_row_security_leg(&su, &url).await;
-}
-
 /// A table owner remains subject to `FORCE ROW LEVEL SECURITY`. Letting that
 /// role reconciliation would hide tenant history, so refuse before even a
 /// dry-run observation can claim completeness.

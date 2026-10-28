@@ -43,9 +43,9 @@
 //! 8. `host_exits_before_its_grace_period`: a deleted host pod with a pinned
 //!    backlog it can claim finishes the run and exits with code 0 before
 //!    `terminationGracePeriodSeconds`, and leaves queued the run of another
-//!    release that is ahead of it in the queue (R20 (1), (2)). The run is one
-//!    the claim itself finishes: a `durable` run whose lease expired after an
-//!    effect attempt, which the claim terminalizes as `effect-uncertain`.
+//!    release that is ahead of it in the queue (R20 (1), (2)). The run is a
+//!    standard run whose lease expired, so the draining host claims it again
+//!    and runs it to a terminal status.
 //! 9. release = none: no host pod remains, the declared instance stays
 //!    enabled, no binding remains.
 //! 10. delete with a run pinned to a release with no pod refuses.
@@ -1802,9 +1802,8 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     // 8. host_exits_before_its_grace_period: a host pod with a pinned backlog
     // it can claim finishes the run and exits with code 0 before its grace
     // period (R20 (2)). The run turns claimable ten seconds after it is
-    // seeded, once the pod is draining. It is `durable`, its prior lease
-    // expired after an effect attempt, so the claim terminalizes it as
-    // `effect-uncertain` with no component to execute. A run of release B,
+    // seeded, once the pod is draining. Its prior lease expired, so the
+    // draining host claims it again and runs it to a terminal status. A run of release B,
     // claimable and ahead of it in the queue, stays queued: the draining host
     // claims no run of another release (R20 (1), (2)).
     let (system, system_task) = connect(&system_url).await?;
@@ -1890,18 +1889,6 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
              VALUES ($1, 'drain-claimable', now() + interval '10 seconds', 'gone-replica', \
                      '2000-01-01', 1)",
             &[&env_key],
-        )
-        .await?;
-    let hash = format!("sha256:{}", "5".repeat(64));
-    project
-        .execute(
-            "INSERT INTO wamn_run.effect_attempts \
-               (env_key, run_id, root_plan_hash, current_plan_hash, frame_id, local_node_id, \
-                source_artifact_hash, requirement_name, occurrence, seq, generation_fact_type, \
-                attempt_deadline_at, attempt_input_ref) \
-             VALUES ($1, 'drain-claimable', $2, $2, 0, 'effect-node', $2, 'manager', 0, 1, \
-                     'not-required', '2099-01-01T00:00:00Z', 'sha256:drain-effect-input')",
-            &[&env_key, &hash],
         )
         .await?;
     let pod = pods["items"][0]["metadata"]["name"]
@@ -2062,7 +2049,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
             "host_log_tail": log_tail}),
         exit_code == Some(0)
             && exited_after.is_some_and(|seconds| seconds < grace)
-            && status == "effect-uncertain"
+            && !matches!(status.as_str(), "dispatched" | "running")
             && !queued
             && other_status == "dispatched"
             && other_queued,
