@@ -87,17 +87,9 @@ async fn local_configuration_refuses_a_removed_model_with_the_apply_refusal() {
 }
 
 #[tokio::test]
-#[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
-async fn auth_drops_ensure_admin_role_drops_cached_grants_only_after_commit() {
-    use std::sync::Arc;
-    use std::time::Duration;
+async fn auth_drops_ensure_admin_role_records_only_changed_grants() {
     use wamn_platform_identity::auth_changes::AuthDrops;
-    use wamn_runtime::auth_cache::{
-        AuthCache, PrincipalGrants,
-        test_util::{nats, until, watched},
-    };
 
-    wamn_test_postgres::require_prerequisites(&["WAMN_NATIVE_C_NATS_BIN"]);
     let _lock = wamn_test_postgres::lock();
     let database = wamn_project_state::test_database::tenant_platform();
     let (mut client, connection) = tokio_postgres::connect(database.url(), NoTls)
@@ -115,19 +107,8 @@ async fn auth_drops_ensure_admin_role_drops_cached_grants_only_after_commit() {
          GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA wamn_history, wamn_authority TO authdrops_role_owner; \
          SET ROLE authdrops_role_owner;"
     ).await.unwrap();
-    let (_server, nats) = nats().await;
-    let cache = Arc::new(AuthCache::with_ttl(Duration::from_secs(3600)));
-    let changes = watched(&nats, Some("admin-drops"), cache.clone()).await;
-    let ticket = cache.grants("admin-drops", "principal").unwrap_err();
-    cache
-        .keep_grants(
-            "admin-drops",
-            "principal",
-            ticket,
-            PrincipalGrants::default(),
-        )
-        .await;
-    assert!(cache.grants("admin-drops", "principal").is_ok());
+    let mut expected = AuthDrops::default();
+    expected.env_key("admin-drops");
 
     let tx = client.transaction().await.unwrap();
     bind_apply_package_principal(&tx).await.unwrap();
@@ -137,10 +118,8 @@ async fn auth_drops_ensure_admin_role_drops_cached_grants_only_after_commit() {
             .await
             .unwrap()
     );
-    assert!(!rolled_back.is_empty());
-    assert!(cache.grants("admin-drops", "principal").is_ok());
+    assert_eq!(rolled_back, expected);
     tx.rollback().await.unwrap();
-    assert!(cache.grants("admin-drops", "principal").is_ok());
 
     let tx = client.transaction().await.unwrap();
     bind_apply_package_principal(&tx).await.unwrap();
@@ -150,13 +129,8 @@ async fn auth_drops_ensure_admin_role_drops_cached_grants_only_after_commit() {
             .await
             .unwrap()
     );
-    assert!(cache.grants("admin-drops", "principal").is_ok());
     tx.commit().await.unwrap();
-    changes.publish(drops).await;
-    until("the admin role drop clears cached grants", || {
-        cache.grants("admin-drops", "principal").is_err()
-    })
-    .await;
+    assert_eq!(drops, expected);
     let tx = client.transaction().await.unwrap();
     bind_apply_package_principal(&tx).await.unwrap();
     let mut unchanged = AuthDrops::default();

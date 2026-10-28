@@ -170,17 +170,7 @@ async fn mint_pat(
         "service principal {subject:?} is disabled"
     );
     let transaction = provisioning_transaction(client).await?;
-    let mut drops = AuthDrops::default();
-    assign_project_role(
-        &transaction,
-        principal.id(),
-        &triple.org,
-        &triple.project,
-        purpose.role,
-        &mut drops,
-    )
-    .await
-    .with_context(|| format!("assign {} role", purpose.role))?;
+    let drops = assign_pat_role(&transaction, &principal, triple, purpose).await?;
     transaction
         .commit()
         .await
@@ -202,6 +192,26 @@ async fn mint_pat(
     );
 
     Ok((principal, issued))
+}
+
+async fn assign_pat_role(
+    transaction: &tokio_postgres::Transaction<'_>,
+    principal: &Principal,
+    triple: &Triple,
+    purpose: PatPurpose,
+) -> anyhow::Result<AuthDrops> {
+    let mut drops = AuthDrops::default();
+    assign_project_role(
+        transaction,
+        principal.id(),
+        &triple.org,
+        &triple.project,
+        purpose.role,
+        &mut drops,
+    )
+    .await
+    .with_context(|| format!("assign {} role", purpose.role))?;
+    Ok(drops)
 }
 
 /// Mint a management-author PAT for a recorded environment without writing it.
@@ -240,11 +250,21 @@ pub(crate) async fn resolve_or_create_service(
     display_name: &str,
     changes: &AuthChanges,
 ) -> anyhow::Result<Principal> {
+    let (principal, drops) = resolve_or_create_service_drops(client, subject, display_name).await?;
+    changes.publish(drops).await;
+    Ok(principal)
+}
+
+async fn resolve_or_create_service_drops(
+    client: &mut Client,
+    subject: &str,
+    display_name: &str,
+) -> anyhow::Result<(Principal, AuthDrops)> {
     if let Some(principal) = resolve_subject(&*client, PrincipalType::Service, subject)
         .await
         .context("resolve service principal")?
     {
-        return Ok(principal);
+        return Ok((principal, AuthDrops::default()));
     }
 
     let transaction = provisioning_transaction(client).await?;
@@ -255,8 +275,7 @@ pub(crate) async fn resolve_or_create_service(
                 .commit()
                 .await
                 .context("commit service principal")?;
-            changes.publish(drops).await;
-            Ok(principal)
+            Ok((principal, drops))
         }
         Err(error) if error.error_type() == IdentityErrorType::Conflict => {
             transaction
@@ -267,6 +286,7 @@ pub(crate) async fn resolve_or_create_service(
                 .await
                 .context("resolve concurrently created service principal")?
                 .context("service principal conflict was not resolvable")
+                .map(|principal| (principal, AuthDrops::default()))
         }
         Err(error) => Err(error).context("create service principal"),
     }

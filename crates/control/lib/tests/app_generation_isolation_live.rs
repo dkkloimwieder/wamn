@@ -1,7 +1,7 @@
 //! Live SESSION gate for the App (guest) family's tenant isolation
 //! (`wamn-dkzr`, from the `wamn-0h0g.12.185` acceptance).
 //!
-//! The App family already has a GRANT-level arm. `provisioning_order_live`
+//! The App family already has a GRANT-level arm. `workload_generation_live`
 //! reads `pg_database.datacl` through `aclexplode` and shows which databases
 //! carry a direct `CONNECT` entry for a role. That is a read of what the server
 //! was configured to hand out. It is not a refusal, and it runs on a superuser

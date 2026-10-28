@@ -18,6 +18,10 @@ path = "tests/create_user_live.rs"
 required-features = ["ops"]
 
 [[test]]
+name = "workload_generation_live"
+path = "tests/workload_generation_live.rs"
+
+[[test]]
 name = "netsuite_publication"
 path = "../../../apps/netsuite/tests/publication.rs"
 

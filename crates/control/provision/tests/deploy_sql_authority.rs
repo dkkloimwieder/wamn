@@ -24,8 +24,8 @@
 //! against level-2 spec tests 2, 3, 4, 5, 7, 8, 10, and 16.
 //! The `platform` history case (`wamn-emtx.21`) tests spec test 20 for the
 //! six history tables of `deploy/sql/app-schema.sql`.
-//! Every case starts a PostgreSQL server of its own, because every case
-//! rebuilds cluster-wide roles and the `wamn` database.
+//! The cases share one PostgreSQL server and hold its process lock.
+//! Each case rebuilds cluster-wide roles and owns a fresh `wamn` database.
 
 use std::process::Command;
 
@@ -158,16 +158,32 @@ fn the_platform_grain_family_set_is_pinned_and_not_derived() {
     );
 }
 
-/// Start a PostgreSQL server that one case owns, and return it with its
-/// superuser URL.
-fn owned_server() -> (wamn_test_postgres::OwnedPostgres, String) {
-    let server = wamn_test_postgres::start(&[]).expect("start a test PostgreSQL server");
-    let admin = server
-        .database("postgres")
-        .expect("the test server has its postgres database")
-        .url()
-        .to_owned();
-    (server, admin)
+struct TestDatabase {
+    database: wamn_test_postgres::Database,
+    _lock: wamn_test_postgres::ProcessLock,
+}
+
+impl Drop for TestDatabase {
+    fn drop(&mut self) {
+        self.database
+            .execute(&["DROP DATABASE IF EXISTS wamn WITH (FORCE)"])
+            .expect("drop the case's project database");
+    }
+}
+
+/// Give one case a fresh database on the shared server under its process lock.
+fn shared_server() -> (TestDatabase, String) {
+    let lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    let mut admin = url::Url::parse(database.url()).expect("parse the test database URL");
+    admin.set_path("/postgres");
+    (
+        TestDatabase {
+            database,
+            _lock: lock,
+        },
+        admin.to_string(),
+    )
 }
 
 fn psql(url: &str, database: Option<&str>, script: &str) -> String {
@@ -279,12 +295,12 @@ fn reset(admin_url: &str) {
 /// tenant and only its own.
 #[test]
 fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
-    let (_server, admin) = owned_server();
+    let (_database, admin) = shared_server();
 
     // HERMETIC, and it has to be: `postgres-init.sql` carries a bare
     // `CREATE DATABASE wamn`, and a run that found the database already
     // populated would be asserting against LAST run's schema, not this build's.
-    // Roles are CLUSTER-wide, so this gate OWNS its server.
+    // Roles are cluster-wide, so this case holds the shared server lock.
     reset(&admin);
     // Seed the retired shared-login posture so the REAL init artifact must
     // converge it. The candidate is test-owned and deliberately unrelated to
@@ -463,7 +479,7 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
 /// from `pg_auth_members`, not assumed from the builder's text.
 #[test]
 fn the_platform_arm_admits_every_platform_family_from_the_server() {
-    let (_server, admin) = owned_server();
+    let (_database, admin) = shared_server();
 
     reset(&admin);
     apply(&admin, POSTGRES_INIT);
@@ -755,7 +771,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
 /// following a `reset`, which is the second install arm below.
 #[test]
 fn the_two_scenario_author_emitters_agree_at_zero_memberships() {
-    let (_server, admin) = owned_server();
+    let (_database, admin) = shared_server();
 
     let memberships = |label: &str| -> String {
         let existing = psql(
@@ -837,7 +853,7 @@ fn the_two_scenario_author_emitters_agree_at_zero_memberships() {
 fn the_audit_retention_role_comes_from_the_catalog_schema_alone_on_postgres() {
     const ROLE: &str = "wamn_audit_retention";
     const SYSTEM_DATABASE: &str = "wamn_floor_system";
-    let (_server, admin) = owned_server();
+    let (_database, admin) = shared_server();
     let shape = |url: &str| {
         psql(
             url,
@@ -936,7 +952,7 @@ fn the_audit_retention_role_comes_from_the_catalog_schema_alone_on_postgres() {
 #[test]
 fn the_catalog_and_app_schemas_install_under_a_superuser_not_named_postgres() {
     const PASSWORD: &str = "floor-installer-probe";
-    let (_server, admin) = owned_server();
+    let (_database, admin) = shared_server();
 
     reset(&admin);
     apply(&admin, POSTGRES_INIT);
@@ -1062,7 +1078,7 @@ fn as_guest(db_url: &str, guest: &str, actor: &str, body: &str) {
 /// Spec tests 1, 3, the no-op half of 8, and 9, over the production guest.
 #[test]
 fn the_stamp_trigger_stamps_guest_writes_on_postgres() {
-    let (_server, admin) = owned_server();
+    let (_database, admin) = shared_server();
     let (db_url, guest) = record_history_fixture(&admin);
 
     // THE GRANTS AND THE FUNCTION SHAPE, from the server catalogs.
@@ -1233,7 +1249,7 @@ fn refuses_without_actor(statement: &str) -> String {
 /// The database half of spec test 4 and spec test 12.
 #[test]
 fn the_stamp_trigger_refuses_a_write_without_an_actor_on_postgres() {
-    let (_server, admin) = owned_server();
+    let (_database, admin) = shared_server();
     let (db_url, guest) = record_history_fixture(&admin);
     as_guest(
         &db_url,
@@ -1391,7 +1407,7 @@ fn apply_refused(url: &str, sql: &str) -> String {
 /// 64-byte refusal, from the server catalogs.
 #[test]
 fn the_history_table_function_creates_one_fixed_shape_on_postgres() {
-    let (_server, admin) = owned_server();
+    let (_database, admin) = shared_server();
     let (db_url, guest) = record_history_log_fixture(&admin);
 
     let functions = psql(
@@ -1585,7 +1601,7 @@ fn the_wamn_app_history_grants_come_from_the_grant_file_alone_on_postgres() {
         "timestamptz_image wamn_app EXECUTE",
         "wamn_history wamn_app USAGE",
     ];
-    let (_server, admin) = owned_server();
+    let (_database, admin) = shared_server();
     let joined = |grants: &[&str]| {
         let mut grants = grants.to_vec();
         grants.sort_unstable();
@@ -1711,7 +1727,7 @@ fn the_wamn_app_history_grants_come_from_the_grant_file_alone_on_postgres() {
 /// the transaction id, over the production guest.
 #[test]
 fn the_log_trigger_writes_one_entry_per_row_change_on_postgres() {
-    let (_server, admin) = owned_server();
+    let (_database, admin) = shared_server();
     let (db_url, guest) = record_history_log_fixture(&admin);
 
     // An insert writes the full row in after and '{}' in before. The row image
@@ -1867,7 +1883,7 @@ fn the_log_trigger_writes_one_entry_per_row_change_on_postgres() {
 /// primary key, over the production guest.
 #[test]
 fn the_log_trigger_refuses_and_rolls_back_the_write_on_postgres() {
-    let (_server, admin) = owned_server();
+    let (_database, admin) = shared_server();
     let (db_url, guest) = record_history_log_fixture(&admin);
     apply(
         &db_url,
@@ -2105,7 +2121,7 @@ fn finish(session: std::process::Child) {
 /// competitor leaves no entry.
 #[test]
 fn the_log_trigger_serializes_concurrent_changes_on_postgres() {
-    let (_server, admin) = owned_server();
+    let (_database, admin) = shared_server();
     let (db_url, guest) = record_history_log_fixture(&admin);
     // A third actor inserts, so each update moves updated_by.
     apply(
@@ -2327,7 +2343,7 @@ fn the_log_trigger_serializes_concurrent_changes_on_postgres() {
 /// no-op keeps every stamp.
 #[test]
 fn a_numeric_scale_only_update_moves_the_stamps_on_postgres() {
-    let (_server, admin) = owned_server();
+    let (_database, admin) = shared_server();
     let (db_url, guest) = record_history_fixture(&admin);
     apply(
         &db_url,
@@ -2390,7 +2406,7 @@ fn a_numeric_scale_only_update_moves_the_stamps_on_postgres() {
 /// trigger, so only the amount changes.
 #[test]
 fn a_numeric_scale_only_update_writes_a_log_entry_on_postgres() {
-    let (_server, admin) = owned_server();
+    let (_database, admin) = shared_server();
     let (db_url, guest) = record_history_fixture(&admin);
     apply(
         &db_url,
@@ -2571,7 +2587,7 @@ fn image_columns(image: &str) -> Vec<(String, String)> {
 fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
     wamn_schema_generator::receipt::check_current(&wamn_fixture_package::package_root())
         .unwrap_or_else(|error| panic!("{error:#}"));
-    let (_server, admin) = owned_server();
+    let (_database, admin) = shared_server();
     let (db_url, guest) = record_history_fixture(&admin);
     apply(
         &db_url,
@@ -2814,7 +2830,7 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
 /// role its history table.
 #[test]
 fn the_platform_history_stays_out_of_audit_retention_reach_on_postgres() {
-    let (_server, admin) = owned_server();
+    let (_database, admin) = shared_server();
     let (db_url, guest) = record_history_log_fixture(&admin);
     apply(
         &db_url,
