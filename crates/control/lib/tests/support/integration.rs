@@ -598,20 +598,6 @@ pub async fn exercise(
         dup_window_secs: 120,
     });
     let mut document = fixture_document(connector);
-    super::org_bindings::bind(
-        &platform,
-        &mut document,
-        connector,
-        "upstream",
-        if connector == "netsuite" {
-            "netsuite"
-        } else {
-            "rest-fixture"
-        },
-        "http",
-        json!({"primary-authority":http_connection::ORIGIN, "tls-verification":"disabled"}),
-    )
-    .await?;
     // The preceding edge paging assertion used the same route. A fresh process
     // gives this independent flow its own page-two refusal and request log.
     run.run(
@@ -642,6 +628,22 @@ pub async fn exercise(
     // Platform install provisions with release=none before it renders the
     // session audience from the environment's allocated instance suffix.
     environment::apply(&platform, &file).await?;
+    // Bind only after the connection-free bootstrap. The release below
+    // supplies the upstream declaration for the first bound apply.
+    super::org_bindings::bind(
+        &platform,
+        &mut document,
+        connector,
+        "upstream",
+        if connector == "netsuite" {
+            "netsuite"
+        } else {
+            "rest-fixture"
+        },
+        "http",
+        json!({"primary-authority":http_connection::ORIGIN, "tls-verification":"disabled"}),
+    )
+    .await?;
 
     let (system, system_task) = connect(&platform.system_database_url).await?;
     let suffix: String = system.query_one(

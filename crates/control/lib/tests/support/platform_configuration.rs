@@ -145,8 +145,7 @@ pub fn expected(project: &str) -> Vec<Value> {
     ]
 }
 
-/// Every row of the six tables that `client` can read, without the two
-/// timestamps, in the order of [`expected`].
+/// The fixture caller's rows, without timestamps, in the order of [`expected`].
 pub async fn read_back(client: &tokio_postgres::Client) -> anyhow::Result<Vec<Value>> {
     let mut rows = Vec::new();
     for table in TABLES {
@@ -154,9 +153,9 @@ pub async fn read_back(client: &tokio_postgres::Client) -> anyhow::Result<Vec<Va
             .query(
                 &format!(
                     "SELECT (to_jsonb(t) - 'created_at' - 'updated_at')::text \
-                       FROM platform.{table} AS t ORDER BY 1"
+                       FROM platform.{table} AS t WHERE created_by = $1::text::uuid ORDER BY 1"
                 ),
-                &[],
+                &[&CALLER],
             )
             .await?
         {
@@ -167,7 +166,7 @@ pub async fn read_back(client: &tokio_postgres::Client) -> anyhow::Result<Vec<Va
     Ok(rows)
 }
 
-/// The history entries of the six tables that `client` can read, each as
+/// The fixture caller's history entries, each as
 /// `<table> <type> <operation> <changed_by>`, in the order of [`TABLES`] and
 /// then of position.
 pub async fn history(client: &tokio_postgres::Client) -> anyhow::Result<Vec<String>> {
@@ -177,9 +176,9 @@ pub async fn history(client: &tokio_postgres::Client) -> anyhow::Result<Vec<Stri
             .query(
                 &format!(
                     "SELECT type || ' ' || operation || ' ' || changed_by::text \
-                       FROM platform.{table}_history ORDER BY position"
+                       FROM platform.{table}_history WHERE changed_by = $1::text::uuid ORDER BY position"
                 ),
-                &[],
+                &[&CALLER],
             )
             .await?
         {

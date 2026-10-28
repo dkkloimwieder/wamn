@@ -9,7 +9,9 @@ use super::integration::WorkflowEnvironment;
 use super::{Run, http_connection};
 
 pub async fn seed(project: &tokio_postgres::Client) -> anyhow::Result<()> {
-    project.batch_execute("INSERT INTO rest_consumer_fixture.item (key,name) VALUES ('1','First'),('2','Second'),('3','Third'),('4','Fourth')").await?;
+    project.batch_execute("INSERT INTO rest_consumer_fixture.item (key,name,external_system_id,external_id)
+        SELECT key,name,(SELECT external_system_id FROM platform.connection WHERE name='netsuite'),key
+        FROM (VALUES ('1','First'),('2','Second'),('3','Third'),('4','Fourth')) AS items(key,name)").await?;
     // These are initial state, not push events. No reader is running yet.
     // Advance only the private project's inactive slot past the seed commit.
     let slots = project.query("SELECT slot_name FROM pg_replication_slots WHERE database=current_database() AND NOT active", &[]).await?;
@@ -165,7 +167,8 @@ async fn assertions_inner(
     );
     let items: Value = project
         .query_one(
-            "SELECT jsonb_agg(to_jsonb(i) ORDER BY key) FROM rest_consumer_fixture.item i",
+            "SELECT jsonb_agg(jsonb_build_object('key',key,'name',name) ORDER BY key) \
+             FROM rest_consumer_fixture.item",
             &[],
         )
         .await?
@@ -175,6 +178,16 @@ async fn assertions_inner(
             == json!([{"key":"1","name":"First"},{"key":"2","name":"Second"},{"key":"3","name":"Third"},{"key":"4","name":"Fourth"}]),
         "consumer rows differ: {items}"
     );
+    let provenance: bool = project
+        .query_one(
+            "SELECT bool_and(external_id = key AND external_system_id = \
+         (SELECT external_system_id FROM platform.connection WHERE name = 'netsuite')) \
+         FROM rest_consumer_fixture.item",
+            &[],
+        )
+        .await?
+        .get(0);
+    ensure!(provenance, "consumer rows lost their NetSuite provenance");
     // Since the rows predate capture, prove receipt through the actual command result.
     let result: String = project.query_one("SELECT result FROM platform.write_log WHERE operation='rest-consumer-fixture:item/record' AND idempotency_key=$1", &[&due]).await?.get(0);
     let received: Value = serde_json::from_str(&result)?;
@@ -212,7 +225,14 @@ async fn assertions_inner(
             "wrong SuiteQL page: {page}"
         );
     }
-    project.execute("INSERT INTO rest_consumer_fixture.item (key,name) VALUES ('push-one','Pushed customer')", &[]).await?;
+    project
+        .execute(
+            "INSERT INTO rest_consumer_fixture.item (key,name,external_system_id,external_id)
+        VALUES ('push-one','Pushed customer',
+        (SELECT external_system_id FROM platform.connection WHERE name='netsuite'),'push-one')",
+            &[],
+        )
+        .await?;
     let pushes = wait(run, project, "netsuite_push", 1).await?;
     // An event trigger is a workflow row, so the run names it by its wiring
     // id and records its CDC delivery as the invoker.

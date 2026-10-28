@@ -129,6 +129,23 @@ pub async fn deploy(run: &Run, repository: &Path, system_url: &str) -> anyhow::R
     let (mut system, connection) =
         tokio_postgres::connect(system_url, tokio_postgres::NoTls).await?;
     let driver = tokio::spawn(connection);
+    // C3.5: a connection is enabled only for a project that exists.
+    system.batch_execute("SET ROLE wamn_system").await?;
+    system
+        .execute(
+            "SELECT set_config('app.user_id',$1,false)",
+            &[&wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string()],
+        )
+        .await?;
+    system
+        .execute(
+            wamn_control_registry::sql::upsert_project_sql(),
+            &[&ORG, &PROJECT],
+        )
+        .await?;
+    system.batch_execute("RESET ROLE").await?;
     let tx = system.transaction().await?;
     tx.batch_execute("SET LOCAL ROLE wamn_control").await?;
     tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(

@@ -1469,6 +1469,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     application.packages.remove("label_fixture");
     application.packages.insert("http_fixture".into());
     application.connections.clear();
+    application.connectors.clear();
     for handle in [
         "upstream",
         http_connection::OUTBOUND_HANDLE,
