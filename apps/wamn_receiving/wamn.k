@@ -90,7 +90,6 @@ manifest.Package {
             operations = {}
         }
         receipt = manifest.Model("receipt", _schema) {
-            feed = False
             table = "receipt"
             owner = "wamn_receiving"
             server_owned_fields = ["purchase_order_id", "receipt_reference", "occurred_at"]
@@ -104,7 +103,7 @@ manifest.Package {
             audit_log = {columns = ["created_at", "created_by"]}
             operations: {
                 get: {label = "Receipt", result = "one"}
-                query: {display_field = "receipt_reference", label = "Receipts", result = "page"}
+                query: {feed = False, display_field = "receipt_reference", label = "Receipts", result = "page"}
             }
         }
         receipt_line = manifest.Model("receipt_line", _schema) {
@@ -120,7 +119,6 @@ manifest.Package {
             operations = {}
         }
         supplier = manifest.Model("supplier", _schema) {
-            feed = False
             table = "supplier"
             owner = "wamn_receiving"
             min_lengths = {name = 1}
@@ -129,7 +127,7 @@ manifest.Package {
             audit_log = {columns = ["created_at"]}
             operations: {
                 create: {writable_fields = ["name"], label = "Add a supplier", result = "one"}
-                query: {display_field = "name", label = "Suppliers", result = "page"}
+                query: {feed = False, display_field = "name", label = "Suppliers", result = "page"}
             }
         }
     }

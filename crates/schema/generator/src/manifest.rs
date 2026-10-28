@@ -69,6 +69,9 @@ pub enum ConnectionMode {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CustomOperationDeclaration {
+    /// Whether this authored read requests a feed. Omitted means disabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feed: Option<bool>,
     /// Whether a refusal leaves later entries for the row free to proceed.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub append_only: bool,
@@ -1141,6 +1144,12 @@ fn validate_custom_operation(
     operation_name: &str,
     operation: &CustomOperationDeclaration,
 ) -> Result<(), GenerateError> {
+    if operation.feed == Some(true) {
+        return Err(GenerateError::new(
+            GenerateErrorType::InvalidOperation,
+            format!("{operation_name} authored read feed is not supported yet: remove feed = true"),
+        ));
+    }
     match (operation.visibility(), operation.permission()) {
         (OperationVisibility::Public, Some(permission)) if permission == operation_name => {}
         (OperationVisibility::Public, _) => {
@@ -2547,9 +2556,6 @@ pub enum PolicyContractState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelDeclaration {
-    /// Whether the list read carries a feed. An omitted value follows the list read.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub feed: Option<bool>,
     pub schema: String,
     pub table: String,
     pub owner: String,
@@ -2757,7 +2763,7 @@ impl ModelDeclaration {
 
     /// The revision field of the change feed on the model's list read.
     ///
-    /// Validation refuses an enabled feed without a generated list read,
+    /// Validation refuses an enabled feed without generated SQL,
     /// a history table, or a revision field.
     pub fn feed_revision(&self) -> Option<&str> {
         if !self.feed_enabled() {
@@ -2776,10 +2782,11 @@ impl ModelDeclaration {
         self.revision_field()
     }
 
-    /// Whether the model requests a feed, by declaration or by its list read.
+    /// Whether the generated list read requests a feed. Omitted means enabled.
     pub fn feed_enabled(&self) -> bool {
-        self.feed
-            .unwrap_or_else(|| self.operations.contains_key(&CrudAction::Query))
+        self.operations
+            .get(&CrudAction::Query)
+            .is_some_and(|query| query.feed.unwrap_or(true))
     }
 
     /// Definition owner for one field, inheriting the relation owner when omitted.
@@ -2839,6 +2846,9 @@ impl CrudAction {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OperationDeclaration {
+    /// Whether this generated list read carries a feed. Omitted means enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feed: Option<bool>,
     /// Whether a refusal leaves later entries for the row free to proceed.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub append_only: bool,

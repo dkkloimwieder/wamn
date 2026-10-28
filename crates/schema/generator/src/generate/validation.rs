@@ -232,13 +232,10 @@ fn validate_model(
     model_name: &str,
     model: &ModelDeclaration,
 ) -> Result<(), GenerateError> {
-    if model.feed_enabled() {
+    if let Some(query) = model.operations.get(&CrudAction::Query)
+        && query.feed.unwrap_or(true)
+    {
         let refuse = |message| GenerateError::new(GenerateErrorType::InvalidModel, message);
-        let query = model.operations.get(&CrudAction::Query).ok_or_else(|| {
-            refuse(format!(
-                "{model_name} feed needs a list read (operations.query)"
-            ))
-        })?;
         if query.authored_sql.is_some() {
             return Err(refuse(format!(
                 "{model_name} authored list SQL cannot carry a feed"

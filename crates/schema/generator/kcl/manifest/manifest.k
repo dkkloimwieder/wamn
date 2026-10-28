@@ -200,6 +200,7 @@ schema Command[name: str](CustomOperation):
 
 schema Projection[name: str](CustomOperation):
     type = "projection"
+    feed?: bool
 
 schema EventHandler[name: str](CustomOperation):
     type = "event_handler"
@@ -268,6 +269,7 @@ schema Get(Operation):
     """The get operation of a model."""
 
 schema Query(Operation):
+    feed?: bool
     display_field?: str
     pagination = Pagination {
         default_sort = {field = "created_at", direction = "ascending"}
@@ -326,7 +328,6 @@ schema Model[name: str, schema_name: str]:
     field_text?: {str:TextOfField}
     fields?: {str:ModelField}
     audit_log?: AuditLog
-    feed?: bool
     delete_mode?: "hard" | "tombstone"
     operations: Operations
 

@@ -145,7 +145,7 @@ fn feed_and_append_only_declarations_round_trip() {
     assert!(!parsed.custom_operations["widget.archive"].append_only);
 
     let explicit = Package::new(&source(
-        "            feed = False\n            operations: {get: {append_only = True}}",
+        "            operations: {query: {feed = False}, get: {append_only = True}}",
         "            append_only = True",
     ))
     .compile();
@@ -157,6 +157,48 @@ fn feed_and_append_only_declarations_round_trip() {
         parsed.models["widget"].operations[&wamn_schema_generator::CrudAction::Get].append_only
     );
     assert!(parsed.custom_operations["widget.archive"].append_only);
+}
+
+#[test]
+fn authored_list_feed_declarations_round_trip() {
+    for feed in ["", "feed = False", "feed = True"] {
+        let read = format!(
+            r#"    custom_operations = {{
+        "widget.list" = manifest.Projection("widget.list") {{
+            {feed}
+            input.fields = []
+            result = {{class = "bounded_list", fields = [{{path = "id", type = "uuid"}}]}}
+            lists = {{model = "widget", key_field = "id"}}
+            errors = manifest.platform_errors
+            statements = {{
+                list = manifest.Statement("query", "widget_list") {{
+                    fetch = "bounded_list"
+                    row = [manifest.uuid("id")]
+                }}
+            }}
+        }}"#
+        );
+        let compiled =
+            Package::new(&source("", "").replace("    custom_operations = {", &read)).compile();
+        let parsed = wamn_schema_generator::PackageManifest::from_slice(
+            &serde_json::to_vec(&compiled).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            parsed.custom_operations["widget.list"].feed,
+            match feed {
+                "" => None,
+                "feed = False" => Some(false),
+                _ => Some(true),
+            }
+        );
+    }
+}
+
+#[test]
+fn a_model_feed_declaration_is_refused() {
+    let refusal = Package::new(&source("            feed = False", "")).refusal();
+    assert!(refusal.contains("feed"), "{refusal}");
 }
 
 #[test]

@@ -729,9 +729,11 @@ fn overlay_manifest() -> Value {
         .as_object_mut()
         .unwrap()
         .remove("delete");
-    // Without a record history, no model can carry a feed.
+    // Without a record history, no list read can carry a feed.
     for model in manifest["models"].as_object_mut().unwrap().values_mut() {
-        model["feed"] = json!(false);
+        if let Some(query) = model["operations"].get_mut("query") {
+            query["feed"] = json!(false);
+        }
     }
     manifest["base_dependencies"] = json!({"base": {
         "package": "platform_fixture",
@@ -1795,7 +1797,7 @@ fn authored_sql_for_a_query_generation_writes_refuses() {
             {"field": "created_at", "direction": "descending", "path": "query/widget_query_descending.sql"}
         ]
     });
-    manifest["models"]["widget"]["feed"] = json!(false);
+    manifest["models"]["widget"]["operations"]["query"]["feed"] = json!(false);
     // The statement generation writes for this query, authored as is.
     let one_table = include_str!(
         "../../../../apps/target/wamn/platform_fixture/sql/widget/query_created_at_ascending.sql"

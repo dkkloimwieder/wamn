@@ -1010,11 +1010,11 @@ mod tests {
             "connections": {},
             "components": {"fixture": {"connections": ["postgres"]}},
             "models": {"order_row": {
-                "feed": false,
                 "schema": "receiving", "table": "order_row", "owner": "sort_fixture",
                 "server_owned_fields": [],
                 "audit_log": {"columns": ["created_at"], "retention": "none"},
                 "operations": {"query": {
+                    "feed": false,
                     "permission": "order_row.query", "result": "page",
                     "sort": {"fields": ["created_at", "status"], "directions": ["ascending", "descending"]},
                     "pagination": {"default_sort": {"field": "created_at", "direction": "ascending"}, "tie_breaker": {"field": "id"}},
@@ -1113,11 +1113,11 @@ mod tests {
             "connections": {},
             "components": {"fixture": {"connections": ["postgres"]}},
             "models": {"order_row": {
-                "feed": false,
                 "schema": "receiving", "table": "order_row", "owner": "sort_fixture",
                 "server_owned_fields": [],
                 "audit_log": {"columns": ["created_at"], "retention": "none"},
                 "operations": {"query": {
+                    "feed": false,
                     "permission": "order_row.query", "result": "page",
                     "sort": {"fields": ["created_at", "status"], "directions": ["ascending", "descending"]},
                     "pagination": {"default_sort": {"field": "created_at", "direction": "ascending"}, "tie_breaker": {"field": "id"}},

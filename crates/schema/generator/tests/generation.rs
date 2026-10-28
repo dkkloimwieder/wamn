@@ -2678,7 +2678,7 @@ fn a_logged_relation_keeps_the_schema_description_and_grants_its_history_insert(
 fn a_logged_list_read_gets_its_change_feed() {
     let generated = |retention: &str| {
         let mut manifest = with_audit_log(&json!(ALL_STAMP_COLUMNS), retention);
-        manifest["models"]["gadget"]["feed"] = json!(retention != "none");
+        manifest["models"]["gadget"]["operations"]["query"]["feed"] = json!(retention != "none");
         manifest["models"]["gadget"]["operations"]["query"]
             .as_object_mut()
             .unwrap()
@@ -3301,7 +3301,7 @@ fn integer_keys_reach_contracts_routes_and_feed_bindings() {
             rebuilt_table(model, columns, model.constraints().to_vec()),
         );
         let mut manifest = with_audit_log(&json!(ALL_STAMP_COLUMNS), "P30D");
-        manifest["models"]["gadget"]["feed"] = json!(true);
+        manifest["models"]["gadget"]["operations"]["query"]["feed"] = json!(true);
         manifest["models"]["gadget"]["operations"]["query"]
             .as_object_mut()
             .unwrap()
@@ -3405,7 +3405,10 @@ fn feed_catalog(base: &CatalogIr) -> CatalogIr {
 fn feed_manifest() -> Value {
     let mut value = manifest();
     let model = &mut value["models"]["gadget"];
-    model.as_object_mut().unwrap().remove("feed");
+    model["operations"]["query"]
+        .as_object_mut()
+        .unwrap()
+        .remove("feed");
     model["audit_log"]["retention"] = json!("unlimited");
     model["operations"]["query"]
         .as_object_mut()
@@ -3423,7 +3426,7 @@ fn a_feed_refuses_an_int64_revision_and_accepts_opt_out() {
         refusal.context(),
         "gadget feed needs an int32 revision field: use an int32 revision field or feed = false"
     );
-    value["models"]["gadget"]["feed"] = json!(false);
+    value["models"]["gadget"]["operations"]["query"]["feed"] = json!(false);
     run(&catalog(false), &value, &[]).unwrap();
 }
 
@@ -3449,7 +3452,7 @@ fn a_feed_refuses_missing_history() {
 #[test]
 fn a_feed_refuses_a_missing_revision_field() {
     let mut value = feed_manifest();
-    value["models"]["gadget"]["feed"] = json!(true);
+    value["models"]["gadget"]["operations"]["query"]["feed"] = json!(true);
     value["models"]["gadget"]["operations"]["update"]
         .as_object_mut()
         .unwrap()
@@ -3506,9 +3509,9 @@ fn a_feed_refuses_authored_list_sql() {
     for explicit in [false, true] {
         let mut value = manifest();
         if explicit {
-            value["models"]["gadget"]["feed"] = json!(true);
+            value["models"]["gadget"]["operations"]["query"]["feed"] = json!(true);
         } else {
-            value["models"]["gadget"]
+            value["models"]["gadget"]["operations"]["query"]
                 .as_object_mut()
                 .unwrap()
                 .remove("feed");
@@ -3523,32 +3526,59 @@ fn a_feed_refuses_authored_list_sql() {
 }
 
 #[test]
-fn an_explicit_feed_refuses_a_missing_list_read() {
+fn an_authored_list_defaults_to_no_feed_and_refuses_opt_in() {
+    let mut value = manifest();
+    let mut operation = projection_operation();
+    operation["result"]["class"] = json!("bounded_list");
+    operation["lists"] = json!({"model": "gadget", "key_field": "id"});
+    operation["statements"]["load_gadget_part"]["fetch"] = json!("bounded_list");
+    value["custom_operations"]["quality.load_gadget_part"] = operation;
+    let mut sources = QUERY_SOURCES.to_vec();
+    sources.push(AuthoredSql::new(
+        "query/quality_gadget_part.sql",
+        b"SELECT id FROM gadget WHERE id = $1;",
+    ));
+    let default = run(&catalog(false), &value, &sources).unwrap();
+    value["custom_operations"]["quality.load_gadget_part"]["feed"] = json!(false);
+    assert_eq!(default, run(&catalog(false), &value, &sources).unwrap());
+    value["custom_operations"]["quality.load_gadget_part"]["feed"] = json!(true);
+    let refusal = run(&catalog(false), &value, &sources).unwrap_err();
+    assert_eq!(refusal.error_type(), GenerateErrorType::InvalidOperation);
+    assert_eq!(
+        refusal.context(),
+        "quality.load_gadget_part authored read feed is not supported yet: remove feed = true"
+    );
+}
+
+#[test]
+fn a_model_without_a_list_read_has_no_feed() {
     let mut value = feed_manifest();
     value["models"]["gadget"]["operations"]
         .as_object_mut()
         .unwrap()
         .remove("query");
     run(&catalog(false), &value, &[]).expect("no list read means no default feed");
-    value["models"]["gadget"]["feed"] = json!(true);
+    assert!(!parsed_manifest(&value).models["gadget"].feed_enabled());
+}
+
+#[test]
+fn the_model_level_feed_is_refused() {
+    let mut value = feed_manifest();
+    value["models"]["gadget"]["feed"] = json!(false);
     let refusal = run(&catalog(false), &value, &[]).unwrap_err();
-    assert_eq!(refusal.error_type(), GenerateErrorType::InvalidModel);
-    assert_eq!(
-        refusal.context(),
-        "gadget feed needs a list read (operations.query)"
-    );
+    assert_eq!(refusal.error_type(), GenerateErrorType::InvalidManifest);
 }
 
 #[test]
 fn feed_false_removes_feed_emission() {
     let mut value = feed_manifest();
     let default = run(&feed_catalog(&catalog(false)), &value, &[]).unwrap();
-    value["models"]["gadget"]["feed"] = json!(true);
+    value["models"]["gadget"]["operations"]["query"]["feed"] = json!(true);
     assert_eq!(
         default,
         run(&feed_catalog(&catalog(false)), &value, &[]).unwrap()
     );
-    value["models"]["gadget"]["feed"] = json!(false);
+    value["models"]["gadget"]["operations"]["query"]["feed"] = json!(false);
     let disabled = run(&feed_catalog(&catalog(false)), &value, &[]).unwrap();
     for (package, enabled) in [(&default, true), (&disabled, false)] {
         assert_eq!(

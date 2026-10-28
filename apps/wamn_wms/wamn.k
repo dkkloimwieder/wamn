@@ -13,14 +13,13 @@ manifest.Package {
     required_platform_policy_contract = {id = "wms_data_access", state = "satisfied"}
     models = {
         inventory_transaction = manifest.Model("inventory_transaction", _schema) {
-            feed = False
             table = "inventory_transaction"
             owner = "wamn_wms"
             server_owned_fields = []
             audit_log = {columns = ["created_at", "created_by"]}
             operations: {
                 get: {result = "one"}
-                query: {result = "page"}
+                query: {feed = False, result = "page"}
             }
         }
         location = manifest.Model("location", _schema) {
@@ -66,7 +65,6 @@ manifest.Package {
             }
         }
         packaging_quantity = manifest.Model("packaging_quantity", _schema) {
-            feed = False
             table = "packaging_quantity"
             owner = "wamn_wms"
             server_owned_fields = []
@@ -74,7 +72,7 @@ manifest.Package {
             delete_mode = "hard"
             operations: {
                 get: {result = "one"}
-                query: {result = "page"}
+                query: {feed = False, result = "page"}
             }
         }
         product = manifest.Model("product", _schema) {

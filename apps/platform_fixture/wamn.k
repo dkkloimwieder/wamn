@@ -77,7 +77,6 @@ manifest.Package {
             }
         }
         widget_maker = manifest.Model("widget_maker", _schema) {
-            feed = False
             table = "widget_maker"
             owner = "platform_fixture"
             server_owned_fields = ["edit_version"]
@@ -85,6 +84,7 @@ manifest.Package {
             operations: {
                 get: {revision_field = "edit_version", result = "one"}
                 query: {
+                    feed = False
                     display_field = "name"
                     revision_field = "edit_version"
                     filters = [
