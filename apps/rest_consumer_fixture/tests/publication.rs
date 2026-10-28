@@ -1,6 +1,6 @@
-//! Publication refuses a consumer release without its admitted component.
+//! Publication refuses a consumer release that has no attachments document.
 #[test]
-fn consumer_publication_requires_admitted_operations() {
+fn consumer_publication_requires_an_attachments_document() {
     let package = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../..")
         .join("apps/rest_consumer_fixture");
@@ -21,7 +21,11 @@ fn consumer_publication_requires_admitted_operations() {
             wamn_catalog::PackageCoordinate::new("rest_consumer_fixture", "0.1.0").unwrap(),
         ],
     };
+    let error = wamn_control::publish_release::assemble_local_release(&request, &[package], &[])
+        .expect_err("a release without an attachments document is refused");
     assert!(
-        wamn_control::publish_release::assemble_local_release(&request, &[package], &[]).is_err()
+        format!("{error:#}")
+            .contains("publish-release requires at least one package-owned --attachments document"),
+        "{error:#}"
     );
 }
