@@ -489,9 +489,13 @@ mod tests {
             &[wamn_fixture_package::manifest_path()],
         )
         .expect("read the fixture attachments");
-        // The numbering and integer-key fixtures add routes. The original
+        // The numbering, feed and integer-key fixtures add routes. The original
         // widget surface must still match its frozen routes and declaration.
         for (id, hash) in [
+            (
+                "feed-line-screen-http",
+                "sha256:6c95683d6af1b8421259ced3f135e32e2c046f396b29672fc060ab933c0725a0",
+            ),
             (
                 "counter-create-http",
                 "sha256:63800f68a02a761faeace3feaa500b74b2408aac99898448fdd5c779fdee0b4b",
@@ -544,6 +548,7 @@ mod tests {
             "counter/get",
             "counter/query",
             "counter/update",
+            "feed-line/screen",
             "number/issue",
             "numbered-label/create",
         ] {

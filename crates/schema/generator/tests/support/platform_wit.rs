@@ -11,11 +11,9 @@ fn typed_wit_and_codec_follow_package_and_envelope_declarations() {
     for package_id in ["platform_fixture", "other_fixture"] {
         let mut manifest = fixture::manifest();
         manifest["package"]["id"] = json!(package_id);
-        manifest["models"]["widget"]["owner"] = json!(package_id);
-        manifest["models"]["widget_maker"]["owner"] = json!(package_id);
-        manifest["models"]["widget_tag"]["owner"] = json!(package_id);
-        manifest["models"]["numbered_label"]["owner"] = json!(package_id);
-        manifest["models"]["counter"]["owner"] = json!(package_id);
+        for model in manifest["models"].as_object_mut().unwrap().values_mut() {
+            model["owner"] = json!(package_id);
+        }
         manifest["custom_operations"]["widget.archive"]["input"]["raw_body_maximum"] = json!(4096);
         manifest["custom_operations"]["widget.archive"]["input"]["envelope"] =
             json!({"minimum": 2, "maximum": 7});

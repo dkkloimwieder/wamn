@@ -1130,6 +1130,159 @@ async fn the_feed_of_a_list_read_follows_its_snapshot() -> anyhow::Result<()> {
     result
 }
 
+async fn screen_changes(paths: &Paths, cursor: &str, order: Option<&str>) -> anyhow::Result<Value> {
+    let response = paths
+        .route(
+            "/feed_line/screen",
+            &json!([{"order_id": order, "feed": {"cursor": cursor}}]),
+        )
+        .await?;
+    let changes = value(&response)?.clone();
+    feed_versions(&changes)?;
+    Ok(changes)
+}
+
+fn screen_ids(changes: &Value, expected: &[&str], deleted: bool) -> anyhow::Result<()> {
+    let rows = changes["rows"].as_array().context("screen changes")?;
+    let mut ids = rows
+        .iter()
+        .map(|row| row["id"].as_str().context("root id"))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    ids.sort_unstable();
+    let mut expected = expected.to_vec();
+    expected.sort_unstable();
+    anyhow::ensure!(
+        ids == expected,
+        "affected roots: {changes}, expected {expected:?}"
+    );
+    for row in rows {
+        anyhow::ensure!(
+            row["deleted"] == deleted && row.get("data").is_none() == deleted,
+            "screen row: {row}"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+async fn an_authored_view_feed_maps_joined_changes_moves_and_expiry() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&[
+        "WAMN_APPLICATION_COMPONENTS",
+        "WAMN_FLOW_HTTP_COMPONENT",
+        "WAMN_NATIVE_C_NATS_BIN",
+    ]);
+    let _lock = wamn_test_postgres::lock();
+    let system = wamn_test_postgres::database();
+    let project = wamn_test_postgres::database();
+    let scratch = ScratchRoot::create()?;
+    let (application, paths) = start(system.url(), project.url(), &scratch, "admin").await?;
+    let result = async {
+        let (mut writer, connection) = tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
+        let connection = tokio::spawn(connection);
+        writer.batch_execute("SELECT set_config('app.user_id', (SELECT user_id::text FROM platform.user_role WHERE role_name = 'admin'), false), set_config('app.operation', 'admin:screen-feed', false);
+            INSERT INTO inventory.feed_order VALUES ('00000000-0000-4000-8000-000000000001', 'order one'), ('00000000-0000-4000-8000-000000000002', 'order two');
+            INSERT INTO inventory.feed_item VALUES ('00000000-0000-4000-8000-000000000011', 'item one'), ('00000000-0000-4000-8000-000000000012', 'item two');
+            INSERT INTO inventory.feed_line(id, order_id, item_id, label) VALUES
+            ('00000000-0000-4000-8000-000000000021', '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000011', 'line one'),
+            ('00000000-0000-4000-8000-000000000022', '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000011', 'line two'),
+            ('00000000-0000-4000-8000-000000000023', '00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000012', 'line three');").await?;
+        let one = "00000000-0000-4000-8000-000000000021";
+        let two = "00000000-0000-4000-8000-000000000022";
+        let three = "00000000-0000-4000-8000-000000000023";
+        let four = "00000000-0000-4000-8000-000000000024";
+        let old_order = "00000000-0000-4000-8000-000000000001";
+        let page = paths.route("/feed_line/screen", &json!([{}])).await?;
+        let page = value(&page)?;
+        let mut cursor = page["cursor"].as_str().context("screen cursor")?.to_owned();
+        anyhow::ensure!(page["item"].as_array().context("screen rows")?.len() == 3, "{page}");
+        let snapshot_version = feed_xmin(&cursor)?.to_string();
+        for row in page["item"].as_array().unwrap() {
+            anyhow::ensure!(row["row_version"].as_str() == Some(snapshot_version.as_str()), "snapshot version: {row}");
+        }
+        screen_ids(&screen_changes(&paths, &cursor, None).await?, &[], false)?;
+        writer.batch_execute("UPDATE inventory.feed_line SET enabled = false").await?;
+        for (index, id) in [one, two, three].into_iter().enumerate() {
+            let response = paths.route("/feed_line/screen", &json!([{"feed": {"cursor": cursor, "limit": 1}}])).await?;
+            let changes = value(&response)?;
+            feed_versions(changes)?;
+            screen_ids(changes, &[id], true)?;
+            anyhow::ensure!(changes["complete"] == (index == 2), "root key page: {changes}");
+            cursor = changes["next_cursor"].as_str().unwrap().to_owned();
+        }
+        writer.batch_execute("UPDATE inventory.feed_line SET enabled = true").await?;
+        let refilled = paths.route("/feed_line/screen", &json!([{}])).await?;
+        cursor = value(&refilled)?["cursor"].as_str().unwrap().to_owned();
+        for (sql, ids, field, label) in [
+            ("UPDATE inventory.feed_line SET label = 'new line' WHERE label = 'line one'", vec![one], "label", "new line"),
+            ("UPDATE inventory.feed_order SET label = 'new order' WHERE label = 'order one'", vec![one, two], "order_label", "new order"),
+            ("UPDATE inventory.feed_item SET label = 'new item' WHERE label = 'item one'", vec![one, two], "item_label", "new item"),
+        ] {
+            writer.batch_execute(sql).await?;
+            let changes = screen_changes(&paths, &cursor, None).await?;
+            screen_ids(&changes, &ids, false)?;
+            for row in changes["rows"].as_array().unwrap() { anyhow::ensure!(row["data"][field] == label, "new joined data: {row}"); }
+            cursor = changes["next_cursor"].as_str().unwrap().to_owned();
+        }
+        writer.batch_execute("BEGIN;
+            INSERT INTO inventory.feed_order VALUES ('00000000-0000-4000-8000-000000000003', 'inserted order');
+            INSERT INTO inventory.feed_item VALUES ('00000000-0000-4000-8000-000000000013', 'inserted item');
+            INSERT INTO inventory.feed_line(id, order_id, item_id, label) VALUES ('00000000-0000-4000-8000-000000000024', '00000000-0000-4000-8000-000000000003', '00000000-0000-4000-8000-000000000013', 'inserted line');
+            COMMIT;").await?;
+        let inserted = screen_changes(&paths, &cursor, None).await?;
+        screen_ids(&inserted, &[four], false)?;
+        anyhow::ensure!(inserted["rows"][0]["data"]["order_label"] == "inserted order" && inserted["rows"][0]["data"]["item_label"] == "inserted item", "{inserted}");
+        cursor = inserted["next_cursor"].as_str().unwrap().to_owned();
+        let scoped = paths.route("/feed_line/screen", &json!([{"order_id": old_order}])).await?;
+        let scoped_cursor = value(&scoped)?["cursor"].as_str().context("scoped cursor")?;
+        writer.batch_execute("UPDATE inventory.feed_line SET order_id = '00000000-0000-4000-8000-000000000002' WHERE label = 'new line'").await?;
+        let moved = screen_changes(&paths, &cursor, None).await?;
+        screen_ids(&moved, &[one], false)?;
+        anyhow::ensure!(moved["rows"][0]["data"]["order_label"] == "order two", "{moved}");
+        screen_ids(&screen_changes(&paths, scoped_cursor, Some(old_order)).await?, &[one], true)?;
+        cursor = moved["next_cursor"].as_str().unwrap().to_owned();
+        writer.batch_execute("UPDATE inventory.feed_line SET enabled = false WHERE label = 'line two'").await?;
+        let filtered = screen_changes(&paths, &cursor, None).await?;
+        screen_ids(&filtered, &[two], true)?;
+        cursor = filtered["next_cursor"].as_str().unwrap().to_owned();
+        writer.batch_execute("UPDATE inventory.feed_line SET enabled = true WHERE label = 'line two'").await?;
+        let returned = screen_changes(&paths, &cursor, None).await?;
+        screen_ids(&returned, &[two], false)?;
+        cursor = returned["next_cursor"].as_str().unwrap().to_owned();
+        for (sql, ids) in [
+            ("DELETE FROM inventory.feed_line WHERE label = 'inserted line'", vec![four]),
+            ("DELETE FROM inventory.feed_order WHERE label = 'new order'", vec![two]),
+            ("DELETE FROM inventory.feed_item WHERE label = 'item two'", vec![three]),
+        ] {
+            writer.batch_execute(sql).await?;
+            let changes = screen_changes(&paths, &cursor, None).await?;
+            screen_ids(&changes, &ids, true)?;
+            cursor = changes["next_cursor"].as_str().unwrap().to_owned();
+        }
+        let idle = screen_changes(&paths, &cursor, None).await?;
+        anyhow::ensure!(idle["next_cursor"] == cursor && idle["rows"] == json!([]), "{idle}");
+        let query = wamn_execution_contract::encode_read_query(json!({"feed": {"cursor": cursor}}).as_object().unwrap());
+        let path = format!("/feed_line/screen?{query}");
+        let (status, tag, _) = paths.conditional(&path, None).await?;
+        anyhow::ensure!(status == 200 && tag.is_some(), "feed ETag");
+        let (status, _, body) = paths.conditional(&path, tag.as_deref()).await?;
+        anyhow::ensure!(status == 304 && body.is_empty(), "unchanged feed: {status} {body}");
+        let empty = paths.route("/feed_line/screen", &json!([{"order_id": MISSING}])).await?;
+        anyhow::ensure!(value(&empty)?["item"] == json!([]) && value(&empty)?["cursor"].is_string(), "empty snapshot: {empty}");
+        writer.batch_execute("UPDATE inventory.feed_item SET label = 'pruned' WHERE label = 'new item'; UPDATE inventory.feed_item_history SET changed_at = now() - interval '31 days'").await?;
+        writer.batch_execute("INSERT INTO inventory.feed_item VALUES ('00000000-0000-4000-8000-000000000014', 'retained')").await?;
+        let pruned = wamn_control::prune_record_history::prune(&mut writer).await?;
+        anyhow::ensure!(pruned.iter().any(|history| history.history == "feed_item_history" && history.removed > 0), "joined history pruning: {pruned:?}");
+        let expired = paths.route("/feed_line/screen", &json!([{"feed": {"cursor": cursor}}])).await?;
+        refused(&expired, "cursor_expired", &json!({}))?;
+        drop(writer);
+        connection.await??;
+        Ok::<_, anyhow::Error>(())
+    }.await;
+    application.shutdown().await?;
+    result
+}
+
 /// A held transaction leaves room for one page of visible commits above xmin.
 /// Replacing the priority row keeps the fixture's two-code constraint intact.
 #[tokio::test(flavor = "multi_thread")]
@@ -1352,6 +1505,58 @@ async fn a_role_without_the_list_permission_is_refused_the_feed() -> anyhow::Res
         anyhow::ensure!(
             list == 403 && feed == 403 && list_body == feed_body,
             "the list and its feed are refused alike: {list} {list_body} / {feed} {feed_body}"
+        );
+        drop(database);
+        connection.await??;
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    application.shutdown().await?;
+    result
+}
+
+/// A role without the authored read's permission is refused its feed exactly
+/// as it is refused its page: one permission row protects both variants.
+///
+/// A PAT route admits only a project admin, so the caller starts as `admin`
+/// and then holds the application role `reader`, which has no permission row.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+async fn a_role_without_the_permission_is_refused_an_authored_feed() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&[
+        "WAMN_APPLICATION_COMPONENTS",
+        "WAMN_FLOW_HTTP_COMPONENT",
+        "WAMN_NATIVE_C_NATS_BIN",
+    ]);
+    let _lock = wamn_test_postgres::lock();
+    let system = wamn_test_postgres::database();
+    let project = wamn_test_postgres::database();
+    let scratch = ScratchRoot::create()?;
+    let (application, paths) = start(system.url(), project.url(), &scratch, "admin").await?;
+    let result = async {
+        let (database, connection) =
+            tokio_postgres::connect(project.url(), tokio_postgres::NoTls).await?;
+        let connection = tokio::spawn(connection);
+        database
+            .batch_execute(
+                "BEGIN;
+                 SELECT set_config('app.user_id', (SELECT user_id::text FROM platform.user_role WHERE role_name = 'admin'), true),
+                        set_config('app.operation', 'admin:feed-reader', true);
+                 INSERT INTO platform.role (name)
+                     SELECT 'reader' FROM platform.user_role WHERE role_name = 'admin';
+                 UPDATE platform.user_role SET role_name = 'reader' WHERE role_name = 'admin';
+                 COMMIT;",
+            )
+            .await
+            .context("move the caller to a role with no permission")?;
+        let path = format!("{ROUTE_PREFIX}/feed_line/screen");
+        let (list, list_body) = paths.get(&path, &json!([{}])).await?;
+        let (feed, feed_body) = paths
+            .get(&path, &json!([{"feed": {"cursor": "ZmVlZF9saW5lLnNjcmVlbjox"}}]))
+            .await?;
+        anyhow::ensure!(
+            list == 403 && feed == 403 && list_body == feed_body,
+            "the authored read and its feed are refused alike: {list} {list_body} / {feed} {feed_body}"
         );
         drop(database);
         connection.await??;

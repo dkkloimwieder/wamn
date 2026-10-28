@@ -5,6 +5,33 @@ CREATE TABLE inventory.widget_maker (
     created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE inventory.feed_order (
+    id uuid CONSTRAINT feed_order_id_pkey PRIMARY KEY,
+    label text NOT NULL
+);
+
+CREATE TABLE inventory.feed_item (
+    id uuid CONSTRAINT feed_item_id_pkey PRIMARY KEY,
+    label text NOT NULL
+);
+
+CREATE TABLE inventory.feed_line (
+    id uuid CONSTRAINT feed_line_id_pkey PRIMARY KEY,
+    order_id uuid CONSTRAINT feed_line_order_id_fkey REFERENCES inventory.feed_order(id) ON DELETE SET NULL,
+    item_id uuid CONSTRAINT feed_line_item_id_fkey REFERENCES inventory.feed_item(id) ON DELETE SET NULL,
+    label text NOT NULL,
+    enabled boolean NOT NULL DEFAULT true
+);
+CREATE INDEX feed_line_order_id_idx ON inventory.feed_line(order_id);
+CREATE INDEX feed_line_item_id_idx ON inventory.feed_line(item_id);
+
+CREATE VIEW inventory.feed_screen AS
+SELECT line.id, line.order_id, line.item_id, line.label, line.enabled,
+       orders.label AS order_label, item.label AS item_label
+FROM inventory.feed_line AS line
+JOIN inventory.feed_order AS orders ON orders.id = line.order_id
+JOIN inventory.feed_item AS item ON item.id = line.item_id;
+
 CREATE TABLE inventory.widget (
     id uuid CONSTRAINT widget_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
     code text NOT NULL CONSTRAINT widget_code_key UNIQUE,

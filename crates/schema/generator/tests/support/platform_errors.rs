@@ -108,7 +108,8 @@ fn custom_constraints_follow_catalog_identity_and_kind() {
                     }
                 })
                 .collect(),
-        );
+        )
+        .with_views(catalog.views().to_vec());
         let result = fixture::try_generate_with(&changed_catalog, &manifest);
         if replacement.is_none() {
             assert_eq!(

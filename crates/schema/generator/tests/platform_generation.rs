@@ -394,7 +394,8 @@ fn ownership_only_models_and_exclusion_owners_are_exact() {
                 }
             })
             .collect(),
-    );
+    )
+    .with_views(catalog.views().to_vec());
 
     let mut owned = fixture::manifest();
     owned["models"]["widget"]["constraint_owners"] =
@@ -731,8 +732,19 @@ fn overlay_manifest() -> Value {
         .remove("delete");
     // Without a record history, no list read can carry a feed.
     for model in manifest["models"].as_object_mut().unwrap().values_mut() {
+        model.as_object_mut().unwrap().remove("audit_log");
         if let Some(query) = model["operations"].get_mut("query") {
             query["feed"] = json!(false);
+        }
+    }
+    for operation in manifest["custom_operations"]
+        .as_object_mut()
+        .unwrap()
+        .values_mut()
+    {
+        if operation["feed"] == true {
+            operation["feed"] = json!(false);
+            operation.as_object_mut().unwrap().remove("feed_source");
         }
     }
     manifest["base_dependencies"] = json!({"base": {
@@ -1622,18 +1634,16 @@ fn a_minimum_length_without_its_check_refuses() {
     }
 }
 
-/// The authored manifest, as `wamn.k` compiles it: no relation, and no value
-/// set that a CHECK carries.
+/// The authored manifest without derived relations, feed facts, or CHECK values.
 fn without_relations(mut manifest: Value) -> Value {
     for operation in manifest["custom_operations"]
         .as_object_mut()
         .expect("custom operations")
         .values_mut()
     {
-        operation
-            .as_object_mut()
-            .expect("an operation")
-            .remove("relations");
+        let operation = operation.as_object_mut().expect("an operation");
+        operation.remove("relations");
+        operation.remove("feed_source");
     }
     for model in manifest["models"]
         .as_object_mut()

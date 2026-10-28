@@ -1777,6 +1777,7 @@ fn validate_custom_operation_errors(
                 | "timeout"
                 | "permission_denied"
                 | "internal_error"
+                | "cursor_expired"
         ) {
             return Err(GenerateError::new(
                 GenerateErrorType::InvalidOperation,
@@ -1842,6 +1843,7 @@ fn shared_custom_error_detail(
         "concurrency_conflict" => Some((CONCURRENCY, NONE)),
         "idempotency_conflict" => Some((FIELD, NONE)),
         "permission_denied" => Some((OPERATION, NONE)),
+        "cursor_expired" if operation.feed == Some(true) => Some((NONE, NONE)),
         "retry" | "timeout" | "internal_error" => Some((NONE, NONE)),
         _ => None,
     }

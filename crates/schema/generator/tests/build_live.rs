@@ -483,10 +483,12 @@ async fn authored_feed_refuses_statement_grouping_windows_and_limits() {
 #[tokio::test(flavor = "current_thread")]
 async fn authored_feed_refuses_a_base_table_without_history() {
     let workspace = authored_feed_workspace("feed-no-history", RECEIPT_FEED_VIEW);
-    workspace.edit_manifest(
-        "audit_log = {columns = [], retention = \"P30D\"}",
-        "audit_log = {columns = [], retention = \"none\"}",
-    );
+    let original = r#"widget_tag = manifest.Model("widget_tag", _schema) {
+            table = "widget_tag"
+            owner = "platform_fixture"
+            server_owned_fields = ["edit_version"]
+            audit_log = {columns = [], retention = "P30D"}"#;
+    workspace.edit_manifest(original, &original.replace("P30D", "none"));
     let message = format!("{:#}", authored_feed_build(&workspace).await.unwrap_err());
     assert!(
         message.contains("widget.list")

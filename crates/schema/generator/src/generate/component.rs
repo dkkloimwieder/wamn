@@ -278,7 +278,12 @@ pub(super) fn emit_package_component(
         .iter()
         .filter(|(_, model)| !model.operations.is_empty())
         .collect::<Vec<_>>();
-    if models.is_empty() {
+    let feeds = manifest
+        .custom_operations
+        .iter()
+        .filter(|(_, operation)| operation.feed == Some(true))
+        .collect::<Vec<_>>();
+    if models.is_empty() && feeds.is_empty() {
         return emit_package_world(files, manifest, &models);
     }
     let mut source = String::from(HEADER);
@@ -290,6 +295,14 @@ pub(super) fn emit_package_component(
         writeln!(
             source,
             "\n/// The generated `{model_name}` handlers.\npub mod {model_name} {{\n    include!(\"{model_name}.rs\");\n}}"
+        )
+        .expect("writing to a String cannot fail");
+    }
+    for (name, _) in feeds {
+        let stem = crate::manifest::custom_artifact_stem(name);
+        writeln!(
+            source,
+            "\n/// The authored `{name}` handler.\npub mod {stem} {{ include!(\"{stem}.rs\"); }}"
         )
         .expect("writing to a String cannot fail");
     }

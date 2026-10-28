@@ -1,3 +1,4 @@
+mod authored_feed;
 mod component;
 mod contracts;
 mod data;
@@ -353,7 +354,7 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
     for (operation_name, operation) in &manifest.custom_operations {
         emit_custom_operation(
             &mut files,
-            &sql_corpus,
+            &mut sql_corpus,
             input.transactional,
             input.catalog,
             &manifest,

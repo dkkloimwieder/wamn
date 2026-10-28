@@ -7,7 +7,7 @@ use wamn_schema_generator::{
 };
 use wamn_schema_introspection::ir::{
     CatalogIr, Column, ColumnDefault, ColumnType, Constraint, ForeignKeyAction, ForeignKeyColumn,
-    Table,
+    Index, IndexColumn, IndexDirection, Table, View, ViewBaseTable, ViewColumn, ViewColumnOrigin,
 };
 
 /// The fixture's authored SQL, as the fixture application holds it.
@@ -486,13 +486,86 @@ fn catalog_of(note_nullable: bool, maker_key: bool) -> CatalogIr {
         vec![Constraint::primary_key("counter_id_pkey", ["id"]).expect("valid primary key")],
         Vec::new(),
     );
-    CatalogIr::new(vec![
-        widget,
-        widget_maker,
-        widget_tag,
-        numbered_label,
-        counter,
-    ])
+    let mut tables = vec![widget, widget_maker, widget_tag, numbered_label, counter];
+    for name in ["feed_order", "feed_item"] {
+        tables.push(Table::new(
+            "inventory",
+            name,
+            vec![
+                Column::new("id", ColumnType::Uuid, false, None, None),
+                Column::new("label", ColumnType::Text, false, None, None),
+            ],
+            vec![Constraint::primary_key(format!("{name}_id_pkey"), ["id"]).unwrap()],
+            Vec::new(),
+        ));
+    }
+    tables.push(Table::new(
+        "inventory",
+        "feed_line",
+        vec![
+            Column::new("id", ColumnType::Uuid, false, None, None),
+            Column::new("order_id", ColumnType::Uuid, true, None, None),
+            Column::new("item_id", ColumnType::Uuid, true, None, None),
+            Column::new("label", ColumnType::Text, false, None, None),
+            Column::new(
+                "enabled",
+                ColumnType::Boolean,
+                false,
+                Some(ColumnDefault::boolean(true)),
+                None,
+            ),
+        ],
+        vec![
+            Constraint::primary_key("feed_line_id_pkey", ["id"]).unwrap(),
+            Constraint::foreign_key(
+                "feed_line_order_id_fkey",
+                vec![ForeignKeyColumn::new("order_id", "id")],
+                "inventory",
+                "feed_order",
+                ForeignKeyAction::NoAction,
+                ForeignKeyAction::SetNull,
+            )
+            .unwrap(),
+            Constraint::foreign_key(
+                "feed_line_item_id_fkey",
+                vec![ForeignKeyColumn::new("item_id", "id")],
+                "inventory",
+                "feed_item",
+                ForeignKeyAction::NoAction,
+                ForeignKeyAction::SetNull,
+            )
+            .unwrap(),
+        ],
+        ["order_id", "item_id"]
+            .into_iter()
+            .map(|field| {
+                Index::new(
+                    format!("feed_line_{field}_idx"),
+                    vec![IndexColumn::new(field, IndexDirection::Asc)],
+                )
+                .unwrap()
+            })
+            .collect(),
+    ));
+    let columns = [
+        ("id", "feed_line", "id", ColumnType::Uuid),
+        ("order_id", "feed_line", "order_id", ColumnType::Uuid),
+        ("item_id", "feed_line", "item_id", ColumnType::Uuid),
+        ("label", "feed_line", "label", ColumnType::Text),
+        ("enabled", "feed_line", "enabled", ColumnType::Boolean),
+        ("order_label", "feed_order", "label", ColumnType::Text),
+        ("item_label", "feed_item", "label", ColumnType::Text),
+    ]
+    .into_iter()
+    .map(|(name, table, field, ty)| {
+        ViewColumn::new(name, ty).with_origin(ViewColumnOrigin {
+            schema: "inventory".into(),
+            table: table.into(),
+            column: field.into(),
+        })
+    })
+    .collect();
+    CatalogIr::new(tables).with_views(vec![View::new("inventory", "feed_screen", columns, ["feed_line", "feed_order", "feed_item"].into_iter().map(|name| ViewBaseTable::new("inventory", name)).collect()).with_definition("SELECT line.id, line.order_id, line.item_id, line.label, line.enabled, orders.label AS order_label, item.label AS item_label FROM inventory.feed_line AS line JOIN inventory.feed_order AS orders ON orders.id = line.order_id JOIN inventory.feed_item AS item ON item.id = line.item_id".into(), false)])
 }
 
 /// The name of [`unread_table`].
@@ -538,7 +611,7 @@ pub(crate) fn unread_table() -> Table {
 pub(crate) fn catalog_with_unread_table() -> CatalogIr {
     let mut tables = catalog().tables().to_vec();
     tables.push(unread_table());
-    CatalogIr::new(tables)
+    CatalogIr::new(tables).with_views(catalog().views().to_vec())
 }
 
 /// The fixture manifest, as the fixture application authors it.

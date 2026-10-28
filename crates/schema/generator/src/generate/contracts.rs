@@ -103,13 +103,22 @@ pub(super) fn emit_model(
 
 pub(super) fn emit_custom_operation(
     files: &mut BTreeMap<String, Vec<u8>>,
-    sql_corpus: &BTreeMap<String, Vec<u8>>,
+    sql_corpus: &mut BTreeMap<String, Vec<u8>>,
     transactional: &StatementTransactionality,
     catalog: &CatalogIr,
     manifest: &PackageManifest,
     operation_name: &str,
     operation: &CustomOperationDeclaration,
 ) -> Result<(), GenerateError> {
+    let feeding = super::authored_feed::prepare(
+        files,
+        sql_corpus,
+        catalog,
+        manifest,
+        operation_name,
+        operation,
+    )?;
+    let operation = feeding.as_ref().unwrap_or(operation);
     emit_custom_operation_contracts(
         files,
         sql_corpus,
@@ -251,7 +260,14 @@ fn emit_custom_operation_contracts(
         operation_contract.insert("connection".to_owned(), json!(connection));
     }
     if let Some(result) = &operation.result {
-        operation_contract.insert("result".to_owned(), json!(result.class));
+        operation_contract.insert(
+            "result".to_owned(),
+            json!(if operation.feed == Some(true) {
+                ResultClass::Page
+            } else {
+                result.class
+            }),
+        );
     }
     if let Some(transaction) = operation.transaction {
         operation_contract.insert("transaction".to_owned(), json!(transaction));
@@ -295,6 +311,13 @@ fn emit_custom_operation_contracts(
         input_contract.insert("line".to_owned(), count_contract(line));
     }
     input_contract.insert("fields".to_owned(), json!(operation.input.fields));
+    if operation.feed == Some(true) {
+        input_contract.insert("envelope".to_owned(), json!({"minimum": 1, "maximum": 1}));
+        input_contract.insert("feed".to_owned(), json!({
+            "cursor": {"encoding": "base64url_unpadded", "opaque": true, "invalid": "invalid_input", "expired": "cursor_expired"},
+            "limit": {"default": 100, "minimum": 1, "maximum": 100, "invalid": "invalid_input"}
+        }));
+    }
     if let Some(canonicalization) = &operation.canonicalization {
         let mut contract = json!({
             "payload": "canonical_compact_json",
@@ -315,7 +338,11 @@ fn emit_custom_operation_contracts(
         &Value::Object(input_contract),
     )?;
     if let Some(result) = &operation.result {
-        insert_json(files, &format!("{root}.result.json"), result)?;
+        let mut result = result.clone();
+        if operation.feed == Some(true) {
+            result.class = ResultClass::Page;
+        }
+        insert_json(files, &format!("{root}.result.json"), &result)?;
     }
     insert_json(
         files,

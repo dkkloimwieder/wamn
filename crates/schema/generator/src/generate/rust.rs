@@ -1025,7 +1025,11 @@ fn optional_rust_type(column: &Column, projection: Projection) -> String {
     projected_rust_type(column.column_type(), projection, true)
 }
 
-fn projected_rust_type(ty: ColumnType, projection: Projection, optional: bool) -> String {
+pub(super) fn projected_rust_type(
+    ty: ColumnType,
+    projection: Projection,
+    optional: bool,
+) -> String {
     let base = match (projection, ty) {
         (_, ColumnType::Boolean) => "bool",
         (_, ColumnType::Int32) => "i32",

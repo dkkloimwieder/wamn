@@ -726,6 +726,36 @@ fn derive_data_access_overlay_for_manifest(
         }
     }
     for operation in manifest.custom_operations.values() {
+        if let Some(source) = &operation.feed_source {
+            for table in &source.read_set {
+                let relation = desired_relation(
+                    &mut desired,
+                    &table.schema,
+                    &history_table_name(&table.table),
+                )?;
+                relation.select.extend(
+                    FEED_HISTORY_COLUMNS
+                        .iter()
+                        .map(|column| (*column).to_owned()),
+                );
+            }
+            // Current links and their history images map deletes and moves.
+            for link in &source.join_path {
+                desired_relation(
+                    &mut desired,
+                    &link.foreign_key_table.schema,
+                    &link.foreign_key_table.table,
+                )?
+                .select
+                .extend(
+                    std::iter::once("id".to_owned()).chain(
+                        link.foreign_key_columns
+                            .iter()
+                            .map(|pair| pair.column().to_owned()),
+                    ),
+                );
+            }
+        }
         for declared in &operation.relations {
             let relation = desired_relation(&mut desired, &declared.schema, &declared.table)?;
             relation

@@ -1721,6 +1721,8 @@ fn emit_custom_group(
         let Some(local_name) = operation_name.strip_prefix(&format!("{group}.")) else {
             continue;
         };
+        let feeding = super::authored_feed::contract(operation);
+        let operation = &feeding;
         let emitted = if let Some((_, dependency)) =
             manifest.base_dependencies.iter().find(|(_, item)| {
                 item.operations
@@ -1817,13 +1819,20 @@ fn emit_owned_interface(
     );
     let root = if value.is_some() { "value." } else { "" };
     emit_nested_wit_records(&mut source, &interface, &request_fields, root);
-    if request_fields.is_empty() {
+    if operation.feed == Some(true) {
+        writeln!(source, "  record {interface}-feed {{\n    cursor: option<string>,\n    limit: option<s64>,\n  }}\n").expect("writing to a String cannot fail");
+    }
+    if request_fields.is_empty() && operation.feed != Some(true) {
         writeln!(source, "  enum {interface}-request {{ request }}\n")
             .expect("writing to a String cannot fail");
     } else {
         writeln!(source, "  record {interface}-request {{")
             .expect("writing to a String cannot fail");
         emit_wit_tree_fields(&mut source, &interface, &request_fields, root);
+        if operation.feed == Some(true) {
+            writeln!(source, "    feed: option<{interface}-feed>,")
+                .expect("writing to a String cannot fail");
+        }
         source.push_str("  }\n\n");
     }
 
@@ -1882,16 +1891,32 @@ fn emit_owned_interface(
             "",
             false,
         );
-        let carrier = if result.expect("result exists").class == ResultClass::BoundedList {
-            format!("rows: list<{interface}-row>")
+        if operation.feed == Some(true) {
+            let key = &operation
+                .lists
+                .as_ref()
+                .expect("validated feeding list")
+                .key_field[0];
+            let key_type = result
+                .expect("feeding result")
+                .fields
+                .iter()
+                .find(|field| &field.path == key)
+                .expect("validated key")
+                .ty;
+            writeln!(source, "  }}\n\n  record {interface}-page {{\n    item: list<{interface}-row>,\n    next-cursor: option<string>,\n    cursor: string,\n  }}\n\n  record {interface}-change {{\n    id: {},\n    row-version: s64,\n    data: option<{interface}-row>,\n  }}\n\n  record {interface}-changes {{\n    rows: list<{interface}-change>,\n    next-cursor: string,\n    complete: bool,\n  }}\n\n  variant {interface}-result {{\n    page({interface}-page),\n    changes({interface}-changes),", wit_type(key_type)).expect("writing to a String cannot fail");
         } else {
-            format!("value: option<{interface}-row>")
-        };
-        writeln!(
-            source,
-            "  }}\n\n  record {interface}-result {{\n    {carrier},"
-        )
-        .expect("writing to a String cannot fail");
+            let carrier = if result.expect("result exists").class == ResultClass::BoundedList {
+                format!("rows: list<{interface}-row>")
+            } else {
+                format!("value: option<{interface}-row>")
+            };
+            writeln!(
+                source,
+                "  }}\n\n  record {interface}-result {{\n    {carrier},"
+            )
+            .expect("writing to a String cannot fail");
+        }
     } else {
         writeln!(source, "  record {interface}-result {{")
             .expect("writing to a String cannot fail");
@@ -2147,11 +2172,27 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
         .envelope
         .as_ref()
         .map_or((1, 100), |limit| (limit.minimum, limit.maximum));
+    let (minimum, maximum) = if operation.feed == Some(true) {
+        (1, 1)
+    } else {
+        (minimum, maximum)
+    };
     let type_name = rust_type_identifier(local_name);
     let keyed = custom_is_keyed(operation);
     let mut source = codec_prelude(&format!("{type_name}Item"), minimum, maximum, keyed);
     source.push_str(&emit_custom_decoder(&type_name, operation));
     emit_invalid_detail(&mut source, operation);
+    if operation.feed == Some(true) {
+        writeln!(
+            source,
+            "fn row_json(row: &contract::{type_name}Row) -> Value {{ json!({{"
+        )
+        .expect("writing to a String cannot fail");
+        for field in &result.fields {
+            emit_codec_result_field_for(&mut source, &field.path, field.ty, field.nullable, "row");
+        }
+        source.push_str("}) }\n");
+    }
     // The template states the type name of the operation under generation.
     // No application name reaches this file.
     source.push_str("pub(crate) fn encode(output: &[contract::");
@@ -2161,7 +2202,26 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
         source.push_str("                \"request_id\": item.request_id,\n");
     }
     source.push_str("                \"value\": ");
-    if result.class == ResultClass::BoundedList {
+    if operation.feed == Some(true) {
+        let key = &operation
+            .lists
+            .as_ref()
+            .expect("validated feed list")
+            .key_field[0];
+        let id = if result
+            .fields
+            .iter()
+            .find(|field| &field.path == key)
+            .expect("validated key")
+            .ty
+            == ColumnType::Int64
+        {
+            "change.id.to_string()"
+        } else {
+            "change.id"
+        };
+        writeln!(source, "match value {{\ncontract::{type_name}Result::Page(page) => json!({{\"item\": page.item.iter().map(row_json).collect::<Vec<_>>(), \"next_cursor\": page.next_cursor, \"cursor\": page.cursor}}),\ncontract::{type_name}Result::Changes(changes) => json!({{\"rows\": changes.rows.iter().map(|change| {{ let mut value = json!({{\"id\": {id}, \"row_version\": change.row_version.to_string(), \"deleted\": change.data.is_none()}}); if let Some(row) = &change.data {{ value[\"data\"] = row_json(row); }} value }}).collect::<Vec<_>>(), \"next_cursor\": changes.next_cursor, \"complete\": changes.complete}}),\n}}\n").expect("writing to a String cannot fail");
+    } else if result.class == ResultClass::BoundedList {
         source.push_str("{ \"rows\": value.rows.iter().map(|row| json!({\n");
         for field in &result.fields {
             emit_codec_result_field_for(&mut source, &field.path, field.ty, field.nullable, "row");
@@ -2314,6 +2374,9 @@ fn emit_custom_decoder(type_name: &str, operation: &CustomOperationDeclaration) 
     );
     let root = if value.is_some() { "value." } else { "" };
     let mut source = String::new();
+    if operation.feed == Some(true) {
+        source.push_str("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonFeed { #[serde(default)] cursor: Option<String>, #[serde(default)] limit: Option<i64> }\n");
+    }
     emit_json_tree_records(&mut source, &fields, root);
     source
         .push_str("#[derive(Deserialize)]\n#[serde(deny_unknown_fields)]\nstruct JsonRequest {\n");
@@ -2321,6 +2384,9 @@ fn emit_custom_decoder(type_name: &str, operation: &CustomOperationDeclaration) 
         source.push_str("    value: JsonRoot,\n");
     } else {
         emit_json_tree_fields(&mut source, &fields, root);
+    }
+    if operation.feed == Some(true) {
+        source.push_str("    #[serde(default)] feed: Option<JsonFeed>,\n");
     }
     source.push_str("}\n\n");
     if value.is_some() {
@@ -2332,7 +2398,7 @@ fn emit_custom_decoder(type_name: &str, operation: &CustomOperationDeclaration) 
     let (envelope, key) = decode_envelope_parts(custom_is_keyed(operation));
     writeln!(source, "pub(crate) fn decode(input: &str) -> Result<Vec<contract::{type_name}Item>, CodecError> {{\n    {envelope}\n        let input = serde_json::from_value::<JsonRequest>(body).map(|request| {{")
         .expect("writing to a String cannot fail");
-    if fields.is_empty() {
+    if fields.is_empty() && operation.feed != Some(true) {
         writeln!(
             source,
             "            let _ = request;\n            contract::{type_name}Request::Request"
@@ -2347,6 +2413,9 @@ fn emit_custom_decoder(type_name: &str, operation: &CustomOperationDeclaration) 
         writeln!(source, "            contract::{type_name}Request {{")
             .expect("writing to a String cannot fail");
         emit_contract_tree_assignments(&mut source, type_name, &fields, access, root, 16);
+        if operation.feed == Some(true) {
+            writeln!(source, "feed: request.feed.map(|part| contract::{type_name}Feed {{ cursor: part.cursor, limit: part.limit }}),").expect("writing to a String cannot fail");
+        }
         source.push_str("            }\n");
     }
     writeln!(source, "        }}).map_err(|_| invalid(\"input\"));\n        Ok(contract::{type_name}Item {{ {key}input }})\n    }}).collect()\n}}\n")
@@ -2515,6 +2584,9 @@ fn emit_custom_normalizer(type_name: &str, operation: &CustomOperationDeclaratio
     );
     source.push_str("    let _ = &request;\n");
     emit_tree_validation(&mut source, &fields, "request", 4);
+    if operation.feed == Some(true) {
+        source.push_str("    if let Some(part) = &mut request.feed { let limit = *part.limit.get_or_insert(100); if limit < 1 { return Err(invalid(\"feed.limit\")); } part.limit = Some(limit.min(100)); }\n");
+    }
     source.push_str("    Ok(())\n}\n\n");
     source
 }

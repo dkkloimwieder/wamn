@@ -51,7 +51,7 @@ const CODES: [AccessOperationErrorLiteral; 12] = [
 
 /// The Rust type a request carries a value of this column type in: the type
 /// of the operation's WIT member.
-fn request_type(ty: ColumnType) -> &'static str {
+pub(super) fn request_type(ty: ColumnType) -> &'static str {
     match ty {
         ColumnType::Boolean => "bool",
         ColumnType::Int32 => "i32",
@@ -68,7 +68,7 @@ fn request_type(ty: ColumnType) -> &'static str {
 
 /// The expression that turns one request value into its statement value,
 /// refusing on `path` when it is not in its one spelling.
-fn parse(ty: ColumnType, value: &str, path: &str) -> String {
+pub(super) fn parse(ty: ColumnType, value: &str, path: &str) -> String {
     let parser = match ty {
         ColumnType::Uuid => "uuid",
         ColumnType::Timestamptz => "timestamptz",
@@ -85,7 +85,7 @@ fn parse(ty: ColumnType, value: &str, path: &str) -> String {
 }
 
 /// The cursor key type of a sort field, the type its row member holds.
-fn cursor_key_type(ty: ColumnType) -> &'static str {
+pub(super) fn cursor_key_type(ty: ColumnType) -> &'static str {
     match ty {
         ColumnType::Boolean => "bool",
         ColumnType::Int32 => "i32",
@@ -826,7 +826,13 @@ pub(super) fn emit_package_data(
         .filter(|(_, model)| !model.operations.is_empty())
         .collect::<Vec<_>>();
     let sequences = manifest.sequences.iter().collect::<Vec<_>>();
-    if models.is_empty() && sequences.is_empty() {
+    if models.is_empty()
+        && sequences.is_empty()
+        && !manifest
+            .custom_operations
+            .values()
+            .any(|operation| operation.feed == Some(true))
+    {
         return Ok(());
     }
     // The refusal is the closed vocabulary, so every package spells it the
@@ -862,6 +868,18 @@ pub(super) fn emit_package_data(
         writeln!(
             source,
             "\n/// The generated `{model_name}` operations.\npub mod {model_name} {{\n    include!(\"{model_name}.rs\");\n}}"
+        )
+        .expect("writing to a String cannot fail");
+    }
+    for (name, _) in manifest
+        .custom_operations
+        .iter()
+        .filter(|(_, operation)| operation.feed == Some(true))
+    {
+        let stem = crate::manifest::custom_artifact_stem(name);
+        writeln!(
+            source,
+            "\n/// The authored `{name}` feed.\npub mod {stem} {{ include!(\"{stem}.rs\"); }}"
         )
         .expect("writing to a String cannot fail");
     }

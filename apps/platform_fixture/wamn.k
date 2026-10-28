@@ -14,6 +14,24 @@ manifest.Package {
         pick_label = {pattern = "B{seq:batch,per=batch_id,width=4}-{seq:line,reset=batch,width=3}"}
     }
     models = {
+        feed_line = manifest.Model("feed_line", _schema) {
+            table = "feed_line"
+            owner = "platform_fixture"
+            audit_log = {columns = [], retention = "P30D"}
+            operations = {}
+        }
+        feed_order = manifest.Model("feed_order", _schema) {
+            table = "feed_order"
+            owner = "platform_fixture"
+            audit_log = {columns = [], retention = "P30D"}
+            operations = {}
+        }
+        feed_item = manifest.Model("feed_item", _schema) {
+            table = "feed_item"
+            owner = "platform_fixture"
+            audit_log = {columns = [], retention = "P30D"}
+            operations = {}
+        }
         counter = manifest.Model("counter", _schema) {
             table = "counter"
             owner = "platform_fixture"
@@ -109,6 +127,27 @@ manifest.Package {
         }
     }
     custom_operations = {
+        "feed_line.screen" = manifest.Projection("feed_line.screen") {
+            feed = True
+            input.fields = [{path = "order_id", type = "uuid", nullable = True}]
+            result = {class = "bounded_list", fields = [
+                {path = "id", type = "uuid"}
+                {path = "order_id", type = "uuid"}
+                {path = "item_id", type = "uuid"}
+                {path = "label", type = "text"}
+                {path = "order_label", type = "text"}
+                {path = "item_label", type = "text"}
+            ]}
+            errors = ["invalid_input", *_errors_after_input]
+            lists = {model = "feed_line", key_field = "id", display_field = "label"}
+            statements = {
+                screen = manifest.Statement("query", "feed_line_screen") {
+                    fetch = "bounded_list"
+                    parameters = [manifest.nullable(manifest.uuid("order_id"))]
+                    row = [manifest.uuid("id"), manifest.uuid("order_id"), manifest.uuid("item_id"), manifest.text("label"), manifest.text("order_label"), manifest.text("item_label")]
+                }
+            }
+        }
         "number.issue" = manifest.Command("number.issue") {
             input.fields = [
                 manifest.request_id

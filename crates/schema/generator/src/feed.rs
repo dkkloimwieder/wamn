@@ -172,6 +172,55 @@ pub(crate) fn derive(
             "an authored feeding read needs exactly one SELECT statement",
         ));
     };
+    if operation.result.as_ref().is_some_and(|result| {
+        result
+            .fields
+            .iter()
+            .any(|field| field.path == "row_version")
+    }) || statement
+        .row
+        .iter()
+        .any(|field| field.name == "row_version")
+    {
+        return Err(fail(
+            "result field row_version is reserved for the snapshot version",
+        ));
+    }
+    if let Some(result) = &operation.result {
+        if result.class != crate::manifest::ResultClass::BoundedList {
+            return Err(fail("a feeding read needs a bounded_list result"));
+        }
+        for field in &result.fields {
+            if !statement
+                .row
+                .iter()
+                .any(|column| column.name == field.path && column.ty == field.ty)
+            {
+                return Err(refusal(
+                    name,
+                    format!(
+                        "result field {} must name a statement column of the same type",
+                        field.path
+                    ),
+                ));
+            }
+        }
+    }
+    for parameter in &statement.parameters {
+        if !operation.input.fields.iter().any(|field| {
+            (field.path == parameter.name || field.path == format!("value.{}", parameter.name))
+                && field.ty == parameter.ty
+                && field.nullable == parameter.nullable
+        }) {
+            return Err(refusal(
+                name,
+                format!(
+                    "statement parameter {} must name a request field of the same type and nullability",
+                    parameter.name
+                ),
+            ));
+        }
+    }
     let sql = sources
         .iter()
         .find(|source| source.path() == statement.path)
@@ -798,6 +847,223 @@ mod tests {
         );
         let indexed = CatalogIr::new(vec![indexed, table("item", &[]), table("orders", &[])]);
         assert!(missing_indexes(&indexed, "load", &source).is_empty());
+    }
+
+    #[test]
+    fn a_feed_refuses_an_authored_snapshot_field() {
+        let mut manifest = manifest();
+        manifest
+            .custom_operations
+            .get_mut("load")
+            .unwrap()
+            .statements
+            .get_mut("load")
+            .unwrap()
+            .row
+            .push(crate::manifest::StaticSqlValueDeclaration {
+                name: "row_version".into(),
+                ty: wamn_schema_introspection::ir::ColumnType::Int64,
+                nullable: false,
+            });
+        let error = derive_sql(&catalog(RECEIPT), &manifest, "SELECT id FROM screen").unwrap_err();
+        assert!(error.context().contains("field row_version"));
+        let mut manifest = self::manifest();
+        manifest.custom_operations.get_mut("load").unwrap().result = Some(serde_json::from_value(json!({"class": "bounded_list", "fields": [{"path": "row_version", "type": "int64", "nullable": false}]})).unwrap());
+        let error = derive_sql(&catalog(RECEIPT), &manifest, "SELECT id FROM screen").unwrap_err();
+        assert!(error.context().contains("field row_version"));
+    }
+
+    #[test]
+    fn authored_feed_emits_snapshot_statements_and_typed_variants() {
+        let catalog = catalog(RECEIPT);
+        let mut document = serde_json::to_value(manifest()).unwrap();
+        let mut operation = document["custom_operations"]["load"].take();
+        operation["permission"] = json!("line.load");
+        operation["connection"] = json!("postgres");
+        operation["input"]["fields"] =
+            json!([{"path": "value_id", "type": "uuid", "nullable": false}]);
+        document["components"] = json!({"fixture": {"connections": ["postgres"]}});
+        operation["errors"] = json!([
+            "invalid_input",
+            "retry",
+            "timeout",
+            "permission_denied",
+            "internal_error"
+        ]);
+        operation["result"] = json!({"class": "bounded_list", "fields": [{"path": "id", "type": "uuid", "nullable": false}]});
+        operation["statements"]["load"]["row"] =
+            json!([{"name": "id", "type": "uuid", "nullable": false}]);
+        operation["statements"]["load"]["parameters"] =
+            json!([{"name": "value_id", "type": "uuid", "nullable": false}]);
+        document["custom_operations"] = json!({"line.load": operation});
+        let bytes = serde_json::to_vec(&document).unwrap();
+        let sql = [AuthoredSql::new(
+            "query/load.sql",
+            b"SELECT id FROM screen WHERE ($1::uuid IS NULL OR order_id = $1::uuid) ORDER BY id;",
+        )];
+        let derived = crate::derive_manifest(&catalog, &bytes, &sql).unwrap();
+        let output = crate::generate(&crate::GenerationInput::new(
+            &catalog,
+            &derived,
+            &sql,
+            &crate::StatementTransactionality::default(),
+        ))
+        .unwrap();
+        for file in output.files() {
+            if std::path::Path::new(file.path())
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("rs"))
+            {
+                syn::parse_file(std::str::from_utf8(file.bytes()).unwrap()).unwrap();
+            }
+            if std::path::Path::new(file.path())
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("sql"))
+            {
+                pg_query::parse(std::str::from_utf8(file.bytes()).unwrap()).unwrap();
+            }
+        }
+        let text = |path| std::str::from_utf8(output.file(path).unwrap().bytes()).unwrap();
+        let changes = text("generated/sql/line_load/feed_changes.sql");
+        for expected in [
+            "item_history",
+            "line_history",
+            "orders_history",
+            "before->>'order_id'",
+            "before->>'item_id'",
+            "result.id = ANY",
+            "max(change_transaction)",
+            "LIMIT $4::int8",
+        ] {
+            assert!(changes.contains(expected), "missing {expected}: {changes}");
+        }
+        let wit = text("generated/wit/deps/fixture-line/package.wit");
+        let contract: serde_json::Value =
+            serde_json::from_str(text("generated/contracts/line/load.operation.json")).unwrap();
+        assert_eq!(contract["result"], "page");
+        assert_eq!(
+            contract["statements"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|statement| statement["name"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["feed_changes", "feed_page"]
+        );
+        assert!(text("generated/data/line_load.rs").contains("Error::invalid(\"value_id\")"));
+        for expected in [
+            "feed: option<load-feed>",
+            "page(load-page)",
+            "changes(load-changes)",
+            "row-version: s64",
+            "cursor-expired",
+        ] {
+            assert!(wit.contains(expected), "{expected}: {wit}");
+        }
+        let grants = text(crate::data_access::DATA_ACCESS_OVERLAY_PATH);
+        let grants: serde_json::Value = serde_json::from_str(grants).unwrap();
+        for table in ["item_history", "line_history", "orders_history"] {
+            let relation = grants["relations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|relation| relation["table"] == table)
+                .unwrap();
+            assert_eq!(
+                relation["select_fields"],
+                json!(["before", "row_key", "transaction_id", "type"])
+            );
+        }
+    }
+
+    #[test]
+    fn affected_keys_follow_each_link_and_both_images() {
+        let catalog = CatalogIr::new(vec![table("line", &[("order_id", "orders")]), table("orders", &[("item_id", "item")]), table("item", &[])]).with_views(vec![View::new("app", "screen", [("id", "line", "id"), ("order_id", "line", "order_id"), ("item_id", "orders", "item_id")].into_iter().map(|(name, table, field)| ViewColumn::new(name, ColumnType::Uuid).with_origin(ViewColumnOrigin { schema: "app".into(), table: table.into(), column: field.into() })).collect(), ["line", "orders", "item"].into_iter().map(|name| ViewBaseTable::new("app", name)).collect()).with_definition("SELECT line.id, line.order_id, orders.item_id FROM app.line JOIN app.orders ON orders.id = line.order_id JOIN app.item ON item.id = orders.item_id".into(), false)]);
+        let source = derive_sql(&catalog, &manifest(), "SELECT id FROM screen").unwrap();
+        let sql = crate::sql::authored_changes(
+            &catalog,
+            &source,
+            "SELECT id FROM screen",
+            "id",
+            &["id".into()],
+            1,
+        );
+        pg_query::parse(&sql).unwrap();
+        for expected in [
+            "item_id::uuid AS to_id FROM orders",
+            "order_id::uuid AS to_id FROM line",
+            "before->>'item_id'",
+            "before->>'order_id'",
+            "link_1.to_id = link_0.from_id",
+        ] {
+            assert!(sql.contains(expected), "{expected}: {sql}");
+        }
+
+        let catalog = CatalogIr::new(vec![table("line", &[]), table("orders", &[("line_id", "line")])]).with_views(vec![View::new("app", "screen", vec![ViewColumn::new("id", ColumnType::Uuid).with_origin(ViewColumnOrigin { schema: "app".into(), table: "line".into(), column: "id".into() })], ["line", "orders"].into_iter().map(|name| ViewBaseTable::new("app", name)).collect()).with_definition("SELECT line.id FROM app.line LEFT JOIN app.orders ON orders.line_id = line.id GROUP BY line.id".into(), false)]);
+        let source = derive_sql(&catalog, &manifest(), "SELECT id FROM screen").unwrap();
+        let sql = crate::sql::authored_changes(
+            &catalog,
+            &source,
+            "SELECT id FROM screen",
+            "id",
+            &["id".into()],
+            1,
+        );
+        pg_query::parse(&sql).unwrap();
+        for expected in [
+            "line_id::uuid AS to_id FROM orders",
+            "before->>'line_id'",
+            "link_0.from_id = (entry.row_key->>'id')::uuid",
+            "SELECT link_0.to_id AS change_id",
+        ] {
+            assert!(sql.contains(expected), "{expected}: {sql}");
+        }
+        let mut tables = catalog.tables().to_vec();
+        let root = tables
+            .iter_mut()
+            .find(|table| table.name() == "line")
+            .unwrap();
+        *root = Table::new(
+            "app",
+            "line",
+            vec![Column::new(
+                "id",
+                ColumnType::Int32,
+                false,
+                None,
+                Some(wamn_schema_introspection::ir::ColumnGeneration::Identity {
+                    mode: wamn_schema_introspection::ir::IdentityMode::Always,
+                }),
+            )],
+            root.constraints().to_vec(),
+            Vec::new(),
+        );
+        let child = tables
+            .iter_mut()
+            .find(|table| table.name() == "orders")
+            .unwrap();
+        *child = Table::new(
+            "app",
+            "orders",
+            vec![
+                Column::new("id", ColumnType::Uuid, false, None, None),
+                Column::new("line_id", ColumnType::Int64, false, None, None),
+            ],
+            child.constraints().to_vec(),
+            Vec::new(),
+        );
+        let catalog = CatalogIr::new(tables);
+        let sql = crate::sql::authored_changes(
+            &catalog,
+            &source,
+            "SELECT id FROM screen",
+            "id",
+            &["id".into()],
+            1,
+        );
+        pg_query::parse(&sql).unwrap();
+        assert!(sql.contains("line_id::int4 AS to_id FROM orders"));
+        assert!(sql.contains("(before->>'line_id')::int4"));
     }
 
     #[test]

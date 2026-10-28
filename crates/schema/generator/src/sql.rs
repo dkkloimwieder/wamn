@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use wamn_schema_introspection::ir::{Column, ColumnType, Table};
 
 use wamn_record_history::history_table_name;
@@ -271,7 +272,7 @@ pub(crate) fn changes(table: &Table, operation: &OperationDeclaration, tombstone
     let after = transaction + 1;
     let limit = after + 1;
     let history = history_table_name(table.name());
-    let affected_keys = affected_root_keys(&[table], &[], transaction);
+    let affected_keys = affected_root_keys(table, &[table], &[], transaction);
     predicates.push("    model.id = ANY(ARRAY(SELECT change_id FROM affected))".to_owned());
     let restricted = query_select(table, &predicates);
     let expired = format!(
@@ -325,15 +326,14 @@ ORDER BY page.change_transaction, page.change_id;
 /// Map history entries in the cursor window to root keys before paging.
 /// Each join path entry names a table and its linking column.
 fn affected_root_keys(
+    root: &Table,
     read_set: &[&Table],
-    join_path: &[(&Table, &str)],
+    join_path: &[crate::feed::FeedLink],
     transaction: usize,
 ) -> String {
-    // Generated reads have one root table and no linking columns.
-    assert!(join_path.is_empty(), "generated reads have no joins");
-    let [root] = read_set else {
-        panic!("generated reads read one root table");
-    };
+    if !join_path.is_empty() {
+        return joined_root_keys(root, read_set, join_path, transaction);
+    }
     let key_cast = key_cast(root);
     let history = history_table_name(root.name());
     format!(
@@ -347,6 +347,204 @@ fn affected_root_keys(
                    AND pg_visible_in_snapshot(entry.transaction_id::text::xid8, bound.snapshot)))
         GROUP BY (entry.row_key->>'id')::{key_cast}"
     )
+}
+
+fn history_window(transaction: usize) -> String {
+    format!(
+        "entry.transaction_id >= ${transaction}::int8
+          AND (entry.transaction_id < bound.feed_end
+               OR (entry.transaction_id < bound.feed_max
+                   AND pg_visible_in_snapshot(entry.transaction_id::text::xid8, bound.snapshot)))"
+    )
+}
+
+fn root_paths(
+    table: &Table,
+    root: &Table,
+    links: &[crate::feed::FeedLink],
+    tables: &[&Table],
+    seen: &mut Vec<usize>,
+) -> Vec<Vec<usize>> {
+    if table == root {
+        return vec![Vec::new()];
+    }
+    let mut found = Vec::new();
+    for (i, link) in links.iter().enumerate() {
+        if seen.contains(&i)
+            || link.table.schema != table.schema()
+            || link.table.table != table.name()
+        {
+            continue;
+        }
+        let parent = if link.direction == crate::feed::FeedDirection::ReferencesRoot {
+            root
+        } else {
+            tables
+                .iter()
+                .copied()
+                .find(|candidate| {
+                    candidate.schema() == link.foreign_key_table.schema
+                        && candidate.name() == link.foreign_key_table.table
+                })
+                .expect("validated linking table")
+        };
+        seen.push(i);
+        for mut path in root_paths(parent, root, links, tables, seen) {
+            path.insert(0, i);
+            found.push(path);
+        }
+        seen.pop();
+    }
+    found
+}
+
+fn joined_root_keys(
+    root: &Table,
+    read_set: &[&Table],
+    join_path: &[crate::feed::FeedLink],
+    transaction: usize,
+) -> String {
+    use crate::feed::FeedDirection;
+
+    let index = |table: &crate::feed::FeedTable| {
+        read_set
+            .iter()
+            .position(|candidate| {
+                candidate.schema() == table.schema && candidate.name() == table.table
+            })
+            .expect("validated feed table belongs to the read set")
+    };
+    let histories = read_set.iter().enumerate().map(|(i, table)| {
+        format!("history_{i} AS MATERIALIZED (SELECT entry.transaction_id, entry.row_key, entry.before FROM {} AS entry WHERE {})", history_table_name(table.name()), history_window(transaction))
+    }).collect::<Vec<_>>();
+    // Each edge includes the old foreign key. This also keeps a deleted join
+    // reachable when the current view no longer returns its root.
+    let edges = join_path.iter().enumerate().map(|(i, link)| {
+        let from = index(&link.foreign_key_table);
+        let pair = &link.foreign_key_columns[0];
+        let table = read_set[from];
+        let to = if link.direction == FeedDirection::ReferencesRoot { root } else { read_set[index(&link.table)] };
+        let from_cast = key_cast(table);
+        let to_cast = key_cast(to);
+        let column = pair.column();
+        format!("edge_{i} AS (SELECT id AS from_id, {column}::{to_cast} AS to_id FROM {} UNION ALL SELECT (row_key->>'id')::{from_cast}, (before->>'{column}')::{to_cast} FROM history_{from} WHERE before IS NOT NULL)", table.name())
+    }).collect::<Vec<_>>();
+    let mut mapped = Vec::new();
+    for (i, table) in read_set.iter().enumerate() {
+        for path in root_paths(table, root, join_path, read_set, &mut Vec::new()) {
+            let mut id = format!("(entry.row_key->>'id')::{}", key_cast(table));
+            let mut joins = String::new();
+            for edge in path {
+                let direct = join_path[edge].direction == FeedDirection::ReferencesRoot;
+                let (matched, next) = if direct {
+                    ("from_id", "to_id")
+                } else {
+                    ("to_id", "from_id")
+                };
+                write!(
+                    joins,
+                    " JOIN edge_{edge} AS link_{edge} ON link_{edge}.{matched} = {id}"
+                )
+                .expect("writing to a String cannot fail");
+                id = format!("link_{edge}.{next}");
+            }
+            mapped.push(format!("SELECT {id} AS change_id, entry.transaction_id AS change_transaction FROM history_{i} AS entry{joins}"));
+        }
+    }
+    format!(
+        "        WITH {}\n        SELECT change_id, max(change_transaction) AS change_transaction FROM ({}) AS mapped WHERE change_id IS NOT NULL GROUP BY change_id",
+        histories
+            .into_iter()
+            .chain(edges)
+            .collect::<Vec<_>>()
+            .join(",\n        "),
+        mapped.join(" UNION ALL ")
+    )
+}
+
+/// Wrap the authored read in the same snapshot carrier as a generated page.
+pub(crate) fn authored_page(statement: &str, fields: &[String]) -> String {
+    format!(
+        "SELECT bound.feed_cursor, {} FROM (SELECT {SNAPSHOT_XMIN} AS feed_cursor) AS bound LEFT JOIN LATERAL (\n{}\n) AS page ON true;\n",
+        fields
+            .iter()
+            .map(|field| format!("page.{field}"))
+            .collect::<Vec<_>>()
+            .join(", "),
+        statement.trim().trim_end_matches(';')
+    )
+}
+
+/// Find root keys, restrict the authored read, and emit deletions in one snapshot.
+pub(crate) fn authored_changes(
+    catalog: &wamn_schema_introspection::ir::CatalogIr,
+    source: &crate::feed::FeedSource,
+    statement: &str,
+    key: &str,
+    fields: &[String],
+    transaction: usize,
+) -> String {
+    let read_set = source
+        .read_set
+        .iter()
+        .map(|table| {
+            catalog
+                .tables()
+                .iter()
+                .find(|candidate| {
+                    candidate.schema() == table.schema && candidate.name() == table.table
+                })
+                .expect("validated feed table")
+        })
+        .collect::<Vec<_>>();
+    let root = read_set
+        .iter()
+        .copied()
+        .find(|table| table.schema() == source.root.schema && table.name() == source.root.table)
+        .expect("validated feed root");
+    let affected = affected_root_keys(root, &read_set, &source.join_path, transaction);
+    let after = transaction + 1;
+    let limit = after + 1;
+    let cast = key_cast(root);
+    let expired = source
+        .read_set
+        .iter()
+        .map(|table| {
+            format!(
+                "'{}.{}'::regclass",
+                table.schema,
+                history_table_name(&table.table)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let columns = |alias: &str| {
+        fields
+            .iter()
+            .map(|field| format!("{alias}.{field}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    format!("SELECT bound.feed_end, bound.expired, page.change_id, page.change_transaction, page.present, {page_columns}
+FROM (
+    SELECT pg_snapshot_xmin(snapshot)::text::int8 AS feed_end,
+           pg_snapshot_xmax(snapshot)::text::int8 AS feed_max, snapshot,
+           EXISTS (SELECT FROM wamn_history.pruning_watermarks AS watermark WHERE watermark.history_table IN ({expired}) AND ${transaction}::int8 <= watermark.transaction_id) AS expired
+    FROM (SELECT pg_current_snapshot() AS snapshot OFFSET 0) AS current
+) AS bound
+LEFT JOIN LATERAL (
+    WITH affected AS MATERIALIZED (
+        SELECT changed.change_id, changed.change_transaction FROM (
+{affected}
+        ) AS changed
+        WHERE ${after}::{cast} IS NULL OR (changed.change_transaction, changed.change_id) > (${transaction}::int8, ${after}::{cast})
+        ORDER BY changed.change_transaction, changed.change_id LIMIT ${limit}::int8
+    ), result AS (
+        SELECT * FROM (\n{statement}\n        ) AS result WHERE result.{key} = ANY(ARRAY(SELECT change_id FROM affected))
+    )
+    SELECT affected.change_id, affected.change_transaction, result.{key} IS NOT NULL AS present, {result_columns}
+    FROM affected LEFT JOIN result ON result.{key} = affected.change_id
+) AS page ON true ORDER BY page.change_transaction, page.change_id;\n", page_columns = columns("page"), result_columns = columns("result"), statement = statement.trim().trim_end_matches(';'))
 }
 
 /// The query body shared by a list page and its restricted feed run.

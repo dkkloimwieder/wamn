@@ -238,4 +238,66 @@
     },
     "registered-operation": "platform-fixture:number/issue"
   }
+,
+  "feed-line-screen-http": {
+    "type": "http",
+    "package-id": "platform_fixture",
+    "component": "fixture",
+    "operation": "platform-fixture:feed-line/screen",
+    "definition-hash": "sha256:6c95683d6af1b8421259ced3f135e32e2c046f396b29672fc060ab933c0725a0",
+    "definition": {
+      "id": "feed-line-screen-http",
+      "type": "http",
+      "route": {
+        "path": "/feed_line/screen"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 1,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "order_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            },
+            "feed": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "cursor": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "limit": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "minimum": 1,
+                  "maximum": 100
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "modes": [
+        "pat"
+      ]
+    },
+    "registered-operation": "platform-fixture:feed-line/screen"
+  }
 }
