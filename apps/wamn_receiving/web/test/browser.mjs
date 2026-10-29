@@ -241,16 +241,24 @@ try {
   await run("record-receipt", {
     start: receivingScreen,
     body: async () => {
+      // The receiving screen is a sync screen: its row action opens a receipt panel for that line.
       await table("Receiving screen").getByRole("button", { name: "Record a receipt", exact: true }).click();
-      await page.getByRole("button", { name: "Record a receipt", exact: true }).waitFor();
-      await page.waitForFunction(
-        () => document.querySelector('input[aria-label="Order line"]')?.value === "ITEM-BROWSER",
-      );
-      await choose("Location", "DOCK-BROWSER");
-      await page.getByLabel("Receipt reference", { exact: true }).fill("BROWSER-RECEIPT");
-      await page.getByLabel("Quantity", { exact: true }).fill("1");
+      const receiptPanel = page.getByRole("form", { name: "Record a receipt", exact: true });
+      await receiptPanel.getByRole("heading", { name: /ITEM-BROWSER$/ }).waitFor();
+      await receiptPanel
+        .getByRole("combobox", { name: "Location", exact: true })
+        .selectOption({ label: "DOCK-BROWSER" });
+      await receiptPanel.getByLabel("Receipt reference", { exact: true }).fill("BROWSER-RECEIPT");
+      await receiptPanel.getByLabel("Quantity", { exact: true }).fill("1");
       await capture("record-receipt");
-      await page.getByRole("button", { name: "Record a receipt", exact: true }).click();
+      await receiptPanel.getByRole("button", { name: "Record a receipt", exact: true }).click();
+      await receiptPanel.waitFor({ state: "detached" });
+      await table("Receiving screen").locator('[data-tentative="true"]').first().waitFor({ state: "detached" });
+      await page
+        .getByLabel("Sync status", { exact: true })
+        .filter({ hasText: /Pending: 0\. Refused: 0\./ })
+        .waitFor();
+      await menu("Receipts");
       await table("Receipts").getByText("BROWSER-RECEIPT", { exact: true }).waitFor();
       assert.ok(new URL(page.url()).pathname.endsWith("/receipts"));
     },

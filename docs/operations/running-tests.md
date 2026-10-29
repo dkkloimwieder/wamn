@@ -1213,6 +1213,7 @@ It uses the same prerequisites, component variables, and `delivery_timings` fixt
 Build Receiving and the platform UI before the run.
 The test seeds 26 purchase orders, one line per order, one supplier, one item, and one location in its disposable database.
 It signs in, follows record links, pages the orders, changes a supplier, and records a receipt.
+The receipt goes through the sync receipt panel, and the browser waits until the status line shows "Pending: 0. Refused: 0."
 It also creates a supplier and uses the form cancel action.
 The browser requires table-header actions, full-panel tables, literal uppercase breadcrumbs, and forms that return to their tables.
 
@@ -1237,6 +1238,32 @@ The files are `sign-in.png`, `audiences.png`, `purchase-orders.png`, `purchase-o
 It also saves `record-receipt.png`, `receipts.png`, `receipt.png`, `create-supplier.png`, `suppliers.png`, and `locations.png`.
 The test prints the directory and retains it after service cleanup.
 The service log stays at `<results>/receiving-ui-env/control-web.log`.
+
+### Local Receiving sync
+
+`local_receiving_sync` runs five browser checks against the Receiving sync screens.
+It uses the same build steps, variables, and fixture as [Local Receiving screens](#local-receiving-screens).
+The checks are:
+
+1. A 30 second network drop: the screens make no page read and no navigation.
+2. A second browser records a receipt, and the first browser shows the new remaining quantity within one poll.
+3. The browser reopens offline with a saved session, shows "Offline, sign in to upload.", and replays the receipt when the network returns.
+4. Eight network flaps with three receipts: each receipt uploads once.
+5. A refused receipt goes to the "Not uploaded" region, and a corrected copy uploads.
+
+Run from the repository root:
+
+```bash
+export TMPDIR=/var/tmp
+results="$(mktemp -d /var/tmp/wamn-receiving-sync-XXXXXX)/run"
+"$CARGO_TARGET_DIR/debug/examples/delivery_timings" "$PWD" "$CARGO_TARGET_DIR" "$results" -- \
+  cargo test --offline -p wamn-ctl --test receiving_ui_live \
+  local_receiving_sync -- --ignored --exact --nocapture
+```
+
+The test prints "CHECK n PASS" for each check and then "PASS: Receiving sync checks".
+Failure screenshots go to `<results>/receiving-sync-screenshots/`.
+The service log stays at `<results>/receiving-sync-env/control-web.log`.
 
 ### Generated descriptions
 

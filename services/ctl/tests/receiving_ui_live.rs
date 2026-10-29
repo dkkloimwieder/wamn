@@ -30,6 +30,41 @@ async fn run(command: &mut Command) -> anyhow::Result<()> {
 #[tokio::test]
 #[ignore = "requires: delivery_timings fixture, built native binaries, platform UI, flow-http, materializer, Chrome"]
 async fn local_receiving_screens() -> anyhow::Result<()> {
+    drive(Browser {
+        name: "local_receiving_screens",
+        script: "apps/wamn_receiving/web/test/browser.mjs",
+        environment: "receiving-ui-env",
+        screenshots: "receiving-screenshots",
+        passed: "PASS: Receiving screens, writes, pagination and navigation",
+    })
+    .await
+}
+
+/// The five sync checks of the open receipt lines screen: a 30 s drop, another
+/// browser, a reopen during an outage, a flapping replay, and a refusal.
+#[tokio::test]
+#[ignore = "requires: delivery_timings fixture, built native binaries, platform UI, flow-http, materializer, Chrome"]
+async fn local_receiving_sync() -> anyhow::Result<()> {
+    drive(Browser {
+        name: "local_receiving_sync",
+        script: "apps/wamn_receiving/web/test/sync-browser.mjs",
+        environment: "receiving-sync-env",
+        screenshots: "receiving-sync-screenshots",
+        passed: "PASS: Receiving sync checks",
+    })
+    .await
+}
+
+/// One browser script against the seeded local Receiving release.
+struct Browser {
+    name: &'static str,
+    script: &'static str,
+    environment: &'static str,
+    screenshots: &'static str,
+    passed: &'static str,
+}
+
+async fn drive(browser_run: Browser) -> anyhow::Result<()> {
     let started = Instant::now();
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -37,10 +72,10 @@ async fn local_receiving_screens() -> anyhow::Result<()> {
     let mut postgres = wamn_test_postgres::start(&[("wal_level", "logical")])?;
     let system = postgres.create_database("wamn_system")?;
     let results = PathBuf::from(required("WAMN_TIMINGS_ROOT")?);
-    let report = results.join("receiving-screenshots");
+    let report = results.join(browser_run.screenshots);
     std::fs::create_dir_all(&report)?;
     println!("Receiving screenshots: {}", report.display());
-    let root = results.join("receiving-ui-env");
+    let root = results.join(browser_run.environment);
     let wamn = required("WAMN_RECEIVING_DEV_BIN")?;
     let mut up = Command::new(&wamn);
     up.current_dir(&repository)
@@ -121,7 +156,7 @@ async fn local_receiving_screens() -> anyhow::Result<()> {
             .send().await?;
         ensure!(enrolled.status() == reqwest::StatusCode::NO_CONTENT, "password enrollment refused: {}", enrolled.status());
         let mut browser = Command::new("pnpm").current_dir(&repository)
-            .args(["exec", "node", "apps/wamn_receiving/web/test/browser.mjs"])
+            .args(["exec", "node", browser_run.script])
             .env("WAMN_BROWSER_URL", url)
             .env("WAMN_BROWSER_EMAIL", DEVELOPER_EMAIL)
             .env("WAMN_BROWSER_PASSWORD", PASSWORD)
@@ -134,7 +169,7 @@ async fn local_receiving_screens() -> anyhow::Result<()> {
         let output = browser.wait_with_output().await?;
         println!("{}", String::from_utf8_lossy(&output.stdout));
         ensure!(output.status.success(), "browser failed: {}", output.status);
-        ensure!(String::from_utf8_lossy(&output.stdout).contains("PASS: Receiving screens, writes, pagination and navigation"), "Receiving browser assertions did not finish");
+        ensure!(String::from_utf8_lossy(&output.stdout).contains(browser_run.passed), "Receiving browser assertions did not finish");
         drop(admin);
         driver.await??;
         Ok::<_, anyhow::Error>(())
@@ -165,7 +200,8 @@ async fn local_receiving_screens() -> anyhow::Result<()> {
         Ok(())
     };
     println!(
-        "local_receiving_screens: {:.2}s; result={}; cleanup={}",
+        "{}: {:.2}s; result={}; cleanup={}",
+        browser_run.name,
         started.elapsed().as_secs_f64(),
         if result.is_ok() { "PASS" } else { "FAIL" },
         if cleanup.is_ok() { "PASS" } else { "FAIL" }
