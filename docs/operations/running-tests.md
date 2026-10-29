@@ -800,8 +800,66 @@ Before you run a case with a new check, do these steps:
 
 The `<release>-http` Service has no selector, so `kubectl port-forward svc/<release>-http` fails.
 The case found no EndpointSlice for that Service either.
-While a case runs, its cluster stays available through the `kubeconfig` file in its work directory `/var/tmp/wamn-apply-<pid>`.
-The case deletes its cluster after either outcome.
+The `environment_apply_kind` case uses `wamn-apply-<k>` as its cluster name.
+Here, `<k>` contains the first eight hexadecimal characters of the SHA256 hash of the canonical worktree path.
+The registry name is `<cluster>-registry`.
+Each run writes results to `$TMPDIR/wamn-apply-<pid>`.
+The kubeconfig and secrets stay in the original work directory.
+
+A failed full run keeps its cluster, registry, event containers, images, releases, databases, and secrets.
+A passing full run deletes them.
+Set `WAMN_KIND_KEEP=never` to delete them after either outcome.
+Unset or empty `WAMN_KIND_KEEP` keeps them on failure.
+The case rejects other values.
+
+A kept run writes `kept.json` beside `report.json`.
+This file records names, secret paths, failed checks, reached phases, image digests, and data for another run.
+The case prints the cluster name, kubeconfig path, failed names, and cleanup command on one line.
+A full run refuses an existing cluster or registry and names the cleanup command.
+It never deletes a kept cluster automatically.
+To delete the kept resources and secrets, run the command from `kept.json`:
+
+```bash
+tools/kind-kept-delete /absolute/path/to/kept.json
+```
+
+To rerun named checks, set both variables:
+
+```bash
+WAMN_KIND_REUSE=/absolute/path/to/kept.json \
+WAMN_KIND_CHECKS='14 / A1 heartbeat labels,4 show reapply' \
+WAMN_RELEASE_CHART=/absolute/path/to/chart \
+cargo test --locked --offline -p wamn-control --test environment_apply_kind -- --ignored --exact environment_apply_kind --nocapture
+```
+
+A rerun runs only the named checks and always keeps the cluster.
+It writes a new result directory and a new `kept.json` with the original kubeconfig and secret paths.
+It refreshes only images whose digests change and records each transfer in `report.json`.
+It uses prepared packages and does not rebuild them.
+Setting only one variable fails.
+An empty selection or an unknown name fails and lists the known names.
+
+Each rerunnable check declares its required phase, a point that setup reaches.
+The `environment` phase includes the operators, registry, provisioned organization, packages, releases, system database, and event broker.
+The `release` phase adds the applied dev environment.
+The `bindings` phase adds the dev connection apply.
+Deleting the dev environment removes the `release` and `bindings` phases.
+A rerun refuses a check when its phase is missing.
+
+The rerun table contains these checks:
+
+| Name | Phase |
+| --- | --- |
+| `4 rest_connector` | `environment` |
+| `4 netsuite` | `environment` |
+| `native files on kind MinIO` | `environment` |
+| `14 / A1 heartbeat labels` | `release` |
+| `15 wrong release placement` | `release` |
+| `4 show reapply` | `bindings` |
+
+When you add a rerunnable check, add its name, phase, and function to `CHECKS` in `environment_apply_kind.rs`.
+Call that same function at the existing point in the full run.
+These keep and rerun rules apply only to `environment_apply_kind`.
 
 ### Files on PostgreSQL and MinIO
 

@@ -11,26 +11,23 @@ use wamn_control_provision::CredentialGeneration;
 
 use super::{NAMESPACE, PG_CLUSTER, Run};
 
-pub async fn deploy(run: &Run, repository: &Path, platform: &Platform) -> anyhow::Result<String> {
+pub async fn deploy(
+    run: &mut Run,
+    repository: &Path,
+    platform: &Platform,
+) -> anyhow::Result<String> {
     let name = "integration-session";
     let hostname = format!("{name}.{NAMESPACE}.svc.cluster.local");
     let issuer = format!("https://{hostname}");
-    let image = wamn_control::release_chart::qualification_images(&platform.chart)
-        .await?
-        .identity;
+    if run.reuse && run.kept.identity_ready {
+        return Ok(issuer);
+    }
+    prepare_image(run, &platform.chart).await?;
     let image_repository = format!("{}-identity", run.cluster);
-    let local_image = format!("{image_repository}:debug");
-    run.run("docker", &["pull", "--quiet", &image]).await?;
-    run.run("docker", &["tag", &image, &local_image]).await?;
-    run.run(
-        "kind",
-        &["load", "docker-image", &local_image, "--name", &run.cluster],
-    )
-    .await?;
 
     // As in gate-harness::session_issuer::prepare_application, provision the
     // issuer credential and publish a real key through the identity library.
-    let secret = run.work.join("integration-session-db.json");
+    let secret = run.kept.secret_work.join("integration-session-db.json");
     provision_identity_issuer(IdentityIssuerRequest {
         issuer: issuer.clone(),
         system_database_url: platform.system_database_url.clone(),
@@ -146,5 +143,16 @@ pub async fn deploy(run: &Run, repository: &Path, platform: &Platform) -> anyhow
         ],
     )
     .await?;
+    run.kept.identity_ready = true;
     Ok(issuer)
+}
+
+pub async fn prepare_image(run: &mut Run, chart: &Path) -> anyhow::Result<()> {
+    let image = wamn_control::release_chart::qualification_images(chart)
+        .await?
+        .identity;
+    let local_image = format!("{}-identity:debug", run.cluster);
+    run.run("docker", &["pull", "--quiet", &image]).await?;
+    run.run("docker", &["tag", &image, &local_image]).await?;
+    run.load_image(&local_image).await
 }

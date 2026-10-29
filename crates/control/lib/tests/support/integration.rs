@@ -116,7 +116,7 @@ pub async fn auth_changes(run: &Run) -> anyhow::Result<(AuthChanges, Child)> {
         .local_addr()?
         .port();
     let forward = Command::new("kubectl")
-        .env("KUBECONFIG", run.work.join("kubeconfig"))
+        .env("KUBECONFIG", &run.kept.kubeconfig)
         .args([
             "-n",
             NAMESPACE,
@@ -577,16 +577,32 @@ pub async fn exercise(
     let consumers = wamn_control_provision::events::entity_consumers(&scope, &manifests);
     // Each connector run gets its own broker directory, because the broker
     // refuses an existing one.
-    let broker_work = run.work.join(connector);
-    std::fs::create_dir(&broker_work)?;
-    let broker = event_broker::prepare(
-        &broker_work,
-        &scope,
-        &env_key,
-        &source,
-        &advisory_stream_config(&scope, 1),
-        &consumers,
-    )?;
+    let active = run
+        .run("docker", &["ps", "-a", "--format", "{{.Names}}"])
+        .await?
+        .lines()
+        .any(|name| name == format!("{}-events", run.cluster));
+    let broker = if run.reuse && active {
+        event_broker::load(
+            run.kept
+                .brokers
+                .get("events")
+                .context("the kept event broker files")?,
+        )?
+    } else {
+        let broker_work = run.work.join(connector);
+        std::fs::create_dir(&broker_work)?;
+        let broker = event_broker::prepare(
+            &broker_work,
+            &scope,
+            &env_key,
+            &source,
+            &advisory_stream_config(&scope, 1),
+            &consumers,
+        )?;
+        run.kept.brokers.insert("events".into(), broker_work);
+        broker
+    };
     let server = start_broker(run, &broker.configuration, &broker.provisioning, "events").await?;
     event_broker::write_binding(&broker, &server, &source)?;
     let mut platform = platform.clone();
@@ -597,6 +613,21 @@ pub async fn exercise(
         stream_replicas: 1,
         dup_window_secs: 120,
     });
+    if run.reuse {
+        // A required setup error can leave the check's environment partly applied.
+        let (system, driver) = connect(&platform.system_database_url).await?;
+        let exists = system
+            .query_opt(
+                "SELECT 1 FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3",
+                &[&ORG, &PROJECT, &ENVIRONMENT],
+            )
+            .await?
+            .is_some();
+        driver.abort();
+        if exists {
+            environment::delete::delete(&platform, &scope, true).await?;
+        }
+    }
     let mut document = fixture_document(connector);
     // The preceding edge paging assertion used the same route. A fresh process
     // gives this independent flow its own page-two refusal and request log.
@@ -650,7 +681,7 @@ pub async fn exercise(
         "SELECT instance_suffix FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3",
         &[&ORG, &PROJECT, &ENVIRONMENT],
     ).await?.get(0);
-    let issuer = if connector == "netsuite" {
+    let issuer = if run.kept.identity_ready {
         // The preceding Epic 4 case installed this issuer in the shared fixture.
         format!("https://integration-session.{NAMESPACE}.svc.cluster.local")
     } else {
@@ -663,10 +694,18 @@ pub async fn exercise(
         "/{}",
         wamn_control_provision::project_env_database_name(ORG, PROJECT, ENVIRONMENT, &suffix)
     ));
-    let bytes = publish(
-        run, repository, registry, &roots, &manifests, &env_key, connector,
-    )
-    .await?;
+    let bytes = if let Some(bytes) = run.kept.releases.get(connector) {
+        bytes.clone()
+    } else {
+        let bytes = publish(
+            run, repository, registry, &roots, &manifests, &env_key, connector,
+        )
+        .await?;
+        run.kept
+            .releases
+            .insert(connector.to_owned(), bytes.clone());
+        bytes
+    };
     let pushed = wamn_control::publish_release::push_manifest_bytes(
         &bytes,
         &platform.release_artifact_base,
@@ -1001,26 +1040,34 @@ pub(super) async fn start_broker(
     suffix: &str,
 ) -> anyhow::Result<String> {
     let name = format!("{}-{suffix}", run.cluster);
-    run.run(
-        "docker",
-        &[
-            "run",
-            "--detach",
-            "--name",
-            &name,
-            "--network",
-            "kind",
-            "--volume",
-            &format!("{}:/fixture/nats.conf:ro", configuration.display()),
-            "nats:2.10-alpine",
-            "--jetstream",
-            "--store_dir",
-            "/data",
-            "--config",
-            "/fixture/nats.conf",
-        ],
-    )
-    .await?;
+    let exists = run.reuse
+        && run
+            .run("docker", &["ps", "-a", "--format", "{{.Names}}"])
+            .await?
+            .lines()
+            .any(|container| container == name);
+    if !exists {
+        run.run(
+            "docker",
+            &[
+                "run",
+                "--detach",
+                "--name",
+                &name,
+                "--network",
+                "kind",
+                "--volume",
+                &format!("{}:/fixture/nats.conf:ro", configuration.display()),
+                "nats:2.10-alpine",
+                "--jetstream",
+                "--store_dir",
+                "/data",
+                "--config",
+                "/fixture/nats.conf",
+            ],
+        )
+        .await?;
+    }
     let ip = run
         .run(
             "docker",

@@ -3,7 +3,7 @@
 //!
 //! This is the one kind suite of the platform. `apply` ensures the
 //! environment's `Database` CR, so the suite runs CloudNativePG: a fresh kind
-//! cluster `wamn-apply-<pid>` (epic decision D9),
+//! cluster `wamn-apply-<checkout hash>`,
 //! cert-manager, the operator release, the CNPG operator and one `Cluster`,
 //! and a TLS registry with a password on the kind network. The system
 //! database lives on the CNPG cluster and the verb reaches it through a port
@@ -94,7 +94,10 @@
 //!
 //! Independent checks record their failures and continue. Required setup stops
 //! the case if a later check needs it. The final error names every failed check.
-//! The case removes its cluster and registry after either outcome.
+//! A failed run keeps its cluster, registry and secrets. `kept.json` records
+//! the cleanup command. A passing full run deletes them. `WAMN_KIND_KEEP=never`
+//! deletes them after either outcome. Set `WAMN_KIND_REUSE` to `kept.json` and
+//! `WAMN_KIND_CHECKS` to comma-separated names to rerun checks and keep the cluster.
 //!
 //! A run with a failed check keeps a `diagnostics` row in `report.json`: the
 //! events, the descriptions, the container logs and, for a failed rollout,
@@ -134,10 +137,13 @@
 //! `WAMN_BLOB_PUT_COMPONENT` to the resulting `blob_put.wasm`.
 //! `WAMN_RELEASE_CHART=<chart> cargo test --locked --offline -p wamn-control --test environment_apply_kind -- --ignored --nocapture`
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, ensure};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::AsyncReadExt as _;
 use tokio::process::{Child, Command};
@@ -201,19 +207,239 @@ const ROUTE_NOT_FOUND: &str = r#"{"error":{"code":"route-not-found"}}"#;
 const ROLLOUT_SNAPSHOT: Duration = Duration::from_secs(30);
 /// An image that the deliberately unplaced probe never pulls.
 const UNPULLED: &str = "registry.invalid/wamn/unpulled@sha256:2222222222222222222222222222222222222222222222222222222222222222";
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct Kept {
+    cluster: String,
+    kubeconfig: PathBuf,
+    registry: String,
+    work: PathBuf,
+    secret_work: PathBuf,
+    failed: Vec<String>,
+    phases: Vec<String>,
+    images: BTreeMap<String, String>,
+    role_inputs: BTreeMap<String, String>,
+    image_set: Option<ImageSet>,
+    registry_address: String,
+    event_server: String,
+    release_digest: String,
+    releases: BTreeMap<String, Vec<u8>>,
+    file_setup_error: Option<String>,
+    identity_ready: bool,
+    fixture_source: String,
+    brokers: BTreeMap<String, PathBuf>,
+    cleanup: String,
+}
+
+fn keep_on_failure(value: Option<&str>) -> anyhow::Result<bool> {
+    match value {
+        None | Some("") => Ok(true),
+        Some("never") => Ok(false),
+        Some(value) => {
+            anyhow::bail!("invalid WAMN_KIND_KEEP={value:?}: accepted value is never (or unset)")
+        }
+    }
+}
+
+fn cluster_name(repository: &Path) -> String {
+    let digest = ring::digest::digest(
+        &ring::digest::SHA256,
+        repository.as_os_str().as_encoded_bytes(),
+    );
+    format!("wamn-apply-{}", &hex::encode(digest.as_ref())[..8])
+}
+
+struct CheckContext {
+    repository: PathBuf,
+    platform: Platform,
+    images: ImageSet,
+    registry: PackageRegistry,
+    admin_url: String,
+    digest: String,
+    show_expected: Option<(usize, Option<i64>)>,
+    _forward: Child,
+}
+
+type CheckFuture<'a> = Pin<Box<dyn Future<Output = anyhow::Result<()>> + 'a>>;
+struct Check {
+    name: &'static str,
+    phase: &'static str,
+    run: for<'a> fn(&'a mut Run, &'a CheckContext) -> CheckFuture<'a>,
+}
+
+const CHECKS: [Check; 6] = [
+    Check {
+        name: "4 rest_connector",
+        phase: "environment",
+        run: |run, context| Box::pin(connector_check(run, context, "rest_connector")),
+    },
+    Check {
+        name: "4 netsuite",
+        phase: "environment",
+        run: |run, context| Box::pin(connector_check(run, context, "netsuite")),
+    },
+    Check {
+        name: "native files on kind MinIO",
+        phase: "environment",
+        run: |run, context| Box::pin(files_check(run, context)),
+    },
+    Check {
+        name: "14 / A1 heartbeat labels",
+        phase: "release",
+        run: |run, context| Box::pin(heartbeat_check(run, context)),
+    },
+    Check {
+        name: "15 wrong release placement",
+        phase: "release",
+        run: |run, context| Box::pin(placement_check(run, context)),
+    },
+    Check {
+        name: "4 show reapply",
+        phase: "bindings",
+        run: |run, context| Box::pin(async { show_check(run, context).await.map(|_| ()) }),
+    },
+];
+
+fn select_checks(value: &str) -> anyhow::Result<Vec<&'static Check>> {
+    let mut selected = Vec::new();
+    for name in value.split(',').map(str::trim) {
+        let check = CHECKS
+            .iter()
+            .find(|check| check.name == name)
+            .with_context(|| {
+                format!(
+                    "unknown or empty WAMN_KIND_CHECKS name {name:?}: known names: {}",
+                    CHECKS
+                        .iter()
+                        .map(|check| check.name)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            })?;
+        if !selected.iter().any(|entry: &&Check| entry.name == name) {
+            selected.push(check);
+        }
+    }
+    Ok(selected)
+}
+
+fn require_phases(checks: &[&Check], phases: &[String]) -> anyhow::Result<()> {
+    for check in checks {
+        ensure!(
+            phases.iter().any(|phase| phase == check.phase),
+            "check {} needs missing phase {}",
+            check.name,
+            check.phase
+        );
+    }
+    Ok(())
+}
+
+fn reuse_checks<'a>(
+    reuse: Option<&'a str>,
+    checks: Option<&str>,
+) -> anyhow::Result<Option<(&'a str, Vec<&'static Check>)>> {
+    match (reuse, checks) {
+        (None, None) => Ok(None),
+        (Some(path), Some(names)) => {
+            ensure!(!path.is_empty(), "WAMN_KIND_REUSE must name kept.json");
+            Ok(Some((path, select_checks(names)?)))
+        }
+        _ => anyhow::bail!("set WAMN_KIND_REUSE and WAMN_KIND_CHECKS together"),
+    }
+}
+
 struct Run {
     work: PathBuf,
     cluster: String,
     registry: String,
     report: Vec<Value>,
     failures: Failures,
+    kept: Kept,
+    reuse: bool,
 }
 
 impl Run {
+    fn new(work: PathBuf, cluster: String) -> Self {
+        let registry = format!("{cluster}-registry");
+        Self {
+            kept: Kept {
+                cluster: cluster.clone(),
+                registry: registry.clone(),
+                kubeconfig: work.join("kubeconfig"),
+                secret_work: work.clone(),
+                work: work.clone(),
+                ..Kept::default()
+            },
+            work,
+            cluster,
+            registry,
+            report: Vec::new(),
+            failures: Failures::default(),
+            reuse: false,
+        }
+    }
+
+    fn write_kept(&mut self, repository: &Path) -> anyhow::Result<PathBuf> {
+        let path = self.work.join("kept.json");
+        self.kept.work.clone_from(&self.work);
+        self.kept.failed = self
+            .report
+            .iter()
+            .filter(|row| row["result"] == "fail")
+            .filter_map(|row| row["check"].as_str().map(str::to_owned))
+            .collect();
+        self.kept.cleanup = format!(
+            "{} {}",
+            shell_quote(&repository.join("tools/kind-kept-delete")),
+            shell_quote(&path)
+        );
+        std::fs::write(&path, serde_json::to_vec_pretty(&self.kept)?)?;
+        Ok(path)
+    }
+
+    fn phase(&mut self, phase: &str) -> anyhow::Result<()> {
+        if !self.kept.phases.iter().any(|reached| reached == phase) {
+            self.kept.phases.push(phase.to_owned());
+        }
+        self.write_kept(
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../..")
+                .canonicalize()?,
+        )?;
+        Ok(())
+    }
+
+    async fn load_image(&mut self, image: &str) -> anyhow::Result<()> {
+        let digest = self
+            .run(
+                "docker",
+                &["image", "inspect", "--format", "{{.Id}}", image],
+            )
+            .await?
+            .trim()
+            .to_owned();
+        if self.reuse && self.kept.images.get(image) == Some(&digest) {
+            return Ok(());
+        }
+        self.run(
+            "kind",
+            &["load", "docker-image", "--name", &self.cluster, image],
+        )
+        .await?;
+        self.kept.images.insert(image.to_owned(), digest.clone());
+        self.record(
+            "image loaded",
+            "kind load docker-image",
+            json!({"image": image, "digest": digest}),
+            "info",
+        );
+        Ok(())
+    }
+
     async fn run(&self, program: &str, args: &[&str]) -> anyhow::Result<String> {
         let output = Command::new(program)
             .args(args)
-            .env("KUBECONFIG", self.work.join("kubeconfig"))
+            .env("KUBECONFIG", &self.kept.kubeconfig)
             .kill_on_drop(true)
             .output()
             .await
@@ -255,7 +481,7 @@ impl Run {
 
     async fn retain_failure_diagnostics(&mut self, name: &str) -> anyhow::Result<()> {
         if self.report.iter().any(|row| row["result"] == "fail") {
-            let observed = diagnostics(&self.work.join("kubeconfig")).await;
+            let observed = diagnostics(&self.kept.kubeconfig).await;
             std::fs::write(
                 self.work.join(format!("rollout-{name}-failure.json")),
                 serde_json::to_vec_pretty(&observed)?,
@@ -396,122 +622,97 @@ impl Run {
             "resourceVersion": deployment["metadata"]["resourceVersion"]}))
     }
 
-    async fn remove(&self) {
-        if self.work.join("kubeconfig").exists() {
-            for resource in [
-                format!("deployment/{}", http_connection::SERVICE),
-                format!("service/{}", http_connection::SERVICE),
-            ] {
-                let _ = self
-                    .run(
-                        "kubectl",
-                        &[
-                            "-n",
-                            NAMESPACE,
-                            "delete",
-                            &resource,
-                            "--ignore-not-found",
-                            "--wait=false",
-                        ],
-                    )
-                    .await;
-            }
-        }
-        match Command::new("bash")
-            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tools/kind-cluster-delete"))
-            .arg(&self.cluster)
-            .arg("--kubeconfig")
-            .arg(self.work.join("kubeconfig"))
-            .output()
-            .await
-        {
-            Ok(output) => {
-                eprint!("{}", String::from_utf8_lossy(&output.stderr));
-                let _ = std::fs::write(
-                    self.work.join("kind-teardown.json"),
-                    json!({"exit_code":output.status.code(),
-                        "teardown_leftovers":String::from_utf8_lossy(&output.stdout).lines().collect::<Vec<_>>()}).to_string(),
-                );
-            }
-            Err(error) => eprintln!("delete kind cluster {}: {error}", self.cluster),
-        }
-        let _ = Command::new("docker")
-            .args([
-                "rm",
-                "--force",
-                "--volumes",
-                &self.registry,
-                &format!("{}-events", self.cluster),
-                &format!("{}-apply-events", self.cluster),
-            ])
-            .output()
-            .await;
-        let _ = Command::new("docker")
-            .args([
-                "image",
-                "rm",
-                &format!("{}-http-fixture:debug", self.cluster),
-                &format!("{}-identity:debug", self.cluster),
-            ])
-            .output()
-            .await;
-        let _ = std::fs::remove_file(self.work.join("http-fixture.json"));
+    async fn remove(&mut self, repository: &Path) -> anyhow::Result<()> {
+        let kept = self.write_kept(repository)?;
+        self.run(
+            "bash",
+            &[
+                &repository.join("tools/kind-kept-delete").to_string_lossy(),
+                &kept.to_string_lossy(),
+            ],
+        )
+        .await?;
+        Ok(())
     }
 }
 
 #[tokio::test(flavor = "current_thread")]
 #[ignore = "requires: docker, kind, helm 4, kubectl, openssl, debug ctl and CDC reader, built packages, debug blob-put input, stamped chart, OAuth1 fixture env; epic closeout only"]
 async fn environment_apply_kind() -> anyhow::Result<()> {
-    for name in [
-        "WAMN_HTTP_FIXTURE_CONSUMER_KEY",
-        "WAMN_HTTP_FIXTURE_CONSUMER_SECRET",
-        "WAMN_HTTP_FIXTURE_TOKEN",
-        "WAMN_HTTP_FIXTURE_TOKEN_SECRET",
-        "WAMN_HTTP_FIXTURE_REALM",
-    ] {
+    let keep = keep_on_failure(std::env::var("WAMN_KIND_KEEP").ok().as_deref())?;
+    let reuse = std::env::var("WAMN_KIND_REUSE").ok();
+    let checks = std::env::var("WAMN_KIND_CHECKS").ok();
+    let selection = reuse_checks(reuse.as_deref(), checks.as_deref())?;
+    let previous: Option<Kept> = selection
+        .as_ref()
+        .map(|(path, selected)| {
+            let kept: Kept = serde_json::from_slice(&std::fs::read(path)?)?;
+            require_phases(selected, &kept.phases)?;
+            Ok::<_, anyhow::Error>(kept)
+        })
+        .transpose()?;
+    if previous.is_none() {
+        for name in [
+            "WAMN_HTTP_FIXTURE_CONSUMER_KEY",
+            "WAMN_HTTP_FIXTURE_CONSUMER_SECRET",
+            "WAMN_HTTP_FIXTURE_TOKEN",
+            "WAMN_HTTP_FIXTURE_TOKEN_SECRET",
+            "WAMN_HTTP_FIXTURE_REALM",
+        ] {
+            ensure!(
+                std::env::var(name).is_ok_and(|value| !value.is_empty()),
+                "set {name} to a disposable fixture value before the kind case"
+            );
+        }
         ensure!(
-            std::env::var(name).is_ok_and(|value| !value.is_empty()),
-            "set {name} to a disposable fixture value before the kind case"
+            std::env::var_os(native_files::COMPONENT_INPUT)
+                .is_some_and(|path| Path::new(&path).is_file()),
+            "set {} to the debug blob-put wasm before the kind case",
+            native_files::COMPONENT_INPUT
         );
     }
-    ensure!(
-        std::env::var_os(native_files::COMPONENT_INPUT)
-            .is_some_and(|path| Path::new(&path).is_file()),
-        "set {} to the debug blob-put wasm before the kind case",
-        native_files::COMPONENT_INPUT
-    );
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .canonicalize()?;
     let target =
         repository.join(std::env::var_os("CARGO_TARGET_DIR").unwrap_or_else(|| "target".into()));
-    for binary in ["wamn-ctl", "wamn-cdc-reader", "wamn-component-virtualizer"] {
-        ensure!(
-            target.join("debug").join(binary).is_file(),
-            "build debug {binary} in {} before the kind case",
-            target.display()
-        );
+    if previous.is_none() {
+        for binary in ["wamn-ctl", "wamn-cdc-reader", "wamn-component-virtualizer"] {
+            ensure!(
+                target.join("debug").join(binary).is_file(),
+                "build debug {binary} in {} before the kind case",
+                target.display()
+            );
+        }
     }
     let pid = std::process::id();
     let work = std::env::temp_dir().join(format!("wamn-apply-{pid}"));
-    std::fs::create_dir_all(&work)?;
-    let chart = platform_images::source_chart(&repository, &work)?;
+    std::fs::create_dir(&work)?;
+    let work = work.canonicalize()?;
     println!("work directory {}", work.display());
-    let mut run = Run {
-        work,
-        cluster: format!("wamn-apply-{pid}"),
-        registry: format!("wamn-apply-{pid}-registry"),
-        report: Vec::new(),
-        failures: Failures::default(),
-    };
+    let mut run = Run::new(work, cluster_name(&repository));
+    if let Some(previous) = previous {
+        run.cluster.clone_from(&previous.cluster);
+        run.registry.clone_from(&previous.registry);
+        run.kept = previous;
+        run.reuse = true;
+    } else {
+        refuse_existing(&mut run, &repository).await?;
+    }
+    let chart = platform_images::source_chart(&repository, &run.work)?;
     let started = Instant::now();
-    run.remove().await;
-    let result = Box::pin(scenario(&mut run, &repository, &chart)).await;
+    let result = if let Some((_, checks)) = selection {
+        Box::pin(rerun(&mut run, &repository, &chart, &checks)).await
+    } else {
+        Box::pin(scenario(&mut run, &repository, &chart)).await
+    };
     let scenario_error = result.as_ref().err().map(|error| format!("{error:#}"));
     run.collect("required setup", result);
     let elapsed = started.elapsed().as_secs();
     run.record("duration", "", json!({"seconds": elapsed}), "info");
     let report_result = async {
     if run.report.iter().any(|row| row["result"] == "fail") {
-        let mut observed = diagnostics(&run.work.join("kubeconfig")).await;
+        let mut observed = diagnostics(&run.kept.kubeconfig).await;
         observed["error"] = json!(scenario_error);
         for entry in std::fs::read_dir(&run.work)?.flatten() {
             let file = entry.file_name().to_string_lossy().into_owned();
@@ -534,18 +735,6 @@ async fn environment_apply_kind() -> anyhow::Result<()> {
     Ok(())
     }.await;
     run.collect("write diagnostics and report", report_result);
-    run.remove().await;
-    // The key material and credentials go with the cluster; the evidence stays.
-    for secret in [
-        "ca.key",
-        "tls.key",
-        "htpasswd",
-        "auth.json",
-        "kubeconfig",
-        "integration-session-db.json",
-    ] {
-        let _ = std::fs::remove_file(run.work.join(secret));
-    }
     let kept_result = (|| {
         let mut kept = std::fs::read_dir(&run.work)?
             .flatten()
@@ -556,12 +745,28 @@ async fn environment_apply_kind() -> anyhow::Result<()> {
         Ok(())
     })();
     run.collect("list retained files", kept_result);
+    if run.reuse || (keep && run.report.iter().any(|row| row["result"] == "fail")) {
+        run.write_kept(&repository)?;
+        println!(
+            "kept cluster={} kubeconfig={} failed={} cleanup={}",
+            run.cluster,
+            run.kept.kubeconfig.display(),
+            run.kept.failed.join(","),
+            run.kept.cleanup
+        );
+    } else {
+        let result = run.remove(&repository).await;
+        run.collect("cleanup", result);
+    }
+    std::fs::write(
+        run.work.join("report.json"),
+        serde_json::to_vec_pretty(&run.report)?,
+    )?;
     run.failures.finish()
 }
 
 #[allow(clippy::too_many_lines)]
 async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Result<()> {
-    let platform = image_set(source).await?;
     let work = run.work.clone();
     let path = |name: &str| work.join(name).to_string_lossy().into_owned();
     let cluster = run.cluster.clone();
@@ -834,50 +1039,9 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     .await?;
 
     // The system database on the CNPG cluster, through a port forward.
-    let password = run
-        .run(
-            "kubectl",
-            &[
-                "-n",
-                NAMESPACE,
-                "get",
-                "secret",
-                &format!("{PG_CLUSTER}-superuser"),
-                "-o",
-                "jsonpath={.data.password}",
-            ],
-        )
-        .await?;
-    let password = String::from_utf8(base64::Engine::decode(
-        &base64::engine::general_purpose::STANDARD,
-        password.trim(),
-    )?)?;
-    let port = std::net::TcpListener::bind("127.0.0.1:0")?
-        .local_addr()?
-        .port();
-    let _forward: Child = Command::new("kubectl")
-        .env("KUBECONFIG", work.join("kubeconfig"))
-        .args([
-            "-n",
-            NAMESPACE,
-            "port-forward",
-            &format!("svc/{PG_CLUSTER}-rw"),
-            &format!("{port}:5432"),
-        ])
-        .kill_on_drop(true)
-        .spawn()
-        .context("start the port forward")?;
+    let (password, port, forward) = database_forward(run).await?;
     let admin_url = format!("postgresql://postgres:{password}@127.0.0.1:{port}/postgres");
-    let deadline = Instant::now() + Duration::from_secs(60);
-    let (admin, admin_task) = loop {
-        match connect(&admin_url).await {
-            Ok(connected) => break connected,
-            Err(_) if Instant::now() < deadline => {
-                tokio::time::sleep(Duration::from_secs(2)).await;
-            }
-            Err(error) => return Err(error),
-        }
-    };
+    let (admin, admin_task) = connect(&admin_url).await?;
     admin.batch_execute("CREATE DATABASE wamn_system").await?;
     admin_task.abort();
     let system_url = format!("postgresql://postgres:{password}@127.0.0.1:{port}/wamn_system");
@@ -1001,19 +1165,6 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     .await?;
     http_connection::deploy(run, repository, &system_url).await?;
 
-    wash_runtime::oci::set_extra_ca_certificates(&[work.join("ca.crt")])?;
-    let http_digest = platform_images::copy_role(
-        &platform.http,
-        &format!("{local}/wamn/flow-http:apply"),
-        wash_runtime::oci::OciConfig::new_with_credentials(USER, PASSWORD),
-    )
-    .await?;
-    let materializer_digest = platform_images::copy_role(
-        &platform.materializer,
-        &format!("{local}/wamn/materializer:apply"),
-        wash_runtime::oci::OciConfig::new_with_credentials(USER, PASSWORD),
-    )
-    .await?;
     let digest = push_manifest_bytes(
         &manifest_a,
         &format!("{local}/wamn/releases"),
@@ -1027,57 +1178,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     .as_str()
     .to_owned();
 
-    // The chart's host image, pinned by the digest the node reports, as the smoke.
-    let host_image = platform
-        .host
-        .split_once('@')
-        .map_or(platform.host.as_str(), |(tagged, _)| tagged);
-    run.run("docker", &["pull", "--quiet", &platform.host])
-        .await?;
-    run.run("docker", &["tag", &platform.host, host_image])
-        .await?;
-    run.run(
-        "kind",
-        &["load", "docker-image", host_image, "--name", &cluster],
-    )
-    .await?;
-    let node = format!("{cluster}-control-plane");
-    let inspected = run
-        .json(
-            "docker",
-            &[
-                "exec", &node, "crictl", "inspecti", "-o", "json", host_image,
-            ],
-        )
-        .await?;
-    let node_digest = inspected["status"]["repoDigests"][0]
-        .as_str()
-        .and_then(|reference| reference.rsplit_once('@'))
-        .map(|(_, digest)| digest.to_owned())
-        .context("the node reports a digest for the host image")?;
-    let repository_name = host_image
-        .rsplit_once(':')
-        .map_or(host_image, |(name, _)| name);
-    run.run(
-        "docker",
-        &[
-            "exec",
-            &node,
-            "ctr",
-            "-n",
-            "k8s.io",
-            "images",
-            "tag",
-            &containerd_name(host_image),
-            &containerd_name(&format!("{repository_name}@{node_digest}")),
-        ],
-    )
-    .await?;
-    let set = ImageSet {
-        host: format!("{host_image}@{node_digest}"),
-        http: format!("{local}/wamn/flow-http@{http_digest}"),
-        materializer: format!("{local}/wamn/materializer@{materializer_digest}"),
-    };
+    let set = prepare_images(run, source, &local).await?;
     let chart = stamp(source, &set, None, &work.join("chart"))?;
     run.run("helm", &["dependency", "build", &chart.to_string_lossy()])
         .await?;
@@ -1129,32 +1230,29 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     };
     let event_server =
         integration::start_broker(run, &event_config, &event_credentials, "apply-events").await?;
-    let platform = Platform {
-        auth_nats: None,
-        system_database_url: system_url.clone(),
-        target: Target {
-            kubeconfig: work.join("kubeconfig"),
-            context: format!("kind-{cluster}"),
-            namespace: NAMESPACE.to_owned(),
-        },
-        chart,
-        release_artifact_base: format!("{local}/wamn/releases"),
-        registry_auth_file: work.join("auth.json"),
-        oci_ca_paths: ca,
-        package_artifact_base: Some(package_base),
-        database_namespace: NAMESPACE.to_owned(),
-        database_host: None,
-        database_port: 5432,
-        host_group: Some(work.join("host-group.yaml")),
-        pat_issuer: PatIssuerConfig::default(),
-        events: Some(environment::EventBroker {
-            nats_url: event_server.clone(),
-            nats_username: USER.into(),
-            nats_password_file: event_password,
-            stream_replicas: 1,
-            dup_window_secs: 120,
-        }),
+    run.kept.registry_address.clone_from(&local);
+    run.kept.event_server.clone_from(&event_server);
+    run.kept.release_digest.clone_from(&digest);
+    run.kept.image_set = Some(set.clone());
+    let platform = check_platform(run, system_url.clone(), chart);
+    let mut context = CheckContext {
+        repository: repository.to_owned(),
+        platform: platform.clone(),
+        images: set.clone(),
+        registry: package_registry.clone(),
+        admin_url: admin_url.clone(),
+        digest: digest.clone(),
+        show_expected: None,
+        _forward: forward,
     };
+    // Prepare the file package while a full run can build it. Its check reports
+    // a preparation error at the same point as before.
+    if let Err(error) =
+        native_files::prepare_release(run, repository, &package_registry, &admin_url).await
+    {
+        run.kept.file_setup_error = Some(format!("{error:#}"));
+    }
+    run.phase("environment")?;
     let document = |env: &str, route_host: &str| fixture_document(env, route_host, &digest);
     let apply = async |document: &EnvironmentDocument, name: &str| -> anyhow::Result<()> {
         let mut declaration = document.clone();
@@ -1204,6 +1302,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     // 1. The first apply creates the environment.
     let dev = document("dev", "dev.orders.example");
     apply(&dev, "dev-first").await?;
+    run.phase("release")?;
     let (system, system_task) = connect(&system_url).await?;
     system.batch_execute("SET ROLE wamn_system").await?;
     let row = system
@@ -1310,80 +1409,9 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     .await;
     run.collect("17 administration configuration", result);
 
-    let label = release_label(&digest).context("label the fixture digest")?;
-    let result = async {
-        // 14. A1: the heartbeat carries the host group and the release.
-        let deadline = Instant::now() + Duration::from_secs(120);
-        let mut hosts = run.hosts(&name).await?;
-        while hosts.len() != 1 && Instant::now() < deadline {
-            tokio::time::sleep(Duration::from_secs(2)).await;
-            hosts = run.hosts(&name).await?;
-        }
-        let labels: Vec<Value> = hosts
-            .iter()
-            .map(|host| host["metadata"]["labels"].clone())
-            .collect();
-        run.pass(
-            "A1 heartbeat labels",
-            &format!("kubectl -n {NAMESPACE} get hosts -l hostgroup={name} -o json"),
-            json!({"expected": {"hostgroup": name, "wamn.release": label}, "labels": labels}),
-            labels.len() == 1
-                && labels[0]["hostgroup"] == name.as_str()
-                && labels[0]["wamn.release"] == label.as_str(),
-        );
-
-        Ok(())
-    }
-    .await;
+    let result = heartbeat_check(run, &context).await;
     run.collect("14 / A1 heartbeat labels", result);
-
-    let result = async {
-    // 15. A WorkloadDeployment that selects another release is not placed.
-    let probe = format!("{name}-probe-wrong");
-    let mut wrong = label.clone();
-    let last = wrong.pop().context("the label is not empty")?;
-    wrong.push(if last == 'a' { 'b' } else { 'a' });
-    let selector = json!({"hostgroup": name, "wamn.release": wrong});
-    std::fs::write(
-        work.join("probe-wrong.json"),
-        serde_json::to_vec_pretty(&json!({
-            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
-            "kind": "WorkloadDeployment",
-            "metadata": {"name": probe, "namespace": NAMESPACE},
-            "spec": {"replicas": 1, "template": {"spec": {
-                "hostSelector": selector,
-                "environment": NAMESPACE,
-                "components": [{"name": "probe", "image": UNPULLED}],
-            }}},
-        }))?,
-    )?;
-    run.run("kubectl", &["apply", "-f", &path("probe-wrong.json")])
-        .await?;
-    tokio::time::sleep(Duration::from_secs(120)).await;
-    let workloads = run.placements(&probe).await?;
-    run.pass(
-        "not placed on a wrong wamn.release",
-        &format!("kubectl apply -f probe-wrong.json; sleep 120; kubectl -n {NAMESPACE} get workloads -o json (names {probe}*)"),
-        json!({"hostSelector": selector, "workloads": workloads}),
-        workloads
-            .iter()
-            .all(|workload| workload["hostId"].as_str().is_none_or(str::is_empty)),
-    );
-    run.run(
-        "kubectl",
-        &[
-            "-n",
-            NAMESPACE,
-            "delete",
-            "workloaddeployment",
-            &probe,
-            "--wait",
-        ],
-    )
-    .await?;
-
-    Ok(())
-    }.await;
+    let result = placement_check(run, &context).await;
     run.collect("15 wrong release placement", result);
 
     let result = async {
@@ -1404,38 +1432,13 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
 
     // 3. A connection-only change writes no revision and moves the generation.
     let generation = async |system: &tokio_postgres::Client| -> anyhow::Result<Option<i64>> {
-        let env_key = wamn_control_registry::project_env_key(ORG, PROJECT, "dev");
-        let row = system
-            .query_opt(
-                "SELECT instance_suffix FROM registry.project_envs \
-                  WHERE org = $1 AND project = $2 AND env = 'dev'",
-                &[&ORG, &PROJECT],
-            )
-            .await?
-            .context("the dev row")?;
-        let database = wamn_control_provision::project_env_database_name(
-            ORG,
-            PROJECT,
-            "dev",
-            &row.get::<_, String>(0),
-        );
-        let url = format!("postgresql://postgres:{password}@127.0.0.1:{port}/{database}");
-        let (project, task) = connect(&url).await?;
-        let active = project
-            .query_opt(
-                "SELECT active_generation FROM catalog.connection_instances \
-                  WHERE env_key = $1 AND environment = 'dev' AND instance_id = 'edge_device/labels'",
-                &[&env_key],
-            )
-            .await?
-            .and_then(|row| row.get(0));
-        task.abort();
-        Ok(active)
+        connection_generation(system, &admin_url).await
     };
     let mut connected = dev.clone();
     org_bindings::bind(&platform, &mut connected, PACKAGE, "labels", "labels-dev", "s3",
         json!({"provider":"s3", "endpoint":"http://store.invalid", "container":"labels", "prefix":"a/"})).await?;
     apply(&connected, "dev-connection").await?;
+    run.phase("bindings")?;
     let generation_one = generation(system.as_ref()).await?;
     org_bindings::bind(&platform, &mut connected, PACKAGE, "labels", "labels-dev", "s3",
         json!({"provider":"s3", "endpoint":"http://store.invalid", "container":"labels", "prefix":"b/"})).await?;
@@ -1451,16 +1454,8 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     );
 
     // 4. The output of env show, applied, writes nothing.
-    let shown = environment::show::show(&platform, &Triple::new(ORG, PROJECT, "dev")).await?;
-    apply(&shown, "dev-shown").await?;
-    let after_show = run.revisions(&name).await?;
-    let generation_three = generation(system.as_ref()).await?;
-    run.pass(
-        "env show output applied writes nothing",
-        &format!("wamn-ctl env show {ORG}/{PROJECT}/dev | env apply; helm -n {NAMESPACE} history {name}"),
-        json!({"document": shown.to_kcl(), "revisions": after_show, "generation": generation_three}),
-        after_show == first && generation_three == generation_two,
-    );
+    context.show_expected = Some((first, generation_two));
+    let shown = show_check(run, &context).await?;
 
     // HTTP follows the same bind and show paths in its own environment.
     let http_digest = push_manifest_bytes(
@@ -1916,49 +1911,13 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     http_task.abort();
     drop(http_project);
     environment::delete::delete(&platform, &http.triple(), true).await?;
-    Box::pin(integration::exercise(
-        run,
-        repository,
-        &platform,
-        &package_registry,
-        &set,
-        &admin_url,
-        "rest_connector",
-    ))
-    .await
-    .with_context(|| "4 rest_connector setup or cleanup")?;
-    Box::pin(integration::exercise(
-        run,
-        repository,
-        &platform,
-        &package_registry,
-        &set,
-        &admin_url,
-        "netsuite",
-    ))
-    .await
-    .with_context(|| "4 netsuite setup or cleanup")?;
-    let result = Box::pin(native_files::exercise(
-        run,
-        repository,
-        &platform,
-        &package_registry,
-        &set,
-        &admin_url,
-    ))
-    .await;
-    let passed = result.is_ok();
-    run.collect("native files on kind MinIO", result);
-    run.retain_failure_diagnostics("files").await?;
-    if passed {
-        run.pass(
-            "native files on kind MinIO",
-            "native file uploads, reads and exposure on the deployed host",
-            json!({"environment":"files"}),
-            true,
-        );
-    }
-    environment::delete::delete(&platform, &Triple::new(ORG, PROJECT, "files"), true).await?;
+    connector_check(run, &context, "rest_connector")
+        .await
+        .context("4 rest_connector setup or cleanup")?;
+    connector_check(run, &context, "netsuite")
+        .await
+        .context("4 netsuite setup or cleanup")?;
+    files_check(run, &context).await?;
     system_task.abort();
 
     // 5. A12: a second environment in the same namespace.
@@ -2245,6 +2204,10 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     let result = async {
         // 11. delete --data drops the database; 12. a plain delete keeps it.
         let dev_result = environment::delete::delete(&platform, &dev_triple, true).await;
+        if dev_result.is_ok() {
+            run.kept.phases.retain(|phase| phase == "environment");
+            run.write_kept(repository)?;
+        }
         let dev_lines = dev_result.as_ref().ok().cloned();
         run.collect("11 delete with data", dev_result.map(|_| ()));
         let qa_result = environment::delete::delete(&platform, &qa_triple, false).await;
@@ -2486,7 +2449,7 @@ async fn apply_with_diagnostics(
                 return Ok(());
             }
             () = tokio::time::sleep(ROLLOUT_SNAPSHOT) => {
-                let mut snapshot = diagnostics(&work.join("kubeconfig")).await;
+                let mut snapshot = diagnostics(&platform.target.kubeconfig).await;
                 let logs = snapshot["logs"].as_object_mut().expect("diagnostic logs are a map");
                 crash_logs.extend(logs.iter()
                     .filter(|(_, log)| log.get("previous").is_some())
@@ -2834,3 +2797,605 @@ mod prekind_render;
 
 #[path = "support/prekind_host.rs"]
 mod prekind_host;
+
+fn shell_quote(path: &Path) -> String {
+    format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
+}
+
+async fn heartbeat_check(run: &mut Run, context: &CheckContext) -> anyhow::Result<()> {
+    let name = release_name(ORG, PROJECT, "dev")?;
+    let label = release_label(&context.digest).context("label the fixture digest")?;
+    // 14. A1: the heartbeat carries the host group and the release.
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let mut hosts = run.hosts(&name).await?;
+    while hosts.len() != 1 && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        hosts = run.hosts(&name).await?;
+    }
+    let labels: Vec<Value> = hosts
+        .iter()
+        .map(|host| host["metadata"]["labels"].clone())
+        .collect();
+    run.pass(
+        "A1 heartbeat labels",
+        &format!("kubectl -n {NAMESPACE} get hosts -l hostgroup={name} -o json"),
+        json!({"expected": {"hostgroup": name, "wamn.release": label}, "labels": labels}),
+        labels.len() == 1
+            && labels[0]["hostgroup"] == name.as_str()
+            && labels[0]["wamn.release"] == label.as_str(),
+    );
+
+    Ok(())
+}
+
+async fn placement_check(run: &mut Run, context: &CheckContext) -> anyhow::Result<()> {
+    let name = release_name(ORG, PROJECT, "dev")?;
+    let label = release_label(&context.digest).context("label the fixture digest")?;
+    let work = run.work.clone();
+    let path = |name: &str| work.join(name).to_string_lossy().into_owned();
+    // 15. A WorkloadDeployment that selects another release is not placed.
+    let probe = format!("{name}-probe-wrong");
+    let mut wrong = label.clone();
+    let last = wrong.pop().context("the label is not empty")?;
+    wrong.push(if last == 'a' { 'b' } else { 'a' });
+    let selector = json!({"hostgroup": name, "wamn.release": wrong});
+    std::fs::write(
+        work.join("probe-wrong.json"),
+        serde_json::to_vec_pretty(&json!({
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "kind": "WorkloadDeployment",
+            "metadata": {"name": probe, "namespace": NAMESPACE},
+            "spec": {"replicas": 1, "template": {"spec": {
+                "hostSelector": selector,
+                "environment": NAMESPACE,
+                "components": [{"name": "probe", "image": UNPULLED}],
+            }}},
+        }))?,
+    )?;
+    run.run("kubectl", &["apply", "-f", &path("probe-wrong.json")])
+        .await?;
+    tokio::time::sleep(Duration::from_secs(120)).await;
+    let workloads = run.placements(&probe).await?;
+    run.pass(
+        "not placed on a wrong wamn.release",
+        &format!("kubectl apply -f probe-wrong.json; sleep 120; kubectl -n {NAMESPACE} get workloads -o json (names {probe}*)"),
+        json!({"hostSelector": selector, "workloads": workloads}),
+        workloads
+            .iter()
+            .all(|workload| workload["hostId"].as_str().is_none_or(str::is_empty)),
+    );
+    run.run(
+        "kubectl",
+        &[
+            "-n",
+            NAMESPACE,
+            "delete",
+            "workloaddeployment",
+            &probe,
+            "--wait",
+        ],
+    )
+    .await?;
+
+    Ok(())
+}
+
+async fn database_forward(run: &Run) -> anyhow::Result<(String, u16, Child)> {
+    let password = run
+        .run(
+            "kubectl",
+            &[
+                "-n",
+                NAMESPACE,
+                "get",
+                "secret",
+                &format!("{PG_CLUSTER}-superuser"),
+                "-o",
+                "jsonpath={.data.password}",
+            ],
+        )
+        .await?;
+    let password = String::from_utf8(base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        password.trim(),
+    )?)?;
+    let port = std::net::TcpListener::bind("127.0.0.1:0")?
+        .local_addr()?
+        .port();
+    let forward: Child = Command::new("kubectl")
+        .env("KUBECONFIG", &run.kept.kubeconfig)
+        .args([
+            "-n",
+            NAMESPACE,
+            "port-forward",
+            &format!("svc/{PG_CLUSTER}-rw"),
+            &format!("{port}:5432"),
+        ])
+        .kill_on_drop(true)
+        .spawn()
+        .context("start the port forward")?;
+    let admin_url = format!("postgresql://postgres:{password}@127.0.0.1:{port}/postgres");
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let (admin, admin_task) = loop {
+        match connect(&admin_url).await {
+            Ok(connected) => break connected,
+            Err(_) if Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+            Err(error) => return Err(error),
+        }
+    };
+    drop(admin);
+    admin_task.abort();
+    Ok((password, port, forward))
+}
+
+fn check_platform(run: &Run, system_url: String, chart: PathBuf) -> Platform {
+    let work = &run.kept.secret_work;
+    let local = &run.kept.registry_address;
+    Platform {
+        auth_nats: None,
+        system_database_url: system_url,
+        target: Target {
+            kubeconfig: run.kept.kubeconfig.clone(),
+            context: format!("kind-{}", run.cluster),
+            namespace: NAMESPACE.to_owned(),
+        },
+        chart,
+        release_artifact_base: format!("{local}/wamn/releases"),
+        registry_auth_file: work.join("auth.json"),
+        oci_ca_paths: vec![work.join("ca.crt")],
+        package_artifact_base: Some(format!("{local}/wamn/packages")),
+        database_namespace: NAMESPACE.to_owned(),
+        database_host: None,
+        database_port: 5432,
+        host_group: Some(work.join("host-group.yaml")),
+        pat_issuer: PatIssuerConfig::default(),
+        events: Some(environment::EventBroker {
+            nats_url: run.kept.event_server.clone(),
+            nats_username: USER.into(),
+            nats_password_file: work.join("apply-event-password"),
+            stream_replicas: 1,
+            dup_window_secs: 120,
+        }),
+    }
+}
+
+async fn prepare_images(run: &mut Run, source: &Path, local: &str) -> anyhow::Result<ImageSet> {
+    let platform = image_set(source).await?;
+    let cluster = run.cluster.clone();
+    wash_runtime::oci::set_extra_ca_certificates(&[run.kept.secret_work.join("ca.crt")])?;
+    let http_digest = copy_role(
+        run,
+        "http",
+        &platform.http,
+        &format!("{local}/wamn/flow-http:apply"),
+    )
+    .await?;
+    let materializer_digest = copy_role(
+        run,
+        "materializer",
+        &platform.materializer,
+        &format!("{local}/wamn/materializer:apply"),
+    )
+    .await?;
+    // The chart's host image, pinned by the digest the node reports, as the smoke.
+    let host_image = platform
+        .host
+        .split_once('@')
+        .map_or(platform.host.as_str(), |(tagged, _)| tagged);
+    run.run("docker", &["pull", "--quiet", &platform.host])
+        .await?;
+    run.run("docker", &["tag", &platform.host, host_image])
+        .await?;
+    run.load_image(host_image).await?;
+    let node = format!("{cluster}-control-plane");
+    let inspected = run
+        .json(
+            "docker",
+            &[
+                "exec", &node, "crictl", "inspecti", "-o", "json", host_image,
+            ],
+        )
+        .await?;
+    let node_digest = inspected["status"]["repoDigests"][0]
+        .as_str()
+        .and_then(|reference| reference.rsplit_once('@'))
+        .map(|(_, digest)| digest.to_owned())
+        .context("the node reports a digest for the host image")?;
+    let repository_name = host_image
+        .rsplit_once(':')
+        .map_or(host_image, |(name, _)| name);
+    run.run(
+        "docker",
+        &[
+            "exec",
+            &node,
+            "ctr",
+            "-n",
+            "k8s.io",
+            "images",
+            "tag",
+            "--force",
+            &containerd_name(host_image),
+            &containerd_name(&format!("{repository_name}@{node_digest}")),
+        ],
+    )
+    .await?;
+    Ok(ImageSet {
+        host: format!("{host_image}@{node_digest}"),
+        http: format!("{local}/wamn/flow-http@{http_digest}"),
+        materializer: format!("{local}/wamn/materializer@{materializer_digest}"),
+    })
+}
+
+async fn copy_role(
+    run: &mut Run,
+    role: &str,
+    source: &str,
+    destination: &str,
+) -> anyhow::Result<String> {
+    let digest = source
+        .rsplit_once('@')
+        .context("the chart role image must carry a digest")?
+        .1;
+    if run.reuse
+        && run
+            .kept
+            .role_inputs
+            .get(role)
+            .is_some_and(|previous| previous == digest)
+    {
+        return run
+            .kept
+            .images
+            .get(role)
+            .cloned()
+            .context("the copied role digest");
+    }
+    let copied = platform_images::copy_role(
+        source,
+        destination,
+        wash_runtime::oci::OciConfig::new_with_credentials(USER, PASSWORD),
+    )
+    .await?;
+    run.kept.images.insert(role.to_owned(), copied.clone());
+    run.kept
+        .role_inputs
+        .insert(role.to_owned(), digest.to_owned());
+    run.record(
+        "image copied",
+        "platform_images::copy_role",
+        json!({"image": role, "digest": digest}),
+        "info",
+    );
+    Ok(copied)
+}
+
+async fn connection_generation(
+    system: &tokio_postgres::Client,
+    admin_url: &str,
+) -> anyhow::Result<Option<i64>> {
+    let env_key = wamn_control_registry::project_env_key(ORG, PROJECT, "dev");
+    let row = system
+        .query_opt(
+            "SELECT instance_suffix FROM registry.project_envs \
+                  WHERE org = $1 AND project = $2 AND env = 'dev'",
+            &[&ORG, &PROJECT],
+        )
+        .await?
+        .context("the dev row")?;
+    let database = wamn_control_provision::project_env_database_name(
+        ORG,
+        PROJECT,
+        "dev",
+        &row.get::<_, String>(0),
+    );
+    let mut url = url::Url::parse(admin_url)?;
+    url.set_path(&database);
+    let (project, task) = connect(url.as_str()).await?;
+    let active = project
+            .query_opt(
+                "SELECT active_generation FROM catalog.connection_instances \
+                  WHERE env_key = $1 AND environment = 'dev' AND instance_id = 'edge_device/labels'",
+                &[&env_key],
+            )
+            .await?
+            .and_then(|row| row.get(0));
+    task.abort();
+    Ok(active)
+}
+
+async fn show_check(run: &mut Run, context: &CheckContext) -> anyhow::Result<EnvironmentDocument> {
+    let platform = &context.platform;
+    let name = release_name(ORG, PROJECT, "dev")?;
+    let (system, task) = connect(&platform.system_database_url).await?;
+    system.batch_execute("SET ROLE wamn_system").await?;
+    let before = if let Some(expected) = context.show_expected {
+        expected
+    } else {
+        (
+            run.revisions(&name).await?,
+            connection_generation(system.as_ref(), &context.admin_url).await?,
+        )
+    };
+    let shown = environment::show::show(platform, &Triple::new(ORG, PROJECT, "dev")).await?;
+    apply_check_document(run, context, &shown, "dev-shown").await?;
+    let after_show = run.revisions(&name).await?;
+    let generation_three = connection_generation(system.as_ref(), &context.admin_url).await?;
+    task.abort();
+    run.pass(
+        "env show output applied writes nothing",
+        &format!("wamn-ctl env show {ORG}/{PROJECT}/dev | env apply; helm -n {NAMESPACE} history {name}"),
+        json!({"document": shown.to_kcl(), "revisions": after_show, "generation": generation_three}),
+        after_show == before.0 && generation_three == before.1,
+    );
+    Ok(shown)
+}
+
+async fn apply_check_document(
+    run: &Run,
+    context: &CheckContext,
+    document: &EnvironmentDocument,
+    name: &str,
+) -> anyhow::Result<()> {
+    let mut platform = context.platform.clone();
+    let group = serde_yaml::from_slice(&std::fs::read(
+        platform.host_group.as_ref().context("host group")?,
+    )?)?;
+    let server = &platform.events.as_ref().context("events")?.nats_url;
+    let (group, secret) = event_overlay(document, group, server)?;
+    let file = run.work.join(format!("{}-events.json", document.env));
+    std::fs::write(&file, serde_json::to_vec(&secret)?)?;
+    run.run("kubectl", &["apply", "-f", &file.to_string_lossy()])
+        .await?;
+    let file = run
+        .work
+        .join(format!("{}-event-host-group.yaml", document.env));
+    std::fs::write(&file, serde_yaml::to_string(&group)?)?;
+    platform.host_group = Some(file);
+    apply_with_diagnostics(&run.work, &platform, document, name).await
+}
+
+async fn connector_check(
+    run: &mut Run,
+    context: &CheckContext,
+    connector: &str,
+) -> anyhow::Result<()> {
+    Box::pin(integration::exercise(
+        run,
+        &context.repository,
+        &context.platform,
+        &context.registry,
+        &context.images,
+        &context.admin_url,
+        connector,
+    ))
+    .await
+}
+
+async fn files_check(run: &mut Run, context: &CheckContext) -> anyhow::Result<()> {
+    if run.reuse && !run.kept.identity_ready {
+        session_issuer::deploy(run, &context.repository, &context.platform).await?;
+    }
+    let result = Box::pin(native_files::exercise(
+        run,
+        &context.repository,
+        &context.platform,
+        &context.registry,
+        &context.images,
+        &context.admin_url,
+    ))
+    .await;
+    let passed = result.is_ok();
+    run.collect("native files on kind MinIO", result);
+    run.retain_failure_diagnostics("files").await?;
+    if passed {
+        run.pass(
+            "native files on kind MinIO",
+            "native file uploads, reads and exposure on the deployed host",
+            json!({"environment":"files"}),
+            true,
+        );
+    }
+    environment::delete::delete(&context.platform, &Triple::new(ORG, PROJECT, "files"), true)
+        .await?;
+    Ok(())
+}
+
+async fn refuse_existing(run: &mut Run, repository: &Path) -> anyhow::Result<()> {
+    let clusters = run.run("kind", &["get", "clusters"]).await?;
+    let containers = run
+        .run("docker", &["ps", "-a", "--format", "{{.Names}}"])
+        .await?;
+    if clusters.lines().any(|name| name == run.cluster)
+        || containers.lines().any(|name| name == run.registry)
+    {
+        let original = if containers.lines().any(|name| name == run.registry) {
+            let directory = run.run("docker", &["inspect", "--format",
+                "{{range .Mounts}}{{if eq .Destination \"/certs\"}}{{.Source}}{{end}}{{end}}",
+                &run.registry]).await?;
+            Some(Path::new(directory.trim()).join("kept.json")).filter(|path| path.is_file())
+        } else {
+            None
+        };
+        let path = if let Some(original) = original {
+            original
+        } else {
+            run.write_kept(repository)?
+        };
+        anyhow::bail!(
+            "cluster {} or registry {} already exists. Clean up with {} {}",
+            run.cluster,
+            run.registry,
+            shell_quote(&repository.join("tools/kind-kept-delete")),
+            shell_quote(&path)
+        );
+    }
+    Ok(())
+}
+
+async fn rerun(
+    run: &mut Run,
+    repository: &Path,
+    source: &Path,
+    checks: &[&Check],
+) -> anyhow::Result<()> {
+    // Refuse all missing phases before a port forward or image transfer.
+    require_phases(checks, &run.kept.phases)?;
+    let (password, port, forward) = database_forward(run).await?;
+    let admin_url = format!("postgresql://postgres:{password}@127.0.0.1:{port}/postgres");
+    let system_url = format!("postgresql://postgres:{password}@127.0.0.1:{port}/wamn_system");
+    let event_address = run
+        .run(
+            "docker",
+            &[
+                "inspect",
+                "--format",
+                "{{(index .NetworkSettings.Networks \"kind\").IPAddress}}",
+                &format!("{}-apply-events", run.cluster),
+            ],
+        )
+        .await?;
+    run.kept.event_server = format!("nats://{}:4222", event_address.trim());
+    let local = run.kept.registry_address.clone();
+    let images = prepare_images(run, source, &local).await?;
+    http_connection::prepare_image(run, repository).await?;
+    if run.kept.identity_ready {
+        session_issuer::prepare_image(run, source).await?;
+    }
+    if run
+        .kept
+        .images
+        .keys()
+        .any(|name| name.starts_with("minio/"))
+        || checks
+            .iter()
+            .any(|check| check.name == "native files on kind MinIO")
+    {
+        native_files::prepare_images(run).await?;
+    }
+    run.kept.image_set = Some(images.clone());
+    let chart = stamp(source, &images, None, &run.work.join("chart"))?;
+    let platform = check_platform(run, system_url, chart);
+    let registry = PackageRegistry {
+        artifact_base: format!("{local}/wamn/packages"),
+        registry_auth_file: platform.registry_auth_file.clone(),
+        insecure_registry: false,
+        oci_ca_paths: platform.oci_ca_paths.clone(),
+    };
+    let context = CheckContext {
+        repository: repository.to_owned(),
+        platform,
+        images,
+        registry,
+        admin_url,
+        digest: run.kept.release_digest.clone(),
+        show_expected: None,
+        _forward: forward,
+    };
+    for check in checks {
+        let result = (check.run)(run, &context).await;
+        run.collect(check.name, result);
+    }
+    Ok(())
+}
+
+#[test]
+fn check_selection_trims_and_deduplicates() -> anyhow::Result<()> {
+    let selected = select_checks(" 4 netsuite,4 show reapply, 4 netsuite ")?;
+    assert_eq!(
+        selected.iter().map(|check| check.name).collect::<Vec<_>>(),
+        ["4 netsuite", "4 show reapply"]
+    );
+    for names in ["", " ", "4 netsuite,", "unknown"] {
+        let error = select_checks(names)
+            .err()
+            .context("selection must fail")?
+            .to_string();
+        for check in &CHECKS {
+            assert!(error.contains(check.name), "{error}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn reuse_requires_both_inputs() -> anyhow::Result<()> {
+    assert!(reuse_checks(None, None)?.is_none());
+    assert!(reuse_checks(Some("kept.json"), None).is_err());
+    assert!(reuse_checks(None, Some("4 netsuite")).is_err());
+    assert!(reuse_checks(Some(""), Some("4 netsuite")).is_err());
+    assert!(reuse_checks(Some("kept.json"), Some("4 netsuite"))?.is_some());
+    Ok(())
+}
+
+#[test]
+fn checks_refuse_missing_phases() -> anyhow::Result<()> {
+    let selected = select_checks("4 show reapply")?;
+    let mut phases = vec!["environment".into(), "release".into()];
+    let error = require_phases(&selected, &phases).unwrap_err().to_string();
+    assert!(error.contains("bindings") && error.contains("4 show reapply"));
+    phases.push("bindings".into());
+    require_phases(&selected, &phases)
+}
+
+#[test]
+fn kept_metadata_round_trips() -> anyhow::Result<()> {
+    let kept = Kept {
+        cluster: "wamn-apply-01234567".into(),
+        kubeconfig: "/tmp/original/kubeconfig".into(),
+        registry: "wamn-apply-01234567-registry".into(),
+        work: "/tmp/rerun".into(),
+        secret_work: "/tmp/original".into(),
+        failed: vec!["4 netsuite".into()],
+        phases: vec!["environment".into()],
+        images: [("host".into(), "sha256:abc".into())].into(),
+        role_inputs: [("http".into(), "sha256:def".into())].into(),
+        image_set: Some(ImageSet {
+            host: "host@sha256:abc".into(),
+            http: "http@sha256:def".into(),
+            materializer: "materializer@sha256:123".into(),
+        }),
+        registry_address: "172.18.0.2:5000".into(),
+        event_server: "nats://172.18.0.3:4222".into(),
+        release_digest: "sha256:456".into(),
+        releases: [("files".into(), b"manifest".to_vec())].into(),
+        file_setup_error: None,
+        identity_ready: true,
+        fixture_source: "abcdef".into(),
+        brokers: [("events".into(), "/tmp/original/rest_connector".into())].into(),
+        cleanup: "tools/kind-kept-delete '/tmp/rerun/kept.json'".into(),
+    };
+    assert_eq!(
+        kept,
+        serde_json::from_slice(&serde_json::to_vec_pretty(&kept)?)?
+    );
+    Ok(())
+}
+
+#[test]
+fn keep_policy_accepts_only_never_or_unset() -> anyhow::Result<()> {
+    assert!(keep_on_failure(None)?);
+    assert!(keep_on_failure(Some(""))?);
+    assert!(!keep_on_failure(Some("never"))?);
+    let error = keep_on_failure(Some("always")).unwrap_err().to_string();
+    assert!(error.contains("WAMN_KIND_KEEP") && error.contains("never"));
+    Ok(())
+}
+
+#[test]
+fn cluster_names_use_the_checkout_path() {
+    let path = Path::new("/tmp/checkout");
+    let name = cluster_name(path);
+    assert_eq!(name, cluster_name(path));
+    assert_ne!(name, cluster_name(Path::new("/tmp/other-checkout")));
+    assert_eq!(name.len(), "wamn-apply-".len() + 8);
+    assert!(name.starts_with("wamn-apply-"));
+    assert!(
+        name["wamn-apply-".len()..]
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    );
+    assert_eq!(name, "wamn-apply-69901e25");
+}

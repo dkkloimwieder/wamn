@@ -403,7 +403,7 @@ async fn publish(
 }
 
 pub async fn exercise(
-    run: &Run,
+    run: &mut Run,
     repository: &Path,
     platform: &Platform,
     registry: &PackageRegistry,
@@ -411,26 +411,7 @@ pub async fn exercise(
     admin_url: &str,
 ) -> anyhow::Result<()> {
     let source = repository.join("crates/control/lib/tests/support/file_package/deploy");
-    for (image, pin) in IMAGES {
-        let digests = run
-            .run(
-                "docker",
-                &[
-                    "image",
-                    "inspect",
-                    "--format",
-                    "{{json .RepoDigests}}",
-                    image,
-                ],
-            )
-            .await?;
-        ensure!(digests.contains(pin), "{image} is not the pinned {pin}");
-        run.run(
-            "kind",
-            &["load", "docker-image", "--name", &run.cluster, image],
-        )
-        .await?;
-    }
+    prepare_images(run).await?;
     run.run(
         "kubectl",
         &[
@@ -455,9 +436,9 @@ pub async fn exercise(
     )
     .await?;
     let (minio_address, _minio_forward) = forward(run, "svc/c4-files-minio", 9000).await?;
-    let published = Box::pin(publish(run, repository, registry, admin_url)).await?;
+    let bytes = prepare_release(run, repository, registry, admin_url).await?;
     let pushed = wamn_control::publish_release::push_manifest_bytes(
-        &published.canonical_bytes,
+        &bytes,
         &platform.release_artifact_base,
         false,
         &platform.oci_ca_paths,
@@ -476,7 +457,7 @@ pub async fn exercise(
             image_set: super::qualification_artifact::image_set_digests(images)?,
             cases: vec![],
         },
-        published.canonical_bytes.len(),
+        bytes.len(),
     )
     .await?;
     let environment = run.work.join("files.k");
@@ -680,7 +661,7 @@ async fn forward(
 ) -> anyhow::Result<(std::net::SocketAddr, Child)> {
     let address = std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?;
     let child = Command::new("kubectl")
-        .env("KUBECONFIG", run.work.join("kubeconfig"))
+        .env("KUBECONFIG", &run.kept.kubeconfig)
         .args([
             "-n",
             NAMESPACE,
@@ -717,7 +698,7 @@ async fn sessions(
         db.execute("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:files-kind',false)", &[&actor]).await?;
     }
     let user = uuid::Uuid::new_v4().to_string();
-    let email = "files-kind@example.invalid";
+    let email = format!("files-kind-{user}@example.invalid");
     system.execute("INSERT INTO identity.principals(id,type,subject,email,display_name) VALUES ($1::text::uuid,'user',$2,$2,'Kind files')", &[&user, &email]).await?;
     system.execute("INSERT INTO identity.project_env_memberships(principal_id,org,project,env) VALUES ($1::text::uuid,$2,$3,'files')", &[&user, &ORG, &PROJECT]).await?;
     project
@@ -741,7 +722,7 @@ async fn sessions(
         wamn_control::user_role::grant_role_on(
             project,
             env_key,
-            email,
+            &email,
             role,
             &wamn_platform_identity::auth_changes::AuthChanges::default(),
         )
@@ -798,13 +779,7 @@ async fn file_fixture_assembles_an_http_role_without_kind() -> anyhow::Result<()
         .join("../../..")
         .canonicalize()?;
     let work = std::env::temp_dir().join(format!("file-http-role-proof-{}", std::process::id()));
-    let run = Run {
-        work: work.clone(),
-        cluster: String::new(),
-        registry: String::new(),
-        report: Vec::new(),
-        failures: super::Failures::default(),
-    };
+    let run = Run::new(work.clone(), String::new());
     let (package, admissions) = Box::pin(build_fixture(&run, &repository, database.url())).await?;
     let published = wamn_control::publish_release::assemble_local_release(
         &release_request()?,
@@ -830,4 +805,47 @@ async fn file_fixture_assembles_an_http_role_without_kind() -> anyhow::Result<()
     );
     std::fs::remove_dir_all(work)?;
     Ok(())
+}
+
+pub async fn prepare_images(run: &mut Run) -> anyhow::Result<()> {
+    for (image, pin) in IMAGES {
+        let digests = run
+            .run(
+                "docker",
+                &[
+                    "image",
+                    "inspect",
+                    "--format",
+                    "{{json .RepoDigests}}",
+                    image,
+                ],
+            )
+            .await?;
+        ensure!(digests.contains(pin), "{image} is not the pinned {pin}");
+        run.load_image(image).await?;
+    }
+    Ok(())
+}
+
+pub async fn prepare_release(
+    run: &mut Run,
+    repository: &Path,
+    registry: &PackageRegistry,
+    admin_url: &str,
+) -> anyhow::Result<Vec<u8>> {
+    if let Some(error) = &run.kept.file_setup_error {
+        anyhow::bail!("prepare the native file package: {error}");
+    }
+    if let Some(bytes) = run.kept.releases.get("files") {
+        return Ok(bytes.clone());
+    }
+    ensure!(
+        !run.reuse,
+        "the kept run has no prepared native file package"
+    );
+    let published = Box::pin(publish(run, repository, registry, admin_url)).await?;
+    run.kept
+        .releases
+        .insert("files".into(), published.canonical_bytes.clone());
+    Ok(published.canonical_bytes)
 }

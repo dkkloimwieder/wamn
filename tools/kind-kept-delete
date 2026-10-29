@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Delete only the resources named by an environment kind run.
+set -euo pipefail
+kept=$(realpath -- "${1:?usage: tools/kind-kept-delete <kept.json>}")
+cluster=$(jq -er '.cluster | select(startswith("wamn-apply-"))' "$kept")
+kubeconfig=$(jq -er '.kubeconfig' "$kept")
+registry=$(jq -er '.registry' "$kept")
+work=$(jq -er '.work' "$kept")
+secret_work=$(jq -er '.secret_work' "$kept")
+[[ $registry == "$cluster-registry" ]] || { printf 'Registry does not match cluster\n' >&2; exit 64; }
+tool_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+leftovers=$(mktemp)
+trap 'rm -f -- "$leftovers"' EXIT
+status=0
+"$tool_dir/kind-cluster-delete" "$cluster" --kubeconfig "$kubeconfig" >"$leftovers" || status=$?
+jq -n --argjson exit_code "$status" --rawfile leftovers "$leftovers" \
+  '{exit_code:$exit_code, teardown_leftovers:($leftovers | split("\n") | map(select(length > 0)))}' \
+  >"$work/kind-teardown.json"
+# Keep credentials if kind still needs them for another cleanup attempt.
+if ((status != 0)); then exit "$status"; fi
+docker rm --force --volumes "$registry" "$cluster-events" "$cluster-apply-events" >&2 || true
+docker image rm "$cluster-http-fixture:debug" "$cluster-identity:debug" >&2 || true
+rm -f -- "$kubeconfig" "$secret_work/ca.key" "$secret_work/tls.key" \
+  "$secret_work/htpasswd" "$secret_work/auth.json" "$secret_work/integration-session-db.json" \
+  "$secret_work/http-fixture.json"

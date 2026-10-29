@@ -23,7 +23,7 @@ pub const SCHEDULE: &str = "http-minute";
 pub const OAUTH2_HANDLE: &str = "oauth2-upstream";
 pub const OAUTH1_HANDLE: &str = "oauth1-upstream";
 
-pub async fn deploy(run: &Run, repository: &Path, system_url: &str) -> anyhow::Result<()> {
+pub async fn deploy(run: &mut Run, repository: &Path, system_url: &str) -> anyhow::Result<()> {
     let consumer_key = std::env::var("WAMN_HTTP_FIXTURE_CONSUMER_KEY")?;
     let consumer_secret = std::env::var("WAMN_HTTP_FIXTURE_CONSUMER_SECRET")?;
     let token = std::env::var("WAMN_HTTP_FIXTURE_TOKEN")?;
@@ -35,23 +35,7 @@ pub async fn deploy(run: &Run, repository: &Path, system_url: &str) -> anyhow::R
     }})
     .to_string();
     let image = format!("{}-http-fixture:debug", run.cluster);
-    run.run(
-        "docker",
-        &[
-            "build",
-            "-t",
-            &image,
-            &repository
-                .join("crates/control/lib/tests/support/http-fixture")
-                .to_string_lossy(),
-        ],
-    )
-    .await?;
-    run.run(
-        "kind",
-        &["load", "docker-image", "--name", &run.cluster, &image],
-    )
-    .await?;
+    prepare_image(run, repository).await?;
     let file = run.work.join("http-fixture.json");
     std::fs::write(
         &file,
@@ -268,7 +252,7 @@ pub async fn component(
     oci_client::Client::new(ClientConfig {
         extra_root_certificates: vec![Certificate {
             encoding: CertificateEncoding::Pem,
-            data: std::fs::read(run.work.join("ca.crt"))?,
+            data: std::fs::read(run.kept.secret_work.join("ca.crt"))?,
         }],
         read_timeout: Some(Duration::from_secs(30)),
         connect_timeout: Some(Duration::from_secs(30)),
@@ -943,4 +927,36 @@ async fn assert_paged_inner(
         "HTTP paging retry or emitted items differ from the fixture contract"
     );
     Ok(())
+}
+
+pub async fn prepare_image(run: &mut Run, repository: &Path) -> anyhow::Result<()> {
+    let image = format!("{}-http-fixture:debug", run.cluster);
+    let source = repository.join("crates/control/lib/tests/support/http-fixture");
+    let mut hash = ring::digest::Context::new(&ring::digest::SHA256);
+    for file in [
+        "Dockerfile",
+        "Cargo.toml",
+        "Cargo.lock",
+        "server.rs",
+        "netsuite.rs",
+    ] {
+        hash.update(&std::fs::read(source.join(file))?);
+    }
+    let digest = hex::encode(hash.finish().as_ref());
+    if !run.reuse || run.kept.fixture_source != digest {
+        run.run(
+            "docker",
+            &[
+                "build",
+                "-t",
+                &image,
+                &repository
+                    .join("crates/control/lib/tests/support/http-fixture")
+                    .to_string_lossy(),
+            ],
+        )
+        .await?;
+        run.kept.fixture_source = digest;
+    }
+    run.load_image(&image).await
 }
