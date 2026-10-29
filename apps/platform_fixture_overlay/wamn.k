@@ -10,7 +10,7 @@ manifest.Package {
         base_fixture = {
             package = "platform_fixture"
             version = "2.1.0"
-            digest = "sha256:e2480af9e028d585175b9f5e8394d2bbfedaa0eb66ada4286238e1c2ed983823"
+            digest = "sha256:6e3be257bae5cac96ba37ae27a6d299db2efa46c3089fc97fc95092f65be4679"
             operations = ["widget.archive"]
         }
     }
