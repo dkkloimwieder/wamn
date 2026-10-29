@@ -240,6 +240,18 @@ export function SyncReceipts(props: {
         updateAvailable={waitingReload() !== undefined}
         shellResult={shellResult()}
       />
+      {/* The screen scrolls only inside its table, so the panels sit above it. */}
+      <Show when={selected()} keyed>
+        {(line) => (
+          <ReceiptPanel
+            line={line}
+            locations={store.locations()}
+            record={(request) => write(request, line)}
+            close={() => setSelected(undefined)}
+          />
+        )}
+      </Show>
+      <NotUploaded outbox={store.outbox} current={(entry) => rows[String(entry.expect.id)]} resubmit={resubmit} />
       <Records
         screen={props.screen}
         description={props.description}
@@ -255,17 +267,6 @@ export function SyncReceipts(props: {
           run: (row) => setSelected(base[String(row.line_id)]),
         }}
       />
-      <Show when={selected()} keyed>
-        {(line) => (
-          <ReceiptPanel
-            line={line}
-            locations={store.locations()}
-            record={(request) => write(request, line)}
-            close={() => setSelected(undefined)}
-          />
-        )}
-      </Show>
-      <NotUploaded outbox={store.outbox} current={(entry) => rows[String(entry.expect.id)]} resubmit={resubmit} />
     </Page>
   );
 }
