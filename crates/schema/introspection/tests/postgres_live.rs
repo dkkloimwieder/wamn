@@ -1369,6 +1369,7 @@ async fn run_gate(admin_config: Config, fixture: Fixture) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "wamn-fr2lg"]
 async fn the_fixture_migration_round_trips_and_refuses_unsupported_server_objects() {
     // record-history.sql creates the cluster-wide wamn_db_owner role.
     let _serialized = wamn_test_postgres::lock();

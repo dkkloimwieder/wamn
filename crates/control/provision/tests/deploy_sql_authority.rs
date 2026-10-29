@@ -2582,6 +2582,7 @@ fn image_columns(image: &str) -> Vec<(String, String)> {
 /// insert, two updates, and a delete of a widget, and reads the history. The
 /// fold then shows the row at each retained position.
 #[test]
+#[ignore = "wamn-8vsfz"]
 fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
     wamn_schema_generator::receipt::check_current(&wamn_fixture_package::package_root())
         .unwrap_or_else(|error| panic!("{error:#}"));

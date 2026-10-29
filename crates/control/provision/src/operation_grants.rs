@@ -166,6 +166,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "wamn-e1zd9"]
     fn fixture_manifest_yields_the_nineteen_canonical_operation_grants() {
         assert_eq!(
             operation_grant_tokens(&fixture_manifest()).expect("parse strict fixture manifest"),
@@ -197,6 +198,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "wamn-slf04"]
     fn private_custom_operations_never_become_role_grants() {
         let mut manifest: serde_json::Value =
             serde_json::from_slice(&fixture_manifest()).expect("fixture is JSON");

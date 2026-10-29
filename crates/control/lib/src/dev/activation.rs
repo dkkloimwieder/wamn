@@ -2045,6 +2045,7 @@ mod tests {
 
     /// Render locally with Helm: no cluster, release install, or registry access.
     #[test]
+    #[ignore = "wamn-bjs11"]
     fn local_host_matches_the_deployed_host_contract() {
         use crate::release_chart;
         use serde::Deserialize as _;

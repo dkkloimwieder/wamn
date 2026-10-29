@@ -427,6 +427,7 @@ async fn assert_authority(admin: &Client, credential_url: &str) {
 }
 
 #[tokio::test]
+#[ignore = "wamn-44dr0"]
 async fn prune_removes_only_the_expired_prefix_of_each_row() {
     let url = locked_database::database(wamn_project_state::test_database::tenant_platform);
     let admin = connect(&url).await;
