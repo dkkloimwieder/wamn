@@ -107,6 +107,7 @@ pub fn render_project_tofu(
     let registry = &project.kind_registry;
     let zone = &project.dns_zone;
     let guard = &project.guard_state;
+    let domain = zone.dns_name.trim_end_matches('.');
     let guard_member = format!("serviceAccount:{}", guard.service_account);
     let imports = json!([
         {
@@ -142,19 +143,47 @@ pub fn render_project_tofu(
                 "name": "wamn-edge", "project": project.project_id,
                 "tcp_health_check": {"port_specification": "USE_SERVING_PORT"},
             }},
-            "google_compute_backend_service": {"edge": {
-                "name": "wamn-edge-platform", "project": project.project_id,
-                "protocol": "TCP", "load_balancing_scheme": "EXTERNAL_MANAGED",
+            "google_certificate_manager_dns_authorization": {"edge": {
+                "name": "wamn-edge", "project": project.project_id,
+                "domain": domain,
+            }},
+            "google_certificate_manager_certificate": {"edge": {
+                "name": "wamn-edge", "project": project.project_id,
+                "managed": {
+                    "domains": [domain, format!("*.{domain}")],
+                    "dns_authorizations": ["${google_certificate_manager_dns_authorization.edge.id}"],
+                },
+            }},
+            "google_certificate_manager_certificate_map": {"edge": {
+                "name": "wamn-edge", "project": project.project_id,
+            }},
+            "google_certificate_manager_certificate_map_entry": {"edge": {
+                "name": "wamn-edge", "project": project.project_id,
+                "map": "${google_certificate_manager_certificate_map.edge.name}",
+                "certificates": ["${google_certificate_manager_certificate.edge.id}"],
+                "matcher": "PRIMARY",
+            }},
+            // A new address, so that the cutover creates it while the TCP
+            // proxy still holds the old backend service.
+            "google_compute_backend_service": {"edge_https": {
+                "name": "wamn-edge", "project": project.project_id,
+                "protocol": "HTTPS", "load_balancing_scheme": "EXTERNAL_MANAGED",
                 "health_checks": ["${google_compute_health_check.edge.id}"],
                 "backend": [{
                     "group": "${data.google_compute_network_endpoint_group.edge.self_link}",
-                    "balancing_mode": "CONNECTION", "max_connections_per_endpoint": 1000,
+                    "balancing_mode": "RATE", "max_rate_per_endpoint": 1000,
                 }],
+                "enable_cdn": true,
+                "cdn_policy": {"cache_mode": "USE_ORIGIN_HEADERS"},
             }},
-            "google_compute_target_tcp_proxy": {"edge": {
+            "google_compute_url_map": {"edge": {
                 "name": "wamn-edge", "project": project.project_id,
-                "backend_service": "${google_compute_backend_service.edge.id}",
-                "proxy_header": "NONE",
+                "default_service": "${google_compute_backend_service.edge_https.id}",
+            }},
+            "google_compute_target_https_proxy": {"edge": {
+                "name": "wamn-edge", "project": project.project_id,
+                "url_map": "${google_compute_url_map.edge.id}",
+                "certificate_map": "//certificatemanager.googleapis.com/${google_certificate_manager_certificate_map.edge.id}",
             }},
             "google_compute_global_address": {"edge": {
                 "name": "wamn-edge", "project": project.project_id,
@@ -162,7 +191,7 @@ pub fn render_project_tofu(
             "google_compute_global_forwarding_rule": {"edge": {
                 "name": "wamn-edge", "project": project.project_id,
                 "ip_address": "${google_compute_global_address.edge.address}",
-                "target": "${google_compute_target_tcp_proxy.edge.id}",
+                "target": "${google_compute_target_https_proxy.edge.id}",
                 "port_range": "443", "ip_protocol": "TCP",
                 "load_balancing_scheme": "EXTERNAL_MANAGED",
             }},
@@ -206,6 +235,15 @@ pub fn render_project_tofu(
             }},
         },
         "import": imports,
+        // The DNS authorization's CNAME, which the zone needs once.
+        "output": {
+            "edge_dns_authorization_name": {
+                "value": "${google_certificate_manager_dns_authorization.edge.dns_resource_record[0].name}",
+            },
+            "edge_dns_authorization_data": {
+                "value": "${google_certificate_manager_dns_authorization.edge.dns_resource_record[0].data}",
+            },
+        },
         "data": {
             "google_compute_network_endpoint_group": {"edge": {
                 "name": project.edge.neg_name, "zone": project.edge.neg_zone,
@@ -291,7 +329,7 @@ mod tests {
     }
 
     #[test]
-    fn edge_tcp_proxy_reads_the_service_neg_without_hosts_or_certificates() {
+    fn edge_https_proxy_serves_the_service_neg_through_the_cdn() {
         let mut source: Value = serde_json::from_slice(&project()).unwrap();
         source["edge"]["neg_zone"] = json!("us-east1-b");
         let rendered: Value = serde_json::from_slice(
@@ -309,25 +347,49 @@ mod tests {
             resources["google_compute_health_check"]["edge"]["tcp_health_check"],
             json!({"port_specification": "USE_SERVING_PORT"})
         );
-        let backend = &resources["google_compute_backend_service"]["edge"];
-        assert_eq!(backend["protocol"], "TCP");
+        let backends = resources["google_compute_backend_service"]
+            .as_object()
+            .unwrap();
+        assert_eq!(backends.len(), 1);
+        let backend = &backends["edge_https"];
+        assert_eq!(backend["name"], "wamn-edge");
+        assert_eq!(backend["protocol"], "HTTPS");
+        assert_eq!(backend["load_balancing_scheme"], "EXTERNAL_MANAGED");
         assert_eq!(
             backend["health_checks"],
             json!(["${google_compute_health_check.edge.id}"])
         );
         assert_eq!(
-            backend["backend"][0]["group"],
-            "${data.google_compute_network_endpoint_group.edge.self_link}"
+            backend["backend"],
+            json!([{
+                "group": "${data.google_compute_network_endpoint_group.edge.self_link}",
+                "balancing_mode": "RATE", "max_rate_per_endpoint": 1000,
+            }])
         );
-        assert_eq!(backend["backend"][0]["balancing_mode"], "CONNECTION");
+        assert_eq!(backend["enable_cdn"], true);
         assert_eq!(
-            resources["google_compute_target_tcp_proxy"]["edge"]["backend_service"],
-            "${google_compute_backend_service.edge.id}"
+            backend["cdn_policy"],
+            json!({"cache_mode": "USE_ORIGIN_HEADERS"})
+        );
+        assert_eq!(
+            resources["google_compute_url_map"]["edge"],
+            json!({
+                "name": "wamn-edge", "project": "wamn-dev",
+                "default_service": "${google_compute_backend_service.edge_https.id}",
+            })
+        );
+        assert_eq!(
+            resources["google_compute_target_https_proxy"]["edge"],
+            json!({
+                "name": "wamn-edge", "project": "wamn-dev",
+                "url_map": "${google_compute_url_map.edge.id}",
+                "certificate_map": "//certificatemanager.googleapis.com/${google_certificate_manager_certificate_map.edge.id}",
+            })
         );
         let forwarding = &resources["google_compute_global_forwarding_rule"]["edge"];
         assert_eq!(
             forwarding["target"],
-            "${google_compute_target_tcp_proxy.edge.id}"
+            "${google_compute_target_https_proxy.edge.id}"
         );
         assert_eq!(
             forwarding["ip_address"],
@@ -339,13 +401,67 @@ mod tests {
             backend["load_balancing_scheme"]
         );
         for absent in [
-            "google_compute_url_map",
+            "google_compute_target_tcp_proxy",
             "google_compute_ssl_certificate",
+            "google_compute_managed_ssl_certificate",
             "google_compute_backend_bucket",
             "google_compute_network_endpoint_group",
         ] {
-            assert!(resources.get(absent).is_none());
+            assert!(resources.get(absent).is_none(), "{absent}");
         }
+        for rule in ["host_rule", "path_matcher"] {
+            assert!(
+                resources["google_compute_url_map"]["edge"]
+                    .get(rule)
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn edge_certificate_covers_the_zone_domain_and_its_wildcard() {
+        let rendered: Value =
+            serde_json::from_slice(&render_project_tofu(&project(), "state", "dev").unwrap())
+                .unwrap();
+        let resources = &rendered["resource"];
+        assert_eq!(
+            resources["google_certificate_manager_dns_authorization"]["edge"],
+            json!({"name": "wamn-edge", "project": "wamn-dev", "domain": "wamn.dev"})
+        );
+        assert_eq!(
+            resources["google_certificate_manager_certificate"]["edge"],
+            json!({
+                "name": "wamn-edge", "project": "wamn-dev",
+                "managed": {
+                    "domains": ["wamn.dev", "*.wamn.dev"],
+                    "dns_authorizations": ["${google_certificate_manager_dns_authorization.edge.id}"],
+                },
+            })
+        );
+        assert_eq!(
+            resources["google_certificate_manager_certificate_map"]["edge"],
+            json!({"name": "wamn-edge", "project": "wamn-dev"})
+        );
+        assert_eq!(
+            resources["google_certificate_manager_certificate_map_entry"]["edge"],
+            json!({
+                "name": "wamn-edge", "project": "wamn-dev",
+                "map": "${google_certificate_manager_certificate_map.edge.name}",
+                "certificates": ["${google_certificate_manager_certificate.edge.id}"],
+                "matcher": "PRIMARY",
+            })
+        );
+        assert_eq!(
+            rendered["output"],
+            json!({
+                "edge_dns_authorization_name": {
+                    "value": "${google_certificate_manager_dns_authorization.edge.dns_resource_record[0].name}",
+                },
+                "edge_dns_authorization_data": {
+                    "value": "${google_certificate_manager_dns_authorization.edge.dns_resource_record[0].data}",
+                },
+            })
+        );
     }
 
     #[test]
@@ -367,7 +483,7 @@ mod tests {
             })
         );
         let resources = &rendered["resource"];
-        assert_eq!(resources.as_object().unwrap().len(), 10);
+        assert_eq!(resources.as_object().unwrap().len(), 15);
         let clusters = resources["google_container_cluster"].as_object().unwrap();
         assert_eq!(clusters.len(), 1);
         let cluster = &clusters["cluster"];

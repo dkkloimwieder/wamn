@@ -274,11 +274,11 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
         InstallStep {
             number: "4.20", title: "Edge and load balancer",
             runs: Runner::Verb("Kubernetes API"),
-            inputs: vec![("project_id", project.clone()), ("zone", document.zone.clone()), ("route hosts", routes.clone()), ("buckets.web", document.buckets.web.clone()), ("platform_version", platform_version.into()), ("control Service", format!("hosts/c-{org}-http")), ("Rust edge Deployment and Service", "edge/wamn-edge-web".into()), ("edge release and endpoint group", "edge/wamn-edge, wamn-edge".into()), ("TCP backend service and proxy", "wamn-edge-platform, wamn-edge".into()), ("certificate Secret", "edge/wamn-edge-tls".into())],
+            inputs: vec![("project_id", project.clone()), ("zone", document.zone.clone()), ("route hosts", routes.clone()), ("buckets.web", document.buckets.web.clone()), ("platform_version", platform_version.into()), ("control Service", format!("hosts/c-{org}-http")), ("Rust edge Deployment and Service", "edge/wamn-edge-web".into()), ("edge release and endpoint group", "edge/wamn-edge, wamn-edge".into()), ("certificate, backend service, URL map and HTTPS proxy", "wamn-edge".into()), ("certificate Secret", "edge/wamn-edge-tls".into())],
             owner_inputs: vec![OwnerInput {
                 name: format!("edge/wamn-edge-web Workload Identity read on {}", document.buckets.web),
                 instructions: format!("gcloud iam service-accounts create wamn-edge --project {project}\ngcloud storage buckets add-iam-policy-binding gs://{} --member serviceAccount:wamn-edge@{project}.iam.gserviceaccount.com --role roles/storage.objectViewer\ngcloud iam service-accounts add-iam-policy-binding wamn-edge@{project}.iam.gserviceaccount.com --project {project} --role roles/iam.workloadIdentityUser --member 'serviceAccount:{project}.svc.id.goog[edge/wamn-edge-web]'", document.buckets.web),
-            }, dns.clone(), OwnerInput { name: format!("TCP load balancer wamn-edge in {project}"), instructions: "After 4.20 creates the NEG, run tofu apply deploy/gcp, then rerun platform apply for 4.21.".into() }],
+            }, dns.clone(), OwnerInput { name: format!("HTTPS load balancer wamn-edge in {project}"), instructions: "After 4.20 creates the NEG, run tofu apply deploy/gcp and create the DNS authorization CNAME it outputs, then rerun platform apply for 4.21.".into() }],
         },
         InstallStep {
             number: "4.21", title: "Check",

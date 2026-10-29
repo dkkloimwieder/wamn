@@ -57,7 +57,7 @@ pub struct GuardState {
     pub service_account: String,
 }
 
-/// The Service-owned endpoint group used by the TCP proxy.
+/// The Service-owned endpoint group behind the HTTPS load balancer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Edge {

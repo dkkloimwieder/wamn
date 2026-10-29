@@ -332,10 +332,10 @@ Delete each one by name, one command for each disk:
 gcloud compute disks delete <pvc disk name> --project wamn-dev --zone us-central1-a --quiet
 ```
 
-The network endpoint group `wamn-edge` stays after the delete, because the backend service `wamn-edge-platform` names it. Platform apply refuses a missing new NEG status. The agent detaches and deletes the old group as `wamn-agent` with the approval of the teardown:
+The network endpoint group `wamn-edge` stays after the delete, because the backend service `wamn-edge` names it. Platform apply refuses a missing new NEG status. The agent detaches and deletes the old group as `wamn-agent` with the approval of the teardown:
 
 ```bash
-gcloud compute backend-services remove-backend wamn-edge-platform --global \
+gcloud compute backend-services remove-backend wamn-edge --global \
   --network-endpoint-group wamn-edge --network-endpoint-group-zone us-central1-a --project wamn-dev
 gcloud compute network-endpoint-groups delete wamn-edge --zone us-central1-a --project wamn-dev --quiet
 ```
@@ -1228,11 +1228,36 @@ The verb reads `cloud.google.com/neg-status` from that Service with `kubectl` an
 A missing status after rollout refuses the install and names the annotation.
 Kind prints `4.20 Edge NEG: skipped: kind`.
 
-The project document declares a global TCP load balancer that sends all traffic to this NEG.
-OpenTofu renders its health check, TCP backend service, target TCP proxy, global address, and forwarding rule on port 443.
-It reads the NEG by its fixed name and declared zone.
-It reads no environment files and renders no host rules, backend bucket, URL map, or certificate.
-The connection target is 1,000 concurrent connections per endpoint.
+The project document declares a global HTTPS load balancer with Cloud CDN that sends all traffic to this NEG.
+OpenTofu renders these objects, each named `wamn-edge`:
+
+- A Certificate Manager DNS authorization for `wamn.dev`, the DNS name of the zone without its trailing dot.
+- A Google-managed certificate for `wamn.dev` and `*.wamn.dev` through that authorization.
+- A certificate map with one `PRIMARY` entry for that certificate.
+- A backend service on the NEG with protocol HTTPS, Cloud CDN on, and cache mode `USE_ORIGIN_HEADERS`.
+- A URL map whose default service is that backend service, with no host or path rules.
+- A target HTTPS proxy that uses the certificate map, and the global address and forwarding rule on port 443.
+
+The TCP health check stays.
+OpenTofu reads the NEG by its fixed name and declared zone.
+It reads no environment files and renders no compute SSL certificate or backend bucket.
+The rate target is 1,000 requests per second per endpoint.
+
+The origin decides what the CDN caches.
+Digest paths carry `public, max-age=31536000, immutable`, so the CDN caches them.
+`config.json` and pages carry `no-cache`.
+Every `/api` response keeps the route's `cache-control` and `Vary: Authorization, Cookie`, so the CDN caches no API read.
+
+The DNS authorization needs one CNAME record in the zone `wamn-dev`, made once.
+OpenTofu outputs its name as `edge_dns_authorization_name` and its value as `edge_dns_authorization_data`.
+The agent posts this command with those values and runs it only after the owner approves it:
+
+```bash
+gcloud dns record-sets create <edge_dns_authorization_name> --zone wamn-dev --project wamn-dev \
+  --type CNAME --ttl 300 --rrdatas <edge_dns_authorization_data>
+```
+
+A new host under `wamn.dev` needs no certificate change, only its A record.
 
 The order is platform apply, OpenTofu apply, then platform apply again.
 The first run creates the NEG before the load balancer can use it.
@@ -1242,10 +1267,21 @@ The diagnostic `tofu apply deploy/gcp` names this step.
 The next platform apply skips unchanged resources and runs the final HTTPS checks.
 The verb never runs OpenTofu or `gcloud compute`.
 
-nginx terminates TLS with `edge/wamn-edge-tls`.
-On GCP, cert-manager issues that Secret through `deploy/gcp/letsencrypt.yaml`.
+A project that still runs the earlier TCP load balancer moves to the HTTPS load balancer once, with no gap on the route hosts.
+The agent runs each step as `wamn-agent@wamn-dev`:
+
+1. Run `tofu apply` with `-target` on the DNS authorization, certificate, certificate map, certificate map entry, backend service `edge_https`, URL map and HTTPS proxy. The TCP path keeps serving.
+2. Post the CNAME command above. After the owner approves it, run it and wait until the record resolves.
+3. Wait until `gcloud certificate-manager certificates describe wamn-edge --project wamn-dev --format 'value(managed.state)'` prints `ACTIVE`.
+4. Run the full `tofu apply`. It moves the forwarding rule to the HTTPS proxy and deletes the target TCP proxy and the backend service `wamn-edge-platform`.
+
+If `wamn-agent` lacks a Certificate Manager or compute permission, the agent stops and reports the exact permission.
+
+nginx terminates TLS with `edge/wamn-edge-tls`, in kind and on GCP.
+On GCP, the load balancer presents the Google-managed certificate and re-encrypts to nginx.
+On GCP, cert-manager issues the nginx Secret through `deploy/gcp/letsencrypt.yaml`.
 On kind, the existing `edge-self-signed` issuer supplies the same Secret.
-The load balancer holds no certificate and there is no certificate-copy CronJob.
+There is no certificate-copy CronJob.
 
 ### 4.21 Check
 

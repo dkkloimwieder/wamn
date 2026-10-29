@@ -100,7 +100,7 @@ On GCP an HTTPS load balancer with Cloud CDN sits in front of the same edge; `wa
 
 | # | Ruling | Invariant |
 | --- | --- | --- |
-| C1 | GCP ingress is a global HTTPS load balancer on the existing global address: a Certificate Manager certificate map holding one Google-managed certificate for wamn.dev and \*.wamn.dev, issued by DNS authorization, a URL map that routes by host only to one backend service on the edge NEG. | `tofu.rs` render test: a target HTTPS proxy, a URL map with host rules only, a certificate map whose certificate covers wamn.dev and \*.wamn.dev through a DNS authorization; no compute SSL certificate; no target TCP proxy |
+| C1 | GCP ingress is a global HTTPS load balancer on the existing global address: a Certificate Manager certificate map holding one Google-managed certificate for wamn.dev and \*.wamn.dev, issued by DNS authorization, a URL map whose default service is the backend, no host or path rules; one backend service on the edge NEG. | `tofu.rs` render test: a target HTTPS proxy, a URL map whose default service is the backend service and that has no host or path rules, a certificate map whose certificate covers wamn.dev and \*.wamn.dev through a DNS authorization; no compute SSL certificate; no target TCP proxy |
 | C2 | The backend service has Cloud CDN on, cache mode `USE_ORIGIN_HEADERS`, backend protocol HTTPS. | Render test reads `enable_cdn`, the cache mode and the protocol |
 | C3 | The origin decides what caches. Digest paths stay `public, max-age=31536000, immutable`; `config.json` and pages stay `no-cache`; `/api` keeps the route's `cache-control`, so authenticated reads stay `private`. Anonymous `/api` reads are not cached at the CDN either, because every read sends `Vary: Authorization, Cookie` (`apps/platform/ingress/http-route/src/lib.rs`). No change: public API caching is not a goal of this epic. | On wamn-dev, a second fetch of a digest path carries an `age` header; no `/api` GET does |
 | C4 | nginx keeps its own TLS in kind and on GCP; the load balancer re-encrypts to it. The edge chart has one shape. | The edge chart renders the same server blocks with `neg: true` and `neg: false`, apart from the NEG annotation |
@@ -131,16 +131,6 @@ Admission matches WASI imports the way the host linker does: by package and fami
 - `tests/conformance/tests/capability_registry.rs`: rows carry families; the adapter-digest check stays.
 - The capability pages say "family" where they say an exact version.
 
-## Deploy failures
-
-A failed install or apply reports why. Today an install Job waits 900 s (`crates/control/lib/src/platform/job.rs` `INSTALL_DEADLINE`) over the 600 s readiness budget that `env apply` passes to `helm upgrade --wait` (`crates/control/lib/src/release_chart.rs` `upgrade`), so Helm's own timeout surfaces. A host that never starts still ends as a bare Helm or readiness timeout with no cause, and PAT issuance fails under load with one undifferentiated transport error.
-
-| # | Ruling | Invariant |
-| --- | --- | --- |
-| F1 | Each install Job's deadline is longer than any wait it runs inside. | A unit test fails if `INSTALL_DEADLINE` is not above the readiness budget default plus Helm's cleanup margin |
-| F2 | When the Helm wait or the readiness wait of `env apply` fails, `env apply` reports, for each host pod of the release: phase, container state and last termination reason, the release namespace's warning events for those pods, and their last 50 log lines. An install Job carries the same report, because it runs `env apply`. | `environment_apply_kind` with a host that refuses to start reports the host's own error line |
-| F3 | PAT issuance retries a send that failed before any byte reached the issuer (connect refused, DNS, TLS handshake), with a bounded backoff. Any other transport error stays unretried and uncertain, as today. | A unit test: a connect failure is retried and then succeeds; a failure after the request was sent is not retried. The Receiving case of `qualify-release` passes three runs in a row |
-
 ## Kept as is
 
 These review points change nothing. Each has a stated cause.
@@ -163,7 +153,6 @@ Only One NATS forces a platform build, once, at its close. The other epics ride 
 | One NATS | host, identity, ctl, CDC reader (connection config) | yes, once at close |
 | Edge and CDN | none (chart, OpenTofu renderer in ctl) | no |
 | WASI version match | ctl and host (policy crate) | no |
-| Deploy failures | ctl | no |
 
 - Per issue: build, clippy, unit tests. Per merge: the live targets that touch the merged files.
 - One NATS close: `platform_apply_kind` and `environment_apply_kind` once each, then the wamn-dev cutover (`platform apply`, then `env apply` per environment; streams are re-created, no event data carries over).
@@ -173,10 +162,10 @@ Only One NATS forces a platform build, once, at its close. The other epics ride 
 
 One epic is scoped at a time. The next is scoped after the previous closes and is reviewed. Order: Deploy failures, Edge and CDN, WASI version match, One NATS. One NATS closes with the one platform build, which covers all four.
 
-**Deploy failures** (scoped)
+**Edge and CDN** (scoped, epic `wamn-wio2s`)
 
-1. F1 and F2: the deadline test, and the failure report in `env apply`.
-2. F3: PAT issuance retry on send failures that reached no server (`crates/identity/client/src/lib.rs` `issue`).
-3. Docs: `docs/plan/perf-arch.md` decision 7 (shared host groups) closed as not needed, with the cause from Kept as is; the line saying GCP runs `poolSize: 4` corrected to 0.
+1. C5: nginx upstream keepalive in `deploy/platform/edge/templates/configmap.yaml`, pinned by `deployment_declarations`.
+2. C1 to C4: the HTTPS load balancer, managed certificate and CDN in `tofu.rs`, the edge chart test for `neg`, and the docs.
+3. The wamn-dev cutover from the TCP proxy, and C3's two fetches.
 
-**Edge and CDN**, **WASI version match**, **One NATS**: scoped later.
+**WASI version match**, **One NATS**: scoped later.

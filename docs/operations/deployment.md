@@ -345,15 +345,16 @@ The HTTP transport workload selects that host group and supplies endpoints for t
 The edge values can contain a separate `control` entry with `host` and `api`.
 The control host serves no native file routes, so its entry has no `files`.
 The edge chart forwards `/api/` to the control Service and `/password/` to identity.
-With a bucket endpoint, it serves the control bundle directly.
-On Google Cloud, the TCP proxy sends all traffic to nginx. The Rust edge serves the platform UI files behind nginx.
+The Rust edge serves the platform UI files behind nginx.
 Every other page reaches that prefix's `index.html`, including `/`, `/invite`, `/recover`, `/reset`, and control or project-environment audience paths.
 
 ## Google Cloud edge
 
-On Google Cloud, a global load balancer sends `/api/` and `/password/` to the edge and serves every other path from a Cloud CDN backend bucket.
-Set `neg: true` in the edge values. The edge Service then carries the annotation that makes GKE create a network endpoint group, and the chart needs no `bucket.endpoint`, because the load balancer serves the bucket.
-The chart renders no Google Cloud resource. [Google Cloud section 4.20](gcp.md#420-edge-and-load-balancer) creates the load balancer.
+On Google Cloud, a global HTTPS load balancer with Cloud CDN sends all traffic to a network endpoint group, and the group sends it to nginx.
+The load balancer presents a Google-managed certificate and re-encrypts to nginx, which keeps its own TLS as in kind.
+The CDN caches only what the origin marks as cacheable.
+Set `neg: true` in the edge values. The edge Service then carries the annotation that makes GKE create the network endpoint group.
+The chart renders no Google Cloud resource and no other difference from kind. [Google Cloud section 4.20](gcp.md#420-edge-and-load-balancer) creates the load balancer.
 The edge keeps `/api` for native file requests and removes it for other API requests.
 It checks the identity certificate, as it does in kind.
 

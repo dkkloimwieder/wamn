@@ -281,7 +281,7 @@ fn read(root: &Path, file: &str) -> String {
         return String::from_utf8(output.stdout).expect("Helm output is UTF-8");
     }
     if file == "edge" {
-        let output = render_edge(root);
+        let output = render_edge(root, false);
         assert!(
             output.status.success(),
             "render edge chart: {}",
@@ -381,8 +381,8 @@ runtime-operator:
 }
 
 /// The edge chart as the kind edge installs it, with its certificate issued
-/// in place.
-fn render_edge(root: &Path) -> Output {
+/// in place. With `neg`, it is the GCP edge behind the load balancer.
+fn render_edge(root: &Path, neg: bool) -> Output {
     let mut command = Command::new("helm");
     command.current_dir(root).args([
         "template",
@@ -402,6 +402,7 @@ fn render_edge(root: &Path) -> Output {
     ] {
         command.args(["--set-string", &value]);
     }
+    command.args(["--set", &format!("neg={neg}")]);
     command.output().expect("run Helm to render the edge chart")
 }
 
@@ -1020,6 +1021,25 @@ fn every_mounted_secret_is_declared_here_or_named_a_prerequisite() {
              would account for it silently"
         );
     }
+}
+
+#[test]
+fn the_gcp_edge_differs_from_kind_only_by_the_neg_annotation() {
+    let root = repository_root();
+    let [kind, gcp] = [false, true].map(|neg| {
+        let output = render_edge(&root, neg);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    });
+    let annotation = "  annotations:\n    \
+                      cloud.google.com/neg: '{\"exposed_ports\":{\"443\":{\"name\":\"wamn-edge\"}}}'\n";
+    assert!(!kind.contains(annotation));
+    assert_eq!(gcp.matches(annotation).count(), 1);
+    assert_eq!(gcp.replace(annotation, ""), kind);
 }
 
 #[test]

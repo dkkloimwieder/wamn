@@ -1,5 +1,6 @@
-# nginx mounts edge/wamn-edge-tls and terminates TLS behind the TCP proxy.
-# cert-manager owns this certificate. The load balancer owns no certificate.
+# nginx mounts edge/wamn-edge-tls and terminates TLS behind the HTTPS load
+# balancer, which re-encrypts to it. cert-manager owns this certificate. The
+# load balancer presents its own Google-managed certificate.
 # The public certificate of docs/history/gcp-deployment.md step 2. cert-manager
 # answers the Let's Encrypt DNS-01 challenge in the Cloud DNS zone wamn-dev.
 # Its service account has roles/dns.admin on that zone only, through Workload
