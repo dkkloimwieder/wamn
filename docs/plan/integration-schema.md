@@ -9,7 +9,7 @@ Integrations are configured per project, connections per project environment, an
 - **integration** is one project's named instance of a type: name, type, auth type, optional external system. It holds no parameters. Different credentials against the same external account make a new integration of the same type.
 - **connection** is that integration in one project environment: all its parameters, its credential and its service principal, as immutable generations. Exactly one per integration per env.
 - **binding** maps a name an application declares in `wamn.k` to a connection, per release. Several components and applications may share one connection. `environment.k` apply writes bindings; nobody creates them by hand. No binding, no use for component calls; host-managed file access (`file.get`) reads a file through its own connection under the file permissions.
-- **external\_system** is identity only: one external account that records come from (one NetSuite account). It has no type, parameters or credentials. Integrations that reach it set `integration.external_system_id`; most (compute, storage, analytics) leave it NULL. Provenance keys on `external_system_id` + `external_id`. Example: `netsuite_rest`, `netsuite_restlet` and `netsuite_odbc` are three types (they differ in form, interface and auth), configured as three integrations sharing one external system.
+- **external\_system** is identity only: one external account that records come from (one NetSuite account). It has no type, parameters or credentials. Integrations that reach it set `integration.external_system_id`; most (compute, storage, analytics) leave it NULL. Provenance keys on `external_system_id` + `external_id`. Example: `netsuite_rest`, `netsuite_restlet` and `netsuite_odbc` are three types (they differ in runtime type, interface and auth), configured as three integrations sharing one external system.
 - No allow-policy table. Configuring and binding are the project admin's job.
 - Names are identity and never change.
 
@@ -25,7 +25,7 @@ Ten tables, every reference a real FK. Platform-owned catalogs first, then org d
 -- catalogs (platform-owned)
 CREATE TABLE registry.integration_type (
     code      text PRIMARY KEY CHECK (code ~ '^[a-z][a-z0-9_-]*$'),
-    form      text NOT NULL CHECK (form IN ('host', 'wasm', 'native')),
+    runtime_type text NOT NULL CHECK (runtime_type IN ('host', 'wasm', 'native')),
     exclusive boolean NOT NULL,                      -- one physical resource, one holder at a time
     resource_key_template text CHECK (resource_key_template <> ''),  -- e.g. serial:{device}; uses immutable fields only;
                                                      -- no version may change it (publish check)
@@ -325,7 +325,7 @@ A field changes shape only through a new name, over three versions. `deprecated`
 
 ## Files
 
-- File stores are host-form types only (`gcs`, `s3`, `disk`); `platform.file.connection_id` may reference only such a connection (checked at write).
+- File stores are types with runtime type host only (`gcs`, `s3`, `disk`); `platform.file.connection_id` may reference only such a connection (checked at write).
 - A file is read through its own `file.connection_id` with the host's built-in store code and the connection's active generation, authorized by the application's `file.get` permission, not by a binding. Its location is fixed by immutable fields and `blob_key`, so `file.connection_generation` goes.
 - A connection with live `platform.file` rows cannot be deleted; disabling it makes those files unreadable.
 
@@ -333,7 +333,7 @@ A field changes shape only through a new name, over three versions. `deprecated`
 
 WIT is the contract between application and integration code. Integration code has three contracts; only the operations contract forces an application release.
 
-| Contract | Between | Form | Changes when | Who acts |
+| Contract | Between | Defined as | Changes when | Who acts |
 | --- | --- | --- | --- | --- |
 | Binding | host to integration code | WIT `wamn:integration/bound` | almost never | platform release |
 | Parameters | admin to integration code | data: `parameter_schema` | the code needs new configuration | publish a version, stage fields in the UI, move the version in `environment.k` |
@@ -500,7 +500,7 @@ Each is checked by the named test type: SQL (a statement against a fresh schema)
 | 18 | One provider call per due OAuth token across pods; a new generation deletes or expires the token row in its own transaction. | live: two hosts refresh one connection → one call; SQL: write a generation → row gone or expired |
 | 19 | Rotated secret material is destroyed 5 minutes after the new generation is active. | live |
 | 20 | Delete refuses anything referenced (binding, `release_connection`, `platform.file`, connection of an integration, integration or record of an external system). | unit, one refusal per reference |
-| 21 | `platform.file.connection_id` references only host-form store types. | SQL or unit: a file row on another type → refused |
+| 21 | `platform.file.connection_id` references only store types with runtime type host. | SQL or unit: a file row on another type → refused |
 | 22 | Names never change. | SQL: UPDATE of `name` on `external_system`, `integration` → refused |
 | 23 | A platform upgrade never drops a host-type version a live release uses. | unit: refused, naming the releases |
 
