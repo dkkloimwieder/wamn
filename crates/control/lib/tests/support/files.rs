@@ -158,7 +158,7 @@ pub async fn metadata(writer: &Client) -> anyhow::Result<()> {
             "INSERT INTO platform.file \
          (id,application,connection_id,connection_generation,name,media_type,size,sha256,blob_key) \
          VALUES ($1::text::uuid,$2,$3::text::uuid,1,'fixture.txt','text/plain',0,repeat('0',64), \
-                 '_wamn_files/live/' || $1)",
+                 'dev/_wamn_files/live/' || $1)",
             &[&FILE, &APPLICATION, &CONNECTION],
         )
         .await?;
@@ -498,6 +498,7 @@ impl Minio {
         {
             // ListBucket lets a missing public key return origin 404. GetObject
             // stays confined to public copies beneath the binding's prefix.
+            // Keep the old prefix for the explicit legacy-key compatibility case.
             let policy = serde_json::json!({"Version":"2012-10-17","Statement":[
                 {"Effect":"Allow","Principal":"*","Action":["s3:ListBucket","s3:GetBucketLocation"],
                     "Resource":[format!("arn:aws:s3:::{file_bucket}")]},

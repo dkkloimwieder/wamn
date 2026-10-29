@@ -12,7 +12,8 @@ spec:
     spec:
       containers:
         - name: minio
-          image: minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+          image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+          imagePullPolicy: Never
           args: [server, /data]
           env:
             - {name: MINIO_ROOT_USER, value: file-fixture}
@@ -43,7 +44,8 @@ spec:
       restartPolicy: Never
       containers:
         - name: mc
-          image: minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+          image: minio/mc:latest
+          imagePullPolicy: Never
           command: [/bin/sh, -ec]
           args:
             - |
@@ -51,8 +53,8 @@ spec:
               mc mb --ignore-existing files/files-a files/files-b
               for file_bucket in files-a files-b; do
                 if [ "$file_bucket" = files-a ]; then file_prefix=generation-one; else file_prefix=generation-two; fi
-                printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":["s3:ListBucket","s3:GetBucketLocation"],"Resource":["arn:aws:s3:::%s"]},{"Effect":"Allow","Principal":"*","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::%s/%s/public/*"]}]}' "$file_bucket" "$file_bucket" "$file_prefix" > /tmp/public-policy.json
+                printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":["s3:ListBucket","s3:GetBucketLocation"],"Resource":["arn:aws:s3:::%s"]},{"Effect":"Allow","Principal":"*","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::%s/%s/files/public/*"]}]}' "$file_bucket" "$file_bucket" "$file_prefix" > /tmp/public-policy.json
                 mc anonymous set-json /tmp/public-policy.json "files/$file_bucket"
               done
-              mc ilm rule add --expire-days 1 --prefix generation-one/_wamn_files/staging/ files/files-a
-              mc ilm rule add --expire-days 1 --prefix generation-two/_wamn_files/staging/ files/files-b
+              mc ilm rule add --expire-days 1 --prefix generation-one/files/_wamn_files/staging/ files/files-a
+              mc ilm rule add --expire-days 1 --prefix generation-two/files/_wamn_files/staging/ files/files-b

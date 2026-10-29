@@ -354,7 +354,7 @@ async fn raw_blobstore_mutations_refuse_file_namespaces_on_minio() -> anyhow::Re
     );
     let raw = BoundContainer::new(backend.clone(), "files-a", "generation-one");
     let id = uuid::Uuid::new_v4();
-    let live = format!("_wamn_files/live/{id}");
+    let live = format!("dev/_wamn_files/live/{id}");
     backend
         .put(
             &Path::from(format!("generation-one/{live}")),
@@ -364,8 +364,8 @@ async fn raw_blobstore_mutations_refuse_file_namespaces_on_minio() -> anyhow::Re
     raw.put("ordinary", b"ordinary".to_vec()).await?;
     for key in [
         live.clone(),
-        format!("_wamn_files/staging/{id}"),
-        format!("public/{live}"),
+        format!("dev/_wamn_files/staging/{id}"),
+        format!("dev/public/_wamn_files/live/{id}"),
     ] {
         assert!(
             raw.put(&key, b"forged".to_vec()).await.is_err(),
@@ -417,9 +417,14 @@ async fn aged_staging_expires_while_unlinked_metadata_and_aged_live_bytes_stay()
         .with_secret_access_key(files::STORE_PASSWORD)
         .with_allow_http(true)
         .build()?;
-    let live = Path::from(format!("generation-one/_wamn_files/live/{}", files::FILE));
+    let live = Path::from(format!(
+        "generation-one/dev/_wamn_files/live/{}",
+        files::FILE
+    ));
     let staging_id = uuid::Uuid::new_v4().to_string();
-    let staging = Path::from(format!("generation-one/_wamn_files/staging/{staging_id}"));
+    let staging = Path::from(format!(
+        "generation-one/dev/_wamn_files/staging/{staging_id}"
+    ));
     let client = minio.client()?;
     for path in [&live, &staging] {
         let url = store
@@ -481,7 +486,7 @@ async fn aged_staging_expires_while_unlinked_metadata_and_aged_live_bytes_stay()
     let cutoff = chrono::Utc::now() - chrono::Duration::days(2);
     assert!(store.head(&staging).await?.last_modified < cutoff);
     assert!(store.head(&live).await?.last_modified < cutoff);
-    minio.mc("mc ilm rule add --expire-days 1 --prefix generation-one/_wamn_files/staging/ file/files-a").await?;
+    minio.mc("mc ilm rule add --expire-days 1 --prefix generation-one/dev/_wamn_files/staging/ file/files-a").await?;
     let mut removed = false;
     for _ in 0..180 {
         match store.head(&staging).await {

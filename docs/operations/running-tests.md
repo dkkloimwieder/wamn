@@ -298,6 +298,9 @@ cargo test --locked --offline -p wamn-control --test environment_apply_kind \
 
 The case resolves rendered Secrets through the production credential provisioner and starts private PostgreSQL and NATS servers.
 It starts the debug host with rendered arguments and local component files.
+It also sends an upload to the separate file listener and requires the answer of the native file handler.
+This release serves no application host routes, so the handler answers `route-capacity-exhausted`.
+The kind case covers authenticated transfers.
 It requires readiness, running HTTP and materializer workloads, and a completed manual HTTP workflow with the expected response.
 Its old `respond` terminal must fail with `respond-without-caller` after the successful workflow.
 That failure proves that rendering alone cannot establish workflow success.
@@ -735,7 +738,7 @@ The build also prepares the UI bundle that the fixture reads.
 Build the debug test binaries before the cases:
 
 ```bash
-cargo build --locked -p wamn-ctl --bins -p wamn-cdc-reader
+cargo build --locked -p wamn-ctl --bins -p wamn-cdc-reader -p wamn-component-virtualizer
 ```
 
 When the owner requests kind tests, run both cases together from the prepared shell:
@@ -782,6 +785,23 @@ Its [test source](../../crates/control/lib/tests/environment_apply_kind.rs) desc
 ```bash
 WAMN_RELEASE_CHART=<chart> cargo test -p wamn-control --test environment_apply_kind -- --ignored --nocapture
 ```
+
+### Add a check to a kind case
+
+Each kind case is one test, and a full run takes about 30 minutes.
+A check that fails on a cluster fact costs a full run for each fix.
+Before you run a case with a new check, do these steps:
+
+1. Make sure that the kind nodes can pull every image that the check deploys. If they cannot, load a local copy with `kind load docker-image` and set `imagePullPolicy: Never`.
+2. Reach a release host through an in-cluster probe pod, as `route_probe_request` does for check A7.
+3. If the check needs a port forward, select a running pod with the label `wasmcloud.com/hostgroup=<release>`.
+   For native file transfers, forward to port 8082. The workload HTTP port is 80.
+4. Try each new `kubectl` command by hand on the cluster of a running case before the case reaches the new check.
+
+The `<release>-http` Service has no selector, so `kubectl port-forward svc/<release>-http` fails.
+The case found no EndpointSlice for that Service either.
+While a case runs, its cluster stays available through the `kubeconfig` file in its work directory `/var/tmp/wamn-apply-<pid>`.
+The case deletes its cluster after either outcome.
 
 ### Files on PostgreSQL and MinIO
 
@@ -848,31 +868,37 @@ The [pinned MinIO request parser](https://github.com/minio/minio/blob/RELEASE.20
 The test installs a one-day lifecycle rule for staging only, then requires that live bytes and unlinked metadata stay.
 No clock change or external aged snapshot is required.
 
-Root prepares the kind file fixture only after the owner allows kind.
-Use an owned cluster named `wamn-apply-files-<suffix>` and its private kubeconfig.
-Apply `support/file_package/deploy/minio.yaml` in the selected host namespace.
-Publish the file package with the admitted blob-put component and its declaration under `publication/components`.
-Build that component in debug mode. No WIT change is required.
+The `environment_apply_kind` scenario also runs the native file assertions in its existing cluster.
+The check prepares the pinned MinIO server, its public policy, and staging lifecycle rules for the `files` environment.
+It publishes the file package, binds and rotates both S3 connections, and applies the file environment.
+It creates sessions with and without file grants and uses scoped database readers.
+Uploads and reads use port 8082. Metadata operations such as `file.expose` use the HTTP role on port 80.
+The assertions cover hashes, access refusals, public origin behavior, and read binding refusals.
+
+Docker Hub no longer serves the pinned `minio/minio` and `minio/mc` images.
+The check loads the local copies into kind after it makes sure that their digests match the pins.
+The scenario requires `WAMN_BLOB_PUT_COMPONENT`, the path to a debug blob-put guest from this checkout.
+The scenario uses the debug `wamn-component-virtualizer` to remove ambient WASI CLI imports before publication.
+Build that input with the guest workspace and the same target directory as the other scenario inputs:
 
 ```bash
 cargo build --manifest-path apps/Cargo.toml --locked --offline -p blob-put --target wasm32-wasip2
+export WAMN_BLOB_PUT_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/debug/blob_put.wasm"
 ```
 
-The package is outside the application workspace, so its build does not compile the component automatically.
-Use the existing blob-put bytes from `apps/platform/execution/blob-put`, with all three declared store aliases.
-Create and enable the two store connections through the normal control routes.
-Use `connection.json` for `file-store`. Remove `cdn_host` and change the name to `files-no-cdn` for the other connection.
-Rotate both connections with the disposable credential and allow S3 at the org, project, and environment scopes.
-Apply a copy of `environment.k` with the published release digest.
-Grant the four file operations to the fixture role. Prepare another session whose role holds no file grants.
-Forward the host and MinIO services to the addresses of a private copy of `kind-fixture.example.json`.
-Set `WAMN_FILES_KIND_FIXTURE` to that private file. Its database URLs must use scoped readers.
-The kind test calls the deployed host and asserts the stored hash, access refusals, public origin behavior, and binding refusals.
-It reads the selected MinIO Deployment to make sure that the fixture uses the pinned S3-compatible server.
+Before a kind run, make sure that the fixture release has an http role.
+This test builds and assembles the fixture package on a disposable PostgreSQL, without kind:
 
 ```bash
 cargo test --locked --offline -p wamn-control --test environment_apply_kind \
-  native_files_on_kind_minio -- --ignored --exact --nocapture
+  native_files::file_fixture_assembles_an_http_role_without_kind -- --ignored --exact
+```
+
+Set the other [kind prerequisites](#platform-and-environment-apply-on-kind), then run the scenario once:
+
+```bash
+cargo test --locked --offline -p wamn-control --test environment_apply_kind \
+  environment_apply_kind -- --ignored --exact --nocapture
 ```
 
 ### Registry image archive in kind

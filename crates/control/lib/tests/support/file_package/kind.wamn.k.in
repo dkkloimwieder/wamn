@@ -1,0 +1,25 @@
+import manifest
+
+manifest.Package {
+    package = {id = "file_fixture", version = "0.1.0"}
+    required_platform_policy_contract = {id = "file_fixture_data_access", state = "satisfied"}
+    models = {}
+    connections = {
+        files = {integration = "s3", mode = "write"}
+        files_read = {integration = "s3", mode = "read"}
+        files_no_cdn = {integration = "s3", mode = "write"}
+    }
+    components = {fixture = {connections = []}}
+    routes = {auth_modes = ["session"]}
+    custom_operations = {
+        "fixture.run" = manifest.Command("fixture.run") {
+            connection = None
+            transaction = None
+            automatic_retry = None
+            idempotent_by = "stateless"
+            input.fields = []
+            result = {class = "one", fields = [{path = "value", type = "text"}]}
+            errors = ["invalid_input", "permission_denied", "internal_error"]
+        }
+    }
+}
