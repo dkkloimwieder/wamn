@@ -978,6 +978,12 @@ Application roles read file metadata but cannot insert, update, or delete it.
 File rows use the standard stamps and unlimited history.
 
 The package declares its store binding. `environment.k` binds that declaration to an immutable connection name.
+
+The registry owns application bindings. Release hosts receive no binding map in their scope.
+Calls that name a binding require its registry row for the org, project, environment, application, and alias.
+The host also requires a component in the application's packages to declare that blobstore alias.
+Binding changes do not restart release hosts.
+
 C4 covers GCS and S3. C10 owns disk stores and eviction.
 Each mutation requires a write binding. Native host code transfers bytes, and guest operations carry only `file_id`.
 No file byte transfer changes WIT.
@@ -1004,6 +1010,10 @@ The application URL requires a session with `file.get` on the owning application
 Anonymous callers receive 401. A caller without the grant receives 403.
 Private files return 403 through that URL, including for administrators.
 Another application never serves the file.
+
+Reads by `file_id` require no current binding and use the recorded connection generation.
+Removing a binding preserves these reads and application references to the file.
+Disabling the connection stops reads. The registry requires an active connection and project enablement.
 
 A package marks a UUID result field with `signed_reads` in its public operation declaration.
 The host replaces that file ID with a signed URL after the operation returns. The guest uses the existing WIT contract.

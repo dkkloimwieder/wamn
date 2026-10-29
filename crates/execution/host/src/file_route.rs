@@ -203,8 +203,9 @@ pub trait FileConnections: Send + Sync + fmt::Debug {
 /// binding, connection_id, generation)` returns `connection_id uuid`,
 /// `connection_name text`, `generation bigint`, `parameters jsonb`, and `mode text`.
 /// Binding and both pin fields are nullable. The registry must enforce the
-/// reader login's scope, active project enablement, and the application binding.
-/// A pin selects that immutable generation, including its provider parameters.
+/// reader login's scope, active connection and project enablement. A named
+/// binding must belong to the application in the registry. A pin selects that
+/// immutable generation without requiring a current binding for reads.
 pub struct RegistryFileConnections {
     pub client: Option<Arc<tokio_postgres::Client>>,
     pub org: String,
@@ -383,9 +384,7 @@ impl FileRoutes {
             .applications
             .get(application)
             .ok_or_else(|| refused(FileRefusal::BindingRefused, "application"))?;
-        if binding.is_some_and(|alias| {
-            !app.connections.contains_key(alias) || !declares_store(&self.release, app, alias)
-        }) {
+        if binding.is_some_and(|alias| !declares_store(&self.release, app, alias)) {
             return Err(refused(FileRefusal::BindingRefused, "binding"));
         }
         let connection = self
@@ -661,7 +660,8 @@ impl FileRoutes {
         require_binding(&self.release, application, None, pin, &connection, false)?;
         // Signing is the host's declared result work. The operation grant
         // supplies read authority without a guest blobstore import. The
-        // application's declared binding and pinned generation still apply.
+        // registry requires an active, enabled connection at the pinned generation.
+        // Reads do not require a current application binding.
         let store = self
             .blobstore
             .file_store(
@@ -876,17 +876,8 @@ fn require_binding(
         .applications
         .get(application)
         .ok_or_else(|| refused(FileRefusal::BindingRefused, "application"))?;
-    let bound = match binding {
-        Some(alias) => {
-            declares_store(release, app, alias)
-                && app.connections.get(alias) == Some(&connection.name)
-        }
-        None => app
-            .connections
-            .iter()
-            .any(|(alias, name)| name == &connection.name && declares_store(release, app, alias)),
-    };
-    if !bound
+    // The registry owns bindings. Reads use the file's pin without a binding.
+    if binding.is_some_and(|alias| !declares_store(release, app, alias))
         || connection.generation <= 0
         || connection.id.parse::<Uuid>().is_err()
         || write && connection.read_only
@@ -1153,7 +1144,7 @@ mod tests {
                     ApplicationDefinition {
                         connectors: std::collections::BTreeMap::new(),
                         packages: BTreeSet::from(["app".into()]),
-                        connections: BTreeMap::from([("documents".into(), "store".into())]),
+                        connections: BTreeMap::new(),
                     },
                 )])),
             )
@@ -1329,6 +1320,10 @@ mod tests {
         );
         let mut wrong = connection;
         wrong.name = "another-store".into();
+        assert!(
+            require_binding(&release, "orders", Some("documents"), None, &wrong, false).is_ok()
+        );
+        wrong.id = "invalid".into();
         assert!(
             require_binding(&release, "orders", Some("documents"), None, &wrong, false).is_err()
         );

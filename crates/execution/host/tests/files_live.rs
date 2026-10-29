@@ -73,13 +73,11 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
     let manifest: wamn_catalog::ServingManifest = serde_json::from_value(manifest)?;
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_execution_contract::canonical_json_bytes(&serde_json::to_value(manifest)?),
-        "native files fixture", ReleaseScope::new(ENV_KEY,"dev").with_applications(
-            serde_json::from_value(json!({
-                "files":{"packages":["session_test"],"connections":{
-                    "files":files::STORE_NAME,"files_read":files::STORE_NAME,"files_no_cdn":"files-no-cdn"}},
-                "other":{"packages":["other_fixture"],"connections":{}}
-            }))?,
-        ),
+        "native files fixture",
+        ReleaseScope::new(ENV_KEY, "dev").with_applications(serde_json::from_value(json!({
+            "files":{"packages":["session_test"],"connections":{}},
+            "other":{"packages":["other_fixture"],"connections":{}}
+        }))?),
     )?))
 }
 
@@ -819,6 +817,56 @@ async fn application_file_route_requires_its_grant_and_enforces_exposure_and_own
             .await?
             .0,
         403
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn file_id_reads_survive_binding_removal_until_connection_disablement() -> anyhow::Result<()>
+{
+    let mut fixture = FileHost::start("file_binding_removal").await?;
+    let id = fixture.upload("files", b"retained bytes").await?;
+    let token = fixture.token(false);
+    let read = fixture.read("files", id, Some(&token)).await?;
+    assert_eq!(read.0, 200);
+    assert_eq!(read.2, b"retained bytes");
+
+    let bindings: Value = fixture
+        .registry
+        .control
+        .query_one(
+            "SELECT registry.reserve_connection_bindings($1,$2,'dev','cloud','[]'::jsonb)",
+            &[&ORG, &PROJECT],
+        )
+        .await?
+        .get(0);
+    assert_eq!(bindings, json!({"bindings":[]}));
+    let read = fixture.read("files", id, Some(&token)).await?;
+    assert_eq!(read.0, 200);
+    assert_eq!(read.2, b"retained bytes");
+    let upload = fixture
+        .http(
+            "POST",
+            "/api/files/files?binding=files&name=denied.txt",
+            Some(&token),
+            body(b"refused bytes"),
+        )
+        .await?;
+    assert_eq!(upload.0, 403);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&upload.2)?["error"]["code"],
+        "binding_refused"
+    );
+
+    let tx = fixture.registry.control.transaction().await?;
+    wamn_platform_identity::connections::disable_connection(&tx, ORG, PROJECT, files::STORE_NAME)
+        .await?;
+    tx.commit().await?;
+    let read = fixture.read("files", id, Some(&token)).await?;
+    assert_eq!(read.0, 403);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&read.2)?["error"]["code"],
+        "binding_refused"
     );
     Ok(())
 }

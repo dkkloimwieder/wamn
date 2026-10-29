@@ -1615,7 +1615,11 @@ DO $file_generations_acl$ BEGIN
  END IF;
 END $file_generations_acl$;
 
--- Native file routes resolve a declared binding or the generation pinned by a file.
+-- The registry owns application bindings for native file routes.
+-- Named bindings must match the org, project, environment, application and alias.
+-- Reads by file ID need no current binding and use the recorded generation.
+-- The host enforces file.get on the owning application and file exposure.
+-- Connections must stay active and enabled in the project, including for reads.
 -- Scope comes from the authenticated login, never caller-controlled app.* claims.
 CREATE OR REPLACE FUNCTION registry.lookup_file_connection(
  org_id text, project_id text, environment_name text, application_id text,
@@ -1627,8 +1631,8 @@ BEGIN
  RETURN QUERY
  SELECT c.id, c.name, g.generation, g.parameters,
   CASE WHEN binding_name IS NOT NULL THEN binding.mode
-   -- Multiple aliases may bind the same connection. Any current write binding
-   -- permits mutations; a removed binding leaves existing files readable.
+   -- Multiple aliases can bind the same connection. Any current write binding
+   -- permits mutations. A removed binding leaves existing files readable.
    WHEN EXISTS (
     SELECT FROM registry.environment_connection_binding current_binding
     WHERE current_binding.org = login.org_id AND current_binding.project = login.project_id
