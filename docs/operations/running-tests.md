@@ -855,6 +855,7 @@ The rerun table contains these checks:
 | `native files on kind MinIO` | `environment` |
 | `14 / A1 heartbeat labels` | `release` |
 | `15 wrong release placement` | `release` |
+| `F2 failed host report` | `release` |
 | `4 show reapply` | `bindings` |
 
 When you add a rerunnable check, add its name, phase, and function to `CHECKS` in `environment_apply_kind.rs`.
