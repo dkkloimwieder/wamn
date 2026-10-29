@@ -1279,7 +1279,10 @@ fn build_operation(
                     format!("{module}/{name} lists: {error}"),
                 )
             })?,
-        sync: operation.get("sync").and_then(Value::as_bool).unwrap_or(false),
+        sync: operation
+            .get("sync")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         result_class: operation
             .get("result")
             .and_then(Value::as_str)
