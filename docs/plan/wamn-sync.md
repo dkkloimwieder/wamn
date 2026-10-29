@@ -947,11 +947,26 @@ Sign-out deletes that user's saved rows and outbox only when `clear_on_sign_out`
 #### Expiry
 
 `pending_max_age` applies under both profiles when it has a value.
-An outbox entry whose `recorded_at` is older than `pending_max_age` stops replaying.
-The not uploaded panel shows the entry as expired.
-A signed-in user resubmits it with the same id, or discards it.
-The outbox never sends an expired entry on its own.
-The outbox option `maxAge` of `@wfe/sync` carries the value. It is the wfe gap `wamn-ujnkn`.
+The Shell converts the duration to milliseconds and passes it as the outbox option `maxAge` of `@wfe/sync`.
+wfe `b2b29b6` builds `maxAge`, `6319a30` adds expiry on the replay timer while offline, and together they close the wfe gap `wamn-ujnkn`.
+An outbox entry expires when its age is greater than `pending_max_age`.
+Its age starts at `recorded_at`, or at `resubmitted_at` after a resubmit.
+
+The outbox marks expired entries at these times:
+
+1. When the outbox opens.
+2. Before each send.
+3. On each replay timer run while the page is offline.
+
+An expired entry has the state `expired`, and the outbox never sends it on its own.
+It holds the later entries of its record and keeps its tentative row, as a refused entry does.
+The not uploaded panel shows the entry as expired, with its `recorded_at` time.
+The status line counts expired entries apart from pending and refused entries.
+
+A signed-in user takes one of two actions on an expired entry:
+
+- Resubmit: the entry goes back to `pending` with the same id (`seq` and idempotency key). The outbox stamps `resubmitted_at`, so the entry gets a fresh age.
+- Discard: the outbox deletes the entry, and the tentative row goes away.
 
 #### Risks
 
