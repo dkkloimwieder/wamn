@@ -1267,13 +1267,29 @@ The diagnostic `tofu apply deploy/gcp` names this step.
 The next platform apply skips unchanged resources and runs the final HTTPS checks.
 The verb never runs OpenTofu or `gcloud compute`.
 
-A project that still runs the earlier TCP load balancer moves to the HTTPS load balancer once, with no gap on the route hosts.
+wamn-dev still runs the earlier load balancer that was made by hand on 2026-09-27, outside OpenTofu state.
+Its address, forwarding rule, health check, URL map and target HTTPS proxy already carry the name `wamn-edge`.
+Its URL map routes by host to the backend bucket `wamn-edge-files` and the backend service `wamn-edge-platform`, and its proxy holds a compute SSL certificate.
+It moves to the HTTPS load balancer once, with no gap on the route hosts.
 The agent runs each step as `wamn-agent@wamn-dev`:
 
-1. Run `tofu apply` with `-target` on the DNS authorization, certificate, certificate map, certificate map entry, backend service `edge_https`, URL map and HTTPS proxy. The TCP path keeps serving.
-2. Post the CNAME command above. After the owner approves it, run it and wait until the record resolves.
-3. Wait until `gcloud certificate-manager certificates describe wamn-edge --project wamn-dev --format 'value(managed.state)'` prints `ACTIVE`.
-4. Run the full `tofu apply`. It moves the forwarding rule to the HTTPS proxy and deletes the target TCP proxy and the backend service `wamn-edge-platform`.
+1. Post `gcloud services enable certificatemanager.googleapis.com --project wamn-dev` and stop. Enabling an API is an owner input. Continue when `gcloud services list --enabled --project wamn-dev` shows `certificatemanager.googleapis.com`.
+2. Run `platform apply`, so that step 4.20 installs the edge and creates the NEG. Until step 7, the 4.21 check fails on the route-host certificate. Note that failure and continue. Stop on any other failed step.
+3. Import the existing objects into the state of the rendered directory:
+
+    ```bash
+    "$TOFU" import google_compute_global_address.edge projects/wamn-dev/global/addresses/wamn-edge
+    "$TOFU" import google_compute_global_forwarding_rule.edge projects/wamn-dev/global/forwardingRules/wamn-edge
+    "$TOFU" import google_compute_health_check.edge projects/wamn-dev/global/healthChecks/wamn-edge
+    "$TOFU" import google_compute_url_map.edge projects/wamn-dev/global/urlMaps/wamn-edge
+    "$TOFU" import google_compute_target_https_proxy.edge projects/wamn-dev/global/targetHttpsProxies/wamn-edge
+    ```
+
+4. Run `tofu apply` with `-target` on the DNS authorization, certificate, certificate map, certificate map entry and backend service `edge_https`. The old URL map keeps serving.
+5. Post the CNAME command above. After the owner approves it, run it and wait until the record resolves.
+6. Wait until `gcloud certificate-manager certificates describe wamn-edge --project wamn-dev --format 'value(managed.state)'` prints `ACTIVE`.
+7. Run the full `tofu apply`. It updates the URL map and the HTTPS proxy in place, so the forwarding rule and the address do not change.
+8. List the backend service `wamn-edge-platform`, the backend bucket `wamn-edge-files` and the compute SSL certificate that the proxy held. Post the list, then delete exactly those objects by name.
 
 If `wamn-agent` lacks a Certificate Manager or compute permission, the agent stops and reports the exact permission.
 

@@ -166,6 +166,6 @@ One epic is scoped at a time. The next is scoped after the previous closes and i
 
 1. C5: nginx upstream keepalive in `deploy/platform/edge/templates/configmap.yaml`, pinned by `deployment_declarations`.
 2. C1 to C4: the HTTPS load balancer, managed certificate and CDN in `tofu.rs`, the edge chart test for `neg`, and the docs.
-3. The wamn-dev cutover from the TCP proxy, and C3's two fetches.
+3. The wamn-dev cutover from the hand-built load balancer, and C3's two fetches.
 
 **WASI version match**, **One NATS**: scoped later.
