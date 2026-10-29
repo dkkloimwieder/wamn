@@ -174,7 +174,14 @@ pub fn render_project_tofu(
                     "balancing_mode": "RATE", "max_rate_per_endpoint": 1000,
                 }],
                 "enable_cdn": true,
-                "cdn_policy": {"cache_mode": "USE_ORIGIN_HEADERS"},
+                // The provider needs a cache key policy. These are the API
+                // defaults; the host keeps each route host's entries apart.
+                "cdn_policy": {
+                    "cache_mode": "USE_ORIGIN_HEADERS",
+                    "cache_key_policy": {
+                        "include_host": true, "include_protocol": true, "include_query_string": true,
+                    },
+                },
             }},
             "google_compute_url_map": {"edge": {
                 "name": "wamn-edge", "project": project.project_id,
@@ -369,7 +376,12 @@ mod tests {
         assert_eq!(backend["enable_cdn"], true);
         assert_eq!(
             backend["cdn_policy"],
-            json!({"cache_mode": "USE_ORIGIN_HEADERS"})
+            json!({
+                "cache_mode": "USE_ORIGIN_HEADERS",
+                "cache_key_policy": {
+                    "include_host": true, "include_protocol": true, "include_query_string": true,
+                },
+            })
         );
         assert_eq!(
             resources["google_compute_url_map"]["edge"],
