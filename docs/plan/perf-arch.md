@@ -39,7 +39,7 @@ A base route runs two Wasm instances per request and crosses the component bound
 
 A get, in order (code on main):
 
-1. wash-runtime's HTTP server takes the request and instantiates the `http-route` guest (`apps/platform/ingress/http-route`). Locally `pool_size` is 0, so this is a fresh Store per request; GCP has `poolSize: 4` in the chart, unmeasured (`wamn-6rsfg`).
+1. wash-runtime's HTTP server takes the request and instantiates the `http-route` guest (`apps/platform/ingress/http-route`). `pool_size` is 0, so this is a fresh Store per request. The chart also has `poolSize: 0` on GCP (`deploy/platform/release/templates/workloads.yaml`).
 2. The guest reads the body through wasi-http 0.3 streams, parses it (`serde_json::from_slice`), maps it, and serializes it again (`lib.rs:427-449`).
 3. Import `routes(method, authority)`: the host rebuilds the route table for that method from the manifest on every call and lowers the whole `Vec<RouteDefinition>` into guest memory (`flow_http_routing.rs:652`, `:806`). The guest matches the path.
 4. Import `authenticate`: answered from host memory since `wamn-stxy9.2` (0.02 ms p50).
@@ -322,6 +322,6 @@ No function on the list is lost under A5 or A2. Batched requests: a request can 
 4. Does an `update`'s stored `result` need the full row (P4), or is the row itself the authoritative outcome for a replay-free retry?
 5. Is `commit_delay` acceptable as a cluster parameter (P7), given it trades p50 for throughput? Owner 2026-10-20: not decidable without measurement; M6 runs in wamn-c8a5v.3 with the other Postgres tests, decision after.
 6. mimalloc stays deferred (`wamn-9jvm1.1`)?
-7. Should a host group serve several environments (A2)? If yes, the operator earns its place; if no, it is a 1:1 mapping and a Deployment would do.
+7. Closed 2026-10-29 as not needed (`docs/plan/alignment.md`, Kept as is): one release, one host Deployment and operator placement per environment stay. At 1 to 3 applications per environment, a shared host saves at most one pod per org, and it mixes environments that the rulings keep isolated.
 8. Resolved 2026-10-20: under A5 the component handles a batched request. The entry loops over the items and calls `begin-operation` and `commit` per item; the host sees single operations and never knows a batch exists. Per-item claims and transactions stay as today (an item failing does not roll back the others; a retry replays only unfinished keys). Whole-batch atomicity, if an operation wants it, is one begin with one key, declared by that operation's contract. Owner: batch semantics and error handling belong to the application, not the host; the response shapes (per-item errors in a 200, partial completion on a run failure) stay as the entry builds them today, and validate-all-before-run is kept.
 9. Which of M1–M8 and the two spikes run first. Suggested: the A5 spike, M4, M5.
