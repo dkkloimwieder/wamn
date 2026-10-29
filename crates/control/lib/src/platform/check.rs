@@ -165,8 +165,11 @@ pub(super) async fn apply(
                 status == expected,
                 "{context}: answered {status}, expected {expected}"
             );
+            // On GCP the load balancer presents its Google-managed
+            // certificate, which the client already validated for the host
+            // against public roots. Only kind serves edge/wamn-edge-tls.
             ensure!(
-                serial == expected_serial,
+                document.provider != Provider::Kind || serial == expected_serial,
                 "4.21 certificate on {host}: served serial {serial} differs from edge/wamn-edge-tls {expected_serial}"
             );
             results.push(json!({"host": host, "method": method, "path": path, "status": status, "serial": serial}));

@@ -1288,7 +1288,8 @@ There is no certificate-copy CronJob.
 Platform apply runs this step last.
 For every route host, `/` and `/config.json` must answer 200 when `buckets.web` is set.
 A protected API route must answer 401 without credentials.
-Each response must present the certificate serial in `edge/wamn-edge-tls`.
+On GCP, each response must present a certificate that is valid for the host name against public roots, with no serial match.
+On kind, each response must present the certificate serial in `edge/wamn-edge-tls`.
 The verb reads only the public certificate from the Secret.
 A failure names the host and the failing check.
 On GCP, HTTPS connection failures and unexpected status codes also name `tofu apply deploy/gcp` as a likely missing step.
