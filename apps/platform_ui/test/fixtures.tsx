@@ -247,6 +247,8 @@ export async function signIn() {
 }
 
 beforeEach(() => {
+  // A saved user of an earlier test would reopen offline in the next one.
+  localStorage.clear();
   // jsdom does not scroll elements, but the menu scrolls its keyboard target.
   HTMLElement.prototype.scrollIntoView = () => undefined;
   // jsdom has no media queries, and the sidebar asks whether the page is narrow.

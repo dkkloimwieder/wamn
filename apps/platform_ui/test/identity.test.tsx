@@ -370,7 +370,7 @@ describe("identity refusals", () => {
     open(`/${AUD}/pallets`, fetch);
     expect(await screen.findByRole("alert")).toHaveProperty(
       "textContent",
-      "The session could not be renewed: Error: /password/renew answered 503.",
+      "The session could not be renewed: /password/renew answered 503.",
     );
     expect(screen.getByLabelText("Password")).toBeDefined();
     expect(window.location.pathname).toBe(`/${AUD}/pallets`);

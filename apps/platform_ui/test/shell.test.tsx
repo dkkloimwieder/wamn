@@ -83,7 +83,7 @@ describe("the app shell", () => {
     expect(state.calls).toEqual(["/password/renew", "/api/wamn_control/permission/mine"]);
   });
 
-  it("uses the cookie carrier and writes nothing to browser storage", async () => {
+  it("uses the cookie carrier and keeps no token in browser storage", async () => {
     const storage = vi.spyOn(Storage.prototype, "setItem");
     try {
       const { state, fetch } = identity(true);
@@ -92,7 +92,8 @@ describe("the app shell", () => {
       expect(state.bodies[0]).toEqual({ aud: AUD, carrier: "cookie" });
       expect(state.requests[0]?.credentials).toBe("include");
       expect(new Headers(state.requests[1]?.headers).has("authorization")).toBe(false);
-      expect(storage).not.toHaveBeenCalled();
+      // Only the saved user and view, for an offline reopen. No token.
+      expect(storage.mock.calls.map(([key]) => key).sort()).toEqual(["wamn-user:widgets:dev", "wamn-view:widgets:dev"]);
     } finally {
       storage.mockRestore();
     }
