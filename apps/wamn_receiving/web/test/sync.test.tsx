@@ -152,6 +152,8 @@ describe("the open receipt lines screen", () => {
     await waitFor(() => expect(table.querySelector("[data-tentative]")).not.toBeNull());
     await waitFor(() => expect(within(table).getAllByText("5.000").length).toBe(2));
     await waitFor(() => expect(screen.getByLabelText("Sync status").textContent).toContain("Pending: 1"));
+    // The panel closes once the outbox holds the receipt, before any host answer.
+    await waitFor(() => expect(screen.queryByRole("form", { name: "Record a receipt" })).toBeNull());
     await waitFor(() => expect(h.receipts.length).toBeGreaterThan(0));
     const sent = h.receipts[0]!.items[0] as { request_id: string; value: Record<string, unknown> };
     expect(sent.value.idempotency_key).toMatch(/^[0-9a-f]{64}$/);

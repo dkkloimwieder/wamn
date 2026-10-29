@@ -202,7 +202,9 @@ export function SyncReceipts(props: {
       const stop = store.outbox.watch(() => {
         if (store.outbox.entries().some((entry) => entry.request_hash === call.request_hash)) {
           stop();
-          resolve();
+          // The watch runs inside the write action. A caller that resumes there joins the action's
+          // transition, and its signal writes wait for the host's answer. The timer resumes it outside.
+          setTimeout(resolve);
         }
       });
       void record.write(call, receivedLine(line, request.value.line[0]!.quantity)).catch((error: unknown) => {
