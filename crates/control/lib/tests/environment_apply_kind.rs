@@ -266,7 +266,7 @@ struct Check {
     run: for<'a> fn(&'a mut Run, &'a CheckContext) -> CheckFuture<'a>,
 }
 
-const CHECKS: [Check; 6] = [
+const CHECKS: [Check; 7] = [
     Check {
         name: "4 rest_connector",
         phase: "environment",
@@ -291,6 +291,11 @@ const CHECKS: [Check; 6] = [
         name: "15 wrong release placement",
         phase: "release",
         run: |run, context| Box::pin(placement_check(run, context)),
+    },
+    Check {
+        name: "F2 failed host report",
+        phase: "release",
+        run: |run, context| Box::pin(host_report_check(run, context)),
     },
     Check {
         name: "4 show reapply",
@@ -1413,6 +1418,8 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     run.collect("14 / A1 heartbeat labels", result);
     let result = placement_check(run, &context).await;
     run.collect("15 wrong release placement", result);
+    let result = host_report_check(run, &context).await;
+    run.collect("F2 failed host report", result);
 
     let result = async {
         // 2. The same document again writes no revision.
@@ -2880,6 +2887,95 @@ async fn placement_check(run: &mut Run, context: &CheckContext) -> anyhow::Resul
     Ok(())
 }
 
+/// F2: a host that cannot read its component manifest never gets ready. The
+/// failed apply reports Helm's error first, then the host's own error line.
+async fn host_report_check(run: &mut Run, context: &CheckContext) -> anyhow::Result<()> {
+    const ENV: &str = "broken";
+    const BUDGET_SECONDS: i32 = 90;
+    let name = release_name(ORG, PROJECT, ENV)?;
+    let mut platform = context.platform.clone();
+    let base = platform.host_group.as_ref().context("host group")?;
+    let mut group: Value = serde_yaml::from_slice(&std::fs::read(base)?)?;
+    let missing = format!("{}/wamn/missing-components", run.kept.registry_address);
+    let variable = group["env"]
+        .as_array_mut()
+        .context("the host group's env is a list")?
+        .iter_mut()
+        .find(|variable| variable["name"] == "WAMN_COMPONENT_ARTIFACT_BASE")
+        .context("the host group sets WAMN_COMPONENT_ARTIFACT_BASE")?;
+    variable["value"] = missing.clone().into();
+    let file = run.work.join("broken-host-group.yaml");
+    std::fs::write(&file, serde_yaml::to_string(&group)?)?;
+    platform.host_group = Some(file);
+
+    let actor = wamn_control_provision::PlatformComponent::Provisioning
+        .principal_id()
+        .to_string();
+    let set_budget = async |budget: i32| -> anyhow::Result<i32> {
+        let (system, task) = connect(&platform.system_database_url).await?;
+        system.batch_execute("SET ROLE wamn_system").await?;
+        let before: i32 = system
+            .query_one(
+                "SELECT readiness_budget_seconds FROM registry.env_policies \
+                  WHERE org = $1 AND name = $2",
+                &[&ORG, &POLICY],
+            )
+            .await?
+            .get(0);
+        system
+            .execute(
+                "WITH actor AS MATERIALIZED (SELECT set_config('app.user_id', $3, true)) \
+                 UPDATE registry.env_policies SET readiness_budget_seconds = $4 \
+                   FROM actor WHERE org = $1 AND name = $2",
+                &[&ORG, &POLICY, &actor, &budget],
+            )
+            .await?;
+        task.abort();
+        Ok(before)
+    };
+    let mut document = fixture_document(ENV, "broken.orders.example", &context.digest);
+    let (system, task) = connect(&platform.system_database_url).await?;
+    let bound = system
+        .query_opt(
+            "SELECT 1 FROM registry.connection WHERE org=$1 AND name=$2",
+            &[&ORG, &format!("labels-{ENV}")],
+        )
+        .await?
+        .is_some();
+    task.abort();
+    if !bound {
+        org_bindings::bind(&platform, &mut document, PACKAGE, "labels", &format!("labels-{ENV}"), "s3",
+            json!({"provider":"s3","endpoint":"http://store.invalid","container":"labels","prefix":"a/"})).await?;
+    }
+    let before = set_budget(BUDGET_SECONDS).await?;
+    let applied = apply_platform_document(run, &platform, &document, "broken").await;
+    let restored = set_budget(before).await;
+    let deleted =
+        environment::delete::delete(&context.platform, &Triple::new(ORG, PROJECT, ENV), true).await;
+
+    let text = applied.as_ref().err().map(|error| format!("{error:#}"));
+    let report = format!("host pods of Deployment hostgroup-{name}:");
+    let host_error = "component-artifact-manifest-unavailable";
+    let ordered = text.as_deref().is_some_and(|text| {
+        text.find("helm")
+            .zip(text.find(&report))
+            .is_some_and(|(helm, report)| helm < report)
+            && text.contains(host_error)
+    });
+    run.pass(
+        "a failed host start reports the host's own error after Helm's",
+        &format!(
+            "env apply {ORG}/{PROJECT}/{ENV} with WAMN_COMPONENT_ARTIFACT_BASE={missing} \
+             and readiness_budget_seconds={BUDGET_SECONDS}"
+        ),
+        json!({"error": text, "expected": [report, host_error]}),
+        ordered,
+    );
+    restored?;
+    deleted?;
+    Ok(())
+}
+
 async fn database_forward(run: &Run) -> anyhow::Result<(String, u16, Child)> {
     let password = run
         .run(
@@ -3139,7 +3235,16 @@ async fn apply_check_document(
     document: &EnvironmentDocument,
     name: &str,
 ) -> anyhow::Result<()> {
-    let mut platform = context.platform.clone();
+    apply_platform_document(run, &context.platform, document, name).await
+}
+
+async fn apply_platform_document(
+    run: &Run,
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    name: &str,
+) -> anyhow::Result<()> {
+    let mut platform = platform.clone();
     let group = serde_yaml::from_slice(&std::fs::read(
         platform.host_group.as_ref().context("host group")?,
     )?)?;

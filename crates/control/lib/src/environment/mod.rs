@@ -20,6 +20,7 @@ pub mod document;
 pub mod drain;
 pub mod ensure;
 pub mod expand;
+mod host_report;
 pub mod lock;
 pub mod readiness;
 pub mod rollback;

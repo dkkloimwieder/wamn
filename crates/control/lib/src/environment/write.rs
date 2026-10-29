@@ -21,6 +21,7 @@ use super::Platform;
 use super::analyse::{Analysis, ReleaseFacts};
 use super::document::EnvironmentDocument;
 use super::ensure::PrivateDirectory;
+use super::host_report;
 use crate::release_chart::{self, RoleName, ValuesInput};
 use wamn_control_provision::host_credentials::HOST_CREDENTIALS;
 
@@ -112,7 +113,8 @@ pub async fn write(
     std::fs::write(&values, serde_yaml::to_string(&rendered)?)
         .with_context(|| format!("write {}", values.display()))?;
     release_chart::recover_pending(&platform.target, &release_name).await?;
-    release_chart::upgrade(
+    let poller = host_report::Poller::start(&platform.target, &release_name);
+    let upgraded = release_chart::upgrade(
         &platform.target,
         &platform.chart,
         &release_name,
@@ -123,7 +125,9 @@ pub async fn write(
             Some(reason) => format!("rollback by {}: {reason}", analysis.actor),
         },
     )
-    .await?;
+    .await;
+    let report = poller.finish();
+    upgraded.map_err(|error| host_report::attach(&error, &report))?;
     Ok(Written {
         release_name,
         roles: names,
