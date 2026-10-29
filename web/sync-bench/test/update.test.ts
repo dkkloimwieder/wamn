@@ -8,5 +8,5 @@ it.each([
   [0, 0, 0, true],
   [1, 1, 2, false],
 ])("reload with pending=%i sending=%i refused=%i is %s", (pending, sending, refused, allowed) => {
-  expect(canReload({ pending, sending, refused, lastSentAt: undefined })).toBe(allowed);
+  expect(canReload({ pending, sending, refused, expired: 0, lastSentAt: undefined })).toBe(allowed);
 });
