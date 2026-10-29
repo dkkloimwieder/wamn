@@ -232,28 +232,30 @@ export function SyncReceipts(props: {
     await write(request, line);
   }
 
+  // The table fills the main panel as on every table screen. The status line and the panels sit above it.
   return (
-    <Page title={props.description.title}>
-      <SyncStatusLine
-        outbox={store.outbox}
-        offline={session.offline()}
-        status={status()}
-        currentAt={currentAt()}
-        updateAvailable={waitingReload() !== undefined}
-        shellResult={shellResult()}
-      />
-      {/* The screen scrolls only inside its table, so the panels sit above it. */}
-      <Show when={selected()} keyed>
-        {(line) => (
-          <ReceiptPanel
-            line={line}
-            locations={store.locations()}
-            record={(request) => write(request, line)}
-            close={() => setSelected(undefined)}
-          />
-        )}
-      </Show>
-      <NotUploaded outbox={store.outbox} current={(entry) => rows[String(entry.expect.id)]} resubmit={resubmit} />
+    <>
+      <Page title={props.description.title}>
+        <SyncStatusLine
+          outbox={store.outbox}
+          offline={session.offline()}
+          status={status()}
+          currentAt={currentAt()}
+          updateAvailable={waitingReload() !== undefined}
+          shellResult={shellResult()}
+        />
+        <Show when={selected()} keyed>
+          {(line) => (
+            <ReceiptPanel
+              line={line}
+              locations={store.locations()}
+              record={(request) => write(request, line)}
+              close={() => setSelected(undefined)}
+            />
+          )}
+        </Show>
+        <NotUploaded outbox={store.outbox} current={(entry) => rows[String(entry.expect.id)]} resubmit={resubmit} />
+      </Page>
       <Records
         screen={props.screen}
         description={props.description}
@@ -269,7 +271,7 @@ export function SyncReceipts(props: {
           run: (row) => setSelected(base[String(row.line_id)]),
         }}
       />
-    </Page>
+    </>
   );
 }
 
