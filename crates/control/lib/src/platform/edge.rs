@@ -22,9 +22,17 @@ fn proxy_values(document: &ClusterDocument, routes: &BTreeMap<String, String>) -
         "identity": "https://identity.identity.svc.cluster.local",
         "identityCaConfigMap": "identity-ca",
         "neg": document.provider == Provider::Gcp,
-        "applications": routes.iter().map(|(host, release)| json!({
-            "host": host, "api": format!("http://{release}-http.hosts.svc.cluster.local")
-        })).collect::<Vec<_>>()
+        "applications": routes.iter().map(|(host, release)| {
+            let mut application = json!({
+                "host": host, "api": format!("http://{release}-http.hosts.svc.cluster.local")
+            });
+            // The control host serves no native file routes.
+            if *host != document.route_hosts.control {
+                application["files"] =
+                    format!("http://{release}-files.hosts.svc.cluster.local").into();
+            }
+            application
+        }).collect::<Vec<_>>()
     })
 }
 
@@ -372,7 +380,19 @@ mod tests {
                 .split("  server {")
                 .find(|server| server.contains(&format!("server_name {host};")))
                 .unwrap();
-            assert!(server.contains("location /api/ {"));
+            if *host == document.route_hosts.control {
+                assert!(!config.contains(&format!("upstream files_{index} ")));
+                assert!(!server.contains("/files(/|$)"));
+            } else {
+                assert!(config.contains(&format!(
+                    "upstream files_{index} {{\n    zone files_{index} 64k;\n    server {release}-files.hosts.svc.cluster.local resolve;"
+                )));
+                let files = server.find("location ~ ^/api/[^/]+/files(/|$) {").unwrap();
+                assert!(files < server.find("location /api/ {").unwrap());
+                assert!(server.contains(&format!("proxy_pass http://files_{index};")));
+                assert!(server.contains("proxy_request_buffering off;"));
+                assert!(server.contains("client_max_body_size 0;"));
+            }
             assert!(server.contains(&format!("proxy_pass http://api_{index}/;")));
             assert!(!server.contains("rewrite "));
             assert!(server.contains(&format!(

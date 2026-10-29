@@ -9,11 +9,14 @@ image:
 # the config.host of the environment's http workload, so the edge passes the
 # Host header to the router unchanged. api is the URL of the http Service of
 # the environment's release, plain HTTP. The edge removes /api before it forwards.
-# The optional control root has the same host/api shape.
+# files is the native file Service URL. File requests keep their full /api path.
+# The edge streams uploads without a configured size limit.
+# The optional control root has the same host/api shape and no files.
 control: null
 applications: []
 #  - host: receiving.example.com
-#    api: http://r-prod-<hash>-http.wamn-system.svc.cluster.local
+#    api: http://r-prod-<hash>-http.hosts.svc.cluster.local
+#    files: http://r-prod-<hash>-files.hosts.svc.cluster.local
 
 # The serving certificate. With issuer set, the chart requests it from that
 # cert-manager ClusterIssuer into tlsSecret. Without it, tlsSecret must exist.

@@ -421,6 +421,7 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
             format!("--release-artifact-base={}", input.artifact_base).into(),
             format!("--release-manifest-digest={}", input.manifest_digest).into(),
             format!("--environment={}", input.env).into(),
+            "--files-addr=0.0.0.0:8082".into(),
             format!(
                 "--applications={}",
                 applications_argument(&input.applications)?
@@ -428,6 +429,16 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
             .into(),
         ]),
     );
+    group
+        .entry("ports".into())
+        .or_insert_with(|| Value::Sequence(Vec::new()))
+        .as_sequence_mut()
+        .context("the host group body's `ports` is not a list")?
+        .push(Value::Mapping(Mapping::from_iter([
+            ("name".into(), "files".into()),
+            ("containerPort".into(), 8082.into()),
+            ("protocol".into(), "TCP".into()),
+        ])));
     group
         .entry("networking".into())
         .or_insert_with(|| Value::Mapping(Mapping::new()))
@@ -819,6 +830,11 @@ mod tests {
         assert_eq!(group["name"].as_str(), Some(name.as_str()));
         assert_eq!(group["replicas"].as_u64(), Some(3));
         assert_eq!(
+            group["ports"],
+            serde_yaml::from_str::<Value>("[{name: files, containerPort: 8082, protocol: TCP}]")
+                .expect("yaml")
+        );
+        assert_eq!(
             group["env"],
             serde_yaml::from_str::<Value>(
                 "[{name: WAMN_COMPONENT_ARTIFACT_BASE, value: registry.example/components}, \
@@ -837,7 +853,7 @@ mod tests {
             group["extraArgs"],
             serde_yaml::from_str::<Value>(&format!(
                 "[--release-artifact-base=registry.example/releases, --release-manifest-digest={DIGEST}, \
-                 --environment=prod, '--applications={{\"wms\":{{\"packages\":[\"wamn_wms\"]}}}}']"
+                 --environment=prod, --files-addr=0.0.0.0:8082, '--applications={{\"wms\":{{\"packages\":[\"wamn_wms\"]}}}}']"
             ))
             .expect("yaml")
         );

@@ -170,6 +170,10 @@ pub struct HostArgs {
     #[arg(long = "http-addr")]
     pub http_addr: Option<SocketAddr>,
 
+    /// Address for native file transfers on release hosts.
+    #[arg(long, env = "WAMN_FILES_ADDR")]
+    pub files_addr: Option<SocketAddr>,
+
     /// Address for native readiness and liveness probes.
     #[arg(long, env = "WASH_PROBE_ADDR")]
     pub probe_addr: Option<SocketAddr>,
@@ -1720,17 +1724,22 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         probe_state.register(Arc::new(connections.clone()));
         ingress_connections = Some(connections);
         ingress_handler = Some(Arc::clone(&server));
-        builder = match &files {
-            Some(files) => builder.with_http_handler(Arc::new(
-                wamn_execution_host::file_route::FileIngress::new(
-                    server,
-                    Arc::clone(files),
-                    Arc::clone(&flow_http),
-                ),
-            )),
-            None => builder.with_http_handler(server),
-        };
+        builder = builder.with_http_handler(server);
     }
+    let file_listener = match args.files_addr {
+        Some(address) => {
+            anyhow::ensure!(
+                files.is_some(),
+                "--files-addr requires a release host with file routes"
+            );
+            Some(
+                tokio::net::TcpListener::bind(address)
+                    .await
+                    .with_context(|| format!("bind the native file listener on {address}"))?,
+            )
+        }
+        None => None,
+    };
     let probe_listener = match args.probe_addr {
         Some(address) => Some(probes::bind(address).await?),
         None => None,
@@ -1758,6 +1767,14 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         None => {
             tracing::info!("wamn-host carries no release; no release-gated interface is served");
         }
+    }
+    let mut file_tasks = tokio::task::JoinSet::new();
+    if let Some(listener) = file_listener {
+        file_tasks.spawn(wamn_execution_host::file_route::serve(
+            listener,
+            Arc::clone(files.as_ref().expect("file listener requires file routes")),
+            Arc::clone(&flow_http),
+        ));
     }
     let mut probe_tasks = tokio::task::JoinSet::new();
     if let Some(listener) = probe_listener {
@@ -1942,6 +1959,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 error = queue_failure => Err(error),
                 error = wamn_engine::lifecycle::watch_liveness(&liveness, Some(&probe_state), silence_budget) => Err(error),
                 () = ingress_stopped(ingress_connections.as_ref()) => Err(anyhow::anyhow!("native HTTP ingress stopped unexpectedly")),
+                task = file_tasks.join_next(), if !file_tasks.is_empty() => {
+                    Err(anyhow::anyhow!("native file listener stopped unexpectedly: {task:?}"))
+                }
                 task = probe_tasks.join_next(), if !probe_tasks.is_empty() => {
                     Err(probe_listener_failure(task.as_ref()))
                 }
@@ -2005,13 +2025,22 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         Ok(())
     })
     .await;
+    file_tasks.abort_all();
+    let file_result = wamn_engine::lifecycle::bounded_cleanup(Duration::from_secs(1), async {
+        while file_tasks.join_next().await.is_some() {}
+        Ok(())
+    })
+    .await;
     probe_tasks.abort_all();
     let probe_result = wamn_engine::lifecycle::bounded_cleanup(Duration::from_secs(1), async {
         while probe_tasks.join_next().await.is_some() {}
         Ok(())
     })
     .await;
-    result.and(identity_result).and(probe_result)
+    result
+        .and(identity_result)
+        .and(file_result)
+        .and(probe_result)
 }
 
 /// Pull and compile every component that the release serves.

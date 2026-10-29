@@ -320,7 +320,14 @@ Use [Web upload](web-upload.md#package-clients) to write the clients from the se
 That page owns the command, required inputs, destination paths, output, and errors.
 The shell reads `/config.json` before sign-in. The local dev server answers it from `dev.json`.
 The bucket must allow reads without credentials.
-Platform apply renders each application host and API Service in the edge chart. The Rust edge reads the live release and serves its bucket files.
+Platform apply renders each application host and API Service in the edge chart.
+
+Release hosts expose workload HTTP on port 80, probes on port 8081, and native file transfers on port 8082.
+The `<release>-files` Service selects the host group pods and maps port 80 to the named `files` port.
+The edge sends `/api/<application>/files` and its child paths there before the general `/api/` route.
+File requests keep the full path. Other API requests lose the `/api` prefix.
+
+The Rust edge reads the live release and serves its bucket files.
 In kind, the Receiving edge case uses the command. [Cluster tests](cluster-tests.md) describes that case.
 
 ## Platform UI files
@@ -335,7 +342,8 @@ Its platform HTTP role contains the pinned route guest and an empty dispatcher, 
 The HTTP transport workload selects that host group and supplies endpoints for the fixed Service `c-dkk-http`.
 [Google Cloud section 4](gcp.md#4191-control-host-and-platform-ui) owns its installation and credentials.
 
-The edge values contain a separate `control` entry with `host`, `api` and `bucketPath`.
+The edge values can contain a separate `control` entry with `host` and `api`.
+The control host serves no native file routes, so its entry has no `files`.
 The edge chart forwards `/api/` to the control Service and `/password/` to identity.
 With a bucket endpoint, it serves the control bundle directly.
 On Google Cloud, the TCP proxy sends all traffic to nginx. The Rust edge serves the platform UI files behind nginx.
@@ -346,7 +354,8 @@ Every other page reaches that prefix's `index.html`, including `/`, `/invite`, `
 On Google Cloud, a global load balancer sends `/api/` and `/password/` to the edge and serves every other path from a Cloud CDN backend bucket.
 Set `neg: true` in the edge values. The edge Service then carries the annotation that makes GKE create a network endpoint group, and the chart needs no `bucket.endpoint`, because the load balancer serves the bucket.
 The chart renders no Google Cloud resource. [Google Cloud section 4.20](gcp.md#420-edge-and-load-balancer) creates the load balancer.
-The edge itself still removes `/api` and checks the identity certificate, as it does in kind.
+The edge keeps `/api` for native file requests and removes it for other API requests.
+It checks the identity certificate, as it does in kind.
 
 ## Identity password configuration
 

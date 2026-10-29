@@ -1207,7 +1207,11 @@ The edge fetches `config.json` again for every request and returns `Cache-Contro
 Unversioned page paths also return `no-cache`.
 
 The nginx chart proxies web paths to `http://wamn-edge-web.edge.svc.cluster.local` with the original Host header.
-It proxies `/api/` and `/password/` to their existing services.
+It first sends `/api/<application>/files` and its child paths to the `<release>-files` Service with the full path.
+That Service selects release host pods and forwards to their native file listener on port 8082.
+It streams uploads without request buffering or a configured body size limit.
+Other `/api/` requests and `/password/` requests use their existing services.
+
 It reads no bucket and needs no static digest or `bucketPath`.
 Platform apply also installs the nginx chart below.
 

@@ -36,15 +36,34 @@ data:
 {{- range $index, $application := $applications }}
 {{- $host := required "Set host of each application to its public host name." .host }}
 {{- $api := required "Set api of each application to the URL of the http Service of its release." .api }}
+{{- $files := .files }}
       upstream api_{{ $index }} {
         zone api_{{ $index }} 64k;
         server {{ trimPrefix "http://" (trimSuffix "/" $api) }} resolve;
       }
+{{- with $files }}
+      upstream files_{{ $index }} {
+        zone files_{{ $index }} 64k;
+        server {{ trimPrefix "http://" (trimSuffix "/" .) }} resolve;
+      }
+{{- end }}
       server {
         listen 8443 ssl;
         server_name {{ $host }};
         ssl_certificate /etc/wamn-edge/tls/tls.crt;
         ssl_certificate_key /etc/wamn-edge/tls/tls.key;
+{{- if $files }}
+
+        # Native file transfers keep the full /api path. The regex location
+        # wins over the /api/ prefix location below.
+        location ~ ^/api/[^/]+/files(/|$) {
+          proxy_pass http://files_{{ $index }};
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_request_buffering off;
+          client_max_body_size 0;
+        }
+{{- end }}
 
         # The router reads the release from the Host header, so it passes
         # unchanged. The trailing slash removes /api and preserves URI escaping.

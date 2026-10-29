@@ -396,6 +396,7 @@ fn render_edge(root: &Path) -> Output {
         format!("tlsSecret={EDGE_TLS_SECRET}"),
         "issuer=wasmcloud-ca".to_owned(),
         "applications[0].api=http://flow-http.wamn-system.svc.cluster.local".to_owned(),
+        "applications[0].files=http://release-files.hosts.svc.cluster.local".to_owned(),
         format!("identity={IDENTITY_ISSUER}"),
         format!("identityCaConfigMap={EDGE_IDENTITY_CA}"),
     ] {

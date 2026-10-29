@@ -700,11 +700,6 @@ impl FileRoutes {
         }
     }
 
-    /// Handle reserved native file URLs after the ingress selects its workload.
-    pub fn serves_path(&self, path: &str) -> bool {
-        native_route(path).is_some()
-    }
-
     pub async fn http(
         &self,
         routing: &FlowHttpRouting,
@@ -1056,175 +1051,49 @@ impl AsyncRead for BodyReader {
     }
 }
 
-/// Intercept file transfers on the native HTTP service channel.
-/// The ingress still owns TLS, hostname selection, and connection limits.
-pub struct FileIngress {
-    inner: Arc<dyn wash_runtime::host::http::HostHandler>,
+/// Serve native file requests independently of component workloads.
+pub async fn serve(
+    listener: tokio::net::TcpListener,
     files: Arc<FileRoutes>,
     routing: Arc<FlowHttpRouting>,
-    tasks: tokio::sync::Mutex<BTreeMap<String, tokio::task::JoinHandle<()>>>,
-}
-impl fmt::Debug for FileIngress {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("FileIngress")
-            .field("files", &self.files)
-            .finish_non_exhaustive()
-    }
-}
-impl FileIngress {
-    pub fn new(
-        inner: Arc<dyn wash_runtime::host::http::HostHandler>,
-        files: Arc<FileRoutes>,
-        routing: Arc<FlowHttpRouting>,
-    ) -> Self {
-        Self {
-            inner,
-            files,
-            routing,
-            tasks: tokio::sync::Mutex::new(BTreeMap::new()),
-        }
-    }
-    async fn unbind(&self, workload: &str) {
-        if let Some(task) = self.tasks.lock().await.remove(workload) {
-            task.abort();
-        }
-    }
-}
-impl Drop for FileIngress {
-    fn drop(&mut self) {
-        for task in self.tasks.get_mut().values() {
-            task.abort();
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl wash_runtime::host::http::HostHandler for FileIngress {
-    async fn inject_meters(&self, meters: &wash_runtime::observability::Meters) {
-        self.inner.inject_meters(meters).await;
-    }
-    async fn start(&self) -> anyhow::Result<()> {
-        self.inner.start().await
-    }
-    async fn stop(&self) -> anyhow::Result<()> {
-        for task in self.tasks.lock().await.values() {
-            task.abort();
-        }
-        self.inner.stop().await
-    }
-    async fn stopped(&self) {
-        self.inner.stopped().await;
-    }
-    fn port(&self) -> u16 {
-        self.inner.port()
-    }
-    async fn on_workload_resolved(
-        &self,
-        workload: &wash_runtime::engine::workload::ResolvedWorkload,
-        component_id: &str,
-    ) -> anyhow::Result<()> {
-        self.inner
-            .on_workload_resolved(workload, component_id)
-            .await
-    }
-    async fn on_workload_unbind(&self, workload: &str) -> anyhow::Result<()> {
-        self.inner.on_workload_unbind(workload).await?;
-        self.unbind(workload).await;
-        Ok(())
-    }
-    async fn on_service_http_resolved(
-        &self,
-        workload: &str,
-        routes: &[wash_runtime::host::http::IngressRoute],
-        next: tokio::sync::mpsc::Sender<wash_runtime::host::http::ServiceHttpJob>,
-    ) -> anyhow::Result<()> {
-        let (sender, mut receiver) =
-            tokio::sync::mpsc::channel::<wash_runtime::host::http::ServiceHttpJob>(1);
-        let files = Arc::clone(&self.files);
-        let routing = Arc::clone(&self.routing);
-        let max_calls = routing.in_flight_limit();
-        let task = tokio::spawn(async move {
-            let mut calls = tokio::task::JoinSet::new();
-            loop {
-                tokio::select! {
-                    Some(result) = calls.join_next(), if !calls.is_empty() => {
-                        if let Err(error) = result { tracing::warn!(%error, "native file handler task failed"); }
-                    }
-                    job = receiver.recv(), if calls.len() < max_calls => {
-                        let Some(mut job) = job else { break; };
-                        if !files.serves_path(job.req.uri().path()) {
-                            if next.send(job).await.is_err() { break; }
-                            continue;
-                        }
-                        let files = Arc::clone(&files);
-                        let routing = Arc::clone(&routing);
-                        calls.spawn(async move {
-                            tokio::select! {
-                                () = job.resp_tx.closed() => {},
-                                response = files.http(&routing, job.req) => {
-                                    if let Some(response) = response { let _ = job.resp_tx.send(Ok(response)); }
-                                }
-                            }
-                        });
-                    }
+) -> std::io::Result<()> {
+    let mut connections = tokio::task::JoinSet::new();
+    loop {
+        tokio::select! {
+            Some(result) = connections.join_next(), if !connections.is_empty() => {
+                if let Err(error) = result {
+                    tracing::warn!(%error, "native file connection task failed");
                 }
             }
-        });
-        if let Err(error) = self
-            .inner
-            .on_service_http_resolved(workload, routes, sender)
-            .await
-        {
-            task.abort();
-            return Err(error);
+            accepted = listener.accept(), if connections.len() < routing.in_flight_limit() => {
+                let (stream, peer) = accepted?;
+                let files = Arc::clone(&files);
+                let routing = Arc::clone(&routing);
+                connections.spawn(async move {
+                    let service = hyper::service::service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
+                        let files = Arc::clone(&files);
+                        let routing = Arc::clone(&routing);
+                        async move {
+                            let request = request.map(|body| body.map_err(wasmtime_wasi_http::Error::from).boxed_unsync());
+                            let response = files.http(&routing, request).await.unwrap_or_else(|| {
+                                let mut response = hyper::Response::new(WasiBody::default());
+                                *response.status_mut() = hyper::StatusCode::NOT_FOUND;
+                                response
+                            });
+                            Ok::<_, std::convert::Infallible>(response)
+                        }
+                    });
+                    // One request holds one slot through the streamed response body.
+                    if let Err(error) = hyper::server::conn::http1::Builder::new()
+                        .keep_alive(false)
+                        .serve_connection(hyper_util::rt::TokioIo::new(stream), service)
+                        .await
+                    {
+                        tracing::debug!(%peer, %error, "native file connection failed");
+                    }
+                });
+            }
         }
-        if let Some(previous) = self.tasks.lock().await.insert(workload.to_owned(), task) {
-            previous.abort();
-        }
-        Ok(())
-    }
-    async fn on_service_http_unbind(&self, workload: &str) -> anyhow::Result<()> {
-        self.inner.on_service_http_unbind(workload).await?;
-        self.unbind(workload).await;
-        Ok(())
-    }
-    async fn on_trigger_service_messaging_resolved(
-        &self,
-        workload: &str,
-        sender: tokio::sync::mpsc::Sender<wash_runtime::host::trigger_service::MessagingJob>,
-    ) -> anyhow::Result<()> {
-        self.inner
-            .on_trigger_service_messaging_resolved(workload, sender)
-            .await
-    }
-    async fn on_trigger_service_messaging_unbind(&self, workload: &str) -> anyhow::Result<()> {
-        self.inner
-            .on_trigger_service_messaging_unbind(workload)
-            .await
-    }
-    async fn deliver_trigger_service_message(
-        &self,
-        workload: &str,
-        message: wash_runtime::host::trigger_service::BrokerMessage,
-        attributes: Arc<[opentelemetry::KeyValue]>,
-    ) -> anyhow::Result<Result<(), String>> {
-        self.inner
-            .deliver_trigger_service_message(workload, message, attributes)
-            .await
-    }
-    async fn has_trigger_service_messaging(&self, workload: &str) -> bool {
-        self.inner.has_trigger_service_messaging(workload).await
-    }
-    fn outgoing_request(
-        &self,
-        workload: &str,
-        request: hyper::Request<WasiBody>,
-        options: Option<wasmtime_wasi_http::RequestOptions>,
-        future: wash_runtime::host::http::RequestIoFuture,
-        allowed: &[wash_runtime::host::allowed_hosts::AllowedHost],
-    ) -> wash_runtime::host::http::SendFuture {
-        self.inner
-            .outgoing_request(workload, request, options, future, allowed)
     }
 }
 
@@ -1508,6 +1377,42 @@ mod tests {
             signed_lifetime(Duration::from_secs(901)).unwrap(),
             Duration::from_mins(15)
         );
+    }
+
+    #[tokio::test]
+    async fn native_listener_uses_shared_authentication_and_preserves_file_paths() {
+        let files = Arc::new(files());
+        let routing = Arc::new(
+            FlowHttpRouting::new(Some(files.release.clone()), RouteInFlightLimit::default())
+                .with_authenticator(Arc::new(SessionWithoutGrant)),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(serve(listener, files, routing));
+        let client = reqwest::Client::new();
+        for (authorization, status) in [(None, 401), (Some("Bearer session"), 403)] {
+            let mut request = client
+                .post(format!(
+                    "http://{address}/api/orders/files?binding=documents&name=test.txt"
+                ))
+                .header("Host", "orders.example.com")
+                .header("Content-Type", "text/plain")
+                .body("file bytes");
+            if let Some(value) = authorization {
+                request = request.header("Authorization", value);
+            }
+            let response = request.send().await.unwrap();
+            assert_eq!(response.status().as_u16(), status);
+        }
+        let response = client
+            .get(format!("http://{address}/other"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), 404);
+        assert!(response.bytes().await.unwrap().is_empty());
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
     }
 
     #[tokio::test]

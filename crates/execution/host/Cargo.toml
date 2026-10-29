@@ -27,7 +27,7 @@ async-trait = { workspace = true }
 opentelemetry = { workspace = true, features = ["metrics", "trace"] }
 tracing-opentelemetry = { workspace = true }
 tracing = { workspace = true }
-tokio = { workspace = true, features = ["rt", "sync", "time"] }
+tokio = { workspace = true, features = ["rt", "sync", "time", "net"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tokio-postgres = { workspace = true }
@@ -35,12 +35,12 @@ reqwest = { workspace = true, features = ["rustls"] }
 bytes = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true }
+hyper-util = { workspace = true, features = ["tokio"] }
 wasmtime-wasi-http = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true, features = ["v4", "serde"] }
 
 [dev-dependencies]
-hyper-util = { workspace = true, features = ["tokio"] }
 object_store = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
 serde_yaml = { workspace = true }

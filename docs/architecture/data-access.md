@@ -982,12 +982,23 @@ C4 covers GCS and S3. C10 owns disk stores and eviction.
 Each mutation requires a write binding. Native host code transfers bytes, and guest operations carry only `file_id`.
 No file byte transfer changes WIT.
 
-Uploads stream to `_wamn_files/staging/<uuid>` under the binding prefix.
-The host commits metadata, copies staging to `_wamn_files/live/<uuid>`, and deletes staging.
+Uploads stream to `<environment>/_wamn_files/staging/<uuid>` under the binding prefix.
+The host commits metadata, copies staging to `<environment>/_wamn_files/live/<uuid>`, and deletes staging.
 Reads repair a missing live object from staging.
 The store age rule covers staging only. Unlinked metadata and live objects never expire by age.
 Raw blobstore writes, deletes, and clears refuse file-managed keys and their public copies.
 
+Release hosts serve file transfers on a separate HTTP/1.1 listener.
+The release chart sets `--files-addr=0.0.0.0:8082` and exposes it through the `<release>-files` Service.
+Outside the chart, `--files-addr` or `WAMN_FILES_ADDR` enables this listener.
+A control host refuses this configuration.
+
+The edge sends `/api/<application>/files` and its child paths to this Service before the general `/api/` route.
+It keeps the full path and streams uploads without request buffering.
+No upload size limit is configured, so nginx uses `client_max_body_size 0`.
+The storage layer still refuses sizes outside the metadata integer range.
+
+File transfers share the route authenticator and its authentication cache for sessions and PATs.
 Every file route requires its operation grant.
 The application URL requires a session with `file.get` on the owning application.
 Anonymous callers receive 401. A caller without the grant receives 403.
@@ -1003,7 +1014,7 @@ S3 reads its credential through `registry.lookup_connection_credential`.
 Reads and deletes use the bucket and prefix of the recorded generation.
 
 Public exposure requires the optional `cdn_host` store parameter, without a descriptor version change.
-The host copies bytes to `public/<key>` under the binding prefix and stores `url`.
+The host copies bytes to `<environment>/public/_wamn_files/live/<uuid>` under the binding prefix and stores `url`.
 Public copies carry `Cache-Control: max-age=3600`.
 Unexpose deletes the origin object at once and clears the URL, without a cache purge.
 Expose and unexpose are idempotent.

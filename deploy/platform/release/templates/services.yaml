@@ -15,5 +15,23 @@ spec:
       port: 80
       targetPort: 80
       protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $.Release.Name }}-files
+  namespace: {{ $.Release.Namespace }}
+  annotations:
+    {{- include "release.annotations" $ | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    wasmcloud.com/hostgroup: {{ $.Release.Name | quote }}
+    wamn.release: {{ required "runtime-operator.runtime.podLabels.wamn.release is required" (index $.Values "runtime-operator" "runtime" "podLabels" "wamn.release") | quote }}
+  ports:
+    - name: files
+      port: 80
+      targetPort: files
+      protocol: TCP
 {{- end }}
 {{- end }}

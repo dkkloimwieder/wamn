@@ -213,6 +213,7 @@ fn host_command(
     scheduler: &str,
     http: &str,
     probe: &str,
+    files: &str,
 ) -> anyhow::Result<Command> {
     let deployment = documents
         .iter()
@@ -283,6 +284,7 @@ fn host_command(
             "--scheduler-nats-url" | "--data-nats-url" => format!("{flag}={scheduler}"),
             "--http-addr" => format!("{flag}={http}"),
             "--probe-addr" => format!("{flag}={probe}"),
+            "--files-addr" => format!("{flag}={files}"),
             "--oci-cache-dir" => format!("{flag}={}", directory.join("oci").display()),
             "--host-name" => "--host-name=prekind".into(),
             _ => argument.to_owned(),
@@ -762,6 +764,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     }
     let http = address()?;
     let probe = address()?;
+    let files = address()?;
     let mut heartbeats = client
         .subscribe(format!(
             "{}.heartbeat.*",
@@ -769,8 +772,10 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         ))
         .await?;
     client.flush().await?;
-    let mut host =
-        host_command(&documents, &secrets, directory, &scheduler, &http, &probe)?.spawn()?;
+    let mut host = host_command(
+        &documents, &secrets, directory, &scheduler, &http, &probe, &files,
+    )?
+    .spawn()?;
     let result = async {
         tokio::time::timeout(Duration::from_secs(120), async {
             loop {
@@ -791,6 +796,24 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         })
         .await
         .context("host readiness timed out")??;
+        let response = reqwest::Client::new()
+            .post(format!(
+                "http://{files}/api/{PACKAGE}/files?binding=files&name=prekind.txt"
+            ))
+            .header("Host", &document.route_host)
+            .header("Content-Type", "text/plain")
+            .body("prekind")
+            .send()
+            .await?;
+        let status = response.status();
+        let body = response.text().await?;
+        // This release serves no application host routes, so the native file
+        // handler refuses before authentication. The guest answers route-not-found.
+        ensure!(
+            status == 429
+                && serde_json::from_str::<Value>(&body)?["error"] == "route-capacity-exhausted",
+            "the file listener must reach the native file handler: {status} {body}"
+        );
         let response = reqwest::Client::new()
             .get(format!("http://{http}/no-such-route"))
             .header("Host", &document.route_host)
