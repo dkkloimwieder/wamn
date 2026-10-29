@@ -215,9 +215,16 @@ export interface ReferencePresentation {{
   readonly cursorInput?: string;
   readonly read?: {{ readonly operation: string; readonly keyInput: string }};
 }}
+export interface PagePresentation {{
+  readonly limit: boolean;
+  readonly cursor: \"cursor\" | \"after_cursor\" | null;
+  readonly filters: readonly string[];
+  readonly sort: readonly string[];
+}}
 export interface ScreenPresentation {{
   readonly displayField?: string;
   readonly references: Readonly<Record<string, ReferencePresentation>>;
+  readonly page?: PagePresentation;
 }}
 "
         )
@@ -293,6 +300,15 @@ fn screen_presentation(screen: &ScreenPlan<'_>, plan: &ClientPlan<'_>) -> Value 
         .and_then(|list| list.display_field.as_ref())
     {
         value["displayField"] = json!(display);
+    }
+    if screen.role == Role::Table {
+        let page = screen.page_inputs();
+        value["page"] = json!({
+            "limit": page.limit,
+            "cursor": page.cursor,
+            "filters": page.filters,
+            "sort": page.sort,
+        });
     }
     value
 }

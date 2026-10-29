@@ -61,7 +61,9 @@ export function Records(props: {
   let active = true;
   let generation = 0;
   let acceptedInput: RecordValue = {};
-  const paged = props.route.contract.resultClass === "page";
+  // The read declares the page controls it takes. A page result alone does
+  // not: a read with a change feed takes no limit (wamn-fu8cj).
+  const declared = props.description.presentation.page;
   const refresh = async (next = false) => {
     const current = ++generation;
     setLoading(true);
@@ -69,7 +71,7 @@ export function Records(props: {
     try {
       const filter = Object.fromEntries(
         Object.entries(filters())
-          .filter(([, value]) => value !== "")
+          .filter(([field, value]) => value !== "" && declared?.filters.includes(field))
           .map(([field, value]) => [field, [value]]),
       );
       const sorting = table.state.sorting[0];
@@ -77,19 +79,15 @@ export function Records(props: {
         ? acceptedInput
         : {
             ...props.input,
-            ...(paged
-              ? {
-                  limit: pageSize,
-                  ...(Object.keys(filter).length ? { filter } : {}),
-                  ...(sorting
-                    ? { sort: { field: sorting.id, direction: sorting.desc ? "descending" : "ascending" } }
-                    : {}),
-                }
+            ...(declared?.limit ? { limit: pageSize } : {}),
+            ...(Object.keys(filter).length ? { filter } : {}),
+            ...(sorting && declared?.sort.includes(sorting.id)
+              ? { sort: { field: sorting.id, direction: sorting.desc ? "descending" : "ascending" } }
               : {}),
           };
       const result = await invoke<Rows>(props.screen.transport, props.route, {
         ...input,
-        ...(next && cursor() ? { [props.history ? "after_cursor" : "cursor"]: cursor()! } : {}),
+        ...(next && cursor() && declared?.cursor ? { [declared.cursor]: cursor()! } : {}),
       });
       if (!active || current !== generation) return;
       acceptedInput = input;

@@ -549,3 +549,52 @@ fn explicit_visibility_can_show_keys_and_timestamps() {
         ["created_at", "id"]
     );
 }
+
+#[test]
+fn tables_carry_only_the_page_inputs_their_read_declares() {
+    let mut ir = fixture::client_release();
+    // A history read names its position `after_cursor` and declares its own
+    // page size.
+    let list = ir
+        .models
+        .iter_mut()
+        .find(|model| model.name == "widget")
+        .unwrap()
+        .operations
+        .iter_mut()
+        .find(|op| op.name == "list")
+        .unwrap();
+    let template = list.result_fields[0].clone();
+    list.input_fields = [("after_cursor", "text"), ("limit", "int32")]
+        .into_iter()
+        .map(|(path, ty)| FieldIr {
+            path: path.into(),
+            type_name: ty.into(),
+            children: Vec::new(),
+            ..template.clone()
+        })
+        .collect();
+    let files = emit(&ir);
+    let page = |module: &str, name: &str| {
+        description(&files, module, name)["presentation"]["page"].clone()
+    };
+    // A read with a change feed returns a page, but it declares no page
+    // control, so a table sends none (wamn-fu8cj).
+    assert_eq!(
+        page("feed_line", "FeedLineScreenTable"),
+        json!({"limit": false, "cursor": null, "filters": [], "sort": []})
+    );
+    assert_eq!(
+        page("widget", "WidgetQueryTable"),
+        json!({
+            "limit": true,
+            "cursor": "cursor",
+            "filters": ["code", "maker_id", "note"],
+            "sort": ["created_at"],
+        })
+    );
+    assert_eq!(
+        page("widget", "WidgetListTable"),
+        json!({"limit": true, "cursor": "after_cursor", "filters": [], "sort": []})
+    );
+}

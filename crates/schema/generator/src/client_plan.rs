@@ -257,6 +257,27 @@ impl<'a> Paging<'a> {
     }
 }
 
+/// The input that carries the position of a history read's last entry.
+const AFTER_CURSOR_INPUT: &str = "after_cursor";
+
+/// The page controls a table may send, each only because its read declares
+/// it (wamn-fu8cj).
+///
+/// A page result does not mean the read takes a page size: a read with a
+/// change feed returns a page and declares no limit or cursor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageInputs<'a> {
+    /// Whether the read declares the `limit` input.
+    pub limit: bool,
+    /// The input that carries the cursor of the next page, `cursor` or
+    /// `after_cursor`.
+    pub cursor: Option<&'a str>,
+    /// The fields the read filters by, through `filter.<field>`.
+    pub filters: Vec<&'a str>,
+    /// The fields the read sorts by, through `sort.field`.
+    pub sort: Vec<&'a str>,
+}
+
 /// Why a result row can open another screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkReason {
@@ -816,6 +837,39 @@ impl<'a> ModelPlan<'a> {
 }
 
 impl<'a> ScreenPlan<'a> {
+    /// The page controls this screen's read declares.
+    #[must_use]
+    pub fn page_inputs(&self) -> PageInputs<'a> {
+        let leaves = leaf_fields(&self.contract.input_fields);
+        let declared = |path: &str| leaves.iter().any(|field| field.path == path);
+        let paging = self.paging.as_ref();
+        PageInputs {
+            limit: declared(LIMIT_INPUT),
+            cursor: paging
+                .and_then(|paging| paging.cursor_input)
+                .or_else(|| declared(AFTER_CURSOR_INPUT).then_some(AFTER_CURSOR_INPUT)),
+            filters: paging.map_or_else(Vec::new, |paging| {
+                paging
+                    .filters
+                    .iter()
+                    .filter(|filter| {
+                        paging
+                            .filter_inputs
+                            .iter()
+                            .any(|path| filter_input(path, &filter.field))
+                    })
+                    .map(|filter| filter.field.as_str())
+                    .collect()
+            }),
+            sort: paging
+                .filter(|paging| paging.sort_field_input.is_some())
+                .and_then(|paging| paging.sort)
+                .map_or_else(Vec::new, |sort| {
+                    sort.fields.iter().map(String::as_str).collect()
+                }),
+        }
+    }
+
     fn from_ir(model: &'a str, operation: &'a OperationIr) -> Self {
         let supplied: Vec<SuppliedField<'a>> = leaf_fields(&operation.input_fields)
             .into_iter()

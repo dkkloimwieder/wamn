@@ -3,7 +3,11 @@ import { flush } from "solid-js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { JsonValue, Transport } from "@wamn/web-runtime";
 import type { ScreenProps } from "@wamn/platform-ui";
-import { RECEIVING_RECORD_RECEIPT_ROUTE } from "../src/generated/wamn_receiving/receiving.js";
+import {
+  RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_ROUTE,
+  RECEIVING_LOAD_RECEIPT_SCREEN_ROUTE,
+  RECEIVING_RECORD_RECEIPT_ROUTE,
+} from "../src/generated/wamn_receiving/receiving.js";
 import {
   PURCHASE_ORDER_GET_ROUTE,
   PURCHASE_ORDER_QUERY_ROUTE,
@@ -22,7 +26,12 @@ import {
 import { Records } from "../src/table";
 import { SECTIONS } from "../src/routes";
 import { Selector } from "../src/selector";
-import { ReceiptQueryTable, ReceivingRecordReceiptForm } from "../src/generated/wamn_receiving/components/index.js";
+import {
+  ReceiptQueryTable,
+  ReceivingLoadPurchaseOrderHistoryTable,
+  ReceivingLoadReceiptScreenTable,
+  ReceivingRecordReceiptForm,
+} from "../src/generated/wamn_receiving/components/index.js";
 import { RECEIPT_GET_ROUTE, RECEIPT_QUERY_ROUTE } from "../src/generated/wamn_receiving/receipt.js";
 import { PurchaseOrderForm, ReceiptForm, SupplierForm } from "../src/forms";
 
@@ -438,6 +447,46 @@ describe("Receiving descriptions and bindings", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next page" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledTimes(3));
     expect(invoke.mock.calls[2]![0].items).toEqual([{ limit: 25, cursor: "retry" }]);
+  });
+
+  it("sends only the page controls the read declares", async () => {
+    // The Receiving screen read has a change feed: its result is a page, but
+    // it declares no limit, so the decoder refuses one (wamn-fu8cj).
+    const invoke = vi
+      .fn<Transport["invoke"]>()
+      .mockResolvedValue({ status: "completed", value: { item: [], next_cursor: null, cursor: "snapshot" } });
+    render(() => (
+      <Records
+        screen={props(invoke)}
+        description={ReceivingLoadReceiptScreenTable}
+        route={RECEIVING_LOAD_RECEIPT_SCREEN_ROUTE}
+        input={{ purchase_order_id: "order" }}
+      />
+    ));
+    await waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+    expect(invoke.mock.calls[0]![0].items).toEqual([{ purchase_order_id: "order" }]);
+    cleanup();
+
+    const entries = Array.from({ length: 25 }, (_, index) => ({ id: String(index), cursor: `entry-${index}` }));
+    const history = vi
+      .fn<Transport["invoke"]>()
+      .mockResolvedValueOnce({ status: "completed", value: { rows: entries } })
+      .mockResolvedValueOnce({ status: "completed", value: { rows: [] } });
+    render(() => (
+      <Records
+        screen={props(history)}
+        description={ReceivingLoadPurchaseOrderHistoryTable}
+        route={RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_ROUTE}
+        input={{ id: "order" }}
+        history
+      />
+    ));
+    await waitFor(() => expect(history).toHaveBeenCalledTimes(1));
+    expect(history.mock.calls[0]![0].items).toEqual([{ id: "order", limit: 25 }]);
+    await screen.findByText("entry-0");
+    fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+    await waitFor(() => expect(history).toHaveBeenCalledTimes(2));
+    expect(history.mock.calls[1]![0].items).toEqual([{ id: "order", limit: 25, after_cursor: "entry-24" }]);
   });
 
   it("validates the described supplier form and returns to its table only after the write", async () => {
