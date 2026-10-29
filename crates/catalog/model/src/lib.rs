@@ -47,7 +47,8 @@ pub use component_facts::{
 pub use connection::{
     CONNECTION_DESCRIPTOR_VERSION, ComponentConnectionRequirement, ConnectionAuthorityModel,
     ConnectionField, ConnectionFieldOwner, ConnectionFieldOwnership, ConnectionTypeDescriptor,
-    CredentialInjection, RequirementType, org_credential_handle, parse_org_credential_handle,
+    CredentialInjection, RequirementType, RuntimeType, org_credential_handle,
+    parse_org_credential_handle,
 };
 pub use environment_application::{
     ApplicationDefinition, EnvironmentApplications, application_for_package,

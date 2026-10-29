@@ -3,6 +3,25 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+/// The runtime that executes an integration type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum RuntimeType {
+    Host,
+    Wasm,
+    Native,
+}
+
+impl std::fmt::Display for RuntimeType {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Host => "host",
+            Self::Wasm => "wasm",
+            Self::Native => "native",
+        })
+    }
+}
+
 /// A portable component-owned connection requirement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]

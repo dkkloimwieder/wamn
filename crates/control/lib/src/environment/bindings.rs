@@ -141,7 +141,7 @@ async fn resolve(
     if let Some(code) = result["error"].as_str() {
         let code = match code {
             "connector_unpinned" => "connector_unpinned",
-            "connector_form_mismatch" => "connector_form_mismatch",
+            "integration_runtime_type_mismatch" => "integration_runtime_type_mismatch",
             "connector_digest_unpublished" => "connector_digest_unpublished",
             "integration_unavailable" => "integration_unavailable",
             "target_not_found" => "target_not_found",
@@ -172,7 +172,7 @@ async fn resolve(
             if let Some(code) = row.get::<_, Option<String>>(0) {
                 let code = match code.as_str() {
                     "integration_not_found" => "integration_not_found",
-                    "connector_form_mismatch" => "connector_form_mismatch",
+                    "integration_runtime_type_mismatch" => "integration_runtime_type_mismatch",
                     "connector_digest_unpublished" => "connector_digest_unpublished",
                     _ => "integration_unavailable",
                 };
@@ -186,7 +186,10 @@ async fn resolve(
         .iter()
         .map(|row| {
             let integration = row["integration"].as_str().expect("integration");
-            let requirement_type = if row["form"] == "wasm" {
+            let runtime_type: wamn_catalog::RuntimeType =
+                serde_json::from_value(row["runtime_type"].clone())
+                    .map_err(|_| refuse("integration_unavailable", integration))?;
+            let requirement_type = if runtime_type == wamn_catalog::RuntimeType::Wasm {
                 None
             } else {
                 Some(

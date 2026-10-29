@@ -50,10 +50,11 @@ pub async fn run(args: IntegrationArgs) -> anyhow::Result<()> {
         }
     };
     println!(
-        "{} {} {}",
+        "{} {} {} runtime_type={}",
         built.code,
         built.digest,
-        built.directory.display()
+        built.directory.display(),
+        built.runtime_type,
     );
     Ok(())
 }

@@ -5,6 +5,7 @@ use std::time::Duration;
 use anyhow::{Context as _, ensure};
 use oci_client::manifest::OciImageManifest;
 use serde::Deserialize;
+use wamn_catalog::RuntimeType;
 
 use crate::{PackageRegistry, Repository, ensure_digest, registry_pull, sha256_digest};
 
@@ -19,7 +20,7 @@ pub const WASM_TYPE: &str = "application/wasm";
 #[serde(deny_unknown_fields)]
 struct ConnectorConfig {
     code: String,
-    form: String,
+    runtime_type: RuntimeType,
     source_digest: String,
 }
 
@@ -72,7 +73,7 @@ pub async fn pull_from(
     );
     let config: ConnectorConfig = serde_json::from_slice(&config)?;
     ensure!(
-        config.code == code && config.form == "wasm",
+        config.code == code && config.runtime_type == RuntimeType::Wasm,
         "connector artifact does not belong to wasm integration {code}"
     );
     ensure_digest(&config.source_digest)?;
@@ -90,4 +91,24 @@ pub async fn pull_from(
         "connector component differs from its descriptor"
     );
     Ok(component)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ConnectorConfig;
+    use wamn_catalog::RuntimeType;
+
+    #[test]
+    fn artifact_runtime_type_uses_the_current_field_and_closed_values() {
+        let mut config = serde_json::json!({
+            "code": "modbus",
+            "runtime_type": "wasm",
+            "source_digest": format!("sha256:{}", "a".repeat(64)),
+        });
+        let parsed: ConnectorConfig = serde_json::from_value(config.clone()).unwrap();
+        assert_eq!(parsed.runtime_type, RuntimeType::Wasm);
+
+        config["runtime_type"] = "component".into();
+        assert!(serde_json::from_value::<ConnectorConfig>(config).is_err());
+    }
 }

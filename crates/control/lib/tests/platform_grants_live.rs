@@ -166,7 +166,7 @@ async fn integration_and_target_seeds_live_only_in_the_system_database() {
         "s3:host:false".to_owned(),
     ];
     let seeds = async || -> Vec<String> {
-        admin.query("SELECT code || ':' || form || ':' || exclusive FROM registry.integrations ORDER BY code",&[]).await.unwrap().iter().map(|r|r.get(0)).collect()
+        admin.query("SELECT code || ':' || runtime_type || ':' || exclusive FROM registry.integration_type ORDER BY code",&[]).await.unwrap().iter().map(|r|r.get(0)).collect()
     };
     assert_eq!(seeds().await, expected);
     let target: String=admin.query_one("SELECT name || ':' || type || ':' || status FROM registry.target WHERE last_seen_at IS NULL",&[]).await.unwrap().get(0);

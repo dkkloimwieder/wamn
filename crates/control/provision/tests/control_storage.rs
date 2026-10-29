@@ -452,30 +452,6 @@ const ASSERTIONS: &str = r#"
 INSERT INTO registry.orgs (id, placement_type, pool_cluster)
   VALUES ('acme','dedicated',NULL),
          ('try','pooled','wamn-pg');
-INSERT INTO registry.org_connections (org, name, type, definition)
-  VALUES ('acme', 'erp', 'http', '{}');
-DO $$ BEGIN
-  BEGIN
-    INSERT INTO registry.org_connections VALUES ('missing', 'erp', 'http', '{}');
-    ASSERT false, 'org connections require an existing org';
-  EXCEPTION WHEN foreign_key_violation THEN NULL; END;
-  BEGIN
-    INSERT INTO registry.org_connections VALUES ('acme', 'erp', 'http', '{}');
-    ASSERT false, 'org and name identify one connection';
-  EXCEPTION WHEN unique_violation THEN NULL; END;
-  BEGIN
-    INSERT INTO registry.org_connections VALUES ('acme', '', 'http', '{}');
-    ASSERT false, 'an org connection needs a name';
-  EXCEPTION WHEN check_violation THEN NULL; END;
-  BEGIN
-    INSERT INTO registry.org_connections VALUES ('acme', 'files', 'blobstore', '{}');
-    ASSERT false, 'only HTTP connections can be org scoped';
-  EXCEPTION WHEN check_violation THEN NULL; END;
-  BEGIN
-    INSERT INTO registry.org_connections VALUES ('acme', 'bad', 'http', '[]');
-    ASSERT false, 'a definition must be an object';
-  EXCEPTION WHEN check_violation THEN NULL; END;
-END $$;
 INSERT INTO registry.env_policies
     (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image)
   VALUES ('acme','dev','"own"'::jsonb,10,1,'2Gi','200m','256Mi','ghcr.io/cloudnative-pg/postgresql:18'),
@@ -574,7 +550,11 @@ DO $$ BEGIN
     SELECT FROM information_schema.columns
     WHERE table_schema IN ('registry', 'provisioning')
       AND column_name ~ '(password|secret_value|credential|(^|_)dsn($|_)|connection_string)'
-  ), 'registry and provisioning must hold no tenant DB credential columns';
+      -- A generation references its identity.credential row by id, and an
+      -- auth type names the fields of a credential.
+      AND (table_name, column_name) NOT IN
+        (('connection_generation', 'credential_id'), ('auth_type', 'credential_schema'))
+  ),'registry and provisioning must hold no tenant DB credential columns';
 END $$;
 
 -- Invariant 2 (no credentials, R8b): project_envs carries the Secret REFERENCE
@@ -612,7 +592,7 @@ DO $$ DECLARE tbls text; BEGIN
   SELECT string_agg(table_schema||'.'||table_name, ',' ORDER BY table_schema, table_name)
     INTO tbls FROM information_schema.tables
     WHERE table_schema IN ('registry','provisioning','identity') AND table_type='BASE TABLE';
-  ASSERT tbls = 'identity.credential,identity.org_memberships,identity.org_roles,identity.password_attempts,identity.password_credentials,identity.password_logins,identity.password_tokens,identity.pats,identity.principals,identity.project_env_memberships,identity.project_roles,identity.renewal_credentials,identity.session_keys,identity.session_signing_state,registry.capture_gap,registry.connection,registry.connection_generation,registry.credential_import,registry.env_policies,registry.environment_connection_binding,registry.event_readers,registry.external_system,registry.generation_passwords,registry.integration_allow,registry.integration_digest,registry.integrations,registry.meta,registry.org_connections,registry.orgs,registry.project_connection,registry.project_envs,registry.projects,registry.retired_project_envs,registry.schema_migrations,registry.target',
+  ASSERT tbls = 'identity.credential,identity.org_memberships,identity.org_roles,identity.password_attempts,identity.password_credentials,identity.password_logins,identity.password_tokens,identity.pats,identity.principals,identity.project_env_memberships,identity.project_roles,identity.renewal_credentials,identity.session_keys,identity.session_signing_state,registry.auth_type,registry.capture_gap,registry.connection,registry.connection_generation,registry.env_policies,registry.event_readers,registry.external_system,registry.generation_passwords,registry.integration,registry.integration_type,registry.integration_type_auth,registry.integration_type_version,registry.meta,registry.orgs,registry.project_envs,registry.projects,registry.retired_project_envs,registry.schema_migrations,registry.target',
     format('unexpected control-plane table set (invariant 3): %s', tbls);
 END $$;
 

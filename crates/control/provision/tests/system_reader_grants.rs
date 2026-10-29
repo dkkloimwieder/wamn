@@ -478,28 +478,18 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
 
     assert_eq!(
         load_role_grants(&admin_url, WorkloadRoleFamily::ConnectionReader.acl_role()),
-        vec![
-            "routine|registry|lookup_connection_binding_mode|EXECUTE|false".to_owned(),
-            "routine|registry|lookup_connection_credential|EXECUTE|false".to_owned(),
-            "routine|registry|lookup_connector_bindings|EXECUTE|false".to_owned(),
-            "routine|registry|lookup_file_connection|EXECUTE|false".to_owned(),
-            "routine|registry|lookup_file_generations|EXECUTE|false".to_owned(),
-            "schema|registry|registry|USAGE|false".to_owned(),
-        ],
-        "the connection reader holds exactly its credential and connection read surface"
+        vec!["schema|registry|registry|USAGE|false".to_owned()],
+        "the connection reader holds only schema access"
     );
     assert_eq!(
-        reader_sqlstate(
-            &reader_url[2].1,
-            "SELECT connection_id FROM registry.project_connection"
-        ),
+        reader_sqlstate(&reader_url[2].1, "SELECT id FROM registry.connection"),
         Some("42501".to_owned()),
-        "the connection reader cannot directly read project enablement"
+        "the connection reader cannot directly read connection rows"
     );
     assert_eq!(
-        reader_sqlstate(&reader_url[2].1, "DELETE FROM registry.project_connection"),
+        reader_sqlstate(&reader_url[2].1, "DELETE FROM registry.connection"),
         Some("42501".to_owned()),
-        "the connection reader cannot change project enablement"
+        "the connection reader cannot change connection rows"
     );
 
     let identity_role = &reader_url[0].2;
@@ -647,364 +637,57 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
     }
 }
 
-#[cfg(feature = "test-util")]
 #[test]
-fn credential_lookup_uses_the_login_scope_and_current_generation() {
+fn the_connection_reader_cannot_read_or_change_credential_metadata_directly() {
     let _serialized = wamn_test_postgres::lock();
-    let test_database = wamn_control_provision::test_database::system();
-    let admin_url = test_database.url();
-    let database = test_database.name();
-    reset_roles(admin_url, database);
+    let test_database = wamn_test_postgres::database();
+    let admin = test_database.url();
+    reset_roles(admin, test_database.name());
+    apply_system_schema(admin);
     run_admin(
-        admin_url,
-        "grant only the credential lookup",
+        admin,
+        "grant the connection reader surface",
         &wamn_control_provision::sql::grant_connection_reader_surface_sql(),
     );
-    let mut setup = String::from("BEGIN; SET LOCAL ROLE wamn_system;");
-    setup.push_str(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_control_provision::PlatformComponent::Provisioning,
-    ));
-    for (org, project) in [(ORG, PROJECT), (ORG, "unenabled"), ("other", PROJECT)] {
-        setup.push_str(
-            &wamn_control_provision::test_database::seed_org_project_env_sql(org, project, ENV),
-        );
-    }
-    setup.push_str("SET LOCAL ROLE wamn_control;");
-    for org in [ORG, "other"] {
-        write!(setup, "SELECT registry.configure_connection('{org}','external_system.write', '{{\"name\":\"erp-system\",\"integration\":\"http\",\"parameters\":{{}},\"status\":\"active\"}}'); SELECT registry.configure_connection('{org}','connection.write', '{{\"name\":\"erp\",\"external_system\":\"erp-system\",\"integration\":\"http\",\"transport\":\"http\",\"exchange\":\"request\",\"parameters\":{{\"primary-authority\":\"https://example.invalid\",\"tls-verification\":\"verify-authority\"}},\"status\":\"active\"}}'); SELECT registry.configure_connection('{org}','project_connection.enable','{{\"project\":\"{PROJECT}\",\"connection\":\"erp\"}}'); SELECT registry.rotate_connection('{org}','erp','first'); SELECT registry.rotate_connection('{org}','erp','second');").unwrap();
-    }
-    setup.push_str("COMMIT;");
-    run_admin(admin_url, "seed credential authority as control", &setup);
-    let mapped = generation_role(SystemReader::Connection, CredentialGeneration::A, database);
-    let unmapped = generation_role(SystemReader::Connection, CredentialGeneration::B, database);
-    let unenabled = system_reader_generation_role(
+    let role = generation_role(
         SystemReader::Connection,
-        ORG,
-        "unenabled",
-        ENV,
-        database,
         CredentialGeneration::A,
+        test_database.name(),
     );
-    for role in [&mapped, &unmapped, &unenabled] {
-        run_admin(
-            admin_url,
-            "mint a real reader login",
-            &prepare_workload_generation_sql(
-                WorkloadRoleFamily::ConnectionReader,
-                database,
-                role,
-                READER_PW,
-                "2099-01-01T00:00:00Z",
-            ),
-        );
-    }
     run_admin(
-        admin_url,
-        "map only the authenticated reader logins",
-        &format!(
-            "BEGIN; SET LOCAL ROLE wamn_system; {} INSERT INTO wamn_authority.author_login_tenants(login_identity,env_key,org_id,project_id,environment) VALUES ('{mapped}','acme--widgets--dev','{ORG}','{PROJECT}','{ENV}'),('{unenabled}','acme--unenabled--dev','{ORG}','unenabled','{ENV}'); COMMIT;",
-            wamn_control_provision::bind_platform_principal_sql(
-                wamn_control_provision::PlatformComponent::Provisioning,
-            ),
+        admin,
+        "create an authenticated reader",
+        &prepare_workload_generation_sql(
+            WorkloadRoleFamily::ConnectionReader,
+            test_database.name(),
+            &role,
+            READER_PW,
+            "2099-01-01T00:00:00Z",
         ),
     );
-    let reader = role_url(admin_url, &mapped, READER_PW);
+    let reader = role_url(admin, &role, READER_PW);
     run_admin(
         &reader,
-        "assert the login and role are unprivileged",
+        "assert that the reader cannot bypass permissions",
         "DO $$ BEGIN ASSERT NOT (SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname=current_user); END $$;",
     );
-    for relation in [
-        "identity.credential",
-        "registry.connection",
-        "registry.external_system",
-        "registry.connection_generation",
-        "registry.project_connection",
+    for (relation, column) in [
+        ("identity.credential", "version"),
+        ("registry.external_system", "name"),
+        ("registry.integration", "name"),
+        ("registry.connection", "status"),
+        ("registry.connection_generation", "generation"),
     ] {
-        assert_eq!(
-            reader_sqlstate(&reader, &format!("SELECT * FROM {relation}")),
-            Some("42501".into()),
-            "direct SELECT on {relation} refuses"
-        );
-    }
-    let (ok, expected_system_id, error) = psql_tuples(
-        admin_url,
-        &format!(
-            "SELECT id::text FROM registry.external_system WHERE org='{ORG}' AND name='erp-system'"
-        ),
-    );
-    assert!(ok, "{error}");
-    assert!(
-        !expected_system_id.trim().is_empty(),
-        "the seed has a system id"
-    );
-    let (ok, external_system, error) = psql_tuples(
-        &reader,
-        &format!(
-            "SELECT external_system FROM registry.lookup_connection_credential('{ORG}','{PROJECT}','erp',NULL)"
-        ),
-    );
-    assert!(ok, "{error}");
-    assert_eq!(
-        external_system.trim(),
-        expected_system_id.trim(),
-        "the scoped lookup returns the projected system id without a table grant"
-    );
-    for (generation, expected) in [("NULL", "second"), ("2", "first"), ("3", "second")] {
-        let (ok, out, err) = psql_tuples(
-            &reader,
-            &format!(
-                "SELECT secret FROM registry.lookup_connection_credential('{ORG}','{PROJECT}','erp',{generation})"
-            ),
-        );
-        assert!(ok, "{err}");
-        assert_eq!(out.trim(), expected);
-    }
-    for (url, org, project) in [
-        (reader.clone(), "other", PROJECT),
-        (reader.clone(), ORG, "unenabled"),
-        (role_url(admin_url, &unmapped, READER_PW), ORG, PROJECT),
-        (role_url(admin_url, &unenabled, READER_PW), ORG, "unenabled"),
-    ] {
-        for generation in ["NULL", "2"] {
-            let (ok, out, err) = psql_tuples(
-                &url,
-                &format!(
-                    "SET app.org='other'; SET app.project='{PROJECT}'; SELECT count(*) FROM registry.lookup_connection_credential('{org}','{project}','erp',{generation})"
-                ),
-            );
-            assert!(ok, "{err}");
+        for statement in [
+            format!("SELECT * FROM {relation}"),
+            format!("UPDATE {relation} SET {column}={column}"),
+            format!("DELETE FROM {relation}"),
+        ] {
             assert_eq!(
-                out.trim(),
-                "0",
-                "claims, requested scope and pinned generations cannot widen a login"
+                reader_sqlstate(&reader, &statement),
+                Some("42501".to_owned()),
+                "the reader cannot access {relation} directly"
             );
         }
     }
-    run_admin(
-        admin_url,
-        "disable the enabled connection as control",
-        &format!(
-            "SET ROLE wamn_control; SELECT registry.configure_connection('{ORG}','connection.write','{{\"name\":\"erp\",\"external_system\":\"erp-system\",\"integration\":\"http\",\"transport\":\"http\",\"exchange\":\"request\",\"parameters\":{{}},\"status\":\"disabled\"}}');"
-        ),
-    );
-    let (ok, out, err) = psql_tuples(
-        &reader,
-        &format!(
-            "SELECT count(*) FROM registry.lookup_connection_credential('{ORG}','{PROJECT}','erp',2)"
-        ),
-    );
-    assert!(ok, "{err}");
-    assert_eq!(
-        out.trim(),
-        "0",
-        "disabled connections refuse pinned secrets and principals"
-    );
-}
-
-#[cfg(feature = "test-util")]
-#[test]
-fn file_connection_lookup_scopes_bindings_and_pins_on_fresh_install() {
-    let _serialized = wamn_test_postgres::lock();
-    let database = wamn_control_provision::test_database::system();
-    let admin = database.url();
-    reset_roles(admin, database.name());
-    run_admin(
-        admin,
-        "grant file lookup",
-        &wamn_control_provision::sql::grant_connection_reader_surface_sql(),
-    );
-    let mut setup = String::from("BEGIN; SET LOCAL ROLE wamn_system;");
-    setup.push_str(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_control_provision::PlatformComponent::Provisioning,
-    ));
-    for (org, project) in [(ORG, PROJECT), (ORG, "unenabled"), ("other", PROJECT)] {
-        setup.push_str(
-            &wamn_control_provision::test_database::seed_org_project_env_sql(org, project, ENV),
-        );
-    }
-    write!(setup, "SET LOCAL ROLE wamn_control; SELECT registry.configure_connection('{ORG}','connection.write','{{\"name\":\"files\",\"integration\":\"gcs\",\"transport\":\"gcs\",\"exchange\":\"request\",\"parameters\":{{\"provider\":\"gcs\",\"container\":\"old-bucket\",\"prefix\":\"old/\"}},\"status\":\"active\"}}'); SELECT registry.configure_connection('{ORG}','project_connection.enable','{{\"project\":\"{PROJECT}\",\"connection\":\"files\"}}'); SELECT registry.configure_connection('{ORG}','connection.write','{{\"name\":\"other-files\",\"integration\":\"gcs\",\"transport\":\"gcs\",\"exchange\":\"request\",\"parameters\":{{\"provider\":\"gcs\",\"container\":\"other-bucket\",\"prefix\":\"other/\"}},\"status\":\"active\"}}'); SELECT registry.configure_connection('{ORG}','project_connection.enable','{{\"project\":\"{PROJECT}\",\"connection\":\"other-files\"}}'); SET LOCAL ROLE wamn_system; INSERT INTO registry.environment_connection_binding(org,project,env,application,alias,target_id,connection_id,generation,mode,exclusive) SELECT '{ORG}','{PROJECT}','{ENV}','app',CASE c.name WHEN 'files' THEN 'files' ELSE 'other' END,t.id,c.id,1,'write',false FROM registry.target t,registry.connection c WHERE t.name='cloud' AND c.org='{ORG}' AND c.name IN ('files','other-files'); COMMIT;").unwrap();
-    run_admin(admin, "seed file binding with restricted owners", &setup);
-    let mapped = generation_role(
-        SystemReader::Connection,
-        CredentialGeneration::A,
-        database.name(),
-    );
-    let unmapped = generation_role(
-        SystemReader::Connection,
-        CredentialGeneration::B,
-        database.name(),
-    );
-    for role in [&mapped, &unmapped] {
-        run_admin(
-            admin,
-            "mint file reader",
-            &prepare_workload_generation_sql(
-                WorkloadRoleFamily::ConnectionReader,
-                database.name(),
-                role,
-                READER_PW,
-                "2099-01-01T00:00:00Z",
-            ),
-        );
-    }
-    let run_system = |what: &str, script: &str| {
-        run_admin(
-            admin,
-            what,
-            &format!(
-                "BEGIN; SET LOCAL ROLE wamn_system; {} {script} COMMIT;",
-                wamn_control_provision::bind_platform_principal_sql(
-                    wamn_control_provision::PlatformComponent::Provisioning
-                )
-            ),
-        )
-    };
-    run_system(
-        "map the authenticated file reader",
-        &format!(
-            "INSERT INTO wamn_authority.author_login_tenants(login_identity,env_key,org_id,project_id,environment) VALUES ('{mapped}','acme--widgets--dev','{ORG}','{PROJECT}','{ENV}');"
-        ),
-    );
-    let reader = role_url(admin, &mapped, READER_PW);
-    run_admin(
-        &reader,
-        "assert reader attributes",
-        "DO $$ BEGIN ASSERT NOT (SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname=current_user); END $$;",
-    );
-    for relation in [
-        "registry.connection",
-        "registry.connection_generation",
-        "registry.environment_connection_binding",
-        "identity.credential",
-    ] {
-        assert_eq!(
-            reader_sqlstate(&reader, &format!("SELECT * FROM {relation}")),
-            Some("42501".to_owned())
-        );
-    }
-    let (ok, id, error) = psql_tuples(
-        admin,
-        &format!("SELECT id::text FROM registry.connection WHERE org='{ORG}' AND name='files'"),
-    );
-    assert!(ok, "{error}");
-    let id = id.trim();
-    assert!(!id.is_empty());
-    let binding = format!("'{ORG}','{PROJECT}','{ENV}','app','files',NULL,NULL");
-    let pin = format!("'{ORG}','{PROJECT}','{ENV}','app',NULL,'{id}',1");
-    let binding_pin = format!("'{ORG}','{PROJECT}','{ENV}','app','files','{id}',1");
-    assert_eq!(
-        reader_sqlstate(&reader, "SET ROLE wamn_conn_reader"),
-        Some("42501".to_owned()),
-        "the reader inherits its grants but cannot assume the ACL role"
-    );
-    let lookup = |url: &str, arguments: &str, expected: &str| {
-        let (ok, out, error) = psql_tuples(
-            url,
-            &format!(
-                "SET app.org='forged'; SET app.project='forged'; SELECT coalesce(string_agg(concat_ws('|',connection_name,generation,parameters->>'prefix',mode),','),'none') FROM registry.lookup_file_connection({arguments})"
-            ),
-        );
-        assert!(ok, "{arguments}: {error}");
-        assert_eq!(out.trim(), expected, "{arguments}");
-    };
-    let definition = "SELECT pg_get_functiondef(p.oid), pg_get_userbyid(p.proowner), p.provolatile, p.prosecdef, p.proconfig::text FROM pg_proc p WHERE p.oid='registry.lookup_file_connection(text,text,text,text,text,text,bigint)'::regprocedure";
-    let (ok, fresh, error) = psql_tuples(admin, definition);
-    assert!(ok, "{error}");
-    assert!(
-        fresh.ends_with("wamn_system|s|t|{search_path=pg_catalog}\n"),
-        "{fresh}"
-    );
-    lookup(&reader, &binding, "files|1|old/|write");
-    lookup(&reader, &pin, "files|1|old/|write");
-    lookup(&reader, &binding_pin, "files|1|old/|write");
-    let (ok, columns, error) = psql_tuples(
-        &reader,
-        &format!(
-            "SELECT array_agg(key ORDER BY key)::text FROM registry.lookup_file_connection({binding}) f CROSS JOIN LATERAL jsonb_object_keys(to_jsonb(f)) AS keys(key)"
-        ),
-    );
-    assert!(ok, "{error}");
-    assert_eq!(
-        columns.trim(),
-        "{connection_id,connection_name,generation,mode,parameters}",
-        "the lookup returns coordinates without a secret"
-    );
-    let (ok, grants, error) = psql_tuples(
-        admin,
-        "SELECT string_agg(pg_get_userbyid(a.grantee),',' ORDER BY pg_get_userbyid(a.grantee)) FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) a WHERE p.oid='registry.lookup_file_connection(text,text,text,text,text,text,bigint)'::regprocedure AND a.grantee<>p.proowner AND a.privilege_type='EXECUTE'",
-    );
-    assert!(ok, "{error}");
-    assert_eq!(grants.trim(), "wamn_conn_reader");
-    run_admin(
-        admin,
-        "move the active store as control",
-        &format!(
-            "BEGIN; SET LOCAL ROLE wamn_control; {} SELECT registry.configure_connection('{ORG}','connection.write','{{\"name\":\"files\",\"integration\":\"gcs\",\"transport\":\"gcs\",\"exchange\":\"request\",\"parameters\":{{\"provider\":\"gcs\",\"container\":\"new-bucket\",\"prefix\":\"new/\"}},\"status\":\"active\"}}'); COMMIT;",
-            wamn_control_provision::bind_platform_principal_sql(
-                wamn_control_provision::PlatformComponent::Provisioning
-            )
-        ),
-    );
-    lookup(&reader, &binding, "files|2|new/|write");
-    lookup(&reader, &binding_pin, "files|1|old/|write");
-    lookup(&reader, &pin, "files|1|old/|write");
-    lookup(&role_url(admin, &unmapped, READER_PW), &binding, "none");
-    lookup(&role_url(admin, &unmapped, READER_PW), &pin, "none");
-    for arguments in [
-        binding.replacen("'acme'", "'other'", 1),
-        pin.replacen("'acme'", "'other'", 1),
-        binding.replacen("'widgets'", "'unenabled'", 1),
-        pin.replacen("'widgets'", "'unenabled'", 1),
-        binding.replacen("'dev'", "'prod'", 1),
-        pin.replacen("'dev'", "'prod'", 1),
-        binding.replacen("'app'", "'another-app'", 1),
-        format!("'{ORG}','{PROJECT}','{ENV}','app',NULL,'{id}',999"),
-        format!("'{ORG}','{PROJECT}','{ENV}','app','other','{id}',1"),
-        binding_pin.replacen("'app'", "'another-app'", 1),
-        binding_pin.replace("'files'", "'missing'"),
-        format!("'{ORG}','{PROJECT}','{ENV}','app','files','{id}',999"),
-        format!("'{ORG}','{PROJECT}','{ENV}','app','files','{id}',NULL"),
-        format!("'{ORG}','{PROJECT}','{ENV}','app',NULL,'{id}',NULL"),
-        format!("'{ORG}','{PROJECT}','{ENV}','app',NULL,'not-a-uuid',1"),
-    ] {
-        lookup(&reader, &arguments, "none");
-    }
-    run_system(
-        "downgrade the application's current binding",
-        "UPDATE registry.environment_connection_binding SET mode='read';",
-    );
-    lookup(&reader, &pin, "files|1|old/|read");
-    lookup(&reader, &binding_pin, "none");
-    run_system(
-        "add an independent write alias",
-        "INSERT INTO registry.environment_connection_binding SELECT org,project,env,application,'writer',target_id,connection_id,generation,'write',false FROM registry.environment_connection_binding WHERE alias='files';",
-    );
-    lookup(&reader, &pin, "files|1|old/|write");
-    lookup(&reader, &binding, "files|2|new/|read");
-    lookup(&reader, &binding_pin, "none");
-    lookup(
-        &reader,
-        &binding_pin.replace("'files'", "'writer'"),
-        "files|1|old/|write",
-    );
-    run_system(
-        "remove application bindings",
-        "DELETE FROM registry.environment_connection_binding;",
-    );
-    lookup(&reader, &binding, "none");
-    lookup(&reader, &pin, "files|1|old/|read");
-    lookup(&reader, &binding_pin, "none");
-    run_system(
-        "remove project enablement",
-        "DELETE FROM registry.project_connection;",
-    );
-    lookup(&reader, &pin, "none");
-    run_system(
-        "reenable the project and disable the connection",
-        &format!(
-            "INSERT INTO registry.project_connection VALUES ('{ORG}','{PROJECT}','{id}'); UPDATE registry.connection SET status='disabled' WHERE id='{id}';"
-        ),
-    );
-    lookup(&reader, &pin, "none");
 }

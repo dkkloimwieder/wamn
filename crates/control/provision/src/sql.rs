@@ -932,34 +932,23 @@ pub fn grant_identity_reader_surface_sql() -> String {
     )
 }
 
-/// Grant only the lookup that derives scope from the authenticated login.
+/// Reserve schema access for the environment reader.
 pub fn grant_connection_reader_surface_sql() -> String {
     let mut sql =
         grant_system_reader_surface_sql(WorkloadRoleFamily::ConnectionReader, "registry", &[]);
     let role = quote_ident(WorkloadRoleFamily::ConnectionReader.acl_role());
-    write!(sql, " REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA registry, identity FROM {role}; GRANT EXECUTE ON FUNCTION registry.lookup_connection_credential(text,text,text,bigint) TO {role}; GRANT EXECUTE ON FUNCTION registry.lookup_connection_binding_mode(text,text,text,text,text) TO {role}; GRANT EXECUTE ON FUNCTION registry.lookup_file_connection(text,text,text,text,text,text,bigint) TO {role}; GRANT EXECUTE ON FUNCTION registry.lookup_file_generations(text,text,text) TO {role}; GRANT EXECUTE ON FUNCTION registry.lookup_connector_bindings(text,text,text) TO {role};")
-        .expect("writing to a String cannot fail");
+    write!(
+        sql,
+        " REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA registry, identity FROM {role};"
+    )
+    .expect("writing to a String cannot fail");
     sql
 }
 
 /// Non-secret connection functions available to the control host.
 pub const CONTROL_CONNECTION_FUNCTIONS: &[&str] = &[
-    "publish_integration(text,text)",
-    "connector_pin_error(text,text)",
-    "connection_org_exists(text)",
-    "connection_integration_exists(text)",
-    "connection_system_rows(text)",
-    "connection_rows(text)",
-    "connection_project_rows(text)",
-    "connection_allow_rows(text)",
-    "connection_principal_rows(text,text)",
+    "publish_integration(text,integer,text,jsonb,text)",
     "configure_connection(text,text,jsonb)",
-    "rotate_connection(text,text,text)",
-    "import_connection_credentials(text,jsonb)",
-    "connection_integrations()",
-    "connection_binding_rows(text,text,text)",
-    "analyse_connection_bindings(text,text,text,text,jsonb)",
-    "reserve_connection_bindings(text,text,text,text,jsonb)",
 ];
 
 /// The privileges the control host holds on a relation that it writes.

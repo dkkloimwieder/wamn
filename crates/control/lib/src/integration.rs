@@ -7,6 +7,7 @@ use anyhow::{Context as _, ensure};
 use oci_client::manifest::OCI_IMAGE_MEDIA_TYPE;
 use serde_json::{Value, json};
 use tokio::process::Command;
+use wamn_catalog::RuntimeType;
 use wamn_control_provision::WorkloadRoleFamily;
 use wamn_package_artifact::{PackageRegistry, Repository, sha256_digest};
 
@@ -18,6 +19,7 @@ use wamn_package_artifact::connector::{CONFIG_TYPE, WASM_TYPE};
 #[derive(Debug)]
 pub struct BuiltIntegration {
     pub code: String,
+    pub runtime_type: RuntimeType,
     pub digest: String,
     pub directory: PathBuf,
     component: Vec<u8>,
@@ -161,7 +163,7 @@ pub async fn build(repository: &Path, code: &str) -> anyhow::Result<BuiltIntegra
         "connector sources changed during the build"
     );
     let config = wamn_execution_contract::canonical_json_bytes(&json!({
-        "code":code, "form":"wasm", "source_digest":inputs
+        "code":code, "runtime_type":RuntimeType::Wasm, "source_digest":inputs
     }));
     let manifest = wamn_execution_contract::canonical_json_bytes(&json!({
         "schemaVersion":2, "mediaType":OCI_IMAGE_MEDIA_TYPE, "artifactType":ARTIFACT_TYPE,
@@ -183,6 +185,7 @@ pub async fn build(repository: &Path, code: &str) -> anyhow::Result<BuiltIntegra
     }
     Ok(BuiltIntegration {
         code: code.into(),
+        runtime_type: RuntimeType::Wasm,
         digest,
         directory,
         component,

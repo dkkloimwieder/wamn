@@ -684,7 +684,7 @@ async fn connector_pin_case(pin: Option<&str>, expected: Option<&str>) {
     let mut system = connect(database.url()).await.unwrap();
     system
         .batch_execute(&format!(
-            "SET ROLE wamn_system; BEGIN; {} INSERT INTO registry.integrations(code,form,exclusive) VALUES ('fixture','wasm',false); COMMIT;",
+            "SET ROLE wamn_system; BEGIN; {} INSERT INTO registry.integration_type(code,runtime_type,exclusive) VALUES ('fixture','wasm',false); COMMIT;",
             wamn_control_provision::test_database::seed_org_project_env_sql("acme", "one", "dev"),
         ))
         .await
@@ -801,7 +801,7 @@ async fn apply_refuses_a_bound_connection_without_a_connector_pin() {
 
 #[tokio::test]
 async fn apply_refuses_a_host_pin_for_a_wasm_integration() {
-    connector_pin_case(Some("host"), Some("connector_form_mismatch")).await;
+    connector_pin_case(Some("host"), Some("integration_runtime_type_mismatch")).await;
 }
 
 #[tokio::test]

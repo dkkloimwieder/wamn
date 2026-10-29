@@ -73,6 +73,10 @@ async fn build_digest_tracks_source_bytes_and_survives_another_checkout() {
     assert_ne!(a.digest, edited.digest);
     assert!(a.directory.join("connector.wasm").is_file());
     assert!(a.directory.join("manifest.json").is_file());
+    let config: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(a.directory.join("config.json")).unwrap()).unwrap();
+    assert_eq!(config["runtime_type"], "wasm");
+    assert!(config.get("form").is_none());
 }
 
 #[tokio::test]
@@ -81,7 +85,7 @@ async fn publish_pushes_by_digest_and_records_the_catalog_as_control() {
     wamn_test_postgres::require_prerequisites(&["docker"]);
     let _lock = wamn_test_postgres::lock();
     let database = wamn_control_provision::test_database::system();
-    database.execute(&["SET ROLE wamn_system; INSERT INTO registry.integrations(code,form,exclusive) VALUES ('fixture','wasm',false)"]).unwrap();
+    database.execute(&["SET ROLE wamn_system; INSERT INTO registry.integration_type(code,runtime_type,exclusive) VALUES ('fixture','wasm',false)"]).unwrap();
     let fixture = fixture();
     let (_registry, configuration) = registry(fixture.path(), "connector").await;
     let built = integration::build(fixture.path(), "fixture").await.unwrap();
@@ -158,7 +162,7 @@ async fn publish_refuses_an_unknown_integration_without_creating_catalog_rows() 
 async fn publish_catalog_refuses_host_and_native_integrations() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_control_provision::test_database::system();
-    database.execute(&["SET ROLE wamn_system; INSERT INTO registry.integrations(code,form,exclusive) VALUES ('native_fixture','native',false)"]).unwrap();
+    database.execute(&["SET ROLE wamn_system; INSERT INTO registry.integration_type(code,runtime_type,exclusive) VALUES ('native_fixture','native',false)"]).unwrap();
     let (client, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
         .await
         .unwrap();
@@ -175,7 +179,7 @@ async fn publish_catalog_refuses_host_and_native_integrations() {
             .unwrap_err();
         assert_eq!(
             error.as_db_error().unwrap().message(),
-            "integration_form_mismatch"
+            "integration_runtime_type_mismatch"
         );
     }
     assert_eq!(

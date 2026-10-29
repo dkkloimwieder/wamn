@@ -5,6 +5,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio_postgres::Transaction;
+use wamn_catalog::RuntimeType;
 
 use crate::auth_changes::AuthDrops;
 use crate::configuration::{
@@ -259,14 +260,16 @@ pub async fn write_connection(
         &row.status,
     )
     .await?;
-    let form: String = tx
+    let runtime_type: String = tx
         .query_one(
-            "SELECT form FROM registry.connection_integrations() WHERE code=$1",
+            "SELECT runtime_type FROM registry.connection_integrations() WHERE code=$1",
             &[&row.integration],
         )
         .await?
         .get(0);
-    if form == "host" {
+    let runtime_type: RuntimeType = serde_json::from_value(Value::String(runtime_type))
+        .map_err(|_| refuse("integration_unavailable", "integration"))?;
+    if runtime_type == RuntimeType::Host {
         let requirement = wamn_catalog::RequirementType::for_integration(&row.integration)
             .ok_or_else(|| refuse("integration_unavailable", "integration"))?;
         requirement
@@ -282,7 +285,7 @@ pub async fn write_connection(
         {
             return Err(refuse("integration_mismatch", "parameters"));
         }
-    } else if form != "wasm" {
+    } else if runtime_type != RuntimeType::Wasm {
         return Err(refuse("integration_unavailable", "integration"));
     }
     if !matches!(row.exchange.as_str(), "request" | "event") || row.transport.is_empty() {
