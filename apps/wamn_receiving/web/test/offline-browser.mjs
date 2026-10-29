@@ -222,6 +222,13 @@ try {
     );
     await until("remaining moves once", async () => (await remaining(page, "PO-BROWSER-07")) === kept - 1, ONE_POLL);
     assert.equal(sent.length, 1, "the resubmitted entry is sent once");
+    await until(
+      "the resubmitted row is no longer tentative",
+      async () => !(await tentative(page, "PO-BROWSER-07")),
+      // Confirmation needs a feed pass that starts after the send, up to two polls.
+      30_000,
+    );
+    assert.ok(await tentative(page, "PO-BROWSER-08"), "the other expired entry keeps its tentative row");
     await notUploaded(page).getByRole("button", { name: "Discard", exact: true }).click();
     await until("the discarded entry goes", async () => (await notUploaded(page).count()) === 0, 10_000);
     await until(
@@ -230,13 +237,6 @@ try {
       10_000,
     );
     assert.equal(sent.length, 1, "the discarded entry is never sent");
-    // Both restored entries write one overlay store, so the landed row stays tentative until the other is resolved.
-    await until(
-      "the resubmitted row is no longer tentative",
-      async () => !(await tentative(page, "PO-BROWSER-07")),
-      // Confirmation needs a feed pass that starts after the send, up to two polls.
-      30_000,
-    );
     await capture(page, "check-3-cleared");
     console.log("CHECK 3 PASS: expired entries not sent, resubmit sent once, discard removed the row");
     await context.close();
