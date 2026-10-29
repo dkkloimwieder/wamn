@@ -13,8 +13,16 @@ use url::Url;
 use wamn_platform_identity::PrincipalId;
 use wamn_session::PAT_TOKEN_PREFIX;
 
-/// The provisioning request stops after five seconds and never retries issuance.
+/// Each provisioning request attempt stops after five seconds.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+/// A connect failure reached no issuer, so issuance tries again after each of
+/// these waits: five attempts in all.
+const CONNECT_BACKOFF: [Duration; 4] = [
+    Duration::from_millis(500),
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+    Duration::from_secs(4),
+];
 /// A PAT response contains five small fields. Larger bodies are refused.
 const MAX_RESPONSE_BYTES: usize = 4096;
 /// A lost response does not mean that the service refused to create the PAT.
@@ -123,7 +131,8 @@ impl PatClient {
         Ok(Self { http, endpoint })
     }
 
-    /// Issue one PAT. The request is not retried.
+    /// Issue one PAT. Only a send that failed to connect is retried, because
+    /// it reached no issuer.
     pub async fn issue(
         &self,
         principal_id: &PrincipalId,
@@ -136,15 +145,34 @@ impl PatClient {
             "lifetime_seconds": lifetime.as_secs(),
         }))
         .map_err(|_| anyhow::anyhow!("PAT request encoding failed"))?;
-        let mut response = self
-            .http
-            .post(self.endpoint.clone())
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .body(body)
-            .send()
-            .await
-            .map_err(reqwest::Error::without_url)
-            .with_context(|| format!("PAT issuance transport failed. {UNCERTAIN_ISSUANCE}"))?;
+        let mut waits = CONNECT_BACKOFF.iter();
+        let mut response = loop {
+            let sent = self
+                .http
+                .post(self.endpoint.clone())
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(body.clone())
+                .send()
+                .await
+                .map_err(reqwest::Error::without_url);
+            match sent {
+                Ok(response) => break response,
+                Err(error) if error.is_connect() => match waits.next() {
+                    Some(wait) => tokio::time::sleep(*wait).await,
+                    None => {
+                        return Err(anyhow::Error::new(error).context(format!(
+                            "PAT issuer was not reachable in {} attempts. No PAT was issued.",
+                            CONNECT_BACKOFF.len() + 1
+                        )));
+                    }
+                },
+                Err(error) => {
+                    return Err(anyhow::Error::new(error).context(format!(
+                        "PAT issuance transport failed. {UNCERTAIN_ISSUANCE}"
+                    )));
+                }
+            }
+        };
         anyhow::ensure!(
             response.status() == reqwest::StatusCode::CREATED,
             "PAT issuer returned an unsuccessful response. {UNCERTAIN_ISSUANCE}"
@@ -551,6 +579,15 @@ mod tests {
         server_name: &str,
         response: impl FnOnce(&str) -> String,
     ) -> HttpsFixture {
+        https_fixture_after(server_name, None, response).await
+    }
+
+    /// With `start_after`, the issuer listens only after that wait.
+    async fn https_fixture_after(
+        server_name: &str,
+        start_after: Option<Duration>,
+        response: impl FnOnce(&str) -> String,
+    ) -> HttpsFixture {
         static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
         let directory = std::env::temp_dir().join(format!(
             "wamn-pat-client-{}-{}",
@@ -611,7 +648,14 @@ mod tests {
         tls.alpn_protocols = vec![b"http/1.1".to_vec()];
         let acceptor = TlsAcceptor::from(Arc::new(tls));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let endpoint = format!("https://{}/identity", listener.local_addr().unwrap());
+        let address = listener.local_addr().unwrap();
+        let listener = if start_after.is_some() {
+            drop(listener);
+            None
+        } else {
+            Some(listener)
+        };
+        let endpoint = format!("https://{address}/identity");
         let args = PatIssuerConfig {
             endpoint: Some(endpoint.clone()),
             client_cert: Some(write_pem("operator.pem", &client.pem())),
@@ -623,6 +667,13 @@ mod tests {
         let request_count = Arc::clone(&requests);
         let (sender, received) = tokio::sync::mpsc::unbounded_channel();
         let task = tokio::spawn(async move {
+            let listener = match (listener, start_after) {
+                (Some(listener), _) => listener,
+                (None, wait) => {
+                    tokio::time::sleep(wait.unwrap_or_default()).await;
+                    TcpListener::bind(address).await.unwrap()
+                }
+            };
             while let Ok((stream, _)) = listener.accept().await {
                 let Ok(mut stream) = acceptor.accept(stream).await else {
                     continue;
@@ -751,7 +802,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             error.to_string(),
-            format!("PAT issuance transport failed. {UNCERTAIN_ISSUANCE}")
+            "PAT issuer was not reachable in 5 attempts. No PAT was issued."
         );
         let source = error.downcast_ref::<reqwest::Error>().unwrap();
         assert!(source.is_connect());
@@ -778,9 +829,29 @@ mod tests {
             .issue(&PRINCIPAL.parse().unwrap(), "operator", LIFETIME)
             .await
             .unwrap_err();
-        assert!(error.to_string().contains("transport failed"));
-        assert!(error.to_string().contains(UNCERTAIN_ISSUANCE));
+        // A refused handshake is a connect error: retried, and no PAT issued.
+        assert_eq!(
+            error.to_string(),
+            "PAT issuer was not reachable in 5 attempts. No PAT was issued."
+        );
         assert_eq!(fixture.requests.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn a_connect_failure_is_retried_until_the_issuer_listens() {
+        let mut fixture = https_fixture_after("127.0.0.1", Some(Duration::from_millis(700)), |_| {
+            let body = response().to_string();
+            format!("HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
+        })
+        .await;
+        let result = PatClient::new(&fixture.args)
+            .unwrap()
+            .issue(&PRINCIPAL.parse().unwrap(), "operator", LIFETIME)
+            .await
+            .unwrap();
+        assert_eq!(result.token_prefix, PREFIX);
+        fixture.received.recv().await.unwrap();
+        assert_eq!(fixture.requests.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
