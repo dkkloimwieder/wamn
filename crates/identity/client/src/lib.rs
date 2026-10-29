@@ -29,6 +29,28 @@ const MAX_RESPONSE_BYTES: usize = 4096;
 const UNCERTAIN_ISSUANCE: &str =
     "A PAT can exist without a returned token. The request was not retried.";
 
+/// Whether a send failed because rustls refused a certificate: a
+/// misconfiguration that a retry cannot fix.
+fn refused_certificate(error: &reqwest::Error) -> bool {
+    let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    while let Some(current) = cause {
+        if matches!(
+            current.downcast_ref::<rustls::Error>(),
+            Some(rustls::Error::InvalidCertificate(_))
+        ) {
+            return true;
+        }
+        // `io::Error::source` skips the error it wraps, so step into it.
+        cause = match current.downcast_ref::<std::io::Error>() {
+            Some(io) => io
+                .get_ref()
+                .map(|inner| inner as &(dyn std::error::Error + 'static)),
+            None => current.source(),
+        };
+    }
+    false
+}
+
 /// TLS credentials and the identity service endpoint for operator PAT issuance.
 #[derive(Clone, Default)]
 pub struct PatIssuerConfig {
@@ -157,6 +179,10 @@ impl PatClient {
                 .map_err(reqwest::Error::without_url);
             match sent {
                 Ok(response) => break response,
+                Err(error) if refused_certificate(&error) => {
+                    return Err(anyhow::Error::new(error)
+                        .context("PAT issuer certificate was refused. No PAT was issued."));
+                }
                 Err(error) if error.is_connect() => match waits.next() {
                     Some(wait) => tokio::time::sleep(*wait).await,
                     None => {
@@ -429,7 +455,7 @@ mod tests {
     use rcgen::{BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair, KeyUsagePurpose};
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     use tokio::net::TcpListener;
-    use tokio_rustls::{TlsAcceptor, rustls};
+    use tokio_rustls::TlsAcceptor;
 
     const PRINCIPAL: &str = "6d3f2d1c-0000-4000-8000-00000000abcd";
     const PREFIX: &str = "0123456789abcdef";
@@ -563,6 +589,7 @@ mod tests {
     struct HttpsFixture {
         args: PatIssuerConfig,
         requests: Arc<AtomicUsize>,
+        connections: Arc<AtomicUsize>,
         received: tokio::sync::mpsc::UnboundedReceiver<String>,
         task: tokio::task::JoinHandle<()>,
         directory: PathBuf,
@@ -665,6 +692,8 @@ mod tests {
         let response = response(&endpoint);
         let requests = Arc::new(AtomicUsize::new(0));
         let request_count = Arc::clone(&requests);
+        let connections = Arc::new(AtomicUsize::new(0));
+        let connection_count = Arc::clone(&connections);
         let (sender, received) = tokio::sync::mpsc::unbounded_channel();
         let task = tokio::spawn(async move {
             let listener = match (listener, start_after) {
@@ -675,6 +704,7 @@ mod tests {
                 }
             };
             while let Ok((stream, _)) = listener.accept().await {
+                connection_count.fetch_add(1, Ordering::SeqCst);
                 let Ok(mut stream) = acceptor.accept(stream).await else {
                     continue;
                 };
@@ -715,6 +745,7 @@ mod tests {
         HttpsFixture {
             args,
             requests,
+            connections,
             received,
             task,
             directory,
@@ -829,12 +860,12 @@ mod tests {
             .issue(&PRINCIPAL.parse().unwrap(), "operator", LIFETIME)
             .await
             .unwrap_err();
-        // A refused handshake is a connect error: retried, and no PAT issued.
         assert_eq!(
             error.to_string(),
-            "PAT issuer was not reachable in 5 attempts. No PAT was issued."
+            "PAT issuer certificate was refused. No PAT was issued."
         );
         assert_eq!(fixture.requests.load(Ordering::SeqCst), 0);
+        assert_eq!(fixture.connections.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

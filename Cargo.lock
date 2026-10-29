@@ -6178,6 +6178,7 @@ dependencies = [
  "chrono",
  "rcgen",
  "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "tokio",
