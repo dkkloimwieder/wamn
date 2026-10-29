@@ -421,7 +421,7 @@ fn start_route_path() -> anyhow::Result<String> {
         .context("workflow.start names its path")
 }
 
-/// The one request item of `workflow.start`, as a generated client sends a
+/// The one request element of `workflow.start`, as a generated client sends a
 /// write: the request id and the input under `value`.
 fn start_request(args: &StartArgs, input: &serde_json::Value) -> serde_json::Value {
     serde_json::json!([{
@@ -462,12 +462,12 @@ async fn start(args: &StartArgs) -> anyhow::Result<String> {
         status.is_success(),
         "workflow.start answered HTTP {status}: {body}"
     );
-    let [item]: [serde_json::Value; 1] =
-        serde_json::from_str(&body).context("workflow.start answers one item")?;
-    if let Some(error) = item.get("error") {
+    let [request_element]: [serde_json::Value; 1] =
+        serde_json::from_str(&body).context("workflow.start answers one request element")?;
+    if let Some(error) = request_element.get("error") {
         anyhow::bail!("workflow.start refused: {error}");
     }
-    item["value"]["run_id"]
+    request_element["value"]["run_id"]
         .as_str()
         .map(str::to_owned)
         .context("workflow.start answers a run id")

@@ -17,27 +17,31 @@ use super::native_workload::NativeApplication;
 /// The call path dispatches through this plugin by its [`HostPlugin::id`].
 pub trait InvocationPolicy: HostPlugin + Sized {
     /// The facts of one call that only the policy reads.
-    /// A logged call clones them for each item it runs.
+    /// A logged call clones them for each request element it runs.
     type Facts: Clone + Send + Sync + 'static;
     /// Revokes the authority of one call when it drops.
     type Authority: Send;
-    /// The host transaction of one item of a logged call.
-    type ItemTransaction: ItemTransaction;
+    /// The host transaction of one request element of a logged call.
+    type Transaction: Transaction;
 
-    /// Begin the host transaction of one item of a logged call, before its
+    /// Begin the host transaction of one request element of a logged call, before its
     /// claim and its guest call (`docs/history/host-transaction.md` 4.1). It
     /// admits the call as [`activate`](Self::activate) does. An operation that
     /// declares no SQL gets `None`.
-    fn begin_item(
+    fn admit_and_open_transaction(
         &self,
         component_id: &str,
         operation: &str,
         facts: &Self::Facts,
-    ) -> impl Future<Output = anyhow::Result<Option<Self::ItemTransaction>>> + Send;
+    ) -> impl Future<Output = anyhow::Result<Option<Self::Transaction>>> + Send;
 
-    /// The facts of the item's guest call, which carry its transaction to
+    /// The facts of the request element's guest call, which carry its transaction to
     /// [`activate`](Self::activate).
-    fn item_facts(&self, facts: &Self::Facts, transaction: &Self::ItemTransaction) -> Self::Facts;
+    fn transaction_facts(
+        &self,
+        facts: &Self::Facts,
+        transaction: &Self::Transaction,
+    ) -> Self::Facts;
 
     /// Grant authority after native initialization, with rollback on every partial failure.
     fn activate(
@@ -67,41 +71,41 @@ pub trait InvocationPolicy: HostPlugin + Sized {
     fn revoke(&self, scope: &str);
 }
 
-/// The host transaction of one item of a logged call. The engine commits it
-/// when the item succeeds and rolls it back otherwise.
-pub trait ItemTransaction: Send + Sync {
+/// The host transaction of one request element of a logged call. The engine commits it
+/// when the request element succeeds and rolls it back otherwise.
+pub trait Transaction: Send + Sync {
     /// Commit the transaction.
-    fn commit(&self) -> impl Future<Output = Result<(), ItemCommitFailure>> + Send;
+    fn commit(&self) -> impl Future<Output = Result<(), CommitFailure>> + Send;
     /// Roll the transaction back.
     fn rollback(&self) -> impl Future<Output = anyhow::Result<()>> + Send;
-    /// The store that claims the item's key inside this transaction, so the
+    /// The store that claims the request element's key inside this transaction, so the
     /// claim commits with the work. `None` claims in the call's own store.
     fn intent_store(&self) -> Option<&dyn wamn_run_state::IntentStore> {
         None
     }
 }
 
-/// Why the commit of an item transaction did not succeed.
+/// Why the commit of a request element's transaction did not succeed.
 #[derive(Debug)]
-pub enum ItemCommitFailure {
+pub enum CommitFailure {
     /// The transaction rolled back. `code` is the generated error literal that
-    /// the item answers: `retry`, `timeout` or `internal_error`.
+    /// the request element answers: `retry`, `timeout` or `internal_error`.
     RolledBack { code: &'static str, message: String },
-    /// `COMMIT` was sent and its answer was not read, so the item may have
-    /// committed. The item answers `intent-uncertain`.
+    /// `COMMIT` was sent and its answer was not read, so the request element
+    /// may have committed. The request element answers `intent-uncertain`.
     Uncertain { message: String },
 }
 
-/// The item transaction of a host that has no SQL.
+/// The request element transaction of a host that has no SQL.
 #[derive(Debug)]
-pub enum NoItemTransaction {}
+pub enum NoTransaction {}
 
 #[expect(
     clippy::unused_async_trait_impl,
     reason = "the type has no value, so neither method runs"
 )]
-impl ItemTransaction for NoItemTransaction {
-    async fn commit(&self) -> Result<(), ItemCommitFailure> {
+impl Transaction for NoTransaction {
+    async fn commit(&self) -> Result<(), CommitFailure> {
         match *self {}
     }
 

@@ -106,20 +106,20 @@ fn json_paths(
     field: &SignedFileField,
 ) -> anyhow::Result<Vec<String>> {
     let mut paths = Vec::new();
-    for (index, item) in value
+    for (index, element) in value
         .as_array()
         .context("operation result is not an outcome list")?
         .iter()
         .enumerate()
     {
-        if let Some(error) = item.get("error") {
+        if let Some(error) = element.get("error") {
             anyhow::ensure!(
-                error.is_object() && item.get("value").is_none(),
+                error.is_object() && element.get("value").is_none(),
                 "operation result mixes a value with a refusal"
             );
             continue;
         }
-        let row = item
+        let row = element
             .get("value")
             .context("operation outcome has no value")?;
         let base = format!("/{index}/value");
@@ -172,13 +172,13 @@ fn json_field(
     let value = value.get(name).context("signed result field is missing")?;
     let base = format!("{base}/{name}");
     if member.ends_with("[]") {
-        for (i, item) in value
+        for (i, element) in value
             .as_array()
             .context("signed result field is not a list")?
             .iter()
             .enumerate()
         {
-            json_field(item, &format!("{base}/{i}"), rest, nullable, paths)?;
+            json_field(element, &format!("{base}/{i}"), rest, nullable, paths)?;
         }
     } else {
         json_field(value, &base, rest, nullable, paths)?;
@@ -196,17 +196,17 @@ fn typed_paths(
     let Val::Result(result) = value else {
         anyhow::bail!("typed operation result is not a result")
     };
-    let items = match result {
+    let elements = match result {
         Err(_) => return Ok(Vec::new()),
-        Ok(Some(items)) => items,
+        Ok(Some(elements)) => elements,
         Ok(None) => anyhow::bail!("typed operation returned no outcome list"),
     };
-    let Val::List(items) = items.as_ref() else {
+    let Val::List(elements) = elements.as_ref() else {
         anyhow::bail!("typed operation result is not an outcome list")
     };
     let mut paths = Vec::new();
-    for (i, item) in items.iter().enumerate() {
-        let (index, outcome) = typed_member(item, "outcome")?;
+    for (i, element) in elements.iter().enumerate() {
+        let (index, outcome) = typed_member(element, "outcome")?;
         let Val::Result(result) = outcome else {
             anyhow::bail!("typed outcome is not a result")
         };
@@ -284,13 +284,13 @@ fn typed_field(
     let (index, value) = typed_member(value, name)?;
     base.push(index);
     if member.ends_with("[]") {
-        let Val::List(items) = value else {
+        let Val::List(elements) = value else {
             anyhow::bail!("signed typed result field is not a list")
         };
-        for (i, item) in items.iter().enumerate() {
+        for (i, element) in elements.iter().enumerate() {
             let mut base = base.clone();
             base.push(i);
-            typed_field(item, base, rest, nullable, paths)?;
+            typed_field(element, base, rest, nullable, paths)?;
         }
     } else {
         typed_field(value, base, rest, nullable, paths)?;
@@ -308,9 +308,9 @@ fn typed_at_mut<'a>(mut value: &'a mut Val, path: &[usize]) -> anyhow::Result<&'
                     .context("typed result record field disappeared")?
                     .1
             }
-            Val::List(items) => items
+            Val::List(elements) => elements
                 .get_mut(i)
-                .context("typed result list item disappeared")?,
+                .context("typed result list request element disappeared")?,
             _ => anyhow::bail!("typed signed result path is invalid"),
         };
     }
@@ -349,8 +349,8 @@ mod tests {
             _ => Val::Record(vec![("rows".into(), Val::List(vec![row]))]),
         };
         let outcome = Val::Result(Ok(Some(Box::new(value))));
-        let item = Val::Record(vec![("outcome".into(), outcome)]);
-        Val::Result(Ok(Some(Box::new(Val::List(vec![item])))))
+        let element = Val::Record(vec![("outcome".into(), outcome)]);
+        Val::Result(Ok(Some(Box::new(Val::List(vec![element])))))
     }
 
     #[tokio::test]
@@ -418,13 +418,13 @@ mod tests {
     #[tokio::test]
     async fn typed_failure_drops_the_entire_owned_result() {
         let mut value = typed("one");
-        let Val::Result(Ok(Some(items))) = &mut value else {
+        let Val::Result(Ok(Some(elements))) = &mut value else {
             panic!("fixture outer result")
         };
-        let Val::List(items) = items.as_mut() else {
+        let Val::List(elements) = elements.as_mut() else {
             panic!("fixture outcomes")
         };
-        items.push(items[0].clone());
+        elements.push(elements[0].clone());
         let mut calls = 0;
         let result = sign_result(NativeOutcome::Typed(value), &reads("one"), |_, _| {
             calls += 1;

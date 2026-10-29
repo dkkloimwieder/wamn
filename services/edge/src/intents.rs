@@ -2,7 +2,7 @@
 //!
 //! The running edge holds the SQLite file, so these commands open it only when
 //! the edge is stopped. An uncertain intent began and never finished, so its
-//! item answers `intent-uncertain` until an operator resolves it here. After
+//! request element answers `intent-uncertain` until an operator resolves it here. After
 //! that, its key answers `intent-resolved` with the basis, and the caller sends
 //! a new key.
 

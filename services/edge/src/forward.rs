@@ -3,13 +3,13 @@
 //!
 //! Every attempt reads its samples from the store, so a retry never comes from
 //! memory, and a restart continues where the store says. The forward sends
-//! one sample per request, as the item `{"request_id": sample_key, "value":
+//! one sample per request, as the request element `{"request_id": sample_key, "value":
 //! body}`, and writes the sample key into the configured `key_field` too, so
 //! the platform's idempotency makes a repeated forward harmless. The outcome
 //! of each attempt is written to the sample's row:
 //!
-//! - An item with a value: the sample is forwarded.
-//! - An item error or another 4xx status: the sample is refused with the
+//! - A request element with a value: the sample is forwarded.
+//! - A request element error or another 4xx status: the sample is refused with the
 //!   platform's reason, and the forward never sends it again. An operator
 //!   resolves it (owner ruling, `wamn-e5in.9`).
 //! - No answer, a timeout, a 5xx status, or a 408 or 429 status: the sample
@@ -338,13 +338,13 @@ impl Forwarder {
     /// Send one sample and read what the platform did with it.
     async fn send(&self, sample: &Sample) -> Answer {
         let key = sample.sample_key.as_str();
-        let mut item = json!({"request_id": key, "value": sample.body});
+        let mut request_element = json!({"request_id": key, "value": sample.body});
         if let Some(field) = &self.key_field
-            && let Err(reason) = write_field(&mut item, field, key)
+            && let Err(reason) = write_field(&mut request_element, field, key)
         {
             return Answer::Refused(reason);
         }
-        let body = Value::Array(vec![item]).to_string();
+        let body = Value::Array(vec![request_element]).to_string();
         let request = hyper::Request::post(self.url.clone())
             .header(AUTHORIZATION, &self.authorization)
             .header(CONTENT_TYPE, "application/json")
@@ -370,11 +370,11 @@ impl Forwarder {
     }
 }
 
-/// Write `key` into the item at the dot path `field`, and create the objects
+/// Write `key` into the request element at the dot path `field`, and create the objects
 /// on the path that are missing.
-fn write_field(item: &mut Value, field: &str, key: &str) -> Result<(), String> {
+fn write_field(request_element: &mut Value, field: &str, key: &str) -> Result<(), String> {
     let mut names = field.split('.').peekable();
-    let mut target = item;
+    let mut target = request_element;
     while let Some(name) = names.next() {
         let object = target
             .as_object_mut()
@@ -411,16 +411,21 @@ fn answer(status: StatusCode, body: &[u8], key: &str) -> Answer {
     if !status.is_success() {
         return Answer::Refused(text());
     }
-    let items: Option<Vec<Value>> = serde_json::from_slice(body).ok();
-    let item = items.as_deref().and_then(|items| {
-        items
-            .iter()
-            .find(|item| item.get("request_id").and_then(Value::as_str) == Some(key))
+    let request_elements: Option<Vec<Value>> = serde_json::from_slice(body).ok();
+    let request_element = request_elements.as_deref().and_then(|request_elements| {
+        request_elements.iter().find(|request_element| {
+            request_element.get("request_id").and_then(Value::as_str) == Some(key)
+        })
     });
-    match item {
-        Some(item) if item.get("error").is_some() => Answer::Refused(item["error"].to_string()),
-        Some(item) if item.get("value").is_some() => Answer::Accepted,
-        _ => Answer::Unreachable(format!("the platform answered no item: {}", text())),
+    match request_element {
+        Some(request_element) if request_element.get("error").is_some() => {
+            Answer::Refused(request_element["error"].to_string())
+        }
+        Some(request_element) if request_element.get("value").is_some() => Answer::Accepted,
+        _ => Answer::Unreachable(format!(
+            "the platform answered no request element: {}",
+            text()
+        )),
     }
 }
 
@@ -433,11 +438,12 @@ mod tests {
 
     #[test]
     fn the_sample_key_is_written_into_the_key_field() {
-        let mut item = json!({"request_id": "k-1", "value": {"frame": "12.5 kg"}});
-        write_field(&mut item, "value.idempotency_key", "k-1").expect("a path of objects");
-        assert_eq!(item["value"]["idempotency_key"], "k-1");
-        write_field(&mut item, "idempotency_key", "k-1").expect("a top-level field");
-        assert_eq!(item["idempotency_key"], "k-1");
+        let mut request_element = json!({"request_id": "k-1", "value": {"frame": "12.5 kg"}});
+        write_field(&mut request_element, "value.idempotency_key", "k-1")
+            .expect("a path of objects");
+        assert_eq!(request_element["value"]["idempotency_key"], "k-1");
+        write_field(&mut request_element, "idempotency_key", "k-1").expect("a top-level field");
+        assert_eq!(request_element["idempotency_key"], "k-1");
 
         let mut scalar = json!({"request_id": "k-1", "value": 12.5});
         assert!(write_field(&mut scalar, "value.idempotency_key", "k-1").is_err());
@@ -445,9 +451,10 @@ mod tests {
 
     #[test]
     fn a_refusal_is_an_outcome_and_only_the_moment_is_retried() {
-        let item = |body: serde_json::Value| body.to_string().into_bytes();
-        let accepted = item(json!([{"request_id": "k", "value": {"id": 1}}]));
-        let refused = item(json!([{"request_id": "k", "error": {"code": "invalid_input"}}]));
+        let request_element = |body: serde_json::Value| body.to_string().into_bytes();
+        let accepted = request_element(json!([{"request_id": "k", "value": {"id": 1}}]));
+        let refused =
+            request_element(json!([{"request_id": "k", "error": {"code": "invalid_input"}}]));
         assert_eq!(answer(StatusCode::OK, &accepted, "k"), Answer::Accepted);
         assert!(matches!(
             answer(StatusCode::OK, &refused, "k"),

@@ -197,9 +197,9 @@ async fn call(
         .attachments()
         .find(|(_, attachment)| attachment.reference == format!("wamn-control:{operation}"))
         .expect("the control set serves the route");
-    // One request item, as a generated client sends it: a read carries its
+    // One request element, as a generated client sends it: a read carries its
     // input, and a write carries a request id and its input under `value`.
-    let item = if attachment.route.type_.is_read() {
+    let request_element = if attachment.route.type_.is_read() {
         payload
     } else {
         json!({"request_id": "control-route-test", "value": payload})
@@ -209,7 +209,7 @@ async fn call(
             DeliveryRequest {
                 source: Source::Attachment(id.to_owned()),
                 delivery_id: "control-route-test".to_owned(),
-                payload: json!([item]).to_string(),
+                payload: json!([request_element]).to_string(),
                 caller: None,
                 trace: None,
                 parent_causation: None,
@@ -227,13 +227,13 @@ async fn call(
         .await;
     match report.outcome {
         Ok(DeliveryOutcome::Respond(body)) => {
-            let [item]: [Value; 1] = serde_json::from_str(&body).expect("one outcome");
-            match item.get("error") {
+            let [request_element]: [Value; 1] = serde_json::from_str(&body).expect("one outcome");
+            match request_element.get("error") {
                 Some(error) => Err(refused(
                     error["code"].as_str().expect("a refusal has a code"),
                     &error["detail"],
                 )),
-                None => Ok(item["value"].clone()),
+                None => Ok(request_element["value"].clone()),
             }
         }
         Err(DeliveryError::PermissionDenied(denial)) => {

@@ -1,11 +1,11 @@
-//! The one query-string encoding of a read request item.
+//! The one query-string encoding of a read request element.
 //!
-//! A read route is an HTTP GET, so its one request item travels in the query
+//! A read route is an HTTP GET, so its one request element travels in the query
 //! string (`docs/architecture/execution.md`). Each top-level member is one
 //! parameter. Its value is the canonical JSON text of the member, strings
 //! included, so a decoder needs no schema. Parameters stand in byte order of
 //! their names, and every byte outside the RFC 3986 unreserved set is escaped
-//! as `%XX` with uppercase hex. Equal items therefore give equal URLs, which a
+//! as `%XX` with uppercase hex. Equal request elements therefore give equal URLs, which a
 //! cache keys on.
 
 use std::fmt::Write as _;
@@ -14,7 +14,7 @@ use serde_json::{Map, Value};
 
 use crate::canonical_json_bytes;
 
-/// Why a query string is not the canonical encoding of a read item.
+/// Why a query string is not the canonical encoding of a read request element.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReadQueryError {
     /// A parameter has no `=`, or an escape is not `%` and two uppercase hex digits.
@@ -23,7 +23,7 @@ pub enum ReadQueryError {
     NotUtf8,
     /// A value is not JSON.
     NotJson,
-    /// The query string decodes, but encoding its item gives other bytes: a
+    /// The query string decodes, but encoding its request element gives other bytes: a
     /// parameter repeats, stands out of order, or is escaped or spelled
     /// differently.
     NotCanonical,
@@ -35,21 +35,24 @@ impl std::fmt::Display for ReadQueryError {
             Self::Malformed => "the query string is malformed",
             Self::NotUtf8 => "a query parameter name is not UTF-8",
             Self::NotJson => "a query parameter value is not JSON",
-            Self::NotCanonical => "the query string is not the canonical encoding of its item",
+            Self::NotCanonical => {
+                "the query string is not the canonical encoding of its request element"
+            }
         })
     }
 }
 
 impl std::error::Error for ReadQueryError {}
 
-/// Encode one read item as its canonical query string, without the leading `?`.
+/// Encode one read request element as its canonical query string, without the leading
+/// `?`.
 ///
-/// An item with no members gives the empty string.
-pub fn encode_read_query(item: &Map<String, Value>) -> String {
+/// A request element with no members gives the empty string.
+pub fn encode_read_query(request_element: &Map<String, Value>) -> String {
     let mut query = String::new();
     // Sort the names here: with `preserve_order` a serde_json map keeps
     // insertion order (wamn-g1jd).
-    let mut members: Vec<_> = item.iter().collect();
+    let mut members: Vec<_> = request_element.iter().collect();
     members.sort_unstable_by_key(|(name, _)| *name);
     for (name, value) in members {
         if !query.is_empty() {
@@ -62,27 +65,27 @@ pub fn encode_read_query(item: &Map<String, Value>) -> String {
     query
 }
 
-/// Decode a query string that must be the canonical encoding of one read item.
+/// Decode a query string that must be the canonical encoding of one read request element.
 ///
 /// # Errors
 ///
 /// Returns [`ReadQueryError`] when the query string is not exactly what
-/// [`encode_read_query`] writes for the item it decodes to.
+/// [`encode_read_query`] writes for the request element it decodes to.
 pub fn decode_read_query(query: &str) -> Result<Map<String, Value>, ReadQueryError> {
-    let mut item = Map::new();
+    let mut request_element = Map::new();
     if !query.is_empty() {
         for parameter in query.split('&') {
             let (name, value) = parameter.split_once('=').ok_or(ReadQueryError::Malformed)?;
             let name = String::from_utf8(unescape(name)?).map_err(|_| ReadQueryError::NotUtf8)?;
             let value = serde_json::from_slice::<Value>(&unescape(value)?)
                 .map_err(|_| ReadQueryError::NotJson)?;
-            item.insert(name, value);
+            request_element.insert(name, value);
         }
     }
-    if encode_read_query(&item) != query {
+    if encode_read_query(&request_element) != query {
         return Err(ReadQueryError::NotCanonical);
     }
-    Ok(item)
+    Ok(request_element)
 }
 
 fn escape(bytes: &[u8], out: &mut String) {
@@ -135,11 +138,16 @@ mod tests {
         let vectors: Vec<Value> = serde_json::from_str(VECTORS).expect("vector file is JSON");
         assert!(!vectors.is_empty());
         for vector in vectors {
-            let item: Map<String, Value> =
-                serde_json::from_value(vector["item"].clone()).expect("vector item is an object");
+            let request_element: Map<String, Value> =
+                serde_json::from_value(vector["item"].clone())
+                    .expect("vector request element is an object");
             let query = vector["query"].as_str().expect("vector query is a string");
-            assert_eq!(encode_read_query(&item), query, "{vector}");
-            assert_eq!(decode_read_query(query).as_ref(), Ok(&item), "{vector}");
+            assert_eq!(encode_read_query(&request_element), query, "{vector}");
+            assert_eq!(
+                decode_read_query(query).as_ref(),
+                Ok(&request_element),
+                "{vector}"
+            );
         }
     }
 

@@ -9,14 +9,14 @@
 
 use serde_json::{Map, Value, json};
 
-use super::wit::{CRUD_ITEMS_MAXIMUM, CRUD_ITEMS_MINIMUM};
+use super::wit::{CRUD_REQUEST_ELEMENTS_MAXIMUM, CRUD_REQUEST_ELEMENTS_MINIMUM};
 
 /// A canonical hyphenated UUID, the form every generated client sends.
 const UUID_PATTERN: &str = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$";
 
 /// The route input schema of one generated operation, from its input contract.
 pub(super) fn route_input_schema(contract: &Value) -> Value {
-    let mut item = ObjectSchema::default();
+    let mut request_element_schema = ObjectSchema::default();
     // Every top-level member that states a type is one input: the request
     // identity, the key, the idempotency key and the revision.
     for (name, member) in contract.as_object().into_iter().flatten() {
@@ -29,7 +29,7 @@ pub(super) fn route_input_schema(contract: &Value) -> Value {
             continue;
         };
         let required = member.get("required").and_then(Value::as_bool) == Some(true);
-        item.insert(name, present(scalar(ty), ty, required), required);
+        request_element_schema.insert(name, present(scalar(ty), ty, required), required);
     }
     for writable in members(contract, "writable_fields") {
         let (Some(path), Some(ty)) = (
@@ -42,8 +42,10 @@ pub(super) fn route_input_schema(contract: &Value) -> Value {
         let schema = present(nullable(writable, ty), ty, required);
         match path.split_once('.') {
             // A group, such as an update's `change`, is always sent.
-            Some((group, name)) => item.group(group).insert(name, schema, required),
-            None => item.insert(path, schema, required),
+            Some((group, name)) => request_element_schema
+                .group(group)
+                .insert(name, schema, required),
+            None => request_element_schema.insert(path, schema, required),
         }
     }
     let mut filter = ObjectSchema::default();
@@ -79,14 +81,14 @@ pub(super) fn route_input_schema(contract: &Value) -> Value {
     }
     if !filter.properties.is_empty() {
         let required = !filter.required.is_empty();
-        item.insert("filter", filter.into_value(), required);
+        request_element_schema.insert("filter", filter.into_value(), required);
     }
     // A search is one string, and an empty one would match every row.
     if contract.get("search").is_some_and(Value::is_object) {
-        item.insert("search", json!({"type": "string", "minLength": 1}), false);
+        request_element_schema.insert("search", json!({"type": "string", "minLength": 1}), false);
     }
     if let Some(sort) = contract.get("sort").filter(|sort| sort.is_object()) {
-        item.insert(
+        request_element_schema.insert(
             "sort",
             json!({
                 "type": "object",
@@ -102,10 +104,10 @@ pub(super) fn route_input_schema(contract: &Value) -> Value {
     }
     // The cursor is an opaque token the previous page returned.
     if contract.get("pagination").is_some_and(Value::is_object) {
-        item.insert("cursor", json!({"type": "string", "minLength": 1}), false);
+        request_element_schema.insert("cursor", json!({"type": "string", "minLength": 1}), false);
     }
     if let Some(limit) = contract.get("limit").filter(|limit| limit.is_object()) {
-        item.insert(
+        request_element_schema.insert(
             "limit",
             json!({"type": "integer", "minimum": limit["minimum"], "maximum": limit["maximum"]}),
             false,
@@ -113,7 +115,7 @@ pub(super) fn route_input_schema(contract: &Value) -> Value {
     }
     // The feed part reads the changes since its cursor in place of a page.
     if let Some(feed) = contract.get("feed").filter(|feed| feed.is_object()) {
-        item.insert(
+        request_element_schema.insert(
             "feed",
             json!({
                 "type": "object",
@@ -132,9 +134,9 @@ pub(super) fn route_input_schema(contract: &Value) -> Value {
     }
     json!({
         "type": "array",
-        "minItems": CRUD_ITEMS_MINIMUM,
-        "maxItems": CRUD_ITEMS_MAXIMUM,
-        "items": item.into_value(),
+        "minItems": CRUD_REQUEST_ELEMENTS_MINIMUM,
+        "maxItems": CRUD_REQUEST_ELEMENTS_MAXIMUM,
+        "items": request_element_schema.into_value(),
     })
 }
 

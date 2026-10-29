@@ -14,10 +14,10 @@ use crate::client_fields::input_fields_of;
 use crate::client_ir::FieldIr;
 use crate::manifest::{FilterMatch, OperationErrorDetailKey, authored_name, serde_field};
 
-/// How many items one generated CRUD call carries. The codec refuses any
+/// How many request elements one generated CRUD call carries. The codec refuses any
 /// other count, and the route input schema states the same bounds.
-pub(super) const CRUD_ITEMS_MINIMUM: u32 = 1;
-pub(super) const CRUD_ITEMS_MAXIMUM: u32 = 100;
+pub(super) const CRUD_REQUEST_ELEMENTS_MINIMUM: u32 = 1;
+pub(super) const CRUD_REQUEST_ELEMENTS_MAXIMUM: u32 = 100;
 
 /// Emit typed boundaries for every declared model operation.
 pub(super) fn emit_model_wit(
@@ -433,7 +433,12 @@ fn emit_update_codec(
     min_lengths: &BTreeMap<String, u32>,
     details: &BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration>,
 ) -> String {
-    let mut source = codec_prelude("UpdateItem", CRUD_ITEMS_MINIMUM, CRUD_ITEMS_MAXIMUM, true);
+    let mut source = codec_prelude(
+        "UpdateItem",
+        CRUD_REQUEST_ELEMENTS_MINIMUM,
+        CRUD_REQUEST_ELEMENTS_MAXIMUM,
+        true,
+    );
     let revision = operation
         .revision_field
         .as_deref()
@@ -574,8 +579,8 @@ fn emit_crud_codec(
     let type_name = rust_type_identifier(action.as_str());
     let mut source = codec_prelude(
         &format!("{type_name}Item"),
-        CRUD_ITEMS_MINIMUM,
-        CRUD_ITEMS_MAXIMUM,
+        CRUD_REQUEST_ELEMENTS_MINIMUM,
+        CRUD_REQUEST_ELEMENTS_MAXIMUM,
         crud_is_keyed(action),
     );
     source.push_str(&emit_crud_json_codec(
@@ -1313,7 +1318,7 @@ fn emit_crud_encoder(
 ) {
     let type_name = rust_type_identifier(action.as_str());
     let key = outcome_key_member(crud_is_keyed(action));
-    writeln!(source, "pub(crate) fn encode(output: &[contract::{type_name}Outcome]) -> String {{\n    let values = output.iter().map(|item| match &item.outcome {{\n        Ok(value) => json!({{ {key}\"value\":")
+    writeln!(source, "pub(crate) fn encode(output: &[contract::{type_name}Outcome]) -> String {{\n    let values = output.iter().map(|request_element| match &request_element.outcome {{\n        Ok(value) => json!({{ {key}\"value\":")
         .expect("writing to a String cannot fail");
     match operation.result {
         ResultClass::One => emit_json_row(source, fields, "value.value", 12),
@@ -1371,7 +1376,7 @@ fn emit_json_row_fields(source: &mut String, fields: &[ContractFieldDeclaration]
 
 fn emit_handler(type_name: &str, keyed: bool) -> String {
     let key = if keyed {
-        "request_id: item.request_id, "
+        "request_id: request_element.request_id, "
     } else {
         ""
     };
@@ -1383,8 +1388,8 @@ where
     F: AsyncFnMut(&mut S, contract::{type_name}Request) -> Result<contract::{type_name}Result, contract::{type_name}Error>,
 {{
     let mut output = Vec::with_capacity(input.len());
-    for item in input {{
-        let outcome = match item.input {{
+    for request_element in input {{
+        let outcome = match request_element.input {{
             Ok(mut request) => match normalize(&mut request) {{
                 Ok(()) => handler(state, request).await,
                 Err(error) => Err(contract::{type_name}Error::InvalidInput(error)),
@@ -1411,32 +1416,33 @@ fn emit_codec_support(files: &mut BTreeMap<String, Vec<u8>>) -> Result<(), Gener
     Ok(())
 }
 
-fn codec_prelude(item: &str, minimum: u32, maximum: u32, keyed: bool) -> String {
+fn codec_prelude(request_element_type: &str, minimum: u32, maximum: u32, keyed: bool) -> String {
     let key_check = if keyed {
-        "\n    if input.iter().any(|item| item.request_id.is_empty()) {\n        return Err(CodecError(\"every operation item must carry a nonempty string request_id\"));\n    }"
+        "\n    if input.iter().any(|request_element| request_element.request_id.is_empty()) {\n        return Err(CodecError(\"every operation request element must carry a nonempty string request_id\"));\n    }"
     } else {
         ""
     };
     format!(
-        "// @generated from operation declarations; do not edit.\n\ninclude!(\"operation_codec.rs\");\ntype Item = contract::{item};\nconst MINIMUM: usize = {minimum};\nconst MAXIMUM: usize = {maximum};\nconst COUNT_ERROR: &str = \"operation input item count must be {minimum}..={maximum}\";\n\n#[allow(dead_code)]\npub(crate) fn validate(input: &[Item]) -> Result<(), CodecError> {{\n    validate_count(input.len())?;{key_check}\n    Ok(())\n}}\n\n"
+        "// @generated from operation declarations; do not edit.\n\ninclude!(\"operation_codec.rs\");\ntype RequestElement = contract::{request_element_type};\nconst MINIMUM: usize = {minimum};\nconst MAXIMUM: usize = {maximum};\nconst COUNT_ERROR: &str = \"operation input request element count must be {minimum}..={maximum}\";\n\n#[allow(dead_code)]\npub(crate) fn validate(input: &[RequestElement]) -> Result<(), CodecError> {{\n    validate_count(input.len())?;{key_check}\n    Ok(())\n}}\n\n"
     )
 }
 
-/// Whether the items of a generated CRUD operation carry a `request_id`.
+/// Whether the request elements of a generated CRUD operation carry a `request_id`.
 ///
-/// A read carries none (`docs/architecture/execution.md`): its one item travels in a
-/// GET query string, and its outcomes match its items by list position.
+/// A read carries none (`docs/architecture/execution.md`): its one request element
+/// travels in a GET query string, and its outcomes match its request elements by list
+/// position.
 fn crud_is_keyed(action: CrudAction) -> bool {
     !matches!(action, CrudAction::Get | CrudAction::Query)
 }
 
-/// Whether the items of a custom operation carry a `request_id`: every kind
+/// Whether the request elements of a custom operation carry a `request_id`: every kind
 /// but a projection, which is a read.
 fn custom_is_keyed(operation: &CustomOperationDeclaration) -> bool {
     operation.type_ != crate::manifest::CustomOperationType::Projection
 }
 
-/// The WIT field that keys an item or an outcome, or nothing for a read.
+/// The WIT field that keys a request element or an outcome, or nothing for a read.
 fn request_key_field(keyed: bool) -> &'static str {
     if keyed {
         "    request-id: string,\n"
@@ -1448,13 +1454,13 @@ fn request_key_field(keyed: bool) -> &'static str {
 /// The JSON member that keys an encoded outcome, or nothing for a read.
 fn outcome_key_member(keyed: bool) -> &'static str {
     if keyed {
-        "\"request_id\": item.request_id, "
+        "\"request_id\": request_element.request_id, "
     } else {
         ""
     }
 }
 
-/// The start of a decode loop, and the key field its item takes.
+/// The start of a decode loop, and the key field its request element takes.
 fn decode_envelope_parts(keyed: bool) -> (&'static str, &'static str) {
     if keyed {
         (
@@ -1482,13 +1488,13 @@ fn decode_envelope(input: &str) -> Result<Vec<(String, Value)>, CodecError> {
     validate_count(values.len())?;
     values.into_iter().map(|value| {
         let Value::Object(mut object) = value else {
-            return Err(CodecError("every operation item must be a JSON object"));
+            return Err(CodecError("every operation request element must be a JSON object"));
         };
         let Some(Value::String(request_id)) = object.remove("request_id") else {
-            return Err(CodecError("every operation item must carry a nonempty string request_id"));
+            return Err(CodecError("every operation request element must carry a nonempty string request_id"));
         };
         if request_id.is_empty() {
-            return Err(CodecError("every operation item must carry a nonempty string request_id"));
+            return Err(CodecError("every operation request element must carry a nonempty string request_id"));
         }
         Ok((request_id, Value::Object(object)))
     }).collect()
@@ -1502,7 +1508,7 @@ fn decode_read_envelope(input: &str) -> Result<Vec<Value>, CodecError> {
     validate_count(values.len())?;
     values.into_iter().map(|value| match value {
         Value::Object(_) => Ok(value),
-        _ => Err(CodecError("every operation item must be a JSON object")),
+        _ => Err(CodecError("every operation request element must be a JSON object")),
     }).collect()
 }
 "#;
@@ -1624,17 +1630,17 @@ const UPDATE_CODEC_VALIDATE_PREFIX: &str = r#"                        },
 "#;
 
 const UPDATE_CODEC_ENCODE_PREFIX: &str = r#"pub(crate) fn encode(output: &[contract::UpdateOutcome]) -> String {
-    let values = output.iter().map(|item| {
-        match &item.outcome {
+    let values = output.iter().map(|request_element| {
+        match &request_element.outcome {
             Ok(value) => json!({
-                "request_id": item.request_id,
+                "request_id": request_element.request_id,
                 "value": {
 "#;
 
 const UPDATE_CODEC_ERROR_PREFIX: &str = r#"                }
             }),
             Err(error) => json!({
-                "request_id": item.request_id,
+                "request_id": request_element.request_id,
                 "error": error_value(error),
             }),
         }
@@ -2197,9 +2203,9 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
     // No application name reaches this file.
     source.push_str("pub(crate) fn encode(output: &[contract::");
     source.push_str(&type_name);
-    source.push_str("Outcome]) -> String {\n    let values = output.iter().map(|item| {\n        match &item.outcome {\n            Ok(value) => json!({\n");
+    source.push_str("Outcome]) -> String {\n    let values = output.iter().map(|request_element| {\n        match &request_element.outcome {\n            Ok(value) => json!({\n");
     if keyed {
-        source.push_str("                \"request_id\": item.request_id,\n");
+        source.push_str("                \"request_id\": request_element.request_id,\n");
     }
     source.push_str("                \"value\": ");
     if operation.feed == Some(true) {
@@ -2249,7 +2255,7 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
     }
     source.push_str("            }),\n            Err(error) => json!({\n");
     if keyed {
-        source.push_str("                \"request_id\": item.request_id,\n");
+        source.push_str("                \"request_id\": request_element.request_id,\n");
     }
     source.push_str(CUSTOM_CODEC_ERROR_HEAD);
     source.push_str(&type_name);

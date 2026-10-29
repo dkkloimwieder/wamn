@@ -17,7 +17,7 @@
 //!   contract;
 //! - **failure** — [`WiringFailureKind`], the frozen `failure-code` literals;
 //! - **read query** — [`encode_read_query`] / [`decode_read_query`], the one
-//!   query-string encoding of a read request item.
+//!   query-string encoding of a read request element.
 
 mod canonical_scalar;
 mod effect_outcome;

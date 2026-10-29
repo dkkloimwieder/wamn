@@ -16,7 +16,7 @@ use wamn_postgres_statements::{Json, StatementError, TimestampTz, Transaction, U
 use crate::error::{AccessError, AccessErrorType, AllowedConstraints};
 use crate::statements::wamn::receiving_record_receipt as generated;
 
-/// Maximum number of receipt facts in one command item.
+/// Maximum number of receipt facts in one command request element.
 pub const MAX_RECORD_RECEIPT_LINES: usize = 100;
 /// Raw request ceiling enforced by ingress before JSON parsing.
 pub const MAX_RECORD_RECEIPT_BODY_BYTES: usize = 1_048_576;
@@ -323,7 +323,7 @@ impl From<StatementError> for RecordReceiptError {
     }
 }
 
-/// Execute one item in the transaction the codec holds for the write log.
+/// Execute one request element in the transaction the codec holds for the write log.
 pub async fn execute(
     transaction: &mut Transaction,
     command: &RecordReceiptValue,

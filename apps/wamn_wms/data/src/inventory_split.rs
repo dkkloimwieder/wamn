@@ -14,7 +14,7 @@ use crate::error::{self, AccessError, AccessErrorType};
 use crate::scalar;
 use crate::statements::wamn::inventory_split as sql;
 
-/// One envelope item's command body.
+/// One request element's command body.
 #[derive(Debug, Deserialize)]
 pub struct SplitCommand {
     pub source_packaging_id: String,
@@ -73,7 +73,7 @@ fn parse(command: &SplitCommand) -> Result<Parsed, AccessError> {
     })
 }
 
-/// Run one command item in the transaction its codec holds for the write log.
+/// Run one command request element in the transaction its codec holds for the write log.
 ///
 /// # Errors
 ///

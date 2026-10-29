@@ -221,7 +221,7 @@ pub struct ForwardConfig {
     /// PEM certificates that the forward trusts beside the system roots.
     #[serde(default)]
     pub ca_file: Option<PathBuf>,
-    /// The item field of the platform route's idempotency key, such as
+    /// The request element field of the platform route's idempotency key, such as
     /// `value.idempotency_key`. The forward writes the sample key into it.
     #[serde(default)]
     pub key_field: Option<String>,

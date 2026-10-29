@@ -25,8 +25,8 @@ pub(super) fn validate_read_limits(
     };
     let input: Value = serde_json::from_str(payload)
         .map_err(|_| super::SchemaInvalid::from_refusal(String::new()))?;
-    for (index, item) in input.as_array().into_iter().flatten().enumerate() {
-        if let Some(limit) = item.get("limit")
+    for (index, request_element) in input.as_array().into_iter().flatten().enumerate() {
+        if let Some(limit) = request_element.get("limit")
             && !limit.as_u64().is_some_and(|limit| {
                 limits
                     .page_minimum
@@ -41,7 +41,7 @@ pub(super) fn validate_read_limits(
             )));
         }
         for band in &limits.band_starts {
-            let value = item
+            let value = request_element
                 .get("filter")
                 .and_then(|filter| filter.get(&band.field));
             if (band.required || value.is_some())
@@ -129,9 +129,11 @@ async fn execute(
                     .map_err(|error| boundary(&error, operation_id))?;
                 if let Some(inputs) = &route.etag_inputs
                     && let EtagKind::Get(field) = &inputs.kind
-                    && let Some(items) = result.as_array()
-                    && let [item] = items.as_slice()
-                    && let Some(revision) = item.get("value").and_then(|value| value.get(field))
+                    && let Some(request_elements) = result.as_array()
+                    && let [request_element] = request_elements.as_slice()
+                    && let Some(revision) = request_element
+                        .get("value")
+                        .and_then(|value| value.get(field))
                     && (revision.is_number() || revision.is_string())
                 {
                     *etag = Some(format!(
@@ -152,27 +154,33 @@ async fn execute(
             }
         }
     };
-    let Some(items) = input.as_array_mut() else {
-        return Ok(invalid("the input is not an item list"));
+    let Some(request_elements) = input.as_array_mut() else {
+        return Ok(invalid("the input is not a request element list"));
     };
     let mut keys = HashSet::new();
-    for item in items.iter_mut() {
+    for request_element in request_elements.iter_mut() {
         if let Some(rule) = &route.request_hash_rule {
-            canonicalize(item, rule);
+            canonicalize(request_element, rule);
         }
-        let Some(key) = field(item, key_field).and_then(Value::as_str) else {
-            return Ok(invalid(&format!("an item has no {key_field}")));
+        let Some(key) = field(request_element, key_field).and_then(Value::as_str) else {
+            return Ok(invalid(&format!("a request element has no {key_field}")));
         };
-        if item.get("request_id").and_then(Value::as_str).is_none() || !keys.insert(key.to_owned())
+        if request_element
+            .get("request_id")
+            .and_then(Value::as_str)
+            .is_none()
+            || !keys.insert(key.to_owned())
         {
             return Ok(invalid(
-                "an item has no request_id or repeats its idempotency key",
+                "a request element has no request_id or repeats its idempotency key",
             ));
         }
     }
-    let mut answers = Vec::with_capacity(items.len());
-    for item in items.iter() {
-        let request_id = item["request_id"].as_str().expect("request id checked");
+    let mut answers = Vec::with_capacity(request_elements.len());
+    for request_element in request_elements.iter() {
+        let request_id = request_element["request_id"]
+            .as_str()
+            .expect("request id checked");
         if remaining_ms(deadline) == 0 {
             answers.push(
                 json!({"request_id": request_id, "error": {
@@ -182,10 +190,10 @@ async fn execute(
             );
             continue;
         }
-        let key = field(item, key_field)
+        let key = field(request_element, key_field)
             .and_then(Value::as_str)
             .expect("key checked");
-        let mut hashed = item.clone();
+        let mut hashed = request_element.clone();
         if let Some(rule) = &route.request_hash_rule {
             for path in &rule.excluded {
                 remove(&mut hashed, &path.split('.').collect::<Vec<_>>());
@@ -215,7 +223,7 @@ async fn execute(
                 let result = call(
                     operation_id,
                     context(request, delivery_id, remaining_ms(deadline)),
-                    json!([item]).to_string(),
+                    json!([request_element]).to_string(),
                 )
                 .await;
                 let result = match result {
@@ -235,7 +243,7 @@ async fn execute(
                             .map_err(|error| boundary(&error, operation_id))?;
                         answers.push(json!({"request_id": request_id, "error": {
                             "code": "internal_error",
-                            "message": format!("the export answered nothing for item {request_id}"),
+                            "message": format!("the export answered nothing for request element {request_id}"),
                             "detail": null,
                         }}).to_string());
                         continue;
@@ -244,7 +252,7 @@ async fn execute(
                         operation::rollback()
                             .await
                             .map_err(|error| boundary(&error, operation_id))?;
-                        if items.len() == 1 {
+                        if request_elements.len() == 1 {
                             return Ok(node_failure(error));
                         }
                         let detail = match error {
@@ -424,10 +432,10 @@ fn field<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
     path.split('.').try_fold(value, |value, key| value.get(key))
 }
 
-fn canonicalize(item: &mut Value, rule: &RequestHashRule) {
+fn canonicalize(request_element: &mut Value, rule: &RequestHashRule) {
     for spelling in &rule.spelling {
         respell(
-            item,
+            request_element,
             &spelling.path.split('.').collect::<Vec<_>>(),
             spelling.spelling,
         );
@@ -436,7 +444,7 @@ fn canonicalize(item: &mut Value, rule: &RequestHashRule) {
         && let Some(Value::Array(lines)) = order
             .path
             .split('.')
-            .try_fold(item, |value, key| value.get_mut(key))
+            .try_fold(request_element, |value, key| value.get_mut(key))
     {
         lines.sort_by_cached_key(|line| {
             line.get(&order.ascending_by)
@@ -461,9 +469,9 @@ fn respell(value: &mut Value, path: &[&str], spelling: CanonicalSpelling) {
         return;
     };
     if let Some(name) = first.strip_suffix("[]") {
-        if let Some(Value::Array(items)) = value.get_mut(name) {
-            for item in items {
-                respell(item, rest, spelling);
+        if let Some(Value::Array(request_elements)) = value.get_mut(name) {
+            for request_element in request_elements {
+                respell(request_element, rest, spelling);
             }
         }
     } else if let Some(value) = value.get_mut(*first) {
@@ -481,9 +489,9 @@ fn remove(value: &mut Value, path: &[&str]) {
         }
         [first, rest @ ..] => {
             if let Some(name) = first.strip_suffix("[]") {
-                if let Some(Value::Array(items)) = value.get_mut(name) {
-                    for item in items {
-                        remove(item, rest);
+                if let Some(Value::Array(request_elements)) = value.get_mut(name) {
+                    for request_element in request_elements {
+                        remove(request_element, rest);
                     }
                 }
             } else if let Some(value) = value.get_mut(*first) {

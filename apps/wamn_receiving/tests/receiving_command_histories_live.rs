@@ -126,45 +126,46 @@ impl Route {
     }
 }
 
-fn item(response: &Response, request_id: &str) -> Result<Value> {
+fn request_element(response: &Response, request_id: &str) -> Result<Value> {
     ensure!(
         response.status == reqwest::StatusCode::OK,
         "command {request_id}: status={} body={}",
         response.status,
         response.body
     );
-    let items = response
+    let request_elements = response
         .body
         .as_array()
         .context("response is not an array")?;
     ensure!(
-        items.len() == 1,
-        "command {request_id} returned {} items",
-        items.len()
+        request_elements.len() == 1,
+        "command {request_id} returned {} request elements",
+        request_elements.len()
     );
     ensure!(
-        items[0]["request_id"] == request_id,
+        request_elements[0]["request_id"] == request_id,
         "response lost request identity"
     );
-    Ok(items[0].clone())
+    Ok(request_elements[0].clone())
 }
 
 fn succeeded(response: &Response, request_id: &str) -> Result<Value> {
-    let item = item(response, request_id)?;
+    let request_element = request_element(response, request_id)?;
     ensure!(
-        item.get("error").is_none(),
-        "command {request_id} refused: {item}"
+        request_element.get("error").is_none(),
+        "command {request_id} refused: {request_element}"
     );
-    item.get("value")
+    request_element
+        .get("value")
         .cloned()
-        .context("successful item has no value")
+        .context("successful request element has no value")
 }
 
 fn refused(response: &Response, request_id: &str, code: &str) -> Result<()> {
-    let item = item(response, request_id)?;
+    let request_element = request_element(response, request_id)?;
     ensure!(
-        item["error"]["code"] == code && item.get("value").is_none(),
-        "command {request_id} expected {code}: {item}"
+        request_element["error"]["code"] == code && request_element.get("value").is_none(),
+        "command {request_id} expected {code}: {request_element}"
     );
     Ok(())
 }
@@ -421,8 +422,8 @@ async fn history(db: &Client, route: &Route, history: &History, evidence: &mut F
                 refusal: response
                     .body
                     .as_array()
-                    .and_then(|items| items.first())
-                    .and_then(|item| item["error"]["code"].as_str())
+                    .and_then(|request_elements| request_elements.first())
+                    .and_then(|request_element| request_element["error"]["code"].as_str())
                     .map(str::to_owned),
             };
             ensure!(
@@ -630,7 +631,7 @@ async fn invalid_status(db: &Client, route: &Route, evidence: &mut File) -> Resu
     )
 }
 
-async fn mixed_items(db: &Client, route: &Route, evidence: &mut File) -> Result<()> {
+async fn mixed_request_elements(db: &Client, route: &Route, evidence: &mut File) -> Result<()> {
     let fixture = seed(db, [3, 1], "open").await?;
     let commands = [
         Receipt {
@@ -659,18 +660,18 @@ async fn mixed_items(db: &Client, route: &Route, evidence: &mut File) -> Result<
             .collect(),
     );
     let response = route.post(RECEIPT_PATH, &body).await?;
-    let items = response
+    let request_elements = response
         .body
         .as_array()
         .context("mixed envelope is not an array")?;
     ensure!(
-        items.len() == 3,
-        "mixed envelope did not settle three command items"
+        request_elements.len() == 3,
+        "mixed envelope did not settle three command request elements"
     );
-    for (index, item) in items.iter().enumerate() {
+    for (index, request_element) in request_elements.iter().enumerate() {
         let individual = Response {
             status: response.status,
-            body: json!([item]),
+            body: json!([request_element]),
         };
         let request = format!("item-{index}");
         if index == 1 {
@@ -680,7 +681,7 @@ async fn mixed_items(db: &Client, route: &Route, evidence: &mut File) -> Result<
             let revision = if index == 0 { 2 } else { 3 };
             ensure!(
                 value["row_version"] == revision,
-                "mixed item result lost its own transaction"
+                "mixed request element result lost its own transaction"
             );
         }
     }
@@ -751,12 +752,17 @@ async fn competing_receipts(
             "REC-REPLAY overlapping same-key calls changed the original result"
         );
     } else {
-        let a_item = item(&a, "competing-a")?;
-        let b_item = item(&b, "competing-b")?;
-        match (a_item.get("value"), b_item.get("value")) {
+        let a_request_element = request_element(&a, "competing-a")?;
+        let b_request_element = request_element(&b, "competing-b")?;
+        match (
+            a_request_element.get("value"),
+            b_request_element.get("value"),
+        ) {
             (Some(_), None) => refused(&b, "competing-b", "quantity_exceeds_remaining")?,
             (None, Some(_)) => refused(&a, "competing-a", "quantity_exceeds_remaining")?,
-            _ => anyhow::bail!("REC-CONTENTION expected exactly one commit: {a_item}, {b_item}"),
+            _ => anyhow::bail!(
+                "REC-CONTENTION expected exactly one commit: {a_request_element}, {b_request_element}"
+            ),
         }
     }
     assert_state(&snapshot(db, &fixture).await?, [2, 0], "open", 2, 1)?;
@@ -1188,7 +1194,7 @@ pub(crate) fn assert_histories_with_cancellation(
     }
     run_before(&runtime, deadline, cancellation, async {
         invalid_status(&db.client, &route, &mut evidence).await?;
-        mixed_items(&db.client, &route, &mut evidence).await?;
+        mixed_request_elements(&db.client, &route, &mut evidence).await?;
         competing_receipts(&db.client, &route, inputs, &mut evidence, false).await?;
         competing_receipts(&db.client, &route, inputs, &mut evidence, true).await?;
         rollback_after_write(&db.client, &route, inputs, &mut evidence).await?;

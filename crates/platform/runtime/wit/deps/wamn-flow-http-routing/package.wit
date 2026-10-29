@@ -97,7 +97,7 @@ interface routing {
     cache-control: option<string>,
     /// None for host routes and wiring attachments, which use router-delivery.
     sealed-operation-id: option<string>,
-    /// The dotted item path of the key. None means this route logs no intent.
+    /// The dotted request element path of the key. None means this route logs no intent.
     idempotency-rule: option<string>,
     request-hash-rule: option<request-hash-rule>,
     etag-inputs: option<etag-inputs>,

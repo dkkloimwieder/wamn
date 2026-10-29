@@ -87,7 +87,7 @@ impl core::fmt::Display for NoRole {
     }
 }
 
-/// The item field that carries the idempotency key of one operation, from its
+/// The request element field that carries the idempotency key of one operation, from its
 /// generated input contract, or `None` when the contract declares no key.
 ///
 /// Publish writes it into the operation's route, so the route host and a
@@ -105,13 +105,13 @@ pub fn idempotency_field(input_contract: &serde_json::Value) -> Option<String> {
         .map(|field| field.path.clone())
 }
 
-/// The canonical form of one operation's input item, from its generated input
+/// The canonical form of one operation's input request element, from its generated input
 /// contract, or `None` when the contract declares nothing to canonicalize.
 ///
 /// Every `numeric` and `timestamptz` leaf takes its canonical spelling. The
 /// `canonicalization` of the contract adds its excluded fields, without the
 /// `request_id` and the key, and its line order. Publish writes it into the
-/// operation's route, and the host applies it before it hashes an item
+/// operation's route, and the host applies it before it hashes a request element
 /// (`docs/history/host-transaction.md` 7, ruling (a)).
 #[must_use]
 pub fn route_canonicalization(
@@ -436,7 +436,7 @@ pub struct RowForm<'a> {
     /// input of the form names the filled input in its `revision` and this
     /// screen shows the field that carries it: the result field of this
     /// screen, and the revision input of that form. A form that sends one
-    /// item for each of many rows sends each row's own revision this way.
+    /// request element for each of many rows sends each row's own revision this way.
     pub revision: Option<(&'a str, &'a str)>,
 }
 

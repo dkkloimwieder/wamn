@@ -84,7 +84,7 @@ pub(crate) enum Refusal {
     /// A delivery refusal, such as a caller without `org-admin`.
     Delivery(DeliveryError),
     /// A refusal that the route's contract declares: its code and its
-    /// detail, answered as the error of the request item.
+    /// detail, answered as the error of the request element.
     Declared { code: &'static str, detail: Value },
     /// A failure of the host or of a service it calls.
     Failed(anyhow::Error),

@@ -158,21 +158,24 @@ mod tests {
     use wamn_postgres_statements::{Numeric, Uuid};
 
     #[test]
-    fn a_read_item_carries_no_request_id() {
-        let items = get::decode(
+    fn a_read_request_element_carries_no_request_id() {
+        let request_elements = get::decode(
             r#"[
             {"request_id":"first","id":"00000000-0000-0000-0000-000000000001"},
             {"id":"00000000-0000-0000-0000-000000000002"}
         ]"#,
         )
         .unwrap();
-        assert!(items[0].input.is_err(), "a read refuses a request identity");
-        assert!(items[1].input.is_ok());
+        assert!(
+            request_elements[0].input.is_err(),
+            "a read refuses a request identity"
+        );
+        assert!(request_elements[1].input.is_ok());
     }
 
     #[test]
-    fn envelope_preserves_item_order() {
-        let items = get::decode(
+    fn envelope_preserves_request_element_order() {
+        let request_elements = get::decode(
             r#"[
             {"id":"00000000-0000-0000-0000-000000000002"},
             {"id":"00000000-0000-0000-0000-000000000001"}
@@ -180,11 +183,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            items[0].input.as_ref().unwrap().id,
+            request_elements[0].input.as_ref().unwrap().id,
             "00000000-0000-0000-0000-000000000002"
         );
         assert_eq!(
-            items[1].input.as_ref().unwrap().id,
+            request_elements[1].input.as_ref().unwrap().id,
             "00000000-0000-0000-0000-000000000001"
         );
     }

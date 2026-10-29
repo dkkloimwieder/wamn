@@ -298,8 +298,8 @@ impl FileHost {
         let DeliveryOutcome::Respond(response) = outcome else {
             anyhow::bail!("file operation did not respond: {outcome:?}");
         };
-        let [item]: [Value; 1] = serde_json::from_str(&response)?;
-        Ok(item)
+        let [request_element]: [Value; 1] = serde_json::from_str(&response)?;
+        Ok(request_element)
     }
 
     fn bind_operation(&self) -> anyhow::Result<AuthenticatedCaller> {
@@ -1342,8 +1342,8 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
     let DeliveryOutcome::Respond(payload) = outcome else {
         anyhow::bail!("signed read did not return its operation result: {outcome:?}");
     };
-    let [item]: [Value; 1] = serde_json::from_str(&payload)?;
-    let url = item["value"]["document"]
+    let [request_element]: [Value; 1] = serde_json::from_str(&payload)?;
+    let url = request_element["value"]["document"]
         .as_str()
         .context("host replaces the private file id with its signed URL")?;
     let lifetime = url::Url::parse(url)?

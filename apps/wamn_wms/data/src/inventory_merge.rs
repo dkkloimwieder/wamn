@@ -14,7 +14,7 @@ use crate::error::{self, AccessError, AccessErrorType};
 use crate::scalar;
 use crate::statements::wamn::inventory_merge as sql;
 
-/// One envelope item's command body.
+/// One request element's command body.
 #[derive(Debug, Deserialize)]
 pub struct MergeCommand {
     pub source_packaging_id: String,
@@ -62,7 +62,7 @@ fn parse(command: &MergeCommand) -> Result<Parsed, AccessError> {
     Ok(parsed)
 }
 
-/// Run one command item in the transaction its codec holds for the write log.
+/// Run one command request element in the transaction its codec holds for the write log.
 ///
 /// # Errors
 ///

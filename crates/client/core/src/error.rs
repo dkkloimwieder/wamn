@@ -68,9 +68,9 @@ impl ClientError {
         }
     }
 
-    /// Build from one envelope item's error member.
+    /// Build from one envelope request element's error member.
     #[must_use]
-    pub fn from_item_error(error: &serde_json::Value) -> Self {
+    pub fn from_request_element_error(error: &serde_json::Value) -> Self {
         let literal = error
             .get("code")
             .and_then(serde_json::Value::as_str)
@@ -180,33 +180,36 @@ impl core::fmt::Display for ClientError {
 
 impl std::error::Error for ClientError {}
 
-/// One envelope item's outcome, correlated by `request_id`.
+/// One envelope request element's outcome, correlated by `request_id`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ItemOutcome {
-    /// Echoes the request item's `request_id`. A read carries none, and its
-    /// outcomes match its items by position.
+    /// Echoes the request element's `request_id`. A read carries none, and its
+    /// outcomes match its request elements by position.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
-    /// Present when the item succeeded.
+    /// Present when the request element succeeded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<serde_json::Value>,
-    /// Present when the item was refused.
+    /// Present when the request element was refused.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<serde_json::Value>,
 }
 
 impl ItemOutcome {
-    /// The item's value, or the typed error it carried.
+    /// The request element's value, or the typed error it carried.
     ///
     /// # Errors
     ///
-    /// [`ClientError`] built from the item's declared error contract.
+    /// [`ClientError`] built from the request element's declared error contract.
     pub fn into_result(self) -> Result<serde_json::Value, ClientError> {
         match (self.value, self.error) {
-            (_, Some(error)) => Err(ClientError::from_item_error(&error)),
+            (_, Some(error)) => Err(ClientError::from_request_element_error(&error)),
             (Some(value), None) => Ok(value),
             (None, None) => Err(ClientError::MalformedResponse {
-                detail: format!("item {:?} carried neither value nor error", self.request_id),
+                detail: format!(
+                    "request element {:?} carried neither value nor error",
+                    self.request_id
+                ),
             }),
         }
     }
@@ -222,7 +225,7 @@ mod tests {
     /// retry or merge.
     #[test]
     fn a_stale_revision_carries_both_versions() {
-        let error = ClientError::from_item_error(&json!({
+        let error = ClientError::from_request_element_error(&json!({
             "code": "concurrency_conflict",
             "detail": { "expected_row_version": 4, "observed_row_version": 7 },
         }));
@@ -250,7 +253,7 @@ mod tests {
             json!({ "expected_row_version": "4", "observed_row_version": "7" }),
         ] {
             assert_eq!(
-                ClientError::from_item_error(&json!({
+                ClientError::from_request_element_error(&json!({
                     "code": "concurrency_conflict",
                     "detail": detail,
                 })),
@@ -261,7 +264,7 @@ mod tests {
             );
         }
         assert_eq!(
-            ClientError::from_item_error(&json!({
+            ClientError::from_request_element_error(&json!({
                 "code": "concurrency_conflict",
                 "detail": { "expected_row_version": "four", "observed_row_version": null },
             })),
@@ -306,7 +309,7 @@ mod tests {
 
     #[test]
     fn a_contract_literal_passes_through_with_its_detail() {
-        let error = ClientError::from_item_error(&json!({
+        let error = ClientError::from_request_element_error(&json!({
             "code": "invalid_input",
             "detail": { "field": "value.quantity", "minimum": "1" },
         }));
@@ -319,10 +322,10 @@ mod tests {
         }
     }
 
-    /// An item carrying neither value nor error is malformed, not empty —
+    /// A request element carrying neither value nor error is malformed, not empty —
     /// reading it as a successful null is how a caller silently loses a write.
     #[test]
-    fn an_item_with_neither_value_nor_error_is_malformed() {
+    fn a_request_element_with_neither_value_nor_error_is_malformed() {
         let outcome = ItemOutcome {
             request_id: Some("r1".to_owned()),
             value: None,

@@ -77,15 +77,17 @@ impl Route {
         serde_json::from_str(&text).with_context(|| format!("the route's answer is JSON: {text}"))
     }
 
-    /// Send the one item of a read as a GET, as its route is published.
+    /// Send the one request element of a read as a GET, as its route is published.
     async fn get(
         &self,
         client: &reqwest::Client,
         path: &str,
-        item: &Value,
+        request_element: &Value,
     ) -> anyhow::Result<Value> {
-        let item = item.as_object().context("a read sends one object item")?;
-        let query = wamn_execution_contract::encode_read_query(item);
+        let request_element = request_element
+            .as_object()
+            .context("a read sends one object request element")?;
+        let query = wamn_execution_contract::encode_read_query(request_element);
         let response = client
             .get(format!("{}{path}?{query}", self.endpoint))
             .header("Host", &self.host)
@@ -146,23 +148,23 @@ fn move_body(
     }])
 }
 
-/// The single item of an array envelope, checked to carry the request id it
+/// The single request element of an array envelope, checked to carry the request id it
 /// was asked with.
-fn item<'a>(answer: &'a Value, request_id: &str) -> anyhow::Result<&'a Value> {
-    let items = answer
+fn request_element<'a>(answer: &'a Value, request_id: &str) -> anyhow::Result<&'a Value> {
+    let request_elements = answer
         .as_array()
         .context("the route answers with an array envelope")?;
     anyhow::ensure!(
-        items.len() == 1,
-        "one request, one item; got {}",
-        items.len()
+        request_elements.len() == 1,
+        "one request, one request element; got {}",
+        request_elements.len()
     );
     anyhow::ensure!(
-        items[0]["request_id"] == request_id,
-        "the item answers request {request_id}: {}",
-        items[0]
+        request_elements[0]["request_id"] == request_id,
+        "the request element answers request {request_id}: {}",
+        request_elements[0]
     );
-    Ok(&items[0])
+    Ok(&request_elements[0])
 }
 
 pub(crate) async fn assert_contention_and_replay(
@@ -184,17 +186,22 @@ pub(crate) async fn assert_contention_and_replay(
     );
     let answer_a = answer_a?;
     let answer_b = answer_b?;
-    let item_a = item(&answer_a, REQUEST_ID_A)?;
-    let item_b = item(&answer_b, REQUEST_ID_B)?;
+    let request_element_a = request_element(&answer_a, REQUEST_ID_A)?;
+    let request_element_b = request_element(&answer_b, REQUEST_ID_B)?;
 
-    let outcomes = [(REQUEST_ID_A, item_a, &a), (REQUEST_ID_B, item_b, &b)];
+    let outcomes = [
+        (REQUEST_ID_A, request_element_a, &a),
+        (REQUEST_ID_B, request_element_b, &b),
+    ];
     let winners: Vec<_> = outcomes
         .iter()
-        .filter(|(_, item, _)| item.get("value").is_some())
+        .filter(|(_, request_element, _)| request_element.get("value").is_some())
         .collect();
     let conflicts: Vec<_> = outcomes
         .iter()
-        .filter(|(_, item, _)| item["error"]["code"] == "concurrency_conflict")
+        .filter(|(_, request_element, _)| {
+            request_element["error"]["code"] == "concurrency_conflict"
+        })
         .collect();
     anyhow::ensure!(
         winners.len() == 1 && conflicts.len() == 1,
@@ -249,7 +256,7 @@ pub(crate) async fn assert_contention_and_replay(
     let mut replay: Value = (**winning_body).clone();
     replay[0]["request_id"] = json!(REQUEST_ID_REPLAY);
     let answer = route.post(&client, "/inventory/move", &replay).await?;
-    let replayed = item(&answer, REQUEST_ID_REPLAY)?;
+    let replayed = request_element(&answer, REQUEST_ID_REPLAY)?;
     anyhow::ensure!(
         replayed["value"] == *value,
         "a replay returns the original result, not a second move: {replayed}"
@@ -295,30 +302,31 @@ pub(crate) async fn assert_label_delivery_and_replay(
     Ok(json!({"label_key": label_key}))
 }
 
-/// The `value` of the single item answering `request_id`, or the refusal as
+/// The `value` of the single request element answering `request_id`, or the refusal as
 /// an error naming it.
-/// The `value` of the single item a read answers. A read carries no request
-/// identity, so its one outcome answers its one item by position.
+/// The `value` of the single request element a read answers. A read carries no request
+/// identity, so its one outcome answers its one request element by position.
 fn read_value(answer: &Value) -> anyhow::Result<&Value> {
-    let items = answer
+    let request_elements = answer
         .as_array()
         .context("the route answers with an array envelope")?;
     anyhow::ensure!(
-        items.len() == 1 && items[0].get("request_id").is_none(),
+        request_elements.len() == 1 && request_elements[0].get("request_id").is_none(),
         "one read, one outcome with no request identity: {answer}"
     );
-    items[0]
+    request_elements[0]
         .get("value")
-        .with_context(|| format!("the read was refused: {}", items[0]))
+        .with_context(|| format!("the read was refused: {}", request_elements[0]))
 }
 
 fn value<'a>(answer: &'a Value, request_id: &str) -> anyhow::Result<&'a Value> {
-    let item = item(answer, request_id)?;
-    item.get("value")
-        .with_context(|| format!("{request_id} was refused: {item}"))
+    let request_element = request_element(answer, request_id)?;
+    request_element
+        .get("value")
+        .with_context(|| format!("{request_id} was refused: {request_element}"))
 }
 
-/// The `error` of the single item answering `request_id`: the refusal that
+/// The `error` of the single request element answering `request_id`: the refusal that
 /// was asked for, named by its code.
 /// A code that is blank after a trim refuses in the codec, on its field, before
 /// the CHECK that guards the same rule could answer (wamn-iowb.4).
@@ -328,7 +336,7 @@ pub(crate) async fn assert_blank_codes_refuse(route: &Route) -> anyhow::Result<(
         .build()
         .context("build the route client")?;
     let missing = "00000000-0000-0000-0000-00000000b1a2";
-    for (path, item, field) in [
+    for (path, request_element, field) in [
         (
             "/product/create",
             json!({"request_id": "blank", "id": uuid::Uuid::now_v7().to_string(), "idempotency_key": "blank-product", "product_code": "  "}),
@@ -358,7 +366,7 @@ pub(crate) async fn assert_blank_codes_refuse(route: &Route) -> anyhow::Result<(
             "change.location_code",
         ),
     ] {
-        let answer = route.post(&client, path, &json!([item])).await?;
+        let answer = route.post(&client, path, &json!([request_element])).await?;
         let detail = refusal(&answer, "blank", "invalid_input")?;
         anyhow::ensure!(
             detail["field"] == field,
@@ -369,10 +377,10 @@ pub(crate) async fn assert_blank_codes_refuse(route: &Route) -> anyhow::Result<(
 }
 
 fn refusal<'a>(answer: &'a Value, request_id: &str, code: &str) -> anyhow::Result<&'a Value> {
-    let item = item(answer, request_id)?;
-    let error = item
-        .get("error")
-        .with_context(|| format!("{request_id} was expected to refuse with {code}: {item}"))?;
+    let request_element = request_element(answer, request_id)?;
+    let error = request_element.get("error").with_context(|| {
+        format!("{request_id} was expected to refuse with {code}: {request_element}")
+    })?;
     anyhow::ensure!(
         error["code"] == code,
         "{request_id} refuses with {code}: {error}"
@@ -623,9 +631,7 @@ pub(crate) async fn assert_remaining_operations(
         .await?;
     let page = read_value(&answer)?;
     anyhow::ensure!(
-        page["item"]
-            .as_array()
-            .is_some_and(|items| items.len() == 1)
+        page["item"].as_array().is_some_and(|rows| rows.len() == 1)
             && page["item"][0]["id"] == new_packaging_id.as_str(),
         "the first page holds the new packaging: {page}"
     );
@@ -654,9 +660,7 @@ pub(crate) async fn assert_remaining_operations(
         .await?;
     let page = read_value(&answer)?;
     anyhow::ensure!(
-        page["item"]
-            .as_array()
-            .is_some_and(|items| items.len() == 1)
+        page["item"].as_array().is_some_and(|rows| rows.len() == 1)
             && page["item"][0]["id"] == new_packaging_id.as_str(),
         "the consumed filter finds exactly the merged packaging: {page}"
     );
@@ -728,11 +732,12 @@ pub(crate) async fn assert_committed_move_after_label_failure(
         "the move answers HTTP200 while the label store is missing, got {status}: {text}"
     );
     let answer: Value = serde_json::from_str(&text).context("the move response is JSON")?;
-    let committed = item(&answer, &request_id)?;
+    let committed = request_element(&answer, &request_id)?;
     anyhow::ensure!(
         committed
             .as_object()
-            .is_some_and(|item| item.len() == 2 && item.contains_key("value")),
+            .is_some_and(|request_element| request_element.len() == 2
+                && request_element.contains_key("value")),
         "the move envelope has only request_id and value: {committed}"
     );
     let expected = json!({
@@ -850,10 +855,10 @@ mod shape {
     #[test]
     fn a_move_body_is_the_array_envelope_the_route_admits() {
         let body = move_body("r", "k", &runtime(), 1);
-        let items = body.as_array().expect("array envelope");
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0]["request_id"], "r");
-        let value = &items[0]["value"];
+        let request_elements = body.as_array().expect("array envelope");
+        assert_eq!(request_elements.len(), 1);
+        assert_eq!(request_elements[0]["request_id"], "r");
+        let value = &request_elements[0]["value"];
         for key in [
             "idempotency_key",
             "packaging_id",
@@ -872,17 +877,17 @@ mod shape {
     }
 
     #[test]
-    fn an_item_must_answer_the_request_it_was_asked_with() {
+    fn a_request_element_must_answer_the_request_it_was_asked_with() {
         let answer = json!([{"request_id": "other", "value": {}}]);
-        assert!(item(&answer, "mine").is_err());
+        assert!(request_element(&answer, "mine").is_err());
         let answer =
             json!([{"request_id": "mine", "value": {}}, {"request_id": "mine", "value": {}}]);
         assert!(
-            item(&answer, "mine").is_err(),
-            "two items for one request is refused"
+            request_element(&answer, "mine").is_err(),
+            "two request elements for one request is refused"
         );
         let answer = json!([{"request_id": "mine", "value": {}}]);
-        assert!(item(&answer, "mine").is_ok());
+        assert!(request_element(&answer, "mine").is_ok());
     }
 
     #[test]

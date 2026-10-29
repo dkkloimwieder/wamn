@@ -4,8 +4,8 @@
 //! The loop calls as the fixed local principal that the configuration names,
 //! with the permissions of its role in the release grants (spec 4.4). Each
 //! frame gets a new sample key, which is the request id and so the intent key
-//! of its one item. The input is `[{"request_id", "value": {"frame",
-//! "captured_at"}}]`. Calls run one at a time. A completed item stores its
+//! of its one request element. The input is `[{"request_id", "value": {"frame",
+//! "captured_at"}}]`. Calls run one at a time. A completed request element stores its
 //! `value` as the sample, in the transaction that finishes its intent.
 
 use std::sync::Arc;
@@ -157,7 +157,7 @@ async fn run(
     }
 }
 
-/// Whether the answer of one device call is an item without an error.
+/// Whether the answer of one device call is a request element without an error.
 fn stored(answer: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(answer)
         .is_ok_and(|answer| answer[0].get("value").is_some() && answer[0].get("error").is_none())

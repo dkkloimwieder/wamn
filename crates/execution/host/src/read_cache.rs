@@ -15,7 +15,7 @@ use wamn_catalog::ServingRelation;
 /// The strong ETag of a `get` result, or `None` when the result carries no
 /// revision.
 ///
-/// A read carries one item, so its result is a list of one outcome. Only a
+/// A read carries one request element, so its result is a list of one outcome. Only a
 /// completed outcome whose value holds the revision field has a tag. A refusal
 /// or a missing record has none.
 pub(crate) fn get_tag(release: &str, result: &Value, revision_field: &str) -> Option<String> {
@@ -50,7 +50,7 @@ pub(crate) fn list_tag(release: &str, reads: &BTreeSet<ServingRelation>, version
 pub(crate) fn is_feed_read(payload: &Value) -> bool {
     payload
         .get(0)
-        .and_then(|item| item.get("feed"))
+        .and_then(|request_element| request_element.get("feed"))
         .is_some_and(Value::is_object)
 }
 

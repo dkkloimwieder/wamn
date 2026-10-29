@@ -101,7 +101,7 @@ pub use event_admission::{
 };
 pub use event_batch::EventBatchAdmission;
 pub use numbering::{CounterSet, CounterSetError, CounterSetRefusal};
-pub use operation_transaction::{CommitFailure, OperationTransaction};
+pub use operation_transaction::{OperationTransaction, PgCommitFailure};
 pub use pool::{
     CheckoutProbe, ClassCredentials, CredentialProvider, K8sSecretProvider, ProjectConfig,
     ResolvedCredential, StaticCredentialProvider, WamnPostgresConfig,

@@ -686,11 +686,13 @@ fn native_member_statement_instances() {
             request.facts.caller = Some(caller.clone());
             let transaction = fixture
                 .policy
-                .begin_item(&component_id, ROOT, &request.facts)
+                .admit_and_open_transaction(&component_id, ROOT, &request.facts)
                 .await
-                .expect("begin the item transaction")
+                .expect("begin the request element transaction")
                 .expect("the root's declared host transaction begins");
-            request.facts = fixture.policy.item_facts(&request.facts, &transaction);
+            request.facts = fixture
+                .policy
+                .transaction_facts(&request.facts, &transaction);
             let result = invoke_native(&fixture.target().await, request)
                 .await
                 .expect("the composed root dispatches");
@@ -701,7 +703,10 @@ fn native_member_statement_instances() {
                     "root and child each refuse the other's statement and run their own, \
                      and the child, nested in the command, is refused begin and plain run"
                 );
-                transaction.commit().await.expect("commit the item");
+                transaction
+                    .commit()
+                    .await
+                    .expect("commit the request element");
                 assert_eq!(
                     rows().await,
                     ["a", "b1"],
@@ -709,11 +714,14 @@ fn native_member_statement_instances() {
                 );
             } else {
                 result.expect_err("the root fails after both members wrote");
-                transaction.rollback().await.expect("roll back the item");
+                transaction
+                    .rollback()
+                    .await
+                    .expect("roll back the request element");
                 assert_eq!(
                     rows().await,
                     ["a", "b1"],
-                    "a rolled-back item leaves no write of either member"
+                    "a rolled-back request element leaves no write of either member"
                 );
             }
         }
@@ -724,9 +732,9 @@ fn native_member_statement_instances() {
 
 /// `wamn-azko6`: a command without SQL whose manifest declares `transaction =
 /// explicit_per_input` calls a member with SQL. Its released operation holds
-/// no statement, and the host still begins the item transaction from the
+/// no statement, and the host still begins the request element transaction from the
 /// declared field; the member works in it through its own instance, and the
-/// item commits or rolls back whole.
+/// request element commits or rolls back whole.
 #[test]
 fn native_sql_free_command_begins_from_its_transaction_field() {
     super::run_isolated_test(
@@ -815,11 +823,15 @@ fn native_sql_free_command_begins_from_its_transaction_field() {
                 request.facts.caller = Some(caller.clone());
                 let transaction = fixture
                     .policy
-                    .begin_item(&component_id, ROOT, &request.facts)
+                    .admit_and_open_transaction(&component_id, ROOT, &request.facts)
                     .await
-                    .expect("begin the item transaction")
-                    .expect("the declared transaction field begins the item transaction");
-                request.facts = fixture.policy.item_facts(&request.facts, &transaction);
+                    .expect("begin the request element transaction")
+                    .expect(
+                        "the declared transaction field begins the request element transaction",
+                    );
+                request.facts = fixture
+                    .policy
+                    .transaction_facts(&request.facts, &transaction);
                 let result = invoke_native(&fixture.target().await, request)
                     .await
                     .expect("the composed root dispatches");
@@ -830,15 +842,21 @@ fn native_sql_free_command_begins_from_its_transaction_field() {
                         "the child runs its own statement in the host transaction, is \
                          refused the root path, and is refused begin and plain run"
                     );
-                    transaction.commit().await.expect("commit the item");
+                    transaction
+                        .commit()
+                        .await
+                        .expect("commit the request element");
                     assert_eq!(rows().await, ["b0"], "the child's write commits");
                 } else {
                     result.expect_err("the root fails after the child wrote");
-                    transaction.rollback().await.expect("roll back the item");
+                    transaction
+                        .rollback()
+                        .await
+                        .expect("roll back the request element");
                     assert_eq!(
                         rows().await,
                         ["b0"],
-                        "a rolled-back item leaves no write of the child"
+                        "a rolled-back request element leaves no write of the child"
                     );
                 }
             }

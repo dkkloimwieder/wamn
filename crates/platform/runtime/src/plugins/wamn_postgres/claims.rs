@@ -294,7 +294,7 @@ pub struct WamnPostgres {
     /// coordinates an effect span names, and the run half is
     /// [`current_run_for`](Self::current_run_for).
     invocations: std::sync::RwLock<HashMap<String, ConnectionInvocation>>,
-    /// The host transaction of each scope whose operation item has one.
+    /// The host transaction of each scope whose operation request element has one.
     pub(super) operation_transactions:
         std::sync::Mutex<super::operation_transaction::OperationTransactions>,
     /// Verified SQL facts bound by operation plus the one invocation-active
@@ -1582,10 +1582,10 @@ impl WamnPostgres {
     /// records an actor that names no row. The host's
     /// [auth memory](crate::auth_cache) answers first: the route authenticator
     /// read the same row a moment before. On a miss the bind reads the row and
-    /// keeps the answer. An item that begins its own transaction binds twice,
-    /// and its second bind is
-    /// [`bind_item_session_claims`](Self::bind_item_session_claims), which
-    /// does not check again.
+    /// keeps the answer. A request element that begins its own transaction
+    /// binds twice, and its second bind is
+    /// [`bind_request_element_session_claims`](Self::bind_request_element_session_claims),
+    /// which does not check again.
     ///
     /// On a host that watches the auth bucket, a user row deleted after the
     /// check stays accepted until a change message clears the memory, or
@@ -1617,13 +1617,13 @@ impl WamnPostgres {
     }
 
     /// Bind `claims` as [`bind_session_claims`](Self::bind_session_claims)
-    /// does, without its principal read, for the call inside an item whose
+    /// does, without its principal read, for the call inside a request element whose
     /// transaction a bind of the same claims began (`wamn-uq4r`).
     ///
-    /// The item's bind read the principal's user row moments before, in the
+    /// The request element's bind read the principal's user row moments before, in the
     /// same invocation, so a second read answers nothing new and takes a
     /// second guest connection. The caller passes the claims of that bind.
-    pub fn bind_item_session_claims(
+    pub fn bind_request_element_session_claims(
         &self,
         component_id: &str,
         claims: &SessionClaims,

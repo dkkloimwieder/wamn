@@ -160,7 +160,7 @@ impl CustomOperationDeclaration {
         self.type_ == CustomOperationType::Command && !self.statements.is_empty()
     }
 
-    /// Whether the host begins the item transaction of this operation: a
+    /// Whether the host begins the request element transaction of this operation: a
     /// command that declares `transaction = explicit_per_input`, with or
     /// without SQL of its own. A command without SQL works in it through the
     /// members it calls.
@@ -175,7 +175,7 @@ impl CustomOperationDeclaration {
     }
 
     /// The input field of the key a claim command claims in the write log:
-    /// `idempotency_key`, or `value.idempotency_key` under an item value.
+    /// `idempotency_key`, or `value.idempotency_key` under a request element value.
     /// `None` for an operation that does not claim.
     pub fn idempotency_key_field(&self) -> Option<&str> {
         if !self.claims() {
@@ -208,13 +208,12 @@ pub enum CommandTransaction {
 /// composed case, because an inference is what let the pilot command ship with
 /// no idempotence at all.
 ///
-/// `Claim` claims the idempotency key in the write log, so a repeat answers the
-/// stored result (docs/architecture/data-access.md#the-write-log). `State`
-/// mints no identity and names the row versions that guard it, so a repeat
-/// after success sees a version moved and gets a typed conflict. `Stateless`
-/// declares no connection, relation or statement, so it writes no state that a
-/// repeat could change. The engine's per-item intent is its replay guard (owner
-/// ruling, `wamn-hxow`).
+/// `Claim` claims the idempotency key in the write log, so a repeat answers the stored
+/// result (docs/architecture/data-access.md#the-write-log). `State` mints no identity
+/// and names the row versions that guard it, so a repeat after success sees a version
+/// moved and gets a typed conflict. `Stateless` declares no connection, relation or
+/// statement, so it writes no state that a repeat could change. The engine's per
+/// request element intent is its replay guard (owner ruling, `wamn-hxow`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CommandIdempotence {
@@ -492,7 +491,7 @@ pub struct CommandLineOrder {
     pub positive_member: Option<String>,
 }
 
-/// Closed operation-error detail keys serialized on per-item refusals.
+/// Closed operation-error detail keys serialized on per request element refusals.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OperationErrorDetailKey {
@@ -596,7 +595,7 @@ pub enum StaticSqlFetch {
 }
 
 impl PackageManifest {
-    /// The local names of the operations whose item transaction the host
+    /// The local names of the operations whose request element transaction the host
     /// begins: every generated action that changes records, and every command
     /// that [begins one](CustomOperationDeclaration::begins_host_transaction).
     pub fn host_transaction_operations(&self) -> BTreeSet<String> {

@@ -626,7 +626,7 @@ impl Fixture {
     }
 
     /// Start the workflow through `delivery` as a session of `user`: the one
-    /// outcome item of the route, its `value` or its `error`.
+    /// outcome request element of the route, its `value` or its `error`.
     async fn start_on(&self, delivery: &HostRouteDelivery, user: &str, key: &str) -> Value {
         self.start_in(delivery, APP, user, key).await
     }
@@ -658,17 +658,21 @@ impl Fixture {
             )
             .await;
         let Ok(DeliveryOutcome::Respond(body)) = report.outcome else {
-            panic!("workflow.start answers one item: {:?}", report.outcome);
+            panic!(
+                "workflow.start answers one request element: {:?}",
+                report.outcome
+            );
         };
-        let [item]: [Value; 1] = serde_json::from_str(&body).expect("one outcome item");
-        item
+        let [request_element]: [Value; 1] =
+            serde_json::from_str(&body).expect("one outcome request element");
+        request_element
     }
 
     async fn start(&self, user: &str, key: &str) -> String {
-        let item = self.start_on(&self.delivery, user, key).await;
-        item["value"]["run_id"]
+        let request_element = self.start_on(&self.delivery, user, key).await;
+        request_element["value"]["run_id"]
             .as_str()
-            .unwrap_or_else(|| panic!("workflow.start admits a run: {item}"))
+            .unwrap_or_else(|| panic!("workflow.start admits a run: {request_element}"))
             .to_owned()
     }
 
@@ -848,10 +852,13 @@ async fn a_wrong_hash_refuses_at_start_and_fails_the_run_at_resolution() {
 
     // An application the environment does not declare refuses before any
     // row is read.
-    let item = fixture
+    let request_element = fixture
         .start_in(&fixture.delivery, "billing", READER, "undeclared")
         .await;
-    assert_eq!(item["error"]["code"], "application_not_declared", "{item}");
+    assert_eq!(
+        request_element["error"]["code"], "application_not_declared",
+        "{request_element}"
+    );
 
     // A row written past authorship, enabled, under another graph's hash.
     let graph = serde_json::to_string(&workflow(1, READ)).unwrap();
@@ -875,10 +882,13 @@ async fn a_wrong_hash_refuses_at_start_and_fails_the_run_at_resolution() {
         )
         .await
         .unwrap();
-    let item = fixture
+    let request_element = fixture
         .start_on(&fixture.delivery, READER, "wrong-row")
         .await;
-    assert_eq!(item["error"]["code"], "workflow_not_served", "{item}");
+    assert_eq!(
+        request_element["error"]["code"], "workflow_not_served",
+        "{request_element}"
+    );
 
     // Version 2, authored and enabled, and a run of it admitted under the
     // executor with a hash the stored row does not carry.
@@ -946,10 +956,13 @@ async fn an_operation_not_in_the_release_refuses_at_author_and_at_admission() {
 
     fixture.enabled().await;
     let without = load(&manifest(None, &fixture.jsonata));
-    let item = fixture
+    let request_element = fixture
         .start_on(&host(&fixture.postgres, &without), READER, "replaced")
         .await;
-    assert_eq!(item["error"]["code"], "workflow_not_served", "{item}");
+    assert_eq!(
+        request_element["error"]["code"], "workflow_not_served",
+        "{request_element}"
+    );
     let runs: i64 = fixture
         .admin
         .query_one("SELECT count(*) FROM wamn_run.runs", &[])

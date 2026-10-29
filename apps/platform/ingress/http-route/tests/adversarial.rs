@@ -925,13 +925,13 @@ fn deadline_adjustments_reach_success_and_error_responses() {
 }
 
 #[test]
-fn a_read_authenticates_its_body_but_takes_its_item_from_the_canonical_query() {
+fn a_read_authenticates_its_body_but_takes_its_request_element_from_the_canonical_query() {
     let mut read = route();
     read.method = "GET".to_string();
     read.path = "/receipts/get".to_string();
     read.mappings = Vec::new();
-    let item = json!({"filter": {"status": ["open"]}, "id": "r-1"});
-    let query = wamn_execution_contract::encode_read_query(item.as_object().unwrap());
+    let request_element = json!({"filter": {"status": ["open"]}, "id": "r-1"});
+    let query = wamn_execution_contract::encode_read_query(request_element.as_object().unwrap());
     let mut get = head();
     get.method = "get".to_string();
     get.target = format!("/receipts/get?{query}");
@@ -946,7 +946,7 @@ fn a_read_authenticates_its_body_but_takes_its_item_from_the_canonical_query() {
     );
     assert_eq!(
         serde_json::from_str::<Value>(&backend.deliveries[0].payload).unwrap(),
-        json!([item])
+        json!([request_element])
     );
 
     for target in [
@@ -971,8 +971,8 @@ fn a_query_read_answers_its_page_as_one_body() {
     read.path = "/receipts/query".to_string();
     read.mappings = Vec::new();
     read.cache_control = Some("private, max-age=10, stale-while-revalidate=60".to_string());
-    let item = json!({"limit": 10});
-    let query = wamn_execution_contract::encode_read_query(item.as_object().unwrap());
+    let request_element = json!({"limit": 10});
+    let query = wamn_execution_contract::encode_read_query(request_element.as_object().unwrap());
     let mut get = head();
     get.method = "get".to_string();
     get.target = format!("/receipts/query?{query}");
@@ -1010,8 +1010,8 @@ fn a_feed_read_is_revalidated_every_time_under_the_scope_of_its_list() {
     read.path = "/packaging/query".to_string();
     read.mappings = Vec::new();
     read.cache_control = Some("private, max-age=10, stale-while-revalidate=60".to_string());
-    let item = json!({"filter": {"status": ["held"]}, "feed": {"cursor": "Y3Vyc29y"}});
-    let query = wamn_execution_contract::encode_read_query(item.as_object().unwrap());
+    let request_element = json!({"filter": {"status": ["held"]}, "feed": {"cursor": "Y3Vyc29y"}});
+    let query = wamn_execution_contract::encode_read_query(request_element.as_object().unwrap());
     let mut get = head();
     get.method = "get".to_string();
     get.target = format!("/packaging/query?{query}");
@@ -1033,7 +1033,7 @@ fn a_feed_read_is_revalidated_every_time_under_the_scope_of_its_list() {
     // The query string decodes to the same request a body would carry.
     assert_eq!(
         serde_json::from_str::<Value>(&backend.deliveries[0].payload).unwrap(),
-        json!([item])
+        json!([request_element])
     );
 }
 

@@ -7,7 +7,7 @@ use crate::{NodeError, invalid_input};
 async fn run(input: Vec<contract::UpdateItem>) -> Result<Vec<contract::UpdateOutcome>, NodeError> {
     codec::validate(&input).map_err(|error| invalid_input(error.context()))?;
     Ok(codec::run(input, &mut (), async |(), _| {
-        unreachable!("a refused item reaches no handler")
+        unreachable!("a refused request element reaches no handler")
     })
     .await)
 }
@@ -23,8 +23,14 @@ fn refusal(change: &str, revision: &str) -> serde_json::Value {
     let input = format!(
         r#"[{{"request_id":"update-1","id":"00000000-0000-0000-0000-000000000001","expected_row_version":{revision},"change":{change}}}]"#
     );
-    let item = codec::decode(&input).unwrap().pop().unwrap();
-    serde_json::to_value(item.input.expect_err("the request refuses").field).unwrap()
+    let request_element = codec::decode(&input).unwrap().pop().unwrap();
+    serde_json::to_value(
+        request_element
+            .input
+            .expect_err("the request refuses")
+            .field,
+    )
+    .unwrap()
 }
 
 /// A revision is an int32, so it is one JSON number with one spelling, and
@@ -106,16 +112,16 @@ fn a_blank_supplier_name_refuses_on_its_field() {
         ]"#,
     )
     .unwrap();
-    // Each item refuses before the handler runs, so the test needs no
+    // Each request element refuses before the handler runs, so the test needs no
     // database.
     let mut state = ();
     let mut call = std::pin::pin!(create::run(input, &mut state, async |(), _| unreachable!(
-        "a refused item reaches no handler"
+        "a refused request element reaches no handler"
     )));
     let mut context = std::task::Context::from_waker(std::task::Waker::noop());
     let std::task::Poll::Ready(output) = std::future::Future::poll(call.as_mut(), &mut context)
     else {
-        panic!("a refused item performs no I/O");
+        panic!("a refused request element performs no I/O");
     };
     assert_eq!(output.len(), 3);
     for outcome in output {

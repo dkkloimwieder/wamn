@@ -121,7 +121,7 @@ pub async fn quality_load_purchase_order_detail(
 }
 
 /// Execute `quality.approve_inspection` in the transaction the host began for
-/// the input item.
+/// the input request element.
 pub async fn quality_approve_inspection(
     transaction: &mut Transaction,
     receipt_id: &str,
@@ -175,7 +175,7 @@ pub async fn quality_create_inspection(event: &str, receipt_id: &str) -> Result<
 /// Record Acme's inspection of a receipt that Receiving recorded earlier in
 /// the same host transaction. A purchase order that requires no inspection
 /// writes nothing, an approved one writes the inspection row, and one that is
-/// not approved refuses, so the item rolls back with its receipt.
+/// not approved refuses, so the request element rolls back with its receipt.
 pub async fn record_inspection(
     transaction: &mut Transaction,
     receipt_id: &str,

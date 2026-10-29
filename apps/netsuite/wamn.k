@@ -7,13 +7,13 @@ manifest.Package {
         integration = {
             package = "wamn_integration"
             version = "0.1.0"
-            digest = "sha256:69391db4fe2dded040495fe65122e2d7158d664a94146d735c453de2c7975fac"
+            digest = "sha256:844fad8cf0c27aecfa678b72aad537c37c3a5631fedcb257ca4014fd0af1f8b9"
             operations = ["setting.read", "setting.write"]
         }
         consumer = {
             package = "rest_consumer_fixture"
             version = "0.1.0"
-            digest = "sha256:20398f5918c0f5e6cc255fde8cb0d6e9b930662372071156e1cf62c6646a7a34"
+            digest = "sha256:395be1fb2fa4774091e070000397215fc8636b15e54de040a79a0f92eb50067d"
             operations = ["item.record"]
         }
     }

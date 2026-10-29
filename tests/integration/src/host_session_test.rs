@@ -148,14 +148,14 @@ fn fixture(bytes: &[u8]) -> anyhow::Result<Fixture> {
             && reqwest::header::HeaderValue::from_str(&fixture.route_host).is_ok(),
         "host fixture route refused"
     );
-    let request = unit_item(&fixture.request_body)?;
-    let expected = unit_item(&fixture.expected_response)?;
+    let request = unit_request_element(&fixture.request_body)?;
+    let expected = unit_request_element(&fixture.expected_response)?;
     let value = expected
         .get("value")
         .and_then(Value::as_object)
         .ok_or_else(|| anyhow!("host fixture needs a successful GET value"))?;
     // A get is a read: it carries no request identity, and its one outcome
-    // answers its one item by position.
+    // answers its one request element by position.
     ensure!(
         request.len() == 1
             && expected.len() == 1
@@ -180,12 +180,12 @@ fn fixture(bytes: &[u8]) -> anyhow::Result<Fixture> {
     Ok(fixture)
 }
 
-fn unit_item(value: &Value) -> anyhow::Result<&serde_json::Map<String, Value>> {
+fn unit_request_element(value: &Value) -> anyhow::Result<&serde_json::Map<String, Value>> {
     value
         .as_array()
-        .filter(|items| items.len() == 1)
-        .and_then(|items| items[0].as_object())
-        .ok_or_else(|| anyhow!("host fixture requires a one-item batch envelope"))
+        .filter(|request_elements| request_elements.len() == 1)
+        .and_then(|request_elements| request_elements[0].as_object())
+        .ok_or_else(|| anyhow!("host fixture requires a one request element batch envelope"))
 }
 
 async fn read_file(path: &Path, private: bool) -> anyhow::Result<Vec<u8>> {
@@ -272,7 +272,7 @@ async fn host_request(
 ) -> anyhow::Result<(reqwest::StatusCode, Vec<u8>)> {
     let mut url = endpoint.clone();
     url.set_query(Some(&wamn_execution_contract::encode_read_query(
-        unit_item(&fixture.request_body)?,
+        unit_request_element(&fixture.request_body)?,
     )));
     let response = http
         .get(url)

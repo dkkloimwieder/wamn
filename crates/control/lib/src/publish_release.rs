@@ -1711,7 +1711,7 @@ fn project_routes(
             canonicalization: contract.canonicalization.clone(),
         });
     }
-    // Workflow nodes also use these contracts to begin item transactions and
+    // Workflow nodes also use these contracts to begin request element transactions and
     // claim their keys, for private and registered commands alike. An HTTP
     // attachment is not required to call an operation.
     for component in components.iter() {

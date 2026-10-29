@@ -15,7 +15,7 @@ use wash_runtime::wasmtime::component::{Accessor, HasData, Resource, ResourceTab
 
 use super::write_log::OpaqueBegun;
 use super::{
-    CommitFailure, OperationTransaction, PreparedStatementMembers, PreparedStatementSet,
+    OperationTransaction, PgCommitFailure, PreparedStatementMembers, PreparedStatementSet,
     ReleaseIdentity, SessionClaims, StatementField, StatementValueType, VerifiedStatement,
     WAMN_POSTGRES_ID, WamnPostgres,
 };
@@ -497,8 +497,8 @@ impl<T: 'static + Send> wit::HostWithStore<T> for PostgresOperation {
             transaction.finish_opaque(&open.operation, &open.key, result);
         }
         let committed = transaction.commit().await.map_err(|error| match error {
-            CommitFailure::RolledBack(error) => Refusal::Postgres(error),
-            CommitFailure::Uncertain(_) => Refusal::Uncertain,
+            PgCommitFailure::RolledBack(error) => Refusal::Postgres(error),
+            PgCommitFailure::Uncertain(_) => Refusal::Uncertain,
         });
         open.postgres.operation_metrics.record(
             &open.source,
@@ -732,7 +732,7 @@ async fn begin(
     if authorize_only {
         // The host-issued caller already passed authentication and grant checks.
         postgres
-            .bind_item_session_claims(&open.scope, &claims)
+            .bind_request_element_session_claims(&open.scope, &claims)
             .map_err(|error| binding_error(OperationErrorKind::Claims, &open.scope, error))?;
     } else {
         postgres

@@ -10,17 +10,17 @@ use serde_json::{Map, Number, Value};
 
 use crate::descriptor::FieldSchema;
 
-/// One valid canonical input and its single-item HTTP body.
+/// One valid canonical input and its single request element HTTP body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuiltRequest {
-    item: Value,
+    request_element: Value,
     body: Box<[u8]>,
 }
 
 impl BuiltRequest {
     /// The canonical input object without the outer envelope.
-    pub const fn item(&self) -> &Value {
-        &self.item
+    pub const fn request_element(&self) -> &Value {
+        &self.request_element
     }
 
     /// The captured outer-array bytes to send unchanged on a permitted retry.
@@ -82,18 +82,18 @@ impl Error for RequestError {
 /// The final canonical body must also satisfy the served input schema.
 pub fn build_request(
     fields: &[FieldSchema],
-    item: &Value,
+    request_element: &Value,
     input_schema: Option<&Value>,
 ) -> Result<BuiltRequest, RequestError> {
     supported_fields(fields)?;
-    let item_schema = input_schema.and_then(|schema| schema.get("items"));
-    let item = canonical_object(fields, item, item_schema, "$")?;
-    let envelope = Value::Array(vec![item.clone()]);
+    let request_element_schema = input_schema.and_then(|schema| schema.get("items"));
+    let request_element = canonical_object(fields, request_element, request_element_schema, "$")?;
+    let envelope = Value::Array(vec![request_element.clone()]);
     if let Some(schema) = input_schema {
         validate_schema(schema, &envelope)?;
     }
     Ok(BuiltRequest {
-        item,
+        request_element,
         body: wamn_execution_contract::canonical_json_bytes(&envelope).into_boxed_slice(),
     })
 }

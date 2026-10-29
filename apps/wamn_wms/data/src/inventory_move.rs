@@ -5,7 +5,7 @@
 //! wrote every statement and its decoding; what is authored here is the ORDER
 //! those statements run in and what each refusal means.
 //!
-//! # The shape of one item
+//! # The shape of one request element
 //!
 //! ```text
 //! → lock the packaging          (the serialization point); a consumed one is not found
@@ -29,7 +29,7 @@ use crate::error::{self, AccessError, AccessErrorType};
 use crate::scalar;
 use crate::statements::wamn::inventory_move as sql;
 
-/// One envelope item's command body.
+/// One request element's command body.
 #[derive(Debug, Deserialize)]
 pub struct MoveCommand {
     pub packaging_id: String,
@@ -62,7 +62,7 @@ fn parse(command: &MoveCommand) -> Result<Parsed, AccessError> {
     })
 }
 
-/// Run one command item in the transaction its codec holds for the write log.
+/// Run one command request element in the transaction its codec holds for the write log.
 ///
 /// # Errors
 ///

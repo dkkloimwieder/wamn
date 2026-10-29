@@ -1,13 +1,12 @@
 //! The edge's delivery: a route calls its one operation, and nothing else runs.
 //!
-//! A route target calls [`invoke_operation`] once and settles its result with
-//! the engine's lowering, so the box and the cloud answer a route alike. The
-//! call carries the intent context of its route, so a write logs one intent
-//! for each item in the SQLite store and runs only new items. The device loop
-//! calls through the same path with its own intent log. A
-//! wiring or registration target has no runner on the box and fails as
-//! `execution-failed`. The box has no model versions, so a read carries no
-//! ETag and ignores `If-None-Match`.
+//! A route target calls [`invoke_operation`] once and settles its result with the
+//! engine's lowering, so the box and the cloud answer a route alike. The call carries
+//! the intent context of its route, so a write logs one intent for each request element
+//! in the SQLite store and runs only new request elements. The device loop calls
+//! through the same path with its own intent log. A wiring or registration target has
+//! no runner on the box and fails as `execution-failed`. The box has no model versions,
+//! so a read carries no ETag and ignores `If-None-Match`.
 
 use std::sync::Arc;
 

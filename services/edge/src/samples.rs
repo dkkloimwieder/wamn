@@ -55,7 +55,7 @@ pub struct Sample {
     pub intent: IntentId,
     /// When the host read the frame, in RFC 3339.
     pub captured_at: String,
-    /// The `value` of the device operation's item result.
+    /// The `value` of the device operation's request element result.
     pub body: Value,
     /// The forward attempts so far.
     pub attempts: u32,
@@ -329,7 +329,7 @@ impl IntentStore for SampleIntents<'_> {
             StoreError::new(
                 StoreErrorType::Contract,
                 "finish",
-                "the device operation returned an item without a value",
+                "the device operation returned a request element without a value",
             )
         })?;
         let body = body.to_string();

@@ -18,16 +18,16 @@
 //! resurrect one. A palette transform that means to NARROW the payload
 //! declares itself a projection instead.
 //!
-//! **The payload on an edge is the route ENVELOPE** (RULED `wamn-362o.42`):
-//! an array of items, each `{request_id, value}` or `{request_id, error}`,
-//! exactly what the entry operation emits and what the route answers with.
-//! The platform carries one value of one schema per edge and has no fan-out,
-//! so a palette node applies itself to EACH ITEM'S VALUE and passes error
-//! items through untouched; its ports declare `{"type": "array"}`,
-//! byte-identical to the entry's, which is what the gate's digest rule
-//! compares. `docs/architecture/execution.md#results-and-effects` records
-//! the current limit. Earlier alternatives were router fan-out per item and
-//! per-item outcome reporting for nodes whose work can fail per item.
+//! **The payload on an edge is the route ENVELOPE** (RULED `wamn-362o.42`): an array of
+//! request elements, each `{request_id, value}` or `{request_id, error}`, exactly what
+//! the entry operation emits and what the route answers with. The platform carries one
+//! value of one schema per edge and has no fan-out, so a palette node applies itself to
+//! EACH ITEM'S VALUE and passes error request elements through untouched; its ports
+//! declare `{"type": "array"}`, byte-identical to the entry's, which is what the gate's
+//! digest rule compares. `docs/architecture/execution.md#results-and-effects` records
+//! the current limit. Earlier alternatives were router fan-out per request element and
+//! per request element outcome reporting for nodes whose work can fail per request
+//! element.
 //!
 //! `template_id` is a **wiring parameter**, not an input field. Template choice
 //! is authoring intent: a wirer picks "packaging label" once and the wiring then
@@ -80,22 +80,22 @@ impl Guest for Component {
             .ok_or_else(|| terminal("invalid_config", "template_id parameter must be a string"))?;
         let mut envelope = serde_json::from_str::<serde_json::Value>(&input)
             .map_err(|_| invalid_input("input_not_json", "input is not JSON"))?;
-        let items = envelope.as_array_mut().ok_or_else(|| {
+        let request_elements = envelope.as_array_mut().ok_or_else(|| {
             invalid_input(
                 "input_not_envelope",
-                "input must be the route envelope: a JSON array of items",
+                "input must be the route envelope: a JSON array of request elements",
             )
         })?;
-        for item in items.iter_mut() {
-            // An error item carries no value to render; it passes through so
+        for request_element in request_elements.iter_mut() {
+            // An error request element carries no value to render; it passes through so
             // the caller still sees every request answered.
-            let Some(fields) = item.get_mut("value") else {
+            let Some(fields) = request_element.get_mut("value") else {
                 continue;
             };
             if !fields.is_object() {
                 return Err(invalid_input(
                     "item_value_not_object",
-                    "an item's value must be a JSON object",
+                    "a request element's value must be a JSON object",
                 ));
             }
             // The one translation of the implementation error into the WIT

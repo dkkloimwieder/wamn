@@ -10,7 +10,7 @@
 //!
 //! The result leaves on port `main`, whose schema admits any JSON. With the
 //! optional parameter `port` set to `items`, it leaves on port `items`, whose
-//! schema is the item array that palette nodes such as `label-render` take:
+//! schema is the request element array that palette nodes such as `label-render` take:
 //! a wiring edge joins two ports only when their schemas are the same, and
 //! the node refuses a result that is not an array there.
 //!
@@ -114,7 +114,7 @@ impl Guest for Component {
             .get("port")
             .map(|port| {
                 port.as_str()
-                    .filter(|port| [MAIN_PORT, ITEMS_PORT].contains(port))
+                    .filter(|port| [MAIN_PORT, REQUEST_ELEMENTS_PORT].contains(port))
                     .ok_or_else(|| {
                         terminal("invalid_config", "port must be main or items".to_owned())
                     })
@@ -142,7 +142,7 @@ impl Guest for Component {
         )?;
         let selected_port = select_port(&config, &payload)?;
         let port = selected_port.as_deref().or(port);
-        if port == Some(ITEMS_PORT) && !is_item_array(&payload) {
+        if port == Some(REQUEST_ELEMENTS_PORT) && !is_request_element_array(&payload) {
             return Err(terminal(
                 "not_an_item_array",
                 "the result on port items must be an array".to_owned(),
@@ -171,7 +171,7 @@ fn select_port(config: &serde_json::Value, payload: &str) -> Result<Option<Strin
     let port = value
         .pointer(pointer)
         .and_then(serde_json::Value::as_str)
-        .filter(|port| [MAIN_PORT, ITEMS_PORT].contains(port))
+        .filter(|port| [MAIN_PORT, REQUEST_ELEMENTS_PORT].contains(port))
         .ok_or_else(|| {
             terminal(
                 "invalid_port",
@@ -183,11 +183,11 @@ fn select_port(config: &serde_json::Value, payload: &str) -> Result<Option<Strin
 
 /// The output port whose schema admits any JSON.
 const MAIN_PORT: &str = "main";
-/// The output port whose schema is an array of items.
-const ITEMS_PORT: &str = "items";
+/// The output port whose schema is an array of request elements.
+const REQUEST_ELEMENTS_PORT: &str = "items";
 
 /// Whether an emitted payload fits the `items` port schema.
-fn is_item_array(payload: &str) -> bool {
+fn is_request_element_array(payload: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(payload).is_ok_and(|value| value.is_array())
 }
 
@@ -205,7 +205,7 @@ bindings::export!(Component with_types_in bindings);
 mod tests {
     use serde_json::{Value, json};
 
-    use super::{EvaluationErrorType, evaluate, is_item_array};
+    use super::{EvaluationErrorType, evaluate, is_request_element_array};
 
     #[test]
     fn parameters_are_bound_without_changing_the_input() {
@@ -240,7 +240,7 @@ mod tests {
     }
 
     /// The WMS label workflow's shape expression (docs/plan/workflow-feature.md
-    /// 4.4): a move row becomes one label-render item keyed by its command,
+    /// 4.4): a move row becomes one label-render request element keyed by its command,
     /// and any other row none.
     const SHAPE: &str = r#"event = "insert" and new.kind = "move"
         ? [{"request_id": new.id,
@@ -254,7 +254,7 @@ mod tests {
     }
 
     #[test]
-    fn the_shape_expression_turns_a_move_row_into_one_label_item() {
+    fn the_shape_expression_turns_a_move_row_into_one_label_request_element() {
         let row = json!({"event": "insert", "new": {
             "id": "m-1", "idempotency_key": "k-1", "kind": "move", "packaging_id": "p-1",
             "from_location_id": "l-0", "to_location_id": "l-2", "quantity": "4"}});
@@ -266,7 +266,7 @@ mod tests {
     }
 
     #[test]
-    fn the_shape_expression_gives_no_item_for_another_movement() {
+    fn the_shape_expression_gives_no_request_element_for_another_movement() {
         let row = json!({"event": "insert", "new": {"id": "m-2", "kind": "receive"}});
         assert_eq!(result(SHAPE, &row), json!([]));
     }
@@ -274,9 +274,11 @@ mod tests {
     #[test]
     fn only_an_array_fits_the_items_port() {
         let row = json!({"event": "insert", "new": {"id": "m-2", "kind": "receive"}});
-        assert!(is_item_array(&evaluate(SHAPE, &row).unwrap()));
-        assert!(!is_item_array(&evaluate("new", &row).unwrap()));
-        assert!(!is_item_array(&evaluate("absent", &row).unwrap()));
+        assert!(is_request_element_array(&evaluate(SHAPE, &row).unwrap()));
+        assert!(!is_request_element_array(&evaluate("new", &row).unwrap()));
+        assert!(!is_request_element_array(
+            &evaluate("absent", &row).unwrap()
+        ));
     }
 
     #[test]

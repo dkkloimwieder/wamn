@@ -419,28 +419,28 @@ pub struct ServingRoute {
     /// `record.revision_field` of its generated contract.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub revision: Option<String>,
-    /// The input item field that carries the idempotency key, such as
+    /// The input request element field that carries the idempotency key, such as
     /// `value.idempotency_key`, from the generated input contract. A route
-    /// without one keys its intents by the item `request_id`.
+    /// without one keys its intents by the request element `request_id`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency: Option<String>,
-    /// The canonical form of an input item, from the generated input
-    /// contract. A route without one takes its items as they are sent.
+    /// The canonical form of an input request element, from the generated input
+    /// contract. A route without one takes its request elements as they are sent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub canonicalization: Option<RouteCanonicalization>,
 }
 
-/// The canonical form of one route's input item
+/// The canonical form of one route's input request element
 /// (`docs/history/host-transaction.md` 7, ruling (a)).
 ///
 /// Two spellings of one request are one request: the host respells the
-/// declared leaves and orders the declared lines before it hashes the item
-/// and before the component gets it. Paths are dotted item paths, and `[]`
+/// declared leaves and orders the declared lines before it hashes the request element
+/// and before the component gets it. Paths are dotted request element paths, and `[]`
 /// names each element of a list, such as `value.line[].quantity`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct RouteCanonicalization {
-    /// Item paths that the request hash leaves out. The key and the
+    /// Request element paths that the request hash leaves out. The key and the
     /// `request_id` are never here.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub excluded: BTreeSet<String>,
@@ -453,7 +453,7 @@ pub struct RouteCanonicalization {
     pub spelling: BTreeMap<String, CanonicalSpelling>,
 }
 
-/// The line list of an item and the member that orders it.
+/// The line list of a request element and the member that orders it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct RouteLineOrder {
@@ -473,20 +473,20 @@ pub enum CanonicalSpelling {
 }
 
 impl RouteCanonicalization {
-    /// Respell the declared leaves of `item` and order its declared lines.
+    /// Respell the declared leaves of `request_element` and order its declared lines.
     ///
     /// A value that the respelling refuses keeps its text, and the component
     /// refuses it.
-    pub fn apply(&self, item: &mut Value) {
+    pub fn apply(&self, request_element: &mut Value) {
         for (path, spelling) in &self.spelling {
             let segments = path.split('.').collect::<Vec<_>>();
-            respell(item, &segments, *spelling);
+            respell(request_element, &segments, *spelling);
         }
         if let Some(order) = &self.lines
             && let Some(Value::Array(lines)) = order
                 .path
                 .split('.')
-                .try_fold(&mut *item, |value, name| value.get_mut(name))
+                .try_fold(&mut *request_element, |value, name| value.get_mut(name))
         {
             lines.sort_by_cached_key(|line| {
                 line.get(&order.ascending_by)
@@ -495,10 +495,10 @@ impl RouteCanonicalization {
         }
     }
 
-    /// `item` without its excluded paths: what the request hash covers.
+    /// `request_element` without its excluded paths: what the request hash covers.
     #[must_use]
-    pub fn hashed(&self, item: &Value) -> Value {
-        let mut hashed = item.clone();
+    pub fn hashed(&self, request_element: &Value) -> Value {
+        let mut hashed = request_element.clone();
         for path in &self.excluded {
             let segments = path.split('.').collect::<Vec<_>>();
             remove(&mut hashed, &segments);

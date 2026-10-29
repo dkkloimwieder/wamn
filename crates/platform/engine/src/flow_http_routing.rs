@@ -976,8 +976,8 @@ fn route_definition(
     });
     Some(RouteDefinition {
         read_limits: operation.filter(|route| route.type_.is_read()).map(|_| {
-            let item = &attachment.definition()["input-schema"]["items"];
-            let properties = &item["properties"];
+            let request_element_schema = &attachment.definition()["input-schema"]["items"];
+            let properties = &request_element_schema["properties"];
             let filter = &properties["filter"];
             routing::ReadLimits {
                 page_minimum: properties["limit"]["minimum"]

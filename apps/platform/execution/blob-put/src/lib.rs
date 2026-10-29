@@ -15,14 +15,14 @@
 //! # The payload is the route envelope
 //!
 //! RULED `wamn-362o.42`: an edge carries the route envelope — an array of
-//! items, each `{request_id, value}` or `{request_id, error}` — and the
+//! request elements, each `{request_id, value}` or `{request_id, error}` — and the
 //! platform has no fan-out, so this node writes ONE OBJECT PER ITEM VALUE,
-//! resolving `key_field` and `body_field` against each item's value, and
-//! passes error items through untouched. It ENRICHES each value it wrote
+//! resolving `key_field` and `body_field` against each request element's value, and
+//! passes error request elements through untouched. It ENRICHES each value it wrote
 //! with `stored: {container, key}` rather than replacing the payload, because
 //! the route answers with what the last node emits and a caller is owed the
 //! operation's result, not this node's result alone. A failed write fails
-//! the emission as a whole; per-item outcome reporting is noted as future
+//! the emission as a whole; per request element outcome reporting is noted as future
 //! work in `docs/architecture/execution.md#results-and-effects`.
 //!
 //! # Why the container is not named here
@@ -110,14 +110,14 @@ impl Guest for Component {
 
         let mut envelope = serde_json::from_str::<serde_json::Value>(&input)
             .map_err(|_| invalid_input("input_not_json", "input is not JSON"))?;
-        let items = envelope.as_array_mut().ok_or_else(|| {
+        let request_elements = envelope.as_array_mut().ok_or_else(|| {
             invalid_input(
                 "input_not_envelope",
-                "input must be the route envelope: a JSON array of items",
+                "input must be the route envelope: a JSON array of request elements",
             )
         })?;
-        for item in items.iter_mut() {
-            let Some(value) = item.get_mut("value") else {
+        for request_element in request_elements.iter_mut() {
+            let Some(value) = request_element.get_mut("value") else {
                 continue;
             };
             // Required, with no default and no generated fallback — see the
@@ -131,7 +131,7 @@ impl Guest for Component {
                     invalid_input(
                         "missing_key",
                         format!(
-                            "key_field {key_field:?} resolves to no non-empty string in an item's \
+                            "key_field {key_field:?} resolves to no non-empty string in a request element's \
                              value: the caller supplies a deterministic object key, and this node \
                              never generates one"
                         ),
@@ -145,7 +145,7 @@ impl Guest for Component {
                     invalid_input(
                         "missing_body",
                         format!(
-                            "body_field {body_field:?} resolves to no string in an item's value"
+                            "body_field {body_field:?} resolves to no string in a request element's value"
                         ),
                     )
                 })?
@@ -155,7 +155,7 @@ impl Guest for Component {
             let Some(record) = value.as_object_mut() else {
                 return Err(invalid_input(
                     "item_value_not_object",
-                    "an item's value must be a JSON object",
+                    "a request element's value must be a JSON object",
                 ));
             };
             record.insert(

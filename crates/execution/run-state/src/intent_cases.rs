@@ -119,7 +119,7 @@ pub async fn a_finished_key_returns_its_stored_outcome(fixture: &dyn IntentStore
     assert!(store.uncertain(10).await.expect("uncertain").is_empty());
 }
 
-/// A refused item frees its key: the record goes, and the key is new again,
+/// A refused request element frees its key: the record goes, and the key is new again,
 /// with any input.
 pub async fn a_released_key_is_new_again(fixture: &dyn IntentStoreFixture) {
     let CaseStores { store, tenant, .. } = fixture.stores("a_released_key_is_new_again").await;

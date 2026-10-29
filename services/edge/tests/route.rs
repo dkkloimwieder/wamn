@@ -1,5 +1,5 @@
 //! The edge serves the route of the `apps/edge_device` bundle through the
-//! http-route guest, and logs one intent for each item of a write.
+//! http-route guest, and logs one intent for each request element of a write.
 //!
 //! The support module builds the bundle when the tests start.
 
@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpStream;
 use wamn_edge::intents;
-use wamn_engine::operation::intent::item_input_hash;
+use wamn_engine::operation::intent::request_element_hash;
 use wamn_run_state::IntentStore as _;
 use wamn_run_state::intent_store::{Begun, Intent, IntentId, StoredOutcome};
 use wamn_run_state::operator_action::OperatorActionBasis;
@@ -21,7 +21,7 @@ use support::{
     HOST, OPERATION, ORG, PACKAGE, PATH, ROLE, bundle, config, key, release, session, start,
 };
 
-/// The capture time of every item.
+/// The capture time of every request element.
 const CAPTURED_AT: &str = "2026-09-25T12:00:00.000000Z";
 
 /// POST `body` to the route and return the status and the response body.
@@ -86,7 +86,7 @@ async fn the_edge_serves_a_route_to_a_session_whose_role_grants_it() {
     let (directory, digest) = bundle("route", &public);
     let host = start(config(&directory, digest)).await;
     let addr = host.addr();
-    let body = json!([item("r-1", " 12.5 kg ")]).to_string();
+    let body = json!([request_element("r-1", " 12.5 kg ")]).to_string();
     let body = body.as_str();
 
     let (status, answer) = post(addr, Some(&session(&known, "key-one", &[ROLE])), body).await;
@@ -114,27 +114,29 @@ async fn the_edge_serves_a_route_to_a_session_whose_role_grants_it() {
     host.stop().await.expect("the edge stops");
 }
 
-/// An item of the route's input, keyed by its request id.
-fn item(request_id: &str, frame: &str) -> Value {
+/// A request element of the route's input, keyed by its request id.
+fn request_element(request_id: &str, frame: &str) -> Value {
     json!({"request_id": request_id, "value": {"frame": frame, "captured_at": CAPTURED_AT}})
 }
 
-/// The answer of the device component to one item: the trimmed frame.
+/// The answer of the device component to one request element: the trimmed frame.
 fn outcome(request_id: &str, frame: &str) -> Value {
-    item(request_id, frame)
+    request_element(request_id, frame)
 }
 
-/// Begin the intent of `item` as the edge would, for a store seeded before the
+/// Begin the intent of `request_element` as the edge would, for a store seeded before the
 /// edge starts.
-async fn begin(store: &SqliteIntentStore, release: &str, item: &Value) -> IntentId {
+async fn begin(store: &SqliteIntentStore, release: &str, request_element: &Value) -> IntentId {
     let begun = store
         .begin(&Intent {
             tenant: ORG,
             release,
             package: PACKAGE,
             operation: OPERATION,
-            idempotency_key: item["request_id"].as_str().expect("a request id"),
-            input_hash: &item_input_hash(item),
+            idempotency_key: request_element["request_id"]
+                .as_str()
+                .expect("a request id"),
+            input_hash: &request_element_hash(request_element),
             deadline_ms: 1_000,
         })
         .await
@@ -145,21 +147,21 @@ async fn begin(store: &SqliteIntentStore, release: &str, item: &Value) -> Intent
     id
 }
 
-/// A command route logs one intent for each item. A finished key answers its
-/// stored outcome without running, an unfinished key answers intent-uncertain,
-/// a resolved key answers intent-resolved with its basis, and only the new item
-/// runs. The operator lists and resolves the uncertain intent with the edge
+/// A command route logs one intent for each request element. A finished key answers its
+/// stored outcome without running, an unfinished key answers intent-uncertain, a
+/// resolved key answers intent-resolved with its basis, and only the new request
+/// element runs. The operator lists and resolves the uncertain intent with the edge
 /// stopped.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_write_logs_one_intent_per_item_and_runs_only_new_items() {
+async fn a_write_logs_one_intent_per_request_element_and_runs_only_new_request_elements() {
     let (pair, public) = key("key-one", 1);
     let (directory, digest) = bundle("intents", &public);
     let db = directory.join("edge.db");
     let release = release(&directory);
     let (stored, open, resolved) = (
-        item("r-stored", "1 kg"),
-        item("r-open", "2 kg"),
-        item("r-resolved", "3 kg"),
+        request_element("r-stored", "1 kg"),
+        request_element("r-open", "2 kg"),
+        request_element("r-resolved", "3 kg"),
     );
     let open_id = {
         let store = SqliteIntentStore::open(&db).expect("open the store before the edge");
@@ -181,11 +183,15 @@ async fn a_write_logs_one_intent_per_item_and_runs_only_new_items() {
     let host = start(config(&directory, digest)).await;
     let addr = host.addr();
     let token = session(&pair, "key-one", &[ROLE]);
-    let batch = json!([item("r-new", " 4 kg"), stored, open, resolved]).to_string();
+    let batch = json!([request_element("r-new", " 4 kg"), stored, open, resolved]).to_string();
     let (status, answer) = post(addr, Some(&token), &batch).await;
     assert_eq!(status, 200, "{answer}");
     let answer: Value = serde_json::from_str(&answer).expect("a JSON body");
-    assert_eq!(answer[0], outcome("r-new", "4 kg"), "the new item runs");
+    assert_eq!(
+        answer[0],
+        outcome("r-new", "4 kg"),
+        "the new request element runs"
+    );
     assert_eq!(
         answer[1],
         json!({"request_id": "r-stored", "value": {"frame": "stored"}}),
@@ -201,14 +207,14 @@ async fn a_write_logs_one_intent_per_item_and_runs_only_new_items() {
     assert_eq!(answer[3]["error"]["code"], "intent-resolved");
     assert_eq!(answer[3]["error"]["detail"]["basis"], "operator-judgment");
 
-    let replay = json!([item("r-new", " 4 kg")]).to_string();
+    let replay = json!([request_element("r-new", " 4 kg")]).to_string();
     let (status, again) = post(addr, Some(&token), &replay).await;
     assert_eq!(status, 200, "{again}");
     assert_eq!(
         serde_json::from_str::<Value>(&again).expect("a JSON body"),
         json!([outcome("r-new", "4 kg")])
     );
-    let changed = json!([item("r-new", "5 kg")]).to_string();
+    let changed = json!([request_element("r-new", "5 kg")]).to_string();
     let (status, conflict) = post(addr, Some(&token), &changed).await;
     assert_eq!(status, 200, "{conflict}");
     let conflict: Value = serde_json::from_str(&conflict).expect("a JSON body");

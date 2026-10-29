@@ -243,7 +243,7 @@ async fn request(
     let secret = caller["metadata"]["name"]
         .as_str()
         .context("operator Secret has a name")?;
-    // A get is a read: its one item travels in the query string, with no
+    // A get is a read: its one request element travels in the query string, with no
     // request identity.
     let query = wamn_execution_contract::encode_read_query(
         json!({"id":super::application::PACKAGING_ID})

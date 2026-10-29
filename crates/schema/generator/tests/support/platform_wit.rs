@@ -35,7 +35,7 @@ fn typed_wit_and_codec_follow_package_and_envelope_declarations() {
             "ArchiveError::AlreadyArchived",
             "const MINIMUM: usize = 2;",
             "const MAXIMUM: usize = 7;",
-            "item count must be 2..=7",
+            "request element count must be 2..=7",
         ] {
             assert!(codec.contains(expected), "{expected}");
         }

@@ -82,8 +82,8 @@ struct ComponentPolicy {
 pub struct NativeFacts {
     pub(super) acquisition: NodeAcquisition,
     pub(super) caller: Option<AuthenticatedCaller>,
-    /// The host transaction of a logged item, which activation binds.
-    pub(super) item: Option<OperationTransaction>,
+    /// The host transaction of a logged request element, which activation binds.
+    pub(super) transaction: Option<OperationTransaction>,
 }
 
 impl std::fmt::Debug for NativeFacts {
@@ -101,7 +101,7 @@ impl NativeFacts {
         Self {
             acquisition,
             caller,
-            item: None,
+            transaction: None,
         }
     }
 }
@@ -280,10 +280,10 @@ impl NativePolicy {
             claims.schema = Some(schema.clone());
         }
         let postgres = &self.resources.postgres;
-        // An item's transaction began under a bind of these same facts, which
+        // A request element's transaction began under a bind of these same facts, which
         // read the principal, so the call inside it does not read again.
-        let bound = if facts.item.is_some() {
-            postgres.bind_item_session_claims(scope, &claims)
+        let bound = if facts.transaction.is_some() {
+            postgres.bind_request_element_session_claims(scope, &claims)
         } else {
             postgres.bind_session_claims(scope, &claims).await
         };
@@ -306,12 +306,12 @@ impl NativePolicy {
 impl InvocationPolicy for NativePolicy {
     type Facts = NativeFacts;
     type Authority = NativeAuthorityGuard;
-    type ItemTransaction = OperationTransaction;
+    type Transaction = OperationTransaction;
 
-    /// Begin the item's transaction under the claims of the call, on a scope
+    /// Begin the request element's transaction under the claims of the call, on a scope
     /// of its own that ends after the transaction captures its claims, when the
     /// admitted operation declares a host transaction. BEGIN waits for the claim.
-    async fn begin_item(
+    async fn admit_and_open_transaction(
         &self,
         component_id: &str,
         operation: &str,
@@ -328,7 +328,7 @@ impl InvocationPolicy for NativePolicy {
             return Ok(None);
         }
         let postgres = &self.resources.postgres;
-        let scope = wamn_engine::operation::next_scope("native-item");
+        let scope = wamn_engine::operation::next_scope("native-request-element");
         let begun = async {
             self.bind_claims(&scope, operation, facts, &component)
                 .await?;
@@ -356,16 +356,22 @@ impl InvocationPolicy for NativePolicy {
                         transaction
                     }
                 })
-                .map_err(|error| anyhow::anyhow!("begin the item transaction: {error:?}"))
+                .map_err(|error| {
+                    anyhow::anyhow!("begin the request element transaction: {error:?}")
+                })
         }
         .await;
         postgres.revoke_session_claims(&scope);
         begun.map(Some)
     }
 
-    fn item_facts(&self, facts: &NativeFacts, transaction: &OperationTransaction) -> NativeFacts {
+    fn transaction_facts(
+        &self,
+        facts: &NativeFacts,
+        transaction: &OperationTransaction,
+    ) -> NativeFacts {
         NativeFacts {
-            item: Some(transaction.clone()),
+            transaction: Some(transaction.clone()),
             ..facts.clone()
         }
     }
@@ -438,7 +444,7 @@ impl InvocationPolicy for NativePolicy {
         resources
             .postgres
             .activate_statement_operation(scope, operation)?;
-        if let Some(transaction) = &request.facts.item {
+        if let Some(transaction) = &request.facts.transaction {
             resources
                 .postgres
                 .bind_operation_transaction(scope, transaction)?;

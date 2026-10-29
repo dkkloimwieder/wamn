@@ -175,7 +175,7 @@ fn state_idempotence_requires_its_exact_shape() {
 }
 
 /// `stateless` is for a command with no SQL, whose replay guard is the
-/// engine's per-item intent. A command with SQL still names claim or state
+/// engine's per request element intent. A command with SQL still names claim or state
 /// (owner ruling, `wamn-hxow`).
 #[test]
 fn stateless_idempotence_is_only_for_a_command_without_sql() {
@@ -212,7 +212,7 @@ fn stateless_idempotence_is_only_for_a_command_without_sql() {
 }
 
 /// A command without SQL of its own may declare `transaction =
-/// explicit_per_input`: it calls members that work in the item transaction,
+/// explicit_per_input`: it calls members that work in the request element transaction,
 /// and the host begins that transaction from this field (`wamn-azko6`).
 #[test]
 fn a_command_without_sql_may_declare_its_host_transaction() {
@@ -874,7 +874,7 @@ fn composition_is_exact_and_carries_its_contract() {
 }
 
 /// The fixture's claim command names its key and the canonical form of its
-/// item, and its codec claims nothing: the host claims the key in the
+/// request element, and its codec claims nothing: the host claims the key in the
 /// operation transaction (`docs/history/host-transaction.md` 4.4). Publish hands
 /// the key and the canonical form to the engine's intent rules.
 #[test]

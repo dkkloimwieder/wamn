@@ -398,23 +398,26 @@ async fn get_case(
 }
 
 fn check_record(body: &Value) -> anyhow::Result<()> {
-    let items = body
+    let request_elements = body
         .as_array()
         .context("response must be a batched envelope")?;
-    ensure!(items.len() == 1, "response must contain exactly one item");
-    let item = &items[0];
+    ensure!(
+        request_elements.len() == 1,
+        "response must contain exactly one request element"
+    );
+    let request_element = &request_elements[0];
     // A read carries no request identity, so its one outcome answers by position.
     ensure!(
-        item.get("request_id").is_none(),
+        request_element.get("request_id").is_none(),
         "a read outcome carries no request identity"
     );
     ensure!(
-        item.get("error").is_none(),
+        request_element.get("error").is_none(),
         "successful HTTP response contained an operation error"
     );
     ensure!(
-        item["value"]["id"] == PURCHASE_ORDER_ID
-            && item["value"]["purchase_order_number"] == "PO-301",
+        request_element["value"]["id"] == PURCHASE_ORDER_ID
+            && request_element["value"]["purchase_order_number"] == "PO-301",
         "response did not return the seeded purchase order"
     );
     Ok(())

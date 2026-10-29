@@ -1,7 +1,7 @@
 //! The write log, `platform.write_log`, as the engine's intent store
 //! (`docs/history/host-transaction.md` 4.2 and 4.3).
 //!
-//! An operation with SQL claims its key in its item transaction, so the claim
+//! An operation with SQL claims its key in its request element transaction, so the claim
 //! and the work commit together or not at all: [`OperationTransaction`] is
 //! that store. An operation without SQL claims in two steps on a connection of
 //! its own: [`WriteLogStore`] commits the claim before the call and the result
@@ -74,7 +74,7 @@ pub(super) const COMMIT_FINISH_SQL: &str = "WITH finished AS (UPDATE platform.wr
      WHERE operation = $1::text AND idempotency_key = $2::text AND result IS NULL \
      RETURNING idempotency_key) SELECT 1 / count(*)::integer FROM finished";
 
-/// Free the key of a two-step claim whose item was refused.
+/// Free the key of a two-step claim whose request element was refused.
 const RELEASE_SQL: &str = "DELETE FROM platform.write_log \
      WHERE operation = $1::text AND idempotency_key = $2::text AND result IS NULL \
      RETURNING idempotency_key";
@@ -244,7 +244,10 @@ impl OperationTransaction {
         if self.known_result.is_some() {
             return;
         }
-        *self.finish.lock().expect("item finish lock poisoned") =
+        *self
+            .finish
+            .lock()
+            .expect("request element finish lock poisoned") =
             Some([log_operation(operation).to_owned(), key.to_owned(), result]);
     }
 
@@ -272,7 +275,7 @@ impl OperationTransaction {
             let claims = self
                 .claims
                 .lock()
-                .expect("item claims lock poisoned")
+                .expect("request element claims lock poisoned")
                 .take();
             if let Some(claims) = claims {
                 let (bound, rows) = tokio::join!(biased;
@@ -316,10 +319,10 @@ pub(super) enum OpaqueBegun {
     Conflict,
 }
 
-/// The claim of an operation with SQL, inside its item transaction.
+/// The claim of an operation with SQL, inside its request element transaction.
 ///
 /// The claim commits with the work, so nothing here is ever uncertain, and a
-/// refused item frees its key when the owner rolls the transaction back.
+/// refused request element frees its key when the owner rolls the transaction back.
 #[async_trait]
 impl IntentStore for OperationTransaction {
     async fn begin(&self, intent: &Intent<'_>) -> Result<Begun, StoreError> {
@@ -337,11 +340,14 @@ impl IntentStore for OperationTransaction {
         let (operation, key) = claim_of("finish", id)?;
         let result = serde_json::to_string(&outcome.0)
             .map_err(|error| contract("finish", format!("encode outcome: {error}")))?;
-        let mut finish = self.finish.lock().expect("item finish lock poisoned");
+        let mut finish = self
+            .finish
+            .lock()
+            .expect("request element finish lock poisoned");
         if finish.is_some() {
             return Err(contract(
                 "finish",
-                "the item already has a pending finish".to_owned(),
+                "the request element already has a pending finish".to_owned(),
             ));
         }
         *finish = Some([operation.to_owned(), key.to_owned(), result]);

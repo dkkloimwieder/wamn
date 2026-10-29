@@ -59,8 +59,8 @@ fn pseudo_terminal() -> (File, PathBuf) {
 struct Received {
     /// The requests, with or without a valid PAT.
     requests: usize,
-    /// Every item, in order of arrival.
-    items: Vec<Value>,
+    /// Every request element, in order of arrival.
+    request_elements: Vec<Value>,
     /// The answer of each applied key.
     applied: BTreeMap<String, Value>,
     /// Hold the answer of the next new key, and never send it.
@@ -166,19 +166,23 @@ fn handle(received: &Mutex<Received>, authorization: &str, body: &[u8]) -> Optio
     if authorization != format!("Bearer {TOKEN}") {
         return Some((401, "[]".to_owned()));
     }
-    let items: Vec<Value> = serde_json::from_slice(body).expect("an item list");
-    let item = items.into_iter().next().expect("one item");
-    let request_id = item["request_id"].clone();
-    let key = item["value"]["idempotency_key"]
+    let request_elements: Vec<Value> =
+        serde_json::from_slice(body).expect("a request element list");
+    let request_element = request_elements
+        .into_iter()
+        .next()
+        .expect("one request element");
+    let request_id = request_element["request_id"].clone();
+    let key = request_element["value"]["idempotency_key"]
         .as_str()
         .expect("the forward writes the key field")
         .to_owned();
-    received.items.push(item.clone());
+    received.request_elements.push(request_element.clone());
     if let Some(answer) = received.applied.get(&key) {
         let answer = json!([{"request_id": request_id, "value": answer}]);
         return Some((200, answer.to_string()));
     }
-    if item["value"]["frame"] == REFUSED_FRAME {
+    if request_element["value"]["frame"] == REFUSED_FRAME {
         let answer = json!([{
             "request_id": request_id,
             "error": {"code": "invalid_input", "message": "the frame is not a weight"},
@@ -425,7 +429,7 @@ async fn a_sample_is_forwarded_once_across_kills() {
     // The restarted edge sends the held sample again, then the second.
     let mut edge = Edge::start(&config);
     until(&platform, "both samples", |received| {
-        received.items.len() >= 3
+        received.request_elements.len() >= 3
     })
     .await;
     controller
@@ -439,20 +443,28 @@ async fn a_sample_is_forwarded_once_across_kills() {
     let refused_key = {
         let received = platform.received();
         let keys: Vec<&str> = received
-            .items
+            .request_elements
             .iter()
-            .map(|item| {
-                let key = item["request_id"].as_str().expect("a request id");
-                assert_eq!(item["value"]["idempotency_key"], key, "one key for both");
+            .map(|request_element| {
+                let key = request_element["request_id"]
+                    .as_str()
+                    .expect("a request id");
+                assert_eq!(
+                    request_element["value"]["idempotency_key"], key,
+                    "one key for both"
+                );
                 key
             })
             .collect();
         assert_eq!(keys.len(), 4, "{keys:?}");
         assert_eq!(keys[0], keys[1], "the held sample is sent again");
-        assert_eq!(received.items[0], received.items[1], "with the same body");
+        assert_eq!(
+            received.request_elements[0], received.request_elements[1],
+            "with the same body"
+        );
         assert_eq!(received.applied.len(), 2, "each sample is applied once");
         assert_eq!(
-            received.items[3]["value"]["frame"], REFUSED_FRAME,
+            received.request_elements[3]["value"]["frame"], REFUSED_FRAME,
             "the refused sample is sent once"
         );
         keys[3].to_owned()

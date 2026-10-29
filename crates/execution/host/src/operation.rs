@@ -54,7 +54,7 @@ mod signed_result;
 #[derive(Debug)]
 pub struct CallIntents {
     /// The two-step store of an operation without SQL. An operation with SQL
-    /// claims in its item transaction instead.
+    /// claims in its request element transaction instead.
     store: WriteLogStore,
     env_key: String,
     release: String,

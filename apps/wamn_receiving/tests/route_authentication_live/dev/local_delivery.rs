@@ -340,7 +340,7 @@ impl Served {
             .await?)
     }
 
-    /// A read whose one item is empty: a GET with no query and no body.
+    /// A read whose one request element is empty: a GET with no query and no body.
     async fn get(&self, token: &str, path: &str) -> anyhow::Result<Value> {
         Ok(http_client()?
             .get(format!("{}{path}", self.url))

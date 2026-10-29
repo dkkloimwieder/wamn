@@ -1,4 +1,4 @@
-//! Item response bodies shared by the guest and its native tests.
+//! Request element response bodies shared by the guest and its native tests.
 
 use serde_json::{Value, json};
 
@@ -25,7 +25,7 @@ pub(crate) fn uncertain(intent: &str) -> Value {
 }
 
 pub(crate) fn with_request_id(mut body: String, request_id: &str) -> Result<String, DeliveryError> {
-    // The stored item is already JSON without request_id. Insert only the
+    // The stored request element is already JSON without request_id. Insert only the
     // current request id, preserving its key order, number spelling and spaces.
     let object = body.trim();
     let members = object

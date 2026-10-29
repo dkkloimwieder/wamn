@@ -1,4 +1,4 @@
-//! A durable queue item whose host dies during application SQL completes
+//! A durable queue request element whose host dies during application SQL completes
 //! after the host restarts (wamn-7k2fh; the cluster case that b8199fb4c
 //! deleted).
 //!
@@ -48,7 +48,7 @@ async fn a_run_killed_during_application_sql_completes_after_the_host_restarts()
             "operation":*super::BASE_RECORD_RECEIPT}}
     }))?;
     // The release publishes the record_receipt route, whose intent the queued
-    // call logs in its host-owned item transaction.
+    // call logs in its host-owned request element transaction.
     let mut attachments =
         wamn_schema_generator::route_schema::read_package_attachments(&receiving)?;
     attachments.retain(|_, attachment| {
@@ -137,7 +137,7 @@ async fn recover(
                    ('00000000-0000-0000-0000-000000000201', 'DOCK-1');",
             )
             .await
-            .context("seed the queued receipt item and location")?;
+            .context("seed the queued receipt request element and location")?;
         super::environment::seed_materializer_order(&client, ORDER, LINE, "PO-304").await?;
         // The local application's operator service holds the admin role.
         let principal: String = client

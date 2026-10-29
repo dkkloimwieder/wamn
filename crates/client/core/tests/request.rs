@@ -74,13 +74,13 @@ fn code_omission_stays_absent_while_explicit_null_is_refused() {
     ))
     .expect("parse the fixture route schema");
     let schema = &schema;
-    let mut item = json!({"request_id":"r1", "id":"00000000-0000-0000-0000-000000000001",
+    let mut request_element = json!({"request_id":"r1", "id":"00000000-0000-0000-0000-000000000001",
         "expected_edit_version": 4, "change": {}});
-    assert_eq!(build_request(FIELDS, &item, Some(schema)).expect("omit code without clearing it").body(),
+    assert_eq!(build_request(FIELDS, &request_element, Some(schema)).expect("omit code without clearing it").body(),
         br#"[{"change":{},"expected_edit_version":4,"id":"00000000-0000-0000-0000-000000000001","request_id":"r1"}]"#);
-    item["change"]["code"] = Value::Null;
-    let error =
-        build_request(FIELDS, &item, Some(schema)).expect_err("explicit null is invalid_input");
+    request_element["change"]["code"] = Value::Null;
+    let error = build_request(FIELDS, &request_element, Some(schema))
+        .expect_err("explicit null is invalid_input");
     assert_eq!(error.error_type(), RequestErrorType::NullNotAllowed);
     assert_eq!(error.path(), "$.change.code");
 }
@@ -140,7 +140,7 @@ fn nested_request_bytes_canonicalize_uuid_time_and_numeric_once() {
     assert_eq!(built.body(), br#"[{"request_id":"r1","value":{"idempotency_key":"intent-1","line":[{"quantity":"5.000","widget_id":"abcdef00-0000-0000-0000-000000000001"}],"occurred_at":"2026-09-08T12:30:00.123456Z"}}]"#);
     assert_eq!(input, batch(), "building never changes the editable draft");
     assert_eq!(
-        build_request(BATCH_FIELDS, built.item(), Some(&batch_schema()))
+        build_request(BATCH_FIELDS, built.request_element(), Some(&batch_schema()))
             .expect("canonical values stay canonical")
             .body(),
         built.body()
@@ -149,23 +149,24 @@ fn nested_request_bytes_canonicalize_uuid_time_and_numeric_once() {
 
 #[test]
 fn nested_arrays_enforce_bounds_and_required_child_fields() {
-    let mut item = batch();
-    item["value"]["line"] = json!([]);
+    let mut request_element = batch();
+    request_element["value"]["line"] = json!([]);
     assert_eq!(
-        build_request(BATCH_FIELDS, &item, None)
+        build_request(BATCH_FIELDS, &request_element, None)
             .expect_err("too few lines")
             .error_type(),
         RequestErrorType::Bounds
     );
-    item["value"]["line"] = json!([{}, {}, {}]);
+    request_element["value"]["line"] = json!([{}, {}, {}]);
     assert_eq!(
-        build_request(BATCH_FIELDS, &item, None)
+        build_request(BATCH_FIELDS, &request_element, None)
             .expect_err("too many lines")
             .error_type(),
         RequestErrorType::Bounds
     );
-    item["value"]["line"] = json!([{}]);
-    let error = build_request(BATCH_FIELDS, &item, None).expect_err("missing nested field");
+    request_element["value"]["line"] = json!([{}]);
+    let error =
+        build_request(BATCH_FIELDS, &request_element, None).expect_err("missing nested field");
     assert_eq!(error.error_type(), RequestErrorType::RequiredField);
     assert_eq!(error.path(), "$.value.line[0].widget_id");
 }
@@ -223,7 +224,7 @@ fn numeric_canonicalization_preserves_scale_without_a_precision_limit() {
     ] {
         let built =
             build_request(&fields, &json!({"quantity":input}), None).expect("lexical numeric");
-        assert_eq!(built.item()["quantity"], expected);
+        assert_eq!(built.request_element()["quantity"], expected);
     }
     for input in [".", "+", "-", "1e3", "NaN", "Infinity", "1.2.3"] {
         assert!(
@@ -371,7 +372,7 @@ fn opaque_result_items_still_enforce_the_declared_array_shape() {
         maximum: Some(2),
         ..scalar("items[]", "array", true, false)
     }];
-    assert!(validate_result(&fields, &json!({"items": [1]})).expect("opaque item"));
+    assert!(validate_result(&fields, &json!({"items": [1]})).expect("opaque element"));
     assert!(validate_result(&fields, &json!({"items": 1})).is_err());
     assert!(validate_result(&fields, &json!({"items": [1, 2, 3]})).is_err());
 }

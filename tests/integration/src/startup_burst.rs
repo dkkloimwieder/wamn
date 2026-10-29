@@ -297,7 +297,7 @@ async fn application_request(
     token: &str,
 ) -> Result<Value> {
     let started = Instant::now();
-    // The probe is a get, a read: its one item travels in the query string,
+    // The probe is a get, a read: its one request element travels in the query string,
     // with no request identity.
     let query = wamn_execution_contract::encode_read_query(
         inputs

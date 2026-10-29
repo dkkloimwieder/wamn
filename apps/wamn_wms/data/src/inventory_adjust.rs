@@ -14,7 +14,7 @@ use crate::error::{self, AccessError, AccessErrorType};
 use crate::scalar;
 use crate::statements::wamn::inventory_adjust as sql;
 
-/// One envelope item's command body.
+/// One request element's command body.
 #[derive(Debug, Deserialize)]
 pub struct AdjustCommand {
     pub packaging_id: String,
@@ -62,7 +62,7 @@ fn parse(command: &AdjustCommand) -> Result<Parsed, AccessError> {
     })
 }
 
-/// Run one command item in the transaction its codec holds for the write log.
+/// Run one command request element in the transaction its codec holds for the write log.
 ///
 /// # Errors
 ///

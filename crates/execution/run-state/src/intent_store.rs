@@ -18,7 +18,7 @@ pub trait IntentStore: Send + Sync {
     async fn begin(&self, intent: &Intent<'_>) -> Result<Begun, StoreError>;
     /// Record the outcome of a begun intent.
     async fn finish(&self, id: &IntentId, outcome: &StoredOutcome) -> Result<(), StoreError>;
-    /// Free the key of a begun intent whose item was refused. The record goes,
+    /// Free the key of a begun intent whose request element was refused. The record goes,
     /// so the next call with the key is new.
     async fn release(&self, id: &IntentId) -> Result<(), StoreError>;
     /// List intents that began and never finished. The host never replays them.
@@ -36,7 +36,7 @@ pub struct Intent<'a> {
     pub operation: &'a str,
     /// The caller's key. A repeated key within the tenant is the same intent.
     pub idempotency_key: &'a str,
-    /// The request hash of the item (`wamn_engine` `item_input_hash`).
+    /// The request hash of the request element (`wamn_engine` `request_element_hash`).
     pub input_hash: &'a str,
     /// The call's bounded deadline in milliseconds.
     pub deadline_ms: u64,
@@ -66,7 +66,7 @@ pub enum Begun {
 }
 
 /// The recorded outcome of a finished intent: the value that the export
-/// returned. A refused item records nothing, because its key is released.
+/// returned. A refused request element records nothing, because its key is released.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StoredOutcome(pub serde_json::Value);
 

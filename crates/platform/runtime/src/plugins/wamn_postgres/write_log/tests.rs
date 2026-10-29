@@ -21,7 +21,7 @@ use crate::plugins::wamn_postgres::{
 /// defect would hang.
 const HANG_GUARD: Duration = Duration::from_secs(120);
 const PROJECT: &str = "default";
-const SCOPE: &str = "write-log-item";
+const SCOPE: &str = "write-log-request-element";
 
 /// The write log section of the schema that every project database gets.
 fn write_log_sql() -> &'static str {
@@ -201,11 +201,11 @@ async fn a_known_result_commits_in_the_claim_without_a_finish_update() {
     );
 }
 
-/// An operation with SQL claims in its item transaction: the claim commits
+/// An operation with SQL claims in its request element transaction: the claim commits
 /// with the result, a retry answers the stored result or a conflict, a
 /// rollback frees the key, and a second claim of a key waits for the first.
 #[tokio::test]
-async fn the_claim_of_an_item_commits_with_its_transaction() {
+async fn the_claim_of_a_request_element_commits_with_its_transaction() {
     let _lock = wamn_test_postgres::lock();
     let (database, postgres) = env_key_database("writelogtx").await;
     postgres
@@ -224,7 +224,7 @@ async fn the_claim_of_an_item_commits_with_its_transaction() {
         postgres
             .begin_operation_transaction(SCOPE)
             .await
-            .expect("the item transaction begins")
+            .expect("the request element transaction begins")
     };
     let rows = || {
         database
@@ -270,7 +270,7 @@ async fn the_claim_of_an_item_commits_with_its_transaction() {
             again.begin(&intent("k2", "h9")).await.expect("claim"),
             Begun::New(_)
         ),
-        "a refused item frees its key for any request"
+        "a refused request element frees its key for any request"
     );
     again.rollback().await.expect("rollback");
 
@@ -317,7 +317,7 @@ async fn the_claim_of_an_item_commits_with_its_transaction() {
     database
         .execute(&["SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
              WHERE state = 'idle in transaction' AND pid <> pg_backend_pid()"])
-        .expect("end the item connection");
+        .expect("end the request element connection");
     assert!(
         lost.begin(&intent("k4", "h1")).await.is_err(),
         "a lost connection fails the claim"
@@ -356,7 +356,7 @@ async fn a_missing_finish_rolls_back_the_pipelined_commit() {
         .unwrap();
     assert!(matches!(
         transaction.commit().await,
-        Err(super::super::operation_transaction::CommitFailure::RolledBack(_))
+        Err(super::super::operation_transaction::PgCommitFailure::RolledBack(_))
     ));
     assert_eq!(
         database

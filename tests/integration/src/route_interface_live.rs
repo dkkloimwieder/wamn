@@ -45,12 +45,12 @@ impl Paths {
         .await
     }
 
-    /// Send the one item of a read as a GET, as its route is published.
+    /// Send the one request element of a read as a GET, as its route is published.
     async fn get(&self, path: &str, body: &Value) -> anyhow::Result<(u16, Value)> {
-        let item = body[0]
+        let request_element = body[0]
             .as_object()
-            .context("a read sends one object item")?;
-        let query = wamn_execution_contract::encode_read_query(item);
+            .context("a read sends one object request element")?;
+        let query = wamn_execution_contract::encode_read_query(request_element);
         self.send(
             self.client.get(format!("{}{path}?{query}", self.endpoint)),
             path,
@@ -123,7 +123,7 @@ impl Paths {
 }
 
 impl Paths {
-    /// A route to a read carries no request identity, so an item without
+    /// A route to a read carries no request identity, so a request element without
     /// one is a read.
     async fn by_kind(&self, path: &str, body: &Value) -> anyhow::Result<(u16, Value)> {
         if body[0].get("request_id").is_none() {
@@ -134,21 +134,21 @@ impl Paths {
     }
 }
 
-/// The `value` of the one item of an answer.
+/// The `value` of the one request element of an answer.
 fn value(answer: &Value) -> anyhow::Result<&Value> {
     answer[0]
         .get("value")
         .with_context(|| format!("the answer carries a value: {answer}"))
 }
 
-/// The `error` code of the one item of an answer.
+/// The `error` code of the one request element of an answer.
 fn refusal(answer: &Value) -> anyhow::Result<&str> {
     answer[0]["error"]["code"]
         .as_str()
         .with_context(|| format!("the answer carries a refusal: {answer}"))
 }
 
-/// Require the one item of an answer to refuse with exactly this code and
+/// Require the one request element of an answer to refuse with exactly this code and
 /// detail.
 fn refused(answer: &Value, code: &str, detail: &Value) -> anyhow::Result<()> {
     anyhow::ensure!(

@@ -9,7 +9,7 @@ fn detail(error: &AccessError, key: &str) -> Option<String> {
 }
 
 /// The stateless device command: one frame becomes one sample, with no SQL.
-/// The engine's per-item intent is its replay guard.
+/// The engine's per request element intent is its replay guard.
 mod read {
     use crate::exports::edge_samples::sample::read as contract;
     mod codec {

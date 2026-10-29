@@ -1,4 +1,4 @@
-//! The transaction that the host owns for one logged operation item
+//! The transaction that the host owns for one logged operation request element
 //! (`docs/history/host-transaction.md` 4.1).
 //!
 //! The host begins it before the guest call or through `operation.begin-operation`,
@@ -25,7 +25,7 @@ pub(super) const HOST_TRANSACTION_REFUSED: &str = "25001";
 /// `invalid_transaction_termination`.
 pub(super) const FINISH_REFUSED: &str = "2D000";
 
-/// The host transaction of one operation item.
+/// The host transaction of one operation request element.
 ///
 /// Every clone names one transaction. When the last clone drops unfinished,
 /// the connection is destroyed, so the server aborts the transaction.
@@ -44,7 +44,7 @@ pub struct OperationTransaction {
 
 /// Why a commit of an [`OperationTransaction`] did not succeed.
 #[derive(Debug)]
-pub enum CommitFailure {
+pub enum PgCommitFailure {
     /// The transaction rolled back: the connection was gone before `COMMIT`
     /// was sent, or the server answered `COMMIT` with an error.
     RolledBack(PgError),
@@ -53,7 +53,7 @@ pub enum CommitFailure {
     Uncertain(PgError),
 }
 
-impl std::fmt::Display for CommitFailure {
+impl std::fmt::Display for PgCommitFailure {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::RolledBack(error) => write!(formatter, "the commit rolled back: {error:?}"),
@@ -64,7 +64,7 @@ impl std::fmt::Display for CommitFailure {
     }
 }
 
-impl std::error::Error for CommitFailure {}
+impl std::error::Error for PgCommitFailure {}
 
 impl OperationTransaction {
     /// Store a known success result in the claim, inside this transaction.
@@ -101,7 +101,7 @@ impl OperationTransaction {
         let claims = self
             .claims
             .lock()
-            .expect("item claims lock poisoned")
+            .expect("request element claims lock poisoned")
             .take();
         if let Some(claims) = claims {
             let connection = StatementConnectionGuard::new(
@@ -136,12 +136,12 @@ impl OperationTransaction {
     ///
     /// # Errors
     ///
-    /// Returns [`CommitFailure::Uncertain`] only when `COMMIT` was sent and
+    /// Returns [`PgCommitFailure::Uncertain`] only when `COMMIT` was sent and
     /// its answer was not read. Every other failure is a certain rollback.
-    pub async fn commit(&self) -> Result<(), CommitFailure> {
-        self.start().await.map_err(CommitFailure::RolledBack)?;
+    pub async fn commit(&self) -> Result<(), PgCommitFailure> {
+        self.start().await.map_err(PgCommitFailure::RolledBack)?;
         let state = &self.transaction.state;
-        let connection = take_conn(state).map_err(CommitFailure::RolledBack)?;
+        let connection = take_conn(state).map_err(PgCommitFailure::RolledBack)?;
         let connection =
             StatementConnectionGuard::new(connection, Arc::clone(&self.transaction.destroyed));
         let mark_finished = || {
@@ -151,20 +151,20 @@ impl OperationTransaction {
         };
         if connection.connection().is_closed() {
             mark_finished();
-            return Err(CommitFailure::RolledBack(PgError::ConnectionUnavailable));
+            return Err(PgCommitFailure::RolledBack(PgError::ConnectionUnavailable));
         }
         // Prepare every statement before polling any part of the commit pipeline.
         let commit = connection
             .connection()
             .prepare_cached("COMMIT")
             .await
-            .map_err(|error| CommitFailure::RolledBack(super::types::map_pg_error(&error)))?;
+            .map_err(|error| PgCommitFailure::RolledBack(super::types::map_pg_error(&error)))?;
         let causation = match &self.causation {
             Some(run) => Some(
                 super::claims::transactions::prepare_causation(connection.connection(), run)
                     .await
                     .map_err(|error| {
-                        CommitFailure::RolledBack(super::types::map_pg_error(&error))
+                        PgCommitFailure::RolledBack(super::types::map_pg_error(&error))
                     })?,
             ),
             None => None,
@@ -184,7 +184,7 @@ impl OperationTransaction {
         let finish = self
             .finish
             .lock()
-            .expect("item finish lock poisoned")
+            .expect("request element finish lock poisoned")
             .take();
         let result = if let Some(params) = finish {
             // Prepare before polling COMMIT: a cache miss must not reorder the writes.
@@ -192,7 +192,7 @@ impl OperationTransaction {
                 .connection()
                 .prepare_cached(super::write_log::COMMIT_FINISH_SQL)
                 .await
-                .map_err(|error| CommitFailure::RolledBack(super::types::map_pg_error(&error)))?;
+                .map_err(|error| PgCommitFailure::RolledBack(super::types::map_pg_error(&error)))?;
             let params: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = params
                 .iter()
                 .map(|value| value as &(dyn tokio_postgres::types::ToSql + Sync))
@@ -203,9 +203,9 @@ impl OperationTransaction {
             if let Err(error) = finished {
                 mark_finished();
                 return Err(if error.as_db_error().is_some() {
-                    CommitFailure::RolledBack(super::types::map_pg_error(&error))
+                    PgCommitFailure::RolledBack(super::types::map_pg_error(&error))
                 } else {
-                    CommitFailure::Uncertain(super::types::map_pg_error(&error))
+                    PgCommitFailure::Uncertain(super::types::map_pg_error(&error))
                 });
             }
             committed
@@ -224,9 +224,9 @@ impl OperationTransaction {
                 drop(connection);
                 let error = super::types::map_pg_error(&error);
                 Err(if answered {
-                    CommitFailure::RolledBack(error)
+                    PgCommitFailure::RolledBack(error)
                 } else {
-                    CommitFailure::Uncertain(error)
+                    PgCommitFailure::Uncertain(error)
                 })
             }
         }
@@ -262,9 +262,9 @@ impl OperationTransaction {
     }
 }
 
-impl wamn_engine::operation::ItemTransaction for OperationTransaction {
-    async fn commit(&self) -> Result<(), wamn_engine::operation::ItemCommitFailure> {
-        use wamn_engine::operation::ItemCommitFailure;
+impl wamn_engine::operation::Transaction for OperationTransaction {
+    async fn commit(&self) -> Result<(), wamn_engine::operation::CommitFailure> {
+        use wamn_engine::operation::CommitFailure;
         // The generated error literals of a failed write log commit.
         let code = |error: &PgError| match error {
             PgError::SerializationFailure | PgError::ConnectionUnavailable => "retry",
@@ -274,23 +274,23 @@ impl wamn_engine::operation::ItemTransaction for OperationTransaction {
         OperationTransaction::commit(self)
             .await
             .map_err(|failure| match failure {
-                CommitFailure::RolledBack(error) => ItemCommitFailure::RolledBack {
+                PgCommitFailure::RolledBack(error) => CommitFailure::RolledBack {
                     code: code(&error),
                     message: format!("the commit rolled back: {error:?}"),
                 },
-                CommitFailure::Uncertain(error) => ItemCommitFailure::Uncertain {
+                PgCommitFailure::Uncertain(error) => CommitFailure::Uncertain {
                     message: format!("the commit outcome is unknown: {error:?}"),
                 },
             })
     }
 
     async fn rollback(&self) -> anyhow::Result<()> {
-        OperationTransaction::rollback(self)
-            .await
-            .map_err(|error| anyhow::anyhow!("roll back the item transaction: {error:?}"))
+        OperationTransaction::rollback(self).await.map_err(|error| {
+            anyhow::anyhow!("roll back the request element transaction: {error:?}")
+        })
     }
 
-    /// The item claims in the write log, inside this transaction.
+    /// The request element claims in the write log, inside this transaction.
     fn intent_store(&self) -> Option<&dyn wamn_run_state::IntentStore> {
         Some(self)
     }
@@ -300,7 +300,7 @@ impl wamn_engine::operation::ItemTransaction for OperationTransaction {
 pub(super) type OperationTransactions = HashMap<String, OperationTransaction>;
 
 impl WamnPostgres {
-    /// Begin the host transaction of one operation item under the claims that
+    /// Begin the host transaction of one operation request element under the claims that
     /// `scope` binds.
     ///
     /// # Errors

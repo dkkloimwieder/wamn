@@ -63,8 +63,8 @@ async fn receipt_screen_feeds_follow_open_orders() -> anyhow::Result<()> {
         ).await?;
         let http = reqwest::Client::new();
         let read = async |path: &str, input: Value| -> anyhow::Result<Value> {
-            let item = input.as_object().context("read input is an object")?;
-            let query = wamn_execution_contract::encode_read_query(item);
+            let request_element = input.as_object().context("read input is an object")?;
+            let query = wamn_execution_contract::encode_read_query(request_element);
             let response = http.get(format!("{}{path}?{query}", application.endpoint))
                 .header(reqwest::header::HOST, &application.route_host)
                 .bearer_auth(&application.bearer).send().await?;
@@ -427,7 +427,7 @@ async fn an_acme_key_replays_across_a_release() -> anyhow::Result<()> {
             .get(0))
     };
     let key = "release-key";
-    let item = async |application: &LocalApplication| {
+    let request_element = async |application: &LocalApplication| {
         record(
             application,
             "/acme/acme/record_receipt",
@@ -453,7 +453,7 @@ async fn an_acme_key_replays_across_a_release() -> anyhow::Result<()> {
     let stored = async {
         super::bind_fixture_principal(&first_client).await?;
         seed_acme_orders(&first_client).await?;
-        item(&first).await
+        request_element(&first).await
     }
     .await;
     first.shutdown().await?;
@@ -495,7 +495,7 @@ async fn an_acme_key_replays_across_a_release() -> anyhow::Result<()> {
                 &[&ACME_OPERATION, &key, &request, &result],
             )
             .await?;
-        item(&second).await
+        request_element(&second).await
     }
     .await;
     second.shutdown().await?;
@@ -608,7 +608,7 @@ const LOCK: &str = "command/record_receipt/lock_purchase_order.sql";
 const ACME_OPERATION: &str = "client-acme-receiving:acme/record-receipt";
 const RECEIVING_OPERATION: &str = "wamn-receiving:receiving/record-receipt";
 
-/// One record_receipt item on `path`, answered as JSON.
+/// One record_receipt request element on `path`, answered as JSON.
 async fn record(
     application: &LocalApplication,
     path: &str,
@@ -705,7 +705,7 @@ async fn acme_inspection(application: &LocalApplication, database_url: &str) -> 
             [(operation, Some(result))] if operation == ACME_OPERATION
                 && serde_json::from_str::<Value>(result)?["value"]["receipt_id"] == none_receipt
         ),
-        "the committed item did not leave one write-log entry under Acme's operation: {none_claims:?}"
+        "the committed request element did not leave one write-log entry under Acme's operation: {none_claims:?}"
     );
 
     // Approved: the inspection row is written. An unchanged key replays.
@@ -765,7 +765,7 @@ async fn acme_inspection(application: &LocalApplication, database_url: &str) -> 
     ensure!(project.query_one("SELECT NOT EXISTS (SELECT 1 FROM receiving.receipt WHERE purchase_order_id = '00000000-0000-0000-0000-000000000722') AND (SELECT received_quantity = 0 FROM receiving.purchase_order_line WHERE id = '00000000-0000-0000-0000-000000000822')", &[]).await?.get::<_, bool>(0), "the refused inspection left Receiving's receipt behind");
     ensure!(
         claims(&project, "part-refused").await?.is_empty(),
-        "the refused item left a claim"
+        "the refused request element left a claim"
     );
 
     // Cross-entry: one key through Receiving, then through Acme, is two
@@ -1025,7 +1025,7 @@ async fn member_instances(
 async fn reads(application: &LocalApplication) -> anyhow::Result<()> {
     let http = reqwest::Client::new();
     let order = "00000000-0000-0000-0000-000000000720";
-    for (path, item) in [
+    for (path, request_element) in [
         ("/location/list", json!({})),
         (
             "/receiving/load_receipt_screen",
@@ -1036,10 +1036,10 @@ async fn reads(application: &LocalApplication) -> anyhow::Result<()> {
             json!({"id": order, "limit": 10}),
         ),
     ] {
-        let Value::Object(item) = item else {
-            unreachable!("each read item is an object");
+        let Value::Object(request_element) = request_element else {
+            unreachable!("each read request element is an object");
         };
-        let query = wamn_execution_contract::encode_read_query(&item);
+        let query = wamn_execution_contract::encode_read_query(&request_element);
         let response = http
             .get(format!("{}{path}?{query}", application.endpoint))
             .header(reqwest::header::HOST, &application.route_host)

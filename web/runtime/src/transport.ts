@@ -501,10 +501,10 @@ export function createTransport(options: TransportOptions): Transport & Required
     if (invokeOptions?.signal !== undefined) init.signal = invokeOptions.signal;
     let target = request.template;
     if (read) {
-      // A read carries its one item in the query string, and has no body.
+      // A read carries its one request element in the query string, and has no body.
       const [item, ...rest] = request.items;
       if (rest.length > 0 || item === null || typeof item !== "object" || Array.isArray(item)) {
-        return uncertain("a read sends exactly one request item");
+        return uncertain("a read sends exactly one request element");
       }
       const query = encodeReadQuery(item as { readonly [name: string]: JsonValue });
       target = query === "" ? target : `${target}?${query}`;
@@ -580,7 +580,7 @@ export function createTransport(options: TransportOptions): Transport & Required
     },
     async invokeEach(request: WireRequest, options?: InvokeOptions): Promise<readonly Outcome<JsonValue>[]> {
       if (request.method === "GET") {
-        return request.items.map(() => uncertain("a read sends exactly one request item"));
+        return request.items.map(() => uncertain("a read sends exactly one request element"));
       }
       const requestIds = request.items.map(itemRequestId);
       const reply = await exchange(request, options);

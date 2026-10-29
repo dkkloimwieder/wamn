@@ -297,7 +297,7 @@ pub struct AdmittedComponentOperation {
     /// The admitted success schema for this registered command's committed result.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub committed_result_schema: Option<ComponentSchema>,
-    /// Whether the host begins the item transaction this export works in: the
+    /// Whether the host begins the request element transaction this export works in: the
     /// package manifest's `transaction = explicit_per_input` on a command, or a
     /// generated create, update or delete. Bound from the manifest at
     /// admission, never authored in a declaration.
@@ -688,7 +688,7 @@ pub fn verify_stored_effect_projection(
 /// and deliberately carry no authorization token. Unmentioned exports remain
 /// palette operations with no package SQL.
 ///
-/// `host_transactions` names the manifest-backed exports whose item
+/// `host_transactions` names the manifest-backed exports whose request element
 /// transaction the host begins; each must be one of the supplied exports.
 pub fn bind_component_statement_facts(
     component: &mut AdmittedComponent,

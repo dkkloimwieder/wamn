@@ -121,15 +121,15 @@ impl exports::wamn::node::async_handler::Guest for Component {
 }
 
 fn completed_due(input: &[finish::FinishItem]) -> Result<String, NodeError> {
-    let [item] = input else {
+    let [request_element] = input else {
         return Err(invalid("checkpoint requires one consumer batch outcome"));
     };
-    if item.input.is_err() {
+    if request_element.input.is_err() {
         return Err(invalid("consumer batch did not succeed"));
     }
-    chrono::DateTime::parse_from_rfc3339(&item.request_id)
+    chrono::DateTime::parse_from_rfc3339(&request_element.request_id)
         .map_err(|error| invalid(&error.to_string()))?;
-    Ok(item.request_id.clone())
+    Ok(request_element.request_id.clone())
 }
 
 impl finish::Guest for Component {

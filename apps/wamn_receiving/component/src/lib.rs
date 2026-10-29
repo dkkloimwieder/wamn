@@ -150,7 +150,7 @@ mod tests {
     #[test]
     fn arbitrary_request_id_is_preserved_in_each_outcome() {
         let request_id = "submit receipt / café 🧾";
-        // Both items refuse before the handler runs, so the test needs no
+        // Both request elements refuse before the handler runs, so the test needs no
         // database.
         let input = receipt_codec::decode(&format!(
             r#"[{{"request_id":{id},"value":{{"unknown":true}}}},{{"request_id":{id},"value":null}}]"#,
@@ -161,15 +161,23 @@ mod tests {
         let mut call = std::pin::pin!(receipt_codec::run(
             input,
             &mut state,
-            async |(), _| unreachable!("a refused item reaches no handler")
+            async |(), _| unreachable!("a refused request element reaches no handler")
         ));
         let mut context = std::task::Context::from_waker(std::task::Waker::noop());
         let std::task::Poll::Ready(output) = std::future::Future::poll(call.as_mut(), &mut context)
         else {
-            panic!("a refused item performs no I/O");
+            panic!("a refused request element performs no I/O");
         };
-        assert!(output.iter().all(|item| item.outcome.is_err()));
-        assert!(output.iter().all(|item| item.request_id == request_id));
+        assert!(
+            output
+                .iter()
+                .all(|request_element| request_element.outcome.is_err())
+        );
+        assert!(
+            output
+                .iter()
+                .all(|request_element| request_element.request_id == request_id)
+        );
     }
 
     const VALID_VALUE: &str = r#"{
@@ -191,14 +199,17 @@ mod tests {
         );
         let decoded = receipt_codec::decode(&input).expect("the envelope decodes");
         assert_eq!(decoded[0].request_id, "valid");
-        let request = decoded[0].input.as_ref().expect("the valid item decodes");
+        let request = decoded[0]
+            .input
+            .as_ref()
+            .expect("the valid request element decodes");
         assert_eq!(request.line[0].quantity, "12.3400");
         assert_eq!(decoded[1].request_id, "bad");
         assert_eq!(decoded[1].input.as_ref().unwrap_err().field, "input");
     }
 
     #[test]
-    fn codec_refuses_unknown_null_and_missing_fields_per_item() {
+    fn codec_refuses_unknown_null_and_missing_fields_per_request_element() {
         let input = r#"[
             {"request_id":"unknown","value":{"unknown":true}},
             {"request_id":"null","value":null},
@@ -208,12 +219,13 @@ mod tests {
         assert_eq!(
             decoded
                 .iter()
-                .map(|item| item.request_id.as_str())
+                .map(|request_element| request_element.request_id.as_str())
                 .collect::<Vec<_>>(),
             ["unknown", "null", "missing"]
         );
-        assert!(decoded.iter().all(|item| {
-            item.input
+        assert!(decoded.iter().all(|request_element| {
+            request_element
+                .input
                 .as_ref()
                 .is_err_and(|detail| detail.field == "input")
         }));

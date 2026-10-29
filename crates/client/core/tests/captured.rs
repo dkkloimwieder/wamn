@@ -211,19 +211,20 @@ async fn code_contract_preserves_absence_and_value_on_the_wire_and_blocks_null()
         method: "POST".into(),
         template: "/widget/update".into(),
     };
-    let mut item = json!({"request_id":"code-absent", "id":"00000000-0000-0000-0000-000000000001",
+    let mut request_element = json!({"request_id":"code-absent", "id":"00000000-0000-0000-0000-000000000001",
         "expected_edit_version":4,"change":{}});
 
-    let absent = build_request(FIELDS, &item, Some(schema)).expect("a code can stay absent");
+    let absent =
+        build_request(FIELDS, &request_element, Some(schema)).expect("a code can stay absent");
     client
         .submit(&route, &BTreeMap::new(), &absent)
         .await
         .expect("send the absent code");
 
-    item["request_id"] = json!("code-null");
-    item["change"]["code"] = serde_json::Value::Null;
-    let error =
-        build_request(FIELDS, &item, Some(schema)).expect_err("the code field refuses null");
+    request_element["request_id"] = json!("code-null");
+    request_element["change"]["code"] = serde_json::Value::Null;
+    let error = build_request(FIELDS, &request_element, Some(schema))
+        .expect_err("the code field refuses null");
     assert_eq!(
         error.error_type(),
         wamn_client::request::RequestErrorType::NullNotAllowed
@@ -232,10 +233,11 @@ async fn code_contract_preserves_absence_and_value_on_the_wire_and_blocks_null()
     assert_eq!(transport.requests.lock().expect("read sent count").len(), 1);
     assert_eq!(credentials.calls.load(Ordering::Relaxed), 1);
 
-    item["request_id"] = json!("code-value");
-    item["change"]["code"] = json!("priority");
-    item["change"]["maker_id"] = json!("ABCDEF00000000000000000000000002");
-    let value = build_request(FIELDS, &item, Some(schema)).expect("the code and maker are valid");
+    request_element["request_id"] = json!("code-value");
+    request_element["change"]["code"] = json!("priority");
+    request_element["change"]["maker_id"] = json!("ABCDEF00000000000000000000000002");
+    let value = build_request(FIELDS, &request_element, Some(schema))
+        .expect("the code and maker are valid");
     client
         .submit(&route, &BTreeMap::new(), &value)
         .await

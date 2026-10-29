@@ -295,27 +295,28 @@ fn served_references(release: &LoadedRelease) -> BTreeSet<String> {
     registered.chain(host).collect()
 }
 
-/// The one item of a host route request: its request id and its input. A
-/// read carries its input as the item, and a write carries a request id and
+/// The one request element of a host route request: its request id and its input. A
+/// read carries its input as the request element, and a write carries a request id and
 /// its input under `value`, as every generated route takes them. Any other
 /// payload is `None`.
-fn request_item(payload: &str, read: bool) -> Option<(Option<String>, Value)> {
-    let Ok(Value::Array(items)) = serde_json::from_str::<Value>(payload) else {
+fn request_element(payload: &str, read: bool) -> Option<(Option<String>, Value)> {
+    let Ok(Value::Array(request_elements)) = serde_json::from_str::<Value>(payload) else {
         return None;
     };
-    let [Value::Object(mut item)] = <[Value; 1]>::try_from(items).ok()? else {
+    let [Value::Object(mut request_element)] = <[Value; 1]>::try_from(request_elements).ok()?
+    else {
         return None;
     };
     if read {
-        return Some((None, Value::Object(item)));
+        return Some((None, Value::Object(request_element)));
     }
-    let Some(Value::String(request_id)) = item.remove("request_id") else {
+    let Some(Value::String(request_id)) = request_element.remove("request_id") else {
         return None;
     };
-    let value = item
+    let value = request_element
         .remove("value")
         .unwrap_or_else(|| Value::Object(serde_json::Map::new()));
-    (item.is_empty() && !request_id.is_empty() && value.is_object())
+    (request_element.is_empty() && !request_id.is_empty() && value.is_object())
         .then_some((Some(request_id), value))
 }
 
@@ -357,19 +358,19 @@ impl RouteDelivery for HostRouteDelivery {
         }
         let caller = caller.expect("a resolved host route has its caller");
         let read = attachment.route.type_.is_read();
-        let Some((request_id, input)) = request_item(&request.payload, read) else {
+        let Some((request_id, input)) = request_element(&request.payload, read) else {
             return report(Err(DeliveryError::InvalidPayload));
         };
-        // The answer is the one outcome of the one item, as a generated
+        // The answer is the one outcome of the one request element, as a generated
         // route answers. A read carries no request id and echoes none.
         let outcome = |member: &str, value: Value| {
-            let mut item = serde_json::Map::new();
+            let mut request_element = serde_json::Map::new();
             if let Some(request_id) = &request_id {
-                item.insert("request_id".to_owned(), json!(request_id));
+                request_element.insert("request_id".to_owned(), json!(request_id));
             }
-            item.insert(member.to_owned(), value);
+            request_element.insert(member.to_owned(), value);
             report(Ok(DeliveryOutcome::Respond(
-                Value::Array(vec![Value::Object(item)]).to_string(),
+                Value::Array(vec![Value::Object(request_element)]).to_string(),
             )))
         };
         match self

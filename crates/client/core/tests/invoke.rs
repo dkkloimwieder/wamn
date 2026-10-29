@@ -63,7 +63,7 @@ fn route() -> RouteMetadata {
     }
 }
 
-fn item(request_id: &str) -> serde_json::Value {
+fn request_element(request_id: &str) -> serde_json::Value {
     serde_json::json!({ "request_id": request_id, "id": "3f8e", "row_version": 4 })
 }
 
@@ -71,7 +71,7 @@ fn item(request_id: &str) -> serde_json::Value {
 async fn the_request_carries_the_bearer_the_host_and_a_canonical_envelope() {
     let transport = FakeTransport::replying(200, r#"[{"request_id":"r1","value":{"ok":true}}]"#);
     client(Arc::clone(&transport))
-        .invoke(&route(), &BTreeMap::new(), &[item("r1")])
+        .invoke(&route(), &BTreeMap::new(), &[request_element("r1")])
         .await
         .expect("the call succeeds");
 
@@ -92,15 +92,19 @@ async fn the_request_carries_the_bearer_the_host_and_a_canonical_envelope() {
 }
 
 #[tokio::test]
-async fn a_read_is_a_get_with_its_one_item_in_the_query_and_no_body() {
+async fn a_read_is_a_get_with_its_one_request_element_in_the_query_and_no_body() {
     let transport = FakeTransport::replying(200, r#"[{"value":{"ok":true}}]"#);
     let read = RouteMetadata {
         method: "GET".to_owned(),
         template: "/widget/get".to_owned(),
     };
-    let item = serde_json::json!({ "id": "3f8e" });
+    let request_element = serde_json::json!({ "id": "3f8e" });
     let outcomes = client(Arc::clone(&transport))
-        .invoke(&read, &BTreeMap::new(), std::slice::from_ref(&item))
+        .invoke(
+            &read,
+            &BTreeMap::new(),
+            std::slice::from_ref(&request_element),
+        )
         .await
         .expect("the read succeeds");
     assert_eq!(
@@ -114,16 +118,20 @@ async fn a_read_is_a_get_with_its_one_item_in_the_query_and_no_body() {
         sent.url,
         format!(
             "http://flow-http.wamn-system.svc/widget/get?{}",
-            wamn_execution_contract::encode_read_query(item.as_object().unwrap())
+            wamn_execution_contract::encode_read_query(request_element.as_object().unwrap())
         )
     );
     assert!(sent.body.is_empty());
     assert!(!sent.headers.contains_key("content-type"));
 
     let two = client(FakeTransport::replying(200, "[]"))
-        .invoke(&read, &BTreeMap::new(), &[item.clone(), item])
+        .invoke(
+            &read,
+            &BTreeMap::new(),
+            &[request_element.clone(), request_element],
+        )
         .await
-        .expect_err("a read sends exactly one item");
+        .expect_err("a read sends exactly one request element");
     assert_eq!(two.code(), "invalid_input");
 }
 
@@ -134,7 +142,7 @@ async fn a_read_is_a_get_with_its_one_item_in_the_query_and_no_body() {
 async fn the_base_url_and_route_join_without_doubling() {
     let transport = FakeTransport::replying(200, r#"[{"request_id":"r1","value":null}]"#);
     client(Arc::clone(&transport))
-        .invoke(&route(), &BTreeMap::new(), &[item("r1")])
+        .invoke(&route(), &BTreeMap::new(), &[request_element("r1")])
         .await
         .expect("call");
     assert!(
@@ -154,7 +162,7 @@ async fn a_stale_write_surfaces_both_revisions_through_the_client() {
              "detail":{"expected_row_version":4,"observed_row_version":7}}}]"#,
     );
     let outcomes = client(transport)
-        .invoke(&route(), &BTreeMap::new(), &[item("r1")])
+        .invoke(&route(), &BTreeMap::new(), &[request_element("r1")])
         .await
         .expect("the envelope itself succeeded");
 
@@ -175,7 +183,7 @@ async fn a_stale_write_surfaces_both_revisions_through_the_client() {
 #[tokio::test]
 async fn authentication_and_authorization_failures_differ_through_the_client() {
     let unauthenticated = client(FakeTransport::replying(401, r#"{"reason":"expired"}"#))
-        .invoke(&route(), &BTreeMap::new(), &[item("r1")])
+        .invoke(&route(), &BTreeMap::new(), &[request_element("r1")])
         .await
         .expect_err("401 refuses");
     assert_eq!(unauthenticated, ClientError::Unauthenticated);
@@ -185,7 +193,7 @@ async fn authentication_and_authorization_failures_differ_through_the_client() {
         403,
         r#"{"operation":"widget.update"}"#,
     ))
-    .invoke(&route(), &BTreeMap::new(), &[item("r1")])
+    .invoke(&route(), &BTreeMap::new(), &[request_element("r1")])
     .await
     .expect_err("403 refuses");
     assert_eq!(
@@ -203,7 +211,7 @@ async fn a_schema_refusal_reports_the_offending_pointer_through_the_client() {
         400,
         r#"{"error":{"code":"schema-invalid","data":{"pointer":"/0/change/created_by"}}}"#,
     ))
-    .invoke(&route(), &BTreeMap::new(), &[item("r1")])
+    .invoke(&route(), &BTreeMap::new(), &[request_element("r1")])
     .await
     .expect_err("400 refuses");
     assert_eq!(
@@ -222,19 +230,23 @@ async fn a_schema_refusal_reports_the_offending_pointer_through_the_client() {
         400,
         r#"{"error":{"code":"schema-invalid"}}"#,
     ))
-    .invoke(&route(), &BTreeMap::new(), &[item("r1")])
+    .invoke(&route(), &BTreeMap::new(), &[request_element("r1")])
     .await
     .expect_err("400 refuses");
     assert_eq!(platform.to_string(), "schema-invalid");
 }
 
 /// An outcome count that does not match the request is malformed. Silently
-/// truncating would hand a caller fewer results than items it sent, and they
+/// truncating would hand a caller fewer results than request elements it sent, and they
 /// would read the missing ones as never attempted.
 #[tokio::test]
 async fn a_short_outcome_array_is_refused_rather_than_truncated() {
     let error = client(FakeTransport::replying(200, "[]"))
-        .invoke(&route(), &BTreeMap::new(), &[item("r1"), item("r2")])
+        .invoke(
+            &route(),
+            &BTreeMap::new(),
+            &[request_element("r1"), request_element("r2")],
+        )
         .await
         .expect_err("a short response refuses");
     match error {
@@ -255,7 +267,7 @@ async fn a_missing_route_parameter_refuses_before_sending() {
         template: "/widget/{id}".to_owned(),
     };
     let error = client(Arc::clone(&transport))
-        .invoke(&parameterised, &BTreeMap::new(), &[item("r1")])
+        .invoke(&parameterised, &BTreeMap::new(), &[request_element("r1")])
         .await
         .expect_err("a missing parameter refuses");
     assert_eq!(error.code(), "route_missing_parameter");
@@ -282,7 +294,7 @@ async fn the_same_route_reaches_different_hosts_from_different_clients() {
             Arc::new(StaticPat::new("pat-abc").expect("token")) as Arc<dyn CredentialProvider>,
             Arc::clone(&transport) as Arc<dyn Transport>,
         )
-        .invoke(&route(), &BTreeMap::new(), &[item("r1")])
+        .invoke(&route(), &BTreeMap::new(), &[request_element("r1")])
         .await
         .expect("call");
         seen.push(transport.request().headers["host"].clone());
@@ -301,7 +313,7 @@ async fn a_client_with_no_host_sends_no_host_header() {
         Arc::new(StaticPat::new("pat-abc").expect("token")) as Arc<dyn CredentialProvider>,
         Arc::clone(&transport) as Arc<dyn Transport>,
     )
-    .invoke(&route(), &BTreeMap::new(), &[item("r1")])
+    .invoke(&route(), &BTreeMap::new(), &[request_element("r1")])
     .await
     .expect("call");
     assert!(

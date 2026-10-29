@@ -1684,21 +1684,21 @@ mod codec_tests {
     #[test]
     fn a_create_accepts_the_supplied_id_and_requires_it() {
         let body = r#"[{"request_id":"r","id":"019fd531-287b-7000-8000-00000000abcd","idempotency_key":"k","sku":"BOX"}]"#;
-        let mut items = super::create_codec::decode(body).unwrap();
-        let request = items.remove(0).input.unwrap();
+        let mut request_elements = super::create_codec::decode(body).unwrap();
+        let request = request_elements.remove(0).input.unwrap();
         assert_eq!(request.id, "019fd531-287b-7000-8000-00000000abcd");
         assert_eq!(create(r#"[{"request_id":"r","idempotency_key":"k","sku":"BOX"}]"#), ["input"]);
         assert_eq!(create(r#"[{"request_id":"r","id":"not-a-uuid","idempotency_key":"k","sku":"BOX"}]"#), ["id"]);
     }
 
-    /// The field each refused item names. A refused item never reaches the
-    /// connection, so this test needs no database.
+    /// The field each refused request element names. A refused request element
+    /// never reaches the connection, so this test needs no database.
     fn create(body: &str) -> Vec<String> {
-        let items = super::create_codec::decode(body).expect("the body decodes");
+        let request_elements = super::create_codec::decode(body).expect("the body decodes");
         let mut connection = wamn_postgres_statements::Connection::new();
         let outcomes = {
-            let run = super::create_codec::run(items, &mut connection, async |_, _| {
-                unreachable!("a refused item reaches no handler")
+            let run = super::create_codec::run(request_elements, &mut connection, async |_, _| {
+                unreachable!("a refused request element reaches no handler")
             });
             let mut run = std::pin::pin!(run);
             let mut context = std::task::Context::from_waker(std::task::Waker::noop());
@@ -1711,7 +1711,7 @@ mod codec_tests {
             .into_iter()
             .map(|outcome| match outcome.outcome {
                 Err(contract::CreateError::InvalidInput(detail)) => detail.field,
-                _ => panic!("every item refuses as invalid input"),
+                _ => panic!("every request element refuses as invalid input"),
             })
             .collect()
     }
@@ -1843,8 +1843,8 @@ mod integer_codec_tests {
     #[test]
     fn ids_use_the_declared_wire_type() {
         let valid = r#"[{"request_id":"r","id":ID,"expected_sequence_number":"1"}]"#;
-        let items = super::delete_codec::decode(valid).unwrap();
-        assert_eq!(items.into_iter().next().unwrap().input.unwrap().id.to_string(), "DECIMAL");
+        let request_elements = super::delete_codec::decode(valid).unwrap();
+        assert_eq!(request_elements.into_iter().next().unwrap().input.unwrap().id.to_string(), "DECIMAL");
         let invalid = r#"[{"request_id":"r","id":WRONG,"expected_sequence_number":"1"}]"#;
         assert!(super::delete_codec::decode(invalid).unwrap().remove(0).input.is_err());
         let valid = r#"[{"request_id":"r","id":ID,"expected_sequence_number":"1","change":{}}]"#;

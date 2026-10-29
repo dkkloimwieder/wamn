@@ -391,9 +391,9 @@ async fn try_handle(
         .map_err(|rejection| rejection_response(&rejection))?;
 
     let body_json = if method == "GET" && matched.definition.mappings.is_empty() {
-        // A read carries its one request item in the query string, in the one
+        // A read carries its one request element in the query string, in the one
         // canonical encoding (docs/architecture/execution.md).
-        read_query_item(&head.target)?
+        read_query_request_element(&head.target)?
     } else if raw_body.is_empty() {
         Value::Null
     } else {
@@ -472,7 +472,7 @@ async fn try_handle(
 pub(crate) fn is_feed_read(input: &Value) -> bool {
     input
         .get(0)
-        .and_then(|item| item.get("feed"))
+        .and_then(|request_element| request_element.get("feed"))
         .is_some_and(Value::is_object)
 }
 
@@ -489,16 +489,16 @@ const CSRF_HEADER: &str = "x-wamn-csrf";
 /// The longest request target a read accepts, path and query together.
 const READ_TARGET_BYTES: usize = 8 * 1024;
 
-/// The one request item of a read, as the list of one item that the route
+/// The one request element of a read, as the list of one request element that the route
 /// input schema describes.
-fn read_query_item(target: &str) -> Result<Value, HttpResponse> {
+fn read_query_request_element(target: &str) -> Result<Value, HttpResponse> {
     if target.len() > READ_TARGET_BYTES {
         return Err(error_response(400, "invalid-target"));
     }
     let query = target.split_once('?').map_or("", |(_, query)| query);
-    let item = wamn_execution_contract::decode_read_query(query)
+    let request_element = wamn_execution_contract::decode_read_query(query)
         .map_err(|_| error_response(400, "invalid-target"))?;
-    Ok(Value::Array(vec![Value::Object(item)]))
+    Ok(Value::Array(vec![Value::Object(request_element)]))
 }
 
 fn normalize_method(method: &str) -> Option<String> {

@@ -1,14 +1,14 @@
 //! The write log through the engine's intent rules and the platform fixture
 //! component (`docs/history/host-transaction.md` 5, issue 5).
 //!
-//! One local application serves the fixture's routes over a disposable
-//! database. The host claims each item's key in the item's transaction. The
-//! create case posts `widget.create` items and reads `inventory.widget` and
-//! `platform.write_log` directly: a retry with the same request answers the
-//! stored result and adds no row, a changed request is refused, a refused
-//! item leaves its key free, and two concurrent calls with one key write one
-//! row. The batch case posts `widget.record_batch`: a retry with its lines in
-//! another order and its amounts spelled another way is the same request.
+//! One local application serves the fixture's routes over a disposable database. The
+//! host claims each request element's key in the request element's transaction. The
+//! create case posts `widget.create` request elements and reads `inventory.widget` and
+//! `platform.write_log` directly: a retry with the same request answers the stored
+//! result and adds no row, a changed request is refused, a refused request element
+//! leaves its key free, and two concurrent calls with one key write one row. The batch
+//! case posts `widget.record_batch`: a retry with its lines in another order and its
+//! amounts spelled another way is the same request.
 
 use std::path::PathBuf;
 
@@ -27,7 +27,7 @@ struct Routes {
 }
 
 impl Routes {
-    /// Post one `widget.create` item, and return its answer item.
+    /// Post one `widget.create` request element, and return its answer request element.
     async fn create(
         &self,
         request_id: &str,
@@ -42,8 +42,8 @@ impl Routes {
         .await
     }
 
-    /// Post one `widget.record_batch` item with `lines` of `[widget_id,
-    /// amount]`, and return its answer item.
+    /// Post one `widget.record_batch` request element with `lines` of `[widget_id,
+    /// amount]`, and return its answer request element.
     async fn record_batch(
         &self,
         request_id: &str,
@@ -69,31 +69,32 @@ impl Routes {
         .await
     }
 
-    /// Post one item to `path`, and return its answer item without its
-    /// request id.
-    async fn post(&self, path: &str, item: Value) -> anyhow::Result<Value> {
-        let request_id = item["request_id"].clone();
+    /// Post one request element to `path`, and return its answer request element
+    /// without its request id.
+    async fn post(&self, path: &str, request_element: Value) -> anyhow::Result<Value> {
+        let request_id = request_element["request_id"].clone();
         let response = self
             .client
             .post(format!("{}{path}", self.endpoint))
             .header("Host", &self.host)
             .bearer_auth(&self.bearer)
-            .json(&json!([item]))
+            .json(&json!([request_element]))
             .send()
             .await?;
         let status = response.status().as_u16();
         let text = response.text().await?;
         anyhow::ensure!(status == 200, "{path} answered {status}: {text}");
         let answer: Value = serde_json::from_str(&text)?;
-        let mut item = answer[0].clone();
+        let mut request_element = answer[0].clone();
         anyhow::ensure!(
-            item["request_id"] == request_id,
+            request_element["request_id"] == request_id,
             "the answer keeps the request id: {answer}"
         );
-        item.as_object_mut()
-            .context("an answer item is an object")?
+        request_element
+            .as_object_mut()
+            .context("an answer request element is an object")?
             .remove("request_id");
-        Ok(item)
+        Ok(request_element)
     }
 }
 
@@ -250,7 +251,7 @@ async fn a_create_claims_its_key_in_the_write_log() -> anyhow::Result<()> {
     anyhow::ensure!(counts(&database, "k-3").await? == (1, 1));
 
     // Replay keeps stored JSON bytes inside the response array. Only the
-    // current request_id is inserted into the stored item.
+    // current request_id is inserted into the stored request element.
     let stored = " \n{ \"value\": {\"z\":1e+00, \"a\":-0.00} }\t";
     database
         .execute(
@@ -286,7 +287,7 @@ async fn a_create_claims_its_key_in_the_write_log() -> anyhow::Result<()> {
 
 /// A retry of `widget.record_batch` with its lines in another order and its
 /// amounts spelled another way answers the stored result, because the host
-/// applies the route's canonical form before it hashes the item. A retry with
+/// applies the route's canonical form before it hashes the request element. A retry with
 /// another amount is another request (`docs/history/host-transaction.md` 7,
 /// ruling (a)).
 #[tokio::test(flavor = "multi_thread")]

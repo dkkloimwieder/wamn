@@ -130,9 +130,9 @@ impl WamnClient {
 
     /// Invoke one operation with an array envelope.
     ///
-    /// `items` are the envelope's request objects; each MUST carry a
+    /// `request_elements` are the envelope's request objects; each MUST carry a
     /// `request_id`, which is how outcomes correlate back. Returns one outcome
-    /// per item, in request order.
+    /// per request element, in request order.
     ///
     /// # Errors
     ///
@@ -142,10 +142,10 @@ impl WamnClient {
         &self,
         route: &RouteMetadata,
         parameters: &BTreeMap<String, String>,
-        items: &[serde_json::Value],
+        request_elements: &[serde_json::Value],
     ) -> Result<Vec<ItemOutcome>, ClientError> {
         let body = wamn_execution_contract::canonical_json_bytes(&serde_json::Value::Array(
-            items.to_vec(),
+            request_elements.to_vec(),
         ));
         let response = self.send_body(route, parameters, body).await?;
 
@@ -157,11 +157,11 @@ impl WamnClient {
                 detail: format!("response is not an outcome array: {error}"),
             }
         })?;
-        if outcomes.len() != items.len() {
+        if outcomes.len() != request_elements.len() {
             return Err(ClientError::MalformedResponse {
                 detail: format!(
-                    "sent {} items and received {} outcomes",
-                    items.len(),
+                    "sent {} request elements and received {} outcomes",
+                    request_elements.len(),
                     outcomes.len()
                 ),
             });
@@ -206,10 +206,10 @@ impl WamnClient {
         }
         let mut url = format!("{}{path}", self.base_url);
         let body = if route.method == "GET" {
-            // A read carries its one item in the query string, and no body.
+            // A read carries its one request element in the query string, and no body.
             let query = read_query(&body).ok_or_else(|| ClientError::Operation {
                 literal: "invalid_input".to_owned(),
-                detail: serde_json::json!({ "detail": "a read sends exactly one request item" }),
+                detail: serde_json::json!({ "detail": "a read sends exactly one request element" }),
             })?;
             if !query.is_empty() {
                 url.push('?');
@@ -232,14 +232,14 @@ impl WamnClient {
     }
 }
 
-/// The query string of a read: the canonical encoding of the one item in the
+/// The query string of a read: the canonical encoding of the one request element in the
 /// captured request array, or `None` when the array does not hold exactly one
 /// object.
 fn read_query(body: &[u8]) -> Option<String> {
-    let items: Vec<serde_json::Map<String, serde_json::Value>> =
+    let request_elements: Vec<serde_json::Map<String, serde_json::Value>> =
         serde_json::from_slice(body).ok()?;
-    let [item] = items.as_slice() else {
+    let [request_element] = request_elements.as_slice() else {
         return None;
     };
-    Some(wamn_execution_contract::encode_read_query(item))
+    Some(wamn_execution_contract::encode_read_query(request_element))
 }

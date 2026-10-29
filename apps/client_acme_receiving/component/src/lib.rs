@@ -138,12 +138,12 @@ mod receipt_codec {
     include!("../../../target/wamn/client_acme_receiving/wit/acme_record_receipt_codec.rs");
 }
 
-/// The request id of the one item that Acme passes to Receiving's operation.
+/// The request id of the one request element that Acme passes to Receiving's operation.
 const BASE_REQUEST_ID: &str = "client_acme_receiving";
 
-/// Acme's entry: each item runs in the host transaction begun for it.
+/// Acme's entry: each request element runs in the host transaction begun for it.
 /// Receiving's record_receipt joins that transaction and records the receipt,
-/// then Acme records the inspection. A refusal by either rolls back the item.
+/// then Acme records the inspection. A refusal by either rolls back the request element.
 impl RecordReceipt for Component {
     async fn run(
         context: NodeContext,

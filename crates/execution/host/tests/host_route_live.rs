@@ -60,14 +60,14 @@ async fn deliver(
 ) -> Result<Value, DeliveryError> {
     match outcome(delivery, attachment, caller, json!({})).await? {
         DeliveryOutcome::Respond(body) => {
-            let [item]: [Value; 1] = serde_json::from_str(&body).expect("one outcome");
-            Ok(item["value"].clone())
+            let [request_element]: [Value; 1] = serde_json::from_str(&body).expect("one outcome");
+            Ok(request_element["value"].clone())
         }
         other => panic!("a host route responds: {other:?}"),
     }
 }
 
-/// Deliver one request item, as a generated client sends it: a read carries
+/// Deliver one request element, as a generated client sends it: a read carries
 /// its input, and a write carries a request id and its input under `value`.
 async fn outcome(
     delivery: &HostRouteDelivery,
@@ -82,7 +82,7 @@ async fn outcome(
         .route
         .type_
         .is_read();
-    let item = if read {
+    let request_element = if read {
         input
     } else {
         json!({"request_id": "host-route-test", "value": input})
@@ -92,7 +92,7 @@ async fn outcome(
             DeliveryRequest {
                 source: Source::Attachment(attachment.to_owned()),
                 delivery_id: "host-route-test".to_owned(),
-                payload: json!([item]).to_string(),
+                payload: json!([request_element]).to_string(),
                 caller: None,
                 trace: None,
                 parent_causation: None,
@@ -326,25 +326,31 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
             .expect("a host-owned caller");
         outcome(delivery, &route, Some(caller), payload).await
     };
-    // The one outcome of the one item: its value, or its declared error.
-    let item = async |reference: &str, payload: Value| -> Value {
+    // The one outcome of the one request element: its value, or its declared error.
+    let request_element = async |reference: &str, payload: Value| -> Value {
         match call(&admin_claims, reference, payload).await {
             Ok(DeliveryOutcome::Respond(body)) => {
-                let [item]: [Value; 1] = serde_json::from_str(&body).unwrap();
-                item
+                let [request_element]: [Value; 1] = serde_json::from_str(&body).unwrap();
+                request_element
             }
             other => panic!("{reference} answers: {other:?}"),
         }
     };
     let answer = async |reference: &str, payload: Value| -> Value {
-        let item = item(reference, payload).await;
-        assert!(item.get("error").is_none(), "{reference} answers: {item}");
-        item["value"].clone()
+        let request_element = request_element(reference, payload).await;
+        assert!(
+            request_element.get("error").is_none(),
+            "{reference} answers: {request_element}"
+        );
+        request_element["value"].clone()
     };
     let refusal = async |reference: &str, payload: Value| -> Value {
-        let item = item(reference, payload).await;
-        assert!(item.get("value").is_none(), "{reference} refuses: {item}");
-        item["error"].clone()
+        let request_element = request_element(reference, payload).await;
+        assert!(
+            request_element.get("value").is_none(),
+            "{reference} refuses: {request_element}"
+        );
+        request_element["error"].clone()
     };
 
     // A caller without admin is refused, even with a stored row that names
@@ -593,7 +599,8 @@ async fn number_counter_set_is_granted_per_role() -> anyhow::Result<()> {
     member_claims["authority"] = json!({"login": MEMBER});
     member_claims["roles"] = json!(["purchase-reader"]);
     let set = "wamn-control:number-counter/set";
-    // One write item with its own request id, answered as its one item.
+    // One write request element with its own request id, answered as its one request
+    // element.
     let call = async |claims: &Value, reference: &str, request_id: &str, value: Value| {
         let route = route_of(reference);
         let caller = routing
@@ -619,8 +626,8 @@ async fn number_counter_set_is_granted_per_role() -> anyhow::Result<()> {
         let DeliveryOutcome::Respond(body) = outcome else {
             panic!("{reference} responds: {outcome:?}");
         };
-        let [item]: [Value; 1] = serde_json::from_str(&body).expect("one outcome");
-        Ok::<_, DeliveryError>(item)
+        let [request_element]: [Value; 1] = serde_json::from_str(&body).expect("one outcome");
+        Ok::<_, DeliveryError>(request_element)
     };
     let request = |counter: &str, value: i64| {
         json!({"application": "receiving", "sequence": "purchase_order",
@@ -894,8 +901,8 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
         else {
             panic!("a host route responds");
         };
-        let [item]: [Value; 1] = serde_json::from_str(&body).expect("one outcome");
-        let page = &item["value"];
+        let [request_element]: [Value; 1] = serde_json::from_str(&body).expect("one outcome");
+        let page = &request_element["value"];
         assert_eq!(page["org_admin"], true);
         assert_eq!(
             page["projects"],

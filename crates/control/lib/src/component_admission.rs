@@ -420,7 +420,7 @@ fn load_component_statement_facts(
     load_package_statements(package_root, manifest, Some(component))
 }
 
-/// The exports among `selected` whose item transaction the host begins, as
+/// The exports among `selected` whose request element transaction the host begins, as
 /// the package manifest declares them.
 fn host_transaction_exports<T>(
     manifest: &wamn_schema_generator::PackageManifest,

@@ -404,7 +404,7 @@ fn operation_row_columns(wamn_api: &WamnApi, row: &str) -> Vec<StatementValueCon
 ///
 /// The host claims the key in the write log, the work runs and the host stores
 /// the result in one transaction. A retry with the same request answers the
-/// stored result and writes nothing. A refused item rolls its claim back.
+/// stored result and writes nothing. A refused request element rolls its claim back.
 fn idempotency_contract(key: &str, operation_id: &str) -> Value {
     // The operation without its `@version`, so a retry across a release
     // answers the stored result.
@@ -1093,8 +1093,8 @@ fn input_contract(
         },
         "writable_fields": writable,
     });
-    // A read carries no request identity: its one item travels in a GET query
-    // string, and its outcomes match its items by list position.
+    // A read carries no request identity: its one request element travels in a GET query
+    // string, and its outcomes match its request elements by list position.
     if !matches!(action, CrudAction::Get | CrudAction::Query) {
         common["request_id"] = json!({"type": "string", "required": true});
     }
