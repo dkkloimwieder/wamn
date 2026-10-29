@@ -11,6 +11,7 @@ import {
   renew,
   rowsDatabase,
   rowsPersistence,
+  savedUser,
   type SessionState,
 } from "@wamn/web-runtime";
 import {
@@ -27,7 +28,6 @@ import { packagingOffline, packagingScope } from "./packaging-offline.js";
 import type { StatusFilter } from "./order.js";
 import { packagingAddress } from "./packaging-writes.js";
 import { PackagingScreen } from "./packaging-screen.js";
-import { savedUser } from "./saved-user.js";
 import { canReload } from "./update.js";
 import "./style.css";
 

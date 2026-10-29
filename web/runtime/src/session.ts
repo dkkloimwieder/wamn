@@ -167,14 +167,25 @@ export async function signIn(
   return times(response);
 }
 
+/** A renewal that the network or the identity service could not answer. The keeper tries it again. */
+class Unreachable extends Error {}
+
 /**
  * Renew the session from its renewal cookie, or null when the identity service
  * refuses, because the login ended or the browser holds no session.
  */
 export async function renew(aud: string, options: SessionOptions = {}): Promise<SessionTimes | null> {
-  const response = await post("/password/renew", { aud, carrier: "cookie" }, options);
+  let response: Response;
+  try {
+    response = await post("/password/renew", { aud, carrier: "cookie" }, options);
+  } catch (error) {
+    throw new Unreachable(`/password/renew did not answer: ${String(error)}`);
+  }
   if (response.status === 401) {
     return null;
+  }
+  if (response.status >= 500) {
+    throw new Unreachable(refusedBy("/password/renew", response).message);
   }
   if (!response.ok) {
     throw refusedBy("/password/renew", response);
@@ -194,6 +205,8 @@ export async function signOut(aud: string, options: SessionOptions = {}): Promis
 export type SessionState =
   | ({ readonly status: "signedIn" } & SessionTimes)
   | { readonly status: "signedOut" }
+  /** The first renewal could not reach the identity service. The keeper keeps trying. */
+  | { readonly status: "unreachable"; readonly reason: string }
   | { readonly status: "failed"; readonly reason: string };
 
 /** The clock the keeper schedules against. */
@@ -212,6 +225,8 @@ export interface KeeperOptions extends SessionOptions {
   readonly onState: (state: SessionState) => void;
   /** The clock to schedule against. The system clock is the default. */
   readonly clock?: Clock;
+  /** Run on each return of the network. The result stops it. The browser online event is the default. */
+  readonly online?: (run: () => void) => () => void;
 }
 
 /** The running keeper of one session. */
@@ -227,6 +242,12 @@ export interface SessionKeeper {
 /** How long before the token expires the keeper renews it, in milliseconds. */
 const RENEW_BEFORE = 60_000;
 
+/** The first wait before a renewal that could not reach the service is tried again, in milliseconds. Each attempt doubles it. */
+const RETRY_FIRST = 5_000;
+
+/** The longest wait between two attempts, in milliseconds. */
+const RETRY_MOST = 60_000;
+
 const SYSTEM_CLOCK: Clock = {
   now: () => Date.now(),
   after: (delay, run) => {
@@ -235,13 +256,21 @@ const SYSTEM_CLOCK: Clock = {
   },
 };
 
+function browserOnline(run: () => void): () => void {
+  if (typeof window === "undefined") return () => undefined;
+  window.addEventListener("online", run);
+  return () => window.removeEventListener("online", run);
+}
+
 /**
  * Keep one cookie session alive.
  *
  * It renews at once, which restores the session after a reload, and again a
  * minute before each token expires. A refused renewal reports the page signed
- * out and stops. Any other failure reports why and stops too, so the page asks
- * again rather than guess.
+ * out and stops. A renewal that cannot reach the identity service keeps the
+ * session as it is and tries again: after 5 s, doubled per attempt up to 60 s,
+ * and at once when the network returns. Any other failure reports why and
+ * stops, so the page asks again rather than guess.
  */
 export function keepSession(options: KeeperOptions): SessionKeeper {
   const clock = options.clock ?? SYSTEM_CLOCK;
@@ -249,10 +278,19 @@ export function keepSession(options: KeeperOptions): SessionKeeper {
   // that arrives after one of them changes nothing.
   let generation = 0;
   let cancel: (() => void) | null = null;
+  // The attempts since the identity service last answered, and the state last reported.
+  let retries = 0;
+  let reported: SessionState["status"] | null = null;
+
+  function report(state: SessionState): void {
+    reported = state.status;
+    options.onState(state);
+  }
 
   function halt(): number {
     cancel?.();
     cancel = null;
+    retries = 0;
     generation += 1;
     return generation;
   }
@@ -261,7 +299,8 @@ export function keepSession(options: KeeperOptions): SessionKeeper {
     if (current !== generation) {
       return;
     }
-    options.onState({ status: "signedIn", ...session });
+    retries = 0;
+    report({ status: "signedIn", ...session });
     const delay = Math.max(0, session.expiresAt * 1000 - RENEW_BEFORE - clock.now());
     cancel = clock.after(delay, () => void renewal(current));
   }
@@ -269,8 +308,19 @@ export function keepSession(options: KeeperOptions): SessionKeeper {
   function fail(current: number, error: unknown): void {
     if (current === generation) {
       halt();
-      options.onState({ status: "failed", reason: String(error) });
+      report({ status: "failed", reason: String(error) });
     }
+  }
+
+  function retry(current: number, error: Unreachable): void {
+    if (current !== generation) {
+      return;
+    }
+    retries += 1;
+    if (reported !== "signedIn" && reported !== "unreachable") {
+      report({ status: "unreachable", reason: error.message });
+    }
+    cancel = clock.after(Math.min(RETRY_FIRST * 2 ** (retries - 1), RETRY_MOST), () => void renewal(current));
   }
 
   async function renewal(current: number): Promise<void> {
@@ -282,15 +332,22 @@ export function keepSession(options: KeeperOptions): SessionKeeper {
       }
       if (session === null) {
         halt();
-        options.onState({ status: "signedOut" });
+        report({ status: "signedOut" });
         return;
       }
       keep(current, session);
     } catch (error) {
-      fail(current, error);
+      if (error instanceof Unreachable) retry(current, error);
+      else fail(current, error);
     }
   }
 
+  const stopOnline = (options.online ?? browserOnline)(() => {
+    if (retries > 0 && cancel !== null) {
+      cancel();
+      void renewal(generation);
+    }
+  });
   void renewal(halt());
 
   return {
@@ -305,13 +362,14 @@ export function keepSession(options: KeeperOptions): SessionKeeper {
       try {
         await signOut(options.aud, options);
         if (current === generation) {
-          options.onState({ status: "signedOut" });
+          report({ status: "signedOut" });
         }
       } catch (error) {
         fail(current, error);
       }
     },
     stop() {
+      stopOnline();
       halt();
     },
   };

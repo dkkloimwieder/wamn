@@ -234,6 +234,7 @@ export function SyncReceipts(props: {
     <Page title={props.description.title}>
       <SyncStatusLine
         outbox={store.outbox}
+        offline={session.offline()}
         status={status()}
         currentAt={currentAt()}
         updateAvailable={waitingReload() !== undefined}

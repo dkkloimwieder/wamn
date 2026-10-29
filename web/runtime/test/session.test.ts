@@ -335,6 +335,111 @@ describe("the session keeper", () => {
     expect(stub.seen).toHaveLength(3);
   });
 
+  it("keeps the session and retries when the renewal cannot reach the service", async () => {
+    const clock = fakeClock(100_000);
+    const offline = () => {
+      throw new TypeError("Failed to fetch");
+    };
+    const stub = stubFetch([times(1_000), offline, reply(503), times(1_900)]);
+    const states: SessionState[] = [];
+    keepSession({ aud: "aud-1", fetch: stub.fetch, clock, onState: (state) => states.push(state) });
+    await settle();
+    clock.advance(940_000);
+    await settle();
+    expect(states).toHaveLength(1);
+    expect(clock.pending()).toEqual([945_000]);
+    clock.advance(945_000);
+    await settle();
+    expect(states).toHaveLength(1);
+    expect(clock.pending()).toEqual([955_000]);
+    clock.advance(955_000);
+    await settle();
+    expect(stub.seen).toHaveLength(4);
+    expect(states).toEqual([
+      { status: "signedIn", userId: "user-1", expiresAt: 1_000, loginExpiresAt: 28_000 },
+      { status: "signedIn", userId: "user-1", expiresAt: 1_900, loginExpiresAt: 28_000 },
+    ]);
+    expect(clock.pending()).toEqual([1_840_000]);
+  });
+
+  it("caps the wait between attempts at a minute", async () => {
+    const clock = fakeClock(0);
+    const offline = () => {
+      throw new TypeError("Failed to fetch");
+    };
+    const stub = stubFetch([offline, offline, offline, offline, offline, offline]);
+    const states: SessionState[] = [];
+    keepSession({ aud: "aud-1", fetch: stub.fetch, clock, onState: (state) => states.push(state) });
+    const waits: number[] = [];
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      await settle();
+      const [at] = clock.pending();
+      waits.push(at! - clock.now());
+      clock.advance(at!);
+    }
+    expect(waits).toEqual([5_000, 10_000, 20_000, 40_000, 60_000, 60_000]);
+    expect(states).toEqual([
+      { status: "unreachable", reason: "/password/renew did not answer: TypeError: Failed to fetch" },
+    ]);
+  });
+
+  it("signs out when the service refuses a retried renewal", async () => {
+    const clock = fakeClock(0);
+    const stub = stubFetch([reply(502), reply(401)]);
+    const states: SessionState[] = [];
+    keepSession({ aud: "aud-1", fetch: stub.fetch, clock, onState: (state) => states.push(state) });
+    await settle();
+    expect(states).toEqual([{ status: "unreachable", reason: "/password/renew answered 502" }]);
+    clock.advance(5_000);
+    await settle();
+    expect(states.at(-1)).toEqual({ status: "signedOut" });
+    expect(clock.pending()).toEqual([]);
+  });
+
+  it("retries at once when the network returns", async () => {
+    const clock = fakeClock(0);
+    const offline = () => {
+      throw new TypeError("Failed to fetch");
+    };
+    const stub = stubFetch([offline, times(1_000)]);
+    let online: () => void = () => undefined;
+    const states: SessionState[] = [];
+    const keeper = keepSession({
+      aud: "aud-1",
+      fetch: stub.fetch,
+      clock,
+      online: (run) => {
+        online = run;
+        return () => {
+          online = () => undefined;
+        };
+      },
+      onState: (state) => states.push(state),
+    });
+    await settle();
+    expect(clock.pending()).toEqual([5_000]);
+    online();
+    await settle();
+    expect(stub.seen).toHaveLength(2);
+    expect(states.at(-1)).toEqual({ status: "signedIn", userId: "user-1", expiresAt: 1_000, loginExpiresAt: 28_000 });
+    expect(clock.pending()).toEqual([940_000]);
+    // A return of the network while the session is current renews nothing.
+    online();
+    await settle();
+    expect(stub.seen).toHaveLength(2);
+    keeper.stop();
+  });
+
+  it("fails on an answer it cannot read", async () => {
+    const clock = fakeClock(0);
+    const stub = stubFetch([reply(400)]);
+    const states: SessionState[] = [];
+    keepSession({ aud: "aud-1", fetch: stub.fetch, clock, onState: (state) => states.push(state) });
+    await settle();
+    expect(states).toEqual([{ status: "failed", reason: "Error: /password/renew answered 400" }]);
+    expect(clock.pending()).toEqual([]);
+  });
+
   it("ignores a renewal that answers after sign out", async () => {
     const clock = fakeClock(0);
     let answer: (response: Response) => void = () => undefined;

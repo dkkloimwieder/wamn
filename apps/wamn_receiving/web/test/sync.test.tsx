@@ -14,7 +14,7 @@ import { addDecimal, receiptCall, receivedLine, SyncReceipts } from "../src/sync
 
 vi.mock("@wamn/platform-ui", async (original) => ({
   ...(await original()),
-  useSession: () => ({ userId: `user-${userCount}` }),
+  useSession: () => ({ userId: `user-${userCount}`, offline: () => false }),
 }));
 
 let userCount = 0;

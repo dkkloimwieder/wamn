@@ -20,4 +20,5 @@ export * from "./group.js";
 export * from "./cell.js";
 export * from "./refusal.js";
 export * from "./session.js";
+export * from "./saved-user.js";
 export * from "./sync/index.js";

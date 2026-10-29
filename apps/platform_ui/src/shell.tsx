@@ -15,6 +15,9 @@ import {
 import {
   createTransport,
   keepSession,
+  savedUser,
+  savedView,
+  type SavedView,
   type SessionOptions,
   type SessionState,
   type Transport,
@@ -28,10 +31,15 @@ const Layout = lazy(() => import("./layout"));
 
 export const API_BASE = "/api";
 
-/** The user of the session the shell holds. The shell provides it only while signed in. */
+/**
+ * The user of the session the shell holds. The shell provides it while signed
+ * in, and offline for the last signed-in user before renewal succeeds.
+ */
 export interface Session {
   /** The session reply's `sub`. */
   readonly userId: string;
+  /** True while the shell shows the saved user, before renewal succeeds. */
+  readonly offline: () => boolean;
 }
 
 const SessionContext = createContext<Session | null>(null);
@@ -90,11 +98,18 @@ function reference(operation: string): string {
   return at < 0 ? operation : operation.slice(0, at);
 }
 
-async function applicationView(transport: Transport, sections: readonly ShellSection[]): Promise<View> {
+/** What the user holds, or undefined when the read did not reach the host. */
+async function applicationHeld(transport: Transport, userId: string): Promise<SavedView | undefined> {
   const outcome = await permission.mine(transport, [{}]);
-  const held = new Set(outcome.status === "completed" ? outcome.value.permissions : []);
-  const admin = outcome.status === "completed" && outcome.value.admin;
-  const holds: Holds = (operation) => admin || held.has(reference(operation));
+  if (outcome.status === "uncertain") return undefined;
+  return outcome.status === "completed"
+    ? { userId, held: outcome.value.permissions, admin: outcome.value.admin }
+    : { userId, held: [], admin: false };
+}
+
+function applicationView(saved: SavedView, sections: readonly ShellSection[]): View {
+  const held = new Set(saved.held);
+  const holds: Holds = (operation) => saved.admin || held.has(reference(operation));
   return {
     holds,
     sections: sections
@@ -204,15 +219,24 @@ export function Shell(props: ShellProps): JSX.Element {
   );
 }
 
+/** The saved user and view of an application environment. The control audience saves none. */
+function saved(aud: string) {
+  const match = /^urn:wamn:project-env:[^:]+:([^:]+):([^:]+):[^:]+$/.exec(aud);
+  return match ? { user: savedUser(match[1]!, match[2]!), view: savedView(match[1]!, match[2]!) } : undefined;
+}
+
 function Session(
   props: ShellProps & { aud: string; kind: Kind; options: SessionOptions; address: Address },
 ): JSX.Element {
   const [state, setState] = createSignal<SessionState | null>(null);
   const [view, setView] = createSignal<View>();
   const [trouble, setTrouble] = createSignal<string>();
+  // The last signed-in user, shown while the first renewal cannot reach the identity service.
+  const [offlineUser, setOfflineUser] = createSignal<string>();
+  const store = props.kind === "application" ? saved(props.aud) : undefined;
   const userId = () => {
     const current = state();
-    return current?.status === "signedIn" ? current.userId : undefined;
+    return current?.status === "signedIn" ? current.userId : offlineUser();
   };
   const sections = props.kind === "control" ? (props.controlSections ?? []) : props.sections;
   const transport = createTransport({
@@ -223,36 +247,64 @@ function Session(
   let active = true;
   let generation = 0;
   let signedIn = false;
+  function show(shown: View): void {
+    setView(shown);
+    const first = shown.sections[0]?.screens[0];
+    if (props.address.url().pathname.replace(/\/$/, "") === `/${props.aud}` && first) {
+      const projects = shown.controlMine?.projects.filter((entry) =>
+        shown.holds(member.MEMBER_LIST_ROUTE.operation, entry.project),
+      );
+      const home =
+        projects?.length === 1
+          ? `projects/${encodeURIComponent(projects[0]!.project)}`
+          : shown.sections.some((section) => section.routes?.some((route) => route.path === ""))
+            ? undefined
+            : first.path;
+      if (home !== undefined) props.address.navigate(`/${props.aud}/${home}`, true);
+    }
+  }
+  /** The saved view of the user, for a shell that cannot reach the host. */
+  function savedViewOf(id: string): View | undefined {
+    const held = store?.view.load(id);
+    return held === undefined ? undefined : applicationView(held, sections);
+  }
+  async function readView(id: string): Promise<View> {
+    if (props.kind === "control") return controlView(transport, sections);
+    const held = await applicationHeld(transport, id);
+    if (held !== undefined) {
+      store?.view.save(held);
+      return applicationView(held, sections);
+    }
+    const fallback = view() ?? savedViewOf(id);
+    if (fallback === undefined) throw new Error("The permissions could not be read. Try again when online.");
+    return fallback;
+  }
   const keeper = keepSession({
     ...props.options,
     aud: props.aud,
     onState: (next) => {
       setState(next);
-      if (next.status !== "signedIn") {
+      if (next.status === "unreachable") {
+        const id = store?.user.load();
+        const shown = id === undefined ? undefined : savedViewOf(id);
+        if (id !== undefined && shown !== undefined) {
+          setOfflineUser(id);
+          show(shown);
+        }
+      } else if (next.status !== "signedIn") {
         signedIn = false;
         generation += 1;
+        setOfflineUser(undefined);
         setView(undefined);
       } else if (!signedIn) {
         signedIn = true;
+        store?.user.save(next.userId);
+        setOfflineUser(undefined);
         const current = ++generation;
         setTrouble(undefined);
-        (props.kind === "control" ? controlView(transport, sections) : applicationView(transport, sections)).then(
+        readView(next.userId).then(
           (shown) => {
-            if (!active || generation !== current) return;
-            setView(shown);
-            const first = shown.sections[0]?.screens[0];
-            if (props.address.url().pathname.replace(/\/$/, "") === `/${props.aud}` && first) {
-              const projects = shown.controlMine?.projects.filter((entry) =>
-                shown.holds(member.MEMBER_LIST_ROUTE.operation, entry.project),
-              );
-              const home =
-                projects?.length === 1
-                  ? `projects/${encodeURIComponent(projects[0]!.project)}`
-                  : shown.sections.some((section) => section.routes?.some((route) => route.path === ""))
-                    ? undefined
-                    : first.path;
-              if (home !== undefined) props.address.navigate(`/${props.aud}/${home}`, true);
-            }
+            if (active && generation === current) show(shown);
           },
           (error: unknown) => {
             if (active && generation === current) setTrouble(String(error));
@@ -268,7 +320,7 @@ function Session(
   });
   return (
     <Show
-      when={state()?.status === "signedIn"}
+      when={state()?.status === "signedIn" || offlineUser() !== undefined}
       fallback={
         <EntryPage title="Sign in">
           <Show when={state() !== null}>
@@ -295,7 +347,7 @@ function Session(
           // A different user mounts the screens again, so no screen keeps the old user's state.
           <Show when={userId()} keyed>
             {(id) => (
-              <SessionContext value={{ userId: id }}>
+              <SessionContext value={{ userId: id, offline: () => state()?.status !== "signedIn" }}>
                 <NotFoundBoundary home={`/${props.aud}`} path={props.address.url().pathname}>
                   <Layout
                     title={props.kind === "control" ? props.org : props.title}
@@ -319,5 +371,7 @@ function Session(
 }
 
 function failure(state: SessionState | null): string | null {
-  return state?.status === "failed" ? `The session could not be renewed: ${state.reason}.` : null;
+  return state?.status === "failed" || state?.status === "unreachable"
+    ? `The session could not be renewed: ${state.reason}.`
+    : null;
 }

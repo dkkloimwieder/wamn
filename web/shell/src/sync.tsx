@@ -19,6 +19,8 @@ export function SyncStatusLine(props: {
   /** When the screen's rows were last current, or undefined before the first read. */
   currentAt: string | undefined;
   signedIn?: boolean;
+  /** True while the page shows the saved user, before the session is renewed. */
+  offline?: boolean;
   updateAvailable?: boolean;
   shellResult?: ShellResult | undefined;
 }) {
@@ -26,6 +28,7 @@ export function SyncStatusLine(props: {
   return (
     <p aria-label="Sync status">
       <Show when={props.updateAvailable}>update available, reload. </Show>
+      <Show when={props.offline}>Offline, sign in to upload. </Show>
       <Show when={props.signedIn === false}>Sign in to upload. </Show>
       Status: <output data-sync-status={props.status}>{props.status}</output>. Pending:{" "}
       {counts().pending + counts().sending}. Refused: {counts().refused}. Last sent: {counts().lastSentAt ?? "never"}.
