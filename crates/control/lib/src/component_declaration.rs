@@ -232,7 +232,7 @@ pub const COMPONENT_DECLARATION_STORE_ALIAS_PLACEHOLDER: &str = "__STORE_ALIAS__
 /// scope as placeholders. A connection whose alias is
 /// [`COMPONENT_DECLARATION_STORE_ALIAS_PLACEHOLDER`] takes `store_alias`, the
 /// name the binding selection gives the store, as the operator passes it to
-/// `bind-connection --store-alias` in the cluster.
+/// the environment document in the cluster.
 pub fn render_palette_declaration(
     template: &Path,
     scope: &wamn_catalog::ComponentPackageScope,

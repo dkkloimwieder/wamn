@@ -194,6 +194,14 @@ pub async fn build(repository: &Path, code: &str) -> anyhow::Result<BuiltIntegra
     })
 }
 
+/// The immutable schema and operations of one published version.
+#[derive(Debug)]
+pub struct Publication {
+    pub version: i32,
+    pub parameter_schema: Value,
+    pub operations: String,
+}
+
 /// Push the exact build by digest, read it back, then record its catalog entry.
 ///
 /// # Errors
@@ -203,6 +211,7 @@ pub async fn publish(
     built: &BuiltIntegration,
     registry: &PackageRegistry,
     database_url: &str,
+    publication: &Publication,
 ) -> anyhow::Result<()> {
     let repository = Repository::open(registry, &built.digest)?;
     // Authenticate before the low-level blob and manifest writes.
@@ -239,8 +248,14 @@ pub async fn publish(
     let tx = system.transaction().await?;
     crate::connection_configuration::use_role(&tx, WorkloadRoleFamily::Control).await?;
     tx.query_one(
-        "SELECT registry.publish_integration($1,$2)",
-        &[&built.code, &built.digest],
+        "SELECT registry.publish_integration($1,$2,$3,$4::text::jsonb,$5)",
+        &[
+            &built.code,
+            &publication.version,
+            &built.digest,
+            &publication.parameter_schema.to_string(),
+            &publication.operations,
+        ],
     )
     .await?;
     tx.commit().await?;

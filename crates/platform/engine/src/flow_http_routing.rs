@@ -1768,9 +1768,15 @@ mod tests {
         assert_eq!(
             served_ids(&served),
             [
+                "wamn-control-connection-get-http",
+                "wamn-control-connection-list-http",
                 "wamn-control-control-mine-http",
                 "wamn-control-environment-list-http",
                 "wamn-control-environment-status-http",
+                "wamn-control-external-system-list-http",
+                "wamn-control-integration-get-http",
+                "wamn-control-integration-list-http",
+                "wamn-control-integration-type-list-http",
                 "wamn-control-member-list-http",
                 "wamn-control-project-list-http",
                 "wamn-control-release-profile-http",

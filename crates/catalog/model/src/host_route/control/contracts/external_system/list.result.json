@@ -1,0 +1,11 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "external_systems",
+      "type": "json",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

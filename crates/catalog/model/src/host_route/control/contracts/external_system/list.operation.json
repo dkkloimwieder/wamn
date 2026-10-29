@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:external-system/list@0.9.0",
+  "type": "get",
+  "label": "List external system",
+  "grant": "wamn-control:external-system/list@0.9.0",
+  "permission_token": "external_system.list",
+  "result": "one",
+  "transaction": "implicit",
+  "visibility": "public"
+}

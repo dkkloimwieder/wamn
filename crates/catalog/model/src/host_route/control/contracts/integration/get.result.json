@@ -1,0 +1,53 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "name",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "org",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "project",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "status",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "integration_type",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "auth_type",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "external_system_id",
+      "type": "text",
+      "nullable": true,
+      "values": []
+    }
+  ]
+}

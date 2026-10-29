@@ -1,5 +1,8 @@
 //! Org connection authority and the rows projected into enabled projects.
 
+pub mod administration;
+pub mod references;
+
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -55,49 +58,7 @@ pub async fn write(
     payload: &str,
     drops: &mut AuthDrops,
 ) -> Result<Value, ConnectionError> {
-    fn parse<T: serde::de::DeserializeOwned>(payload: &str) -> Result<T, ConnectionError> {
-        serde_json::from_str(payload).map_err(|_| refuse("invalid_input", "value"))
-    }
-    match operation {
-        "external_system.write" => {
-            Ok(json!({"name": write_external_system(tx, org, &parse(payload)?).await?}))
-        }
-        "connection.write" => {
-            Ok(json!({"name": write_connection(tx, org, &parse(payload)?, drops).await?}))
-        }
-        "project_connection.enable" | "project_connection.disable" => {
-            #[derive(Deserialize)]
-            #[serde(deny_unknown_fields)]
-            struct Request {
-                project: String,
-                connection: String,
-            }
-            let request: Request = parse(payload)?;
-            set_project_connection(tx, org, &request.project, &request.connection, operation)
-                .await?;
-            Ok(json!({"connection": request.connection}))
-        }
-        "integration_allow.allow" => {
-            #[derive(Deserialize)]
-            #[serde(deny_unknown_fields)]
-            struct Request {
-                scope_type: String,
-                scope_id: String,
-                integration: String,
-            }
-            let request: Request = parse(payload)?;
-            allow_integration(
-                tx,
-                org,
-                &request.scope_type,
-                &request.scope_id,
-                &request.integration,
-            )
-            .await?;
-            Ok(json!({"integration": request.integration}))
-        }
-        _ => Err(refuse("invalid_input", "operation")),
-    }
+    administration::execute(tx, org, operation, payload, drops).await
 }
 
 async fn configure(

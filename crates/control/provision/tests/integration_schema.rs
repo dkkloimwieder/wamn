@@ -221,3 +221,111 @@ fn retired_material_stays_during_the_five_minute_grace() {
         ASSERT NOT EXISTS (SELECT FROM registry.retired_connection_credential('acme'));
       END $$;");
 }
+
+fn publish_refuses(schema: &str, operations: &str, digest: &str, code: &str, message: &str) {
+    run(&format!("DO $$ BEGIN
+        BEGIN
+            PERFORM registry.publish_integration('{code}',2,{digest},'{schema}'::jsonb,'{operations}');
+            ASSERT false, 'invalid publication must refuse';
+        EXCEPTION WHEN invalid_parameter_value THEN
+            ASSERT SQLERRM LIKE '{message}%', SQLERRM;
+        END;
+    END $$;"));
+}
+
+#[test]
+fn publish_refuses_removal_before_deprecation() {
+    publish_refuses(
+        r#"{"type":"object","properties":{}}"#,
+        "wamn:connection/http",
+        "NULL",
+        "http",
+        "field_removal_requires_deprecation",
+    );
+}
+
+#[test]
+fn publish_refuses_a_new_required_field() {
+    publish_refuses(
+        r#"{"type":"object","properties":{"primary-authority":{"type":"string","immutable":true},"tls-verification":{"type":"string"},"new":{"type":"string"}},"required":["new"]}"#,
+        "wamn:connection/http",
+        "NULL",
+        "http",
+        "required_field_requires_optional_predecessor",
+    );
+}
+
+#[test]
+fn publish_refuses_a_changed_json_type() {
+    publish_refuses(
+        r#"{"type":"object","properties":{"primary-authority":{"type":"integer","immutable":true},"tls-verification":{"type":"string"}}}"#,
+        "wamn:connection/http",
+        "NULL",
+        "http",
+        "field_type_changed",
+    );
+}
+
+#[test]
+fn publish_refuses_reserved_auth_parameters() {
+    publish_refuses(
+        r#"{"type":"object","properties":{"auth":{"type":"object"}}}"#,
+        "wamn:connection/http",
+        "NULL",
+        "http",
+        "reserved_auth_field",
+    );
+}
+
+#[test]
+fn publish_refuses_http_auth_with_another_interface() {
+    publish_refuses(
+        r#"{"type":"object","properties":{}}"#,
+        "example:serial/client",
+        "NULL",
+        "http",
+        "http_auth_requires_http_interface",
+    );
+}
+
+#[test]
+fn publish_refuses_wasm_without_a_digest() {
+    publish_refuses(
+        r#"{"type":"object","properties":{}}"#,
+        "wamn:modbus/client",
+        "NULL",
+        "modbus",
+        "digest_required",
+    );
+}
+
+#[test]
+fn publish_refuses_native_without_a_digest() {
+    run(
+        r#"INSERT INTO registry.integration_type(code,runtime_type,exclusive) VALUES ('native_test','native',false);
+        DO $$ BEGIN
+            BEGIN
+                PERFORM registry.publish_integration('native_test',1,NULL,'{"type":"object","properties":{}}','example:native/client');
+                ASSERT false, 'native publication needs a digest';
+            EXCEPTION WHEN invalid_parameter_value THEN ASSERT SQLERRM='digest_required', SQLERRM; END;
+        END $$;"#,
+    );
+}
+
+#[test]
+fn connection_refuses_integration_deletion() {
+    run("DO $$ DECLARE result jsonb; BEGIN
+        result := registry.configure_integration('acme','integration.delete','{\"project\":\"app\",\"name\":\"first\"}');
+        ASSERT result->>'error'='referenced' AND result->>'field'='connection',result::text;
+        ASSERT EXISTS(SELECT FROM registry.integration WHERE name='first');
+    END $$;");
+}
+
+#[test]
+fn integration_refuses_external_system_deletion() {
+    run("DO $$ DECLARE result jsonb; BEGIN
+        result := registry.configure_external_system('acme','external_system.delete','{\"project\":\"app\",\"name\":\"erp\"}');
+        ASSERT result->>'error'='referenced' AND result->>'field'='integration',result::text;
+        ASSERT EXISTS(SELECT FROM registry.external_system WHERE name='erp');
+    END $$;");
+}

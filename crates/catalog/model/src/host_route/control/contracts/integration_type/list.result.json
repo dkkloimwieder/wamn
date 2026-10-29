@@ -1,0 +1,11 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "integration_types",
+      "type": "json",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

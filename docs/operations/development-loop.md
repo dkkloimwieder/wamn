@@ -53,10 +53,11 @@ Supply `--materializer-component` with the absolute path to a `materializer.wasm
 The emitted `local_artifacts` configuration names the local output directory and these components.
 For declared connections, pass `--local-bindings` with an absolute path to the selection file.
 The emitted configuration stores that path in `local_artifacts.bindings`.
-The host reads connection credentials from the system database through its scoped reader.
-Set `WAMN_CONTROL_DATABASE_URL` to the control database URL.
+The host reads credential references from Postgres and resolves values through the environment store.
+Set `WAMN_CONTROL_URL` to the control host URL and `WAMN_TOKEN` to the caller session token.
 Before activation, write connections with `wamn-ctl connection write`.
-Import credentials explicitly with `wamn-ctl connection import-credentials --org <org> --file <private-import.json>`.
+Supply the first credential through `connection write --credential-file <private-file>`.
+Use `connection set-credential` for later credential changes.
 The `dev up` command neither copies nor imports a credential file.
 
 Supply `--platform-domain` with the domain of the platform principal emails, for example `example.invalid`.
@@ -270,7 +271,7 @@ A wiring can name a palette component, which is a platform component with a `dec
 The `wamn build` of a package builds each palette component that a wiring of the package names.
 The loop admits it into the scope of that package, with the platform packages that its declaration states.
 A `__STORE_ALIAS__` connection takes the `store-alias` of the component's selection in `--local-bindings`.
-That is the name that the operator passes to `bind-connection --store-alias` in the cluster.
+The environment document binds that declared name to a project integration.
 The runtime still enforces operation grants, connection bindings, and credentials for each database role.
 
 Local preparation limits each metadata or version command to 60 seconds.

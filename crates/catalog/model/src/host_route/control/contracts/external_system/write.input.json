@@ -7,25 +7,13 @@
       "values": []
     },
     {
-      "path": "value.integration",
+      "path": "value.project",
       "type": "text",
       "nullable": false,
       "values": []
     },
     {
       "path": "value.name",
-      "type": "text",
-      "nullable": false,
-      "values": []
-    },
-    {
-      "path": "value.parameters",
-      "type": "json",
-      "nullable": false,
-      "values": []
-    },
-    {
-      "path": "value.status",
       "type": "text",
       "nullable": false,
       "values": []

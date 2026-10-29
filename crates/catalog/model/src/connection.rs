@@ -149,7 +149,7 @@ pub enum CredentialInjection {
     HostSignedRequest,
 }
 
-/// The connection types that `bind-connection` can bind today. The enum is
+/// The connection types that connection binding can bind today. The enum is
 /// the closed vocabulary a caller chooses from, so a descriptor is never
 /// authored from a string.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -194,7 +194,7 @@ impl RequirementType {
 
     /// Check a generation definition against the coordinates this type's
     /// plugin reads, and return the reason it is refused. `wamn-ctl
-    /// bind-connection` refuses with it.
+    /// binding refuses with it.
     pub fn check_definition(self, definition: &serde_json::Value) -> Result<(), String> {
         use serde_json::Value;
         let Some(object) = definition.as_object() else {

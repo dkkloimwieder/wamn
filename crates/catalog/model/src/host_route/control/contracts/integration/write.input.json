@@ -1,0 +1,40 @@
+{
+  "fields": [
+    {
+      "path": "request_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.project",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.name",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.integration_type",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.auth_type",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.external_system",
+      "type": "text",
+      "nullable": true,
+      "values": []
+    }
+  ]
+}

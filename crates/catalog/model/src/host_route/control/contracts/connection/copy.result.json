@@ -1,0 +1,95 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "name",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "org",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "project",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "status",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "env",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "integration_type",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "integration_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "active_generation",
+      "type": "bigint",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "parameters",
+      "type": "json",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "hint",
+      "type": "text",
+      "nullable": true,
+      "values": []
+    },
+    {
+      "path": "versions",
+      "type": "json",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "auth_type",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "integration_status",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "deprecated_fields",
+      "type": "json",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

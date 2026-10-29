@@ -84,18 +84,14 @@ enum Command {
     QualifyUpgrade(package_verbs::QualifyUpgradeArgs),
     /// Reconcile generated package data privileges after apply-package.
     ReconcilePackageDataAccess(package_verbs::ReconcilePackageDataAccessArgs),
-    /// Submit one authored wiring document as an immutable gated wiring version (wamn-1xb5)
-    /// Bind one admitted component's declared connection alias to an
-    /// environment-owned instance carrying a host-held credential handle.
-    BindConnection(component_verbs::BindConnectionArgs),
-    /// Manage org connection declarations.
+    /// Manage environment connections through control routes.
     Connection(component_verbs::ConnectionArgs),
-    /// Write an org external system from a JSON request.
-    ExternalSystem(component_verbs::ConfigurationArgs),
-    /// Enable an org connection in a project from a JSON request.
-    ProjectConnection(component_verbs::ConfigurationArgs),
-    /// Allow an integration at an org, project or environment scope.
-    IntegrationAllow(component_verbs::ConfigurationArgs),
+    /// Manage project external systems through control routes.
+    ExternalSystem(component_verbs::ExternalSystemArgs),
+    /// Read published integration types through a control route.
+    IntegrationType(component_verbs::IntegrationTypeArgs),
+    /// Build, publish, and administer project integrations.
+    Integration(wamn_ctl::integration_verbs::IntegrationArgs),
     /// Publish one immutable release from exact package-owned facts and push
     /// its manifest to the release repository.
     ///
@@ -160,17 +156,10 @@ async fn main() -> anyhow::Result<()> {
         Command::ApplyPackage(args) => package_verbs::apply(args).await,
         Command::PushPackage(args) => package_verbs::push(args).await,
         Command::QualifyUpgrade(args) => package_verbs::qualify_upgrade(args).await,
-        Command::BindConnection(args) => component_verbs::bind(args).await,
         Command::Connection(args) => component_verbs::connection(args).await,
-        Command::ExternalSystem(args) => {
-            component_verbs::configuration(args, "external_system.write").await
-        }
-        Command::ProjectConnection(args) => {
-            component_verbs::configuration(args, "project_connection.enable").await
-        }
-        Command::IntegrationAllow(args) => {
-            component_verbs::configuration(args, "integration_allow.allow").await
-        }
+        Command::ExternalSystem(args) => component_verbs::external_system(args).await,
+        Command::IntegrationType(args) => component_verbs::integration_type(args).await,
+        Command::Integration(args) => wamn_ctl::integration_verbs::run(args).await,
         Command::ReconcilePackageDataAccess(args) => {
             package_verbs::reconcile_data_access(args).await
         }
@@ -194,26 +183,37 @@ mod tests {
     use super::{Cli, Command};
 
     #[test]
-    fn connection_write_parses_without_a_secret_argument() {
+    fn connection_write_calls_a_host_with_a_separate_credential_file() {
         let args = [
             "wamn-ctl",
             "connection",
             "write",
-            "--org",
-            "acme",
             "--file",
-            "/tmp/erp.json",
-            "--system-database-url",
-            "postgres://localhost/control",
+            "/tmp/request.json",
+            "--host-url",
+            "https://control.example",
+            "--token",
+            "session",
+            "--credential-file",
+            "/tmp/private",
         ];
-        let parsed = Cli::try_parse_from(args).unwrap();
-        let Command::Connection(connection) = parsed.command else {
+        let Command::Connection(connection) = Cli::try_parse_from(args).unwrap().command else {
             panic!("connection verb")
         };
-        let wamn_ctl::component_verbs::ConnectionCommand::Write(write) = connection.command;
-        assert_eq!(write.org, "acme");
-        assert_eq!(write.file, std::path::Path::new("/tmp/erp.json"));
-        assert!(Cli::try_parse_from(args.into_iter().chain(["--secret", "forbidden"])).is_err());
+        let wamn_ctl::component_verbs::ConnectionCommand::Write(write) = connection.command else {
+            panic!("write verb")
+        };
+        assert_eq!(
+            write.credential_file.unwrap(),
+            std::path::Path::new("/tmp/private")
+        );
+        assert!(
+            Cli::try_parse_from(
+                args.into_iter()
+                    .chain(["--system-database-url", "postgres://invalid"])
+            )
+            .is_err()
+        );
     }
 
     #[test]

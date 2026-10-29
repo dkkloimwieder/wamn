@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:integration/enable@0.9.0",
+  "type": "command",
+  "label": "Enable integration",
+  "grant": "wamn-control:integration/enable@0.9.0",
+  "permission_token": "integration.enable",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

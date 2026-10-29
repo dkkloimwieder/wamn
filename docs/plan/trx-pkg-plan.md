@@ -239,7 +239,7 @@ Lot tracking keeps `lot` and `lot_assignment` tables keyed by `receipt_line.id`,
 - Reads of base data: committed, through its own statements instance. Lot tracking is a member for schema and routes, not for the receiving command.
 - Reaction to a receipt: **after commit**, through the existing CDC/history path, as a workflow trigger. Not in the transaction. Eventually consistent by design.
 - If lot assignment must be atomic with the receipt, it is not adjacent; it is case 2, and the app's entry calls it.
-- Analytics in a second database: a member bound to that connection (inference: the same shape as `wamn-ctl bind-connection` for blobstore). It consumes CDC; it is never in the operation transaction.
+- Analytics in a second database: a member bound to that connection (inference: the same shape as environment connection bindings for blobstore). It consumes CDC; it is never in the operation transaction.
 
 ### 3b. Mid-transaction — the overlay must act between base steps
 
@@ -390,7 +390,7 @@ Open questions:
 
 - Does `wac` rename a member's imports in place, or does it need an adapter per member? The link test answers it.
 - Does a step-shaped operation (`receive-lines` returning a typed record) fit the handler signature as declared today? The graph-and-admission test answers it.
-- Does a second connection for a member (analytics) take the `bind-connection` shape? Confirm before the Analytics row in Scenarios is treated as settled.
+- Does a second connection for a member (analytics) take the connection binding shape? Confirm before the Analytics row in Scenarios is treated as settled.
 
 ## Epics
 

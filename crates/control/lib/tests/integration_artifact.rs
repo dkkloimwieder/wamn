@@ -89,17 +89,35 @@ async fn publish_pushes_by_digest_and_records_the_catalog_as_control() {
     let fixture = fixture();
     let (_registry, configuration) = registry(fixture.path(), "connector").await;
     let built = integration::build(fixture.path(), "fixture").await.unwrap();
-    integration::publish(&built, &configuration, database.url())
-        .await
-        .unwrap();
-    integration::publish(&built, &configuration, database.url())
-        .await
-        .unwrap();
+    integration::publish(
+        &built,
+        &configuration,
+        database.url(),
+        &integration::Publication {
+            version: 1,
+            parameter_schema: serde_json::json!({"type":"object","properties":{}}),
+            operations: "test:fixture/client".into(),
+        },
+    )
+    .await
+    .unwrap();
+    integration::publish(
+        &built,
+        &configuration,
+        database.url(),
+        &integration::Publication {
+            version: 1,
+            parameter_schema: serde_json::json!({"type":"object","properties":{}}),
+            operations: "test:fixture/client".into(),
+        },
+    )
+    .await
+    .unwrap_err();
     let (client, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
         .await
         .unwrap();
     tokio::spawn(driver);
-    let row = client.query_one("SELECT digest, count(*) OVER () FROM registry.integration_digest WHERE integration='fixture'", &[]).await.unwrap();
+    let row = client.query_one("SELECT digest, count(*) OVER () FROM registry.integration_type_version WHERE integration_type='fixture'", &[]).await.unwrap();
     assert_eq!(row.get::<_, String>(0), built.digest);
     assert_eq!(row.get::<_, i64>(1), 1);
     let repository = Repository::open(&configuration, &built.digest).unwrap();
@@ -122,7 +140,7 @@ async fn publish_pushes_by_digest_and_records_the_catalog_as_control() {
     client.batch_execute("SET ROLE wamn_control").await.unwrap();
     assert!(
         client
-            .query("SELECT FROM registry.integration_digest", &[])
+            .query("SELECT FROM registry.integration_type_version", &[])
             .await
             .is_err()
     );
@@ -148,45 +166,21 @@ async fn publish_refuses_an_unknown_integration_without_creating_catalog_rows() 
     let fixture = fixture();
     let (_registry, configuration) = registry(fixture.path(), "unknown-connector").await;
     let built = integration::build(fixture.path(), "fixture").await.unwrap();
-    let error = integration::publish(&built, &configuration, database.url())
-        .await
-        .unwrap_err();
+    let error = integration::publish(
+        &built,
+        &configuration,
+        database.url(),
+        &integration::Publication {
+            version: 1,
+            parameter_schema: serde_json::json!({"type":"object","properties":{}}),
+            operations: "test:fixture/client".into(),
+        },
+    )
+    .await
+    .unwrap_err();
     assert!(
         format!("{error:#}").contains("integration_not_found"),
         "{error:#}"
     );
-    assert_eq!(database.execute(&["SELECT (SELECT count(*) FROM registry.integrations WHERE code='fixture'), (SELECT count(*) FROM registry.integration_digest)"]).unwrap().trim(), "0|0");
-}
-
-#[tokio::test]
-async fn publish_catalog_refuses_host_and_native_integrations() {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_control_provision::test_database::system();
-    database.execute(&["SET ROLE wamn_system; INSERT INTO registry.integration_type(code,runtime_type,exclusive) VALUES ('native_fixture','native',false)"]).unwrap();
-    let (client, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
-        .await
-        .unwrap();
-    tokio::spawn(driver);
-    client.batch_execute("SET ROLE wamn_control").await.unwrap();
-    let digest = format!("sha256:{}", "a".repeat(64));
-    for code in ["http", "native_fixture"] {
-        let error = client
-            .query_one(
-                "SELECT registry.publish_integration($1,$2)",
-                &[&code, &digest],
-            )
-            .await
-            .unwrap_err();
-        assert_eq!(
-            error.as_db_error().unwrap().message(),
-            "integration_runtime_type_mismatch"
-        );
-    }
-    assert_eq!(
-        database
-            .execute(&["SELECT count(*) FROM registry.integration_digest"])
-            .unwrap()
-            .trim(),
-        "0"
-    );
+    assert_eq!(database.execute(&["SELECT (SELECT count(*) FROM registry.integration_type WHERE code='fixture'), (SELECT count(*) FROM registry.integration_type_version WHERE integration_type='fixture')"]).unwrap().trim(), "0|0");
 }

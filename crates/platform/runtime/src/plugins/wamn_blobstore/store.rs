@@ -412,7 +412,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_open_container_refuses_disabled_connections_and_project_enablement() {
+    async fn an_open_container_refuses_its_disabled_environment_connection() {
         use crate::connection_credentials::test_util::Fixture;
         let _lock = wamn_test_postgres::lock();
         let mut fixture = Fixture::new().await;
@@ -432,13 +432,13 @@ mod tests {
             "store".into(),
         );
         container.put("item", vec![1]).await.unwrap();
-        fixture.admin.batch_execute("SET ROLE wamn_control; SELECT registry.configure_connection('acme','project_connection.disable','{\"project\":\"project-a\",\"connection\":\"store\"}'); RESET ROLE").await.unwrap();
+        fixture.admin.batch_execute("SET ROLE wamn_control; SELECT registry.configure_connection('acme','connection.disable','{\"project\":\"project-a\",\"env\":\"dev\",\"name\":\"store\"}'); RESET ROLE").await.unwrap();
         assert!(matches!(
             container.get("item").await,
             Err(StoreError::Refused { .. })
         ));
         other.put("item", vec![2]).await.unwrap();
-        fixture.admin.batch_execute("SET ROLE wamn_system; UPDATE registry.connection SET status='disabled' WHERE org='acme' AND name='store'; RESET ROLE").await.unwrap();
+        fixture.admin.batch_execute("SET ROLE wamn_control; SELECT registry.configure_connection('acme','connection.disable','{\"project\":\"project-b\",\"env\":\"dev\",\"name\":\"store\"}'); RESET ROLE").await.unwrap();
         assert!(matches!(
             other.get("item").await,
             Err(StoreError::Refused { .. })

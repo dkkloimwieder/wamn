@@ -6,6 +6,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+wamn-credential-store = { workspace = true }
+uuid = { workspace = true }
 anyhow = { workspace = true }
 # The publication of auth changes on the scheduler NATS (src/auth_changes.rs).
 async-nats = { workspace = true, features = ["jetstream", "kv"] }
@@ -31,6 +33,7 @@ wamn-project-state = { workspace = true }
 wamn-catalog = { workspace = true }
 
 [dev-dependencies]
+async-trait = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "net", "io-util", "sync"] }
 # The live tests apply the system schema composition and bind platform principals.

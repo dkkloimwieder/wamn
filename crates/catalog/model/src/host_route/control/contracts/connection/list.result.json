@@ -1,0 +1,11 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "connections",
+      "type": "json",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

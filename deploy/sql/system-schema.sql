@@ -1111,48 +1111,331 @@ CREATE TRIGGER integration_name_immutable BEFORE UPDATE OF name ON registry.inte
 CREATE TRIGGER external_system_name_immutable BEFORE UPDATE OF name ON registry.external_system
     FOR EACH ROW EXECUTE FUNCTION registry.keep_integration_name();
 
+-- Administration reads and writes use the same restricted function families.
+CREATE FUNCTION registry.configure_integration_type(org_id text, operation text, payload jsonb) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+BEGIN
+    IF operation <> 'integration_type.list' THEN
+        RETURN jsonb_build_object('error','invalid_input','field','operation');
+    END IF;
+    RETURN jsonb_build_object('integration_types', COALESCE((
+        SELECT jsonb_agg(to_jsonb(t) || jsonb_build_object(
+            'versions',(SELECT jsonb_agg(to_jsonb(v) ORDER BY v.version)
+                        FROM registry.integration_type_version v WHERE v.integration_type=t.code),
+            'auth_types',(SELECT jsonb_agg(a.auth_type ORDER BY a.auth_type)
+                          FROM registry.integration_type_auth a WHERE a.integration_type=t.code)) ORDER BY t.code)
+        FROM registry.integration_type t), '[]'::jsonb));
+END $$;
+
+CREATE FUNCTION registry.configure_external_system(org_id text, operation text, payload jsonb) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+#variable_conflict use_variable
+DECLARE
+    project_id text := payload->>'project';
+    row_name text := payload->>'name';
+    row_id uuid;
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('connections:' || org_id, 0));
+    IF operation = 'external_system.list' THEN
+        RETURN jsonb_build_object('external_systems', COALESCE((
+            SELECT jsonb_agg(to_jsonb(s) ORDER BY s.name) FROM registry.external_system s
+            WHERE org=org_id AND project=project_id), '[]'::jsonb));
+    ELSIF operation = 'external_system.write' THEN
+        INSERT INTO registry.external_system(org,project,name) VALUES(org_id,project_id,row_name)
+        ON CONFLICT (org,project,name) DO NOTHING;
+    ELSIF operation = 'external_system.delete' THEN
+        SELECT id INTO row_id FROM registry.external_system
+        WHERE org=org_id AND project=project_id AND name=row_name FOR UPDATE;
+        IF row_id IS NULL THEN
+            RETURN jsonb_build_object('error','not_found','field','name');
+        END IF;
+        IF EXISTS(SELECT FROM registry.integration WHERE external_system_id=row_id) THEN
+            RETURN jsonb_build_object('error','referenced','field','integration');
+        END IF;
+        DELETE FROM registry.external_system WHERE id=row_id;
+    ELSE
+        RETURN jsonb_build_object('error','invalid_input','field','operation');
+    END IF;
+    RETURN jsonb_build_object('name',row_name);
+END $$;
+
+CREATE FUNCTION registry.configure_integration(org_id text, operation text, payload jsonb) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+#variable_conflict use_variable
+DECLARE
+    project_id text := payload->>'project';
+    row_name text := payload->>'name';
+    system_id uuid;
+    existing registry.integration;
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('connections:' || org_id, 0));
+    IF operation = 'integration.lock_project' THEN
+        PERFORM FROM registry.projects WHERE org=org_id AND id=project_id FOR UPDATE;
+        IF NOT FOUND THEN
+            RETURN jsonb_build_object('error','not_found','field','project');
+        END IF;
+        RETURN '{}'::jsonb;
+    END IF;
+    IF operation = 'integration.list' THEN
+        RETURN jsonb_build_object('integrations', COALESCE((SELECT jsonb_agg(to_jsonb(i) ORDER BY i.name)
+            FROM registry.integration i WHERE org=org_id AND project=project_id), '[]'::jsonb));
+    END IF;
+    SELECT * INTO existing FROM registry.integration
+    WHERE org=org_id AND project=project_id AND name=row_name FOR UPDATE;
+    IF operation = 'integration.write' THEN
+        IF payload->>'external_system' IS NOT NULL THEN
+            SELECT id INTO system_id FROM registry.external_system
+            WHERE org=org_id AND project=project_id AND name=payload->>'external_system';
+            IF system_id IS NULL THEN
+                RETURN jsonb_build_object('error','not_found','field','external_system');
+            END IF;
+        END IF;
+        IF NOT EXISTS(SELECT FROM registry.integration_type_auth
+            WHERE integration_type=payload->>'integration_type' AND auth_type=payload->>'auth_type') THEN
+            RETURN jsonb_build_object('error','invalid_input','field','auth_type');
+        END IF;
+        IF existing.id IS NOT NULL THEN
+            IF ROW(existing.integration_type,existing.auth_type,existing.external_system_id)
+                IS DISTINCT FROM ROW(payload->>'integration_type',payload->>'auth_type',system_id) THEN
+                RETURN jsonb_build_object('error','immutable_field','field','integration');
+            END IF;
+        ELSE
+            INSERT INTO registry.integration(org,project,name,integration_type,auth_type,external_system_id)
+            VALUES(org_id,project_id,row_name,payload->>'integration_type',payload->>'auth_type',system_id);
+        END IF;
+    ELSIF existing.id IS NULL THEN
+        RETURN jsonb_build_object('error','not_found','field','name');
+    ELSIF operation = 'integration.get' THEN
+        RETURN to_jsonb(existing);
+    ELSIF operation IN ('integration.enable','integration.disable') THEN
+        UPDATE registry.integration SET status=CASE WHEN operation='integration.enable' THEN 'active' ELSE 'disabled' END
+        WHERE id=existing.id;
+    ELSIF operation = 'integration.delete' THEN
+        IF EXISTS(SELECT FROM registry.connection WHERE integration_id=existing.id) THEN
+            RETURN jsonb_build_object('error','referenced','field','connection');
+        END IF;
+        DELETE FROM registry.integration WHERE id=existing.id;
+    ELSE
+        RETURN jsonb_build_object('error','invalid_input','field','operation');
+    END IF;
+    RETURN jsonb_build_object('name',row_name);
+END $$;
+
+-- Read connection metadata without exposing store references to API readers.
+CREATE FUNCTION registry.connection_summary(requested_connection uuid) RETURNS jsonb
+LANGUAGE sql STABLE SET search_path = pg_catalog AS $$
+    SELECT to_jsonb(c) || jsonb_build_object('name',i.name,'parameters',g.parameters,'hint',k.hint,
+        'credential_created_at',k.created_at,'credential_created_by',k.created_by,
+        'integration_status',i.status,'auth_type',i.auth_type,
+        'deprecated_fields',(SELECT COALESCE(jsonb_agg(DISTINCT f.key),'[]'::jsonb)
+            FROM registry.integration_type_version v, jsonb_each(v.parameter_schema->'properties') f
+            WHERE v.integration_type=c.integration_type AND f.value->>'deprecated'='true'),
+        'versions',(SELECT jsonb_agg(v.version ORDER BY v.version)
+                    FROM registry.integration_type_version v WHERE v.integration_type=c.integration_type))
+    FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id
+    JOIN registry.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation)
+    LEFT JOIN identity.credential k ON k.id=g.credential_id
+    WHERE c.id=requested_connection
+$$;
+
 CREATE FUNCTION registry.configure_connection(org_id text, operation text, payload jsonb) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 #variable_conflict use_variable
 DECLARE
-    row_name text := payload->>'name';
     project_id text := payload->>'project';
-    system_id uuid;
+    environment text := payload->>'env';
+    row_name text := payload->>'name';
+    selected registry.integration;
+    existing registry.connection;
+    target uuid;
+    principal uuid;
+    next_generation bigint;
+    credential uuid;
+    parameters jsonb;
+    template text;
+    field text;
+    resource text;
+    credentials jsonb;
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('connections:' || org_id, 0));
-    IF operation = 'external_system.write' THEN
-        INSERT INTO registry.external_system (org, project, name)
-        VALUES (org_id, project_id, row_name) ON CONFLICT (org, project, name) DO NOTHING;
-    ELSIF operation = 'integration.write' THEN
-        IF payload->>'external_system' IS NOT NULL THEN
-            SELECT id INTO STRICT system_id FROM registry.external_system
-            WHERE org = org_id AND project = project_id AND name = payload->>'external_system';
-        END IF;
-        INSERT INTO registry.integration (org, project, name, integration_type, auth_type, external_system_id, status)
-        VALUES (org_id, project_id, row_name, payload->>'integration_type', payload->>'auth_type', system_id,
-                coalesce(payload->>'status', 'active'))
-        ON CONFLICT (org, project, name) DO UPDATE
-        SET status = EXCLUDED.status;
-    ELSE
-        RETURN jsonb_build_object('error', 'invalid_input', 'field', 'operation');
+    IF operation = 'connection.list' THEN
+        RETURN jsonb_build_object('connections',COALESCE((SELECT jsonb_agg(registry.connection_summary(c.id) ORDER BY i.name)
+            FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id
+            WHERE c.org=org_id AND c.project=project_id AND c.env=environment), '[]'::jsonb));
     END IF;
-    RETURN jsonb_build_object('name', row_name);
+    SELECT * INTO selected FROM registry.integration
+    WHERE org=org_id AND project=project_id AND name=row_name;
+    IF selected.id IS NULL THEN
+        RETURN jsonb_build_object('error','not_found','field','integration');
+    END IF;
+    SELECT * INTO existing FROM registry.connection
+    WHERE integration_id=selected.id AND env=environment FOR UPDATE;
+    IF operation = 'connection.prepare' THEN
+        IF selected.auth_type IN ('oauth2_client_credentials','oauth2_authorization_code') THEN
+            RETURN jsonb_build_object('error','unsupported_auth_type','field','auth_type');
+        END IF;
+        IF existing.id IS NULL THEN
+            IF payload->>'action' <> 'connection.write' THEN
+                RETURN jsonb_build_object('error','not_found','field','connection');
+            END IF;
+            SELECT target_id INTO target FROM registry.project_envs
+            WHERE org=org_id AND project=project_id AND env=environment;
+            IF target IS NULL THEN
+                RETURN jsonb_build_object('error','invalid_input','field','target_id');
+            END IF;
+            existing.id := gen_random_uuid();
+            INSERT INTO identity.principals(type,subject,display_name)
+            VALUES('service','connection-' || existing.id::text, row_name) RETURNING id INTO principal;
+            SELECT resource_key_template INTO template FROM registry.integration_type WHERE code=selected.integration_type;
+            resource := template;
+            IF template IS NOT NULL THEN
+                FOR field IN SELECT (regexp_matches(template, '\{([^{}]+)\}', 'g'))[1] LOOP
+                    IF NOT EXISTS(SELECT FROM registry.integration_type_version v
+                        WHERE v.integration_type=selected.integration_type
+                        AND v.parameter_schema->'properties'->field->>'immutable'='true')
+                        OR payload->'parameters'->>field IS NULL THEN
+                        RETURN jsonb_build_object('error','invalid_input','field','resource_key');
+                    END IF;
+                    resource := replace(resource,'{' || field || '}',payload->'parameters'->>field);
+                END LOOP;
+            END IF;
+            INSERT INTO registry.connection(id,integration_id,org,project,env,integration_type,target_id,resource_key,
+                active_generation,service_principal_id)
+            VALUES(existing.id,selected.id,org_id,project_id,environment,selected.integration_type,target,resource,1,principal)
+            RETURNING * INTO existing;
+        END IF;
+        SELECT g.credential_id,g.parameters INTO credential,parameters FROM registry.connection_generation g
+        WHERE (g.connection_id,g.generation)=(existing.id,existing.active_generation);
+        RETURN jsonb_build_object('id',existing.id,'integration_type',selected.integration_type,
+            'auth_type',selected.auth_type,'principal_id',existing.service_principal_id,
+            'parameters',parameters,'credential_id',credential,
+            'credential_schema',(SELECT credential_schema FROM registry.auth_type WHERE code=selected.auth_type),
+            'auth_schema',(SELECT parameter_schema FROM registry.auth_type WHERE code=selected.auth_type),
+            'store',(SELECT CASE WHEN type='local' THEN 'file' ELSE 'k8s' END FROM registry.target WHERE id=existing.target_id),
+            'schemas',(SELECT jsonb_agg(parameter_schema ORDER BY version)
+                       FROM registry.integration_type_version WHERE integration_type=selected.integration_type));
+    ELSIF existing.id IS NULL THEN
+        RETURN jsonb_build_object('error','not_found','field','connection');
+    ELSIF operation = 'connection.get' THEN
+        RETURN registry.connection_summary(existing.id);
+    ELSIF operation = 'connection.source_parameters' THEN
+        RETURN (SELECT g.parameters FROM registry.connection_generation g
+                WHERE (g.connection_id,g.generation)=(existing.id,existing.active_generation));
+    ELSIF operation = 'connection.finish' THEN
+        -- The row lock owns allocation. Every write affects this environment alone.
+        SELECT COALESCE(max(g.generation),0)+1 INTO next_generation
+        FROM registry.connection_generation g WHERE g.connection_id=existing.id;
+        SELECT g.credential_id INTO credential FROM registry.connection_generation g
+        WHERE (g.connection_id,g.generation)=(existing.id,existing.active_generation);
+        IF payload->'stored_credential' IS NOT NULL THEN
+            credential := (payload->'stored_credential'->>'id')::uuid;
+            INSERT INTO identity.credential(id,connection_id,store,ref,version,hint,created_at,created_by)
+            VALUES(credential,existing.id,payload->'stored_credential'->>'store',payload->'stored_credential'->>'ref',
+                payload->'stored_credential'->>'version',payload->'stored_credential'->>'hint',
+                transaction_timestamp(),current_setting('app.user_id')::uuid);
+        END IF;
+        IF (selected.auth_type='none') <> (credential IS NULL) THEN
+            RETURN jsonb_build_object('error','invalid_input','field','credential');
+        END IF;
+        INSERT INTO registry.connection_generation(connection_id,generation,parameters,credential_id,created_at,created_by)
+        VALUES(existing.id,next_generation,payload->'parameters',credential,transaction_timestamp(),current_setting('app.user_id')::uuid);
+        UPDATE registry.connection SET active_generation=next_generation WHERE id=existing.id;
+        RETURN registry.connection_summary(existing.id);
+    ELSIF operation IN ('connection.enable','connection.disable') THEN
+        IF operation='connection.enable' AND existing.resource_key IS NOT NULL AND EXISTS(
+            SELECT FROM registry.connection c WHERE c.target_id=existing.target_id AND c.resource_key=existing.resource_key
+            AND c.status='active' AND c.id<>existing.id) THEN
+            RETURN jsonb_build_object('error','resource_in_use','field','resource_key');
+        END IF;
+        UPDATE registry.connection SET status=CASE WHEN operation='connection.enable' THEN 'active' ELSE 'disabled' END
+        WHERE id=existing.id;
+    ELSIF operation = 'connection.delete' THEN
+        SELECT COALESCE(jsonb_agg(jsonb_build_object('store',k.store,'ref',k.ref,'version',k.version)), '[]'::jsonb)
+        INTO credentials FROM identity.credential k WHERE k.connection_id=existing.id;
+        DELETE FROM registry.connection WHERE id=existing.id;
+        UPDATE identity.principals SET status='disabled',disabled_at=transaction_timestamp() WHERE id=existing.service_principal_id;
+        RETURN jsonb_build_object('name',row_name,'credentials',credentials,'principal_id',existing.service_principal_id);
+    ELSE
+        RETURN jsonb_build_object('error','invalid_input','field','operation');
+    END IF;
+    RETURN jsonb_build_object('name',row_name,'principal_id',existing.service_principal_id);
+EXCEPTION WHEN unique_violation THEN
+    RETURN jsonb_build_object('error','resource_in_use','field','resource_key');
 END $$;
 
 CREATE FUNCTION registry.publish_integration(
     integration_code text, published_version integer, artifact_digest text,
     parameters jsonb, exported_operations text)
-RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog AS $$
-    INSERT INTO registry.integration_type_version
-        (integration_type, version, digest, parameter_schema, operations, published_at)
-    VALUES (integration_code, published_version, artifact_digest, parameters, exported_operations, transaction_timestamp())
-$$;
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE
+    previous jsonb;
+    field text;
+    definition jsonb;
+    runtime text;
+BEGIN
+    SELECT runtime_type INTO runtime FROM registry.integration_type WHERE code=integration_code FOR UPDATE;
+    IF runtime IS NULL THEN
+        RAISE EXCEPTION 'integration_not_found' USING ERRCODE='22023';
+    END IF;
+    IF runtime IN ('wasm','native') AND artifact_digest IS NULL THEN
+        RAISE EXCEPTION 'digest_required' USING ERRCODE='22023';
+    END IF;
+    IF parameters->>'type' IS DISTINCT FROM 'object' OR jsonb_typeof(parameters->'properties') IS DISTINCT FROM 'object'
+        OR exported_operations IS NULL OR exported_operations='' THEN
+        RAISE EXCEPTION 'invalid_parameter_schema' USING ERRCODE='22023';
+    END IF;
+    IF parameters->'properties' ? 'auth' THEN
+        RAISE EXCEPTION 'reserved_auth_field' USING ERRCODE='22023';
+    END IF;
+    IF EXISTS(SELECT FROM registry.integration_type_auth a JOIN registry.auth_type t ON t.code=a.auth_type
+        WHERE a.integration_type=integration_code AND t.http_only)
+        AND split_part(exported_operations,'@',1) <> 'wamn:connection/http' THEN
+        RAISE EXCEPTION 'http_auth_requires_http_interface' USING ERRCODE='22023';
+    END IF;
+    SELECT parameter_schema INTO previous FROM registry.integration_type_version
+    WHERE integration_type=integration_code ORDER BY version DESC LIMIT 1;
+    IF published_version <= COALESCE((SELECT max(version) FROM registry.integration_type_version
+        WHERE integration_type=integration_code),0) THEN
+        RAISE EXCEPTION 'version_must_increase' USING ERRCODE='22023';
+    END IF;
+    IF previous IS NOT NULL THEN
+        FOR field,definition IN SELECT * FROM jsonb_each(previous->'properties') LOOP
+            IF NOT (parameters->'properties' ? field) AND definition->>'deprecated' IS DISTINCT FROM 'true' THEN
+                RAISE EXCEPTION 'field_removal_requires_deprecation: %',field USING ERRCODE='22023';
+            END IF;
+            IF definition->>'immutable'='true' AND parameters->'properties' ? field
+                AND parameters->'properties'->field->>'immutable' IS DISTINCT FROM 'true' THEN
+                RAISE EXCEPTION 'immutable_field_changed: %',field USING ERRCODE='22023';
+            END IF;
+        END LOOP;
+        FOR field IN SELECT jsonb_array_elements_text(COALESCE(parameters->'required','[]')) LOOP
+            IF NOT (previous->'properties' ? field) THEN
+                RAISE EXCEPTION 'required_field_requires_optional_predecessor: %',field USING ERRCODE='22023';
+            END IF;
+        END LOOP;
+    END IF;
+    FOR field,definition IN SELECT * FROM jsonb_each(parameters->'properties') LOOP
+        IF EXISTS(SELECT FROM registry.integration_type_version v
+            WHERE v.integration_type=integration_code AND v.parameter_schema->'properties' ? field
+            AND v.parameter_schema->'properties'->field->'type' IS DISTINCT FROM definition->'type') THEN
+            RAISE EXCEPTION 'field_type_changed: %',field USING ERRCODE='22023';
+        END IF;
+    END LOOP;
+    INSERT INTO registry.integration_type_version(integration_type,version,digest,parameter_schema,operations,published_at)
+    VALUES(integration_code,published_version,artifact_digest,parameters,exported_operations,transaction_timestamp());
+END $$;
+
+
+REVOKE ALL ON FUNCTION registry.connection_summary(uuid) FROM PUBLIC;
 
 DO $connection_authority_acl$
 DECLARE signature text;
 BEGIN
     FOREACH signature IN ARRAY ARRAY[
         'configure_connection(text,text,jsonb)',
+        'configure_external_system(text,text,jsonb)',
+        'configure_integration(text,text,jsonb)',
+        'configure_integration_type(text,text,jsonb)',
         'publish_integration(text,integer,text,jsonb,text)'
     ] LOOP
         EXECUTE 'ALTER FUNCTION registry.' || signature || ' OWNER TO wamn_system';

@@ -1235,47 +1235,34 @@ The author supplies an explicit shorter name when needed. Tools do not silently 
 For database preparation and SQLx commands, use the [operations pages](../operations/README.md).
 Test database isolation has one definition in [running tests](../operations/running-tests.md#test-database-isolation).
 
-### Org connections and credentials
+### Project integrations and credentials
 
-The system database owns `registry.external_system` and `registry.connection`.
-Each connection names one `registry.integrations` entry: `http`, `gcs`, or `s3`.
-The writer refuses an integration change or an external system with a different integration.
-The name of a connection and the name of an external system are their identity, fixed at creation.
-A write with a new name creates a row. A write with an existing name updates its parameters, status or credential, never its name.
-No rename route exists. Triggers on both tables refuse a name change with `connection_name_is_immutable`.
-Project enablement also prevents connection disablement.
+The system database owns project integrations and environment connections.
+An integration selects its published type, authentication scheme, and optional external system.
+Each environment keeps its own connection generations and service principal.
+Names stay fixed after creation.
+[Integration and connection schema](../plan/integration-schema.md) defines these contracts.
 
-A connection has one unique inbound service principal and a current generation.
-Creation grants that principal no roles. Administrators grant its roles explicitly.
-The existing integration application principals keep their schedules and grants.
-Connection principals do not replace them. An inbound signature with an org connection handle authenticates as that connection’s service principal.
-The host requires an active, enabled external connection and an active service principal in the project.
-It uses only the principal’s current grants and assigns no active user role.
-The owner ruling of 2026-10-25 moves the `wamn` integration and automatic peer creation to `wamn-ym204`.
+The control routes use project administrator authority.
+The `external_system.*`, `integration.*`, and `connection.*` routes manage their respective identities.
+The matching `wamn-ctl` verbs call these routes with a session token.
+Each verb reads its JSON request from `--file`.
+The request names the project, and connection requests also name the environment in `env`.
+The first connection write reads the credential value from `--credential-file`, except for authentication type `none`.
+`connection set-credential` reads later values from that flag too.
+Responses and credential audit metadata contain the last four characters as a hint.
+Postgres stores the reference and never stores the value.
 
-The control operations `external_system.write`, `connection.write`, `project_connection.enable`, and `integration_allow.allow` write the system authority.
-The matching `wamn-ctl` commands use the same writer.
-The control host projects only enabled connections, their external systems, and applicable integration permissions into each project database.
-The system write commits before projection writes. A failed projection reports the affected environment and keeps the system authority.
-The administration login writes these projections. `wamn_app` reads them and cannot write them.
-An integration permission at project or environment scope requires its parent permission.
+A parameter edit appends an immutable generation in the target environment.
+`connection copy` copies parameters from `source_env` and preserves the target credential.
+Integration publication records a version with its parameter schema and operations.
+The publisher refuses invalid field transitions, reserved authentication fields, incompatible authentication interfaces, and missing artifact digests.
 
-`registry.connection_generation` holds immutable parameters and a credential reference.
-A parameter change or credential rotation appends a generation and advances the connection pointer.
-Published bindings retain their generation. Rotation does not rewrite them.
-The host reads secret material from `identity.credential` through the dedicated `wamn_conn_reader` family.
-Registry rows carry only the `secret_id` reference. The registry and provisioning schemas store no credential material.
-Neither `wamn_app` nor PUBLIC receives credential access.
-The host receives its reader URL through `WAMN_CONNECTION_STORE_URL`.
-
-`wamn-ctl connection import-credentials` imports the legacy `orgs` and `projects` maps once.
-Org entries require an existing named connection. Project entries use the command's org and preserve their project handles.
-The import is atomic, and a stored marker refuses a second import for an org.
-`wamn-ctl connection rotate` reads replacement material from its input file and appends a generation.
-The runtime no longer reads or mounts the legacy credential file.
-Org handles identify a stored connection generation as `org:<org>:<name>@<generation>`.
-A legacy handle without a generation reads the first stored credential generation.
-The host refuses an org mismatch and never falls back from an org handle to a project credential.
+Disabling an integration or connection stops its service.
+Deletion requires the absence of all system and environment references.
+The control host holds each environment lifecycle lock during deletion.
+It removes projected identities and destroys stored credentials after the system deletion.
+A deleted connection leaves its service principal disabled for audit history.
 
 The host refuses a session when any signed role is absent from the user's current grants.
 It also refuses a service principal presented as a user session.

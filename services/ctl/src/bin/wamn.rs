@@ -130,6 +130,12 @@ mod tests {
                 "/tmp/auth.json",
                 "--database-url",
                 "postgresql://control/system",
+                "--version",
+                "1",
+                "--parameter-schema",
+                "/tmp/schema.json",
+                "--operations",
+                "example:fixture/client",
             ])
             .unwrap()
             .command,

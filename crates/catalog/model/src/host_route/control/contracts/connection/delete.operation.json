@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:connection/delete@0.9.0",
+  "type": "command",
+  "label": "Delete connection",
+  "grant": "wamn-control:connection/delete@0.9.0",
+  "permission_token": "connection.delete",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

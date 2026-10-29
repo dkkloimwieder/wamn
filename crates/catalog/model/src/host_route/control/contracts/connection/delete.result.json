@@ -1,0 +1,17 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "name",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "principal_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    }
+  ]
+}

@@ -567,20 +567,24 @@ async fn identity_relations_carry_stamps(client: &tokio_postgres::Client) {
             )
         })
         .collect::<Vec<_>>();
-    let expected_columns = RELATIONS
-        .iter()
-        .flat_map(|relation| {
-            [
-                ("created_at", "timestamp with time zone"),
-                ("created_by", "uuid"),
-                ("updated_at", "timestamp with time zone"),
-                ("updated_by", "uuid"),
-            ]
-            .map(|(column, data_type)| {
-                format!("{relation}.{column} {data_type} nullable=NO no_default=true")
-            })
+    // A credential row never changes, so it records only its creation.
+    let expected_columns = [
+        "credential.created_at timestamp with time zone nullable=NO no_default=true".to_owned(),
+        "credential.created_by uuid nullable=NO no_default=true".to_owned(),
+    ]
+    .into_iter()
+    .chain(RELATIONS.iter().flat_map(|relation| {
+        [
+            ("created_at", "timestamp with time zone"),
+            ("created_by", "uuid"),
+            ("updated_at", "timestamp with time zone"),
+            ("updated_by", "uuid"),
+        ]
+        .map(|(column, data_type)| {
+            format!("{relation}.{column} {data_type} nullable=NO no_default=true")
         })
-        .collect::<Vec<_>>();
+    }))
+    .collect::<Vec<_>>();
     assert_eq!(columns, expected_columns);
 
     let triggers = client

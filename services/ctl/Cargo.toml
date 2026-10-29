@@ -38,6 +38,7 @@ path = "tests/prune_run_history_live.rs"
 required-features = ["ops"]
 
 [dependencies]
+wamn-execution-contract = { workspace = true }
 anyhow = { workspace = true }
 # `string`: `wamn-0h0g.22.16` derives the workload-generation flag set from the
 # closed WorkloadRoleFamily vocabulary, so arg ids and long names are computed
@@ -82,7 +83,6 @@ tokio-postgres = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream"] }
 rustix = { workspace = true }
 wamn-authoring-model = { workspace = true }
-wamn-execution-contract = { workspace = true }
 wamn-fixture-package = { workspace = true }
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
 wamn-pg-core = { workspace = true }

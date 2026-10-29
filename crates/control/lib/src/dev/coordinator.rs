@@ -1496,7 +1496,7 @@ struct PreparedLocalBinding {
 }
 
 /// The store alias that the binding selections give a component: the one name
-/// the operator passes as `bind-connection --store-alias` in the cluster.
+/// the operator passes as the environment document in the cluster.
 fn selected_store_alias(
     config: &DevConfig,
     artifact: &SelectedComponentArtifact,

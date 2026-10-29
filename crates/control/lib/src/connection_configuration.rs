@@ -26,11 +26,13 @@ pub async fn write(
         &[&org],
     )
     .await?;
-    // Capture disablement destinations before the enablement row disappears.
+    let request: Value = serde_json::from_str(payload)?;
+    let selection =
+        serde_json::json!({"project":request["project"],"env":request["env"]}).to_string();
     let environments: Vec<(String, String)> = tx
         .query(
             wamn_control_registry::sql::select_connection_projection_environments_sql(),
-            &[&org, &operation, &payload],
+            &[&org, &operation, &selection],
         )
         .await?
         .into_iter()

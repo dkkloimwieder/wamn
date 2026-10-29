@@ -280,22 +280,8 @@ pub fn select_event_reader_sql() -> &'static str {
 /// Read only environments affected by a connection operation, before its write.
 /// Parameters are the org, operation, and JSON payload.
 pub fn select_connection_projection_environments_sql() -> &'static str {
-    "SELECT e.project, e.env FROM registry.project_envs e \
-     WHERE e.org=$1 AND ( \
-       ($2 IN ('project_connection.enable','project_connection.disable') \
-         AND e.project=$3::text::jsonb->>'project') \
-       OR EXISTS (SELECT FROM registry.connection_project_rows($1) p \
-         JOIN registry.connection_rows($1) c ON c.id=p.connection_id \
-         WHERE p.project=e.project AND ( \
-           ($2='connection.write' AND c.name=$3::text::jsonb->>'name') \
-           OR ($2='external_system.write' AND c.external_system_id IN \
-             (SELECT s.id FROM registry.connection_system_rows($1) s \
-              WHERE s.name=$3::text::jsonb->>'name')) \
-           OR ($2='integration_allow.allow' AND c.integration=$3::text::jsonb->>'integration' AND ( \
-             ($3::text::jsonb->>'scope_type'='org') \
-             OR ($3::text::jsonb->>'scope_type'='project' AND e.project=$3::text::jsonb->>'scope_id') \
-             OR ($3::text::jsonb->>'scope_type'='environment' AND e.project || '/' || e.env=$3::text::jsonb->>'scope_id') \
-           )) \
-         )) \
-     ) ORDER BY e.project, e.env"
+    "SELECT e.project,e.env FROM registry.project_envs e \
+     WHERE e.org=$1 AND e.project=$3::text::jsonb->>'project' \
+       AND ($2 NOT LIKE 'connection.%' OR e.env=$3::text::jsonb->>'env') \
+     ORDER BY e.project,e.env"
 }

@@ -77,28 +77,12 @@ The OAuth1 credential carries the account realm and signing keys.
 The host signs requests. Guests receive neither endpoint authority nor credentials.
 The connection requirement type is `http`. OAuth1 is its credential shape.
 
-Set `WAMN_CONTROL_DATABASE_URL` to the control database URL.
-Write this non-secret connection to `netsuite-connection.json`:
+Use the project-scoped requests from [integration administration](../../docs/operations/deployment.md#project-integrations-and-environment-connections).
+Set `WAMN_CONTROL_URL` and `WAMN_TOKEN` before calling the control routes.
+The connection request names the project, `env`, and integration name.
+Put the account authority and TLS policy in its `parameters` object.
+Keep credential values in a separate private file.
 
-```json
-{
-  "integration": "http",
-  "name": "netsuite",
-  "transport": "http",
-  "exchange": "request",
-  "parameters": {"primary-authority": "https://1234567-sb1.suitetalk.api.netsuite.com", "tls-verification": "verify-authority"},
-  "status": "active"
-}
-```
-
-Write the org connection:
-
-```sh
-wamn-ctl connection write --org acme --file netsuite-connection.json \
-  --administration /private/administration
-```
-
-The administration directory holds scoped URLs for projection into affected environments.
 Use the actual account host in the parameters and the actual account realm in the credential.
 For example, a sandbox host uses `1234567-sb1`, while its realm is `1234567_SB1`.
 The credential value has this JSON shape:
@@ -107,27 +91,12 @@ The credential value has this JSON shape:
 {"oauth1":{"consumer-key":"<consumer key>","consumer-secret":"<consumer secret>","token":"<token>","token-secret":"<token secret>","realm":"1234567_SB1"}}
 ```
 
-Place that JSON as a string in the private import file `netsuite-credential-import.json`:
+Keep the credential JSON in a private file.
+Use `wamn-ctl connection write --credential-file <private-file>` for the first credential.
+Use `wamn-ctl connection set-credential --file <target-request> --credential-file <private-file>` for a replacement.
+The target request names the project, `env`, and integration name.
+See [integration administration](../../docs/operations/deployment.md#project-integrations-and-environment-connections) for the supported request format.
 
-```json
-{
-  "projects": {},
-  "orgs": {
-    "acme": {
-      "netsuite": "{\"oauth1\":{\"consumer-key\":\"<consumer key>\",\"consumer-secret\":\"<consumer secret>\",\"token\":\"<token>\",\"token-secret\":\"<token secret>\",\"realm\":\"1234567_SB1\"}}"
-    }
-  }
-}
-```
-
-Import the credential explicitly:
-
-```sh
-wamn-ctl connection import-credentials --org acme --file netsuite-credential-import.json \
-  --administration /private/administration
-```
-
-The deployed host reads the credential from the system database.
 Bind each HTTP component's `upstream` requirement with `connections = { upstream = { org = "netsuite" } }` in the environment document.
 The pull runs as the `workflow` user with its execution role, so grant that role the consumer command.
 
@@ -191,14 +160,9 @@ tools/netsuite/live.sh prepare /private/netsuite.json acme /private/netsuite-hos
 ```
 
 Write `netsuite` with the generated `connection.json` through the connection command above.
-Import the generated `credential-import.json` explicitly:
+Set the credential through `connection set-credential` with a private credential file and the target request.
+The control host writes the value to the environment store.
 
-```sh
-wamn-ctl connection import-credentials --org acme --file /private/netsuite-host/credential-import.json \
-  --administration /private/administration
-```
-
-The deployed host reads those credentials from the system database.
 Bind `upstream` to `{ org = "netsuite" }`, then apply the environment.
 Publish all seven wirings with the package.
 

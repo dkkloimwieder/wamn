@@ -19,7 +19,7 @@
       }
     },
     {
-      "literal": "integration_not_found",
+      "literal": "immutable_field",
       "from": "transaction_invariant",
       "detail": {
         "required": [
@@ -28,7 +28,7 @@
       }
     },
     {
-      "literal": "integration_unavailable",
+      "literal": "unsupported_auth_type",
       "from": "transaction_invariant",
       "detail": {
         "required": [
@@ -37,7 +37,7 @@
       }
     },
     {
-      "literal": "integration_mismatch",
+      "literal": "resource_in_use",
       "from": "transaction_invariant",
       "detail": {
         "required": [
@@ -46,7 +46,16 @@
       }
     },
     {
-      "literal": "integration_not_allowed",
+      "literal": "referenced",
+      "from": "transaction_invariant",
+      "detail": {
+        "required": [
+          "field"
+        ]
+      }
+    },
+    {
+      "literal": "deployment_in_progress",
       "from": "transaction_invariant",
       "detail": {
         "required": [

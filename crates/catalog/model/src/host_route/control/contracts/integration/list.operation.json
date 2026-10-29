@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:integration/list@0.9.0",
+  "type": "get",
+  "label": "List integration",
+  "grant": "wamn-control:integration/list@0.9.0",
+  "permission_token": "integration.list",
+  "result": "one",
+  "transaction": "implicit",
+  "visibility": "public"
+}

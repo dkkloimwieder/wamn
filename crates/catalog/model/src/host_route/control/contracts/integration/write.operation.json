@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:integration/write@0.9.0",
+  "type": "command",
+  "label": "Write integration",
+  "grant": "wamn-control:integration/write@0.9.0",
+  "permission_token": "integration.write",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

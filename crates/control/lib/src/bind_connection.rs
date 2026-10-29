@@ -1,4 +1,4 @@
-//! `wamn-ctl bind-connection`: the connection-admin verb.
+//! Release-scoped connection bindings used by environment apply.
 //!
 //! Writes, in one transaction on the project-environment database, the three
 //! rows a bound connection is made of -- an environment-owned INSTANCE, its

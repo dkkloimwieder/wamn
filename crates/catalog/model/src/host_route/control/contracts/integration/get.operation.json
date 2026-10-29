@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:integration/get@0.9.0",
+  "type": "get",
+  "label": "Get integration",
+  "grant": "wamn-control:integration/get@0.9.0",
+  "permission_token": "integration.get",
+  "result": "one",
+  "transaction": "implicit",
+  "visibility": "public"
+}

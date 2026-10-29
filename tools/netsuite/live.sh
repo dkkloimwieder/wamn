@@ -11,9 +11,9 @@ Usage:
   live.sh run CREDENTIALS_JSON ORG ENV_KEY APPLICATION HOST_URL RECORD_ID QUERY_FILE
 
 prepare writes a connection request and a private credential import file.
-Write the connection with connection write, then import the private file with connection import-credentials.
+Use connection write with a separate credential file. Use connection set-credential for later changes.
 run requires WAMN_PG_ADMIN_URL, WAMN_CONTROL_DATABASE_URL, and WAMN_TOKEN.
-The deployed host reads the imported credentials from the system database.
+The deployed host resolves credential references through the environment store.
 The application must enable the manual workflows record_get and suiteql_query.
 Set WAMN_CTL to the CLI path if it is not target/debug/wamn-ctl.
 USAGE

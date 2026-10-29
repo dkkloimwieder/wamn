@@ -7,31 +7,19 @@
       "values": []
     },
     {
-      "path": "value.integration",
+      "path": "value.project",
       "type": "text",
       "nullable": false,
       "values": []
     },
     {
-      "path": "value.external_system",
+      "path": "value.env",
       "type": "text",
-      "nullable": true,
+      "nullable": false,
       "values": []
     },
     {
       "path": "value.name",
-      "type": "text",
-      "nullable": false,
-      "values": []
-    },
-    {
-      "path": "value.transport",
-      "type": "text",
-      "nullable": false,
-      "values": []
-    },
-    {
-      "path": "value.exchange",
       "type": "text",
       "nullable": false,
       "values": []
@@ -43,9 +31,9 @@
       "values": []
     },
     {
-      "path": "value.status",
+      "path": "value.credential",
       "type": "text",
-      "nullable": false,
+      "nullable": true,
       "values": []
     }
   ]

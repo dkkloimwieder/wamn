@@ -950,6 +950,9 @@ pub const CONTROL_CONNECTION_FUNCTIONS: &[&str] = &[
     "retired_connection_credential(text)",
     "publish_integration(text,integer,text,jsonb,text)",
     "configure_connection(text,text,jsonb)",
+    "configure_external_system(text,text,jsonb)",
+    "configure_integration(text,text,jsonb)",
+    "configure_integration_type(text,text,jsonb)",
 ];
 
 /// The privileges the control host holds on a relation that it writes.

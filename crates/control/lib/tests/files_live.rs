@@ -219,7 +219,7 @@ async fn file_connection_lookup_refuses_wrong_login_and_forged_scope() -> anyhow
 }
 
 #[tokio::test]
-async fn file_connection_lookup_requires_project_enablement_and_an_active_connection()
+async fn file_connection_lookup_requires_its_environment_and_an_active_connection()
 -> anyhow::Result<()> {
     let registry = files::registry("file-org", "project", registry_definition()).await?;
     assert!(
@@ -236,8 +236,8 @@ async fn file_connection_lookup_requires_project_enablement_and_an_active_connec
     );
     registry
         .configure(
-            "project_connection.disable",
-            serde_json::json!({"project":"project","connection":files::STORE_NAME}),
+            "connection.disable",
+            serde_json::json!({"project":"project","env":"dev","name":files::STORE_NAME}),
         )
         .await?;
     assert!(
@@ -254,8 +254,8 @@ async fn file_connection_lookup_requires_project_enablement_and_an_active_connec
     );
     registry
         .configure(
-            "project_connection.enable",
-            serde_json::json!({"project":"project","connection":files::STORE_NAME}),
+            "connection.enable",
+            serde_json::json!({"project":"project","env":"dev","name":files::STORE_NAME}),
         )
         .await?;
     let mut parameters = registry_definition();

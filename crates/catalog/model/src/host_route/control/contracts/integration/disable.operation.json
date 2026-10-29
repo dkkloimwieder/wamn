@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:integration/disable@0.9.0",
+  "type": "command",
+  "label": "Disable integration",
+  "grant": "wamn-control:integration/disable@0.9.0",
+  "permission_token": "integration.disable",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

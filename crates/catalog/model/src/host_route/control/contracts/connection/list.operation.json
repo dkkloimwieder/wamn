@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:connection/list@0.9.0",
+  "type": "get",
+  "label": "List connection",
+  "grant": "wamn-control:connection/list@0.9.0",
+  "permission_token": "connection.list",
+  "result": "one",
+  "transaction": "implicit",
+  "visibility": "public"
+}

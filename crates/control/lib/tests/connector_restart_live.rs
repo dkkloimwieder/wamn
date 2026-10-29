@@ -299,7 +299,7 @@ async fn published_modbus_pins_restart_only_the_bound_connector() -> anyhow::Res
         oci_ca_paths: vec![],
     };
     let first = integration::build(scratch.path(), "modbus").await?;
-    integration::publish(&first, &configuration, database.url()).await?;
+    integration::publish(&first, &configuration, database.url(), &integration::Publication {version:2, parameter_schema:json!({"type":"object","properties":{"authority":{"type":"string","minLength":1,"immutable":true}},"required":["authority"]}),operations:"wamn:modbus/modbus".into()}).await?;
     let source_path = scratch.path().join("integrations/modbus/src/lib.rs");
     let source_bytes = std::fs::read_to_string(&source_path)?;
     std::fs::write(
@@ -307,7 +307,7 @@ async fn published_modbus_pins_restart_only_the_bound_connector() -> anyhow::Res
         format!("{source_bytes}\n// A second published source revision.\n"),
     )?;
     let second = integration::build(scratch.path(), "modbus").await?;
-    integration::publish(&second, &configuration, database.url()).await?;
+    integration::publish(&second, &configuration, database.url(), &integration::Publication {version:3, parameter_schema:json!({"type":"object","properties":{"authority":{"type":"string","minLength":1,"immutable":true}},"required":["authority"]}),operations:"wamn:modbus/modbus".into()}).await?;
     assert_ne!(first.digest, second.digest);
     let (authority, accepts, simulator_task) = simulator().await?;
     let tx = admin.transaction().await?;

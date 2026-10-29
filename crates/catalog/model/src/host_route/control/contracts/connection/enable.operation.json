@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:connection/enable@0.9.0",
+  "type": "command",
+  "label": "Enable connection",
+  "grant": "wamn-control:connection/enable@0.9.0",
+  "permission_token": "connection.enable",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

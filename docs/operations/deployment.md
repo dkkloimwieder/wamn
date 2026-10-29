@@ -26,174 +26,71 @@ Keep registry, database, and broker credentials outside committed files.
 Supply real values for example Secrets and release placeholders before applying them.
 Certificate subjects must match the endpoint names that their clients verify.
 
-### Named connections
+### Project integrations and environment connections
 
-Connection names and external system names stay fixed after creation.
-A write with an existing name updates that row.
-A write with a new name creates a row.
-The CLI selects these rows by name and returns their names.
+Set `WAMN_CONTROL_URL` to the control host URL for the organization.
+Set `WAMN_TOKEN` to a session token with project administrator authority.
+Create an integration request in `/private/integration.json`:
 
-The WMS environment uses the non-secret requests in [deploy/gcp/connections](../../deploy/gcp/connections/):
-
-- `rest-fixture.external-system.json` declares the source system for imported items.
-- `rest-fixture.json` declares HTTP access to `http://http-fixture:8080`.
-- `wms-labels.json` declares GCS access to `wamn-dev-labels` under `labels/`.
-
-The fixture Service must run in the host namespace on port 8080.
-The host signs GCS requests through its workload identity, the Google service account attached to its Kubernetes account.
-The [Google Cloud prerequisites](gcp.md#1-owner-inputs) describe the labels bucket and its grants.
-Keep endpoint credentials and database URLs outside `deploy/`.
-The [cutover procedure](#credential-import-and-cutover) describes credential import for databases with the current full schema.
-
-Set `WAMN_CONTROL_DATABASE_URL` to the control database URL for org `dkk`.
-The CLI publishes messages that remove cached permissions through the authorization broker.
-Set `WAMN_AUTH_NATS_URL` to that broker's URL.
-Set `WAMN_AUTH_NATS_TLS_CA` to its CA file.
-Set `WAMN_AUTH_NATS_TLS_CERT` and `WAMN_AUTH_NATS_TLS_KEY` to the client certificate and key files.
-If the TLS server name differs from the URL host, set `WAMN_AUTH_NATS_TLS_SERVER_NAME`.
-Store each environment's scoped `wamn_administration` URL in `/private/administration/<project>--<env>`.
-The directory must contain every registered environment of the org for an upgrade import.
-For example, `wms--dev` holds the URL for `dkk/wms/dev`.
-Restrict the directory to its owner.
-
-Write the external system before its connections:
-
-```bash
-wamn-ctl external-system --org dkk \
-  --file deploy/gcp/connections/rest-fixture.external-system.json \
-  --administration /private/administration
-wamn-ctl connection write --org dkk \
-  --file deploy/gcp/connections/rest-fixture.json \
-  --administration /private/administration
-wamn-ctl connection write --org dkk \
-  --file deploy/gcp/connections/wms-labels.json \
-  --administration /private/administration
+```json
+{"project":"wms","name":"rest-fixture","integration_type":"http","auth_type":"api_key"}
 ```
 
-For a fresh environment, allow each integration at the org, project, and environment scopes.
-The org `dkk` and project `wms` must exist first.
-Create the environment with `release = "none"` and empty connection bindings before adding its environment permissions.
-Use a private working directory for the request files:
+Write the integration:
 
 ```bash
-CONNECTION_WORK=/private/c35-connections
-mkdir -p "$CONNECTION_WORK"
-chmod 700 "$CONNECTION_WORK"
-for integration in http gcs; do
-  for scope in org project environment; do
-    case "$scope" in
-      org) scope_id=dkk ;;
-      project) scope_id=wms ;;
-      environment) scope_id=wms/dev ;;
-    esac
-    jq -n --arg scope "$scope" --arg id "$scope_id" --arg integration "$integration" \
-      '{scope_type:$scope,scope_id:$id,integration:$integration}' > "$CONNECTION_WORK/allow.json"
-    wamn-ctl integration-allow --org dkk --file "$CONNECTION_WORK/allow.json" \
-      --administration /private/administration
-  done
-done
-for connection in rest-fixture wms-labels; do
-  jq -n --arg connection "$connection" '{project:"wms",connection:$connection}' \
-    > "$CONNECTION_WORK/enable.json"
-  wamn-ctl project-connection --org dkk --file "$CONNECTION_WORK/enable.json" \
-    --administration /private/administration
-done
+wamn-ctl integration write --file /private/integration.json
 ```
 
-### Credential import and cutover
-
-Before upgrading an installed environment, back up its system database and each project database.
-Keep the previous mounted credential maps in private files until the import succeeds.
-Stop the serving hosts before changing their credential reader.
-The platform migration lists are empty. This command makes no changes to a current system database:
-
-```bash
-wamn-ctl upgrade-schema --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --confirm
-```
-
-This command also makes no changes to a current project database:
-
-```bash
-wamn-ctl upgrade-schema --system-database-url "$WAMN_SYSTEM_ADMIN_URL" \
-  --admin-database-url "$PROJECT_ADMIN_URL" --confirm
-```
-
-Use the registered project database URL for each invocation.
-The catalog retains package bindings and their org connection names for the upgrade importer.
-Write each required non-secret connection through `connection write --file` before importing its credential.
-Use the deployment requests above for `rest-fixture` and `wms-labels`.
-Keep existing connection names when converting other installed bindings.
-
-Prepare one private JSON import file for the org.
-Org entries map connection names to secret strings.
-For example, `/private/dkk-credential-import.json` can contain:
+Create its environment request in `/private/connection.json`:
 
 ```json
 {
-  "orgs": {
-    "dkk": {
-      "rest-fixture": "{\"headers\":{\"authorization\":\"Bearer <fixture token>\"}}"
-    }
-  },
-  "projects": {}
-}
-```
-
-Replace the token before importing the file.
-GCS uses workload identity, so `wms-labels` needs no entry.
-If old project maps exist, name the existing connection explicitly for each handle:
-
-```json
-{
-  "orgs": {},
-  "projects": {
-    "wms": {
-      "upstream": {
-        "connection": "rest-fixture",
-        "secret": "{\"headers\":{\"authorization\":\"Bearer <fixture token>\"}}"
-      }
-    }
+  "project":"wms",
+  "env":"dev",
+  "name":"rest-fixture",
+  "parameters":{
+    "primary-authority":"https://upstream.example",
+    "tls-verification":"verify-authority",
+    "auth":{"in":"header","name":"Authorization"}
   }
 }
 ```
 
-Combine the required entries into one file for the org.
-Do not infer a connection name from a project handle.
-Different secrets for the same connection cause a refusal.
+Store the credential JSON in `/private/credential.json`:
 
-```bash
-chmod 600 /private/dkk-credential-import.json
-wamn-ctl connection import-credentials --org dkk \
-  --file /private/dkk-credential-import.json --administration /private/administration
+```json
+{"key":"<replacement authorization value>"}
 ```
 
-The CLI calls `connection_configuration::import_with_bindings`.
-It reads retained bindings through each environment's administration URL.
-It enables their named connections and seeds their org, project, and environment permissions.
-It then imports credentials in the same system transaction.
-Only enabled bindings from retained releases participate.
-Missing source names, mismatched integrations, conflicting secrets, and failed environment reads cause a refusal.
-A refusal rolls back the system transaction.
-A successful import records the org, so another import refuses.
-Use `connection rotate --connection <name> --file <private-secret-file>` for later credential changes.
-
-After the import succeeds, apply the environment document:
+Restrict access to the credential file:
 
 ```bash
-wamn-ctl env apply deploy/gcp/environments/dkk--wms--dev.k
+chmod 600 /private/credential.json
 ```
 
-The document binds `labels` to `wms-labels` and `upstream` to `rest-fixture` by name.
-`applications` is required. It names each application of the environment and the packages of the release that belong to it ([platform configuration](../plan/platform-config.md)).
-With a release, `env apply` refuses a release package that no application lists, a package that two applications list, and a listed package that the release does not carry.
-It also refuses an empty application name, an application with no packages, and an empty package id.
-Workflows belong to an application by its name.
-The host reads credentials through its scoped database login.
-It adds the credential headers to the outgoing request.
-The guest receives the response and never receives the credential.
-Remove the mounted credential file and `WAMN_CREDENTIALS_FILE` from the host configuration before restarting it.
-Run the REST pull and WMS label cases before removing the private import source.
-If projection fails after a connection write commits, reapply the environment document to repair it.
+Write the connection with its first credential:
+
+```bash
+wamn-ctl connection write --file /private/connection.json --credential-file /private/credential.json
+```
+
+For later credential changes, create `/private/target.json` with the project, `env`, and integration name:
+
+```json
+{"project":"wms","env":"dev","name":"rest-fixture"}
+```
+
+Set the replacement credential:
+
+```bash
+wamn-ctl connection set-credential --file /private/target.json --credential-file /private/credential.json
+```
+
+The control host writes credential values through the environment store.
+Postgres keeps their references and display hints.
+The baseline schema owns fresh installations, and the migration lists stay empty.
+[Integration and connection schema](../plan/integration-schema.md) defines administration, bindings, and version selection.
 
 ## Deployment ordering
 

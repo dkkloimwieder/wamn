@@ -1,117 +1,30 @@
-//! Arguments and output of the `bind-connection` verb.
+//! Integration administration through control host routes.
 
 use std::path::PathBuf;
 
-use anyhow::Context as _;
-use clap::{Args, Subcommand, ValueEnum};
-use wamn_catalog::RequirementType;
-use wamn_control::bind_connection::{self, BindConnectionRequest};
+use anyhow::{Context as _, ensure};
+use clap::{Args, Subcommand};
+use serde_json::{Value, json};
+use wamn_catalog::{HostAttachment, HostRouteSet};
 
-/// The connection types the CLI can name today. The enum is the command
-/// line's closed vocabulary, so a descriptor is never authored from a string.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-pub enum RequirementTypeArg {
-    Blobstore,
-    Http,
-}
-
-impl RequirementTypeArg {
-    fn requirement_type(self) -> RequirementType {
-        match self {
-            Self::Blobstore => RequirementType::Blobstore,
-            Self::Http => RequirementType::Http,
-        }
-    }
-}
-
+/// A route request with a separate, write-only credential file.
 #[derive(Debug, Args)]
-pub struct BindConnectionArgs {
-    /// The project-environment database holding the catalog schema.
-    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
-    pub database_url: String,
-
+pub struct ConfigurationArgs {
+    /// Base URL of the control host for the organization.
+    #[arg(long, env = "WAMN_CONTROL_URL")]
+    pub host_url: String,
+    /// The caller's session token.
+    #[arg(long, env = "WAMN_TOKEN", hide_env_values = true)]
+    pub token: String,
+    /// JSON request with project, name, environment, and route parameters.
     #[arg(long)]
-    pub org: String,
-    /// Project whose environment owns the connection binding.
+    pub file: PathBuf,
+    /// Credential value. Only write and set-credential accept this file.
     #[arg(long)]
-    pub project: String,
-
-    #[arg(long)]
-    pub environment: String,
-
-    /// The environment-owned, stable identity of the connection instance.
-    #[arg(long)]
-    pub instance_id: String,
-
-    /// Which platform descriptor the instance carries. Minted, never authored.
-    #[arg(long, value_enum)]
-    pub requirement_type: RequirementTypeArg,
-
-    /// The generation's non-secret definition: a JSON object of exactly the
-    /// coordinates the requirement type's plugin reads.
-    #[arg(long, value_name = "PATH")]
-    pub definition: PathBuf,
-
-    /// The host-held credential's handle. Never the credential. Omit it for a
-    /// `gcs` definition, which signs with the host pod's service account.
-    #[arg(long)]
-    pub credential_handle: Option<String>,
-
-    /// The release whose component is being bound, as its manifest digest.
-    #[arg(long)]
-    pub release_digest: String,
-
-    /// The admitted component's digest, as the release manifest names it.
-    #[arg(long)]
-    pub component_digest: String,
-
-    /// The store alias that component declared for this connection.
-    #[arg(long)]
-    pub store_alias: String,
+    pub credential_file: Option<PathBuf>,
 }
 
-/// Bind one declared alias to an environment-owned instance and print the result.
-pub async fn bind(args: BindConnectionArgs) -> anyhow::Result<()> {
-    let request = BindConnectionRequest {
-        database_url: args.database_url,
-        org: args.org.clone(),
-        project: args.project.clone(),
-        environment: args.environment,
-        instance_id: args.instance_id,
-        requirement_type: args.requirement_type.requirement_type(),
-        definition: serde_json::from_slice(&std::fs::read(&args.definition).with_context(
-            || {
-                format!(
-                    "read the generation definition {}",
-                    args.definition.display()
-                )
-            },
-        )?)
-        .with_context(|| format!("{} is not JSON", args.definition.display()))?,
-        credential_handle: args.credential_handle,
-        org_connection_name: None,
-        manifest_digest: args.release_digest,
-        component_digest: args.component_digest,
-        store_alias: args.store_alias,
-    };
-    let bound = bind_connection::bind(&request).await?;
-    println!(
-        "bound {}:{} to {} generation {} -> {} in release {} (definition {}, validation {}); configuration valid; connectivity and credentials not tested",
-        request.component_digest,
-        request.store_alias,
-        bound.instance_id,
-        bound
-            .previous_generation
-            .map_or_else(|| "none".to_owned(), |generation| generation.to_string()),
-        bound.generation,
-        request.manifest_digest,
-        bound.definition_hash,
-        bound.validation_hash
-    );
-    Ok(())
-}
-
-/// Org connection administration.
+/// Environment connection administration.
 #[derive(Debug, Args)]
 pub struct ConnectionArgs {
     #[command(subcommand)]
@@ -120,84 +33,255 @@ pub struct ConnectionArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum ConnectionCommand {
-    /// Create or update a connection from non-secret JSON.
     Write(ConfigurationArgs),
+    Copy(ConfigurationArgs),
+    SetCredential(ConfigurationArgs),
+    Disable(ConfigurationArgs),
+    Enable(ConfigurationArgs),
+    Delete(ConfigurationArgs),
+    List(ConfigurationArgs),
+    Get(ConfigurationArgs),
 }
 
-/// A control configuration request stored in a JSON file.
+/// Project external-system administration.
 #[derive(Debug, Args)]
-pub struct ConfigurationArgs {
-    #[arg(long, env = "WAMN_CONTROL_DATABASE_URL")]
-    pub system_database_url: String,
-    #[arg(long)]
-    pub org: String,
-    #[arg(long)]
-    pub file: PathBuf,
-    /// Directory of scoped administration URLs for projection writes.
-    #[arg(long)]
-    pub administration: Option<PathBuf>,
+pub struct ExternalSystemArgs {
+    #[command(subcommand)]
+    pub command: ExternalSystemCommand,
 }
 
+#[derive(Debug, Subcommand)]
+pub enum ExternalSystemCommand {
+    Write(ConfigurationArgs),
+    List(ConfigurationArgs),
+    Delete(ConfigurationArgs),
+}
+
+/// The platform integration catalog, read through project authority.
+#[derive(Debug, Args)]
+pub struct IntegrationTypeArgs {
+    #[command(subcommand)]
+    pub command: IntegrationTypeCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum IntegrationTypeCommand {
+    List(ConfigurationArgs),
+}
+
+pub fn route(operation: &str) -> anyhow::Result<&'static HostAttachment> {
+    HostRouteSet::Control
+        .attachments()
+        .map(|(_, attachment)| attachment)
+        .find(|attachment| attachment.route.operation == operation)
+        .with_context(|| format!("control route {operation} is absent"))
+}
+
+fn request(args: &ConfigurationArgs, operation: &str) -> anyhow::Result<Value> {
+    let mut value: Value =
+        serde_json::from_slice(&std::fs::read(&args.file).context("read request file")?)
+            .context("parse request file")?;
+    ensure!(value.is_object(), "the request must be a JSON object");
+    ensure!(
+        value.get("credential").is_none(),
+        "use --credential-file for the write-only value"
+    );
+    if let Some(path) = &args.credential_file {
+        ensure!(
+            matches!(operation, "connection.write" | "connection.set_credential"),
+            "this route does not accept a credential"
+        );
+        value["credential"] = std::fs::read_to_string(path)
+            .context("read credential file")?
+            .into();
+    }
+    ensure!(
+        operation != "connection.set_credential" || args.credential_file.is_some(),
+        "set-credential requires --credential-file"
+    );
+    Ok(value)
+}
+
+fn route_request(
+    client: &reqwest::Client,
+    args: &ConfigurationArgs,
+    attachment: &HostAttachment,
+    value: &Value,
+) -> anyhow::Result<reqwest::Request> {
+    let mut url = format!(
+        "{}{}",
+        args.host_url.trim_end_matches('/'),
+        attachment.definition["route"]["path"]
+            .as_str()
+            .context("route path")?
+    );
+    let request = if attachment.route.type_.is_read() {
+        let query = wamn_execution_contract::encode_read_query(
+            value.as_object().context("read request object")?,
+        );
+        if !query.is_empty() {
+            url.push('?');
+            url.push_str(&query);
+        }
+        client.get(url)
+    } else {
+        let request_id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos()
+            .to_string();
+        client
+            .post(url)
+            .json(&json!([{"request_id":request_id,"value":value}]))
+    };
+    request
+        .bearer_auth(&args.token)
+        .build()
+        .context("build control request")
+}
+
+/// Call one route with the caller's token and print its response.
 pub async fn configuration(args: ConfigurationArgs, operation: &str) -> anyhow::Result<()> {
-    let text = std::fs::read_to_string(&args.file).context("read configuration file")?;
-    let changes = wamn_platform_identity::auth_changes::AuthChanges::connect(
-        &wamn_platform_identity::auth_changes::AuthNats::from_env()?,
-    )
-    .await?;
-    let answer = wamn_control::connection_configuration::write(
-        &args.system_database_url,
-        &args.org,
-        operation,
-        &text,
-        &changes,
-        args.administration.as_deref(),
-    )
-    .await?;
-    println!("{answer}");
+    let attachment = route(operation)?;
+    let value = request(&args, operation)?;
+    let client = reqwest::Client::new();
+    let request = route_request(&client, &args, attachment, &value)?;
+    let response = client
+        .execute(request)
+        .await
+        .context("call control route")?;
+    let status = response.status();
+    let body = response.text().await.context("read control response")?;
+    ensure!(
+        status.is_success(),
+        "{operation} answered HTTP {status}: {body}"
+    );
+    let [answer]: [Value; 1] =
+        serde_json::from_str(&body).context("control route answers one request element")?;
+    if let Some(error) = answer.get("error") {
+        anyhow::bail!("{operation} refused: {error}");
+    }
+    println!("{}", answer["value"]);
     Ok(())
 }
 
 pub async fn connection(args: ConnectionArgs) -> anyhow::Result<()> {
+    let (operation, args) = match args.command {
+        ConnectionCommand::Write(args) => ("connection.write", args),
+        ConnectionCommand::Copy(args) => ("connection.copy", args),
+        ConnectionCommand::SetCredential(args) => ("connection.set_credential", args),
+        ConnectionCommand::Disable(args) => ("connection.disable", args),
+        ConnectionCommand::Enable(args) => ("connection.enable", args),
+        ConnectionCommand::Delete(args) => ("connection.delete", args),
+        ConnectionCommand::List(args) => ("connection.list", args),
+        ConnectionCommand::Get(args) => ("connection.get", args),
+    };
+    configuration(args, operation).await
+}
+
+pub async fn external_system(args: ExternalSystemArgs) -> anyhow::Result<()> {
+    let (operation, args) = match args.command {
+        ExternalSystemCommand::Write(args) => ("external_system.write", args),
+        ExternalSystemCommand::List(args) => ("external_system.list", args),
+        ExternalSystemCommand::Delete(args) => ("external_system.delete", args),
+    };
+    configuration(args, operation).await
+}
+
+pub async fn integration_type(args: IntegrationTypeArgs) -> anyhow::Result<()> {
     match args.command {
-        ConnectionCommand::Write(args) => configuration(args, "connection.write").await,
+        IntegrationTypeCommand::List(args) => configuration(args, "integration_type.list").await,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wamn_catalog::{HostRouteAuthority, OperationType};
 
-    #[test]
-    fn the_http_argument_selects_the_http_requirement() {
-        let argument = RequirementTypeArg::from_str("http", false).unwrap();
-        assert_eq!(argument.requirement_type(), RequirementType::Http);
+    fn args() -> ConfigurationArgs {
+        ConfigurationArgs {
+            host_url: "https://control.example".into(),
+            token: "session".into(),
+            file: PathBuf::from("/tmp/request.json"),
+            credential_file: None,
+        }
     }
 
     #[test]
-    fn configuration_files_select_names_and_refuse_id_fields() {
-        use wamn_platform_identity::connections::{ConnectionWrite, ExternalSystemWrite};
-        let connection = serde_json::json!({
-            "name":"erp", "external_system":"erp-system", "integration":"http",
-            "transport":"http", "exchange":"request", "status":"active",
-            "parameters":{"primary-authority":"https://erp.example", "tls-verification":"verify-authority"}
-        });
-        let parsed: ConnectionWrite = serde_json::from_value(connection.clone()).unwrap();
-        assert_eq!(parsed.name, "erp");
-        assert_eq!(parsed.external_system.as_deref(), Some("erp-system"));
-        for field in ["id", "connection_id", "external_system_id"] {
-            let mut input = connection.clone();
-            input[field] = "00000000-0000-4000-8000-000000000001".into();
-            assert!(serde_json::from_value::<ConnectionWrite>(input).is_err());
-        }
-        let system = serde_json::json!({"name":"erp-system", "integration":"http", "parameters":{}, "status":"active"});
+    fn reads_send_the_canonical_query_and_no_body() {
+        let value = json!({"project":"app","env":"dev","name":"erp"});
+        let request = route_request(
+            &reqwest::Client::new(),
+            &args(),
+            route("connection.get").unwrap(),
+            &value,
+        )
+        .unwrap();
+        assert_eq!(request.method(), reqwest::Method::GET);
+        assert_eq!(request.url().path(), "/wamn_control/connection/get");
+        assert!(request.body().is_none());
         assert_eq!(
-            serde_json::from_value::<ExternalSystemWrite>(system.clone())
-                .unwrap()
-                .name,
-            "erp-system"
+            Value::Object(
+                wamn_execution_contract::decode_read_query(request.url().query().unwrap()).unwrap()
+            ),
+            value
         );
-        let mut input = system;
-        input["id"] = "00000000-0000-4000-8000-000000000001".into();
-        assert!(serde_json::from_value::<ExternalSystemWrite>(input).is_err());
+    }
+
+    #[test]
+    fn writes_send_one_request_element_and_keep_credentials_out_of_the_url() {
+        let value = json!({"project":"app","env":"dev","name":"erp","credential":"private-value"});
+        let request = route_request(
+            &reqwest::Client::new(),
+            &args(),
+            route("connection.set_credential").unwrap(),
+            &value,
+        )
+        .unwrap();
+        assert_eq!(request.method(), reqwest::Method::POST);
+        assert!(request.url().query().is_none());
+        let body: Value =
+            serde_json::from_slice(request.body().unwrap().as_bytes().unwrap()).unwrap();
+        assert_eq!(body.as_array().unwrap().len(), 1);
+        assert!(body[0]["request_id"].is_string());
+        assert_eq!(body[0]["value"], value);
+    }
+
+    #[test]
+    fn every_administration_verb_maps_to_a_project_route() {
+        for (group, verbs) in [
+            ("integration_type", &["list"][..]),
+            ("external_system", &["write", "list", "delete"][..]),
+            (
+                "integration",
+                &["write", "list", "get", "disable", "enable", "delete"][..],
+            ),
+            (
+                "connection",
+                &[
+                    "write",
+                    "copy",
+                    "set_credential",
+                    "disable",
+                    "enable",
+                    "delete",
+                    "list",
+                    "get",
+                ][..],
+            ),
+        ] {
+            for verb in verbs {
+                let attachment = route(&format!("{group}.{verb}")).unwrap();
+                assert_eq!(attachment.route.authority, HostRouteAuthority::ProjectAdmin);
+                assert_eq!(
+                    attachment.route.type_,
+                    if matches!(*verb, "list" | "get") {
+                        OperationType::Get
+                    } else {
+                        OperationType::Command
+                    }
+                );
+            }
+        }
     }
 }
