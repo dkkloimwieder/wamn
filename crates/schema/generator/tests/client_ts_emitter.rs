@@ -338,6 +338,28 @@ fn counter_feed_and_changes_preserve_int64_ids() {
 }
 
 #[test]
+fn no_module_exports_a_changes_route() {
+    // A caller that finds a route by its operation name must find the page
+    // route of a feed read, never its changes route (wamn-rgvi0).
+    let files = emit_ts_client(&release()).unwrap();
+    let mut changes = 0;
+    for file in &files {
+        let text = std::str::from_utf8(file.bytes()).unwrap();
+        changes += text.matches("resultClass: \"changes\"").count();
+        for exported in text.split("\nexport ").skip(1) {
+            let statement = exported.split("\n};").next().unwrap();
+            assert!(
+                !statement.contains("resultClass: \"changes\""),
+                "{} exports a changes route: {}",
+                file.path(),
+                statement.lines().next().unwrap()
+            );
+        }
+    }
+    assert!(changes > 0, "the fixture has a feed read");
+}
+
+#[test]
 fn emitted_client_type_checks_with_workspace_tsc() {
     typescript::type_check(&release()).expect("the emitted client satisfies strict TypeScript");
 }
