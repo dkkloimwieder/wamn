@@ -25,7 +25,7 @@ struct Fixture {
     base: String,
     observed: Arc<Mutex<Vec<Observed>>>,
     task: JoinHandle<()>,
-    credentials: crate::plugins::wamn_credentials::test_util::Fixture,
+    credentials: crate::connection_credentials::test_util::Fixture,
 }
 
 impl Fixture {
@@ -84,7 +84,7 @@ impl Fixture {
             }
         });
         Self {
-            credentials: crate::plugins::wamn_credentials::test_util::Fixture::new().await,
+            credentials: crate::connection_credentials::test_util::Fixture::new().await,
             base,
             observed,
             task,
@@ -306,7 +306,7 @@ async fn clock_seam_expires_cached_token_at_the_sixty_second_margin() {
 }
 
 #[tokio::test]
-async fn cache_separates_project_handle_and_selected_generation() {
+async fn cache_separates_project_connection_and_generation() {
     let _lock = wamn_test_postgres::lock();
     let mut fixture = Fixture::start(
         (1..=4).map(|n| token(n, Some(3600))).collect(),

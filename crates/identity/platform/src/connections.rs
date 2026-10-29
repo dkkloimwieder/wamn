@@ -470,37 +470,3 @@ pub async fn project(
     }
     Ok(drops)
 }
-
-/// Store new secret material and append a generation. Existing generations stay.
-pub async fn rotate(
-    tx: &Transaction<'_>,
-    org: &str,
-    name: &str,
-    secret: &str,
-) -> Result<i64, ConnectionError> {
-    lock_org(tx, org).await?;
-    let result = configure(
-        tx,
-        org,
-        "connection.rotate",
-        &json!({"name": name, "secret": secret}),
-    )
-    .await?;
-    Ok(result["generation"]
-        .as_i64()
-        .expect("database returns a generation"))
-}
-
-/// Import credentials into explicitly named, enabled connections atomically.
-/// Project entries use {"connection": "name", "secret": "material"}.
-pub async fn import_credentials(
-    tx: &Transaction<'_>,
-    project_org: &str,
-    text: &str,
-) -> Result<(), ConnectionError> {
-    let file: Value =
-        serde_json::from_str(text).map_err(|_| refuse("invalid_input", "credentials_file"))?;
-    lock_org(tx, project_org).await?;
-    configure(tx, project_org, "connection.import_credentials", &file).await?;
-    Ok(())
-}

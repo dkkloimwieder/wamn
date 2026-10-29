@@ -17,11 +17,11 @@ use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope};
 use wamn_engine::router_delivery::{DeliveryOutcome, DeliveryRequest, RouteDelivery as _, Source};
 use wamn_execution_host::file_route::{FileRefusal, FileRoutes, RegistryFileConnections};
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
+use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::plugins::connection_http::{
     ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin, InvocationEntry,
 };
 use wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore;
-use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wasmtime_wasi_http::WasiBody;
 
 #[path = "support/application_fixture.rs"]
@@ -133,7 +133,7 @@ impl FileHost {
         }
         let blobstore = Arc::new(WamnBlobstore::new(
             Arc::clone(&postgres),
-            Arc::new(WamnCredentials::from_database(
+            Arc::new(ConnectionCredentials::from_database(
                 Arc::clone(&registry.reader),
                 ORG,
             )),
@@ -1349,7 +1349,7 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
         Arc::new(wamn_engine::build_engine(&[])?),
         Arc::clone(&fixture.postgres),
         Arc::new(HttpTransport::new()?),
-        Arc::new(WamnCredentials::from_database(
+        Arc::new(ConnectionCredentials::from_database(
             Arc::clone(&fixture.registry.reader),
             ORG,
         )),

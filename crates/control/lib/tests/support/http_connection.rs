@@ -161,12 +161,27 @@ pub async fn deploy(run: &mut Run, repository: &Path, system_url: &str) -> anyho
         .await?;
         wamn_platform_identity::connections::enable_connection(&tx, ORG, PROJECT, name).await?;
     }
-    wamn_platform_identity::connections::import_credentials(
-        &tx,
-        ORG,
-        &json!({"orgs":{ORG:credentials},"projects":{}}).to_string(),
-    )
-    .await?;
+    let secret_name = wamn_credential_store::kubernetes::secret_name(ORG, PROJECT, "http");
+    let mut data = serde_json::Map::new();
+    for (name, value) in &credentials {
+        let version = uuid::Uuid::new_v4().to_string();
+        let value = value.as_str().context("credential value")?;
+        data.insert(version.clone(), value.into());
+        wamn_test_infrastructure::credentials::set_reference(
+            &tx,
+            ORG,
+            PROJECT,
+            "http",
+            name,
+            &wamn_credential_store::StoreVersion {
+                store: "k8s",
+                reference: secret_name.clone(),
+                version,
+            },
+        )
+        .await?;
+    }
+    manifest["items"].as_array_mut().unwrap().push(json!({"apiVersion":"v1","kind":"Secret","metadata":{"name":secret_name,"namespace":NAMESPACE,"labels":{"wamn.org":ORG,"wamn.project":PROJECT,"wamn.env":"http"}},"stringData":data}));
     tx.commit().await?;
     drop(system);
     driver.await??;

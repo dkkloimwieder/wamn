@@ -6,10 +6,7 @@ use crate::plugins::wamn_postgres::{
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
 };
-use wamn_platform_identity::{
-    auth_changes::AuthDrops,
-    connections::{self, ConnectionWrite},
-};
+use wamn_platform_identity::auth_changes::AuthDrops;
 
 async fn connect(url: &str) -> tokio_postgres::Client {
     let (client, driver) = tokio_postgres::connect(url, tokio_postgres::NoTls)
@@ -22,47 +19,15 @@ async fn connect(url: &str) -> tokio_postgres::Client {
 #[tokio::test]
 async fn external_signature_uses_the_service_principal_and_only_admin_granted_roles() {
     let _lock = wamn_test_postgres::lock();
-    let system = wamn_control_provision::test_database::system();
-    let mut authority = connect(system.url()).await;
-    authority
-        .batch_execute("SET ROLE wamn_system")
-        .await
-        .unwrap();
-    let tx = authority.transaction().await.unwrap();
-    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_control_provision::PlatformComponent::Provisioning,
-    ))
-    .await
-    .unwrap();
-    tx.batch_execute("INSERT INTO registry.orgs(id,placement_type) VALUES ('acme','dedicated'); INSERT INTO registry.projects(org,id) VALUES ('acme','host-project')").await.unwrap();
-    tx.batch_execute("SET LOCAL ROLE wamn_control")
-        .await
-        .unwrap();
-    let name = connections::write_connection(&tx,"acme",&ConnectionWrite {
-        integration:"http".into(), external_system:None, name:"webhook".into(), transport:"http".into(), exchange:"request".into(),
-        parameters: json!({"primary-authority":"https://source.example","tls-verification":"verify-authority"}),status:"active".into()
-    },&mut AuthDrops::default()).await.unwrap();
-    connections::enable_connection(&tx, "acme", "host-project", &name)
-        .await
-        .unwrap();
-    connections::rotate(
-        &tx,
-        "acme",
-        &name,
-        r#"{"hmac":{"algorithm":"sha256","secret":"test-secret"}}"#,
-    )
-    .await
-    .unwrap();
-    let principal: String = tx
-        .query_one(
-            "SELECT service_principal_id::text FROM registry.connection_rows($1) WHERE name=$2",
-            &[&"acme", &name],
+    let mut fixture = crate::connection_credentials::test_util::Fixture::new().await;
+    fixture
+        .put(
+            "webhook",
+            r#"{"hmac":{"algorithm":"sha256","secret":"test-secret"}}"#,
+            &["host-project"],
         )
-        .await
-        .unwrap()
-        .get(0);
-    tx.commit().await.unwrap();
-
+        .await;
+    let principal: String = fixture.admin.query_one("SELECT c.service_principal_id::text FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE i.name='webhook' AND c.project='host-project'", &[]).await.unwrap().get(0);
     let database = wamn_test_postgres::database();
     let project = connect(database.url()).await;
     project
@@ -116,51 +81,8 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(
         StaticCredentialProvider::new(sources, None),
     )));
-    authority.batch_execute("RESET ROLE").await.unwrap();
-    authority
-        .batch_execute(&sql::grant_connection_reader_surface_sql())
-        .await
-        .unwrap();
-    let credential_role = format!("c35_signature_{}", system.name());
-    authority
-        .batch_execute(&sql::prepare_workload_generation_sql(
-            WorkloadRoleFamily::ConnectionReader,
-            system.name(),
-            &credential_role,
-            "fixture-password",
-            "2099-01-01T00:00:00Z",
-        ))
-        .await
-        .unwrap();
-    let tx = authority.transaction().await.unwrap();
-    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_control_provision::PlatformComponent::Provisioning,
-    ))
-    .await
-    .unwrap();
-    tx.execute(
-        sql::upsert_control_author_env_key_mapping_sql(),
-        &[
-            &credential_role,
-            &"acme--host-project--prod",
-            &"acme",
-            &"host-project",
-            &"prod",
-        ],
-    )
-    .await
-    .unwrap();
-    tx.commit().await.unwrap();
-    let mut credential_url = url::Url::parse(system.url()).unwrap();
-    credential_url.set_username(&credential_role).unwrap();
-    credential_url
-        .set_password(Some("fixture-password"))
-        .unwrap();
-    let credential_reader = connect(credential_url.as_str()).await;
-    let credentials = Arc::new(WamnCredentials::from_database(
-        Arc::new(credential_reader),
-        "acme",
-    ));
+    let credentials = Arc::new(fixture.reader("host-project").await);
+    let authority = connect(fixture.database.url()).await;
     let authority = Arc::new(authority);
     let authentication = Arc::new(
         RouteAuthentication::new(
@@ -204,7 +126,7 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     assert!(caller.permits("fixture:item/read@1.0.0"));
     assert!(!caller.permits("fixture:item/write@1.0.0"));
     assert!(caller.active_role().is_none());
-    let mut authority = connect(system.url()).await;
+    let mut authority = connect(fixture.database.url()).await;
     let tx = authority.transaction().await.unwrap();
     tx.batch_execute("SET LOCAL ROLE wamn_system")
         .await

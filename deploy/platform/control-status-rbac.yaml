@@ -1,4 +1,4 @@
-# The read-only access of the control host's `environment.status`
+# The status and credential access of the control host
 # (docs/plan/platform-deploy.md section 11.4, owner ruling 2026-10-13,
 # wamn-esnu9). Applied once per cluster by the platform install, into the
 # release namespace (`hosts` on GKE, `wamn-system` on kind):
@@ -8,12 +8,11 @@
 # No object states a namespace. The subject's namespace defaults to the
 # RoleBinding's namespace. The control host group runs as the one platform
 # service account `wamn-host` in the release namespace (docs/operations/gcp.md
-# section 3.23, wamn-okr8y). The host groups set automountServiceAccountToken
-# false, so only the control group, which mounts a projected token
-# (deploy/gcp/values-host.yaml), can use this grant.
+# section 3.23, wamn-okr8y). The control group mounts a projected token
+# (deploy/gcp/values-host.yaml). Environment releases use separate ServiceAccounts.
 #
 # get, list and watch on pods, deployments and workloaddeployments in the
-# release namespace, and nothing else: no Secret, no write, no other namespace.
+# release namespace. Credential writes grant create, get and update on Secrets.
 # `crates/execution/host/src/environment_status.rs` tests these rules.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -29,6 +28,9 @@ rules:
 - apiGroups: [runtime.wasmcloud.dev]
   resources: [workloaddeployments]
   verbs: [get, list, watch]
+- apiGroups: [""]
+  resources: [secrets]
+  verbs: [create, get, update]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

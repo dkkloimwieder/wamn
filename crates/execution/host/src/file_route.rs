@@ -1101,7 +1101,7 @@ mod tests {
         AuthRejection, AuthenticationRequest, RouteAuthenticator, RouteInFlightLimit, unauthorized,
     };
     use wamn_engine::release_manifest::ReleaseScope;
-    use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
+    use wamn_runtime::connection_credentials::ConnectionCredentials;
     use wamn_runtime::plugins::wamn_postgres::WamnPostgresConfig;
 
     fn release() -> Arc<LoadedRelease> {
@@ -1205,7 +1205,7 @@ mod tests {
         let release = release();
         let blobstore = Arc::new(WamnBlobstore::new(
             postgres.clone(),
-            Arc::new(WamnCredentials::empty()),
+            Arc::new(ConnectionCredentials::empty()),
             "acme",
             "project",
             Some(release.clone()),

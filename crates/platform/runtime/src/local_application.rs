@@ -50,7 +50,7 @@ pub struct LocalApplication {
 
 #[derive(Clone, Debug)]
 struct LocalConnectionReader {
-    credentials: std::sync::Arc<crate::plugins::wamn_credentials::WamnCredentials>,
+    credentials: std::sync::Arc<crate::connection_credentials::ConnectionCredentials>,
     project: String,
 }
 
@@ -75,7 +75,7 @@ pub async fn load_local_application(
 impl LocalApplication {
     pub(crate) fn set_connection_credentials(
         &self,
-        credentials: std::sync::Arc<crate::plugins::wamn_credentials::WamnCredentials>,
+        credentials: std::sync::Arc<crate::connection_credentials::ConnectionCredentials>,
         project: &str,
     ) {
         *self
@@ -854,7 +854,7 @@ mod tests {
     async fn local_readiness_and_dispatch_refuse_a_forged_binding_mode() {
         use crate::plugins::wamn_postgres::{ConnectionEffectLookup, ConnectionEntryLookup};
         let _lock = wamn_test_postgres::lock();
-        let mut authority = crate::plugins::wamn_credentials::test_util::Fixture::new().await;
+        let mut authority = crate::connection_credentials::test_util::Fixture::new().await;
         authority.put("erp", "secret", &["project-a"]).await;
         authority.admin.batch_execute("SET ROLE wamn_system; INSERT INTO registry.environment_connection_binding(org,project,env,application,alias,target_id,connection_id,generation,mode,exclusive) SELECT 'acme','project-a','dev','app','erp',t.id,c.id,c.current_generation,'read',false FROM registry.target t,registry.connection c WHERE t.name='cloud' AND c.org='acme' AND c.name='erp'; RESET ROLE").await.unwrap();
         let database = wamn_project_state::test_database::tenant_platform();

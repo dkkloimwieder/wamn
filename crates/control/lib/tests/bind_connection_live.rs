@@ -1032,11 +1032,11 @@ fn provision_project_components_for_http_manifest()
 
 #[tokio::test]
 async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
+    use wamn_runtime::connection_credentials::ConnectionCredentials;
     use wamn_runtime::plugins::connection_http::{
         ConnectionExecutionClosure, ConnectionHttp, ConnectionInvocation, ConnectionOrigin,
         InvocationEntry, WiringPosition, transport::HttpTransport,
     };
-    use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
     let _lock = wamn_test_postgres::lock();
     let database = wamn_project_state::test_database::tenant_platform();
     let (project, task) = connect(database.url()).await;
@@ -1142,7 +1142,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
     let plugin = ConnectionHttp::new(
         Arc::clone(&postgres),
         Arc::new(HttpTransport::new().unwrap()),
-        Arc::new(WamnCredentials::empty()),
+        Arc::new(ConnectionCredentials::empty()),
         ENV_KEY,
         DEFAULT_PROJECT,
         vec![
@@ -1239,7 +1239,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
     let plugin = ConnectionHttp::new(
         postgres,
         Arc::new(HttpTransport::new().unwrap()),
-        Arc::new(WamnCredentials::empty()),
+        Arc::new(ConnectionCredentials::empty()),
         ENV_KEY,
         DEFAULT_PROJECT,
         vec![

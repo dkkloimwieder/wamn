@@ -65,22 +65,15 @@ fn qualification_images_fixture() -> QualificationImages {
     }
 }
 
-/// Stamp a copy of the chart and build its subchart archive there.
+/// Stamp a copy of the chart with its committed subchart archive.
 fn stamped_chart(scratch: &Scratch) -> PathBuf {
-    let chart = stamp(
+    stamp(
         &repository_root().join("deploy/platform/release"),
         &image_set_fixture(),
         Some(&qualification_images_fixture()),
         &scratch.0.join("chart"),
     )
-    .expect("stamp the chart");
-    let built = helm(&["dependency", "build", chart.to_str().expect("utf-8 path")]);
-    assert!(
-        built.status.success(),
-        "helm dependency build: {}",
-        String::from_utf8_lossy(&built.stderr)
-    );
-    chart
+    .expect("stamp the chart")
 }
 
 fn input(env: &str) -> ValuesInput {
@@ -241,6 +234,7 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
         ("WorkloadDeployment", format!("{name}-http")),
         ("WorkloadDeployment", format!("{name}-materializer")),
         ("Service", format!("{name}-http")),
+        ("Service", format!("{name}-files")),
         ("NetworkPolicy", format!("hostgroup-{name}")),
     ]
     .into_iter()
@@ -292,10 +286,14 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
         pod["metadata"]["annotations"]["wamn.environment"].as_str(),
         Some("acme/wms/prod")
     );
-    // The host runs as the platform-owned ServiceAccount (owner ruling 2026-10-13).
+    // Provisioning owns the environment account and its Secret grant.
     assert_eq!(
         pod["spec"]["serviceAccountName"].as_str(),
-        Some("wamn-host")
+        Some("wamn-host-acme-wms-prod")
+    );
+    assert_eq!(
+        pod["spec"]["automountServiceAccountToken"],
+        Value::Bool(true)
     );
     // R20: the policy's drain bound is the pod's grace period.
     assert_eq!(

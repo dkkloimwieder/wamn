@@ -14,13 +14,13 @@ pub(super) fn signed(body: &[u8]) -> String {
 }
 
 struct Fixture {
-    credentials: crate::plugins::wamn_credentials::test_util::Fixture,
+    credentials: crate::connection_credentials::test_util::Fixture,
     database: wamn_test_postgres::Database,
 }
 
 impl Fixture {
     async fn new() -> Self {
-        let credentials = crate::plugins::wamn_credentials::test_util::Fixture::new().await;
+        let credentials = crate::connection_credentials::test_util::Fixture::new().await;
         let database = wamn_project_state::test_database::tenant_platform();
         database
             .execute(
@@ -45,10 +45,10 @@ impl Fixture {
             .await;
         self.credentials
             .admin
-            .batch_execute("SET ROLE wamn_control")
+            .batch_execute("SET ROLE wamn_system")
             .await
             .unwrap();
-        let principal: String = self.credentials.admin.query_one("SELECT service_principal_id::text FROM registry.connection_rows('acme') WHERE name='webhook'", &[]).await.unwrap().get(0);
+        let principal: String = self.credentials.admin.query_one("SELECT c.service_principal_id::text FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE i.name='webhook' AND c.project='host-project'", &[]).await.unwrap().get(0);
         self.credentials
             .admin
             .batch_execute("RESET ROLE")
@@ -60,17 +60,6 @@ impl Fixture {
         tokio::spawn(driver);
         client.execute("SELECT set_config('app.user_id',$1,false),set_config('app.operation','admin:connection-principal',false)", &[&principal]).await.unwrap();
         client.execute("INSERT INTO platform.\"user\"(id,type,email) VALUES ($1::text::uuid,'service','webhook@example.test') ON CONFLICT DO NOTHING", &[&principal]).await.unwrap();
-        let connection_id: String = self
-            .credentials
-            .admin
-            .query_one(
-                "SELECT id::text FROM registry.connection_rows('acme') WHERE name='webhook'",
-                &[],
-            )
-            .await
-            .unwrap()
-            .get(0);
-        client.execute("INSERT INTO platform.connection(id,integration,name,transport,exchange) VALUES ($1::text::uuid,'http','webhook','http','request') ON CONFLICT DO NOTHING", &[&connection_id]).await.unwrap();
         let base = crate::plugins::wamn_postgres::WamnPostgresConfig {
             credentials: None,
             guest_pool_max_size: 1,
@@ -345,7 +334,7 @@ async fn disabling_a_connection_refuses_signature_and_pat_principals() {
     )
     .with_authenticator(authenticator.clone());
     let pat = routing_policy(json!({"modes":["pat"]})).with_authenticator(authenticator);
-    let principal: String = fixture.credentials.admin.query_one("SELECT service_principal_id::text FROM registry.connection_rows('acme') WHERE name='webhook'", &[]).await.unwrap().get(0);
+    let principal: String = fixture.credentials.admin.query_one("SELECT c.service_principal_id::text FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE i.name='webhook' AND c.project='host-project'", &[]).await.unwrap().get(0);
     fixture
         .credentials
         .admin
@@ -394,13 +383,13 @@ async fn disabling_a_connection_refuses_signature_and_pat_principals() {
         );
     }
     for disable in [
-        "SELECT registry.configure_connection('acme','project_connection.disable','{\"project\":\"host-project\",\"connection\":\"webhook\"}')",
-        "SELECT registry.configure_connection('acme','connection.write','{\"name\":\"webhook\",\"integration\":\"http\",\"transport\":\"http\",\"exchange\":\"request\",\"parameters\":{\"primary-authority\":\"https://example.invalid\",\"tls-verification\":\"verify-authority\"},\"status\":\"disabled\"}')",
+        "UPDATE registry.integration SET status='disabled' WHERE project='host-project' AND name='webhook'",
+        "UPDATE registry.connection SET status='disabled' WHERE project='host-project'",
     ] {
         fixture
             .credentials
             .admin
-            .batch_execute("SET ROLE wamn_control")
+            .batch_execute("SET ROLE wamn_system")
             .await
             .unwrap();
         fixture
@@ -428,6 +417,6 @@ async fn disabling_a_connection_refuses_signature_and_pat_principals() {
                 401
             );
         }
-        fixture.credentials.admin.batch_execute("SET ROLE wamn_control; SELECT registry.configure_connection('acme','project_connection.enable','{\"project\":\"host-project\",\"connection\":\"webhook\"}'); RESET ROLE").await.unwrap();
+        fixture.credentials.admin.batch_execute("SET ROLE wamn_system; UPDATE registry.integration SET status='active' WHERE project='host-project'; UPDATE registry.connection SET status='active' WHERE project='host-project'; RESET ROLE").await.unwrap();
     }
 }

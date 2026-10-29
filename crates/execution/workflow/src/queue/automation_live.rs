@@ -17,9 +17,9 @@ use wamn_engine::flow_http_routing::CredentialType;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_engine::router_delivery::{OperationRefusalType, authorize_released_operation};
 use wamn_run_state::RunStore as _;
+use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::route_authentication::queued_run_caller;
-use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{
@@ -396,7 +396,7 @@ async fn run_automation(mode: Mode) -> anyhow::Result<()> {
         Arc::clone(&engine),
         Arc::clone(&postgres),
         Arc::new(HttpTransport::new()?),
-        Arc::new(WamnCredentials::empty()),
+        Arc::new(ConnectionCredentials::empty()),
         Arc::clone(&logging),
         Arc::from([]),
         Arc::clone(&release),

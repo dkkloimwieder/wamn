@@ -939,7 +939,7 @@ pub fn grant_connection_reader_surface_sql() -> String {
     let role = quote_ident(WorkloadRoleFamily::ConnectionReader.acl_role());
     write!(
         sql,
-        " REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA registry, identity FROM {role};"
+        " REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA registry, identity FROM {role}; GRANT EXECUTE ON FUNCTION registry.read_connection_credential(text,text,text,uuid) TO {role};"
     )
     .expect("writing to a String cannot fail");
     sql
@@ -947,6 +947,7 @@ pub fn grant_connection_reader_surface_sql() -> String {
 
 /// Non-secret connection functions available to the control host.
 pub const CONTROL_CONNECTION_FUNCTIONS: &[&str] = &[
+    "retired_connection_credential(text)",
     "publish_integration(text,integer,text,jsonb,text)",
     "configure_connection(text,text,jsonb)",
 ];

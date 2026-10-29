@@ -1087,6 +1087,9 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
             ),
         ));
     }
+    if let Ok(directory) = std::env::var("WAMN_CREDENTIAL_DIR") {
+        env.push(("WAMN_CREDENTIAL_DIR".to_owned(), directory));
+    }
     if let Some(url) = request.config.connection_database_url() {
         env.push(("WAMN_CONNECTION_STORE_URL".to_owned(), url.to_owned()));
     }
@@ -2224,6 +2227,10 @@ mod tests {
 
         let mut deployed = settings(&deployed_env, &deployed_args);
         let mut local = settings(&local.env, &local.args);
+        assert_eq!(
+            local.remove("WAMN_CREDENTIAL_DIR"),
+            std::env::var("WAMN_CREDENTIAL_DIR").ok()
+        );
         // Exact names only: new settings remain visible and fail the comparison.
         for key in [
             "WASMCLOUD_HOST_IP",              // Kubernetes supplies the pod IP.

@@ -63,12 +63,10 @@ runtime-operator:
         memory: "768Mi"
     # The install values supply the one host group, named after the release.
     hostGroups: []
-    # Every host runs as the platform-owned ServiceAccount `wamn-host`, which the
-    # platform install creates in this namespace
-    # (deploy/platform/wamn-host-serviceaccount.yaml). The release creates none.
+    # Provisioning creates one account per environment. Install values name it.
     serviceAccount:
       create: false
-      name: wamn-host
+      name: ""
 
 platform:
   # The role component images of the platform image set: `<repository>@sha256:<hex>`.

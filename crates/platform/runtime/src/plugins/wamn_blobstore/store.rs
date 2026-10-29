@@ -103,7 +103,7 @@ pub struct BoundContainer {
 
 #[derive(Clone)]
 struct ConnectionAuthority {
-    vault: Arc<crate::plugins::wamn_credentials::WamnCredentials>,
+    vault: Arc<crate::connection_credentials::ConnectionCredentials>,
     project: String,
     name: String,
 }
@@ -142,7 +142,7 @@ impl BoundContainer {
 
     pub(super) fn with_connection_authority(
         mut self,
-        vault: Arc<crate::plugins::wamn_credentials::WamnCredentials>,
+        vault: Arc<crate::connection_credentials::ConnectionCredentials>,
         project: &str,
         name: String,
     ) -> Self {
@@ -377,7 +377,7 @@ mod tests {
     async fn unavailable_connection_refuses_every_store_call() {
         let (container, _) = bound("p");
         let container = container.with_connection_authority(
-            Arc::new(crate::plugins::wamn_credentials::WamnCredentials::empty()),
+            Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),
             "project-a",
             "erp".into(),
         );
@@ -413,7 +413,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_open_container_refuses_disabled_connections_and_project_enablement() {
-        use crate::plugins::wamn_credentials::test_util::Fixture;
+        use crate::connection_credentials::test_util::Fixture;
         let _lock = wamn_test_postgres::lock();
         let mut fixture = Fixture::new().await;
         fixture

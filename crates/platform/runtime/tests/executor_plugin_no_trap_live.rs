@@ -15,7 +15,7 @@
 //!
 //! The executor's runner store carries `WAMN_POSTGRES_ID`, `WAMN_LOGGING_ID`
 //! and `CONNECTION_HTTP_ID` — gate B's retained set, and the three tested here.
-//! `wamn_jetstream`, `flow_http_routing` and `wamn_credentials` are deliberately
+//! `wamn_jetstream`, `flow_http_routing` and `connection_credentials` are deliberately
 //! out of scope: the first two are not on the executor store, and the third
 //! implements no `HostPlugin` and has no WIT surface at all.
 //!
@@ -54,8 +54,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use wamn_engine::engine::build_engine;
+use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::plugins::connection_http::{self, CONNECTION_HTTP_ID, ConnectionHttp};
-use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::{self, WAMN_LOGGING_ID, WamnLogging, WamnLoggingConfig};
 use wamn_runtime::plugins::wamn_postgres::{
     self, WAMN_POSTGRES_ID, WamnPostgres, WamnPostgresConfig,
@@ -606,7 +606,7 @@ async fn connection_http_maps_an_invalid_context_to_a_wit_error_not_a_trap() {
             wamn_runtime::plugins::connection_http::transport::HttpTransport::new()
                 .expect("HTTP transport"),
         ),
-        Arc::new(WamnCredentials::empty()),
+        Arc::new(ConnectionCredentials::empty()),
         "tenant-a",
         "fixture",
         allowed_hosts,

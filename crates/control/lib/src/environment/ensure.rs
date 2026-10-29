@@ -96,6 +96,7 @@ pub async fn ensure(
     })
     .await
     .context("record the environment and render its database")?;
+    ensure_credential_access(platform, document).await?;
     admin_sql(platform, &outcome.role_sql)
         .await
         .context("ensure the database roles")?;
@@ -802,5 +803,97 @@ mod tests {
                 );
             }
         }
+    }
+}
+
+/// Create the environment account and immutable grants before the release starts.
+async fn ensure_credential_access(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+) -> anyhow::Result<()> {
+    let account = wamn_credential_store::kubernetes::service_account_name(
+        &document.org,
+        &document.project,
+        &document.env,
+    );
+    let secret = wamn_credential_store::kubernetes::secret_name(
+        &document.org,
+        &document.project,
+        &document.env,
+    );
+    for (resource, object) in credential_access(&account, &secret) {
+        let namespace = &platform.target.namespace;
+        let observed = kubectl(
+            platform,
+            namespace,
+            &[
+                "get",
+                resource,
+                &account,
+                "--ignore-not-found",
+                "-o",
+                "json",
+            ],
+            None,
+        )
+        .await?;
+        if !observed.trim().is_empty() {
+            continue;
+        }
+        kubectl(
+            platform,
+            namespace,
+            &["create", "-f", "-"],
+            Some(&serde_json::to_vec(&object)?),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+fn credential_access(account: &str, secret: &str) -> [(&'static str, serde_json::Value); 3] {
+    use serde_json::json;
+    [
+        (
+            "serviceaccount",
+            json!({"apiVersion":"v1","kind":"ServiceAccount","metadata":{"name":account}}),
+        ),
+        (
+            "role",
+            json!({"apiVersion":"rbac.authorization.k8s.io/v1","kind":"Role","metadata":{"name":account},"rules":[{"apiGroups":[""],"resources":["secrets"],"resourceNames":[secret],"verbs":["get"]}]}),
+        ),
+        (
+            "rolebinding",
+            json!({"apiVersion":"rbac.authorization.k8s.io/v1","kind":"RoleBinding","metadata":{"name":account},"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"Role","name":account},"subjects":[{"kind":"ServiceAccount","name":account}]}),
+        ),
+    ]
+}
+
+#[cfg(test)]
+mod credential_access_tests {
+    use super::*;
+
+    #[test]
+    fn the_environment_account_reads_only_its_one_secret() {
+        let objects = credential_access(
+            "wamn-host-acme-orders-dev",
+            "wamn-credential-acme-orders-dev",
+        );
+        assert_eq!(
+            objects[0].1["metadata"]["name"],
+            "wamn-host-acme-orders-dev"
+        );
+        assert_eq!(
+            objects[1].1["rules"],
+            serde_json::json!([{"apiGroups":[""],"resources":["secrets"],"resourceNames":["wamn-credential-acme-orders-dev"],"verbs":["get"]}])
+        );
+        assert_eq!(
+            objects[2].1["roleRef"]["name"],
+            objects[0].1["metadata"]["name"]
+        );
+        assert_eq!(
+            objects[2].1["subjects"][0]["name"],
+            objects[0].1["metadata"]["name"]
+        );
     }
 }

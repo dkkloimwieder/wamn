@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["services/host", "services/edge", "services/identity", "services/ctl", "services/scenario-worker", "services/cdc-reader", "tools/bench", "tools/submodule-check", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/fixture-package", "test-support/infrastructure", "test-support/postgres", "crates/client/core", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/authoring/model", "crates/catalog/model", "crates/catalog/package-artifact", "crates/execution/host", "crates/execution/workflow/router", "crates/execution/run-state", "crates/execution/run-state-sqlite", "crates/execution/workflow", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/pg-core", "crates/platform/number-pattern", "crates/platform/component-policy", "crates/platform/component-composer", "crates/platform/component-virtualizer", "crates/platform/engine", "crates/platform/runtime", "crates/control/lib", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/client", "crates/identity/session", "crates/identity/project-state"]
+members = ["services/host", "services/edge", "services/identity", "services/ctl", "services/scenario-worker", "services/cdc-reader", "tools/bench", "tools/submodule-check", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/fixture-package", "test-support/infrastructure", "test-support/postgres", "crates/client/core", "apps/wamn_receiving/tests", "apps/wamn_wms/tests", "crates/authoring/model", "crates/catalog/model", "crates/catalog/package-artifact", "crates/execution/host", "crates/execution/workflow/router", "crates/execution/run-state", "crates/execution/run-state-sqlite", "crates/execution/workflow", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/pg-core", "crates/platform/number-pattern", "crates/platform/component-policy", "crates/platform/component-composer", "crates/platform/component-virtualizer", "crates/platform/engine", "crates/platform/runtime", "crates/control/lib", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/client", "crates/identity/session", "crates/identity/project-state", "crates/identity/credential-store"]
 default-members = [
   "crates/authoring/model",
   "crates/catalog/model",
@@ -88,6 +88,7 @@ return_self_not_must_use = "allow"#   8. Library-API concern, as above.
 assert_is_empty = "allow"
 
 [workspace.dependencies]
+wamn-credential-store = { path = "crates/identity/credential-store" }
 mimalloc = "0.1.52"
 # Direct upstream v2.11.0, with zero patches. Source identity and evidence
 # are recorded in docs/architecture/native-alignment.md.
@@ -125,6 +126,7 @@ clap = "4"
 data-encoding = "2.11"
 futures-util = "0.3"
 hex = "0.4"
+http = "1"
 http-body-util = "0.1"
 humantime = "2"
 hyper = "1"
@@ -149,6 +151,7 @@ oci-client = { version = "0.17", default-features = false, features = ["rustls-t
 # The one tar layer of a package artifact (wamn-zua8.3). No xattr: the layer
 # carries regular files with a fixed owner, mode and mtime only.
 tar = { version = "0.4", default-features = false }
+tempfile = "3"
 # The S3 client for the blobstore capability. Chosen by the phase-1c spike
 # (wamn-15ny.4) and ratified: it is the ONLY candidate that resolves to a
 # single rustls, and that single version is 0.23 — the workspace pin. aws-sdk-s3

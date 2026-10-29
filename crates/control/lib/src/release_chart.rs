@@ -484,6 +484,19 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
             ("wamn.environment", environment.clone()),
         ]),
     );
+    let mut account = Mapping::new();
+    account.insert(
+        "name".into(),
+        wamn_credential_store::kubernetes::service_account_name(
+            &input.org,
+            &input.project,
+            &input.env,
+        )
+        .into(),
+    );
+    account.insert("create".into(), false.into());
+    runtime.insert("serviceAccount".into(), Value::Mapping(account));
+    runtime.insert("automountServiceAccountToken".into(), true.into());
     runtime.insert(
         "hostGroups".into(),
         Value::Sequence(vec![Value::Mapping(group)]),
@@ -814,6 +827,9 @@ mod tests {
         assert!(values.get("releaseLabel").is_none());
         let runtime = &values["runtime-operator"]["runtime"];
         assert_eq!(runtime["terminationGracePeriodSeconds"].as_u64(), Some(300));
+        assert_eq!(runtime["serviceAccount"]["name"], "wamn-host-acme-wms-prod");
+        assert_eq!(runtime["serviceAccount"]["create"], false);
+        assert_eq!(runtime["automountServiceAccountToken"], true);
         assert_eq!(
             runtime["podLabels"]["wamn.release"].as_str(),
             Some(label.as_str())

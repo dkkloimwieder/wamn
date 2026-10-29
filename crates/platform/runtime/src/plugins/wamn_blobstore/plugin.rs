@@ -27,11 +27,11 @@ use super::store::BoundContainer;
 use wamn_catalog::ServingManifest;
 use wamn_engine::release_manifest::ReleaseScope;
 
+use crate::connection_credentials::ConnectionCredentials;
 use crate::plugins::connection_http::{
     ConnectionExecutionClosure, ConnectionInvocation, authorize_candidate_closure,
     authorize_release_closure, entry_lookup,
 };
-use crate::plugins::wamn_credentials::WamnCredentials;
 use crate::plugins::wamn_postgres::{
     CandidateConnectionBinding, ConnectionEffectLookup, ConnectionEffectSnapshot, WamnPostgres,
 };
@@ -43,7 +43,7 @@ pub const WAMN_BLOBSTORE_ID: &str = "wamn-blobstore";
 /// The WAMN blobstore capability.
 pub struct WamnBlobstore {
     postgres: Arc<WamnPostgres>,
-    vault: Arc<WamnCredentials>,
+    vault: Arc<ConnectionCredentials>,
     pub(super) env_key: Box<str>,
     pub(super) project: Box<str>,
     /// The mounted, digest-verified serving manifest, when this host serves a
@@ -154,7 +154,7 @@ impl WamnBlobstore {
     /// Build the plugin over the connection-authority reader and the vault.
     pub fn new(
         postgres: Arc<WamnPostgres>,
-        vault: Arc<WamnCredentials>,
+        vault: Arc<ConnectionCredentials>,
         env_key: impl Into<Box<str>>,
         project: impl Into<Box<str>>,
         release: Option<Arc<LoadedRelease>>,
@@ -1067,7 +1067,7 @@ mod tests {
         .expect("an offline postgres plugin does not open a connection");
         WamnBlobstore::new(
             Arc::new(postgres),
-            Arc::new(WamnCredentials::empty()),
+            Arc::new(ConnectionCredentials::empty()),
             "tenant-a",
             "project-a",
             None,

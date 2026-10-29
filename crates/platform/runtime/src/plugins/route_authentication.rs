@@ -26,7 +26,7 @@ use wamn_platform_identity::{PreparedIdentityReads, PrincipalType};
 use wamn_project_state::ADMIN_ROLE;
 use wamn_session::verifier::SessionVerifier;
 
-use crate::plugins::wamn_credentials::WamnCredentials;
+use crate::connection_credentials::ConnectionCredentials;
 use crate::session_keys::IssuerKeys;
 
 /// The user row of one active service or user principal, each role it
@@ -243,7 +243,7 @@ impl SessionRouteAuthentication {
 pub struct PlatformRouteAuthenticator {
     authentication: Option<Arc<RouteAuthentication>>,
     session_authentication: Option<Arc<SessionRouteAuthentication>>,
-    signature_authentication: Option<(Arc<WamnCredentials>, Box<str>)>,
+    signature_authentication: Option<(Arc<ConnectionCredentials>, Box<str>)>,
 }
 
 impl PlatformRouteAuthenticator {
@@ -251,7 +251,7 @@ impl PlatformRouteAuthenticator {
     #[must_use]
     pub fn with_signature_authentication(
         mut self,
-        credentials: Arc<WamnCredentials>,
+        credentials: Arc<ConnectionCredentials>,
         project: impl Into<Box<str>>,
     ) -> Self {
         self.signature_authentication = Some((credentials, project.into()));
@@ -529,19 +529,17 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
             match principal.principal_type() {
                 PrincipalType::Platform => return Err(unauthorized()),
                 PrincipalType::Service if principal.subject().starts_with("connection-") => {
-                    let name = authentication
-                        .postgres
-                        .connection_principal_name(&authentication.project, principal.subject())
-                        .await
-                        .map_err(|_| authentication_unavailable())?
+                    let connection = principal
+                        .subject()
+                        .strip_prefix("connection-")
+                        .and_then(|id| id.parse::<uuid::Uuid>().ok())
                         .ok_or_else(unauthorized)?;
                     let (credentials, project) = self
                         .signature_authentication
                         .as_ref()
                         .ok_or_else(unauthorized)?;
-                    let handle = format!("org:{}:{name}", authentication.org);
                     let active = credentials
-                        .inbound_principal(project, &handle)
+                        .principal_for_connection(project, connection)
                         .await
                         .map_err(|_| authentication_unavailable())?;
                     if active.as_deref() != Some(principal.id().as_str()) {

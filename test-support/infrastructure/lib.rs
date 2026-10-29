@@ -20,3 +20,5 @@ pub mod secrets;
 pub mod telemetry;
 
 pub mod workload;
+
+pub mod credentials;

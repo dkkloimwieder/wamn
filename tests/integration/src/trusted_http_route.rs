@@ -24,6 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use wamn_credential_store::Store as _;
 
 use anyhow::Context as _;
 use oci_client::client::{ClientConfig, ClientProtocol, Config, ImageLayer};
@@ -49,8 +50,8 @@ use wamn_run_state::AuthorityClass;
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
+use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
-use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 use wamn_runtime::plugins::wamn_postgres::{ClassCredentials, WamnPostgres, WamnPostgresConfig};
 use wamn_schema_control::connections::ComponentConnectionRequirement;
@@ -156,7 +157,7 @@ pub async fn build(options: &RouteOptions) -> anyhow::Result<TrustedHttpRoute> {
 async fn credential_fixture(
     secrets: &[(&str, String)],
 ) -> anyhow::Result<(
-    WamnCredentials,
+    ConnectionCredentials,
     wamn_test_infrastructure::postgres::Database,
 )> {
     let database = wamn_control_provision::test_database::system();
@@ -172,6 +173,8 @@ async fn credential_fixture(
             ),
         )
         .await?;
+    let credential_store =
+        Arc::new(wamn_test_infrastructure::credentials::LocalCredentials::create()?);
     let tx = admin.transaction().await?;
     tx.batch_execute("SET LOCAL ROLE wamn_control").await?;
     tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
@@ -187,7 +190,18 @@ async fn credential_fixture(
             parameters: serde_json::json!({"primary-authority":"https://fixture.invalid", "tls-verification":"verify-authority"}),
         }, &mut wamn_platform_identity::auth_changes::AuthDrops::default()).await?;
         wamn_platform_identity::connections::enable_connection(&tx, "acme", PROJECT, name).await?;
-        wamn_platform_identity::connections::rotate(&tx, "acme", name, secret).await?;
+        let stored = credential_store
+            .put(uuid::Uuid::new_v4(), secret.as_bytes())
+            .await?;
+        wamn_test_infrastructure::credentials::set_reference(
+            &tx,
+            "acme",
+            PROJECT,
+            ENVIRONMENT,
+            name,
+            &stored,
+        )
+        .await?;
     }
     tx.commit().await?;
     admin.batch_execute("RESET ROLE").await?;
@@ -216,14 +230,14 @@ async fn credential_fixture(
         tokio_postgres::connect(&generation_url(database.url(), &role)?, NoTls).await?;
     tokio::spawn(connection);
     Ok((
-        WamnCredentials::from_database(Arc::new(reader), "acme"),
+        ConnectionCredentials::from_database(Arc::new(reader), "acme").with_store(credential_store),
         database,
     ))
 }
 
 async fn build_with_credentials(
     options: &RouteOptions,
-    credentials: WamnCredentials,
+    credentials: ConnectionCredentials,
     credential_database: wamn_test_infrastructure::postgres::Database,
 ) -> anyhow::Result<TrustedHttpRoute> {
     let component_bytes = std::fs::read(&options.component_wasm).with_context(|| {

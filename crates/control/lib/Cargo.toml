@@ -38,6 +38,7 @@ name = "wamn_integration_live"
 path = "../../../apps/platform/wamn_integration/tests/operations_live.rs"
 
 [dependencies]
+wamn-credential-store = { workspace = true }
 futures-util = { workspace = true }
 rcgen = { workspace = true }
 schemars = { workspace = true }

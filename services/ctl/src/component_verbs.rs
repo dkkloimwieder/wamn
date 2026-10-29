@@ -122,10 +122,6 @@ pub struct ConnectionArgs {
 pub enum ConnectionCommand {
     /// Create or update a connection from non-secret JSON.
     Write(ConfigurationArgs),
-    /// Import credential maps once.
-    ImportCredentials(ConfigurationArgs),
-    /// Append a credential generation from a private file.
-    Rotate(RotateConnectionArgs),
 }
 
 /// A control configuration request stored in a JSON file.
@@ -140,15 +136,6 @@ pub struct ConfigurationArgs {
     /// Directory of scoped administration URLs for projection writes.
     #[arg(long)]
     pub administration: Option<PathBuf>,
-}
-
-#[derive(Debug, Args)]
-pub struct RotateConnectionArgs {
-    #[command(flatten)]
-    pub input: ConfigurationArgs,
-    /// The org connection name whose credential changes.
-    #[arg(long)]
-    pub connection: String,
 }
 
 pub async fn configuration(args: ConfigurationArgs, operation: &str) -> anyhow::Result<()> {
@@ -173,34 +160,6 @@ pub async fn configuration(args: ConfigurationArgs, operation: &str) -> anyhow::
 pub async fn connection(args: ConnectionArgs) -> anyhow::Result<()> {
     match args.command {
         ConnectionCommand::Write(args) => configuration(args, "connection.write").await,
-        ConnectionCommand::ImportCredentials(args) => {
-            let text =
-                std::fs::read_to_string(&args.file).context("read credential import file")?;
-            wamn_control::connection_configuration::import_with_bindings(
-                &args.system_database_url,
-                &args.org,
-                &text,
-                args.administration.as_deref().context(
-                    "credential import requires the administration credential directory",
-                )?,
-            )
-            .await?;
-            println!("credentials imported");
-            Ok(())
-        }
-        ConnectionCommand::Rotate(args) => {
-            let text = std::fs::read_to_string(&args.input.file)
-                .context("read credential rotation file")?;
-            let generation = wamn_control::connection_configuration::rotate(
-                &args.input.system_database_url,
-                &args.input.org,
-                &args.connection,
-                &text,
-            )
-            .await?;
-            println!("generation {generation}");
-            Ok(())
-        }
     }
 }
 

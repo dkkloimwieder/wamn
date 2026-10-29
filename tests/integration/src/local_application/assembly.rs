@@ -24,6 +24,8 @@ use wamn_execution_host::{
 };
 use wamn_platform_identity::{assign_project_role, create_service, issue_pat, operator_subject};
 use wamn_run_state::AuthorityClass;
+use wamn_runtime::connection_credentials::ConnectionCredentials;
+use wamn_runtime::plugins::WamnLogging;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::route_authentication::{
     PlatformRouteAuthenticator, RouteAuthentication,
@@ -33,7 +35,6 @@ use wamn_runtime::plugins::wamn_logging::WamnLoggingConfig;
 use wamn_runtime::plugins::wamn_postgres::{
     ClassCredentials, ProjectConfig, StaticCredentialProvider, WamnPostgres,
 };
-use wamn_runtime::plugins::{WamnCredentials, WamnLogging};
 use wamn_workflow::RouterDriver;
 use wash_runtime::wasmtime::component::Component;
 
@@ -357,7 +358,7 @@ pub(super) async fn assemble(
         Arc::clone(&engine),
         Arc::clone(&postgres),
         Arc::new(HttpTransport::new()?),
-        Arc::new(WamnCredentials::empty()),
+        Arc::new(ConnectionCredentials::empty()),
         Arc::new(WamnLogging::new(&WamnLoggingConfig::default())?),
         Arc::from([]),
         Arc::clone(&release),

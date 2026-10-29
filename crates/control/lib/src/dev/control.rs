@@ -159,6 +159,9 @@ pub(super) async fn start(
         .expect("object")
         .clone(),
     );
+    if let Ok(directory) = std::env::var("WAMN_CREDENTIAL_DIR") {
+        env.insert("WAMN_CREDENTIAL_DIR".to_owned(), json!(directory));
+    }
     for (name, value) in crate::release_chart::TELEMETRY_VARIABLES {
         env.insert(
             name.to_owned(),

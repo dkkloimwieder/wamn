@@ -482,6 +482,9 @@ pub async fn exercise(
         serde_json::from_slice(&std::fs::read(source.join("connection.json"))?)?;
     connection["parameters"]["cdn_host"] =
         json!(format!("http://files-a.localhost:{}", minio_address.port()));
+    let credential_secret = wamn_credential_store::kubernetes::secret_name(ORG, PROJECT, "files");
+    let mut credential_data = serde_json::Map::new();
+    let mut credential_references = Vec::new();
     for name in ["file-store", "files-no-cdn"] {
         connection["name"] = json!(name);
         if name == "files-no-cdn" {
@@ -499,13 +502,19 @@ pub async fn exercise(
             None,
         )
         .await?;
-        wamn_control::connection_configuration::rotate(
-            &platform.system_database_url,
-            ORG,
+        let version = uuid::Uuid::new_v4().to_string();
+        credential_data.insert(
+            version.clone(),
+            std::fs::read_to_string(source.join("credential.json"))?.into(),
+        );
+        credential_references.push((
             name,
-            &std::fs::read_to_string(source.join("credential.json"))?,
-        )
-        .await?;
+            wamn_credential_store::StoreVersion {
+                store: "k8s",
+                reference: credential_secret.clone(),
+                version,
+            },
+        ));
     }
     let (mut system, system_task) =
         tokio_postgres::connect(&platform.system_database_url, tokio_postgres::NoTls).await?;
@@ -526,7 +535,21 @@ pub async fn exercise(
     ] {
         wamn_platform_identity::connections::allow_integration(&tx, ORG, scope, &id, "s3").await?;
     }
+    for (name, stored) in &credential_references {
+        wamn_test_infrastructure::credentials::set_reference(
+            &tx, ORG, PROJECT, "files", name, stored,
+        )
+        .await?;
+    }
     tx.commit().await?;
+    let credential_manifest = run.work.join("files-credential.json");
+    let secret = json!({"apiVersion":"v1","kind":"Secret","metadata":{"name":credential_secret,"namespace":NAMESPACE,"labels":{"wamn.org":ORG,"wamn.project":PROJECT,"wamn.env":"files"}},"stringData":credential_data});
+    std::fs::write(&credential_manifest, serde_json::to_vec(&secret)?)?;
+    run.run(
+        "kubectl",
+        &["apply", "-f", &credential_manifest.to_string_lossy()],
+    )
+    .await?;
     let suffix: String = system.query_one("SELECT instance_suffix FROM registry.project_envs WHERE org=$1 AND project=$2 AND env='files'", &[&ORG, &PROJECT]).await?.get(0);
     let mut group: Value = serde_yaml::from_slice(&std::fs::read(
         platform.host_group.as_ref().context("host group")?,

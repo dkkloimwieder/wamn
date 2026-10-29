@@ -26,6 +26,7 @@ use wamn_engine::release_manifest::{LoadedRelease, validate_component_in_release
 use wamn_engine::router_delivery::bounded_node_deadline_ms;
 use wamn_event_wire::Causation;
 use wamn_project_state::PlatformComponent;
+use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::plugins::EffectEvidence;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::connection_http::{
@@ -33,7 +34,6 @@ use wamn_runtime::plugins::connection_http::{
     InvocationEntry,
 };
 use wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore;
-use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{
     PreparedStatementMembers, PreparedStatementSet, ReleaseIdentity, SessionClaims, StatementField,
@@ -197,7 +197,7 @@ pub struct OperationHost {
     pub postgres: Arc<WamnPostgres>,
     /// Shared by every driver in this process, independently of fresh stores.
     http_transport: Arc<HttpTransport>,
-    credentials: Arc<WamnCredentials>,
+    credentials: Arc<ConnectionCredentials>,
     logging: Arc<WamnLogging>,
     allowed_hosts: Arc<[AllowedHost]>,
     pub release: Arc<LoadedRelease>,
@@ -278,7 +278,7 @@ impl OperationHost {
         engine: Arc<Engine>,
         postgres: Arc<WamnPostgres>,
         http_transport: Arc<HttpTransport>,
-        credentials: Arc<WamnCredentials>,
+        credentials: Arc<ConnectionCredentials>,
         logging: Arc<WamnLogging>,
         allowed_hosts: Arc<[AllowedHost]>,
         release: Arc<LoadedRelease>,

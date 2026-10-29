@@ -1541,7 +1541,7 @@ async fn assert_definer_grantees(client: &Client) -> anyhow::Result<()> {
             &["wamn_app"],
         ),
         (
-            "registry.lookup_connection_credential(text, text, text, bigint)",
+            "registry.read_connection_credential(text, text, text, uuid)",
             &["wamn_conn_reader"],
         ),
         (
@@ -1583,10 +1583,9 @@ async fn assert_definer_grantees(client: &Client) -> anyhow::Result<()> {
             "registry.configure_connection(text, text, jsonb)",
             CONNECTION,
         ),
-        ("registry.rotate_connection(text, text, text)", CONNECTION),
         (
-            "registry.import_connection_credentials(text, jsonb)",
-            CONNECTION,
+            "registry.retired_connection_credential(text)",
+            &["wamn_control"],
         ),
         ("registry.connection_integrations()", CONNECTION),
         (

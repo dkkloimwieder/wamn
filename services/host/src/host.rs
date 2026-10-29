@@ -49,12 +49,12 @@ use wamn_runtime::auth_cache::replicate;
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
+use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::route_authentication::{
     ControlRouteAuthenticator, EnvironmentStatusReader, PlatformRouteAuthenticator,
     RouteAuthentication, SessionRouteAuthentication,
 };
-use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_postgres::AuthorityClass;
 use wamn_runtime::plugins::{ClassCredentials, WamnJetstream, WamnLogging, WamnPostgres};
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
@@ -1232,11 +1232,11 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             let client = Arc::new(client);
             file_connection_reader = Some(Arc::clone(&client));
             (
-                WamnCredentials::from_database(client, org),
+                ConnectionCredentials::from_database(client, org),
                 Some(SupervisedIdentityConnection::new(tokio::spawn(connection))),
             )
         }
-        _ => (WamnCredentials::empty(), None),
+        _ => (ConnectionCredentials::empty(), None),
     };
     let credentials = Arc::new(credentials);
     let connectors = application.map(|release| {
@@ -1643,6 +1643,27 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let probe_state = ProbeState::default().with_liveness(Arc::clone(&liveness));
     let (stop_queue, stopping) = tokio::sync::watch::channel(false);
     let mut schedule_tasks = tokio::task::JoinSet::new();
+    if let Some(connection) = &control {
+        let client = Arc::clone(&connection.client);
+        let org = connection.org.clone();
+        let mut stopped = stopping.clone();
+        schedule_tasks.spawn(async move {
+            let mut ticks = tokio::time::interval(Duration::from_secs(60));
+            ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                tokio::select! {
+                    _ = stopped.changed() => return,
+                    _ = ticks.tick() => {},
+                }
+                tokio::select! {
+                    _ = stopped.changed() => return,
+                    result = wamn_execution_host::credential_cleanup::collect(&client, &org) => {
+                        if let Err(error) = result { tracing::warn!(%error, "credential collection failed"); }
+                    }
+                }
+            }
+        });
+    }
     // Every application host serves the enabled schedule workflows of the
     // applications its environment declares, read from `catalog.workflows` at
     // each tick (docs/architecture/execution.md#workflows).

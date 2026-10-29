@@ -471,11 +471,11 @@ pub async fn invoke(
     use wamn_engine::artifact_source::LocalComponentSource;
     use wamn_engine::operation::native_workload::NativeComponent;
     use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope};
+    use wamn_runtime::connection_credentials::ConnectionCredentials;
     use wamn_runtime::plugins::connection_http::transport::HttpTransport;
     use wamn_runtime::plugins::connection_http::{
         ConnectionExecutionClosure, InvocationEntry, WiringPosition,
     };
-    use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
     use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
@@ -505,7 +505,7 @@ pub async fn invoke(
         Arc::new(wamn_engine::build_engine(&[])?),
         postgres,
         Arc::new(HttpTransport::new()?),
-        Arc::new(WamnCredentials::empty()),
+        Arc::new(ConnectionCredentials::empty()),
         Arc::new(WamnLogging::new(&WamnLoggingConfig::default())?),
         Arc::from([]),
         release,

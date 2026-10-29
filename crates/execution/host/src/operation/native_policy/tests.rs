@@ -18,12 +18,12 @@ use wamn_catalog::{
 use wamn_engine::component_admission::component_digest;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_project_state::PlatformComponent;
+use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::connection_http::{
     ConnectionExecutionClosure, ConnectionHttp, ConnectionInvocation, ConnectionOrigin,
 };
 use wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore;
-use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 use wamn_runtime::plugins::wamn_postgres::{
     ReleaseIdentity, SessionClaims, StaticCredentialProvider, WAMN_POSTGRES_ID, WamnPostgres,
@@ -761,7 +761,7 @@ impl Fixture {
                 StaticCredentialProvider::new(HashMap::new(), None),
             )))
         });
-        let vault = Arc::new(WamnCredentials::empty());
+        let vault = Arc::new(ConnectionCredentials::empty());
         let policy = new_native_policy(
             &native,
             None,

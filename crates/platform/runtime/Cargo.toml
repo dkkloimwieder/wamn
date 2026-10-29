@@ -13,6 +13,7 @@ wasm_component_model_implements = [
 ]
 
 [dependencies]
+wamn-credential-store = { workspace = true }
 percent-encoding = { workspace = true }
 # Activation compares the native broker declarations from this library.
 wamn-control-provision = { workspace = true }

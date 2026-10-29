@@ -32,11 +32,11 @@ use crate::plugins::effect_span::{
 };
 use wamn_engine::release_manifest::LoadedRelease;
 
-use super::wamn_credentials::WamnCredentials;
 use super::wamn_postgres::{
     CandidateBindingWorld, ConnectionEffectLookup, ConnectionEffectSnapshot, ConnectionEntryLookup,
     WamnPostgres, WiringLookup,
 };
+use crate::connection_credentials::ConnectionCredentials;
 
 mod network_policy;
 pub mod transport;
@@ -193,7 +193,7 @@ impl std::fmt::Debug for ConnectionHttp {
 pub struct ConnectionHttp {
     postgres: Arc<WamnPostgres>,
     transport: Arc<HttpTransport>,
-    vault: Arc<WamnCredentials>,
+    vault: Arc<ConnectionCredentials>,
     env_key: Box<str>,
     project: Box<str>,
     allowed_hosts: Arc<[AllowedHost]>,
@@ -217,7 +217,7 @@ impl ConnectionHttp {
     pub fn new(
         postgres: Arc<WamnPostgres>,
         transport: Arc<HttpTransport>,
-        vault: Arc<WamnCredentials>,
+        vault: Arc<ConnectionCredentials>,
         env_key: impl Into<Box<str>>,
         project: impl Into<Box<str>>,
         allowed_hosts: Arc<[AllowedHost]>,
@@ -1629,7 +1629,7 @@ mod tests {
         let plugin = ConnectionHttp::new(
             Arc::new(offline_postgres()),
             Arc::new(HttpTransport::new().expect("HTTP transport")),
-            Arc::new(WamnCredentials::empty()),
+            Arc::new(ConnectionCredentials::empty()),
             "tenant-a",
             "project-a",
             Vec::<AllowedHost>::new().into(),
@@ -2396,7 +2396,7 @@ mod tests {
         ConnectionHttp::new(
             Arc::new(offline_postgres()),
             Arc::new(HttpTransport::new().expect("HTTP transport")),
-            Arc::new(WamnCredentials::empty()),
+            Arc::new(ConnectionCredentials::empty()),
             "tenant-a",
             "project-a",
             Vec::<AllowedHost>::new().into(),

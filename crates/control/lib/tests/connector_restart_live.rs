@@ -28,8 +28,8 @@ use wamn_platform_identity::{
     connections::{self, ConnectionWrite},
 };
 use wamn_runtime::{
+    connection_credentials::ConnectionCredentials,
     connectors::{ConnectorSource, Connectors, REFRESH_INTERVAL},
-    plugins::wamn_credentials::WamnCredentials,
 };
 use wash_runtime::{
     engine::{ctx::SharedCtx, workload::ResolvedWorkload},
@@ -381,7 +381,7 @@ async fn published_modbus_pins_restart_only_the_bound_connector() -> anyhow::Res
             .await
             .is_err()
     );
-    let credentials = Arc::new(WamnCredentials::from_database(
+    let credentials = Arc::new(ConnectionCredentials::from_database(
         Arc::clone(&reader_database),
         "acme",
     ));

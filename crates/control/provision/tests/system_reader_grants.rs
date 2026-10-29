@@ -478,8 +478,11 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
 
     assert_eq!(
         load_role_grants(&admin_url, WorkloadRoleFamily::ConnectionReader.acl_role()),
-        vec!["schema|registry|registry|USAGE|false".to_owned()],
-        "the connection reader holds only schema access"
+        vec![
+            "routine|registry|read_connection_credential|EXECUTE|false".to_owned(),
+            "schema|registry|registry|USAGE|false".to_owned(),
+        ],
+        "the connection reader holds only registry schema access and credential reader execution"
     );
     assert_eq!(
         reader_sqlstate(&reader_url[2].1, "SELECT id FROM registry.connection"),

@@ -176,3 +176,48 @@ fn integration_runtime_type_values_are_closed() {
          END $$;",
     );
 }
+
+#[test]
+fn credential_columns_hold_only_references_and_audit_metadata() {
+    run("DO $$ BEGIN
+      ASSERT (SELECT array_agg(attname::text ORDER BY attnum) FROM pg_attribute
+              WHERE attrelid='identity.credential'::regclass AND attnum>0 AND NOT attisdropped)
+          = ARRAY['id','connection_id','store','ref','version','hint','created_at','created_by'];
+    END $$;");
+}
+
+#[test]
+fn retired_material_ages_from_the_first_replacement() {
+    run("BEGIN;
+      INSERT INTO identity.credential(id,connection_id,store,ref,version,created_at,created_by)
+      VALUES ('00000000-0000-0000-0000-000000000043','00000000-0000-0000-0000-000000000031',
+              'file','new','new',now(),'00000000-0000-0000-0000-000000000001');
+      INSERT INTO registry.connection_generation(connection_id,generation,credential_id,created_at,created_by)
+      VALUES ('00000000-0000-0000-0000-000000000031',3,'00000000-0000-0000-0000-000000000043',
+              now()-interval '6 minutes','00000000-0000-0000-0000-000000000001'),
+             ('00000000-0000-0000-0000-000000000031',4,'00000000-0000-0000-0000-000000000043',
+              now(),'00000000-0000-0000-0000-000000000001');
+      UPDATE registry.connection SET active_generation=4 WHERE id='00000000-0000-0000-0000-000000000031';
+      COMMIT;
+      DO $$ BEGIN
+        ASSERT (SELECT count(*) FROM registry.retired_connection_credential('acme'))=1;
+        ASSERT (SELECT ref FROM registry.retired_connection_credential('acme'))='first';
+        ASSERT NOT EXISTS (SELECT FROM registry.retired_connection_credential('other'));
+      END $$;");
+}
+
+#[test]
+fn retired_material_stays_during_the_five_minute_grace() {
+    run("BEGIN;
+      INSERT INTO identity.credential(id,connection_id,store,ref,version,created_at,created_by)
+      VALUES ('00000000-0000-0000-0000-000000000043','00000000-0000-0000-0000-000000000031',
+              'file','new','new',now(),'00000000-0000-0000-0000-000000000001');
+      INSERT INTO registry.connection_generation(connection_id,generation,credential_id,created_at,created_by)
+      VALUES ('00000000-0000-0000-0000-000000000031',3,'00000000-0000-0000-0000-000000000043',
+              now()-interval '4 minutes','00000000-0000-0000-0000-000000000001');
+      UPDATE registry.connection SET active_generation=3 WHERE id='00000000-0000-0000-0000-000000000031';
+      COMMIT;
+      DO $$ BEGIN
+        ASSERT NOT EXISTS (SELECT FROM registry.retired_connection_credential('acme'));
+      END $$;");
+}

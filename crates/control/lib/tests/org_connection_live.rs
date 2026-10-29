@@ -1,6 +1,8 @@
 //! Org connections materialize into independent catalogs and resolve one host-held secret.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
+use wamn_credential_store::Store as _;
 
 use serde_json::{Value, json};
 use tokio_postgres::{Client, NoTls};
@@ -9,7 +11,7 @@ use wamn_control::environment::analyse::resolve_connections;
 use wamn_control::environment::document::EnvironmentDocument;
 use wamn_control::environment::expand::{ConnectionTarget, materialize_connections};
 use wamn_control::org_connection::ResolvedConnection;
-use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
+use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::plugins::wamn_postgres::{
     ClassCredentials, ConnectionEffectLookup, ConnectionEffectSnapshot, ConnectionEntryLookup,
     DEFAULT_PROJECT, WamnPostgres, WamnPostgresConfig,
@@ -129,7 +131,7 @@ async fn connect(url: &str) -> Client {
 async fn credential_reader(
     database: &wamn_test_postgres::Database,
     project: &str,
-) -> WamnCredentials {
+) -> ConnectionCredentials {
     let mut admin = connect(database.url()).await;
     let role = format!("c35_{}_{}", database.name(), project);
     admin
@@ -164,7 +166,7 @@ async fn credential_reader(
     let mut url = url::Url::parse(database.url()).unwrap();
     url.set_username(&role).unwrap();
     url.set_password(Some("fixture-password")).unwrap();
-    WamnCredentials::from_database(std::sync::Arc::new(connect(url.as_str()).await), "acme")
+    ConnectionCredentials::from_database(std::sync::Arc::new(connect(url.as_str()).await), "acme")
 }
 
 async fn write_connection(
@@ -486,13 +488,26 @@ async fn org_connection_materializes_once_per_environment() {
         .is_err()
     );
 
-    wamn_control::connection_configuration::import(
-        control_database.url(),
-        "acme",
-        &json!({"projects": {}, "orgs": {"acme": {"shared_erp": SECRET}}}).to_string(),
-    )
-    .await
-    .unwrap();
+    let credential_store =
+        Arc::new(wamn_test_infrastructure::credentials::LocalCredentials::create().unwrap());
+    let tx = control.transaction().await.unwrap();
+    for project in ["alpha", "beta"] {
+        let stored = credential_store
+            .put(uuid::Uuid::new_v4(), SECRET.as_bytes())
+            .await
+            .unwrap();
+        wamn_test_infrastructure::credentials::set_reference(
+            &tx,
+            "acme",
+            project,
+            "dev",
+            "shared_erp",
+            &stored,
+        )
+        .await
+        .unwrap();
+    }
+    tx.commit().await.unwrap();
     let original = binding_inputs(&control, &doc_a).await.unwrap();
     let inputs_a = resolve_connections(&doc_a, &original).unwrap();
     let inputs_b = resolve_connections(&doc_b, &original).unwrap();
@@ -525,7 +540,9 @@ async fn org_connection_materializes_once_per_environment() {
         (&database_b, &env_key_b, &targets_b),
     ] {
         let project = env_key.split("--").nth(1).unwrap();
-        let vault = credential_reader(&control_database, project).await;
+        let vault = credential_reader(&control_database, project)
+            .await
+            .with_store(credential_store.clone());
         for target in targets {
             let snapshot = selected(database.url(), env_key, target).await;
             assert_eq!(snapshot.definition, Some(declaration.definition.clone()));
@@ -642,7 +659,9 @@ async fn org_connection_materializes_once_per_environment() {
             .get(0);
         assert_eq!(source, "shared_erp");
         let project = env_key.split("--").nth(1).unwrap();
-        let vault = credential_reader(&control_database, project).await;
+        let vault = credential_reader(&control_database, project)
+            .await
+            .with_store(credential_store.clone());
         for target in targets {
             let snapshot = selected(database.url(), env_key, target).await;
             assert_eq!(
@@ -692,230 +711,6 @@ async fn binding_refuses_a_handle_from_another_org_before_connecting() {
             .to_string()
             .contains("connect to the project-environment database")
     );
-}
-
-#[tokio::test]
-async fn upgrade_import_seeds_only_bound_projects_and_scopes_atomically() {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_control_provision::test_database::system();
-    let environment_a = wamn_project_state::test_database::tenant_platform();
-    let environment_b = wamn_project_state::test_database::tenant_platform();
-    let mut system = connect(database.url()).await;
-    system.batch_execute(&format!(
-        "SET ROLE wamn_system; {} INSERT INTO registry.orgs(id,placement_type) VALUES ('acme','dedicated'); INSERT INTO registry.projects(org,id) VALUES ('acme','alpha'),('acme','beta'),('acme','unrelated')",
-        wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
-        ),
-    )).await.unwrap();
-    for project in ["alpha", "beta"] {
-        system
-            .batch_execute(
-                &wamn_control_provision::test_database::seed_org_project_env_sql(
-                    "acme", project, "dev",
-                ),
-            )
-            .await
-            .unwrap();
-    }
-    let tx = system.transaction().await.unwrap();
-    tx.batch_execute("SET LOCAL ROLE wamn_control")
-        .await
-        .unwrap();
-    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_control_provision::PlatformComponent::Provisioning,
-    ))
-    .await
-    .unwrap();
-    for (name, integration, parameters) in [
-        ("shared_erp", "http", definition("erp.example")),
-        (
-            "files",
-            "gcs",
-            json!({"provider":"gcs","container":"files","prefix":"archive/"}),
-        ),
-        ("unused", "http", definition("unused.example")),
-    ] {
-        wamn_platform_identity::connections::write_connection(
-            &tx,
-            "acme",
-            &wamn_platform_identity::connections::ConnectionWrite {
-                integration: integration.into(),
-                external_system: None,
-                name: name.into(),
-                transport: "http".into(),
-                exchange: "request".into(),
-                parameters,
-                status: "active".into(),
-            },
-            &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
-        )
-        .await
-        .unwrap();
-    }
-    tx.commit().await.unwrap();
-    let directory = std::env::temp_dir().join(format!("wamn-c35-upgrade-{}", std::process::id()));
-    std::fs::create_dir_all(&directory).unwrap();
-    for (environment, project, name, integration, requirement_type, parameters) in [
-        (
-            &environment_a,
-            "alpha",
-            "shared_erp",
-            "http",
-            RequirementType::Http,
-            definition("erp.example"),
-        ),
-        (
-            &environment_b,
-            "beta",
-            "files",
-            "gcs",
-            RequirementType::Blobstore,
-            json!({"provider":"gcs","container":"files","prefix":"archive/"}),
-        ),
-    ] {
-        let target = connect(environment.url()).await;
-        target
-            .batch_execute("CREATE SCHEMA IF NOT EXISTS wamn_run")
-            .await
-            .unwrap();
-        target
-            .batch_execute(
-                &wamn_control_provision::sql::grant_administration_surface_sql("wamn_run"),
-            )
-            .await
-            .unwrap();
-        let env_key = wamn_control_provision::project_env_key("acme", project, "dev");
-        let mut targets = seed_typed(&target, &env_key, requirement_type).await;
-        if integration == "gcs" {
-            for binding in &mut targets {
-                binding.mode = wamn_schema_generator::ConnectionMode::Write;
-            }
-        }
-        let inputs = [(
-            "erp/erp".into(),
-            ResolvedConnection {
-                requirement_type,
-                definition: parameters,
-                credential_handle: (integration == "http").then(|| "org:acme:shared_erp@1".into()),
-                org_connection_name: Some(name.into()),
-            },
-        )]
-        .into();
-        materialize_connections(environment.url(), &document(project), &inputs, &targets)
-            .await
-            .unwrap();
-        std::fs::write(
-            directory.join(wamn_control_provision::control_administration_key(
-                project, "dev",
-            )),
-            environment.url(),
-        )
-        .unwrap();
-    }
-    let a = connect(environment_a.url()).await;
-    a.batch_execute(
-        "UPDATE catalog.connection_instances SET org_connection_name='missing',revision=revision+1",
-    )
-    .await
-    .unwrap();
-    let credentials = json!({"orgs":{"acme":{"shared_erp":SECRET}},"projects":{}}).to_string();
-    assert!(
-        wamn_control::connection_configuration::import_with_bindings(
-            database.url(),
-            "acme",
-            &credentials,
-            &directory
-        )
-        .await
-        .is_err()
-    );
-    assert!(
-        system
-            .query("SELECT FROM registry.project_connection", &[])
-            .await
-            .unwrap()
-            .is_empty(),
-        "a missing source rolls back the entire import"
-    );
-    assert!(
-        system
-            .query("SELECT FROM registry.integration_allow", &[])
-            .await
-            .unwrap()
-            .is_empty()
-    );
-    a.batch_execute("UPDATE catalog.connection_instances SET org_connection_name='shared_erp',revision=revision+1").await.unwrap();
-    wamn_control::connection_configuration::import_with_bindings(
-        database.url(),
-        "acme",
-        &credentials,
-        &directory,
-    )
-    .await
-    .unwrap();
-    let enabled: Vec<(String,String)> = system.query("SELECT p.project,c.name FROM registry.project_connection p JOIN registry.connection c ON c.id=p.connection_id ORDER BY 1,2",&[]).await.unwrap().into_iter().map(|row|(row.get(0),row.get(1))).collect();
-    assert_eq!(
-        enabled,
-        [
-            ("alpha".into(), "shared_erp".into()),
-            ("beta".into(), "files".into())
-        ]
-    );
-    let scopes: Vec<(String, String, String)> = system
-        .query(
-            "SELECT scope_type,scope_id,integration FROM registry.integration_allow ORDER BY 1,2,3",
-            &[],
-        )
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|row| (row.get(0), row.get(1), row.get(2)))
-        .collect();
-    assert_eq!(
-        scopes,
-        vec![
-            ("environment".into(), "alpha/dev".into(), "http".into()),
-            ("environment".into(), "beta/dev".into(), "gcs".into()),
-            ("org".into(), "acme".into(), "gcs".into()),
-            ("org".into(), "acme".into(), "http".into()),
-            ("project".into(), "alpha".into(), "http".into()),
-            ("project".into(), "beta".into(), "gcs".into()),
-        ]
-    );
-    let before: Vec<String> = system
-        .query(
-            "SELECT xmin::text FROM registry.project_connection ORDER BY project",
-            &[],
-        )
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|row| row.get(0))
-        .collect();
-    assert!(
-        wamn_control::connection_configuration::import_with_bindings(
-            database.url(),
-            "acme",
-            &credentials,
-            &directory
-        )
-        .await
-        .unwrap_err()
-        .to_string()
-        .starts_with("already_imported")
-    );
-    let after: Vec<String> = system
-        .query(
-            "SELECT xmin::text FROM registry.project_connection ORDER BY project",
-            &[],
-        )
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|row| row.get(0))
-        .collect();
-    assert_eq!(after, before, "replayed import writes no rows");
-    std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[tokio::test]

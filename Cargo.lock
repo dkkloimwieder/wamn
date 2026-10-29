@@ -5787,6 +5787,7 @@ dependencies = [
  "wamn-component-composer",
  "wamn-control-provision",
  "wamn-control-registry",
+ "wamn-credential-store",
  "wamn-engine",
  "wamn-event-reg",
  "wamn-event-wire",
@@ -5846,6 +5847,21 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "wamn-credential-store"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "http",
+ "libc",
+ "reqwest",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -6028,6 +6044,7 @@ dependencies = [
  "wamn-control",
  "wamn-control-provision",
  "wamn-control-registry",
+ "wamn-credential-store",
  "wamn-engine",
  "wamn-event-wire",
  "wamn-execution-contract",
@@ -6233,6 +6250,7 @@ dependencies = [
  "wamn-control",
  "wamn-control-provision",
  "wamn-control-registry",
+ "wamn-credential-store",
  "wamn-engine",
  "wamn-event-reg",
  "wamn-event-wire",
@@ -6478,6 +6496,7 @@ dependencies = [
  "wamn-catalog",
  "wamn-control-provision",
  "wamn-control-registry",
+ "wamn-credential-store",
  "wamn-engine",
  "wamn-event-wire",
  "wamn-execution-contract",
@@ -6635,6 +6654,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-nats",
+ "async-trait",
  "base64 0.22.1",
  "hex",
  "reqwest",
@@ -6646,11 +6666,13 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "url",
+ "uuid",
  "wamn-authoring-model",
  "wamn-catalog",
  "wamn-control",
  "wamn-control-provision",
  "wamn-control-registry",
+ "wamn-credential-store",
  "wamn-event-wire",
  "wamn-platform-identity",
  "wamn-schema-generator",

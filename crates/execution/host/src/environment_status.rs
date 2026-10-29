@@ -2,13 +2,14 @@
 //! (docs/architecture/execution.md#host-run-routes).
 //!
 //! The current state of one environment, read with the control host's
-//! read-only ServiceAccount from the release namespace `hosts`: the digest of
+//! ServiceAccount from the release namespace `hosts`: the digest of
 //! the host Deployment's pod template, its rollout, the conditions of the
 //! release's WorkloadDeployments and the live set. The reader is
 //! [`wamn_control_provision::environment_state`], the one `wamn-ctl env
-//! status` uses. No Secret, no Helm revision, no history; the role in
+//! status` uses. No Helm revision or history; the role in
 //! `deploy/platform/control-status-rbac.yaml` grants only get, list and watch
-//! on pods, deployments and workloaddeployments.
+//! on pods, deployments and workloaddeployments. Credential access grants
+//! create, get and update on Secrets.
 //! The local source reads the development loop's selected host over NATS.
 //! The serving mode selects one source through [`StatusSource`].
 
@@ -16,14 +17,13 @@ use std::path::PathBuf;
 use std::time::Duration;
 use wash_runtime::washlet::{rpc_subject, types::v2};
 
-use anyhow::{Context as _, ensure};
+use anyhow::Context as _;
 use serde_json::{Value, json};
 use wamn_control_provision::environment_state::{
     DeploymentStatus, EnvironmentState, environment_state, observe, release_name,
 };
+use wamn_credential_store::kubernetes_api::KubernetesApi;
 
-/// The mounted token, CA and namespace of the pod's ServiceAccount.
-const SERVICE_ACCOUNT: &str = "/var/run/secrets/kubernetes.io/serviceaccount";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The status reader selected by the control host's serving mode.
@@ -179,74 +179,6 @@ fn status_value(state: &EnvironmentState) -> Value {
     })
 }
 
-/// The Kubernetes API of the pod's cluster, with the pod's ServiceAccount.
-struct KubernetesApi {
-    http: reqwest::Client,
-    base: String,
-    token: String,
-    /// The pod's own namespace, the release namespace of every environment.
-    namespace: String,
-}
-
-impl KubernetesApi {
-    /// The API server from the pod's environment, and the token and CA its
-    /// ServiceAccount mounts. The token is read for each status read, so a
-    /// rotated token is used.
-    fn in_cluster() -> anyhow::Result<Self> {
-        let host = std::env::var("KUBERNETES_SERVICE_HOST")
-            .context("the control host does not run in a Kubernetes pod")?;
-        let port = std::env::var("KUBERNETES_SERVICE_PORT").unwrap_or_else(|_| "443".to_owned());
-        let host = if host.contains(':') {
-            format!("[{host}]")
-        } else {
-            host
-        };
-        let token = std::fs::read_to_string(format!("{SERVICE_ACCOUNT}/token"))
-            .context("read the ServiceAccount token")?;
-        let namespace = std::fs::read_to_string(format!("{SERVICE_ACCOUNT}/namespace"))
-            .context("read the ServiceAccount namespace")?;
-        let ca = std::fs::read(format!("{SERVICE_ACCOUNT}/ca.crt"))
-            .context("read the ServiceAccount CA")?;
-        let roots =
-            reqwest::Certificate::from_pem_bundle(&ca).context("decode the ServiceAccount CA")?;
-        ensure!(!roots.is_empty(), "the ServiceAccount CA is empty");
-        let http = reqwest::Client::builder()
-            .tls_backend_rustls()
-            .tls_certs_only(roots)
-            .https_only(true)
-            .redirect(reqwest::redirect::Policy::none())
-            .retry(reqwest::retry::never())
-            .timeout(REQUEST_TIMEOUT)
-            .build()
-            .context("build the Kubernetes API client")?;
-        Ok(Self {
-            http,
-            base: format!("https://{host}:{port}"),
-            token: token.trim().to_owned(),
-            namespace: namespace.trim().to_owned(),
-        })
-    }
-
-    /// One GET of an API path, decoded.
-    async fn get(&self, path: String) -> anyhow::Result<Value> {
-        let response = self
-            .http
-            .get(format!("{}{path}", self.base))
-            .bearer_auth(&self.token)
-            .header(reqwest::header::ACCEPT, "application/json")
-            .send()
-            .await
-            .with_context(|| format!("GET {path}"))?;
-        let status = response.status();
-        ensure!(status.is_success(), "GET {path} answered {status}");
-        let body = response
-            .bytes()
-            .await
-            .with_context(|| format!("read GET {path}"))?;
-        serde_json::from_slice(&body).with_context(|| format!("decode GET {path}"))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,12 +283,11 @@ mod tests {
         );
     }
 
-    /// The role grants get, list and watch on pods, deployments and
-    /// workloaddeployments in the namespace it is applied to, and nothing
-    /// else, to the control host's ServiceAccount. No object states a
-    /// namespace: the install applies it with `-n <release namespace>`.
+    /// The control account reads runtime status and writes credential Secrets.
+    /// The install applies these grants with `-n <release namespace>`.
+
     #[test]
-    fn the_status_role_reads_only_the_three_resources_in_the_release_namespace() {
+    fn the_control_role_limits_status_reads_and_credential_writes_to_the_release_namespace() {
         let manifest = include_str!("../../../../deploy/platform/control-status-rbac.yaml");
         let documents: Vec<Value> = serde_yaml::Deserializer::from_str(manifest)
             .map(|document| {
@@ -375,6 +306,7 @@ mod tests {
                 {"apiGroups": [""], "resources": ["pods"], "verbs": verbs},
                 {"apiGroups": ["apps"], "resources": ["deployments"], "verbs": verbs},
                 {"apiGroups": ["runtime.wasmcloud.dev"], "resources": ["workloaddeployments"], "verbs": verbs},
+                {"apiGroups": [""], "resources": ["secrets"], "verbs": ["create", "get", "update"]},
             ])
         );
         let binding = documents

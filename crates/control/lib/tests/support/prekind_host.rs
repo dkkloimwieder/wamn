@@ -2,6 +2,7 @@
 
 use std::net::TcpListener;
 use std::process::Stdio;
+use wamn_credential_store::Store as _;
 
 use super::*;
 use futures_util::StreamExt as _;
@@ -481,7 +482,19 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
             .await?;
     }
     tx.commit().await?;
-    wamn_control::connection_configuration::import(control.url(), ORG, &json!({"orgs": {}, "projects": {PROJECT: {"upstream": {"connection": "upstream", "secret": json!({"headers":{"authorization":"Bearer fixture-token"}}).to_string()}}}}).to_string()).await?;
+    let credential_store = wamn_test_infrastructure::credentials::LocalCredentials::create()?;
+    let stored = credential_store
+        .put(
+            uuid::Uuid::new_v4(),
+            br#"{"headers":{"authorization":"Bearer fixture-token"}}"#,
+        )
+        .await?;
+    let tx = seed.transaction().await?;
+    wamn_test_infrastructure::credentials::set_reference(
+        &tx, ORG, PROJECT, "http", "upstream", &stored,
+    )
+    .await?;
+    tx.commit().await?;
 
     let scheduler_address = address()?;
     let scheduler = format!("nats://{scheduler_address}");
@@ -775,6 +788,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     let mut host = host_command(
         &documents, &secrets, directory, &scheduler, &http, &probe, &files,
     )?
+    .env("WAMN_CREDENTIAL_DIR", credential_store.directory())
     .spawn()?;
     let result = async {
         tokio::time::timeout(Duration::from_secs(120), async {

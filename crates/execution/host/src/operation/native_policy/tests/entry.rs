@@ -12,11 +12,11 @@ use wamn_engine::component_admission::component_digest;
 use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation, node_types};
 use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope};
 use wamn_project_state::PlatformComponent;
+use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::connection_http::{
     ConnectionExecutionClosure, InvocationEntry, WiringPosition,
 };
-use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 use wamn_runtime::plugins::wamn_postgres::{StaticCredentialProvider, WamnPostgres};
 use wamn_test_infrastructure::scratch::ScratchRoot;
@@ -190,7 +190,7 @@ fn release(with_entry: bool, postgres: Option<Arc<WamnPostgres>>) -> Release {
         Arc::new(wamn_engine::build_engine(&[]).expect("production native engine")),
         postgres,
         Arc::new(HttpTransport::new().expect("HTTP transport")),
-        Arc::new(WamnCredentials::empty()),
+        Arc::new(ConnectionCredentials::empty()),
         Arc::new(WamnLogging::new(&WamnLoggingConfig::default()).expect("logging plugin")),
         Arc::from([]),
         release,

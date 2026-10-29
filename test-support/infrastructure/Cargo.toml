@@ -13,6 +13,9 @@ name = "wamn-test-postgres"
 path = "postgres-run.rs"
 
 [dependencies]
+wamn-credential-store = { workspace = true }
+async-trait = { workspace = true }
+uuid = { workspace = true, features = ["v4"] }
 anyhow = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream", "server_2_10"] }
 base64 = { workspace = true }

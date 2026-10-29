@@ -11,7 +11,7 @@ use wamn_engine::connector::{Connector, ConnectorBinding, ConnectorReader};
 use wamn_package_artifact::registry_credentials::RegistryCredentialSource;
 use wamn_package_artifact::{PackageRegistry, Repository};
 
-use crate::plugins::wamn_credentials::WamnCredentials;
+use crate::connection_credentials::ConnectionCredentials;
 
 /// Poll bindings every two seconds when no binding-change signal is available.
 pub const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
@@ -199,7 +199,7 @@ impl Connectors {
 /// Host-owned inputs. Debug output omits credentials and connection material.
 pub struct ConnectorSource {
     pub database: Arc<tokio_postgres::Client>,
-    pub credentials: Arc<WamnCredentials>,
+    pub credentials: Arc<ConnectionCredentials>,
     pub registry: PackageRegistry,
     pub registry_credentials: RegistryCredentialSource,
     pub org: String,

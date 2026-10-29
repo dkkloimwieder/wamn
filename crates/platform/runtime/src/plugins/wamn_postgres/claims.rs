@@ -1936,7 +1936,7 @@ impl WamnPostgres {
     /// Share the host reader with local binding readiness and dispatch.
     pub(crate) fn set_connection_credentials(
         &self,
-        credentials: Arc<crate::plugins::wamn_credentials::WamnCredentials>,
+        credentials: Arc<crate::connection_credentials::ConnectionCredentials>,
         project: &str,
     ) {
         if let Some(local) = &self.local_application {
@@ -2212,32 +2212,6 @@ impl WamnPostgres {
             .keep_grants(env_key, principal.as_str(), ticket, grants.clone())
             .await;
         Ok(grants)
-    }
-
-    /// Resolve the projected name of a connection principal from its identity subject.
-    pub async fn connection_principal_name(
-        &self,
-        project: &str,
-        subject: &str,
-    ) -> anyhow::Result<Option<String>> {
-        let Some(id) = subject.strip_prefix("connection-") else {
-            return Ok(None);
-        };
-        let id = id
-            .parse::<uuid::Uuid>()
-            .context("invalid connection principal subject")?
-            .to_string();
-        let (client, _) = self
-            .checkout_platform(project, AuthorityClass::CallableHttp)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        Ok(client
-            .query_opt(
-                "SELECT name FROM platform.connection WHERE id=$1::text::uuid",
-                &[&id],
-            )
-            .await?
-            .map(|row| row.get(0)))
     }
 
     /// The application roles and stored permissions a caller holds, read by a

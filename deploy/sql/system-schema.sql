@@ -1178,3 +1178,57 @@ DO $control_surface$ BEGIN
     REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; REVOKE ALL PRIVILEGES ON SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; GRANT USAGE ON SCHEMA "identity", "registry" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_roles" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."password_logins" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."principals" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_env_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_roles" TO "wamn_control"; GRANT SELECT ON TABLE "registry"."project_envs" TO "wamn_control"; GRANT SELECT, INSERT ON TABLE "registry"."projects" TO "wamn_control"; GRANT UPDATE ("status") ON TABLE "registry"."project_envs" TO "wamn_control"; DO $connection_acl$ BEGIN IF to_regprocedure('registry.publish_integration(text,integer,text,jsonb,text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.publish_integration(text,integer,text,jsonb,text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.configure_connection(text,text,jsonb)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.configure_connection(text,text,jsonb) TO "wamn_control"; END IF; END $connection_acl$;
   END IF;
 END $control_surface$;
+
+-- Session identity fixes the environment. Caller claims never supply authority.
+CREATE FUNCTION registry.read_connection_credential(org_id text, project_id text, connection_name text, requested_connection uuid DEFAULT NULL)
+RETURNS TABLE(store text, ref text, version text, principal_id text, external_system text)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
+#variable_conflict use_variable
+BEGIN
+ RETURN QUERY
+ SELECT k.store, k.ref, k.version, c.service_principal_id::text, i.external_system_id::text
+ FROM wamn_authority.author_login_tenants login
+ JOIN registry.connection c ON (c.org,c.project,c.env) = (login.org_id,login.project_id,login.environment)
+ JOIN registry.integration i ON i.id = c.integration_id AND i.status = 'active'
+ JOIN identity.principals p ON p.id = c.service_principal_id AND p.status = 'active'
+ JOIN registry.connection_generation g ON g.connection_id = c.id AND g.generation = c.active_generation
+ LEFT JOIN identity.credential k ON k.id = g.credential_id AND k.connection_id = c.id
+ WHERE login.login_identity = session_user AND login.org_id = org_id AND login.project_id = project_id
+   AND ((requested_connection IS NULL AND i.name = connection_name)
+        OR (connection_name IS NULL AND c.id = requested_connection)) AND c.status = 'active';
+END $$;
+ALTER FUNCTION registry.read_connection_credential(text,text,text,uuid) OWNER TO wamn_system;
+REVOKE ALL ON FUNCTION registry.read_connection_credential(text,text,text,uuid) FROM PUBLIC;
+DO $$ BEGIN
+ IF to_regrole('wamn_conn_reader') IS NOT NULL THEN
+   GRANT EXECUTE ON FUNCTION registry.read_connection_credential(text,text,text,uuid) TO wamn_conn_reader;
+ END IF;
+END $$;
+
+CREATE FUNCTION registry.retired_connection_credential(org_id text)
+RETURNS TABLE(store text, ref text, version text)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
+ SELECT k.store,k.ref,k.version
+ FROM identity.credential k
+ JOIN registry.connection c ON c.id=k.connection_id
+ JOIN registry.connection_generation active ON active.connection_id=c.id AND active.generation=c.active_generation
+ JOIN LATERAL (
+   SELECT max(g.generation) AS generation FROM registry.connection_generation g
+   WHERE g.connection_id=c.id AND g.credential_id=k.id
+ ) last_use ON true
+ JOIN LATERAL (
+   SELECT g.created_at FROM registry.connection_generation g
+   WHERE g.connection_id=c.id AND g.generation>last_use.generation
+   ORDER BY g.generation LIMIT 1
+ ) successor ON true
+ WHERE c.org=org_id AND active.credential_id IS DISTINCT FROM k.id
+   AND successor.created_at < now() - interval '5 minutes'
+$$;
+ALTER FUNCTION registry.retired_connection_credential(text) OWNER TO wamn_system;
+REVOKE ALL ON FUNCTION registry.retired_connection_credential(text) FROM PUBLIC;
+
+DO $$ BEGIN
+ IF to_regrole('wamn_control') IS NOT NULL THEN
+   GRANT EXECUTE ON FUNCTION registry.retired_connection_credential(text) TO wamn_control;
+ END IF;
+END $$;

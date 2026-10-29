@@ -41,8 +41,8 @@ use wamn_engine::engine::build_engine;
 use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope};
 use wamn_execution_host::{OperationHost, OperationScope};
 use wamn_project_state::{PlatformComponent, workflow_user_id};
+use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
-use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
 use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 use wamn_runtime::plugins::wamn_postgres::{
@@ -563,7 +563,7 @@ impl Fixture {
                 Arc::clone(&self.engine),
                 Arc::clone(&self.postgres),
                 Arc::new(HttpTransport::new().unwrap()),
-                Arc::new(WamnCredentials::empty()),
+                Arc::new(ConnectionCredentials::empty()),
                 Arc::clone(&self.logging),
                 Arc::from([]),
                 Arc::clone(&self.release),

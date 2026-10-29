@@ -47,8 +47,8 @@ use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers, OperationHost, O
 use wamn_platform_identity::PrincipalId;
 use wamn_platform_identity::auth_changes::AuthChanges;
 use wamn_project_state::PlatformComponent;
+use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
-use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_jetstream::WamnJetstream;
 use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 use wamn_runtime::plugins::wamn_postgres::{
@@ -514,7 +514,7 @@ impl Fixture {
                 Arc::clone(&self.engine),
                 Arc::clone(&self.postgres),
                 Arc::new(HttpTransport::new().unwrap()),
-                Arc::new(WamnCredentials::empty()),
+                Arc::new(ConnectionCredentials::empty()),
                 Arc::clone(&self.logging),
                 Arc::from([]),
                 Arc::clone(release),

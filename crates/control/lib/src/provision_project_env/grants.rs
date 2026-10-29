@@ -961,21 +961,7 @@ fn verify_connection_reader_grants(
         (
             "routine",
             "registry",
-            "lookup_connection_binding_mode",
-            "EXECUTE",
-        ),
-        (
-            "routine",
-            "registry",
-            "lookup_connection_credential",
-            "EXECUTE",
-        ),
-        ("routine", "registry", "lookup_file_connection", "EXECUTE"),
-        ("routine", "registry", "lookup_file_generations", "EXECUTE"),
-        (
-            "routine",
-            "registry",
-            "lookup_connector_bindings",
+            "read_connection_credential",
             "EXECUTE",
         ),
     ]);
