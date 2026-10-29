@@ -145,7 +145,7 @@ function SessionPackaging(props: { userId: string; signedIn: boolean; onRenew: (
 
 function App() {
   const [state, setState] = createSignal<SessionState>();
-  const [userId, setUserId] = createSignal<string | undefined>(lastUser.load());
+  const [userId, setUserId] = createSignal<string | undefined>(lastUser.load()?.userId);
   const [error, setError] = createSignal("");
   const signedIn = (id: string) => {
     const current = state();
@@ -158,7 +158,7 @@ function App() {
     onState: (next: SessionState) => {
       setState(next);
       if (next.status === "signedIn") {
-        lastUser.save(next.userId);
+        lastUser.save({ userId: next.userId, expiresAt: next.expiresAt, loginExpiresAt: next.loginExpiresAt });
         setUserId(next.userId);
       }
     },

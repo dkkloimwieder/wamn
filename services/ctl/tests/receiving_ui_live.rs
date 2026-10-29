@@ -55,6 +55,22 @@ async fn local_receiving_sync() -> anyhow::Result<()> {
     .await
 }
 
+/// The five offline profile checks of the open receipt lines screen: a session
+/// reopen after and before the login expires, expired entries, sign-out
+/// clearing, and a local_first reopen.
+#[tokio::test]
+#[ignore = "requires: delivery_timings fixture, built native binaries, platform UI, flow-http, materializer, Chrome"]
+async fn local_receiving_offline() -> anyhow::Result<()> {
+    drive(Browser {
+        name: "local_receiving_offline",
+        script: "apps/wamn_receiving/web/test/offline-browser.mjs",
+        environment: "receiving-offline-env",
+        screenshots: "receiving-offline-screenshots",
+        passed: "PASS: Receiving offline profile checks",
+    })
+    .await
+}
+
 /// One browser script against the seeded local Receiving release.
 struct Browser {
     name: &'static str,

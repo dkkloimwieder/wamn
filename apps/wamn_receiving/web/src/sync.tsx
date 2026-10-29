@@ -21,6 +21,7 @@ import {
 } from "@wfe/sync";
 import {
   createSend,
+  durationMs,
   occurredAt,
   outboxDatabase,
   renew,
@@ -29,7 +30,7 @@ import {
   rowsPersistence,
   type Transport,
 } from "@wamn/web-runtime";
-import { Page, useSession, type ScreenProps } from "@wamn/platform-ui";
+import { Page, useSession, type ScreenProps, type Session } from "@wamn/platform-ui";
 import { NotUploaded, SyncStatusLine } from "../../../../web/shell/src/sync.js";
 import { LOCATION_LIST_ROUTE } from "./generated/wamn_receiving/location.js";
 import * as receiving from "./generated/wamn_receiving/receiving.js";
@@ -71,8 +72,9 @@ interface Store {
 
 let current: Store | undefined;
 
-/** The store of the signed-in user. A different user closes the old user's outbox. */
-function storeFor(userId: string, transport: Transport): Store {
+/** The store of the signed-in user. A different user or a sign-out closes the old user's outbox. */
+function storeFor(session: Session, transport: Transport): Store {
+  const userId = session.userId;
   if (current?.userId === userId) return current;
   current?.outbox.close();
   const address = receivingAddress(location.pathname);
@@ -90,6 +92,7 @@ function storeFor(userId: string, transport: Transport): Store {
     database: outboxDatabase(address.application, address.environment, userId),
     send,
     probe: async () => (await transport.probe?.()) ?? navigator.onLine,
+    ...(session.settings.pendingMaxAge === undefined ? {} : { maxAge: durationMs(session.settings.pendingMaxAge) }),
   });
   const [locations, setLocations] = createSignal<readonly RecordValue[]>();
   void invoke<Rows>(transport, LOCATION_LIST_ROUTE, {}).then(
@@ -104,6 +107,12 @@ function storeFor(userId: string, transport: Transport): Store {
     ]),
     locations,
   };
+  const store = current;
+  // Sign-out deletes the outbox database, which waits until this connection closes.
+  session.onSignOut(() => {
+    store.outbox.close();
+    if (current === store) current = undefined;
+  });
   void o.replay().catch(() => undefined);
   return current;
 }
@@ -165,7 +174,7 @@ export function SyncReceipts(props: {
 }) {
   const session = useSession();
   if (session === undefined) throw new Error("a sync screen needs a signed-in shell");
-  const store = storeFor(session.userId, props.screen.transport);
+  const store = storeFor(session, props.screen.transport);
   const options = { persistence: store.persistence };
   const c: SyncCollection<Line> =
     props.purchaseOrderId === undefined

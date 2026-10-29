@@ -14,9 +14,15 @@ import {
 } from "./generated/wamn_control_org/index.js";
 import {
   createTransport,
+  deleteDatabase,
   keepSession,
+  offlineSettings,
+  opensOffline,
+  outboxDatabase,
+  rowsDatabase,
   savedUser,
   savedView,
+  type OfflineSettings,
   type SavedView,
   type SessionOptions,
   type SessionState,
@@ -40,6 +46,10 @@ export interface Session {
   readonly userId: string;
   /** True while the shell shows the saved user, before renewal succeeds. */
   readonly offline: () => boolean;
+  /** The offline profile settings saved with the user, or the `session` defaults. */
+  readonly settings: OfflineSettings;
+  /** Run before sign-out clears the user's saved rows and outbox, for example to close the outbox. */
+  readonly onSignOut: (run: () => void) => void;
 }
 
 const SessionContext = createContext<Session | null>(null);
@@ -222,7 +232,19 @@ export function Shell(props: ShellProps): JSX.Element {
 /** The saved user and view of an application environment. The control audience saves none. */
 function saved(aud: string) {
   const match = /^urn:wamn:project-env:[^:]+:([^:]+):([^:]+):[^:]+$/.exec(aud);
-  return match ? { user: savedUser(match[1]!, match[2]!), view: savedView(match[1]!, match[2]!) } : undefined;
+  if (!match) return undefined;
+  const application = match[1]!;
+  const environment = match[2]!;
+  return {
+    user: savedUser(application, environment),
+    view: savedView(application, environment),
+    /** Delete the user's saved rows and outbox. */
+    clear: (userId: string) =>
+      Promise.all([
+        deleteDatabase(outboxDatabase(application, environment, userId)),
+        deleteDatabase(rowsDatabase(application, environment, userId)),
+      ]),
+  };
 }
 
 function Session(
@@ -247,6 +269,10 @@ function Session(
   let active = true;
   let generation = 0;
   let signedIn = false;
+  // Under the session profile an offline reopen ends when the saved login expires.
+  let loginEnds: ReturnType<typeof setTimeout> | undefined;
+  const signOutRuns = new Set<() => void>();
+  const settings = () => offlineSettings(store?.user.load());
   function show(shown: View): void {
     setView(shown);
     const first = shown.sections[0]?.screens[0];
@@ -284,21 +310,39 @@ function Session(
     aud: props.aud,
     onState: (next) => {
       setState(next);
+      clearTimeout(loginEnds);
       if (next.status === "unreachable") {
-        const id = store?.user.load();
-        const shown = id === undefined ? undefined : savedViewOf(id);
-        if (id !== undefined && shown !== undefined) {
-          setOfflineUser(id);
+        const user = store?.user.load();
+        const shown = user === undefined ? undefined : savedViewOf(user.userId);
+        if (user !== undefined && shown !== undefined && opensOffline(user, Date.now())) {
+          setOfflineUser(user.userId);
           show(shown);
+          if (offlineSettings(user).profile === "session") {
+            // After the saved login expires, the shell shows the sign-in form.
+            loginEnds = setTimeout(
+              () => {
+                if (state()?.status !== "signedIn") setOfflineUser(undefined);
+              },
+              Math.min(user.loginExpiresAt * 1000 - Date.now(), 2_147_483_647),
+            );
+          }
         }
       } else if (next.status !== "signedIn") {
         signedIn = false;
         generation += 1;
         setOfflineUser(undefined);
         setView(undefined);
-      } else if (!signedIn) {
+      } else {
+        // The settings saved with the same user stay until a settings read replaces them (wamn-yaiqo).
+        const before = store?.user.load();
+        store?.user.save({
+          userId: next.userId,
+          expiresAt: next.expiresAt,
+          loginExpiresAt: next.loginExpiresAt,
+          ...(before?.userId === next.userId && before.settings !== undefined ? { settings: before.settings } : {}),
+        });
+        if (signedIn) return;
         signedIn = true;
-        store?.user.save(next.userId);
         setOfflineUser(undefined);
         const current = ++generation;
         setTrouble(undefined);
@@ -313,9 +357,26 @@ function Session(
       }
     },
   });
+  /**
+   * Sign out. Under the session profile the saved user goes too. With
+   * `clear_on_sign_out`, the user's saved rows and outbox go as well.
+   */
+  async function signOut(): Promise<void> {
+    const id = userId();
+    const current = settings();
+    for (const run of signOutRuns) run();
+    signOutRuns.clear();
+    try {
+      await keeper.signOut();
+    } finally {
+      if (current.profile === "session") store?.user.clear();
+      if (id !== undefined && current.clearOnSignOut) await store?.clear(id);
+    }
+  }
   void Layout.preload();
   onCleanup(() => {
     active = false;
+    clearTimeout(loginEnds);
     keeper.stop();
   });
   return (
@@ -347,7 +408,14 @@ function Session(
           // A different user mounts the screens again, so no screen keeps the old user's state.
           <Show when={userId()} keyed>
             {(id) => (
-              <SessionContext value={{ userId: id, offline: () => state()?.status !== "signedIn" }}>
+              <SessionContext
+                value={{
+                  userId: id,
+                  offline: () => state()?.status !== "signedIn",
+                  settings: settings(),
+                  onSignOut: (run) => void signOutRuns.add(run),
+                }}
+              >
                 <NotFoundBoundary home={`/${props.aud}`} path={props.address.url().pathname}>
                   <Layout
                     title={props.kind === "control" ? props.org : props.title}
@@ -357,7 +425,7 @@ function Session(
                     controlMine={shown().controlMine}
                     transport={transport}
                     address={props.address}
-                    signOut={() => keeper.signOut()}
+                    signOut={signOut}
                     routes={sections}
                   />
                 </NotFoundBoundary>

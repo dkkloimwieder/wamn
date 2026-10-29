@@ -14,7 +14,12 @@ import { addDecimal, receiptCall, receivedLine, SyncReceipts } from "../src/sync
 
 vi.mock("@wamn/platform-ui", async (original) => ({
   ...(await original()),
-  useSession: () => ({ userId: `user-${userCount}`, offline: () => false }),
+  useSession: () => ({
+    userId: `user-${userCount}`,
+    offline: () => false,
+    settings: { profile: "session", pendingMaxAge: "PT1H", clearOnSignOut: true },
+    onSignOut: () => undefined,
+  }),
 }));
 
 let userCount = 0;

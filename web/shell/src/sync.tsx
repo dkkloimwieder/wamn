@@ -31,13 +31,18 @@ export function SyncStatusLine(props: {
       <Show when={props.offline}>Offline, sign in to upload. </Show>
       <Show when={props.signedIn === false}>Sign in to upload. </Show>
       Status: <output data-sync-status={props.status}>{props.status}</output>. Pending:{" "}
-      {counts().pending + counts().sending}. Refused: {counts().refused}. Last sent: {counts().lastSentAt ?? "never"}.
-      Current as of: {props.currentAt ?? "not yet read"}. {shellStatus(props.shellResult)}
+      {counts().pending + counts().sending}. Refused: {counts().refused}. Expired: {counts().expired}. Last sent:{" "}
+      {counts().lastSentAt ?? "never"}. Current as of: {props.currentAt ?? "not yet read"}.{" "}
+      {shellStatus(props.shellResult)}
     </p>
   );
 }
 
-/** Every refused entry of the outbox, with its stored request and a corrected one to resubmit. */
+/**
+ * Every refused and expired entry of the outbox. A refused entry shows its
+ * stored request and a corrected one to resubmit. An expired entry shows when
+ * it was recorded, and resubmits as it is with a fresh age.
+ */
 export function NotUploaded(props: {
   outbox: Outbox;
   /** The current row of the entry's record, or undefined when the screen holds none. */
@@ -48,22 +53,68 @@ export function NotUploaded(props: {
   const counts = outboxStatus(props.outbox);
   const entries = createMemo(() => {
     counts();
-    return props.outbox.entries().filter((entry) => entry.state === "refused");
+    return props.outbox.entries().filter((entry) => entry.state === "refused" || entry.state === "expired");
   });
   return (
     <section aria-label="Not uploaded">
       <h2>Not uploaded</h2>
-      <For each={entries()} keyed={(entry) => entry.seq}>
+      <For each={entries()} keyed={(entry) => `${entry.seq}:${entry.state}`}>
         {(entry) => (
-          <RefusedEntry
-            entry={entry()}
-            current={() => props.current(entry())}
-            resubmit={(edited) => props.resubmit(entry(), edited)}
-            discard={() => props.outbox.discard(entry().seq)}
-          />
+          <Show
+            when={entry().state === "expired"}
+            fallback={
+              <RefusedEntry
+                entry={entry()}
+                current={() => props.current(entry())}
+                resubmit={(edited) => props.resubmit(entry(), edited)}
+                discard={() => props.outbox.discard(entry().seq)}
+              />
+            }
+          >
+            <ExpiredEntry
+              entry={entry()}
+              resubmit={() => props.outbox.resubmit(entry().seq)}
+              discard={() => props.outbox.discard(entry().seq)}
+            />
+          </Show>
         )}
       </For>
     </section>
+  );
+}
+
+function ExpiredEntry(props: { entry: OutboxEntry; resubmit: () => Promise<void>; discard: () => Promise<void> }) {
+  const [busy, setBusy] = createSignal(false);
+  const [error, setError] = createSignal("");
+  async function run(action: () => Promise<void>) {
+    setBusy(true);
+    setError("");
+    try {
+      await action();
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <article data-entry={props.entry.seq} data-state="expired">
+      <p>
+        Operation: {props.entry.operation}. Record id: {props.entry.expect.id}
+      </p>
+      <p>
+        Expired. Recorded at <time datetime={props.entry.recorded_at}>{props.entry.recorded_at}</time>.
+      </p>
+      <h3>Stored request</h3>
+      <pre>{JSON.stringify(props.entry.request, null, 2)}</pre>
+      <button disabled={busy()} onClick={() => void run(props.resubmit)}>
+        Resubmit
+      </button>
+      <button disabled={busy()} onClick={() => void run(props.discard)}>
+        Discard
+      </button>
+      <p role="alert">{error()}</p>
+    </article>
   );
 }
 
