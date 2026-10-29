@@ -5,7 +5,6 @@
 //! calls [`invoke_operation`] once. A route never retries: the caller decides
 //! whether to send a new request.
 
-use anyhow::Context as _;
 use tracing::Instrument as _;
 use wamn_catalog::AdmittedComponent;
 use wamn_event_wire::Causation;
@@ -133,9 +132,8 @@ fn authorized_component<'a>(
         route.component,
         route.operation,
     )?;
-    let fact = component
-        .operation(route.operation)
-        .context("route-operation-fact-missing")?;
+    // route_component only returns a component that carries the operation.
+    let fact = &component.operations[route.operation];
     authorize_registered_operation(route.caller.as_ref(), fact.registered_operation.as_deref())?;
     Ok(component)
 }
@@ -230,7 +228,6 @@ mod tests {
         assert!(authorized_component(&components, &route).is_ok());
         components[0].operations.clear();
         let error = authorized_component(&components, &route).unwrap_err();
-        // The later route-operation-fact-missing arm is unreachable.
         assert_eq!(error.to_string(), "route-component-missing");
     }
 

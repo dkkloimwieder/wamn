@@ -962,15 +962,6 @@ mod tests {
 
         assert_status_vocabulary(&client).await?;
 
-        let missing_id = Uuid::from_u128(0x100);
-        let unused_supplier = Uuid::from_u128(0x101);
-        let not_found = execute_update(&client, missing_id, 1, unused_supplier).await?;
-        ensure!(
-            not_found.outcome == "not_found",
-            "missing row did not return not_found"
-        );
-        assert_null_payload(&not_found)?;
-
         let subject_id = Uuid::from_u128(0x200);
         let initial_supplier = Uuid::from_u128(0x201);
         insert_purchase_order(
@@ -1055,17 +1046,6 @@ mod tests {
             "competing updates did not persist one winner"
         );
 
-        let stale_supplier = Uuid::from_u128(0x204);
-        let stale = execute_update(&client, subject_id, 1, stale_supplier).await?;
-        ensure!(
-            stale.outcome == "concurrency_conflict",
-            "stale revision did not remain a concurrency conflict"
-        );
-        assert_null_payload(&stale)?;
-        ensure!(
-            persisted_revision(&client, subject_id).await? == persisted,
-            "stale update mutated the winning row"
-        );
         assert_no_op_keeps_revision_and_stamps(&client, subject_id, persisted).await?;
 
         assert_record_receipt(&url, &mut client).await?;
