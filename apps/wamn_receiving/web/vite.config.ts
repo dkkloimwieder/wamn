@@ -33,7 +33,7 @@ export default defineConfig(({ command, mode }) => {
       },
     ],
     resolve: {
-      conditions: ["wfe-source", "browser", "development|production"],
+      conditions: ["browser", "development|production"],
       dedupe: ["solid-js", "@solidjs/web", "@solidjs/signals"],
       alias: [
         ...application.resolve.alias,
