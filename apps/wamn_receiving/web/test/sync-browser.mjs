@@ -20,6 +20,9 @@ const OPEN = "Open receipt lines";
 const LOCATION_ID = "00000000-0000-0000-0000-000000000201";
 // The collection polls every 10 s. One poll and the time the write takes to land.
 const ONE_POLL = 13_000;
+// WAMN_SYNC_CHECK=<1-5> runs one check alone. Each check works on its own order.
+const only = process.env.WAMN_SYNC_CHECK;
+const runs = (check) => !only || only === String(check);
 const browser = await chromium.launch({ channel: "chrome", headless: true });
 const errors = [];
 let page;
@@ -99,132 +102,143 @@ try {
   // The worker controls the page after its first load.
   await page.evaluate(() => navigator.serviceWorker.ready);
 
-  step = "check-1";
-  let navigations = 0;
-  page.on("framenavigated", (frame) => {
-    if (frame === page.mainFrame()) navigations += 1;
-  });
-  const readsBefore = pageReads.length;
-  assert.equal(await remaining(page, "PO-BROWSER-01"), 5);
-  await first.setOffline(true);
-  const dropped = Date.now();
-  await record(page, "PO-BROWSER-01", "SYNC-DROP", "1");
-  assert.ok(await tentative(page, "PO-BROWSER-01"), "the receipt recorded during the drop shows tentative");
-  assert.equal(await remaining(page, "PO-BROWSER-01"), 4);
-  await capture(page, "check-1-drop");
-  while (Date.now() - dropped < 30_000) {
-    assert.equal(await table(page).locator("tbody > tr[data-row]").count(), 25, "rows keep rendering");
-    await new Promise((resolve) => setTimeout(resolve, 2_000));
-  }
-  await first.setOffline(false);
-  await until(
-    "the dropped receipt lands",
-    async () => !(await tentative(page, "PO-BROWSER-01")) && (await settled(page)),
-    30_000,
-  );
-  assert.equal(await remaining(page, "PO-BROWSER-01"), 4);
-  assert.equal(navigations, 0, "the screen never navigates");
-  assert.deepEqual(pageReads.slice(readsBefore), [], "the screen never reads its page");
-  await capture(page, "check-1-landed");
-  console.log(
-    `CHECK 1 PASS: 30 s drop, rows kept, receipt tentative then landed, ${feedCalls.length} feed calls, 0 page reads`,
-  );
-
-  step = "check-2";
-  const second = await browser.newContext({ viewport: { width: 1400, height: 900 } });
-  const other = await second.newPage();
-  watch(other);
-  await signIn(other);
-  await record(other, "PO-BROWSER-02", "SYNC-OTHER", "2");
-  await until(
-    "the other browser's receipt lands",
-    async () => !(await tentative(other, "PO-BROWSER-02")) && (await settled(other)),
-    30_000,
-  );
-  const landed = Date.now();
-  await until(
-    "the first browser shows the other receipt",
-    async () => (await remaining(page, "PO-BROWSER-02")) === 3,
-    ONE_POLL,
-  );
-  console.log(`CHECK 2 PASS: another browser's receipt shown after ${Date.now() - landed} ms, remaining 5 -> 3`);
-  await capture(page, "check-2-other");
-  await second.close();
-
-  step = "check-3";
-  await first.setOffline(true);
-  await record(page, "PO-BROWSER-03", "SYNC-REOPEN", "1");
-  assert.ok(await tentative(page, "PO-BROWSER-03"));
-  await page.close();
-  page = await first.newPage();
-  watch(page);
-  await page.goto(openLines);
-  await row(page, "PO-BROWSER-03").waitFor();
-  assert.equal(await table(page).locator("tbody > tr[data-row]").count(), 25, "saved rows paint");
-  await until("the pending receipt shows", () => tentative(page, "PO-BROWSER-03"), 10_000);
-  assert.match(await pending(page), /Offline, sign in to upload\./);
-  assert.match(await pending(page), /Pending: 1\./);
-  await capture(page, "check-3-reopened");
-  await first.setOffline(false);
-  await until(
-    "replay runs on return",
-    async () => !(await tentative(page, "PO-BROWSER-03")) && (await settled(page)),
-    30_000,
-  );
-  assert.equal(await remaining(page, "PO-BROWSER-03"), 4);
-  assert.doesNotMatch(await pending(page), /Offline/);
-  console.log("CHECK 3 PASS: reopened offline, saved rows and pending receipt shown, replayed on return");
-
-  step = "check-4";
-  await first.setOffline(true);
-  await record(page, "PO-BROWSER-04", "SYNC-FLAP-1", "1");
-  await record(page, "PO-BROWSER-05", "SYNC-FLAP-2", "1");
-  await record(page, "PO-BROWSER-04", "SYNC-FLAP-3", "1");
-  assert.match(await pending(page), /Pending: 3\./);
-  for (let flap = 0; flap < 8; flap += 1) {
-    await first.setOffline(false);
-    await new Promise((resolve) => setTimeout(resolve, 150 + 100 * (flap % 3)));
+  if (runs(1)) {
+    step = "check-1";
+    let navigations = 0;
+    page.on("framenavigated", (frame) => {
+      if (frame === page.mainFrame()) navigations += 1;
+    });
+    const readsBefore = pageReads.length;
+    assert.equal(await remaining(page, "PO-BROWSER-01"), 5);
     await first.setOffline(true);
-    await new Promise((resolve) => setTimeout(resolve, 300));
-  }
-  await first.setOffline(false);
-  await until("the outbox empties", () => settled(page), 60_000);
-  // A receipt that landed twice would move remaining twice, or be refused.
-  await until(
-    "each receipt lands once",
-    async () => (await remaining(page, "PO-BROWSER-04")) === 3 && (await remaining(page, "PO-BROWSER-05")) === 4,
-    ONE_POLL,
-  );
-  console.log("CHECK 4 PASS: 8 flaps during replay, 3 receipts landed once each, outbox empty");
-
-  step = "check-5";
-  await record(page, "PO-BROWSER-01", "SYNC-REFUSED", "99");
-  const refused = page.getByRole("region", { name: "Not uploaded", exact: true }).locator("article");
-  await refused.first().waitFor({ timeout: 30_000 });
-  assert.equal(await refused.count(), 1);
-  assert.match(await pending(page), /Refused: 1\./);
-  assert.equal(await remaining(page, "PO-BROWSER-01"), 4, "the refused receipt moves nothing");
-  await capture(page, "check-5-refused");
-  const corrected = refused.getByLabel("Corrected request", { exact: false });
-  const request = JSON.parse(await corrected.inputValue());
-  const lower = (value) => {
-    if (value === null || typeof value !== "object") return;
-    for (const [key, inner] of Object.entries(value)) {
-      if (key === "quantity") value[key] = "1";
-      else lower(inner);
+    const dropped = Date.now();
+    await record(page, "PO-BROWSER-01", "SYNC-DROP", "1");
+    assert.ok(await tentative(page, "PO-BROWSER-01"), "the receipt recorded during the drop shows tentative");
+    assert.equal(await remaining(page, "PO-BROWSER-01"), 4);
+    await capture(page, "check-1-drop");
+    while (Date.now() - dropped < 30_000) {
+      assert.equal(await table(page).locator("tbody > tr[data-row]").count(), 25, "rows keep rendering");
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
     }
-  };
-  lower(request);
-  await corrected.fill(JSON.stringify(request, null, 2));
-  await refused.getByRole("button", { name: "Resubmit", exact: true }).click();
-  await until(
-    "the corrected receipt lands",
-    async () => (await refused.count()) === 0 && (await settled(page)),
-    30_000,
-  );
-  await until("remaining moves", async () => (await remaining(page, "PO-BROWSER-01")) === 3, ONE_POLL);
-  await capture(page, "check-5-corrected");
-  console.log("CHECK 5 PASS: refused receipt in the not uploaded panel, corrected receipt with the same id landed");
+    await first.setOffline(false);
+    await until(
+      "the dropped receipt lands",
+      async () => !(await tentative(page, "PO-BROWSER-01")) && (await settled(page)),
+      30_000,
+    );
+    assert.equal(await remaining(page, "PO-BROWSER-01"), 4);
+    assert.equal(navigations, 0, "the screen never navigates");
+    assert.deepEqual(pageReads.slice(readsBefore), [], "the screen never reads its page");
+    await capture(page, "check-1-landed");
+    console.log(
+      `CHECK 1 PASS: 30 s drop, rows kept, receipt tentative then landed, ${feedCalls.length} feed calls, 0 page reads`,
+    );
+  }
+
+  if (runs(2)) {
+    step = "check-2";
+    const second = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+    const other = await second.newPage();
+    watch(other);
+    await signIn(other);
+    await record(other, "PO-BROWSER-02", "SYNC-OTHER", "2");
+    await until(
+      "the other browser's receipt lands",
+      async () => !(await tentative(other, "PO-BROWSER-02")) && (await settled(other)),
+      30_000,
+    );
+    const landed = Date.now();
+    await until(
+      "the first browser shows the other receipt",
+      async () => (await remaining(page, "PO-BROWSER-02")) === 3,
+      ONE_POLL,
+    );
+    console.log(`CHECK 2 PASS: another browser's receipt shown after ${Date.now() - landed} ms, remaining 5 -> 3`);
+    await capture(page, "check-2-other");
+    await second.close();
+  }
+
+  if (runs(3)) {
+    step = "check-3";
+    await first.setOffline(true);
+    await record(page, "PO-BROWSER-03", "SYNC-REOPEN", "1");
+    assert.ok(await tentative(page, "PO-BROWSER-03"));
+    await page.close();
+    page = await first.newPage();
+    watch(page);
+    await page.goto(openLines);
+    await row(page, "PO-BROWSER-03").waitFor();
+    assert.equal(await table(page).locator("tbody > tr[data-row]").count(), 25, "saved rows paint");
+    await until("the pending receipt shows", () => tentative(page, "PO-BROWSER-03"), 10_000);
+    assert.match(await pending(page), /Offline, sign in to upload\./);
+    assert.match(await pending(page), /Pending: 1\./);
+    await capture(page, "check-3-reopened");
+    await first.setOffline(false);
+    await until(
+      "replay runs on return",
+      async () => !(await tentative(page, "PO-BROWSER-03")) && (await settled(page)),
+      30_000,
+    );
+    assert.equal(await remaining(page, "PO-BROWSER-03"), 4);
+    assert.doesNotMatch(await pending(page), /Offline/);
+    console.log("CHECK 3 PASS: reopened offline, saved rows and pending receipt shown, replayed on return");
+  }
+
+  if (runs(4)) {
+    step = "check-4";
+    await first.setOffline(true);
+    await record(page, "PO-BROWSER-04", "SYNC-FLAP-1", "1");
+    await record(page, "PO-BROWSER-05", "SYNC-FLAP-2", "1");
+    await record(page, "PO-BROWSER-04", "SYNC-FLAP-3", "1");
+    assert.match(await pending(page), /Pending: 3\./);
+    for (let flap = 0; flap < 8; flap += 1) {
+      await first.setOffline(false);
+      await new Promise((resolve) => setTimeout(resolve, 150 + 100 * (flap % 3)));
+      await first.setOffline(true);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    await first.setOffline(false);
+    await until("the outbox empties", () => settled(page), 60_000);
+    // A receipt that landed twice would move remaining twice, or be refused.
+    await until(
+      "each receipt lands once",
+      async () => (await remaining(page, "PO-BROWSER-04")) === 3 && (await remaining(page, "PO-BROWSER-05")) === 4,
+      ONE_POLL,
+    );
+    console.log("CHECK 4 PASS: 8 flaps during replay, 3 receipts landed once each, outbox empty");
+  }
+
+  if (runs(5)) {
+    step = "check-5";
+    const before = await remaining(page, "PO-BROWSER-01");
+    await record(page, "PO-BROWSER-01", "SYNC-REFUSED", "99");
+    const refused = page.getByRole("region", { name: "Not uploaded", exact: true }).locator("article");
+    await refused.first().waitFor({ timeout: 30_000 });
+    assert.equal(await refused.count(), 1);
+    assert.match(await pending(page), /Refused: 1\./);
+    assert.equal(await remaining(page, "PO-BROWSER-01"), before, "the refused receipt moves nothing");
+    await capture(page, "check-5-refused");
+    const corrected = refused.getByLabel("Corrected request", { exact: false });
+    const request = JSON.parse(await corrected.inputValue());
+    const lower = (value) => {
+      if (value === null || typeof value !== "object") return;
+      for (const [key, inner] of Object.entries(value)) {
+        if (key === "quantity") value[key] = "1";
+        else lower(inner);
+      }
+    };
+    lower(request);
+    await corrected.fill(JSON.stringify(request, null, 2));
+    await refused.getByRole("button", { name: "Resubmit", exact: true }).click();
+    await until(
+      "the corrected receipt lands",
+      async () => (await refused.count()) === 0 && (await settled(page)),
+      30_000,
+    );
+    await until("remaining moves", async () => (await remaining(page, "PO-BROWSER-01")) === before - 1, ONE_POLL);
+    await capture(page, "check-5-corrected");
+    console.log("CHECK 5 PASS: refused receipt in the not uploaded panel, corrected receipt with the same id landed");
+  }
 
   console.log(`page errors: ${JSON.stringify(errors)}`);
   console.log("PASS: Receiving sync checks");
