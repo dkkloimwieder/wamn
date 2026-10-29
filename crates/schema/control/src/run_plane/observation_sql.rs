@@ -85,8 +85,8 @@ pub fn select_authoring_table_privileges_sql() -> &'static str {
       WHERE grantee IN ('PUBLIC', 'wamn_app', 'wamn_scenario_author') \
         AND ((table_schema = 'catalog' AND table_name IN \
               ('packages', 'package_migrations', 'releases', \
-               'connection_requirements', 'connection_instances', \
-               'connection_generations', 'connection_bindings')) \
+               'connection_requirement', 'release_connection', \
+               'connection_binding')) \
           OR (table_schema = $1 AND table_name IN ('environment_policies', 'runs'))) \
       ORDER BY table_schema, table_name, grantee, privilege_type"
 }
@@ -108,8 +108,8 @@ pub fn select_authoring_effective_table_privileges_sql() -> &'static str {
       WHERE actor.rolname IN ('wamn_app', 'wamn_scenario_author') \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
               ('packages', 'package_migrations', 'releases', \
-               'connection_requirements', 'connection_instances', \
-               'connection_generations', 'connection_bindings')) \
+               'connection_requirement', 'release_connection', \
+               'connection_binding')) \
           OR (namespace.nspname = $1 \
               AND relation.relname IN ('environment_policies', 'runs'))) \
         AND pg_catalog.has_table_privilege( \
@@ -132,8 +132,8 @@ pub fn select_authoring_effective_column_privileges_sql() -> &'static str {
       WHERE actor.rolname IN ('wamn_app', 'wamn_scenario_author') \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
               ('packages', 'package_migrations', 'releases', \
-               'connection_requirements', 'connection_instances', \
-               'connection_generations', 'connection_bindings')) \
+               'connection_requirement', 'release_connection', \
+               'connection_binding')) \
           OR (namespace.nspname = $1 \
               AND relation.relname IN ('environment_policies', 'runs'))) \
         AND pg_catalog.has_any_column_privilege( \
@@ -153,8 +153,8 @@ pub fn select_authoring_table_owners_sql() -> &'static str {
       WHERE relation.relkind = 'r' \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
               ('packages', 'package_migrations', 'releases', \
-               'connection_requirements', 'connection_instances', \
-               'connection_generations', 'connection_bindings')) \
+               'connection_requirement', 'release_connection', \
+               'connection_binding')) \
           OR (namespace.nspname = $1 \
               AND relation.relname IN ('environment_policies', 'runs'))) \
       ORDER BY namespace.nspname, relation.relname"

@@ -52,6 +52,20 @@ impl Fixture {
     }
 
     pub async fn put(&mut self, name: &str, value: &str, projects: &[&str]) {
+        self.put_type(name, value, projects, "http").await;
+    }
+
+    pub async fn put_store(&mut self, name: &str, value: &str, projects: &[&str]) {
+        self.put_type(name, value, projects, "s3").await;
+    }
+
+    async fn put_type(
+        &mut self,
+        name: &str,
+        value: &str,
+        projects: &[&str],
+        integration_type: &str,
+    ) {
         for project in projects {
             let tx = self.admin.transaction().await.unwrap();
             tx.batch_execute("SET LOCAL ROLE wamn_system")
@@ -62,14 +76,14 @@ impl Fixture {
             ))
             .await
             .unwrap();
-            let integration: String = tx.query_one("INSERT INTO registry.integration(org,project,name,integration_type,auth_type) VALUES ('acme',$1,$2,'http','custom') ON CONFLICT (org,project,name) DO UPDATE SET status=registry.integration.status RETURNING id::text", &[project, &name]).await.unwrap().get(0);
+            let integration: String = tx.query_one("INSERT INTO registry.integration(org,project,name,integration_type,auth_type) VALUES ('acme',$1,$2,$3,'custom') ON CONFLICT (org,project,name) DO UPDATE SET status=registry.integration.status RETURNING id::text", &[project, &name, &integration_type]).await.unwrap().get(0);
             let existing = tx.query_opt("SELECT id::text,active_generation FROM registry.connection WHERE integration_id=$1::text::uuid AND env='dev'", &[&integration]).await.unwrap();
             let (connection, generation) = if let Some(row) = existing {
                 (row.get::<_, String>(0), row.get::<_, i64>(1) + 1)
             } else {
                 let connection_id = uuid::Uuid::new_v4().to_string();
                 let principal: String = tx.query_one("INSERT INTO identity.principals(type,subject,display_name) VALUES ('service',$1,$1) RETURNING id::text", &[&format!("connection-{connection_id}")]).await.unwrap().get(0);
-                let id: String = tx.query_one("INSERT INTO registry.connection(id,integration_id,org,project,env,integration_type,target_id,active_generation,service_principal_id) SELECT $4::text::uuid,$1::text::uuid,'acme',$2,'dev','http',target_id,2,$3::text::uuid FROM registry.project_envs WHERE org='acme' AND project=$2 AND env='dev' RETURNING id::text", &[&integration, project, &principal, &connection_id]).await.unwrap().get(0);
+                let id: String = tx.query_one("INSERT INTO registry.connection(id,integration_id,org,project,env,integration_type,target_id,active_generation,service_principal_id) SELECT $4::text::uuid,$1::text::uuid,'acme',$2,'dev',$5,target_id,2,$3::text::uuid FROM registry.project_envs WHERE org='acme' AND project=$2 AND env='dev' RETURNING id::text", &[&integration, project, &principal, &connection_id, &integration_type]).await.unwrap().get(0);
                 (id, 2)
             };
             let id = uuid::Uuid::new_v4();

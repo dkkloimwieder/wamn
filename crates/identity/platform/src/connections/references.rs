@@ -4,71 +4,50 @@ use serde_json::Value;
 use tokio_postgres::Transaction;
 
 use super::{ConnectionError, refuse};
+use crate::auth_changes::AuthDrops;
 
-async fn exists(tx: &Transaction<'_>, relation: &str) -> Result<bool, ConnectionError> {
-    Ok(tx
-        .query_one("SELECT to_regclass($1) IS NOT NULL", &[&relation])
-        .await?
-        .get(0))
+fn projection_relation(group: &str) -> Result<&'static str, ConnectionError> {
+    match group {
+        "connection" => Ok("platform.connection"),
+        "integration" => Ok("platform.integration"),
+        "external_system" => Ok("platform.external_system"),
+        _ => Err(refuse("invalid_input", "operation")),
+    }
 }
 
-/// IS1.5 completes this function with the singular catalog tables and their projections.
+/// Refuse deleting a row that this environment database still references.
 pub async fn refuse_environment_references(
     tx: &Transaction<'_>,
     group: &str,
     id: &str,
-    name: &str,
 ) -> Result<(), ConnectionError> {
-    let projection = match group {
-        "connection" => "platform.connection",
-        "integration" => "platform.integration",
-        "external_system" => "platform.external_system",
-        _ => return Err(refuse("invalid_input", "operation")),
-    };
-    if exists(tx, projection).await? {
-        // Foreign-key inserts wait here until deletion commits or rolls back.
-        tx.query(
-            &format!("SELECT id FROM {projection} WHERE id=$1::text::uuid FOR UPDATE"),
-            &[&id],
-        )
-        .await?;
-    }
+    let projection = projection_relation(group)?;
+    // Foreign-key inserts wait here until deletion commits or rolls back.
+    tx.query(
+        &format!("SELECT id FROM {projection} WHERE id=$1::text::uuid FOR UPDATE"),
+        &[&id],
+    )
+    .await?;
     if group == "connection" {
-        // Existing releases identify a system connection through its integration name.
-        if exists(tx, "catalog.connection_bindings").await?
-            && exists(tx, "catalog.connection_instances").await?
-        {
-            let referenced: bool = tx.query_one(
-                "SELECT EXISTS(SELECT FROM catalog.connection_bindings b JOIN catalog.connection_instances i \
-                 ON (i.env_key,i.environment,i.instance_id)=(b.env_key,b.environment,b.instance_id) \
-                 WHERE i.org_connection_name=$1 OR i.instance_id=$2)", &[&name, &id],
-            ).await?.get(0);
-            if referenced {
-                return Err(refuse("referenced", "binding"));
-            }
-        }
-        for (relation, field, sql) in [
+        for (field, sql) in [
             (
-                "catalog.connection_binding",
                 "binding",
                 "SELECT EXISTS(SELECT FROM catalog.connection_binding WHERE connection_id=$1::text::uuid)",
             ),
             (
-                "catalog.release_connection",
                 "release_connection",
                 "SELECT EXISTS(SELECT FROM catalog.release_connection WHERE connection_id=$1::text::uuid)",
             ),
             (
-                "platform.file",
                 "file",
                 "SELECT EXISTS(SELECT FROM platform.file WHERE connection_id=$1::text::uuid)",
             ),
         ] {
-            if exists(tx, relation).await? && tx.query_one(sql, &[&id]).await?.get::<_, bool>(0) {
+            if tx.query_one(sql, &[&id]).await?.get::<_, bool>(0) {
                 return Err(refuse("referenced", field));
             }
         }
-    } else if group == "external_system" && exists(tx, "platform.external_system").await? {
+    } else if group == "external_system" {
         // A foreign key identifies every record source, including application tables.
         for row in tx.query(
             "SELECT quote_ident(n.nspname)||'.'||quote_ident(t.relname), quote_ident(a.attname) \
@@ -95,37 +74,30 @@ pub async fn remove_projection(
     group: &str,
     id: &str,
 ) -> Result<(), ConnectionError> {
-    let relation = match group {
-        "connection" => "platform.connection",
-        "integration" => "platform.integration",
-        "external_system" => "platform.external_system",
-        _ => return Err(refuse("invalid_input", "operation")),
-    };
-    if exists(tx, relation).await? {
-        if group == "connection" && exists(tx, "platform.project_connection").await? {
-            tx.execute(
-                "DELETE FROM platform.project_connection WHERE connection_id=$1::text::uuid",
-                &[&id],
-            )
-            .await?;
-        }
-        tx.execute(
-            &format!("DELETE FROM {relation} WHERE id=$1::text::uuid"),
-            &[&id],
-        )
-        .await?;
-    }
+    let relation = projection_relation(group)?;
+    tx.execute(
+        &format!("DELETE FROM {relation} WHERE id=$1::text::uuid"),
+        &[&id],
+    )
+    .await?;
     Ok(())
 }
 
-/// IS1.5 fills the new projection through the project-state writer.
-pub fn project_administration(
-    _system: &Transaction<'_>,
-    _environment: &Transaction<'_>,
-    _org: &str,
-    _project: &str,
-    _env: &str,
-) {
+/// Push the project's administration rows into one environment database.
+pub async fn project_administration(
+    system: &Transaction<'_>,
+    environment: &Transaction<'_>,
+    org: &str,
+    project: &str,
+    env: &str,
+) -> Result<AuthDrops, ConnectionError> {
+    crate::connection_projection::project(system, environment, org, project, env)
+        .await
+        .map_err(|source| ConnectionError {
+            code: "database_error",
+            field: "projection",
+            source: Some(Box::new(source)),
+        })
 }
 
 /// Destroy every private object after the connection and projected rows disappear.

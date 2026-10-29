@@ -946,7 +946,8 @@ mod tests {
             .batch_execute(
                 "CREATE SCHEMA receiving; \
                  CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                   NOINHERIT NOREPLICATION NOBYPASSRLS",
+                   NOINHERIT NOREPLICATION NOBYPASSRLS; \
+                 CREATE ROLE wamn_scenario_author NOLOGIN",
             )
             .await
             .context("create the Receiving schema and the application role")?;
@@ -1065,6 +1066,10 @@ mod tests {
 
     /// Install `deploy/sql/app-schema.sql`, whose write log the command claims in.
     async fn install_write_log(client: &Client) -> Result<()> {
+        client
+            .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
+            .await
+            .context("apply the catalog and connection projections")?;
         client
             .batch_execute(APP_SCHEMA_SQL)
             .await

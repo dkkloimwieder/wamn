@@ -190,22 +190,25 @@ manifest.Package {{
         // generates their contracts but does not compile a guest. Encode an
         // unused guest with those exact exports for the normal admission path.
         let output = wamn_schema_generator::output_root(&package);
-        let mut resolve = wit_parser::Resolve::new();
+        let mut resolve = test_wit_parser::Resolve::new();
         resolve.push_str(
             "node.wit",
             include_str!("../../../../../crates/execution/workflow/router/wit/package.wit"),
         )?;
         let (wit_package, _) = resolve.push_dir(output.join("wit"))?;
         let world = resolve.select_world(&[wit_package], Some("generated"))?;
-        let mut module =
-            wit_component::dummy_module(&resolve, world, wit_parser::ManglingAndAbi::Standard32);
-        wit_component::embed_component_metadata(
+        let mut module = test_wit_component::dummy_module(
+            &resolve,
+            world,
+            test_wit_parser::ManglingAndAbi::Standard32,
+        );
+        test_wit_component::embed_component_metadata(
             &mut module,
             &resolve,
             world,
-            wit_component::StringEncoding::UTF8,
+            test_wit_component::StringEncoding::UTF8,
         )?;
-        let bytes = wit_component::ComponentEncoder::default()
+        let bytes = test_wit_component::ComponentEncoder::default()
             .module(&module)?
             .validate(true)
             .encode()?;

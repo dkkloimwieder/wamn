@@ -10,11 +10,12 @@
 
 use serde_json::{Value, json};
 use wamn_platform_identity::configuration::{
-    Connection, ExternalSystem, IntegrationAllow, NumberSequence, PlatformConfiguration,
-    ProjectConnection, Setting, write_configuration,
+    Connection, ExternalSystem, Integration, NumberSequence, PlatformConfiguration, Setting,
+    write_configuration,
 };
 
 const EXTERNAL_SYSTEM_ID: &str = "a0000000-0000-4000-8000-000000000001";
+const INTEGRATION_ID: &str = "a0000000-0000-4000-8000-000000000004";
 const CONNECTION_ID: &str = "a0000000-0000-4000-8000-000000000002";
 const NUMBER_SEQUENCE_ID: &str = "a0000000-0000-4000-8000-000000000003";
 
@@ -26,12 +27,11 @@ pub const CALLER: &str = "a0000000-0000-4000-8000-0000000000c1";
 /// sealed operation id.
 pub const OPERATION: &str = "admin:platform-configuration";
 
-/// The six tables, in the order of [`expected`].
-pub const TABLES: [&str; 6] = [
+/// The five tables, in the order of [`expected`].
+pub const TABLES: [&str; 5] = [
     "external_system",
+    "integration",
     "connection",
-    "project_connection",
-    "integration_allow",
     "number_sequence",
     "setting",
 ];
@@ -62,29 +62,20 @@ pub fn configuration(project: &str) -> PlatformConfiguration {
     PlatformConfiguration {
         external_systems: vec![ExternalSystem {
             id: EXTERNAL_SYSTEM_ID.to_owned(),
-            integration: "netsuite".to_owned(),
             name: "netsuite-main".to_owned(),
-            parameters: json!({"account_id": "1234567"}),
+        }],
+        integrations: vec![Integration {
+            id: INTEGRATION_ID.to_owned(),
+            integration_type: "netsuite".to_owned(),
+            external_system_id: Some(EXTERNAL_SYSTEM_ID.to_owned()),
+            name: "netsuite-orders".to_owned(),
             status: "active".to_owned(),
         }],
         connections: vec![Connection {
             id: CONNECTION_ID.to_owned(),
-            integration: "netsuite".to_owned(),
-            external_system_id: Some(EXTERNAL_SYSTEM_ID.to_owned()),
-            name: "netsuite-orders".to_owned(),
-            transport: "http".to_owned(),
-            exchange: "request".to_owned(),
-            parameters: json!({"endpoint": "https://example.invalid/orders"}),
+            integration_id: INTEGRATION_ID.to_owned(),
+            integration_type: "netsuite".to_owned(),
             status: "active".to_owned(),
-        }],
-        project_connections: vec![ProjectConnection {
-            project_id: project.to_owned(),
-            connection_id: CONNECTION_ID.to_owned(),
-        }],
-        integration_allows: vec![IntegrationAllow {
-            scope_type: "project".to_owned(),
-            scope_id: project.to_owned(),
-            integration: "netsuite".to_owned(),
         }],
         number_sequences: vec![NumberSequence {
             id: NUMBER_SEQUENCE_ID.to_owned(),
@@ -111,27 +102,9 @@ pub fn expected(project: &str) -> Vec<Value> {
         json!({"table": table, "row": row})
     };
     vec![
-        stamped(
-            "external_system",
-            json!({"id": EXTERNAL_SYSTEM_ID, "integration": "netsuite", "name": "netsuite-main",
-                   "parameters": {"account_id": "1234567"}, "status": "active"}),
-        ),
-        stamped(
-            "connection",
-            json!({"id": CONNECTION_ID, "integration": "netsuite",
-                   "external_system_id": EXTERNAL_SYSTEM_ID, "name": "netsuite-orders",
-                   "transport": "http", "exchange": "request",
-                   "parameters": {"endpoint": "https://example.invalid/orders"},
-                   "status": "active"}),
-        ),
-        stamped(
-            "project_connection",
-            json!({"project_id": project, "connection_id": CONNECTION_ID}),
-        ),
-        stamped(
-            "integration_allow",
-            json!({"scope_type": "project", "scope_id": project, "integration": "netsuite"}),
-        ),
+        json!({"table":"external_system", "row":{"id": EXTERNAL_SYSTEM_ID, "name":"netsuite-main"}}),
+        json!({"table":"integration", "row":{"id": INTEGRATION_ID, "integration_type":"netsuite", "external_system_id":EXTERNAL_SYSTEM_ID, "name":"netsuite-orders", "status":"active"}}),
+        json!({"table":"connection", "row":{"id": CONNECTION_ID, "integration_id": INTEGRATION_ID, "integration_type":"netsuite", "status":"active"}}),
         stamped(
             "number_sequence",
             json!({"id": NUMBER_SEQUENCE_ID, "application": "receiving", "name": "receipt",
@@ -149,13 +122,16 @@ pub fn expected(project: &str) -> Vec<Value> {
 pub async fn read_back(client: &tokio_postgres::Client) -> anyhow::Result<Vec<Value>> {
     let mut rows = Vec::new();
     for table in TABLES {
+        let recorded = ["number_sequence", "setting"].contains(&table);
+        let condition = if recorded {
+            format!("created_by = '{CALLER}'::uuid")
+        } else {
+            "true".to_owned()
+        };
         for row in client
             .query(
-                &format!(
-                    "SELECT (to_jsonb(t) - 'created_at' - 'updated_at')::text \
-                       FROM platform.{table} AS t WHERE created_by = $1::text::uuid ORDER BY 1"
-                ),
-                &[&CALLER],
+                &format!("SELECT (to_jsonb(t) - 'created_at' - 'updated_at')::text FROM platform.{table} t WHERE {condition} ORDER BY 1"),
+                &[],
             )
             .await?
         {
@@ -171,7 +147,7 @@ pub async fn read_back(client: &tokio_postgres::Client) -> anyhow::Result<Vec<Va
 /// then of position.
 pub async fn history(client: &tokio_postgres::Client) -> anyhow::Result<Vec<String>> {
     let mut entries = Vec::new();
-    for table in TABLES {
+    for table in ["number_sequence", "setting"] {
         for row in client
             .query(
                 &format!(

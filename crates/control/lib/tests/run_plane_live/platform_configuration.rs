@@ -3,7 +3,7 @@
 //!
 //! `reconcile-run-plane` writes the identity rows of the tenant first, as env
 //! apply does. Then an administration generation login, minted by the
-//! production builder, writes one row of each of the six tables in one
+//! production builder, writes one row of each of the five tables in one
 //! transaction that binds a caller and an operation, as the control host
 //! writes the application rows of an environment. The login reaches neither
 //! a superuser nor `BYPASSRLS`, so the row security of each table applies.
@@ -106,7 +106,7 @@ async fn platform_configuration_leg(su: &Client, system_url: &str) {
         rows::write(&mut administration, &configuration)
             .await
             .expect("the administration login writes the configuration rows"),
-        6,
+        5,
         "the first write writes one row of each table"
     );
     let (generation, guest) = mint_guest_generation(&target, &target_url, ENV_KEY).await;
@@ -117,7 +117,7 @@ async fn platform_configuration_leg(su: &Client, system_url: &str) {
         rows::expected(CLI_PROJECT),
         "the guest generation reads each row as written, stamped by the caller"
     );
-    let inserted: Vec<String> = rows::TABLES
+    let inserted: Vec<String> = ["number_sequence", "setting"]
         .iter()
         .map(|table| format!("{table} insert {} {}", rows::OPERATION, rows::CALLER))
         .collect();
@@ -182,7 +182,7 @@ async fn platform_configuration_leg(su: &Client, system_url: &str) {
             .await
             .expect("read the configuration rows again")
             .len(),
-        6,
+        5,
         "a write of no rows removes none"
     );
 

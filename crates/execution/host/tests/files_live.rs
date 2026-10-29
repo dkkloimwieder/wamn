@@ -124,12 +124,14 @@ impl FileHost {
             let row = registry
                 .owner
                 .query_one(
-                    "SELECT id::text,parameters FROM registry.connection WHERE org=$1 AND name=$2",
-                    &[&ORG, &name],
+                    "SELECT c.id::text,i.id::text,i.integration_type,i.name,i.status,CASE WHEN i.status='active' AND c.status='active' THEN 'active' ELSE 'disabled' END FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.org=$1 AND c.project=$3 AND c.env='dev' AND i.name=$2",
+                    &[&ORG, &name, &PROJECT],
                 )
                 .await?;
-            writer.execute("INSERT INTO platform.connection(id,integration,name,transport,exchange,parameters) VALUES ($1::text::uuid,'s3',$2,'s3','request',$3)",
-                &[&row.get::<_,String>(0),&name,&row.get::<_,Value>(1)]).await?;
+            writer.execute("INSERT INTO platform.integration(id,integration_type,name,status) VALUES ($1::text::uuid,$2,$3,$4)",
+                &[&row.get::<_,String>(1),&row.get::<_,String>(2),&row.get::<_,String>(3),&row.get::<_,String>(4)]).await?;
+            writer.execute("INSERT INTO platform.connection(id,integration_id,integration_type,status) VALUES ($1::text::uuid,$2::text::uuid,$3,$4)",
+                &[&row.get::<_,String>(0),&row.get::<_,String>(1),&row.get::<_,String>(2),&row.get::<_,String>(5)]).await?;
         }
         let blobstore = Arc::new(WamnBlobstore::new(
             Arc::clone(&postgres),
@@ -356,7 +358,7 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
     let fixture =
         FileHost::start_on_store("file_orphan_collector", release()?, minio, definition).await?;
     let generations_sql =
-        "SELECT connection_id::text, generation FROM registry.lookup_file_generations($1,$2,$3)";
+        "SELECT connection_id::text, generation FROM registry.read_file_connection($1,$2,$3)";
     assert!(
         !fixture
             .registry
@@ -488,16 +490,11 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
     let fresh = Uuid::new_v4();
     let store = fixture
         .blobstore
-        .file_store(
-            files::STORE_NAME,
-            fixture.registry.generation,
-            &fixture.registry.definition,
-            false,
-        )
+        .file_store(files::STORE_NAME, false)
         .await?;
     let staged = store.stage(fresh, &b"pending row"[..]).await?;
     fixture.writer.batch_execute("BEGIN").await?;
-    fixture.writer.execute("INSERT INTO platform.file(id,application,connection_id,connection_generation,name,media_type,size,sha256,blob_key,exposure) VALUES($1::text::uuid,'files',$2::text::uuid,$3,'pending.txt','text/plain',$4,$5,$6,'application')", &[&fresh.to_string(), &fixture.registry.connection_id, &fixture.registry.generation, &i64::try_from(staged.size)?, &staged.sha256, &staged.blob_key]).await?;
+    fixture.writer.execute("INSERT INTO platform.file(id,application,connection_id,name,media_type,size,sha256,blob_key,exposure) VALUES($1::text::uuid,'files',$2::text::uuid,'pending.txt','text/plain',$3,$4,$5,'application')", &[&fresh.to_string(), &fixture.registry.connection_id, &i64::try_from(staged.size)?, &staged.sha256, &staged.blob_key]).await?;
     store.finish(fresh).await?;
     assert_eq!(
         fixture
@@ -660,7 +657,7 @@ async fn native_upload_streams_more_than_64_mib_and_hashes_the_stored_bytes() ->
         .host
         .admin
         .query_one(
-            "SELECT size,sha256,blob_key,connection_generation FROM platform.file WHERE id=$1::text::uuid",
+            "SELECT size,sha256,blob_key FROM platform.file WHERE id=$1::text::uuid",
             &[&id.to_string()],
         )
         .await?;
@@ -674,15 +671,9 @@ async fn native_upload_streams_more_than_64_mib_and_hashes_the_stored_bytes() ->
         row.get::<_, String>(2),
         format!("dev/_wamn_files/live/{id}")
     );
-    assert_eq!(row.get::<_, i64>(3), fixture.registry.generation);
     let store = fixture
         .blobstore
-        .file_store(
-            files::STORE_NAME,
-            fixture.registry.generation,
-            &fixture.registry.definition,
-            false,
-        )
+        .file_store(files::STORE_NAME, false)
         .await?;
     let stored = store.get(&row.get::<_, String>(2)).await?.bytes().await?;
     assert_eq!(stored.len(), size);
@@ -706,9 +697,9 @@ async fn legacy_unsegmented_file_still_reads_signs_exposes_and_deletes() -> anyh
         ))
         .await?;
     fixture.writer.execute(
-        "INSERT INTO platform.file(id,application,connection_id,connection_generation,name,media_type,size,sha256,blob_key) \
-         VALUES ($1::text::uuid,'files',$2::text::uuid,$3,'legacy.txt','text/plain',12,$4,$5)",
-        &[&id.to_string(), &fixture.registry.connection_id, &fixture.registry.generation,
+        "INSERT INTO platform.file(id,application,connection_id,name,media_type,size,sha256,blob_key) \
+         VALUES ($1::text::uuid,'files',$2::text::uuid,'legacy.txt','text/plain',12,$3,$4)",
+        &[&id.to_string(), &fixture.registry.connection_id,
           &hex::encode(Sha256::digest(b"legacy bytes")), &key],
     ).await?;
     let read = fixture
@@ -877,19 +868,14 @@ async fn committed_staging_bytes_repair_a_missing_live_object_on_native_get() ->
     let fixture = FileHost::start("file_crash_repair").await?;
     let store = fixture
         .blobstore
-        .file_store(
-            files::STORE_NAME,
-            fixture.registry.generation,
-            &fixture.registry.definition,
-            false,
-        )
+        .file_store(files::STORE_NAME, false)
         .await?;
     let id = Uuid::new_v4();
     let staged = store.stage(id, &b"committed staging"[..]).await?;
     fixture.writer.execute(
-        "INSERT INTO platform.file(id,application,connection_id,connection_generation,name,media_type,size,sha256,blob_key) \
-         VALUES ($1::text::uuid,'files',$2::text::uuid,$3,'crash.txt','text/plain',$4,$5,$6)",
-        &[&id.to_string(),&fixture.registry.connection_id,&fixture.registry.generation,&i64::try_from(staged.size)?,&staged.sha256,&staged.blob_key],
+        "INSERT INTO platform.file(id,application,connection_id,name,media_type,size,sha256,blob_key) \
+         VALUES ($1::text::uuid,'files',$2::text::uuid,'crash.txt','text/plain',$3,$4,$5)",
+        &[&id.to_string(),&fixture.registry.connection_id,&i64::try_from(staged.size)?,&staged.sha256,&staged.blob_key],
     ).await?;
     assert_eq!(
         fixture
@@ -1126,74 +1112,6 @@ async fn public_exposure_without_cdn_and_every_read_binding_mutation_refuse() ->
             .await?
             .get::<_, i64>(0),
         2
-    );
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn files_read_and_delete_through_the_generation_that_wrote_them_after_relocation()
--> anyhow::Result<()> {
-    let fixture = FileHost::start("file_generation_move").await?;
-    let old = fixture.upload("files", b"old bucket").await?;
-    let mut moved = fixture.minio.definition();
-    moved["container"] = json!("files-b");
-    moved["prefix"] = json!("generation-two/");
-    fixture.registry.move_store(&moved).await?;
-    let new = fixture.upload("files", b"new bucket").await?;
-    assert_eq!(
-        fixture
-            .read("files", old, Some(&fixture.token(false)))
-            .await?
-            .2,
-        b"old bucket"
-    );
-    assert_eq!(
-        fixture
-            .read("files", new, Some(&fixture.token(false)))
-            .await?
-            .2,
-        b"new bucket"
-    );
-    let rows = fixture
-        .host
-        .admin
-        .query(
-            "SELECT id::text,connection_generation FROM platform.file ORDER BY connection_generation",
-            &[],
-        )
-        .await?;
-    assert_eq!(rows[0].get::<_, String>(0), old.to_string());
-    assert_eq!(rows[0].get::<_, i64>(1), fixture.registry.generation);
-    assert_eq!(rows[1].get::<_, String>(0), new.to_string());
-    assert!(rows[1].get::<_, i64>(1) > fixture.registry.generation);
-    assert!(
-        fixture
-            .mutate("delete", old, "files", None)
-            .await?
-            .get("value")
-            .is_some()
-    );
-    assert!(
-        fixture
-            .minio
-            .mc(&format!(
-                "mc stat file/files-a/generation-one/dev/_wamn_files/live/{old}"
-            ))
-            .await
-            .is_err()
-    );
-    fixture
-        .minio
-        .mc(&format!(
-            "mc stat file/files-b/generation-two/dev/_wamn_files/live/{new}"
-        ))
-        .await?;
-    assert_eq!(
-        fixture
-            .read("files", new, Some(&fixture.token(false)))
-            .await?
-            .2,
-        b"new bucket"
     );
     Ok(())
 }

@@ -675,25 +675,19 @@ pub(super) const AUTHORING_PRIVILEGE_SPECS: &[AuthoringPrivilegeSpec] = &[
     },
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::Catalog,
-        table: "connection_requirements",
+        table: "connection_requirement",
         app: &["SELECT"],
         author: &[],
     },
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::Catalog,
-        table: "connection_instances",
+        table: "release_connection",
         app: &["SELECT"],
         author: &[],
     },
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::Catalog,
-        table: "connection_generations",
-        app: &["SELECT"],
-        author: &[],
-    },
-    AuthoringPrivilegeSpec {
-        schema: AuthoringTableSchema::Catalog,
-        table: "connection_bindings",
+        table: "connection_binding",
         app: &["SELECT"],
         author: &[],
     },

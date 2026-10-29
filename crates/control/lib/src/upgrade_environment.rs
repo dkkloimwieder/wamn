@@ -566,19 +566,22 @@ impl Run {
         use crate::qualify_upgrade::{presented_root_identity, read_current_packages};
 
         let auth_changes = platform(environment)?.auth_changes().await?;
+        let package_registry = crate::package_artifact::PackageRegistry {
+            artifact_base: format!("{}/packages", environment.registry),
+            registry_auth_file: registry.auth_file(),
+            insecure_registry: false,
+            oci_ca_paths: Vec::new(),
+        };
+        let component_source =
+            crate::apply_package::component_source_from_env(Some(&package_registry))?;
         let request = |root: &crate::apply_package::PackageRoot| ApplyPackageRequest {
+            component_source: component_source.clone(),
             changes: auth_changes.clone(),
             package: root.clone(),
             database_url: databases.project_url(),
             org: self.arguments.org.clone(),
             project: self.arguments.project.clone(),
             environment: self.arguments.environment.clone(),
-        };
-        let package_registry = crate::package_artifact::PackageRegistry {
-            artifact_base: format!("{}/packages", environment.registry),
-            registry_auth_file: registry.auth_file(),
-            insecure_registry: false,
-            oci_ca_paths: Vec::new(),
         };
         let evidence_path = self.release_files().join("package-upgrade.json");
         let mut client = databases.project().await?;
@@ -698,6 +701,7 @@ impl Run {
             }
             crate::qualify_upgrade::qualify_upgrade(
                 crate::qualify_upgrade::QualifyUpgradeRequest {
+                    component_source: component_source.clone(),
                     database_url: databases.project_url(),
                     org: self.arguments.org.clone(),
                     project: self.arguments.project.clone(),

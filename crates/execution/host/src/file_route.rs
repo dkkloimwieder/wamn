@@ -1,7 +1,7 @@
 //! Native streaming file routes and operation-only signed reads.
 //!
-//! Uploads finish staging before the metadata transaction. Existing files retain
-//! the connection generation that wrote their bytes. No guest receives a body.
+//! Uploads finish staging before the metadata transaction. File reads use
+//! the active connection generation. No guest receives a body.
 //!
 //! POST `/api/<application>/files?binding=<alias>&name=<filename>` sends the raw
 //! request body. Its Content-Type supplies the media type. GET
@@ -35,7 +35,8 @@ use wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore;
 use wamn_runtime::plugins::wamn_postgres::WamnPostgres;
 use wasmtime_wasi_http::WasiBody;
 
-const FILE_COLUMNS: &str = "id::text, connection_id::text, connection_generation, media_type, size, exposure, url, blob_key";
+const FILE_COLUMNS: &str =
+    "id::text, connection_id::text, media_type, size, exposure, url, blob_key";
 
 /// Exposure stored in the platform file catalog. Unknown literals refuse.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,7 +62,6 @@ impl Exposure {
 struct FileRecord {
     id: Uuid,
     connection_id: String,
-    generation: i64,
     media_type: String,
     size: i64,
     exposure: Exposure,
@@ -188,24 +188,17 @@ pub trait FileConnections: Send + Sync + fmt::Debug {
         ))
     }
 
-    /// Resolve an application's binding, or an existing file's pinned generation.
+    /// Resolve an application's binding, or an existing file's active generation.
     async fn lookup(
         &self,
         application: &str,
         binding: Option<&str>,
-        pinned: Option<(&str, i64)>,
+        pinned: Option<&str>,
     ) -> Result<FileConnection, FileError>;
 }
 
-/// Login-scoped registry lookup. This client holds the connection-reader login.
-///
-/// `registry.lookup_file_connection(org, project, environment, application,
-/// binding, connection_id, generation)` returns `connection_id uuid`,
-/// `connection_name text`, `generation bigint`, `parameters jsonb`, and `mode text`.
-/// Binding and both pin fields are nullable. The registry must enforce the
-/// reader login's scope, active connection and project enablement. A named
-/// binding must belong to the application in the registry. A pin selects that
-/// immutable generation without requiring a current binding for reads.
+/// Login-scoped registry lookup of active store generations.
+/// Existing files use their connection identity without a binding.
 pub struct RegistryFileConnections {
     pub client: Option<Arc<tokio_postgres::Client>>,
     pub org: String,
@@ -230,7 +223,7 @@ impl FileConnections for RegistryFileConnections {
             )
         })?;
         let mut generations = Vec::new();
-        for row in client.query("SELECT connection_id::text, connection_name, generation, parameters FROM registry.lookup_file_generations($1,$2,$3)", &[&self.org, &self.project, &self.environment]).await? {
+        for row in client.query("SELECT connection_id::text, connection_name, generation, parameters FROM registry.read_file_connection($1,$2,$3)", &[&self.org, &self.project, &self.environment]).await? {
             generations.push(FileConnection {
                 id: row.try_get(0)?, name: row.try_get(1)?, generation: row.try_get(2)?, definition: row.try_get(3)?, read_only: false,
             });
@@ -242,15 +235,30 @@ impl FileConnections for RegistryFileConnections {
         &self,
         application: &str,
         binding: Option<&str>,
-        pinned: Option<(&str, i64)>,
+        pinned: Option<&str>,
     ) -> Result<FileConnection, FileError> {
         let client = self
             .client
             .as_ref()
             .ok_or_else(|| failed("binding", anyhow::anyhow!("connection reader unavailable")))?;
+        if binding.is_none()
+            && let Some(id) = pinned
+        {
+            let row = client.query_opt(
+                "SELECT connection_id::text, connection_name, generation, parameters FROM registry.read_file_connection($1,$2,$3,$4::text::uuid)",
+                &[&self.org, &self.project, &self.environment, &id],
+            ).await?.ok_or_else(|| refused(FileRefusal::BindingRefused, "connection"))?;
+            return Ok(FileConnection {
+                id: row.try_get(0)?,
+                name: row.try_get(1)?,
+                generation: row.try_get(2)?,
+                definition: row.try_get(3)?,
+                read_only: false,
+            });
+        }
         let row = client.query_opt(
             "SELECT connection_id::text, connection_name, generation, parameters, mode FROM registry.lookup_file_connection($1,$2,$3,$4,$5,$6,$7)",
-            &[&self.org, &self.project, &self.environment, &application, &binding, &pinned.map(|pin| pin.0), &pinned.map(|pin| pin.1)],
+            &[&self.org, &self.project, &self.environment, &application, &binding, &pinned, &Option::<i64>::None],
         ).await?.ok_or_else(|| refused(FileRefusal::BindingRefused, "binding"))?;
         let mode: String = row.try_get(4)?;
         let read_only = match mode.as_str() {
@@ -375,7 +383,7 @@ impl FileRoutes {
         &self,
         application: &str,
         binding: Option<&str>,
-        pinned: Option<(&str, i64)>,
+        pinned: Option<&str>,
         write: bool,
     ) -> Result<(FileConnection, FileStore), FileError> {
         let app = self
@@ -401,12 +409,7 @@ impl FileRoutes {
         )?;
         let store = self
             .blobstore
-            .file_store(
-                &connection.name,
-                connection.generation,
-                &connection.definition,
-                connection.read_only,
-            )
+            .file_store(&connection.name, connection.read_only)
             .await?;
         Ok((connection, store))
     }
@@ -465,8 +468,8 @@ impl FileRoutes {
         let size = i64::try_from(staged.size).map_err(|error| failed("size", error))?;
         self.postgres.administration_transaction(&self.project, &self.release.scope().env_key, &principal,
             &format!("wamn-control:file/put@{}", wamn_catalog::host_route_version()), async |client| {
-                client.execute("INSERT INTO platform.file (id, application, connection_id, connection_generation, name, media_type, size, sha256, blob_key, exposure) VALUES ($1::text::uuid,$2,$3::text::uuid,$4,$5,$6,$7,$8,$9,'application')",
-                    &[&id.to_string(), &application, &connection.id, &staged.connection_generation, &name, &media_type, &size, &staged.sha256, &staged.blob_key]).await?;
+                client.execute("INSERT INTO platform.file (id, application, connection_id, name, media_type, size, sha256, blob_key, exposure) VALUES ($1::text::uuid,$2,$3::text::uuid,$4,$5,$6,$7,$8,'application')",
+                    &[&id.to_string(), &application, &connection.id, &name, &media_type, &size, &staged.sha256, &staged.blob_key]).await?;
                 Ok::<_, FileError>(())
             }).await.map_err(|error| failed("catalog", error))??;
         // A committed row remains readable through staging if promotion fails.
@@ -490,12 +493,7 @@ impl FileRoutes {
         let row = self.record(&principal, application, id, "get").await?;
         require_exposure(row.exposure)?;
         let (_, store) = self
-            .store(
-                application,
-                None,
-                Some((&row.connection_id, row.generation)),
-                false,
-            )
+            .store(application, None, Some(row.connection_id.as_str()), false)
             .await?;
         let body = store
             .get(&row.blob_key)
@@ -530,7 +528,7 @@ impl FileRoutes {
             .store(
                 &request.application,
                 Some(&request.binding),
-                Some((&row.connection_id, row.generation)),
+                Some(row.connection_id.as_str()),
                 true,
             )
             .await?;
@@ -544,7 +542,7 @@ impl FileRoutes {
             // Metadata deletion is committed. The collector (wamn-2wdsf.4)
             // owns orphan cleanup, so this path does not retry object deletion.
             tracing::warn!(%error, file_id = %request.file_id, connection_id = %row.connection_id,
-                generation = row.generation, object_key = %row.blob_key,
+                generation = connection.generation, object_key = %row.blob_key,
                 bucket = connection.definition.get("container").and_then(|value| value.as_str()).unwrap_or_default(),
                 prefix = connection.definition.get("prefix").and_then(|value| value.as_str()).unwrap_or_default(),
                 "file metadata deletion committed but object cleanup failed");
@@ -566,7 +564,7 @@ impl FileRoutes {
             .store(
                 &request.application,
                 Some(&request.binding),
-                Some((&row.connection_id, row.generation)),
+                Some(row.connection_id.as_str()),
                 true,
             )
             .await?;
@@ -655,21 +653,16 @@ impl FileRoutes {
             .parse()
             .map_err(|error| failed("principal", error))?;
         let row = self.record(&principal, application, id, "get").await?;
-        let pin = Some((row.connection_id.as_str(), row.generation));
+        let pin = Some(row.connection_id.as_str());
         let connection = self.connections.lookup(application, None, pin).await?;
         require_binding(&self.release, application, None, pin, &connection, false)?;
         // Signing is the host's declared result work. The operation grant
         // supplies read authority without a guest blobstore import. The
-        // registry requires an active, enabled connection at the pinned generation.
+        // registry requires an active connection and uses its active generation.
         // Reads do not require a current application binding.
         let store = self
             .blobstore
-            .file_store(
-                &connection.name,
-                connection.generation,
-                &connection.definition,
-                connection.read_only,
-            )
+            .file_store(&connection.name, connection.read_only)
             .await?;
         store
             .signed_url(&row.blob_key, lifetime)
@@ -867,7 +860,7 @@ fn require_binding(
     release: &LoadedRelease,
     application: &str,
     binding: Option<&str>,
-    pinned: Option<(&str, i64)>,
+    pinned: Option<&str>,
     connection: &FileConnection,
     write: bool,
 ) -> Result<(), FileError> {
@@ -876,14 +869,12 @@ fn require_binding(
         .applications
         .get(application)
         .ok_or_else(|| refused(FileRefusal::BindingRefused, "application"))?;
-    // The registry owns bindings. Reads use the file's pin without a binding.
+    // Reads use the file's connection identity without a binding.
     if binding.is_some_and(|alias| !declares_store(release, app, alias))
         || connection.generation <= 0
         || connection.id.parse::<Uuid>().is_err()
         || write && connection.read_only
-        || pinned.is_some_and(|(id, generation)| {
-            id != connection.id || generation != connection.generation
-        })
+        || pinned.is_some_and(|id| id != connection.id)
     {
         return Err(refused(FileRefusal::BindingRefused, "binding"));
     }
@@ -894,20 +885,18 @@ fn decode<T: serde::de::DeserializeOwned>(payload: &str) -> Result<T, FileError>
 }
 fn decode_record(row: &tokio_postgres::Row) -> Result<FileRecord, FileError> {
     let id: String = row.try_get(0)?;
-    let exposure: String = row.try_get(5)?;
+    let exposure: String = row.try_get(4)?;
     let file = FileRecord {
         id: id.parse().map_err(|error| failed("file_id", error))?,
         connection_id: row.try_get(1)?,
-        generation: row.try_get(2)?,
-        media_type: row.try_get(3)?,
-        size: row.try_get(4)?,
+        media_type: row.try_get(2)?,
+        size: row.try_get(3)?,
         exposure: serde_json::from_value(json!(exposure))
             .map_err(|error| failed("exposure", error))?,
-        url: row.try_get(6)?,
-        blob_key: row.try_get(7)?,
+        url: row.try_get(5)?,
+        blob_key: row.try_get(6)?,
     };
-    if file.generation <= 0
-        || file.size < 0
+    if file.size < 0
         || !valid_media_type(&file.media_type)
         || (file.exposure == Exposure::Public) != file.url.is_some()
     {
@@ -1185,7 +1174,7 @@ mod tests {
             &self,
             _: &str,
             _: Option<&str>,
-            _: Option<(&str, i64)>,
+            _: Option<&str>,
         ) -> Result<FileConnection, FileError> {
             panic!("a refused request must not reach connection authority")
         }
@@ -1272,7 +1261,7 @@ mod tests {
     }
 
     #[test]
-    fn writes_require_the_declared_application_binding_and_exact_generation() {
+    fn writes_require_the_declared_application_binding_and_connection() {
         let release = release();
         let connection = connection();
         assert!(
@@ -1292,12 +1281,7 @@ mod tests {
             (
                 "orders",
                 Some("documents"),
-                Some((connection.id.as_str(), 2)),
-            ),
-            (
-                "orders",
-                Some("documents"),
-                Some(("33333333-3333-4333-8333-333333333333", 3)),
+                Some("33333333-3333-4333-8333-333333333333"),
             ),
         ] {
             assert!(
@@ -1312,7 +1296,7 @@ mod tests {
                 &release,
                 "orders",
                 None,
-                Some((&read.id, read.generation)),
+                Some(read.id.as_str()),
                 &read,
                 false
             )

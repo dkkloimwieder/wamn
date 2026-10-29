@@ -162,6 +162,14 @@ async fn apply_contract(
         manifest.package.predecessor_version
     );
     crate::apply_package::apply_package(crate::apply_package::ApplyPackageRequest {
+        component_source: crate::apply_package::component_source_from_env(Some(
+            &crate::package_artifact::PackageRegistry {
+                artifact_base: platform.package_artifact_base.clone().unwrap_or_default(),
+                registry_auth_file: platform.registry_auth_file.clone(),
+                insecure_registry: false,
+                oci_ca_paths: platform.oci_ca_paths.clone(),
+            },
+        ))?,
         changes: platform.auth_changes().await?,
         package: opened.package_root(),
         database_url: project_url.to_owned(),

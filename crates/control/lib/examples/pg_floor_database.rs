@@ -50,6 +50,7 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     apply_local_package(
         ApplyPackageRequest {
+            component_source: wamn_control::apply_package::component_source_from_env(None).unwrap(),
             changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
             package: PackageRoot {
                 path: package.clone(),

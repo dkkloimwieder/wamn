@@ -56,19 +56,18 @@ async fn application_file_writes_are_refused_and_history_uses_the_standard_contr
     let row = fixture
         .guest
         .query_one(
-            "SELECT application,connection_id::text,connection_generation,created_by::text, \
+            "SELECT application,connection_id::text,created_by::text, \
          updated_by::text,created_at=updated_at,exposure,url FROM platform.file WHERE id=$1::text::uuid",
             &[&files::FILE],
         )
         .await?;
     assert_eq!(row.get::<_, String>(0), files::APPLICATION);
     assert_eq!(row.get::<_, String>(1), files::CONNECTION);
-    assert_eq!(row.get::<_, i64>(2), 1);
+    assert_eq!(row.get::<_, String>(2), files::CALLER);
     assert_eq!(row.get::<_, String>(3), files::CALLER);
-    assert_eq!(row.get::<_, String>(4), files::CALLER);
-    assert!(row.get::<_, bool>(5));
-    assert_eq!(row.get::<_, String>(6), "application");
-    assert!(row.get::<_, Option<String>>(7).is_none());
+    assert!(row.get::<_, bool>(4));
+    assert_eq!(row.get::<_, String>(5), "application");
+    assert!(row.get::<_, Option<String>>(6).is_none());
     let entry = fixture
         .observer
         .query_one(
@@ -104,13 +103,13 @@ async fn disabling_a_connection_preserves_file_references_and_referenced_delete_
     let row = fixture
         .guest
         .query_one(
-            "SELECT c.status,f.connection_generation FROM file_fixture.document d \
+            "SELECT c.status,f.connection_id::text FROM file_fixture.document d \
          JOIN platform.file f ON f.id=d.file_id JOIN platform.connection c ON c.id=f.connection_id",
             &[],
         )
         .await?;
     assert_eq!(row.get::<_, String>(0), "disabled");
-    assert_eq!(row.get::<_, i64>(1), 1);
+    assert_eq!(row.get::<_, String>(1), files::CONNECTION);
     let error = fixture
         .writer
         .execute(
@@ -291,52 +290,6 @@ async fn file_connection_lookup_requires_its_environment_and_an_active_connectio
 }
 
 #[tokio::test]
-async fn file_connection_lookup_pins_bucket_and_prefix_after_a_store_move() -> anyhow::Result<()> {
-    let original = registry_definition();
-    let registry = files::registry("file-org", "project", original.clone()).await?;
-    let moved = serde_json::json!({"provider":"s3","endpoint":"http://127.0.0.1:9000",
-        "container":"files-b","prefix":"new/"});
-    registry.move_store(&moved).await?;
-    let current = files::lookup(
-        &registry.reader,
-        "file-org",
-        "project",
-        "files",
-        Some("files"),
-        None,
-    )
-    .await?;
-    assert_eq!(current.len(), 1);
-    assert_eq!(current[0].get::<_, serde_json::Value>(3), moved);
-    assert!(current[0].get::<_, i64>(2) > registry.generation);
-    let pinned = files::lookup(
-        &registry.reader,
-        "file-org",
-        "project",
-        "files",
-        None,
-        Some((&registry.connection_id, registry.generation)),
-    )
-    .await?;
-    assert_eq!(pinned.len(), 1);
-    assert_eq!(pinned[0].get::<_, i64>(2), registry.generation);
-    assert_eq!(pinned[0].get::<_, serde_json::Value>(3), original);
-    assert!(
-        files::lookup(
-            &registry.reader,
-            "file-org",
-            "project",
-            "files",
-            None,
-            Some((&registry.connection_id, 999_999))
-        )
-        .await?
-        .is_empty()
-    );
-    Ok(())
-}
-
-#[tokio::test]
 async fn raw_blobstore_mutations_refuse_file_namespaces_on_minio() -> anyhow::Result<()> {
     use object_store::{ObjectStoreExt as _, aws::AmazonS3Builder, path::Path};
     use std::sync::Arc;
@@ -402,13 +355,6 @@ async fn aged_staging_expires_while_unlinked_metadata_and_aged_live_bytes_stay()
     files::metadata(&metadata.writer).await?;
     files::age_metadata(&metadata).await?;
     let minio = files::Minio::start().await?;
-    metadata
-        .writer
-        .execute(
-            "UPDATE platform.connection SET parameters=$1 WHERE id=$2::text::uuid",
-            &[&minio.definition(), &files::CONNECTION],
-        )
-        .await?;
     let store = AmazonS3Builder::new()
         .with_endpoint(&minio.endpoint)
         .with_bucket_name("files-a")

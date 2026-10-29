@@ -212,6 +212,7 @@ async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedC
     }
     wamn_test_infrastructure::fixture_digest::write_receipt(&package);
     apply_package::apply_package(ApplyPackageRequest {
+        component_source: wamn_control::apply_package::component_source_from_env(None).unwrap(),
         changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: wamn_control::apply_package::PackageRoot {
             path: package.clone(),

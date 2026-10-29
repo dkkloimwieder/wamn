@@ -79,6 +79,27 @@ impl ConnectionCredentials {
         ).await.context("read connection credential authority")
     }
 
+    /// Read one active host store through the login's environment scope.
+    pub(crate) async fn file_configuration(
+        &self,
+        project: &str,
+        environment: &str,
+        id: &str,
+    ) -> anyhow::Result<Option<(i64, serde_json::Value)>> {
+        let client = self
+            .database
+            .as_ref()
+            .context("connection reader unavailable")?;
+        let org = self
+            .org
+            .as_deref()
+            .context("connection reader has no org")?;
+        Ok(client.query_opt(
+            "SELECT generation,parameters FROM registry.read_file_connection($1,$2,$3,$4::text::uuid)",
+            &[&org, &project, &environment, &id],
+        ).await?.map(|row| (row.get(0), row.get(1))))
+    }
+
     /// Read the active generation through the environment credential store.
     pub async fn read_connection(
         &self,
@@ -273,6 +294,61 @@ mod tests {
         assert!(
             reader
                 .principal_for_connection("project-a", id.parse().unwrap())
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn file_reads_select_the_active_generation_and_refuse_other_types() {
+        let _lock = wamn_test_postgres::lock();
+        let mut fixture = Fixture::new().await;
+        fixture.put_store("files", "first", &["project-a"]).await;
+        fixture.put("erp", "http", &["project-a"]).await;
+        let reader = fixture.reader("project-a").await;
+        let rows = fixture.admin.query("SELECT c.id::text,i.name FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.project='project-a'", &[]).await.unwrap();
+        let store: String = rows
+            .iter()
+            .find(|row| row.get::<_, String>(1) == "files")
+            .unwrap()
+            .get(0);
+        let http: String = rows
+            .iter()
+            .find(|row| row.get::<_, String>(1) == "erp")
+            .unwrap()
+            .get(0);
+        let first = reader
+            .file_configuration("project-a", "dev", &store)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.1["provider"], "s3");
+        fixture.put_store("files", "current", &["project-a"]).await;
+        let current = reader
+            .file_configuration("project-a", "dev", &store)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(current.0 > first.0);
+        assert!(
+            reader
+                .file_configuration("project-a", "dev", &http)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            reader
+                .file_configuration("project-b", "dev", &store)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        fixture.admin.batch_execute("SET ROLE wamn_system; UPDATE registry.integration SET status='disabled' WHERE project='project-a' AND name='files'; RESET ROLE").await.unwrap();
+        assert!(
+            reader
+                .file_configuration("project-a", "dev", &store)
                 .await
                 .unwrap()
                 .is_none()

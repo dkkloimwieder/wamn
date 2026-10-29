@@ -14,20 +14,16 @@ INSERT INTO catalog.package_definition_owners
 VALUES ('history', 'fixture', 'item', 'relation', 'item', 'fixture');
 INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes)
 VALUES ('history', 'sha256:' || encode(sha256('{}'::bytea), 'hex'), '{}'::bytea);
-INSERT INTO catalog.connection_requirements
-    (env_key, component_digest, store_alias, requirement_json, requirement_hash)
-VALUES ('history', 'sha256:' || repeat('a', 64), 'store', '{}', 'sha256:' || repeat('b', 64));
-INSERT INTO catalog.connection_instances
-    (env_key, environment, instance_id, requirement_type, contract)
-VALUES ('history', 'dev', 'store', 'http', 'wamn:connection/http@0.1.0');
-INSERT INTO catalog.connection_generations
-    (env_key, environment, instance_id, generation, definition_json, definition_hash)
-VALUES ('history', 'dev', 'store', 1, '{}', 'sha256:' || repeat('b', 64));
-INSERT INTO catalog.connection_bindings
-    (env_key, manifest_digest, component_digest, store_alias, environment, instance_id,
-     package_id, binding_status, validation_status, validation_hash)
-VALUES ('history', 'sha256:' || encode(sha256('{}'::bytea), 'hex'), 'sha256:' || repeat('a', 64),
-        'store', 'dev', 'store', 'fixture', 'active', 'valid', 'sha256:' || repeat('b', 64));
+INSERT INTO platform.integration (id,integration_type,name,status)
+VALUES ('10000000-0000-4000-8000-000000000001','http','history-http','active');
+INSERT INTO platform.connection (id,integration_id,integration_type,status)
+VALUES ('10000000-0000-4000-8000-000000000002','10000000-0000-4000-8000-000000000001','http','active');
+INSERT INTO catalog.connection_requirement (env_key,component_digest,package_id,name,integration_type,interfaces,mode)
+VALUES ('history','sha256:' || repeat('a',64),'fixture','store','http',ARRAY['wamn:connection/http@0.1.0'],'write');
+INSERT INTO catalog.release_connection (env_key,manifest_digest,connection_id,integration_type,version)
+VALUES ('history','sha256:' || encode(sha256('{}'::bytea),'hex'),'10000000-0000-4000-8000-000000000002','http',1);
+INSERT INTO catalog.connection_binding (env_key,manifest_digest,component_digest,package_id,name,connection_id,integration_type)
+VALUES ('history','sha256:' || encode(sha256('{}'::bytea),'hex'),'sha256:' || repeat('a',64),'fixture','store','10000000-0000-4000-8000-000000000002','http');
 INSERT INTO catalog.wiring_tombstones (env_key, package_id, environment, wiring_id, reason)
 VALUES ('history', 'fixture', 'dev', 'retired', 'fixture');
 INSERT INTO catalog.package_upgrade_qualifications
@@ -49,7 +45,7 @@ DECLARE
 BEGIN
     FOREACH relation IN ARRAY ARRAY[
         'packages', 'package_migrations', 'package_definition_owners', 'releases',
-        'connection_requirements', 'connection_generations', 'connection_bindings',
+        'release_connection', 'connection_binding',
         'wiring_tombstones', 'package_upgrade_qualifications', 'package_upgrade_stages', 'package_floors'
     ] LOOP
         ASSERT (SELECT count(*) = 4 AND bool_and(attnotnull AND atthasdef = false)
@@ -71,7 +67,7 @@ BEGIN
             ASSERT SQLERRM = 'actor-required', format('%s missing actor: %s', relation, SQLERRM);
         END;
         PERFORM set_config('app.user_id', '00000000-0000-4000-8000-0000000000f1', true);
-        IF relation NOT IN ('package_upgrade_stages', 'package_floors') THEN
+        IF relation NOT IN ('package_upgrade_stages', 'package_floors', 'release_connection', 'connection_binding') THEN
             BEGIN
                 EXECUTE format('UPDATE catalog.%I SET created_by = created_by', relation);
                 RAISE EXCEPTION '% accepted an immutable update', relation;

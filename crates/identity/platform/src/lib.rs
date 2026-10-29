@@ -25,6 +25,7 @@ use wamn_session::PAT_TOKEN_PREFIX;
 pub mod application;
 pub mod auth_changes;
 pub mod configuration;
+pub mod connection_projection;
 pub mod connections;
 pub mod control;
 pub mod org;

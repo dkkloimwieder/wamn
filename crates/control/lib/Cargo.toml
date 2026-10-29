@@ -38,6 +38,8 @@ name = "wamn_integration_live"
 path = "../../../apps/platform/wamn_integration/tests/operations_live.rs"
 
 [dependencies]
+wit-component = { workspace = true }
+wit-parser = { workspace = true }
 wamn-credential-store = { workspace = true }
 futures-util = { workspace = true }
 rcgen = { workspace = true }
@@ -112,8 +114,8 @@ wamn-control-provision = { workspace = true, features = ["test-util"] }
 wamn-project-state = { workspace = true, features = ["test-util"] }
 wamn-test-infrastructure = { workspace = true }
 wamn-test-postgres = { workspace = true }
-wit-component = { version = "=0.254.2", features = ["dummy-module"] }
-wit-parser = "=0.254.2"
+test-wit-component = { package = "wit-component", version = "=0.254.2", features = ["dummy-module"] }
+test-wit-parser = { package = "wit-parser", version = "=0.254.2" }
 wat = "=1.254.2"
 
 [lints]

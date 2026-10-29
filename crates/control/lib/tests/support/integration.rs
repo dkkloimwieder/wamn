@@ -1546,7 +1546,7 @@ async fn assertions_inner(
             );
             let expected = json!([{"key":"five","name":"Fifth"},{"key":"four","name":"Fourth"},{"key":"one","name":"First"},{"key":"three","name":"Third"},{"key":"two","name":"Second"}]);
             ensure!(rows["items"] == expected, "consumer rows differ: {rows}");
-            let provenance: bool = project.query_one("SELECT count(*) = 5 AND bool_and(external_id = key AND external_system_id IS NOT NULL AND external_system_id = (SELECT external_system_id FROM platform.connection WHERE name = 'rest-fixture')) FROM rest_consumer_fixture.item", &[]).await?.get(0);
+            let provenance: bool = project.query_one("SELECT count(*) = 5 AND bool_and(external_id = key AND external_system_id IS NOT NULL AND external_system_id = (SELECT external_system_id FROM platform.integration WHERE name = 'rest-fixture')) FROM rest_consumer_fixture.item", &[]).await?.get(0);
             ensure!(provenance, "consumer records must retain source provenance");
             let logs = rows["logs"].as_array().unwrap();
             ensure!(

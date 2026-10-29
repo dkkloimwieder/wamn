@@ -1,7 +1,7 @@
 -- Package and release facts carry the four NOT NULL record history stamps.
 -- Their triggers use wamn_history.stamp_row(), installed by CATALOG_SCHEMA_SQL.
 -- Package application binds wamn:apply-package; environment and connection
--- provisioning bind wamn:provisioning. These tables keep no history log.
+-- provisioning bind wamn:provisioning. Release connections and bindings also log history.
 
 CREATE TABLE catalog.packages (
     env_key            text        NOT NULL CHECK (env_key <> ''),
@@ -211,137 +211,91 @@ CREATE TRIGGER package_migrations_release_seal
     FOR EACH ROW
     EXECUTE FUNCTION catalog.reject_package_migration_after_release_membership();
 
-CREATE TABLE catalog.connection_requirements (
-    env_key          text  NOT NULL CHECK (env_key <> ''),
-    component_digest text  NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
-    store_alias      text  NOT NULL CHECK (store_alias <> ''),
-    requirement_json jsonb NOT NULL CHECK (jsonb_typeof(requirement_json) = 'object'),
-    requirement_hash text  NOT NULL CHECK (requirement_hash ~ '^sha256:[0-9a-f]{64}$'),
-    created_at       timestamptz NOT NULL,
-    created_by       uuid        NOT NULL,
-    updated_at       timestamptz NOT NULL,
-    updated_by       uuid        NOT NULL,
-    CONSTRAINT connection_requirements_pkey
-        PRIMARY KEY (env_key, component_digest, store_alias)
+-- Connection projections precede the catalog references to them.
+CREATE SCHEMA platform AUTHORIZATION CURRENT_USER;
+
+CREATE TABLE platform.external_system (
+    id uuid PRIMARY KEY,
+    name text NOT NULL UNIQUE
 );
 
-CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON catalog.connection_requirements
-    FOR EACH ROW
-    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
-
-CREATE TABLE catalog.connection_instances (
-    env_key          text        NOT NULL CHECK (env_key <> ''),
-    environment      text        NOT NULL CHECK (environment <> ''),
-    instance_id      text        NOT NULL CHECK (instance_id <> ''),
-    requirement_type text        NOT NULL CHECK (requirement_type <> ''),
-    contract          text        NOT NULL CHECK (contract <> ''),
-    lifecycle_status  text        NOT NULL DEFAULT 'enabled'
-        CHECK (lifecycle_status IN ('enabled', 'disabled')),
-    org_connection_name text,
-    active_generation bigint,
-    revision          bigint      NOT NULL DEFAULT 1 CHECK (revision > 0),
-    created_at        timestamptz NOT NULL DEFAULT now(),
-    updated_at        timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT connection_instances_pkey
-        PRIMARY KEY (env_key, environment, instance_id)
+CREATE TABLE platform.integration (
+    id uuid PRIMARY KEY,
+    integration_type text NOT NULL,
+    external_system_id uuid REFERENCES platform.external_system (id),
+    name text NOT NULL UNIQUE,
+    status text NOT NULL
 );
 
-CREATE TABLE catalog.connection_generations (
-    env_key              text        NOT NULL CHECK (env_key <> ''),
-    environment          text        NOT NULL CHECK (environment <> ''),
-    instance_id          text        NOT NULL CHECK (instance_id <> ''),
-    generation           bigint      NOT NULL CHECK (generation > 0),
-    definition_json      jsonb       NOT NULL,
-    definition_hash      text        NOT NULL CHECK (definition_hash ~ '^sha256:[0-9a-f]{64}$'),
-    -- NULL for a gcs blobstore, which signs with the host pod's service account.
-    credential_set_handle text       CHECK (credential_set_handle <> ''),
-    created_at           timestamptz NOT NULL,
-    created_by           uuid        NOT NULL,
-    updated_at           timestamptz NOT NULL,
-    updated_by           uuid        NOT NULL,
-    CONSTRAINT connection_generations_pkey
-        PRIMARY KEY (env_key, environment, instance_id, generation),
-    CONSTRAINT connection_generations_instance_fkey
-        FOREIGN KEY (env_key, environment, instance_id)
-        REFERENCES catalog.connection_instances (env_key, environment, instance_id)
+CREATE TABLE platform.connection (
+    id uuid PRIMARY KEY,
+    integration_id uuid NOT NULL UNIQUE REFERENCES platform.integration (id),
+    integration_type text NOT NULL,
+    status text NOT NULL,
+    UNIQUE (id, integration_type)
 );
 
-CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON catalog.connection_generations
-    FOR EACH ROW
-    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
+GRANT USAGE ON SCHEMA platform TO wamn_app;
+GRANT SELECT ON platform.external_system, platform.integration, platform.connection TO wamn_app;
 
-ALTER TABLE catalog.connection_instances
-    ADD CONSTRAINT connection_instances_active_generation_fkey
-    FOREIGN KEY (env_key, environment, instance_id, active_generation)
-    REFERENCES catalog.connection_generations
-        (env_key, environment, instance_id, generation)
-    DEFERRABLE INITIALLY DEFERRED;
-
-CREATE TABLE catalog.connection_bindings (
-    env_key              text        NOT NULL CHECK (env_key <> ''),
-    manifest_digest      text        NOT NULL CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
-    component_digest     text        NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
-    store_alias          text        NOT NULL CHECK (store_alias <> ''),
-    environment          text        NOT NULL CHECK (environment <> ''),
-    instance_id          text        NOT NULL CHECK (instance_id <> ''),
-    package_id           text        NOT NULL CONSTRAINT connection_bindings_package_id_nonempty CHECK (package_id <> ''),
-    mode                 text        NOT NULL DEFAULT 'write' CHECK (mode IN ('read', 'write')),
-    binding_status       text        NOT NULL CHECK (binding_status IN ('active', 'disabled')),
-    validation_status    text        NOT NULL CHECK (validation_status IN ('valid', 'invalid')),
-    validation_hash      text        NOT NULL CHECK (validation_hash ~ '^sha256:[0-9a-f]{64}$'),
-    bound_at             timestamptz NOT NULL DEFAULT now(),
-    created_at           timestamptz NOT NULL,
-    created_by           uuid        NOT NULL,
-    updated_at           timestamptz NOT NULL,
-    updated_by           uuid        NOT NULL,
-    CONSTRAINT connection_bindings_pkey
-        PRIMARY KEY (env_key, manifest_digest, component_digest, store_alias, package_id),
-    CONSTRAINT connection_bindings_release_fkey
-        FOREIGN KEY (env_key, manifest_digest)
-        REFERENCES catalog.releases (env_key, manifest_digest),
-    CONSTRAINT connection_bindings_requirement_fkey
-        FOREIGN KEY (env_key, component_digest, store_alias)
-        REFERENCES catalog.connection_requirements
-            (env_key, component_digest, store_alias),
-    CONSTRAINT connection_bindings_instance_fkey
-        FOREIGN KEY (env_key, environment, instance_id)
-        REFERENCES catalog.connection_instances (env_key, environment, instance_id)
+CREATE TABLE catalog.connection_requirement (
+    env_key text NOT NULL,
+    component_digest text NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
+    package_id text NOT NULL,
+    name text NOT NULL,
+    integration_type text NOT NULL,
+    interfaces text[] NOT NULL CHECK (cardinality(interfaces) > 0),
+    mode text NOT NULL CHECK (mode IN ('read', 'write')),
+    PRIMARY KEY (env_key, component_digest, package_id, name),
+    UNIQUE (env_key, component_digest, package_id, name, integration_type)
 );
 
-CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON catalog.connection_bindings
-    FOR EACH ROW
-    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
+CREATE TABLE catalog.release_connection (
+    env_key text NOT NULL,
+    manifest_digest text NOT NULL,
+    connection_id uuid NOT NULL,
+    integration_type text NOT NULL,
+    version integer NOT NULL,
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
+    PRIMARY KEY (env_key, manifest_digest, connection_id),
+    UNIQUE (env_key, manifest_digest, connection_id, integration_type),
+    FOREIGN KEY (env_key, manifest_digest) REFERENCES catalog.releases (env_key, manifest_digest),
+    FOREIGN KEY (connection_id, integration_type) REFERENCES platform.connection (id, integration_type)
+);
 
-CREATE FUNCTION catalog.guard_connection_instance_update()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
+CREATE TABLE catalog.connection_binding (
+    env_key text NOT NULL,
+    manifest_digest text NOT NULL,
+    component_digest text NOT NULL,
+    package_id text NOT NULL,
+    name text NOT NULL,
+    connection_id uuid NOT NULL,
+    integration_type text NOT NULL,
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
+    PRIMARY KEY (env_key, manifest_digest, component_digest, package_id, name),
+    FOREIGN KEY (env_key, manifest_digest, connection_id, integration_type)
+        REFERENCES catalog.release_connection (env_key, manifest_digest, connection_id, integration_type),
+    FOREIGN KEY (env_key, component_digest, package_id, name, integration_type)
+        REFERENCES catalog.connection_requirement (env_key, component_digest, package_id, name, integration_type)
+);
+
+DO $connection_history$
+DECLARE relation text;
 BEGIN
-    IF ROW(NEW.env_key, NEW.environment, NEW.instance_id,
-           NEW.requirement_type, NEW.contract, NEW.created_at)
-       IS DISTINCT FROM
-       ROW(OLD.env_key, OLD.environment, OLD.instance_id,
-           OLD.requirement_type, OLD.contract, OLD.created_at) THEN
-        RAISE EXCEPTION USING ERRCODE = '55000',
-            MESSAGE = 'connection-instance-identity-is-immutable';
-    END IF;
-    IF NEW.revision <= OLD.revision THEN
-        RAISE EXCEPTION USING ERRCODE = '23514',
-            MESSAGE = 'connection-instance-revision-must-advance';
-    END IF;
-    NEW.updated_at := now();
-    RETURN NEW;
-END
-$$;
-CREATE TRIGGER connection_instances_controlled_update
-    BEFORE UPDATE ON catalog.connection_instances
-    FOR EACH ROW EXECUTE FUNCTION catalog.guard_connection_instance_update();
-CREATE TRIGGER connection_instances_delete_immutable
-    BEFORE DELETE ON catalog.connection_instances
-    FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+    FOREACH relation IN ARRAY ARRAY['release_connection', 'connection_binding'] LOOP
+        EXECUTE format('CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON catalog.%I '
+            'FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(''created_at'', ''created_by'', ''updated_at'', ''updated_by'')', relation);
+        PERFORM wamn_history.create_history_table('catalog', relation, false);
+        EXECUTE format('CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE ON catalog.%I '
+            'FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change(''unlimited'')', relation);
+    END LOOP;
+END $connection_history$;
 
 CREATE TABLE catalog.wiring_tombstones (
     env_key     text        NOT NULL CHECK (env_key <> ''),
@@ -569,9 +523,7 @@ BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
         'packages', 'package_migrations', 'package_definition_owners',
         'releases',
-        'connection_requirements',
-        'connection_instances',
-        'connection_generations', 'connection_bindings',
+        'connection_requirement', 'release_connection', 'connection_binding',
         'wiring_tombstones', 'workflows',
         'package_upgrade_qualifications',
         'package_upgrade_stages', 'package_floors'
@@ -603,7 +555,7 @@ BEGIN
     FOREACH relation_name IN ARRAY ARRAY[
         'packages', 'package_migrations', 'package_definition_owners',
         'releases',
-        'connection_requirements', 'connection_generations',
+        'connection_requirement',
         'wiring_tombstones',
         'package_upgrade_qualifications'
     ] LOOP
@@ -615,80 +567,16 @@ BEGIN
 END
 $immutable_facts$;
 
--- A binding never changes. `env apply` removes the bindings of a release
--- that left the live set, after the drain (docs/plan/platform-deploy.md R22 (3)).
-CREATE TRIGGER connection_bindings_immutable
-    BEFORE UPDATE ON catalog.connection_bindings
-    FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
-
 GRANT SELECT ON catalog.packages,
     catalog.releases,
-    catalog.connection_requirements,
-    catalog.connection_instances,
-    catalog.connection_generations,
-    catalog.connection_bindings,
+    catalog.connection_requirement,
+    catalog.release_connection,
+    catalog.connection_binding,
     catalog.wiring_tombstones,
     catalog.workflows
 TO wamn_app;
 
 REVOKE ALL ON ALL TABLES IN SCHEMA catalog FROM PUBLIC;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA catalog FROM PUBLIC;
-
--- Read enabled bindings that survive the environment's release contraction.
-CREATE OR REPLACE FUNCTION catalog.connection_upgrade_bindings(env_key text, environment_name text)
-RETURNS TABLE(connection_name text, integration text)
-LANGUAGE sql
-STABLE
-SECURITY DEFINER
-SET search_path = pg_catalog
-AS $$
-    SELECT DISTINCT instance.org_connection_name,
-           CASE WHEN instance.requirement_type = 'blobstore'
-                THEN coalesce(generation.definition_json->>'provider', 's3')
-                ELSE instance.requirement_type END
-      FROM catalog.connection_bindings AS binding
-      JOIN catalog.connection_instances AS instance
-        ON (instance.env_key, instance.environment, instance.instance_id)
-         = (binding.env_key, binding.environment, binding.instance_id)
-      JOIN catalog.connection_generations AS generation
-        ON (generation.env_key, generation.environment, generation.instance_id, generation.generation)
-         = (instance.env_key, instance.environment, instance.instance_id, instance.active_generation)
-      JOIN catalog.connection_requirements AS requirement
-        ON (requirement.env_key, requirement.component_digest, requirement.store_alias)
-         = (binding.env_key, binding.component_digest, binding.store_alias)
-      JOIN catalog.releases AS release
-        ON (release.env_key, release.manifest_digest) = (binding.env_key, binding.manifest_digest)
-     WHERE binding.env_key = $1 AND binding.environment = environment_name
-       AND binding.binding_status = 'active' AND binding.validation_status = 'valid'
-       AND instance.lifecycle_status = 'enabled' AND instance.org_connection_name IS NOT NULL
-     ORDER BY 1, 2
-$$;
-DO $upgrade_reader_owner$ BEGIN
-    EXECUTE format('ALTER FUNCTION catalog.connection_upgrade_bindings(text, text) OWNER TO %I',
-        (SELECT pg_get_userbyid(relowner) FROM pg_class
-          WHERE oid = 'catalog.connection_bindings'::regclass));
-END $upgrade_reader_owner$;
-DO $upgrade_reader_policies$
-DECLARE
-    function_owner name;
-    relation_name text;
-BEGIN
-    SELECT pg_get_userbyid(proowner) INTO function_owner FROM pg_proc
-     WHERE oid = 'catalog.connection_upgrade_bindings(text,text)'::regprocedure;
-    FOREACH relation_name IN ARRAY ARRAY[
-        'connection_bindings', 'connection_generations', 'connection_instances',
-        'connection_requirements', 'releases'
-    ] LOOP
-        EXECUTE format('DROP POLICY IF EXISTS connection_upgrade_reader_owner ON catalog.%I', relation_name);
-        EXECUTE format('CREATE POLICY connection_upgrade_reader_owner ON catalog.%I FOR SELECT TO %I USING (true)',
-                       relation_name, function_owner);
-    END LOOP;
-END $upgrade_reader_policies$;
-REVOKE ALL ON FUNCTION catalog.connection_upgrade_bindings(text, text) FROM PUBLIC;
-DO $upgrade_reader_grant$ BEGIN
-    IF to_regrole('wamn_administration') IS NOT NULL THEN
-        GRANT EXECUTE ON FUNCTION catalog.connection_upgrade_bindings(text, text) TO wamn_administration;
-    END IF;
-END $upgrade_reader_grant$;
 
 COMMIT;

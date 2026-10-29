@@ -277,6 +277,10 @@ pub(super) fn package_request(
         ],
         ..JobRequest::default()
     };
+    request.environment.insert(
+        "WAMN_COMPONENT_ARTIFACT_BASE".into(),
+        artifact_base(registry, "components")?,
+    );
     job::auth_nats_inputs(&mut request, Some(auth))?;
     Ok(request)
 }

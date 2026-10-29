@@ -17,8 +17,7 @@
 //! The tables are the AUTH/RBAC half of plan item 2.4: [`USER`], [`ROLE`] (+
 //! the user↔role linkage [`USER_ROLE`]), [`PERMISSION`], [`API_KEY`], and the
 //! platform configuration tables in `docs/architecture/data-access.md#actors`:
-//! [`EXTERNAL_SYSTEM`], [`CONNECTION`], [`INTEGRATION_ALLOW`],
-//! [`PROJECT_CONNECTION`], [`NUMBER_SEQUENCE`], [`NUMBER_COUNTER`] and
+//! [`EXTERNAL_SYSTEM`], [`INTEGRATION`], [`CONNECTION`], [`NUMBER_SEQUENCE`], [`NUMBER_COUNTER`] and
 //! [`SETTING`]. The "platform metadata" half of 2.4 (entities / fields /
 //! relations / flows) is ALREADY shipped — the catalog model in
 //! `deploy/sql/catalog-schema.sql` (3.1) — and is referenced, not redefined
@@ -281,53 +280,42 @@ pub const ENVIRONMENT: Table = Table {
     columns: &["id", "status"],
 };
 
-/// The persistent identity that a group of connections reach. `integration`
-/// is the catalog code of the connector code.
+/// One external account identity copied from the system database.
 pub const EXTERNAL_SYSTEM: Table = Table {
     name: "external_system",
-    columns: &["id", "integration", "name", "parameters", "status"],
+    columns: &["id", "name"],
 };
 
-/// A configured instance of an integration, bound by `name`.
-pub const CONNECTION: Table = Table {
-    name: "connection",
+/// One project integration copied from the system database.
+pub const INTEGRATION: Table = Table {
+    name: "integration",
     columns: &[
         "id",
-        "integration",
+        "integration_type",
         "external_system_id",
         "name",
-        "transport",
-        "exchange",
-        "parameters",
         "status",
     ],
 };
 
-/// Application-owned file metadata. Storage coordinates use the recorded generation.
+/// One environment connection with effective status.
+pub const CONNECTION: Table = Table {
+    name: "connection",
+    columns: &["id", "integration_id", "integration_type", "status"],
+};
+
+/// Application-owned file metadata. Storage reads use the active generation.
 pub const FILE: Table = Table {
     name: "file",
     columns: &[
         "id",
         "application",
         "connection_id",
-        "connection_generation",
         "blob_key",
         "exposure",
         "url",
         "created_by",
     ],
-};
-
-/// The integrations allowed at an org, project or environment scope.
-pub const INTEGRATION_ALLOW: Table = Table {
-    name: "integration_allow",
-    columns: &["scope_type", "scope_id", "integration"],
-};
-
-/// The connections a project has enabled.
-pub const PROJECT_CONNECTION: Table = Table {
-    name: "project_connection",
-    columns: &["project_id", "connection_id"],
 };
 
 /// One document number sequence of one application.
@@ -361,20 +349,23 @@ pub const TABLES: &[Table] = &[
     API_KEY,
     ENVIRONMENT,
     EXTERNAL_SYSTEM,
+    INTEGRATION,
     CONNECTION,
     FILE,
-    INTEGRATION_ALLOW,
-    PROJECT_CONNECTION,
     NUMBER_SEQUENCE,
     NUMBER_COUNTER,
     SETTING,
 ];
 
 /// The tables of [`TABLES`] that have no history table and no log trigger.
-/// `number_counter` is the one: a history entry per bump would double the
-/// writes of every create, and the write log is the audit (owner ruling,
-/// wamn-aqd0m.1).
-pub const HISTORY_EXEMPT: &[&str] = &["number_counter"];
+/// System projections carry no local history. The number counter uses the
+/// write log for its audit (owner ruling, wamn-aqd0m.1).
+pub const HISTORY_EXEMPT: &[&str] = &[
+    "external_system",
+    "integration",
+    "connection",
+    "number_counter",
+];
 
 /// Test databases with the tenant+platform floor.
 #[cfg(any(test, feature = "test-util"))]
@@ -408,9 +399,9 @@ mod tests {
     #[test]
     fn table_manifest_is_complete_and_unique() {
         // Four auth/RBAC concepts, with the user↔role linkage split out as
-        // its own table, the environment status, and the eight platform
-        // configuration tables make fourteen tables.
-        assert_eq!(TABLES.len(), 14);
+        // its own table, the environment status, and the platform
+        // configuration tables make thirteen tables.
+        assert_eq!(TABLES.len(), 13);
         let mut names: Vec<&str> = TABLES.iter().map(|t| t.name).collect();
         names.sort_unstable();
         names.dedup();

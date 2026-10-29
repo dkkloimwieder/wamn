@@ -1,7 +1,7 @@
 //! The hand-written DDL's tenant floor derives from `current_user`.
 //!
 //! `wamn-0h0g.22.6.3` established the guest tenant floor across four artifacts;
-//! the current package-era relation set contains 22 governed relations, all off
+//! the current package-era relation set contains 21 governed relations, all off
 //! the settable `app.env_key` claim and onto
 //! `wamn_authority.tenant_key(env_key) = wamn_authority.current_tenant_key()`,
 //! each with the expression index that keeps the predicate sargable.
@@ -387,8 +387,10 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
           WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%current_tenant_key%'",
     );
     assert_eq!(
-        governed, "22",
-        "the sweep must cover exactly the 22 governed relations: C3.1 removes role, \
+        governed, "21",
+        "the sweep must cover exactly the 21 governed relations: IS1.5 replaces four \
+         catalog connection tables with connection_requirement, release_connection and \
+         connection_binding; C3.1 removes role, \
          user_role, permission, api_key, environment, role_history, user_role_history, \
          permission_history, api_key_history and environment_history from the tenant \
          floor; project 0036 removes catalog.wirings and catalog.event_registrations; \
@@ -2851,10 +2853,10 @@ fn the_platform_history_stays_out_of_audit_retention_reach_on_postgres() {
     );
     assert_eq!(
         logs,
-        "api_key:unlimited\\000 connection:unlimited\\000 environment:unlimited\\000 \
-         external_system:unlimited\\000 file:unlimited\\000 integration_allow:unlimited\\000 \
+        "api_key:unlimited\\000 environment:unlimited\\000 \
+         file:unlimited\\000 \
          number_sequence:unlimited\\000 permission:unlimited\\000 \
-         project_connection:unlimited\\000 role:unlimited\\000 setting:unlimited\\000 \
+         role:unlimited\\000 setting:unlimited\\000 \
          user:unlimited\\000 user_role:unlimited\\000",
         "every platform relation must log with the retention unlimited"
     );

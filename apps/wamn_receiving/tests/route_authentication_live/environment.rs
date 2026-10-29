@@ -53,6 +53,7 @@ pub(super) async fn install_journey_project(
     install_journey_platform_floor(project, PLATFORM_DOMAIN).await?;
     for (package, root) in released_journey_packages().zip(packages) {
         apply_package::apply_package(ApplyPackageRequest {
+            component_source: wamn_control::apply_package::component_source_from_env(None).unwrap(),
             changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
             package: root.clone(),
             database_url: project_url.to_owned(),

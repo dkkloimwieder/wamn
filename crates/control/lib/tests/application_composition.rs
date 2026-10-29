@@ -13,17 +13,20 @@ use wamn_engine::component_admission::component_digest;
 const OPERATION: &str = "source-fixture:item/get@1.0.0";
 const HANDLER: &str = "wasi:http/handler@0.3.0";
 
-fn component(resolve: &wit_parser::Resolve, world: wit_parser::WorldId) -> Vec<u8> {
-    let mut module =
-        wit_component::dummy_module(resolve, world, wit_parser::ManglingAndAbi::Standard32);
-    wit_component::embed_component_metadata(
+fn component(resolve: &test_wit_parser::Resolve, world: test_wit_parser::WorldId) -> Vec<u8> {
+    let mut module = test_wit_component::dummy_module(
+        resolve,
+        world,
+        test_wit_parser::ManglingAndAbi::Standard32,
+    );
+    test_wit_component::embed_component_metadata(
         &mut module,
         resolve,
         world,
-        wit_component::StringEncoding::UTF8,
+        test_wit_component::StringEncoding::UTF8,
     )
     .expect("embed fixture metadata");
-    wit_component::ComponentEncoder::default()
+    test_wit_component::ComponentEncoder::default()
         .module(&module)
         .expect("read fixture module")
         .validate(true)
@@ -32,7 +35,7 @@ fn component(resolve: &wit_parser::Resolve, world: wit_parser::WorldId) -> Vec<u
 }
 
 fn application(extra: &str) -> Vec<u8> {
-    let mut resolve = wit_parser::Resolve::new();
+    let mut resolve = test_wit_parser::Resolve::new();
     resolve
         .push_str(
             "node.wit",
@@ -124,7 +127,7 @@ fn admit_declared(bytes: &[u8], extra: &[&str]) -> anyhow::Result<ComponentAdmis
 }
 
 fn route() -> Vec<u8> {
-    let mut resolve = wit_parser::Resolve::new();
+    let mut resolve = test_wit_parser::Resolve::new();
     let package = resolve
         .push_str(
             "route.wit",
@@ -306,7 +309,7 @@ fn publication_refuses_an_application_with_its_own_http_handler() {
 
 #[test]
 fn composition_preserves_overlay_exports_that_use_base_types() {
-    let mut resolve = wit_parser::Resolve::new();
+    let mut resolve = test_wit_parser::Resolve::new();
     let base_package = resolve
         .push_str(
             "base.wit",

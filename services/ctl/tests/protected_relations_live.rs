@@ -195,6 +195,8 @@ async fn install_project_database(client: &Client, url: &str) {
     );
 
     apply_package::apply_package(ApplyPackageRequest {
+        component_source: apply_package::component_source_from_env(None)
+            .expect("component repository configuration"),
         changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: wamn_control::apply_package::PackageRoot {
             path: wamn_fixture_package::package_root(),

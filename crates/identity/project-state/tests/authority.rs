@@ -29,8 +29,6 @@
 
 use std::fmt::Write as _;
 
-use std::path::Path;
-
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
 };
@@ -56,14 +54,11 @@ const APP_GENERATION_VALID_UNTIL: &str = "2099-01-01T00:00:00Z";
 /// `deploy/sql/record-history.sql`, `deploy/sql/record-history-app-grants.sql`,
 /// and `deploy/sql/app-schema.sql`, the order every tenant applier uses.
 fn app_schema_sql() -> String {
-    let deploy = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy");
-    let record_history = std::fs::read_to_string(deploy.join("sql/record-history.sql"))
-        .expect("read deploy/sql/record-history.sql");
-    let app_grants = std::fs::read_to_string(deploy.join("sql/record-history-app-grants.sql"))
-        .expect("read deploy/sql/record-history-app-grants.sql");
-    let app_schema = std::fs::read_to_string(deploy.join("sql/app-schema.sql"))
-        .expect("read deploy/sql/app-schema.sql");
-    format!("{record_history}\n{app_grants}\n{app_schema}")
+    format!(
+        "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_scenario_author') THEN CREATE ROLE wamn_scenario_author NOLOGIN; END IF; END $$;\nDROP SCHEMA IF EXISTS catalog CASCADE;\n{}\n{}",
+        wamn_catalog::CATALOG_SCHEMA_SQL,
+        include_str!("../../../../deploy/sql/app-schema.sql")
+    )
 }
 
 fn current_database(url: &str) -> String {
@@ -189,8 +184,7 @@ DO $$
 DECLARE relation text; operation text;
 BEGIN
   FOREACH relation IN ARRAY ARRAY['user','role','user_role','permission','environment',
-                                  'external_system','connection','integration_allow',
-                                  'project_connection','number_sequence','number_counter',
+                                  'external_system','integration','connection','number_sequence','number_counter',
                                   'setting'] LOOP
     ASSERT has_table_privilege('wamn_app'::name, ('platform.'||relation)::text, 'SELECT'::text),
       format('%s must stay readable — the platform revokes writes, not reads', relation);
@@ -246,10 +240,9 @@ BEGIN
     'UPDATE platform.number_sequence SET pattern = ''F-{{seq:f}}''',
     'INSERT INTO platform.setting (scope_type, scope_id, key, value) VALUES (''org'', ''acme'', ''locale'', ''true'')',
     'UPDATE platform.setting SET locked = true',
-    'INSERT INTO platform.external_system (integration, name) VALUES (''netsuite'', ''forged'')',
-    'INSERT INTO platform.connection (integration, name, transport, exchange) VALUES (''netsuite'', ''forged'', ''http'', ''request'')',
-    'INSERT INTO platform.integration_allow (scope_type, scope_id, integration) VALUES (''org'', ''acme'', ''modbus'')',
-    'DELETE FROM platform.project_connection',
+    'INSERT INTO platform.external_system (id,name) VALUES (gen_random_uuid(),''forged'')',
+    'INSERT INTO platform.integration (id,integration_type,name,status) VALUES (gen_random_uuid(),''http'',''forged'',''active'')',
+    'DELETE FROM platform.connection',
     'INSERT INTO platform.environment (status) VALUES (''active'')',
     'UPDATE platform.environment SET status = ''active''',
     'DELETE FROM platform.environment'
@@ -525,9 +518,7 @@ DECLARE history text; operation text;
 BEGIN
   FOREACH history IN ARRAY ARRAY['user_history','role_history','user_role_history',
                                  'permission_history','api_key_history',
-                                 'environment_history','external_system_history',
-                                 'connection_history','integration_allow_history',
-                                 'project_connection_history','number_sequence_history',
+                                 'environment_history','number_sequence_history',
                                  'setting_history'] LOOP
     FOREACH operation IN ARRAY ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE'] LOOP
       ASSERT NOT has_table_privilege('wamn_app'::name, ('platform.'||history)::text, operation),
@@ -560,10 +551,6 @@ BEGIN
     'SELECT count(*) FROM platform.permission_history',
     'SELECT count(*) FROM platform.api_key_history',
     'SELECT count(*) FROM platform.environment_history',
-    'SELECT count(*) FROM platform.external_system_history',
-    'SELECT count(*) FROM platform.connection_history',
-    'SELECT count(*) FROM platform.integration_allow_history',
-    'SELECT count(*) FROM platform.project_connection_history',
     'SELECT count(*) FROM platform.number_sequence_history',
     'SELECT count(*) FROM platform.setting_history',
     {direct_writes},

@@ -84,7 +84,7 @@
 -- session management here. `api_key.key_hash` is a one-way digest column (the
 -- raw key is shown once at creation, never stored; hashing is 4.2's job).
 
-CREATE SCHEMA platform AUTHORIZATION CURRENT_USER;
+CREATE SCHEMA IF NOT EXISTS platform AUTHORIZATION CURRENT_USER;
 
 -- The shared platform group role that catalog and run policies target
 -- (`wamn-0h0g.22.17`). Created HERE, not assumed, for the reason
@@ -451,51 +451,11 @@ GRANT DELETE ON platform.write_log TO wamn_app;
 -- application scope names an application by name.
 --
 -- ---------------------------------------------------------------------------
-CREATE TABLE platform.external_system (
-    id          uuid NOT NULL DEFAULT gen_random_uuid(),
-    integration text NOT NULL CHECK (integration <> ''),
-    name        text NOT NULL CHECK (name <> ''),
-    parameters  jsonb NOT NULL DEFAULT '{}'::jsonb,
-    status      text NOT NULL DEFAULT 'active',
-    created_at  timestamptz NOT NULL,
-    created_by  uuid NOT NULL,
-    updated_at  timestamptz NOT NULL,
-    updated_by  uuid NOT NULL,
-    PRIMARY KEY (id),
-    UNIQUE (name),
-    CONSTRAINT external_system_status_check
-        CHECK (status IN ('active', 'disabled'))
-);
-
-CREATE TABLE platform.connection (
-    id                 uuid NOT NULL DEFAULT gen_random_uuid(),
-    integration        text NOT NULL CHECK (integration <> ''),
-    external_system_id uuid,
-    name               text NOT NULL CHECK (name <> ''),
-    transport          text NOT NULL CHECK (transport <> ''),
-    exchange           text NOT NULL,
-    parameters         jsonb NOT NULL DEFAULT '{}'::jsonb,
-    status             text NOT NULL DEFAULT 'active',
-    created_at         timestamptz NOT NULL,
-    created_by         uuid NOT NULL,
-    updated_at         timestamptz NOT NULL,
-    updated_by         uuid NOT NULL,
-    PRIMARY KEY (id),
-    UNIQUE (name),
-    FOREIGN KEY (external_system_id)
-        REFERENCES platform.external_system (id),
-    CONSTRAINT connection_exchange_check
-        CHECK (exchange IN ('request', 'event')),
-    CONSTRAINT connection_status_check
-        CHECK (status IN ('active', 'disabled'))
-);
-
--- File objects belong to one application and retain their storage generation.
+-- File objects belong to one application and use the active storage generation.
 CREATE TABLE platform.file (
     id                    uuid NOT NULL DEFAULT gen_random_uuid(),
     application           text NOT NULL CHECK (application <> ''),
     connection_id         uuid NOT NULL REFERENCES platform.connection (id),
-    connection_generation bigint NOT NULL CHECK (connection_generation > 0),
     name                  text NOT NULL CHECK (name <> ''),
     media_type            text NOT NULL CHECK (media_type <> ''),
     size                  bigint NOT NULL CHECK (size >= 0),
@@ -517,33 +477,20 @@ CREATE TABLE platform.file (
     CHECK (url IS NULL OR url <> '')
 );
 
--- The integrations allowed at one scope. Each scope narrows the one above it:
--- org, then project, then environment.
-CREATE TABLE platform.integration_allow (
-    scope_type  text NOT NULL,
-    scope_id    text NOT NULL CHECK (scope_id <> ''),
-    integration text NOT NULL CHECK (integration <> ''),
-    created_at  timestamptz NOT NULL,
-    created_by  uuid NOT NULL,
-    updated_at  timestamptz NOT NULL,
-    updated_by  uuid NOT NULL,
-    PRIMARY KEY (scope_type, scope_id, integration),
-    CONSTRAINT integration_allow_scope_type_check
-        CHECK (scope_type IN ('org', 'project', 'environment'))
-);
-
--- The connections a project has enabled.
-CREATE TABLE platform.project_connection (
-    project_id    text NOT NULL CHECK (project_id <> ''),
-    connection_id uuid NOT NULL,
-    created_at    timestamptz NOT NULL,
-    created_by    uuid NOT NULL,
-    updated_at    timestamptz NOT NULL,
-    updated_by    uuid NOT NULL,
-    PRIMARY KEY (project_id, connection_id),
-    FOREIGN KEY (connection_id)
-        REFERENCES platform.connection (id)
-);
+CREATE FUNCTION platform.require_file_store() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT FROM platform.connection
+        WHERE id = NEW.connection_id AND integration_type IN ('gcs', 's3', 'disk')
+    ) THEN
+        RAISE EXCEPTION 'file_connection_requires_host_store' USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION platform.require_file_store() FROM PUBLIC;
+CREATE TRIGGER file_store BEFORE INSERT OR UPDATE OF connection_id ON platform.file
+    FOR EACH ROW EXECUTE FUNCTION platform.require_file_store();
 
 -- One document number sequence of one application, and its pattern.
 CREATE TABLE platform.number_sequence (
@@ -592,12 +539,13 @@ CREATE TABLE platform.setting (
         CHECK (scope_type IN ('org', 'project', 'application', 'role', 'user'))
 );
 
+GRANT SELECT ON platform.external_system, platform.integration, platform.connection TO wamn_app;
+
 -- The stamp trigger of each table, and the SELECT of wamn_app.
 DO $platform_configuration$
 DECLARE relation text;
 BEGIN
-  FOREACH relation IN ARRAY ARRAY['external_system', 'connection', 'file', 'integration_allow',
-                                  'project_connection', 'number_sequence',
+  FOREACH relation IN ARRAY ARRAY['file', 'number_sequence',
                                   'number_counter', 'setting'] LOOP
     EXECUTE format('CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON platform.%I '
                    'FOR EACH ROW EXECUTE FUNCTION '
@@ -611,8 +559,7 @@ END $platform_configuration$;
 DO $platform_configuration_history$
 DECLARE relation text;
 BEGIN
-  FOREACH relation IN ARRAY ARRAY['external_system', 'connection', 'file', 'integration_allow',
-                                  'project_connection', 'number_sequence', 'setting'] LOOP
+  FOREACH relation IN ARRAY ARRAY['file', 'number_sequence', 'setting'] LOOP
     PERFORM wamn_history.create_history_table('platform', relation, false);
     EXECUTE format('CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE '
                    'ON platform.%I FOR EACH ROW EXECUTE FUNCTION '

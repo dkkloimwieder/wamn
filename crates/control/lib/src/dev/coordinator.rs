@@ -408,7 +408,7 @@ impl ProductionDevStageRunner {
         .map_err(|source| ProductionDevStageError::owner("project environment policy", source))?;
 
         for package in package_inputs {
-            let outcome = apply_package::apply_local_package(
+            let outcome = Box::pin(apply_package::apply_local_package(
                 ApplyPackageRequest {
                     changes: wamn_platform_identity::auth_changes::AuthChanges::new(
                         async_nats::connect(self.config.scheduler_nats_url())
@@ -428,9 +428,13 @@ impl ProductionDevStageRunner {
                     org: self.config.activation_identity().org.clone(),
                     project: self.config.activation_identity().project.clone(),
                     environment: self.config.activation_identity().environment.clone(),
+                    component_source: crate::apply_package::component_source_from_env(None)
+                        .map_err(|source| {
+                            ProductionDevStageError::owner("component repository", source)
+                        })?,
                 },
                 &self.config.activation_identity().environment,
-            )
+            ))
             .await
             .map_err(|source| {
                 ProductionDevStageError::owner("apply package to verification", source)

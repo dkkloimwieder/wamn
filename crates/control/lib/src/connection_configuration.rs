@@ -62,7 +62,7 @@ pub async fn write(
             environment_tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
                 wamn_control_provision::PlatformComponent::Provisioning,
             )).await?;
-            let drops = wamn_platform_identity::connections::project(
+            let drops = wamn_platform_identity::connection_projection::project(
                 &source, &environment_tx, org, &project, &env,
             ).await?;
             environment_tx.commit().await?;

@@ -1458,7 +1458,7 @@ CREATE TRIGGER wamn_record_history_stamp
 
 DO $control_surface$ BEGIN
   IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_control') THEN
-    REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; REVOKE ALL PRIVILEGES ON SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; GRANT USAGE ON SCHEMA "identity", "registry" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_roles" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."password_logins" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."principals" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_env_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_roles" TO "wamn_control"; GRANT SELECT ON TABLE "registry"."project_envs" TO "wamn_control"; GRANT SELECT, INSERT ON TABLE "registry"."projects" TO "wamn_control"; GRANT UPDATE ("status") ON TABLE "registry"."project_envs" TO "wamn_control"; DO $connection_acl$ BEGIN IF to_regprocedure('registry.publish_integration(text,integer,text,jsonb,text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.publish_integration(text,integer,text,jsonb,text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.configure_connection(text,text,jsonb)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.configure_connection(text,text,jsonb) TO "wamn_control"; END IF; END $connection_acl$;
+    REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; REVOKE ALL PRIVILEGES ON SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; GRANT USAGE ON SCHEMA "identity", "registry" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_roles" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."password_logins" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."principals" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_env_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_roles" TO "wamn_control"; GRANT SELECT ON TABLE "registry"."project_envs" TO "wamn_control"; GRANT SELECT, INSERT ON TABLE "registry"."projects" TO "wamn_control"; GRANT UPDATE ("status") ON TABLE "registry"."project_envs" TO "wamn_control"; DO $connection_acl$ BEGIN IF to_regprocedure('registry.retired_connection_credential(text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.retired_connection_credential(text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.project_connection_projection(text,text,text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.project_connection_projection(text,text,text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.publish_integration(text,integer,text,jsonb,text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.publish_integration(text,integer,text,jsonb,text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.configure_connection(text,text,jsonb)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.configure_connection(text,text,jsonb) TO "wamn_control"; END IF; END $connection_acl$;
   END IF;
 END $control_surface$;
 
@@ -1513,5 +1513,59 @@ REVOKE ALL ON FUNCTION registry.retired_connection_credential(text) FROM PUBLIC;
 DO $$ BEGIN
  IF to_regrole('wamn_control') IS NOT NULL THEN
    GRANT EXECUTE ON FUNCTION registry.retired_connection_credential(text) TO wamn_control;
+ END IF;
+END $$;
+
+-- The control host copies only one project's rows and one environment's connections.
+CREATE FUNCTION registry.project_connection_projection(org_id text, project_id text, environment_id text)
+RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
+ SELECT jsonb_build_object(
+   'external_system', (SELECT coalesce(jsonb_agg(jsonb_build_object('id',s.id,'name',s.name) ORDER BY s.id),'[]')
+     FROM registry.external_system s WHERE s.org=org_id AND s.project=project_id),
+   'integration', (SELECT coalesce(jsonb_agg(jsonb_build_object('id',i.id,'integration_type',i.integration_type,
+     'external_system_id',i.external_system_id,'name',i.name,'status',i.status) ORDER BY i.id),'[]')
+     FROM registry.integration i WHERE i.org=org_id AND i.project=project_id),
+   'connection', (SELECT coalesce(jsonb_agg(jsonb_build_object('id',c.id,'integration_id',c.integration_id,
+     'integration_type',c.integration_type,'status',CASE WHEN c.status='active' AND i.status='active' THEN 'active' ELSE 'disabled' END) ORDER BY c.id),'[]')
+     FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id
+     WHERE c.org=org_id AND c.project=project_id AND c.env=environment_id),
+   'principal', (SELECT coalesce(jsonb_agg(jsonb_build_object('id',p.id,'connection_id',c.id,'subject',p.subject,
+     'display_name',p.display_name,'status',p.status,'platform_domain',m.platform_domain) ORDER BY p.id),'[]')
+     FROM registry.connection c JOIN identity.principals p ON p.id=c.service_principal_id CROSS JOIN registry.meta m
+     WHERE c.org=org_id AND c.project=project_id AND c.env=environment_id)
+ )
+$$;
+ALTER FUNCTION registry.project_connection_projection(text,text,text) OWNER TO wamn_system;
+REVOKE ALL ON FUNCTION registry.project_connection_projection(text,text,text) FROM PUBLIC;
+DO $$ BEGIN
+ IF to_regrole('wamn_control') IS NOT NULL THEN
+   GRANT EXECUTE ON FUNCTION registry.project_connection_projection(text,text,text) TO wamn_control;
+ END IF;
+END $$;
+
+-- The reader login fixes the environment and exposes only active host stores.
+CREATE FUNCTION registry.read_file_connection(org_id text, project_id text, environment_id text, requested_connection uuid DEFAULT NULL)
+RETURNS TABLE(connection_id uuid, connection_name text, generation bigint, parameters jsonb)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
+#variable_conflict use_column
+BEGIN
+ RETURN QUERY
+ SELECT c.id, i.name, c.active_generation, g.parameters || jsonb_build_object('provider',c.integration_type)
+ FROM wamn_authority.author_login_tenants login
+ JOIN registry.connection c ON (c.org,c.project,c.env)=(login.org_id,login.project_id,login.environment)
+ JOIN registry.integration i ON i.id=c.integration_id AND i.status='active'
+ JOIN registry.integration_type t ON t.code=c.integration_type AND t.runtime_type='host'
+ JOIN registry.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation)
+ JOIN identity.principals p ON p.id=c.service_principal_id AND p.status='active'
+ WHERE login.login_identity=session_user AND login.org_id=$1 AND login.project_id=$2
+   AND login.environment=$3 AND c.status='active' AND c.integration_type IN ('gcs','s3','disk')
+   AND ($4 IS NULL OR c.id=$4)
+ ORDER BY c.id;
+END $$;
+ALTER FUNCTION registry.read_file_connection(text,text,text,uuid) OWNER TO wamn_system;
+REVOKE ALL ON FUNCTION registry.read_file_connection(text,text,text,uuid) FROM PUBLIC;
+DO $$ BEGIN
+ IF to_regrole('wamn_conn_reader') IS NOT NULL THEN
+   GRANT EXECUTE ON FUNCTION registry.read_file_connection(text,text,text,uuid) TO wamn_conn_reader;
  END IF;
 END $$;

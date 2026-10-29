@@ -34,6 +34,8 @@ use crate::reconcile_package_data_access::upgrade::{
 /// Source project and complete candidate roots.
 #[derive(Debug)]
 pub struct QualifyUpgradeRequest {
+    pub component_source:
+        Option<wamn_runtime::component_artifact_source::ComponentArtifactSourceConfig>,
     pub database_url: String,
     pub org: String,
     pub project: String,
@@ -631,11 +633,13 @@ async fn prove_connected_copy(
             &roots,
             &complete_roots,
             manifest,
+            request.component_source.as_ref(),
         )
         .await
         .context("apply base and overlay successors atomically on the owned predecessor copy")?;
     } else {
         apply_qualification_package(ApplyPackageRequest {
+            component_source: request.component_source.clone(),
             changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
             package: candidate.root.clone(),
             database_url: database_url.to_owned(),

@@ -26,6 +26,7 @@ async fn local_configuration_refuses_a_removed_model_with_the_apply_refusal() {
     let shipped = std::env::temp_dir().join(format!("wamn-local-shipped-{}", std::process::id()));
     crate::test_support::copy_schema_fixture(&shipped);
     apply_package(ApplyPackageRequest {
+        component_source: crate::apply_package::component_source_from_env(None).unwrap(),
         changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: crate::package_artifact::fixture_package_root(&shipped).unwrap(),
         database_url: url.clone(),
@@ -56,6 +57,7 @@ async fn local_configuration_refuses_a_removed_model_with_the_apply_refusal() {
         std::fs::write(root.join(&migration.relative_path), &migration.bytes).unwrap();
     }
     let applied = apply_package(ApplyPackageRequest {
+        component_source: crate::apply_package::component_source_from_env(None).unwrap(),
         changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: crate::package_artifact::fixture_package_root(&root).unwrap(),
         database_url: url.clone(),
@@ -195,6 +197,7 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop() {
     let shipped = std::env::temp_dir().join(format!("wamn-local-shipped-{}", std::process::id()));
     crate::test_support::copy_schema_fixture(&shipped);
     apply_package(ApplyPackageRequest {
+        component_source: crate::apply_package::component_source_from_env(None).unwrap(),
         package: crate::package_artifact::fixture_package_root(&shipped).unwrap(),
         database_url: owner_url.to_string(),
         org: "apply-drops".into(),

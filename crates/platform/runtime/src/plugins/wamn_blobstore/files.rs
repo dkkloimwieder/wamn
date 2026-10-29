@@ -1,4 +1,4 @@
-//! Streaming, generation-pinned storage for native file routes.
+//! Streaming storage for native file routes.
 //!
 //! The native caller authorizes the application binding before opening this store.
 //! Upload to `<environment>/_wamn_files/staging/<id>`, commit metadata, then call `finish`.
@@ -121,10 +121,9 @@ pub struct StagedFile {
     pub blob_key: String,
     pub size: u64,
     pub sha256: String,
-    pub connection_generation: i64,
 }
 
-/// A store built from the file row's pinned connection generation.
+/// A store built from the connection's active generation.
 #[derive(Clone)]
 pub struct FileStore {
     bound: BoundContainer,
@@ -410,7 +409,6 @@ impl FileStore {
             blob_key: live_key(&self.environment, id),
             size,
             sha256: hex::encode(hash.finalize()),
-            connection_generation: self.generation,
         })
     }
 
@@ -574,7 +572,6 @@ mod tests {
             staged.sha256,
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
-        assert_eq!(staged.connection_generation, 7);
         assert_eq!(staged.blob_key, format!("dev/_wamn_files/live/{id}"));
         let staging = Path::from(format!("tenant/app/dev/_wamn_files/staging/{id}"));
         let live = Path::from(format!("tenant/app/{}", live_key("dev", id)));

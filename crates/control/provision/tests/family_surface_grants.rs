@@ -414,10 +414,9 @@ fn expected_executor_grants() -> Vec<String> {
     }
     rows.push("relation|wamn_run|environment_policies|SELECT".to_owned());
     for relation in [
-        "connection_bindings",
-        "connection_generations",
-        "connection_instances",
-        "connection_requirements",
+        "connection_binding",
+        "release_connection",
+        "connection_requirement",
         "releases",
         "workflows",
     ] {
@@ -889,38 +888,23 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
         &admin,
         "seed one readable fact in each catalog and fresh permission relation",
         &format!(
-            // `connection_instances.active_generation` and
-            // `connection_generations` reference each other, and the instance's
-            // BEFORE UPDATE guard rejects any revision that is not a controlled
-            // bump — so the cycle is closed with the DEFERRABLE arm inside one
-            // transaction rather than with an UPDATE the schema forbids.
-            "BEGIN;\nSET CONSTRAINTS ALL DEFERRED;\n\
-             INSERT INTO catalog.packages \
-               (env_key, package_id, package_version, artifact_digest) \
-             VALUES ('tenant-a', 'orders', '1.0.0', '{digest}');\n\
-             INSERT INTO catalog.releases \
-               (env_key, manifest_digest, canonical_bytes) \
-             VALUES ('tenant-a', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', '{{}}');\n\
-             INSERT INTO catalog.connection_instances \
-               (env_key, environment, instance_id, requirement_type, contract, \
-                lifecycle_status, active_generation, revision, created_at, updated_at) \
-             VALUES ('tenant-a', 'prod', 'upstream', 'http', \
-                     'wamn:connection/http@0.1.0', 'enabled', 1, 1, now(), now());\n\
-             INSERT INTO catalog.connection_generations \
-               (env_key, environment, instance_id, generation, definition_json, \
-                definition_hash, credential_set_handle, created_at) \
-             VALUES ('tenant-a', 'prod', 'upstream', 1, '{{}}', '{digest}', \
-                     'upstream-v1', now());\n\
-             INSERT INTO catalog.connection_requirements \
-               (env_key, component_digest, store_alias, requirement_json, \
-                requirement_hash) \
-             VALUES ('tenant-a', '{digest}', 'upstream', '{{}}', '{digest}');\n\
-             INSERT INTO catalog.connection_bindings \
-               (env_key, manifest_digest, component_digest, store_alias, \
-                environment, instance_id, binding_status, validation_status, \
-                validation_hash, package_id) \
-             VALUES ('tenant-a', 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', '{digest}', 'upstream', 'prod', 'upstream', \
-                     'active', 'valid', '{digest}', 'orders');\n\
+            "BEGIN;\n\
+             SELECT set_config('app.user_id', '00000000-0000-4000-8000-000000000001', true), \
+                    set_config('app.operation', 'admin:seed-family-surface-fixture', true);\n\
+             INSERT INTO catalog.packages (env_key,package_id,package_version,artifact_digest) \
+             VALUES ('tenant-a','orders','1.0.0','{digest}');\n\
+             INSERT INTO catalog.releases (env_key,manifest_digest,canonical_bytes) \
+             VALUES ('tenant-a','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{{}}');\n\
+             INSERT INTO platform.integration (id,integration_type,name,status) \
+             VALUES ('00000000-0000-4000-8000-000000000011','http','upstream','active');\n\
+             INSERT INTO platform.connection (id,integration_id,integration_type,status) \
+             VALUES ('00000000-0000-4000-8000-000000000012','00000000-0000-4000-8000-000000000011','http','active');\n\
+             INSERT INTO catalog.connection_requirement (env_key,component_digest,package_id,name,integration_type,interfaces,mode) \
+             VALUES ('tenant-a','{digest}','orders','upstream','http',ARRAY['wamn:connection/http@0.1.0'],'write');\n\
+             INSERT INTO catalog.release_connection (env_key,manifest_digest,connection_id,integration_type,version) \
+             VALUES ('tenant-a','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','00000000-0000-4000-8000-000000000012','http',1);\n\
+             INSERT INTO catalog.connection_binding (env_key,manifest_digest,component_digest,package_id,name,connection_id,integration_type) \
+             VALUES ('tenant-a','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{digest}','orders','upstream','00000000-0000-4000-8000-000000000012','http');\n\
              INSERT INTO catalog.workflows \
                (env_key, environment, application, workflow_id, version, graph_json, \
                 wiring_hash, trigger, execution_type, execution_role, created_by) \

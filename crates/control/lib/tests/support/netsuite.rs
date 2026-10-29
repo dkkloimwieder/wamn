@@ -10,7 +10,7 @@ use super::{Run, http_connection};
 
 pub async fn seed(project: &tokio_postgres::Client) -> anyhow::Result<()> {
     project.batch_execute("INSERT INTO rest_consumer_fixture.item (key,name,external_system_id,external_id)
-        SELECT key,name,(SELECT external_system_id FROM platform.connection WHERE name='netsuite'),key
+        SELECT key,name,(SELECT external_system_id FROM platform.integration WHERE name='netsuite'),key
         FROM (VALUES ('1','First'),('2','Second'),('3','Third'),('4','Fourth')) AS items(key,name)").await?;
     // These are initial state, not push events. No reader is running yet.
     // Advance only the private project's inactive slot past the seed commit.
@@ -181,7 +181,7 @@ async fn assertions_inner(
     let provenance: bool = project
         .query_one(
             "SELECT bool_and(external_id = key AND external_system_id = \
-         (SELECT external_system_id FROM platform.connection WHERE name = 'netsuite')) \
+         (SELECT external_system_id FROM platform.integration WHERE name = 'netsuite')) \
          FROM rest_consumer_fixture.item",
             &[],
         )
@@ -229,7 +229,7 @@ async fn assertions_inner(
         .execute(
             "INSERT INTO rest_consumer_fixture.item (key,name,external_system_id,external_id)
         VALUES ('push-one','Pushed customer',
-        (SELECT external_system_id FROM platform.connection WHERE name='netsuite'),'push-one')",
+        (SELECT external_system_id FROM platform.integration WHERE name='netsuite'),'push-one')",
             &[],
         )
         .await?;

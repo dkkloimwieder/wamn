@@ -1561,10 +1561,6 @@ async fn assert_definer_grantees(client: &Client) -> anyhow::Result<()> {
             &["wamn_conn_reader"],
         ),
         (
-            "catalog.connection_upgrade_bindings(text, text)",
-            &["wamn_administration"],
-        ),
-        (
             "registry.publish_integration(text, text)",
             &["wamn_control"],
         ),
@@ -1630,34 +1626,6 @@ async fn assert_definer_grantees(client: &Client) -> anyhow::Result<()> {
         );
         let grantable: bool = client.query_one("SELECT EXISTS (SELECT FROM pg_proc p CROSS JOIN LATERAL aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE p.oid=$1::text::regprocedure AND a.grantee<>p.proowner AND a.is_grantable)", &[&name]).await?.get(0);
         assert!(!grantable, "non-owner grant option on {name}");
-        if name == "catalog.connection_upgrade_bindings(text, text)" {
-            let policies = client.query("SELECT c.relname::text, p.polcmd::text, p.polroles=ARRAY[(SELECT proowner FROM pg_proc WHERE oid=$1::text::regprocedure)], pg_get_expr(p.polqual,p.polrelid), p.polwithcheck IS NULL FROM pg_policy p JOIN pg_class c ON c.oid=p.polrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='catalog' AND p.polname='connection_upgrade_reader_owner' ORDER BY c.relname", &[&name]).await?;
-            assert_eq!(
-                policies
-                    .iter()
-                    .map(|row| row.get::<_, String>(0))
-                    .collect::<Vec<_>>(),
-                [
-                    "connection_bindings",
-                    "connection_generations",
-                    "connection_instances",
-                    "connection_requirements",
-                    "releases"
-                ]
-            );
-            for policy in policies {
-                assert_eq!(policy.get::<_, String>(1), "r");
-                assert!(
-                    policy.get::<_, bool>(2),
-                    "only the function owner reads through this policy"
-                );
-                assert_eq!(policy.get::<_, String>(3), "true");
-                assert!(
-                    policy.get::<_, bool>(4),
-                    "the reader policy has no write condition"
-                );
-            }
-        }
     }
     Ok(())
 }

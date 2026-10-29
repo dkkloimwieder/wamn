@@ -242,9 +242,6 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     let component_digest = digest("a");
     let imports_fingerprint = digest("b");
     let artifact_digest = digest("f");
-    let requirement_hash = digest("1");
-    let definition_hash = digest("2");
-    let validation_hash = digest("3");
     // The release facts the runtime reads from the bytes: package membership,
     // the wiring membership and the component closure, each component with
     // its descriptor.
@@ -260,31 +257,16 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
                (env_key,manifest_digest,canonical_bytes) \
              SELECT '{ENV_KEY}', 'sha256:' || encode(sha256(bytes), 'hex'), bytes \
                FROM (SELECT convert_to('{manifest_body}', 'UTF8') AS bytes) AS frozen; \
-             INSERT INTO catalog.connection_requirements \
-               (env_key,component_digest,store_alias,requirement_json,requirement_hash) \
-             VALUES ('{ENV_KEY}','{component_digest}','a-store', \
-                     '{{\"requirement-type\":\"http\"}}','{requirement_hash}'); \
-             INSERT INTO catalog.connection_instances \
-               (env_key,environment,instance_id,requirement_type,contract) \
-             VALUES ('{ENV_KEY}','{ENVIRONMENT}','instance-a','http','wamn:http/0.1'); \
-             INSERT INTO catalog.connection_generations \
-               (env_key,environment,instance_id,generation,definition_json, \
-                definition_hash,credential_set_handle) \
-             VALUES ('{ENV_KEY}','{ENVIRONMENT}','instance-a',1, \
-                     '{{\"base-url\":\"https://a.invalid\"}}','{definition_hash}', \
-                     'credential-a-1'); \
-             UPDATE catalog.connection_instances \
-                SET active_generation=1,revision=revision+1, \
-                    updated_at=clock_timestamp()+interval '1 second' \
-              WHERE env_key='{ENV_KEY}' AND environment='{ENVIRONMENT}'; \
-             INSERT INTO catalog.connection_bindings \
-               (env_key,manifest_digest,component_digest,store_alias, \
-                environment,instance_id,package_id,binding_status,validation_status, \
-                validation_hash) \
-             SELECT '{ENV_KEY}',manifest_digest,'{component_digest}','a-store', \
-                    '{ENVIRONMENT}','instance-a','{PACKAGE_ID}','active','valid', \
-                    '{validation_hash}' \
-               FROM catalog.releases; \
+             INSERT INTO platform.integration (id,integration_type,name,status) \
+             VALUES ('00000000-0000-4000-8000-000000000011','http','a-store','active'); \
+             INSERT INTO platform.connection (id,integration_id,integration_type,status) \
+             VALUES ('00000000-0000-4000-8000-000000000012','00000000-0000-4000-8000-000000000011','http','active'); \
+             INSERT INTO catalog.connection_requirement (env_key,component_digest,package_id,name,integration_type,interfaces,mode) \
+             VALUES ('{ENV_KEY}','{component_digest}','{PACKAGE_ID}','a-store','http',ARRAY['wamn:connection/http@0.1.0'],'write'); \
+             INSERT INTO catalog.release_connection (env_key,manifest_digest,connection_id,integration_type,version) \
+             SELECT '{ENV_KEY}',manifest_digest,'00000000-0000-4000-8000-000000000012','http',1 FROM catalog.releases; \
+             INSERT INTO catalog.connection_binding (env_key,manifest_digest,component_digest,package_id,name,connection_id,integration_type) \
+             SELECT '{ENV_KEY}',manifest_digest,'{component_digest}','{PACKAGE_ID}','a-store','00000000-0000-4000-8000-000000000012','http' FROM catalog.releases; \
              INSERT INTO wamn_run.environment_policies \
                (env_key,expected_environment,durability_class) \
              VALUES ('{ENV_KEY}','{ENVIRONMENT}','standard'); \

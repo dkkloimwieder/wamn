@@ -2,7 +2,7 @@
 //! (docs/architecture/data-access.md#actors).
 //!
 //! The control host writes `platform.external_system`, `platform.connection`,
-//! `platform.project_connection`, `platform.integration_allow`,
+//! `platform.integration`,
 //! `platform.number_sequence` and `platform.setting` on the path that writes
 //! the application rows of [`crate::application`]: with the environment's
 //! `wamn_administration` login, in one transaction on the project database
@@ -20,39 +20,24 @@ use tokio_postgres::GenericClient;
 
 use crate::{IdentityError, database_error};
 
-const EXTERNAL_SYSTEM_SQL: &str = "INSERT INTO platform.external_system \
-    (id, integration, name, parameters, status) \
-    VALUES ($1::text::uuid, $2, $3, $4::text::jsonb, $5) \
-    ON CONFLICT (id) DO UPDATE SET \
-      integration = EXCLUDED.integration, name = EXCLUDED.name, \
-      parameters = EXCLUDED.parameters, status = EXCLUDED.status \
-    WHERE (external_system.integration, external_system.name, \
-           external_system.parameters, external_system.status) \
-          IS DISTINCT FROM \
-          (EXCLUDED.integration, EXCLUDED.name, EXCLUDED.parameters, EXCLUDED.status)";
+const EXTERNAL_SYSTEM_SQL: &str = "INSERT INTO platform.external_system (id, name) \
+    VALUES ($1::text::uuid, $2) ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name \
+    WHERE external_system.name IS DISTINCT FROM EXCLUDED.name";
+
+const INTEGRATION_SQL: &str = "INSERT INTO platform.integration \
+    (id, integration_type, external_system_id, name, status) \
+    VALUES ($1::text::uuid, $2, $3::text::uuid, $4, $5) \
+    ON CONFLICT (id) DO UPDATE SET integration_type = EXCLUDED.integration_type, \
+    external_system_id = EXCLUDED.external_system_id, name = EXCLUDED.name, status = EXCLUDED.status \
+    WHERE (integration.integration_type, integration.external_system_id, integration.name, integration.status) \
+    IS DISTINCT FROM (EXCLUDED.integration_type, EXCLUDED.external_system_id, EXCLUDED.name, EXCLUDED.status)";
 
 const CONNECTION_SQL: &str = "INSERT INTO platform.connection \
-    (id, integration, external_system_id, name, transport, exchange, parameters, status) \
-    VALUES ($1::text::uuid, $2, $3::text::uuid, $4, $5, $6, $7::text::jsonb, $8) \
-    ON CONFLICT (id) DO UPDATE SET \
-      integration = EXCLUDED.integration, \
-      external_system_id = EXCLUDED.external_system_id, name = EXCLUDED.name, \
-      transport = EXCLUDED.transport, exchange = EXCLUDED.exchange, \
-      parameters = EXCLUDED.parameters, status = EXCLUDED.status \
-    WHERE (connection.integration, connection.external_system_id, connection.name, \
-           connection.transport, connection.exchange, connection.parameters, \
-           connection.status) \
-          IS DISTINCT FROM \
-          (EXCLUDED.integration, EXCLUDED.external_system_id, EXCLUDED.name, \
-           EXCLUDED.transport, EXCLUDED.exchange, EXCLUDED.parameters, EXCLUDED.status)";
-
-const PROJECT_CONNECTION_SQL: &str = "INSERT INTO platform.project_connection \
-    (project_id, connection_id) VALUES ($1, $2::text::uuid) \
-    ON CONFLICT DO NOTHING";
-
-const INTEGRATION_ALLOW_SQL: &str = "INSERT INTO platform.integration_allow \
-    (scope_type, scope_id, integration) VALUES ($1, $2, $3) \
-    ON CONFLICT DO NOTHING";
+    (id, integration_id, integration_type, status) VALUES ($1::text::uuid, $2::text::uuid, $3, $4) \
+    ON CONFLICT (id) DO UPDATE SET integration_id = EXCLUDED.integration_id, \
+    integration_type = EXCLUDED.integration_type, status = EXCLUDED.status \
+    WHERE (connection.integration_id, connection.integration_type, connection.status) \
+    IS DISTINCT FROM (EXCLUDED.integration_id, EXCLUDED.integration_type, EXCLUDED.status)";
 
 const NUMBER_SEQUENCE_SQL: &str = "INSERT INTO platform.number_sequence \
     (id, application, name, pattern) VALUES ($1::text::uuid, $2, $3, $4) \
@@ -77,48 +62,27 @@ const SETTING_SQL: &str = "INSERT INTO platform.setting \
 /// One `platform.external_system` row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalSystem {
-    /// A uuid, which the control plane assigns.
     pub id: String,
-    /// The catalog code of the integration.
-    pub integration: String,
     pub name: String,
-    pub parameters: serde_json::Value,
-    /// `active` or `disabled`.
-    pub status: String,
 }
 
-/// One `platform.connection` row.
+/// One `platform.integration` row.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Connection {
-    /// A uuid, which the control plane assigns.
+pub struct Integration {
     pub id: String,
-    /// The catalog code of the integration.
-    pub integration: String,
-    /// The external system the connection reaches, if any.
+    pub integration_type: String,
     pub external_system_id: Option<String>,
     pub name: String,
-    pub transport: String,
-    /// `request` or `event`.
-    pub exchange: String,
-    pub parameters: serde_json::Value,
-    /// `active` or `disabled`.
     pub status: String,
 }
 
-/// One `platform.project_connection` row: a connection the project enabled.
+/// One `platform.connection` row with effective status.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProjectConnection {
-    pub project_id: String,
-    pub connection_id: String,
-}
-
-/// One `platform.integration_allow` row.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IntegrationAllow {
-    /// `org`, `project` or `environment`.
-    pub scope_type: String,
-    pub scope_id: String,
-    pub integration: String,
+pub struct Connection {
+    pub id: String,
+    pub integration_id: String,
+    pub integration_type: String,
+    pub status: String,
 }
 
 /// One `platform.number_sequence` row.
@@ -147,8 +111,7 @@ pub struct Setting {
 pub struct PlatformConfiguration {
     pub external_systems: Vec<ExternalSystem>,
     pub connections: Vec<Connection>,
-    pub project_connections: Vec<ProjectConnection>,
-    pub integration_allows: Vec<IntegrationAllow>,
+    pub integrations: Vec<Integration>,
     pub number_sequences: Vec<NumberSequence>,
     pub settings: Vec<Setting>,
 }
@@ -158,8 +121,7 @@ impl PlatformConfiguration {
     pub fn is_empty(&self) -> bool {
         self.external_systems.is_empty()
             && self.connections.is_empty()
-            && self.project_connections.is_empty()
-            && self.integration_allows.is_empty()
+            && self.integrations.is_empty()
             && self.number_sequences.is_empty()
             && self.settings.is_empty()
     }
@@ -169,24 +131,25 @@ impl PlatformConfiguration {
 /// or changed.
 ///
 /// The caller runs this on the `wamn_administration` login in a transaction
-/// that binds `app.user_id` and `app.operation`, because every table stamps
-/// and logs its writes. The writes go in foreign key order, so a connection
-/// can name an external system and a project connection a connection of the
-/// same configuration.
+/// that binds `app.user_id` and `app.operation` for recorded writes.
+/// Projection writes follow foreign key order: external systems, integrations, connections.
 pub async fn write_configuration(
     client: &(impl GenericClient + Sync),
     configuration: &PlatformConfiguration,
 ) -> Result<u64, IdentityError> {
     let mut written = 0;
     for row in &configuration.external_systems {
+        written += execute(client, EXTERNAL_SYSTEM_SQL, &[&row.id, &row.name]).await?;
+    }
+    for row in &configuration.integrations {
         written += execute(
             client,
-            EXTERNAL_SYSTEM_SQL,
+            INTEGRATION_SQL,
             &[
                 &row.id,
-                &row.integration,
+                &row.integration_type,
+                &row.external_system_id,
                 &row.name,
-                &row.parameters.to_string(),
                 &row.status,
             ],
         )
@@ -198,30 +161,10 @@ pub async fn write_configuration(
             CONNECTION_SQL,
             &[
                 &row.id,
-                &row.integration,
-                &row.external_system_id,
-                &row.name,
-                &row.transport,
-                &row.exchange,
-                &row.parameters.to_string(),
+                &row.integration_id,
+                &row.integration_type,
                 &row.status,
             ],
-        )
-        .await?;
-    }
-    for row in &configuration.project_connections {
-        written += execute(
-            client,
-            PROJECT_CONNECTION_SQL,
-            &[&row.project_id, &row.connection_id],
-        )
-        .await?;
-    }
-    for row in &configuration.integration_allows {
-        written += execute(
-            client,
-            INTEGRATION_ALLOW_SQL,
-            &[&row.scope_type, &row.scope_id, &row.integration],
         )
         .await?;
     }

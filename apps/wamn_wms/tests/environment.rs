@@ -591,6 +591,7 @@ pub async fn publish(
         artifact_digest: Some(pushed.digest),
     };
     apply_package::apply_package(ApplyPackageRequest {
+        component_source: wamn_control::apply_package::component_source_from_env(None).unwrap(),
         changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: installed.clone(),
         database_url: route.database_url.clone(),

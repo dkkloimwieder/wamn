@@ -1122,7 +1122,7 @@ async fn effectful_candidate_runtime_state(project: &Client) -> (bool, bool, boo
     let row = project
         .query_one(
             "SELECT \
-               EXISTS (SELECT 1 FROM catalog.connection_requirements \
+               EXISTS (SELECT 1 FROM catalog.connection_requirement \
                         WHERE env_key = $1 AND component_digest = $2) AS has_requirement, \
                EXISTS (SELECT 1 FROM catalog.releases AS release \
                         CROSS JOIN LATERAL jsonb_array_elements( \
@@ -1132,7 +1132,7 @@ async fn effectful_candidate_runtime_state(project: &Client) -> (bool, bool, boo
                           AND member.value ->> 'package-id' = $3 \
                           AND member.value ->> 'package-version' = $4) \
                  AS has_release_scope, \
-               EXISTS (SELECT 1 FROM catalog.connection_bindings \
+               EXISTS (SELECT 1 FROM catalog.connection_binding \
                         WHERE env_key = $1 AND component_digest = $2) AS has_binding",
             &[
                 &ENV_KEY,

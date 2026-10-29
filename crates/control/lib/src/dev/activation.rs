@@ -2365,7 +2365,7 @@ mod tests {
         document["local_artifacts"] = json!({"directory": directory, "flow_http_component": source,
             "materializer_component": materializer});
         let config = parse_config(&serde_json::to_vec(&document).unwrap()).unwrap();
-        let mut resolve = wit_parser::Resolve::new();
+        let mut resolve = test_wit_parser::Resolve::new();
         let package = resolve
             .push_str(
                 "fixture.wit",
@@ -2373,16 +2373,19 @@ mod tests {
             )
             .unwrap();
         let world = resolve.select_world(&[package], Some("fixture")).unwrap();
-        let mut module =
-            wit_component::dummy_module(&resolve, world, wit_parser::ManglingAndAbi::Standard32);
-        wit_component::embed_component_metadata(
+        let mut module = test_wit_component::dummy_module(
+            &resolve,
+            world,
+            test_wit_parser::ManglingAndAbi::Standard32,
+        );
+        test_wit_component::embed_component_metadata(
             &mut module,
             &resolve,
             world,
-            wit_component::StringEncoding::UTF8,
+            test_wit_component::StringEncoding::UTF8,
         )
         .unwrap();
-        let component_bytes = wit_component::ComponentEncoder::default()
+        let component_bytes = test_wit_component::ComponentEncoder::default()
             .module(&module)
             .unwrap()
             .validate(true)

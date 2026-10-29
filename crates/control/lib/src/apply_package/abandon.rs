@@ -287,6 +287,7 @@ mod tests {
         tx.commit().await.unwrap();
         // The stand-in digest follows the bytes at each call, as a new push would.
         let request = || ApplyPackageRequest {
+            component_source: crate::apply_package::component_source_from_env(None).unwrap(),
             changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
             package: crate::package_artifact::fixture_package_root(&files.0).unwrap(),
             database_url: database.url().to_owned(),

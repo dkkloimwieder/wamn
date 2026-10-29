@@ -23,6 +23,14 @@ use wamn_schema_control::{ReplicaIdentity, ReplicaIdentityPlan};
 /// the digest the registry records (docs/plan/platform-deploy.md R3).
 #[derive(Debug, Args)]
 pub struct ApplyPackageArgs {
+    /// Repository of the component binaries that package descriptors name.
+    #[arg(
+        long,
+        env = "WAMN_COMPONENT_ARTIFACT_BASE",
+        required_unless_present = "abandon_stage"
+    )]
+    pub component_artifact_base: Option<String>,
+
     /// Package artifact `<package_id>-<version>` that `push-package` pushed.
     #[arg(long)]
     pub package_artifact: String,
@@ -67,6 +75,7 @@ pub(crate) const APPLY_PACKAGE_INSTALL_ENV: crate::install_job_tests::Environmen
     crate::install_job_tests::Environment {
         required: &[
             "WAMN_PG_ADMIN_URL",
+            "WAMN_COMPONENT_ARTIFACT_BASE",
             "WAMN_AUTH_NATS_URL",
             "WAMN_AUTH_NATS_TLS_CA",
             "WAMN_AUTH_NATS_TLS_CERT",
@@ -120,6 +129,7 @@ pub async fn qualify_upgrade(args: QualifyUpgradeArgs) -> anyhow::Result<()> {
     let presented = open_all(&registry, args.presented_packages).await?;
     let predecessors = open_all(&registry, args.predecessor_packages).await?;
     let outcome = qualify_upgrade::qualify_upgrade(QualifyUpgradeRequest {
+        component_source: apply_package::component_source_from_env(Some(&registry))?,
         database_url: args.database_url,
         org: args.org.clone(),
         project: args.project.clone(),
@@ -316,7 +326,25 @@ pub async fn apply(args: ApplyPackageArgs) -> anyhow::Result<()> {
     let registry = args.registry.registry();
     let opened = open(&registry, args.package_artifact).await?;
     let presented = open_all(&registry, args.presented_packages).await?;
+    let component_source = if args.abandon_stage {
+        None
+    } else {
+        let base = args
+            .component_artifact_base
+            .as_deref()
+            .context("package install requires --component-artifact-base")?;
+        Some(
+            wamn_runtime::component_artifact_source::ComponentArtifactSourceConfig::new(
+                base,
+                registry.insecure_registry,
+                std::time::Duration::from_secs(30),
+            )?
+            .with_registry_auth_file(&registry.registry_auth_file)?
+            .with_ca_paths(&registry.oci_ca_paths)?,
+        )
+    };
     let request = ApplyPackageRequest {
+        component_source,
         changes: wamn_platform_identity::auth_changes::AuthChanges::connect(
             &wamn_platform_identity::auth_changes::AuthNats::from_env()?,
         )
@@ -489,5 +517,14 @@ mod tests {
             ApplyCli::try_parse_from(&arguments).unwrap_err().kind(),
             clap::error::ErrorKind::ArgumentConflict,
         );
+        arguments.truncate(arguments.len() - 2);
+        arguments.retain(|argument| *argument != "--abandon-stage");
+        let error = ApplyCli::try_parse_from(&arguments).unwrap_err();
+        assert!(error.to_string().contains("--component-artifact-base"));
+        arguments.extend([
+            "--component-artifact-base",
+            "registry.invalid/wamn/components",
+        ]);
+        assert!(ApplyCli::try_parse_from(&arguments).is_ok());
     }
 }

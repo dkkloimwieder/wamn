@@ -120,6 +120,14 @@ pub async fn stage(
         };
         if applies {
             crate::apply_package::apply_package(crate::apply_package::ApplyPackageRequest {
+                component_source: crate::apply_package::component_source_from_env(Some(
+                    &crate::package_artifact::PackageRegistry {
+                        artifact_base: platform.package_artifact_base.clone().unwrap_or_default(),
+                        registry_auth_file: platform.registry_auth_file.clone(),
+                        insecure_registry: false,
+                        oci_ca_paths: platform.oci_ca_paths.clone(),
+                    },
+                ))?,
                 changes: platform.auth_changes().await?,
                 package: opened.package_root(),
                 database_url: project_url.to_owned(),
@@ -136,7 +144,6 @@ pub async fn stage(
     // 2. The release cache row, once its package versions are installed: the
     // row seals the migrations of every version it names.
     write_release(project_url, &env_key, digest, manifest).await?;
-    materialize_requirements(project_url, &env_key, manifest).await?;
     materialize_application_principals(
         &platform.system_database_url,
         project_url,
@@ -457,93 +464,6 @@ pub(super) async fn open(
     .with_context(|| format!("open package artifact {id}@{version}"))
 }
 
-/// Materialize `catalog.connection_requirements` for the release's
-/// components in this environment: a runtime projection of the admitted
-/// descriptors the release manifest carries, one row for each connection of
-/// each component's descriptor (contract D, R2 (3)). An existing row with
-/// other bytes refuses.
-async fn materialize_requirements(
-    project_url: &str,
-    env_key: &str,
-    manifest: &wamn_catalog::ServingManifest,
-) -> anyhow::Result<()> {
-    let requirements = release_requirements(manifest);
-    if requirements.is_empty() {
-        return Ok(());
-    }
-    let mut client = connect(project_url).await?;
-    let transaction = client
-        .transaction()
-        .await
-        .context("begin the connection requirement projection")?;
-    transaction
-        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
-        ))
-        .await
-        .context("bind wamn:provisioning as the actor and operation")?;
-    transaction
-        .query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
-        .await
-        .context("claim the tenant")?;
-    for requirement in &requirements {
-        let json = String::from_utf8(requirement.canonical_bytes())
-            .context("a connection requirement is not UTF-8")?;
-        let hash = requirement.requirement_hash();
-        let params: [&(dyn tokio_postgres::types::ToSql + Sync); 5] = [
-            &env_key,
-            &requirement.component_digest(),
-            &requirement.store_alias(),
-            &json,
-            &hash,
-        ];
-        transaction
-            .execute(
-                wamn_schema_control::connections::insert_component_connection_requirement_sql(),
-                &params,
-            )
-            .await
-            .context("materialize a connection requirement")?;
-        let exact: bool = transaction
-            .query_one(
-                wamn_schema_control::connections::exact_component_connection_requirement_sql(),
-                &params,
-            )
-            .await
-            .context("verify a connection requirement")?
-            .get(0);
-        ensure!(
-            exact,
-            "component {} store alias {} has another connection requirement in this environment",
-            requirement.component_digest(),
-            requirement.store_alias()
-        );
-    }
-    transaction
-        .commit()
-        .await
-        .context("commit the connection requirements")
-}
-
-/// The connection requirements of the descriptors of `manifest`: exactly one
-/// for each connection of each release component.
-pub(super) fn release_requirements(
-    manifest: &wamn_catalog::ServingManifest,
-) -> Vec<wamn_catalog::ComponentConnectionRequirement> {
-    manifest
-        .components
-        .iter()
-        .flat_map(|component| {
-            component.descriptor.connections.iter().map(|connection| {
-                crate::component_admission::portable_requirement(
-                    component.descriptor.component_digest.as_str(),
-                    connection,
-                )
-            })
-        })
-        .collect()
-}
-
 /// Write `catalog.releases (manifest_digest, manifest)` for the release if
 /// absent (R1). The row is immutable, and its bytes hash to its key. This is
 /// the one writer of the row (R1 (3), R2); publish writes OCI only.
@@ -597,15 +517,14 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use wamn_catalog::{
-        ComponentConnection, ComponentConnectionType, ComponentDescriptor,
-        ConnectionTypeDescriptor, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
-        ServingComponent, ServingManifest, ServingRelease,
+        ComponentConnection, ComponentConnectionType, ComponentDescriptor, PackageCoordinate,
+        SERVING_MANIFEST_FORMAT_VERSION, ServingComponent, ServingManifest, ServingRelease,
     };
 
-    use super::{apply_order, release_requirements, schema_request};
+    use super::{apply_order, schema_request};
 
     #[tokio::test]
-    async fn release_and_requirement_writers_stamp_provisioning_and_keep_exact_retries() {
+    async fn release_writer_stamps_provisioning_and_keeps_exact_retries() {
         let _lock = wamn_test_postgres::lock();
         let database = wamn_project_state::test_database::tenant_platform();
         database
@@ -633,22 +552,15 @@ mod tests {
         super::write_release(database.url(), "history", digest.as_str(), &manifest)
             .await
             .unwrap();
-        super::materialize_requirements(database.url(), "history", &manifest)
-            .await
-            .unwrap();
         let sql = format!(
-            "SELECT count(*) = 2 AND bool_and(created_by = '{actor}' AND updated_by = '{actor}' AND created_at = updated_at) \
-             FROM (SELECT created_by, updated_by, created_at, updated_at FROM catalog.releases \
-                   UNION ALL SELECT created_by, updated_by, created_at, updated_at FROM catalog.connection_requirements) stamps",
+            "SELECT count(*) = 1 AND bool_and(created_by = '{actor}' AND updated_by = '{actor}' AND created_at = updated_at) \
+             FROM catalog.releases",
             actor = wamn_control_provision::PlatformComponent::Provisioning.principal_id()
         );
         assert_eq!(database.execute(&[&sql]).unwrap().trim(), "t");
-        let image = "SELECT to_jsonb(r)::text FROM catalog.releases r UNION ALL SELECT to_jsonb(r)::text FROM catalog.connection_requirements r ORDER BY 1";
+        let image = "SELECT to_jsonb(r)::text FROM catalog.releases r ORDER BY 1";
         let before = database.execute(&[image]).unwrap();
         super::write_release(database.url(), "history", digest.as_str(), &manifest)
-            .await
-            .unwrap();
-        super::materialize_requirements(database.url(), "history", &manifest)
             .await
             .unwrap();
         assert_eq!(database.execute(&[image]).unwrap(), before);
@@ -748,45 +660,5 @@ mod tests {
             operations: BTreeMap::new(),
             descriptor,
         }
-    }
-
-    /// Apply writes one requirement for each connection of each release
-    /// descriptor, and nothing else (R2 (3)).
-    #[test]
-    fn the_requirements_are_exactly_those_of_the_release_descriptors() {
-        let first = format!("sha256:{}", "1".repeat(64));
-        let second = format!("sha256:{}", "2".repeat(64));
-        let manifest = ServingManifest {
-            composed_entry: None,
-            format_version: SERVING_MANIFEST_FORMAT_VERSION,
-            release: ServingRelease {
-                packages: BTreeSet::from([PackageCoordinate::new("orders", "1.0.0").unwrap()]),
-            },
-            components: BTreeSet::from([
-                component("blob-put", &first, &["archive", "labels"]),
-                component("orders", &second, &[]),
-            ]),
-            routes: BTreeSet::new(),
-            attachments: BTreeMap::new(),
-            host_routes: BTreeSet::new(),
-        };
-        let written = release_requirements(&manifest)
-            .iter()
-            .map(|requirement| {
-                (
-                    requirement.component_digest().to_owned(),
-                    requirement.store_alias().to_owned(),
-                    requirement.requirement().clone(),
-                )
-            })
-            .collect::<Vec<_>>();
-        let blobstore = ConnectionTypeDescriptor::blobstore_v1();
-        assert_eq!(
-            written,
-            vec![
-                (first.clone(), "archive".to_owned(), blobstore.clone()),
-                (first, "labels".to_owned(), blobstore),
-            ]
-        );
     }
 }

@@ -127,7 +127,7 @@ impl ControlRoutes<'_> {
             clients.push(client);
         }
         let mut targets = Vec::new();
-        for (client, (_, env)) in clients.iter_mut().zip(&environments) {
+        for client in &mut clients {
             let target = client.transaction().await?;
             target
                 .execute(
@@ -136,12 +136,7 @@ impl ControlRoutes<'_> {
                 )
                 .await?;
             if let Some(id) = &identity {
-                let name = if group != "connection" || request["env"].as_str() == Some(env) {
-                    request["name"].as_str().unwrap_or("")
-                } else {
-                    ""
-                };
-                references::refuse_environment_references(&target, group, id, name).await?;
+                references::refuse_environment_references(&target, group, id).await?;
             }
             targets.push(target);
         }
@@ -159,12 +154,18 @@ impl ControlRoutes<'_> {
             .begin_in(writer, attachment, caller, Some(&project))
             .await?;
         let mut completed = Vec::new();
+        let mut projected_drops = Vec::new();
         for (target, (project, env)) in targets.into_iter().zip(&environments) {
             let projected = async {
                 if let Some(id) = &identity {
                     references::remove_projection(&target, group, id).await?;
                 } else {
-                    references::project_administration(&source, &target, self.org, project, env);
+                    projected_drops.push(
+                        references::project_administration(
+                            &source, &target, self.org, project, env,
+                        )
+                        .await?,
+                    );
                 }
                 target.commit().await?;
                 Ok::<_, ConnectionError>(())
@@ -177,6 +178,9 @@ impl ControlRoutes<'_> {
             completed.push(format!("{project}/{env}"));
         }
         source.commit().await?;
+        for drops in projected_drops {
+            self.changes.publish(drops).await;
+        }
         if let Some(credentials) = credentials {
             references::destroy_credentials(&credentials).await?;
         }

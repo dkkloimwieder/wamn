@@ -65,3 +65,5 @@ pub mod workflow_lifecycle;
 
 #[cfg(test)]
 mod test_support;
+
+mod connection_requirement;

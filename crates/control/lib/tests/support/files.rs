@@ -135,9 +135,10 @@ pub async fn fixture(name: &str) -> anyhow::Result<Fixture> {
     ).await?;
     writer
         .execute(
-            "INSERT INTO platform.connection (id,integration,name,transport,exchange,parameters) \
-         VALUES ($1::text::uuid,'s3','file-store','s3','request', \
-         '{\"container\":\"files\",\"prefix\":\"generation-one/\"}')",
+            "WITH integration AS (INSERT INTO platform.integration (id,integration_type,name,status) \
+             VALUES ($1::text::uuid,'s3','file-store','active') RETURNING id) \
+             INSERT INTO platform.connection (id,integration_id,integration_type,status) \
+             SELECT $1::text::uuid,id,'s3','active' FROM integration",
             &[&CONNECTION],
         )
         .await?;
@@ -156,8 +157,8 @@ pub async fn metadata(writer: &Client) -> anyhow::Result<()> {
     writer
         .execute(
             "INSERT INTO platform.file \
-         (id,application,connection_id,connection_generation,name,media_type,size,sha256,blob_key) \
-         VALUES ($1::text::uuid,$2,$3::text::uuid,1,'fixture.txt','text/plain',0,repeat('0',64), \
+         (id,application,connection_id,name,media_type,size,sha256,blob_key) \
+         VALUES ($1::text::uuid,$2,$3::text::uuid,'fixture.txt','text/plain',0,repeat('0',64), \
                  'dev/_wamn_files/live/' || $1)",
             &[&FILE, &APPLICATION, &CONNECTION],
         )

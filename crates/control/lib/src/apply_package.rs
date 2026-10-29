@@ -60,6 +60,10 @@ const CLAIM_ENV_KEY_SQL: &str = "SELECT set_config('app.env_key', $1, true)";
 /// Inputs of one exact package application.
 #[derive(Debug)]
 pub struct ApplyPackageRequest {
+    /// Component repository configuration for digest-addressed binary reads.
+    pub component_source:
+        Option<wamn_runtime::component_artifact_source::ComponentArtifactSourceConfig>,
+
     /// Package root containing strict wamn.json and migrations/, with the
     /// digest of the verified artifact it was opened from.
     pub package: PackageRoot,
@@ -80,6 +84,46 @@ impl ApplyPackageRequest {
     pub fn env_key(&self) -> String {
         wamn_control_registry::project_env_key(&self.org, &self.project, &self.environment)
     }
+}
+
+/// Read the existing component repository variable with the package registry's transport.
+pub fn component_source_from_env(
+    registry: Option<&crate::package_artifact::PackageRegistry>,
+) -> anyhow::Result<Option<wamn_runtime::component_artifact_source::ComponentArtifactSourceConfig>>
+{
+    use wamn_runtime::component_artifact_source::{
+        ComponentArtifactSourceConfig, OCI_CA_PATHS_ENV,
+    };
+    let base = match std::env::var("WAMN_COMPONENT_ARTIFACT_BASE") {
+        Ok(base) => base,
+        Err(std::env::VarError::NotPresent) => return Ok(None),
+        Err(error) => return Err(error).context("read WAMN_COMPONENT_ARTIFACT_BASE"),
+    };
+    let mut source = ComponentArtifactSourceConfig::new(
+        &base,
+        registry.is_some_and(|registry| registry.insecure_registry),
+        std::time::Duration::from_secs(30),
+    )?;
+    if let Some(registry) = registry {
+        source = source
+            .with_registry_auth_file(&registry.registry_auth_file)?
+            .with_ca_paths(&registry.oci_ca_paths)?;
+    } else {
+        if let Some(file) = std::env::var_os("WAMN_REGISTRY_AUTH_FILE") {
+            source = source.with_registry_auth_file(Path::new(&file))?;
+        }
+        if let Some(paths) = std::env::var_os(OCI_CA_PATHS_ENV) {
+            source = source.with_ca_paths(
+                &paths
+                    .to_string_lossy()
+                    .split(',')
+                    .filter(|path| !path.is_empty())
+                    .map(PathBuf::from)
+                    .collect::<Vec<_>>(),
+            )?;
+        }
+    }
+    Ok(Some(source))
 }
 
 /// Result of one exact package application.
@@ -103,6 +147,8 @@ pub struct ApplyOutcome {
 /// Package bytes and migration policy prepared before database mutation.
 #[derive(Debug)]
 pub(crate) struct PreparedPackage {
+    pub component_source:
+        Option<wamn_runtime::component_artifact_source::ComponentArtifactSourceConfig>,
     pub root: PathBuf,
     pub directory: PackageDirectory,
     pub manifest: PackageManifest,
@@ -135,6 +181,7 @@ pub(crate) fn prepare_package(root: &PackageRoot) -> anyhow::Result<PreparedPack
         .context("validate package manifest for registration projection")?;
     let migration_policy = validate_migration_policy(&root.path, &directory, &presented)?;
     Ok(PreparedPackage {
+        component_source: None,
         root: root.path.clone(),
         directory,
         manifest,
@@ -189,6 +236,9 @@ pub(crate) async fn apply_qualification_packages(
     roots: &[PackageRoot],
     complete_roots: &[PackageRoot],
     manifest: &wamn_catalog::ServingManifest,
+    component_source: Option<
+        &wamn_runtime::component_artifact_source::ComponentArtifactSourceConfig,
+    >,
 ) -> anyhow::Result<Vec<ApplyOutcome>> {
     ensure!(
         !env_key.is_empty(),
@@ -200,7 +250,11 @@ pub(crate) async fn apply_qualification_packages(
     );
     let packages = roots
         .iter()
-        .map(prepare_package)
+        .map(|root| {
+            let mut package = prepare_package(root)?;
+            package.component_source = component_source.cloned();
+            Ok(package)
+        })
         .collect::<anyhow::Result<Vec<_>>>()?;
     let (mut client, connection) = tokio_postgres::connect(database_url, NoTls)
         .await
@@ -291,7 +345,10 @@ async fn apply_request(
             .any(|part| part.is_empty()),
         "org, project and environment must not be empty"
     );
-    let package = prepare_package(&request.package)?;
+    let mut package = prepare_package(&request.package)?;
+    package
+        .component_source
+        .clone_from(&request.component_source);
     if crate::qualify_upgrade::stage::whole_row_grants(package.manifest.upgrade_stage.as_ref())
         && let ApplicationMode::Production(Some(accepted)) = mode
     {
@@ -528,6 +585,14 @@ async fn apply_prepared(
             }
         }
     };
+    let requirements_written = crate::connection_requirement::install(
+        tx,
+        env_key,
+        package_root,
+        manifest,
+        package.component_source.as_ref(),
+    )
+    .await?;
     let applied_count = plan.pending.len();
     let migration_changed = !plan.is_noop();
     ensure!(
@@ -755,7 +820,8 @@ async fn apply_prepared(
         package_id,
         package_version,
         migrations_applied: applied_count,
-        changed: package_inserted
+        changed: requirements_written != 0
+            || package_inserted
             || migration_changed
             || ownership_changed
             || history_changed

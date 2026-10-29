@@ -521,7 +521,7 @@ fn effective_indirect_or_owner_authority_never_plans_false_clean() {
     obs.authoring_effective_table_privileges
         .entry((
             "catalog".to_string(),
-            "connection_bindings".to_string(),
+            "connection_binding".to_string(),
             "wamn_app".to_string(),
         ))
         .or_default()
@@ -537,7 +537,7 @@ fn effective_indirect_or_owner_authority_never_plans_false_clean() {
     obs.authoring_effective_column_privileges
         .entry((
             "catalog".to_string(),
-            "connection_requirements".to_string(),
+            "connection_requirement".to_string(),
             "wamn_app".to_string(),
         ))
         .or_default()
@@ -546,9 +546,9 @@ fn effective_indirect_or_owner_authority_never_plans_false_clean() {
     let plan = plan_run_plane(&schema("demo"), &obs);
     for table in [
         "packages",
-        "connection_bindings",
+        "connection_binding",
         "releases",
-        "connection_requirements",
+        "connection_requirement",
     ] {
         let repair = plan
             .actions

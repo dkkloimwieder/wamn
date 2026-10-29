@@ -220,8 +220,6 @@ impl WamnBlobstore {
     pub async fn file_store(
         &self,
         connection_name: &str,
-        generation: i64,
-        definition: &serde_json::Value,
         read_only: bool,
     ) -> Result<super::files::FileStore, super::files::FileStorageError> {
         use super::files::{FileStorageError, FileStorageErrorKind, FileStore};
@@ -233,25 +231,23 @@ impl WamnBlobstore {
             .as_ref()
             .filter(|release| release.scope().env_key == self.env_key.as_ref())
             .ok_or_else(|| refused("file storage requires this environment's loaded release"))?;
-        if generation < 1 {
-            return Err(refused("connection generation must be positive"));
-        }
-        if !self
-            .vault
-            .connection_enabled(&self.project, connection_name)
+        let connection_id = self
+            .postgres
+            .file_connection_id(&self.project, &self.env_key, connection_name)
             .await
-            .map_err(|error| {
-                FileStorageError::new(
-                    FileStorageErrorKind::Refused,
-                    "open",
-                    error.into_boxed_dyn_error(),
-                )
-            })?
-        {
-            return Err(refused(
-                "connection is disabled or unavailable to this project",
-            ));
-        }
+            .map_err(|error| refused(&error.to_string()))?
+            .ok_or_else(|| {
+                refused("file connection is absent or disabled in the environment projection")
+            })?;
+        let (generation, definition) = self
+            .vault
+            .file_configuration(&self.project, &release.scope().environment, &connection_id)
+            .await
+            .map_err(|error| refused(&error.to_string()))?
+            .ok_or_else(|| {
+                refused("file connection is absent or disabled in the system database")
+            })?;
+        let definition = &definition;
         wamn_catalog::RequirementType::Blobstore
             .check_definition(definition)
             .map_err(|error| refused(&error))?;

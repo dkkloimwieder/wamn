@@ -503,10 +503,7 @@ async fn converge_env_key_identity(
          from a legacy installation; install the current full schema first"
     );
     let app_schema_present: bool = client
-        .query_one(
-            "SELECT EXISTS ( SELECT FROM pg_namespace WHERE nspname = 'platform' )",
-            &[],
-        )
+        .query_one("SELECT to_regclass('platform.\"user\"') IS NOT NULL", &[])
         .await
         .context("probe the platform schema")?
         .get(0);

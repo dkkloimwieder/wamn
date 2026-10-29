@@ -157,12 +157,11 @@ pub const MANAGEMENT_ADMITTER_CATALOG_RELATIONS: [&str; 0] = [];
 /// through [`HTTP_ADMITTER_WORKFLOW_COLUMNS`], not through this list. Unlike
 /// management admission, it never consults the environment's mutable
 /// effective-release head.
-pub const HTTP_ADMITTER_CATALOG_RELATIONS: [&str; 5] = [
+pub const HTTP_ADMITTER_CATALOG_RELATIONS: [&str; 4] = [
     "releases",
-    "connection_requirements",
-    "connection_bindings",
-    "connection_instances",
-    "connection_generations",
+    "connection_requirement",
+    "connection_binding",
+    "release_connection",
 ];
 
 /// The `catalog.workflows` columns that callable-HTTP connection authorization
@@ -204,12 +203,11 @@ pub fn http_admitter_relations() -> impl Iterator<Item = (&'static str, &'static
 /// determination: this family holds no write privilege anywhere in `catalog`,
 /// so a column list would withhold only labels and timestamps while making a
 /// statement that reads one more column fail in production instead of at review.
-pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 6] = [
+pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 5] = [
     "workflows",
-    "connection_requirements",
-    "connection_bindings",
-    "connection_instances",
-    "connection_generations",
+    "connection_requirement",
+    "connection_binding",
+    "release_connection",
     "releases",
 ];
 
@@ -568,7 +566,7 @@ pub fn grant_http_admitter_surface_sql(schema: &str) -> String {
 /// (docs/architecture/data-access.md#actors). `number_counter` is not one of
 /// them: only `platform.bump_counter`, `platform.assign_counter` and
 /// `platform.set_counter` write it.
-pub const ADMINISTRATION_RELATIONS: [&str; 12] = [
+pub const ADMINISTRATION_RELATIONS: [&str; 11] = [
     "user",
     "role",
     "user_role",
@@ -577,8 +575,7 @@ pub const ADMINISTRATION_RELATIONS: [&str; 12] = [
     "external_system",
     "connection",
     "file",
-    "project_connection",
-    "integration_allow",
+    "integration",
     "number_sequence",
     "setting",
 ];
@@ -608,19 +605,20 @@ pub fn grant_administration_surface_sql(schema: &str) -> String {
          GRANT USAGE ON SCHEMA catalog, platform, wamn_history TO {role}; \
          GRANT EXECUTE ON FUNCTION wamn_history.row_image(record) TO {role}; \
          GRANT SELECT ON TABLE catalog.releases TO {role}; \
-         GRANT EXECUTE ON FUNCTION catalog.connection_upgrade_bindings(text, text) TO {role};",
+         GRANT SELECT ON TABLE catalog.connection_requirement, catalog.release_connection, catalog.connection_binding TO {role};",
         ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::Administration),
     );
     for relation in ADMINISTRATION_RELATIONS {
         write!(
             sql,
-            " GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE platform.{relation} TO {role}; \
-             GRANT INSERT (row_key, type, operation, changed_by, changed_at, \
-             transaction_id, before, after) ON TABLE platform.{history} TO {role};",
-            relation = quote_ident(relation),
-            history = quote_ident(&format!("{relation}_history")),
+            " GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE platform.{} TO {role};",
+            quote_ident(relation)
         )
         .expect("writing to a String cannot fail");
+        if !["external_system", "integration", "connection"].contains(&relation) {
+            write!(sql, " GRANT INSERT (row_key, type, operation, changed_by, changed_at, transaction_id, before, after) ON TABLE platform.{} TO {role};", quote_ident(&format!("{relation}_history")))
+                .expect("writing to a String cannot fail");
+        }
     }
 
     sql
@@ -939,7 +937,7 @@ pub fn grant_connection_reader_surface_sql() -> String {
     let role = quote_ident(WorkloadRoleFamily::ConnectionReader.acl_role());
     write!(
         sql,
-        " REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA registry, identity FROM {role}; GRANT EXECUTE ON FUNCTION registry.read_connection_credential(text,text,text,uuid) TO {role};"
+        " REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA registry, identity FROM {role}; GRANT EXECUTE ON FUNCTION registry.read_connection_credential(text,text,text,uuid), registry.read_file_connection(text,text,text,uuid) TO {role};"
     )
     .expect("writing to a String cannot fail");
     sql
@@ -948,6 +946,7 @@ pub fn grant_connection_reader_surface_sql() -> String {
 /// Non-secret connection functions available to the control host.
 pub const CONTROL_CONNECTION_FUNCTIONS: &[&str] = &[
     "retired_connection_credential(text)",
+    "project_connection_projection(text,text,text)",
     "publish_integration(text,integer,text,jsonb,text)",
     "configure_connection(text,text,jsonb)",
     "configure_external_system(text,text,jsonb)",
@@ -1277,17 +1276,16 @@ mod tests {
              FROM \"wamn_http_admitter\"; \
              GRANT USAGE ON SCHEMA catalog, platform TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"releases\" TO \"wamn_http_admitter\"; \
-             GRANT SELECT ON TABLE catalog.\"connection_requirements\" \
+             GRANT SELECT ON TABLE catalog.\"connection_requirement\" \
              TO \"wamn_http_admitter\"; \
-             GRANT SELECT ON TABLE catalog.\"connection_bindings\" TO \"wamn_http_admitter\"; \
-             GRANT SELECT ON TABLE catalog.\"connection_instances\" TO \"wamn_http_admitter\"; \
-             GRANT SELECT ON TABLE catalog.\"connection_generations\" TO \"wamn_http_admitter\"; \
+             GRANT SELECT ON TABLE catalog.\"connection_binding\" TO \"wamn_http_admitter\"; \
+             GRANT SELECT ON TABLE catalog.\"release_connection\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE platform.\"permission\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE platform.\"user\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE platform.\"user_role\" TO \"wamn_http_admitter\"; \
              GRANT SELECT (\"env_key\", \"environment\", \"application\", \"workflow_id\", \
              \"version\", \"graph_json\") ON TABLE catalog.\"workflows\" TO \"wamn_http_admitter\";",
-            "the callable-HTTP admitter reads five catalog relations, the selected workflow columns and three platform relations, and holds nothing on the run plane, no write of any grain, and no EXECUTE"
+            "the callable-HTTP admitter reads four catalog relations, the selected workflow columns and three platform relations, and holds nothing on the run plane, no write of any grain, and no EXECUTE"
         );
         // The schema is an identifier position and is quoted, not interpolated.
         assert!(grant_http_admitter_surface_sql("we\"ird").contains("\"we\"\"ird\""));
@@ -1316,13 +1314,11 @@ mod tests {
              FROM \"wamn_executor_platform\"; \
              GRANT USAGE ON SCHEMA catalog, platform, \"wamn_run\" TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE catalog.\"workflows\" TO \"wamn_executor_platform\"; \
-             GRANT SELECT ON TABLE catalog.\"connection_requirements\" \
+             GRANT SELECT ON TABLE catalog.\"connection_requirement\" \
              TO \"wamn_executor_platform\"; \
-             GRANT SELECT ON TABLE catalog.\"connection_bindings\" \
+             GRANT SELECT ON TABLE catalog.\"connection_binding\" \
              TO \"wamn_executor_platform\"; \
-             GRANT SELECT ON TABLE catalog.\"connection_instances\" \
-             TO \"wamn_executor_platform\"; \
-             GRANT SELECT ON TABLE catalog.\"connection_generations\" \
+             GRANT SELECT ON TABLE catalog.\"release_connection\" \
              TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE catalog.\"releases\" TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE \"wamn_run\".\"runs\" TO \"wamn_executor_platform\"; \

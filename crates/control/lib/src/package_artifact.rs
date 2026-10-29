@@ -181,6 +181,62 @@ pub fn read_descriptors(root: &Path) -> anyhow::Result<Vec<ComponentDescriptor>>
     Ok(descriptors)
 }
 
+/// Component bytes and declared connections for package installation.
+pub(crate) async fn connection_components(
+    root: &Path,
+    manifest: &PackageManifest,
+    source: Option<&wamn_runtime::component_artifact_source::ComponentArtifactSourceConfig>,
+) -> anyhow::Result<Vec<(String, Vec<ComponentConnection>, Vec<u8>)>> {
+    let descriptors = read_descriptors(root)?;
+    if !descriptors.is_empty() {
+        use wamn_engine::artifact_source::ArtifactSource as _;
+        use wamn_runtime::component_artifact_source::ComponentArtifactSource;
+        let scope = ComponentPackageScope::new(
+            ADMISSION_ENV_KEY,
+            &manifest.package.id,
+            &manifest.package.version,
+        )?;
+        let mut result = Vec::new();
+        for descriptor in descriptors
+            .into_iter()
+            .filter(|descriptor| !descriptor.connections.is_empty())
+        {
+            let source = ComponentArtifactSource::new(
+                source
+                    .context("set WAMN_COMPONENT_ARTIFACT_BASE for package install")?
+                    .clone(),
+            )?;
+            let facts = descriptor.into_admitted(scope.clone());
+            let bytes = source.pull_verified(&facts.component).await?;
+            result.push((facts.component.component_digest, facts.connections, bytes));
+        }
+        return Ok(result);
+    }
+    let output = wamn_schema_generator::output_root(root);
+    let receipt = wamn_schema_generator::receipt::read(&output)?;
+    let scope = ComponentPackageScope::new(
+        ADMISSION_ENV_KEY,
+        &manifest.package.id,
+        &manifest.package.version,
+    )?;
+    source_components(root, manifest, &receipt)?
+        .into_iter()
+        .map(|source| {
+            let document = match source.template {
+                ComponentTemplate::Owned(path) => {
+                    render_declaration_document(&path, ADMISSION_ENV_KEY)?
+                }
+                ComponentTemplate::Palette {
+                    path, store_alias, ..
+                } => render_palette_declaration(&path, &scope, store_alias.as_deref())?,
+            };
+            let declaration: ComponentDeclaration = serde_json::from_value(document)?;
+            let bytes = std::fs::read(source.file).context("read package component binary")?;
+            Ok((source.sha256, declaration.connections, bytes))
+        })
+        .collect()
+}
+
 /// Each file of [`DESCRIPTOR_DIRECTORY`] under `root`, parsed, with its exact
 /// bytes. The bytes are the canonical JSON of the parsed descriptor, so a
 /// release that carries the parsed descriptor carries the layer bytes.

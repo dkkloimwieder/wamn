@@ -11,6 +11,7 @@ async fn refusal(relation: &str, expected: &str) {
     tokio::spawn(driver);
     client.batch_execute("CREATE SCHEMA platform; CREATE SCHEMA catalog; \
         CREATE TABLE platform.external_system(id uuid PRIMARY KEY); \
+        CREATE TABLE platform.connection(id uuid PRIMARY KEY); \
         CREATE TABLE platform.record_source(external_system_id uuid REFERENCES platform.external_system(id)); \
         CREATE TABLE platform.file(connection_id uuid); \
         CREATE TABLE catalog.connection_binding(connection_id uuid); \
@@ -28,10 +29,9 @@ async fn refusal(relation: &str, expected: &str) {
     } else {
         "connection"
     };
-    let error =
-        refuse_environment_references(&tx, group, "00000000-0000-0000-0000-000000000001", "erp")
-            .await
-            .unwrap_err();
+    let error = refuse_environment_references(&tx, group, "00000000-0000-0000-0000-000000000001")
+        .await
+        .unwrap_err();
     assert_eq!(error.code, "referenced");
     assert_eq!(error.field, expected);
 }

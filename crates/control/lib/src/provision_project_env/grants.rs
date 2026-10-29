@@ -858,17 +858,17 @@ pub(super) fn verify_administration_grants(
         tuple("schema", "platform", "platform", "USAGE"),
         tuple("schema", "wamn_history", "wamn_history", "USAGE"),
         tuple("routine", "wamn_history", "row_image", "EXECUTE"),
-        tuple(
-            "routine",
-            "catalog",
-            "connection_upgrade_bindings",
-            "EXECUTE",
-        ),
+        tuple("relation", "catalog", "connection_requirement", "SELECT"),
+        tuple("relation", "catalog", "release_connection", "SELECT"),
+        tuple("relation", "catalog", "connection_binding", "SELECT"),
         tuple("relation", "catalog", "releases", "SELECT"),
     ]);
     for relation in sql::ADMINISTRATION_RELATIONS {
         for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
             expected.insert(tuple("relation", "platform", relation, privilege));
+        }
+        if ["external_system", "integration", "connection"].contains(&relation) {
+            continue;
         }
         for column in [
             "row_key",
@@ -964,6 +964,7 @@ fn verify_connection_reader_grants(
             "read_connection_credential",
             "EXECUTE",
         ),
+        ("routine", "registry", "read_file_connection", "EXECUTE"),
     ]);
     anyhow::ensure!(
         actual == expected,

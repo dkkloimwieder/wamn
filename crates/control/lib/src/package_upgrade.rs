@@ -85,6 +85,11 @@ pub(crate) async fn apply_coordinated(
             .context("application roots omit a qualified overlay successor")?;
         ordered.push(prepare_package(root)?);
     }
+    for package in &mut ordered {
+        package
+            .component_source
+            .clone_from(&request.component_source);
+    }
     let whole_row = whole_row
         || ordered.iter().any(|package| {
             qualify_upgrade::stage::whole_row_grants(package.manifest.upgrade_stage.as_ref())

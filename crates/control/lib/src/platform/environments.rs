@@ -224,6 +224,10 @@ async fn release_inputs(
         "WAMN_RELEASE_ARTIFACT_BASE".into(),
         super::packages::artifact_base(registry, "releases")?,
     );
+    request.environment.insert(
+        "WAMN_COMPONENT_ARTIFACT_BASE".into(),
+        super::packages::artifact_base(registry, "components")?,
+    );
     chart_files(&directory.join("release-chart"), Path::new(""), request)?;
     let env_key = wamn_control_registry::project_env_key(
         &environment.org,

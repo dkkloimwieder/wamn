@@ -5814,7 +5814,9 @@ dependencies = [
  "wasmparser 0.261.0",
  "wat",
  "wit-component 0.254.2",
+ "wit-component 0.259.0",
  "wit-parser 0.254.2",
+ "wit-parser 0.259.0",
 ]
 
 [[package]]

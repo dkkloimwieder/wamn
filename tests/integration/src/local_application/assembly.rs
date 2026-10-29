@@ -209,6 +209,7 @@ pub(super) async fn assemble(
     let mut roots = BTreeMap::new();
     for package in input.packages {
         let applied = apply_package(ApplyPackageRequest {
+            component_source: wamn_control::apply_package::component_source_from_env(None).unwrap(),
             changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
             package: wamn_control::apply_package::PackageRoot {
                 path: package.root.to_path_buf(),

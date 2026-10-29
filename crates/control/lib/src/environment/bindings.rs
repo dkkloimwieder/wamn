@@ -279,7 +279,7 @@ pub async fn project_authority(
             wamn_control_provision::PlatformComponent::Provisioning,
         ))
         .await?;
-    let drops = wamn_platform_identity::connections::project(
+    let drops = wamn_platform_identity::connection_projection::project(
         &source,
         &target,
         &document.org,

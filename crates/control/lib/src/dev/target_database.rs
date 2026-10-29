@@ -829,121 +829,63 @@ mod tests {
         );
         std::fs::write(&acl, "REVOKE ALL ON DATABASE target FROM PUBLIC;")?;
 
-        let definition = directory.join("connection.json");
-        std::fs::write(
-            &definition,
-            r#"{"endpoint":"https://objects.invalid","container":"fixture","prefix":"local/"}"#,
-        )?;
-        let mut input = crate::bind_connection::LocalInstanceInput {
-            requirement_type: wamn_catalog::RequirementType::Blobstore,
-            definition,
-            credential_handle: "fixture-vault-handle".to_owned(),
-        };
-        let prepared_instance = crate::bind_connection::read_local_instance(&input)?;
-        let requirement = wamn_catalog::ComponentConnectionRequirement::new(
-            format!("sha256:{}", "7".repeat(64)),
-            "objects",
-            wamn_catalog::ConnectionTypeDescriptor::blobstore_v1(),
+        let projection = "\
+INSERT INTO platform.external_system (id, name) VALUES \
+    ('10000000-0000-4000-8000-000000000001', 'objects-account') ON CONFLICT DO NOTHING; \
+INSERT INTO platform.integration (id, integration_type, external_system_id, name, status) VALUES \
+    ('20000000-0000-4000-8000-000000000001', 's3', \
+     '10000000-0000-4000-8000-000000000001', 'objects', 'active') ON CONFLICT DO NOTHING; \
+INSERT INTO platform.connection (id, integration_id, integration_type, status) VALUES \
+    ('30000000-0000-4000-8000-000000000001', \
+     '20000000-0000-4000-8000-000000000001', 's3', 'active') ON CONFLICT DO NOTHING; \
+INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) VALUES \
+    ('local-target', 'sha256:' || encode(sha256('{}'::bytea), 'hex'), '{}') ON CONFLICT DO NOTHING; \
+INSERT INTO catalog.release_connection (env_key, manifest_digest, connection_id, integration_type, version) VALUES \
+    ('local-target', 'sha256:' || encode(sha256('{}'::bytea), 'hex'), \
+     '30000000-0000-4000-8000-000000000001', 's3', 1) ON CONFLICT DO NOTHING;";
+        let read_projection = "\
+SELECT jsonb_build_array(external.name, integration.name, integration.integration_type, \
+                        integration.status, connection.integration_type, connection.status)::text \
+FROM platform.connection AS connection \
+JOIN platform.integration AS integration ON integration.id = connection.integration_id \
+JOIN platform.external_system AS external ON external.id = integration.external_system_id";
+        let actor = wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::ApplyPackage,
         );
-        target.batch_execute("BEGIN").await?;
         target
-            .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-                wamn_control_provision::PlatformComponent::Provisioning,
-            ))
+            .batch_execute(&format!("BEGIN; {actor} {projection}"))
             .await?;
-        crate::bind_connection::prepare_local_instance(
-            &target,
-            &identity.env_key(),
-            &identity.environment,
-            "objects-a",
-            &prepared_instance,
-        )
-        .await?;
-        let selected = wamn_runtime::local_application::read_local_binding(
-            &target,
-            &identity.env_key(),
-            &identity.environment,
-            &requirement,
-            "objects-a",
-        )
-        .await?;
+        let selected: String = target.query_one(read_projection, &[]).await?.get(0);
         target.batch_execute("ROLLBACK").await?;
-        assert!(
-            wamn_runtime::local_application::read_local_binding(
-                &target,
-                &identity.env_key(),
-                &identity.environment,
-                &requirement,
-                "objects-a"
-            )
-            .await
-            .is_err()
-        );
-        let definition_bytes = std::fs::read(&input.definition)?;
-        std::fs::remove_file(&input.definition)?;
-        assert!(crate::bind_connection::read_local_instance(&input).is_err());
-        target.batch_execute("BEGIN").await?;
+        assert!(target.query(read_projection, &[]).await?.is_empty());
         target
-            .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-                wamn_control_provision::PlatformComponent::Provisioning,
-            ))
+            .batch_execute(&format!("BEGIN; {actor} {projection} COMMIT;"))
             .await?;
-        crate::bind_connection::prepare_local_instance(
-            &target,
-            &identity.env_key(),
-            &identity.environment,
-            "objects-a",
-            &prepared_instance,
-        )
-        .await?;
-        target.batch_execute("COMMIT").await?;
         let stamped: bool = target.query_one(
-            "SELECT created_by = $1::text::uuid AND updated_by = $1::text::uuid AND created_at = updated_at FROM catalog.connection_generations",
-            &[&wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()],
+            "SELECT created_by = $1::text::uuid AND updated_by = $1::text::uuid AND created_at = updated_at FROM catalog.release_connection",
+            &[&wamn_control_provision::PlatformComponent::ApplyPackage.principal_id().to_string()],
         ).await?.get(0);
-        assert!(stamped, "local generations stamp wamn:provisioning");
-        crate::bind_connection::prepare_local_instance(
-            &target,
-            &identity.env_key(),
-            &identity.environment,
-            "objects-a",
-            &prepared_instance,
-        )
-        .await?;
+        assert!(stamped, "release connections stamp wamn:apply-package");
+        target
+            .batch_execute(&format!("BEGIN; {actor} {projection} COMMIT;"))
+            .await?;
         assert_eq!(
             selected,
-            wamn_runtime::local_application::read_local_binding(
-                &target,
-                &identity.env_key(),
-                &identity.environment,
-                &requirement,
-                "objects-a"
-            )
-            .await?
-        );
-        std::fs::write(&input.definition, definition_bytes)?;
-        input.credential_handle = "changed-handle".to_owned();
-        assert!(
-            crate::bind_connection::prepare_local_instance(
-                &target,
-                &identity.env_key(),
-                &identity.environment,
-                "objects-a",
-                &crate::bind_connection::read_local_instance(&input)?
-            )
-            .await
-            .is_err()
+            target
+                .query_one(read_projection, &[])
+                .await?
+                .get::<_, String>(0)
         );
         assert_eq!(
-            selected,
-            wamn_runtime::local_application::read_local_binding(
-                &target,
-                &identity.env_key(),
-                &identity.environment,
-                &requirement,
-                "objects-a"
-            )
-            .await?
+            target
+                .query_one(
+                    "SELECT count(*) FROM catalog.release_connection_history",
+                    &[]
+                )
+                .await?
+                .get::<_, i64>(0),
+            1,
+            "replaying the release connection leaves its history unchanged"
         );
         drop(target);
         driver.await??;
@@ -986,34 +928,29 @@ mod tests {
                 .get::<_, i64>(0),
             0
         );
-        target.batch_execute("BEGIN").await?;
+        assert!(target.query(read_projection, &[]).await?.is_empty());
+        assert_eq!(
+            target
+                .query_one("SELECT count(*) FROM catalog.release_connection", &[])
+                .await?
+                .get::<_, i64>(0),
+            0
+        );
         target
-            .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-                wamn_control_provision::PlatformComponent::Provisioning,
-            ))
+            .batch_execute(&format!("BEGIN; {actor} {projection} COMMIT;"))
             .await?;
-        crate::bind_connection::prepare_local_instance(
-            &target,
-            &identity.env_key(),
-            &identity.environment,
-            "objects-a",
-            &prepared_instance,
-        )
-        .await?;
-        target.batch_execute("COMMIT").await?;
         let stamped: bool = target.query_one(
-            "SELECT created_by = $1::text::uuid AND updated_by = $1::text::uuid AND created_at = updated_at FROM catalog.connection_generations",
-            &[&wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()],
+            "SELECT created_by = $1::text::uuid AND updated_by = $1::text::uuid AND created_at = updated_at FROM catalog.release_connection",
+            &[&wamn_control_provision::PlatformComponent::ApplyPackage.principal_id().to_string()],
         ).await?.get(0);
-        assert!(stamped, "local generations stamp wamn:provisioning");
-        wamn_runtime::local_application::read_local_binding(
-            &target,
-            &identity.env_key(),
-            &identity.environment,
-            &requirement,
-            "objects-a",
-        )
-        .await?;
+        assert!(stamped, "release connections stamp wamn:apply-package");
+        assert_eq!(
+            selected,
+            target
+                .query_one(read_projection, &[])
+                .await?
+                .get::<_, String>(0)
+        );
         drop(target);
         driver.await??;
         drop(lease);

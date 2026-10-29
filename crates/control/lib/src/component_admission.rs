@@ -1667,7 +1667,7 @@ mod tests {
             .unwrap_or_default();
         let insecure_registry = oci_ca_paths.is_empty();
         let operation = "wamn:node/handler@0.1.0";
-        let mut resolve = wit_parser::Resolve::new();
+        let mut resolve = test_wit_parser::Resolve::new();
         let package = resolve
             .push_str(
                 "wamn-node.wit",
@@ -1677,16 +1677,19 @@ mod tests {
         let world = resolve
             .select_world(&[package], Some("node"))
             .expect("the live node world resolves");
-        let mut module =
-            wit_component::dummy_module(&resolve, world, wit_parser::ManglingAndAbi::Standard32);
-        wit_component::embed_component_metadata(
+        let mut module = test_wit_component::dummy_module(
+            &resolve,
+            world,
+            test_wit_parser::ManglingAndAbi::Standard32,
+        );
+        test_wit_component::embed_component_metadata(
             &mut module,
             &resolve,
             world,
-            wit_component::StringEncoding::UTF8,
+            test_wit_component::StringEncoding::UTF8,
         )
         .expect("fixture component metadata embeds");
-        let component_bytes = wit_component::ComponentEncoder::default()
+        let component_bytes = test_wit_component::ComponentEncoder::default()
             .module(&module)
             .expect("fixture core module is accepted")
             .validate(true)

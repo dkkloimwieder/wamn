@@ -58,6 +58,7 @@ fn fixture_roots(paths: &[PathBuf]) -> Vec<PackageRoot> {
 
 fn apply_request(database_url: &str, package: &Path) -> ApplyPackageRequest {
     ApplyPackageRequest {
+        component_source: crate::apply_package::component_source_from_env(None).unwrap(),
         changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
         package: fixture_root(package),
         database_url: database_url.to_owned(),
@@ -239,6 +240,7 @@ fn runtime() -> BTreeMap<String, String> {
 fn request(fixture: &Fixture, result: &str) -> QualifyUpgradeRequest {
     let package = fixture_root(&fixture.root.join("candidate"));
     QualifyUpgradeRequest {
+        component_source: crate::apply_package::component_source_from_env(None).unwrap(),
         database_url: fixture.source_database.url().to_owned(),
         org: "upgrade-proof".into(),
         project: "fixture".into(),

@@ -26,8 +26,11 @@ fn deploy_dir() -> std::path::PathBuf {
 }
 
 fn app_schema_sql() -> String {
-    std::fs::read_to_string(deploy_dir().join("sql/app-schema.sql"))
-        .expect("read deploy/sql/app-schema.sql")
+    format!(
+        "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_scenario_author') THEN CREATE ROLE wamn_scenario_author NOLOGIN; END IF; END $$;\nDROP SCHEMA IF EXISTS catalog CASCADE;\n{}\n{}",
+        wamn_catalog::CATALOG_SCHEMA_SQL,
+        include_str!("../../../../deploy/sql/app-schema.sql")
+    )
 }
 
 /// The platform stamp function that every applier installs before
@@ -67,8 +70,8 @@ const WRITE_LOG: &str = "write_log";
 fn wamn_app_privileges(table: &str) -> &'static str {
     match table {
         "user" | "role" | "user_role" | "permission" | "environment" | "external_system"
-        | "connection" | "integration_allow" | "project_connection" | "number_sequence"
-        | "number_counter" | "setting" | "file" => "SELECT",
+        | "connection" | "integration" | "number_sequence" | "number_counter" | "setting"
+        | "file" => "SELECT",
         "api_key"
         | "user_history"
         | "role_history"
@@ -76,10 +79,6 @@ fn wamn_app_privileges(table: &str) -> &'static str {
         | "permission_history"
         | "api_key_history"
         | "environment_history"
-        | "external_system_history"
-        | "connection_history"
-        | "integration_allow_history"
-        | "project_connection_history"
         | "number_sequence_history"
         | "setting_history"
         | "file_history" => "",
@@ -593,7 +592,7 @@ fn platform_relations_stamp_provisioning_writes_on_postgres() {
            FROM pg_catalog.pg_trigger AS t \
            JOIN pg_catalog.pg_class AS c ON c.oid = t.tgrelid \
            JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
-          WHERE n.nspname = 'platform' AND NOT t.tgisinternal \
+          WHERE n.nspname = 'platform' AND NOT t.tgisinternal AND t.tgname LIKE 'wamn_record_history_%' \
           ORDER BY c.relname COLLATE \"C\", t.tgname;\n\
          BEGIN;\n",
     );
@@ -614,7 +613,10 @@ fn platform_relations_stamp_provisioning_writes_on_postgres() {
     let mut expected = Vec::new();
     let mut names = TABLES.iter().map(|table| table.name).collect::<Vec<_>>();
     names.sort_unstable();
-    for name in &names {
+    for name in names
+        .iter()
+        .filter(|name| !["external_system", "integration", "connection"].contains(name))
+    {
         for (column, column_type) in [
             ("created_at", "timestamp with time zone"),
             ("created_by", "uuid"),
@@ -656,7 +658,7 @@ fn platform_relations_stamp_provisioning_writes_on_postgres() {
                      wamn_history.log_row_change('unlimited')"
                 )
             }),
-            Some(format!(
+            (!["external_system", "integration", "connection"].contains(name)).then(|| format!(
                 "trigger|CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE \
                  ON {relation} FOR EACH ROW EXECUTE FUNCTION \
                  wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by')"

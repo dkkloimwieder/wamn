@@ -26,8 +26,8 @@ use wamn_schema_control::BareSchemaName;
 /// the control database.
 ///
 /// Three legs of the project-residency probe are gone because the relations they
-/// named do not exist in the control store: `catalog.connection_bindings`,
-/// `catalog.connection_instances`, and `catalog.connection_generations` are
+/// named do not exist in the control store: `catalog.connection_binding`,
+/// `catalog.release_connection`, and `catalog.connection_requirement` are
 /// project-local after the plane split, and there is no `runs` relation to read
 /// at all — project run observation stays with wamn-0h0g.8.5.
 ///
@@ -464,9 +464,9 @@ mod tests {
         // Relations that only a PROJECT database has are gone: reading them would
         // have made the control credential impossible to admit.
         for project_local in [
-            "catalog.connection_bindings",
-            "catalog.connection_instances",
-            "catalog.connection_generations",
+            "catalog.connection_binding",
+            "catalog.release_connection",
+            "catalog.connection_requirement",
             "'runs'",
             ".runs",
         ] {

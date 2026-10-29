@@ -70,14 +70,14 @@ impl FileRoutes {
                 continue;
             }
             let result = async {
-                let store = self.blobstore.file_store(&connection.name, connection.generation, &connection.definition, false).await?;
+                let store = self.blobstore.file_store(&connection.name, false).await?;
                 let mut batches = store.live_objects().await?.try_filter(|object| std::future::ready(object.last_modified < cutoff)).try_chunks(BATCH_SIZE);
                 while let Some(batch) = batches.next().await {
                     let batch = batch.map_err(|error| error.1)?;
                     let keys: Vec<_> = batch.iter().map(|object| object.blob_key.clone()).collect();
                     let rows = reader.rows(&keys).await?;
                     for object in batch {
-                        let present = rows.iter().any(|(id, generation, key)| key == &object.blob_key && generations.iter().find(|pin| &pin.id == id && &pin.generation == generation).is_none_or(|pin| namespace(pin) == location));
+                        let present = rows.iter().any(|(id, key)| key == &object.blob_key && generations.iter().find(|pin| &pin.id == id).is_none_or(|pin| namespace(pin) == location));
                         if !present && store.delete_collected(&object, cutoff).await? {
                             deleted += 1;
                             tracing::info!(object_key = object.object_key(), connection_id = %connection.id, generation = connection.generation, "file collector deleted orphan object");

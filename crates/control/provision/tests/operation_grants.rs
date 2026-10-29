@@ -14,9 +14,6 @@ use wamn_control_provision::operation_grants::{
 };
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 
-const RECORD_HISTORY: &str = include_str!("../../../../deploy/sql/record-history.sql");
-const RECORD_HISTORY_APP_GRANTS: &str =
-    include_str!("../../../../deploy/sql/record-history-app-grants.sql");
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
 /// The test principal that the fixture seed writes as.
 const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
@@ -103,12 +100,16 @@ fn admin_role_has_no_rows_and_authored_rows_are_grants_live() {
     run(
         &url,
         "reset application authority floor",
-        "DROP SCHEMA IF EXISTS platform CASCADE; \
+        "DROP SCHEMA IF EXISTS catalog CASCADE; \
+         DROP SCHEMA IF EXISTS platform CASCADE; \
          DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
          DO $role$ BEGIN \
            IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_app') THEN \
              CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                NOINHERIT NOREPLICATION NOBYPASSRLS; \
+           END IF; \
+           IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
+             CREATE ROLE wamn_scenario_author NOLOGIN; \
            END IF; \
          END $role$;",
     );
@@ -125,9 +126,10 @@ fn admin_role_has_no_rows_and_authored_rows_are_grants_live() {
 
     run(
         &url,
-        "install application authority floor",
-        &format!("{RECORD_HISTORY}\n{RECORD_HISTORY_APP_GRANTS}\n{APP_SCHEMA}"),
+        "install the catalog and connection projections",
+        wamn_catalog::CATALOG_SCHEMA_SQL,
     );
+    run(&url, "install application authority floor", APP_SCHEMA);
     run(
         &url,
         "seed an authored role with two permissions",
@@ -201,6 +203,7 @@ fn admin_role_has_no_rows_and_authored_rows_are_grants_live() {
     run(
         &url,
         "remove application authority floor",
-        "DROP SCHEMA platform CASCADE; DROP SCHEMA wamn_authority CASCADE;",
+        "DROP SCHEMA catalog CASCADE; DROP SCHEMA platform CASCADE; \
+         DROP SCHEMA wamn_authority CASCADE;",
     );
 }
