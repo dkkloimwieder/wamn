@@ -909,7 +909,58 @@ Replay uses the host's current authorization. The per-application active role an
 A role change can produce an ordinary refusal.
 The entry's `recorded_at` is a local display timestamp, not authoritative host time.
 Applications can declare a separate business timestamp without changing queue behavior.
-Signing out does not itself delete saved rows or entries.
+Signing out deletes saved rows and entries only when the offline profile sets `clear_on_sign_out`.
+
+### Offline profile
+
+The offline profile is an application setting that decides what the page can do offline.
+Each environment holds its own value.
+The values are three `setting` rows at application scope, as [platform configuration, Settings](platform-config.md#settings) describes.
+The platform declares the three keys in its closed key set.
+The epic `wamn-9y7wu` builds the profile.
+
+| Key | Values | `session` default | `local_first` default |
+| --- | --- | --- | --- |
+| `sync.offline_profile` | `session` or `local_first` | `session` is the default profile | |
+| `sync.pending_max_age` | An ISO 8601 duration, or none | `PT1H` | none |
+| `sync.clear_on_sign_out` | true or false | true | false |
+
+The Shell reads the three values through the platform settings route while it is online.
+It saves them with the saved user and the saved view.
+Offline, it uses the saved values.
+If no values are saved, the Shell uses the `session` defaults.
+
+#### `session`
+
+The Shell saves the session times, `expiresAt` and `loginExpiresAt`, with the saved user.
+An offline reopen and offline recording work only while the saved `loginExpiresAt` is later than the device clock.
+After that time, the Shell shows the sign-in form.
+Sign-out clears the saved user.
+If `clear_on_sign_out` is true, sign-out also deletes that user's saved rows and outbox.
+
+#### `local_first`
+
+An offline reopen and offline recording always work, as the saved user.
+This is the behavior that the rest of this section describes.
+Sign-out deletes that user's saved rows and outbox only when `clear_on_sign_out` is true.
+
+#### Expiry
+
+`pending_max_age` applies under both profiles when it has a value.
+An outbox entry whose `recorded_at` is older than `pending_max_age` stops replaying.
+The not uploaded panel shows the entry as expired.
+A signed-in user resubmits it with the same id, or discards it.
+The outbox never sends an expired entry on its own.
+The outbox option `maxAge` of `@wfe/sync` carries the value. It is the wfe gap `wamn-ujnkn`.
+
+#### Risks
+
+- Shared-device attribution: the outbox records each entry as the saved user, whoever used the device.
+- Plain IndexedDB at rest: saved rows and outbox entries are not encrypted on the device.
+- The cached view is display only: it decides which screens show, and the host authorizes every call.
+- A lost device loses its unsent writes.
+- Late replay relies on the server's own checks, such as `quantity_exceeds_remaining`, because the host does not know what changed while the device was offline.
+- The device clock is not a security control: a user can change it, so the `loginExpiresAt` and `pending_max_age` checks on the device limit only honest use. The host's token expiry and authorization are the controls.
 
 ## Release compatibility
 
