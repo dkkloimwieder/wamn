@@ -48,10 +48,10 @@ const PRINCIPAL_GRANTS_SQL: &str = "SELECT u.status = 'active', r.role_name, p.p
     ON p.role_name = r.role_name \
     WHERE u.id = $1::text::uuid";
 
-/// One row of the bound principal, read under the tenant's own guest login.
+/// One row of the bound principal, read under the env_key's own guest login.
 ///
 /// Row existence is the whole question, so the projection is a constant. The
-/// database is the org boundary, so the table has no tenant column.
+/// database is the org boundary, so the table has no org column.
 const PROVISIONED_PRINCIPAL_SQL: &str = "SELECT 1 FROM platform.\"user\" \
     WHERE id = $1::text::uuid";
 
@@ -217,13 +217,13 @@ pub struct WamnPostgres {
     /// Host-owned claim, authorization, and plan-supply project pools. Keeping a
     /// distinct cache makes cross-lifecycle session reuse unrepresentable.
     platform_pools: std::sync::RwLock<HashMap<PoolKey, Arc<ProjectPool>>>,
-    /// component id → tenant claim.
+    /// component id → env_key claim.
     env_keys: std::sync::RwLock<HashMap<String, String>>,
     /// component id → project id (which database). Absent ⇒ the default project.
     projects: std::sync::RwLock<HashMap<String, String>>,
     /// component id → `search_path` schema. Empty (the default) leaves the
     /// server's search_path alone — so S2/pgbench behaviour is unchanged. When
-    /// set, the plugin injects `SET LOCAL search_path` alongside the tenant
+    /// set, the plugin injects `SET LOCAL search_path` alongside the env_key
     /// claim, so unqualified table names resolve to a host-chosen schema (S6:
     /// prod = the shared fixture schema, test = a per-run ephemeral schema).
     schemas: std::sync::RwLock<HashMap<String, String>>,
@@ -355,14 +355,14 @@ impl ReleaseIdentity {
 /// the whole of what [`WamnPostgres::bind_session_claims`] writes and
 /// [`WamnPostgres::revoke_session_claims`] clears. Adding a registry without
 /// adding a field here leaves a claim that no acquisition rebinds — which is
-/// exactly the cross-tenant leak `wamn-0h0g.17.7` closes.
+/// exactly the cross-env_key leak `wamn-0h0g.17.7` closes.
 ///
 /// `None` means *no claim*, not *keep the previous one*: the deny floors
 /// (`app.role` = `''`, `app.user_id` = NULL, no `search_path` override) are what
 /// an acquisition that declares nothing must get.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SessionClaims {
-    /// `app.env_key` — the RLS claim. Required: a session with no tenant is
+    /// `app.env_key` — the RLS claim. Required: a session with no env_key is
     /// refused by [`WamnPostgres::require_env_key`] rather than run unscoped.
     pub env_key: String,
     /// Which project database this session resolves against. `None` ⇒ the
@@ -388,7 +388,7 @@ pub struct SessionClaims {
     pub release: Option<ReleaseIdentity>,
 }
 
-/// The bound principal has no `platform."user"` row in the tenant it claims
+/// The bound principal has no `platform."user"` row in the env_key it claims
 /// (`wamn-0h0g.9.19`).
 ///
 /// A credential for such a principal is a provisioning defect: every write it
@@ -398,7 +398,7 @@ pub struct SessionClaims {
 /// router does that translation in
 /// `crates/execution/host/src/operation/native_policy.rs`.
 ///
-/// It carries the tenant, the project database read, and the principal id, so
+/// It carries the env_key, the project database read, and the principal id, so
 /// an operator can find the missing row. It carries no connection material.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnprovisionedPrincipal {
@@ -408,7 +408,7 @@ pub struct UnprovisionedPrincipal {
 }
 
 impl UnprovisionedPrincipal {
-    /// The tenant whose `platform."user"` table was read.
+    /// The env_key whose `platform."user"` table was read.
     #[must_use]
     pub fn env_key(&self) -> &str {
         &self.env_key
@@ -431,7 +431,7 @@ impl std::fmt::Display for UnprovisionedPrincipal {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             formatter,
-            "principal {} has no platform.\"user\" row in tenant {} of project {}",
+            "principal {} has no platform.\"user\" row in env_key {} of project {}",
             self.principal_id, self.env_key, self.project
         )
     }
@@ -732,12 +732,12 @@ SELECT wiring.graph_json::text, component.component, component.interface_version
 /// declared SQL and refuses these constructs on the parse tree; this guard
 /// still covers a release admitted before that check, or a forged descriptor.
 ///
-/// # The TENANT axis is structurally closed, and this is no longer what holds it
+/// # The env_key axis is structurally closed, and this is no longer what holds it
 ///
-/// The `wamn-0h0g.22.6` lineage re-keyed guest tenant authority onto a
-/// NON-SETTABLE identity: `.22.6.2` re-keyed the generated tenant floor onto
-/// `current_user`, `.22.6.4` minted per-tenant guest LOGIN generations, and
-/// `.22.6.7` cut the guest SQL path onto per-tenant connections.
+/// The `wamn-0h0g.22.6` lineage re-keyed guest env_key authority onto a
+/// NON-SETTABLE identity: `.22.6.2` re-keyed the generated env_key floor onto
+/// `current_user`, `.22.6.4` minted per-env_key guest LOGIN generations, and
+/// `.22.6.7` cut the guest SQL path onto per-env_key connections.
 /// `wamn_authority.current_tenant_key()` reads the CONNECTED ROLE, which no
 /// session can rewrite, so a guest that succeeds in setting `app.env_key`
 /// changes nothing. Measured on PostgreSQL 18 as a guest generation login
@@ -1209,7 +1209,7 @@ impl WamnPostgres {
         )))
     }
 
-    /// Register the tenant claim for a component id. The bench harness calls
+    /// Register the env_key claim for a component id. The bench harness calls
     /// this directly; the host path feeds it from workload bind.
     pub fn set_env_key(&self, component_id: &str, env_key: &str) -> anyhow::Result<()> {
         anyhow::ensure!(
@@ -1341,7 +1341,7 @@ impl WamnPostgres {
     /// set, every transaction the plugin opens for that component binds
     /// `app.role`, so a compiled per-role RLS policy gates on the caller's role
     /// instead of the `''` floor that denies it. Host-injected identity like the
-    /// tenant: the guest has no path to it, and [`reject_claim_mutation`] refuses
+    /// env_key: the guest has no path to it, and [`reject_claim_mutation`] refuses
     /// an in-band override.
     pub fn set_role(&self, component_id: &str, role: &str) -> anyhow::Result<()> {
         anyhow::ensure!(
@@ -1366,7 +1366,7 @@ impl WamnPostgres {
     /// Register the executing principal's `app.user_id` claim for a component
     /// id. When set, every transaction the plugin opens for that component
     /// binds `app.user_id`, so the record-history triggers stamp that
-    /// `users.id`. Host-injected identity like the tenant.
+    /// `users.id`. Host-injected identity like the env_key.
     pub fn set_user_id(&self, component_id: &str, user_id: &str) -> anyhow::Result<()> {
         anyhow::ensure!(
             valid_user_id(user_id),
@@ -1390,7 +1390,7 @@ impl WamnPostgres {
     /// Register the `app.operation` claim for a component id. When set, every
     /// transaction the plugin opens for that component binds `app.operation`,
     /// so the record-history log records the source of each write.
-    /// Host-injected identity like the tenant.
+    /// Host-injected identity like the env_key.
     pub fn set_operation(&self, component_id: &str, operation: &str) -> anyhow::Result<()> {
         anyhow::ensure!(
             valid_operation(operation),
@@ -1414,7 +1414,7 @@ impl WamnPostgres {
     /// Register the `app.application` claim for a component id. When set,
     /// every transaction the plugin opens for that component binds
     /// `app.application`, the declared application that runs the operation.
-    /// Host-injected identity like the tenant.
+    /// Host-injected identity like the env_key.
     pub fn set_application(&self, component_id: &str, application: &str) -> anyhow::Result<()> {
         anyhow::ensure!(
             valid_application(application),
@@ -1558,7 +1558,7 @@ impl WamnPostgres {
     /// identity, for the length of one execution checkout (wamn-0h0g.17.7).
     ///
     /// The registries are process-resident and keyed by component id, so a
-    /// component id is a *claim scope*, not a fact about which tenant a store
+    /// component id is a *claim scope*, not a fact about which env_key a store
     /// was built for. This is the write half of that scope: a pooled instance is
     /// fungible compute, and the identity it serves arrives here at acquisition
     /// rather than at construction. Every registry
@@ -1577,7 +1577,7 @@ impl WamnPostgres {
     /// # The executing principal must own a user row (`wamn-0h0g.9.19`)
     ///
     /// A bind that names an `app.user_id` refuses when the principal owns no
-    /// `platform."user"` row in the tenant's project database. The credential
+    /// `platform."user"` row in the env_key's project database. The credential
     /// of such a principal is a provisioning defect, and every write it makes
     /// records an actor that names no row. The host's
     /// [auth memory](crate::auth_cache) answers first: the route authenticator
@@ -1726,7 +1726,7 @@ impl WamnPostgres {
     /// Read one `platform."user"` row and refuse the principal that owns none
     /// (`wamn-0h0g.9.19`).
     ///
-    /// The read uses the tenant's own guest login, for two reasons. It is the
+    /// The read uses the env_key's own guest login, for two reasons. It is the
     /// only authority class every composition root names, because the platform
     /// classes are unnamed when their generation is absent. And it is the
     /// credential that already holds `SELECT` on this table, so the check
@@ -1784,7 +1784,7 @@ impl WamnPostgres {
 
     /// Read back the claim set one component id currently resolves to.
     ///
-    /// `None` is the deny floor: no tenant is bound, so
+    /// `None` is the deny floor: no env_key is bound, so
     /// [`require_env_key`](Self::require_env_key) refuses every call made under
     /// this id. That is what an idle, never-acquired execution instance must
     /// report, and it is the read half of the checkout-identity seam — the pair
@@ -1814,7 +1814,7 @@ impl WamnPostgres {
     /// installed under one component id.
     ///
     /// Called when a checkout ends, on every path — repooled, retired, or
-    /// dropped. An idle instance that still resolved a tenant would be a warm
+    /// dropped. An idle instance that still resolved an env_key would be a warm
     /// store carrying identity, which is the whole defect this seam closes; and
     /// a `require_env_key` failure is how an unbound instance fails closed
     /// instead of serving someone else's rows.
@@ -1864,7 +1864,7 @@ impl WamnPostgres {
 
     /// Reap EVERY per-component-id claim, workload-authority, and verified
     /// statement registry this plugin keeps for a workload
-    /// on teardown (R31): tenant, project, search_path schema, runner lease-owner,
+    /// on teardown (R31): env_key, project, search_path schema, runner lease-owner,
     /// the caller's role / user id, the executing operation and application, the carried
     /// release identity, the causation run context, and the bound invocation —
     /// all set at workload bind (or via the runner or driver channel) and keyed
@@ -1945,9 +1945,9 @@ impl WamnPostgres {
     }
 
     /// Load every host-derived HTTP authorization input in one read-only
-    /// transaction under the component's injected tenant.
+    /// transaction under the component's injected env_key.
     ///
-    /// # Why the caller's tenant is checked against the registry (wamn-0h0g.17.7)
+    /// # Why the caller's env_key is checked against the registry (wamn-0h0g.17.7)
     ///
     /// `env_key` arrives from `ConnectionHttp`, which froze it into a `Box<str>`
     /// when its store was constructed
@@ -1956,16 +1956,16 @@ impl WamnPostgres {
     /// wash-runtime, so nothing outside it can swap the plugin — while every other
     /// claim on this path IS
     /// ([`bind_session_claims`](Self::bind_session_claims)). A pooled instance
-    /// serving tenant B would therefore carry tenant A's frozen value here and
+    /// serving env_key B would therefore carry env_key A's frozen value here and
     /// read A's rows under B's run.
     ///
-    /// This plugin's registry is the authority on a component id's tenant, so a
-    /// caller-supplied tenant that DISAGREES with it is refused rather than
+    /// This plugin's registry is the authority on a component id's env_key, so a
+    /// caller-supplied env_key that DISAGREES with it is refused rather than
     /// honored. The check is a denial, not a correction: silently substituting
-    /// the registered tenant would hide the divergence it exists to catch.
+    /// the registered env_key would hide the divergence it exists to catch.
     ///
     /// An UNBOUND component id is refused outright (wamn-0h0g.17.11), not
-    /// allowed to fall through to the caller's tenant. Agreement with the
+    /// allowed to fall through to the caller's env_key. Agreement with the
     /// registry is only meaningful when the registry HAS an entry, so a guard
     /// that skipped the absent case would be a guard whose strength depended on
     /// the caller having been bound. It is the same deny floor
@@ -2154,7 +2154,7 @@ impl WamnPostgres {
     }
 
     /// The grants every role of an active org-issued user gives it in this
-    /// tenant, from [`principal_grants`](Self::principal_grants).
+    /// env_key, from [`principal_grants`](Self::principal_grants).
     ///
     /// Route authentication first requires membership in the release environment.
     pub async fn user_operation_permissions(
@@ -2185,7 +2185,7 @@ impl WamnPostgres {
         );
         anyhow::ensure!(
             valid_env_key(env_key),
-            "invalid operation-permission tenant"
+            "invalid operation-permission env_key"
         );
         let ticket = match self.auth.grants(env_key, principal.as_str()) {
             Ok(grants) => return Ok(grants),
@@ -2275,7 +2275,7 @@ impl WamnPostgres {
     /// memory](crate::auth_cache).
     pub async fn environment_inactive(&self, project: &str, env_key: &str) -> anyhow::Result<bool> {
         anyhow::ensure!(valid_project(project), "invalid environment-status project");
-        anyhow::ensure!(valid_env_key(env_key), "invalid environment-status tenant");
+        anyhow::ensure!(valid_env_key(env_key), "invalid environment-status env_key");
         let ticket = match self.auth.environment_inactive(env_key) {
             Ok(inactive) => return Ok(inactive),
             Err(ticket) => ticket,
@@ -2311,7 +2311,7 @@ impl WamnPostgres {
         work: impl AsyncFnOnce(&tokio_postgres::Client) -> Result<T, E>,
     ) -> anyhow::Result<Result<T, E>> {
         anyhow::ensure!(valid_project(project), "invalid host-route project");
-        anyhow::ensure!(valid_env_key(env_key), "invalid host-route tenant");
+        anyhow::ensure!(valid_env_key(env_key), "invalid host-route env_key");
         let (connection, policy) = self
             .checkout_platform(project, AuthorityClass::Administration)
             .await
@@ -2356,7 +2356,7 @@ impl WamnPostgres {
         role: Option<&str>,
     ) -> anyhow::Result<wamn_engine::flow_http_routing::AuthenticatedCaller> {
         anyhow::ensure!(valid_project(project), "invalid queued-run project");
-        anyhow::ensure!(valid_env_key(env_key), "invalid queued-run tenant");
+        anyhow::ensure!(valid_env_key(env_key), "invalid queued-run env_key");
         let (connection, _policy) = self
             .checkout_platform(project, AuthorityClass::CallableHttp)
             .await?;
@@ -2396,11 +2396,11 @@ impl WamnPostgres {
         self.env_key_for(component_id).ok_or_else(|| {
             tracing::warn!(
                 component_id,
-                "wamn:postgres call from component with no tenant identity"
+                "wamn:postgres call from component with no env_key identity"
             );
             PgError::QueryError((
                 "WAMN0".to_string(),
-                "no tenant identity configured for this component".to_string(),
+                "no env_key identity configured for this component".to_string(),
             ))
         })
     }

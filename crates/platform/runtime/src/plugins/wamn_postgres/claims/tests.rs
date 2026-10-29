@@ -95,7 +95,7 @@ async fn a_platform_checkout_refuses_the_guest_authority() {
 /// reaches resolution, and that composing without one resolves NOTHING
 /// rather than falling back.
 /// A guest credential url for `env_key` in `database`, named the way
-/// provisioning names one: the login carries the tenant key as its scope
+/// provisioning names one: the login carries the env_key as its scope
 /// digest (`wamn-0h0g.22.6.4`).
 fn guest_url(env_key: &str, database: &str) -> String {
     format!(
@@ -106,10 +106,10 @@ fn guest_url(env_key: &str, database: &str) -> String {
 
 /// *** THE REFUSAL THAT MAKES THE CREDENTIAL THE AUTHORITY. ***
 ///
-/// After `wamn-0h0g.22.6` a guest's tenant is its LOGIN, so handing back a
-/// credential minted for another tenant is not a mis-selection, it is a
-/// cross-tenant read. Resolution refuses instead, and refuses again when the
-/// caller names no tenant at all.
+/// After `wamn-0h0g.22.6` a guest's env_key is its LOGIN, so handing back a
+/// credential minted for another env_key is not a mis-selection, it is a
+/// cross-env_key read. Resolution refuses instead, and refuses again when the
+/// caller names no env_key at all.
 #[test]
 fn a_guest_credential_resolves_for_its_own_env_key_and_no_other() {
     let host = WamnPostgres::from_env(Some(ClassCredentials::every_class(guest_url(
@@ -120,27 +120,27 @@ fn a_guest_credential_resolves_for_its_own_env_key_and_no_other() {
     assert!(
         host.provider
             .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql, Some("fixture"))
-            .expect("the credential's own tenant resolves")
+            .expect("the credential's own env_key resolves")
             .is_some()
     );
     assert!(
         host.provider
             .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql, Some("evil"))
             .is_err(),
-        "a credential minted for another tenant must be REFUSED, not borrowed"
+        "a credential minted for another env_key must be REFUSED, not borrowed"
     );
     assert!(
         host.provider
             .resolve(DEFAULT_PROJECT, AuthorityClass::GuestSql, None)
             .is_err(),
-        "guest resolution without a tenant has no authority to check"
+        "guest resolution without an env_key has no authority to check"
     );
-    // Platform classes are project-environment scoped, so the tenant is not
+    // Platform classes are project-environment scoped, so the env_key is not
     // part of their binding and its absence is not an error.
     assert!(
         host.provider
             .resolve(DEFAULT_PROJECT, AuthorityClass::ExecutorPlatform, None)
-            .expect("platform resolution needs no tenant")
+            .expect("platform resolution needs no env_key")
             .is_some()
     );
 }
@@ -724,7 +724,7 @@ fn clear_component_claims_reaps_all_registries_for_the_workload() {
 // and creates + drops its own objects.
 // ------------------------------------------------------------------
 
-/// The tenant every live guest checkout in this module authenticates for.
+/// The env_key every live guest checkout in this module authenticates for.
 const LIVE_ENV_KEY: &str = "fixture";
 
 /// The executing principal a live transactional statement binds.
@@ -799,8 +799,8 @@ fn live_database(admin_url: &str) -> String {
 /// Rewrite a disposable-database URL onto a PROPERLY NAMED guest generation,
 /// creating the login if it is missing.
 ///
-/// `wamn-0h0g.22.6.7` binds a guest credential to its tenant: resolution
-/// verifies that the login carries `app_scope_hash(tenant, database)`, so a
+/// `wamn-0h0g.22.6.7` binds a guest credential to its env_key: resolution
+/// verifies that the login carries `app_scope_hash(env_key, database)`, so a
 /// URL naming an arbitrary user no longer resolves for the guest class.
 /// That is the point — a shared login is exactly what item 2 retires — and
 /// it means a live guest test has to authenticate as a real generation.
@@ -1008,7 +1008,7 @@ async fn live_bound_claims_are_injection_inert_and_txn_local() {
 
 // R2/R16 — the REAL plugin path: begin_with_claims injects the guest claim
 // set via the bound statement, they are visible in-txn, and revert after the
-// txn. `app.env_key` is NOT among them (`wamn-0h0g.22.6.7`): a guest's tenant
+// txn. `app.env_key` is NOT among them (`wamn-0h0g.22.6.7`): a guest's env_key
 // is its LOGIN, and injecting a GUC nothing it can read consults would be a
 // second, settable statement about an authority derived elsewhere.
 #[tokio::test]
@@ -1081,8 +1081,8 @@ async fn live_begin_with_claims_sets_the_guest_set_without_a_env_key_claim() {
         env_key, None,
         "the guest claim set must NOT inject app.env_key"
     );
-    // …and the session it runs on authenticates as the tenant's own
-    // generation, which is where its tenant actually comes from.
+    // …and the session it runs on authenticates as the env_key's own
+    // generation, which is where its env_key actually comes from.
     let who: String = conn
         .query_one("SELECT current_user::text", &[])
         .await
@@ -1137,7 +1137,7 @@ async fn visible_rows(pg: &WamnPostgres, component: &str, sql: &str) -> usize {
 /// `crates/control/provision/tests/deploy_sql_authority.rs` and the static
 /// `deploy/sql/app-schema.sql` contract.
 ///
-/// The 3.2 tenant floor plus the row-ownership rule documented by
+/// The 3.2 env_key floor plus the row-ownership rule documented by
 /// `deploy/sql/app-schema.sql`, over a table the probe role does not own so
 /// RLS applies to it.
 fn rls_fixture_sql(schema: &str, probe: &str, env_key: &str, u1: &str, u2: &str) -> String {
@@ -1166,7 +1166,7 @@ fn rls_fixture_sql(schema: &str, probe: &str, env_key: &str, u1: &str, u2: &str)
 // wamn-0h0g.23.1 — the compiled per-user / per-role rules key on `app.role`
 // and `app.user_id`, and under their COALESCE / NULLIF deny floors a policy
 // that is never handed those claims denies EVERYTHING. Before this bead
-// `CLAIM_SQL` bound only tenant / statement_timeout / search_path /
+// `CLAIM_SQL` bound only env_key / statement_timeout / search_path /
 // app.runner, so every per-user policy silently denied on the production
 // path while isolated policy tests passed on hand-written `SET LOCAL`.
 // This drives the REAL plugin (`one_shot`) as a NOSUPERUSER
@@ -1184,11 +1184,11 @@ async fn live_compiled_per_user_policy_permits_the_injected_caller() {
     let admin_url = database.url();
     let suffix = std::process::id();
     let schema = format!("wamn_rls_claim_{suffix}");
-    // The probe login is NAMED AS A GUEST GENERATION for this test's tenant:
+    // The probe login is NAMED AS A GUEST GENERATION for this test's env_key:
     // guest credential resolution verifies that the login carries
-    // `app_scope_hash(tenant, database)` (`wamn-0h0g.22.6.7`), so a probe
+    // `app_scope_hash(env_key, database)` (`wamn-0h0g.22.6.7`), so a probe
     // with an arbitrary name would be refused before the policy under test
-    // ever ran. The two tenants differ per test, so the derived logins do
+    // ever ran. The two env_keys differ per test, so the derived logins do
     // too and the tests stay parallel-safe.
     let probe = format!(
         "wamn_app_{}_a",
@@ -1260,7 +1260,7 @@ async fn live_compiled_per_user_policy_permits_the_injected_caller() {
 }
 
 // wamn-0h0g.23.1 — the SET-override refusal, on the two claims the fix now
-// injects. `reject_claim_mutation` (wamn-cjv.2) is the mechanism the tenant
+// injects. `reject_claim_mutation` (wamn-cjv.2) is the mechanism the env_key
 // claim already carries and it is GUC-agnostic, so it covers these the moment
 // they exist — but coverage that is never exercised is not coverage, and a
 // binding WITHOUT refusal turns a silent-deny bug into privilege escalation.
@@ -1278,11 +1278,11 @@ async fn live_guest_cannot_override_the_injected_role_or_user_claim() {
     let admin_url = database.url();
     let suffix = std::process::id();
     let schema = format!("wamn_rls_override_{suffix}");
-    // The probe login is NAMED AS A GUEST GENERATION for this test's tenant:
+    // The probe login is NAMED AS A GUEST GENERATION for this test's env_key:
     // guest credential resolution verifies that the login carries
-    // `app_scope_hash(tenant, database)` (`wamn-0h0g.22.6.7`), so a probe
+    // `app_scope_hash(env_key, database)` (`wamn-0h0g.22.6.7`), so a probe
     // with an arbitrary name would be refused before the policy under test
-    // ever ran. The two tenants differ per test, so the derived logins do
+    // ever ran. The two env_keys differ per test, so the derived logins do
     // too and the tests stay parallel-safe.
     let probe = format!(
         "wamn_app_{}_a",
@@ -1385,7 +1385,7 @@ async fn live_guest_cannot_override_the_injected_role_or_user_claim() {
         .expect("drop the per-user RLS fixture");
 }
 
-/// wamn-0h0g.17.7 — `ConnectionHttp` freezes its `(tenant, project)` at store
+/// wamn-0h0g.17.7 — `ConnectionHttp` freezes its `(env_key, project)` at store
 /// construction and cannot be rebound at checkout, so the registry has to
 /// refuse it when the two disagree.
 ///
@@ -1413,7 +1413,7 @@ async fn effect_snapshot_refuses_a_env_key_that_disagrees_with_the_bound_claim()
         },
     )
     .await
-    .expect("the acquiring tenant binds");
+    .expect("the acquiring env_key binds");
 
     let lookup = ConnectionEffectLookup {
         entry: crate::plugins::wamn_postgres::ConnectionEntryLookup {
@@ -1438,12 +1438,12 @@ async fn effect_snapshot_refuses_a_env_key_that_disagrees_with_the_bound_claim()
         candidate_binding: None,
     };
 
-    // A stale ConnectionHttp still carrying the tenant its store was BUILT
+    // A stale ConnectionHttp still carrying the env_key its store was BUILT
     // for is refused before it can read a row.
     let stale = pg
         .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "tenant-a", &lookup)
         .await
-        .expect_err("a disagreeing tenant is refused");
+        .expect_err("a disagreeing env_key is refused");
     assert!(
         stale.to_string().contains(
             "HTTP effect authorization env_key \"tenant-a\" disagrees with the env_key bound"
@@ -1451,7 +1451,7 @@ async fn effect_snapshot_refuses_a_env_key_that_disagrees_with_the_bound_claim()
         "the refusal names the divergence rather than any other failure: {stale}"
     );
 
-    // The agreeing tenant gets past the guard and fails only on the absent
+    // The agreeing env_key gets past the guard and fails only on the absent
     // connection, so the guard is not simply refusing everything.
     let agreeing = pg
         .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "tenant-b", &lookup)
@@ -1460,8 +1460,8 @@ async fn effect_snapshot_refuses_a_env_key_that_disagrees_with_the_bound_claim()
     assert!(
         !agreeing
             .to_string()
-            .contains("disagrees with the tenant bound"),
-        "the bound tenant must pass the guard: {agreeing}"
+            .contains("disagrees with the env_key bound"),
+        "the bound env_key must pass the guard: {agreeing}"
     );
 }
 
@@ -1470,7 +1470,7 @@ async fn effect_snapshot_refuses_a_env_key_that_disagrees_with_the_bound_claim()
 ///
 /// Agreement with the registry carries no information when the registry has
 /// no entry, so an unbound claim scope must be refused rather than trusted
-/// with whatever tenant the caller froze. This is the same deny floor
+/// with whatever env_key the caller froze. This is the same deny floor
 /// `require_env_key` applies to every other read: an instance that skipped a
 /// bind resolves nothing.
 ///
@@ -1620,7 +1620,7 @@ async fn effect_snapshot_checks_out_under_the_callable_http_authority() {
         },
     )
     .await
-    .expect("the acquiring tenant binds");
+    .expect("the acquiring env_key binds");
 
     let lookup = ConnectionEffectLookup {
         entry: crate::plugins::wamn_postgres::ConnectionEntryLookup {
@@ -1652,8 +1652,8 @@ async fn effect_snapshot_checks_out_under_the_callable_http_authority() {
     assert!(
         !refused
             .to_string()
-            .contains("disagrees with the tenant bound"),
-        "the bound tenant must reach the checkout, or the class below is \
+            .contains("disagrees with the env_key bound"),
+        "the bound env_key must reach the checkout, or the class below is \
              never asked for: {refused}"
     );
 
@@ -1690,14 +1690,14 @@ async fn user_operation_permissions_reuse_only_the_callable_http_authority() {
     assert_eq!(asked, vec![AuthorityClass::CallableHttp]);
 }
 
-/// The tenant floor over rows belonging to TWO tenants, keyed on
+/// The env_key floor over rows belonging to TWO env_keys, keyed on
 /// `current_user` — the shape `wamn-0h0g.22.6` put in production.
 ///
 /// The literal role names stand in for `wamn_authority.tenant_key`, which
 /// this crate cannot install (the derivations are built by the provisioner,
 /// which the shipped runtime deliberately does not link). What the fixture
 /// reproduces faithfully is the thing under test: the row filter reads the
-/// CONNECTED ROLE, so a session cannot talk its way into another tenant's
+/// CONNECTED ROLE, so a session cannot talk its way into another env_key's
 /// rows — there is no claim to rewrite.
 fn two_env_key_rls_fixture_sql(
     schema: &str,
@@ -1735,15 +1735,15 @@ fn two_env_key_rls_fixture_sql(
 ///
 /// This test used to show that two interleaved CLAIM sets each saw only
 /// their own rows. That subject is retired: after `wamn-0h0g.22.6` a guest's
-/// tenant is its LOGIN, and under the owner ruling on `wamn-0h0g.22.6.7` a
+/// env_key is its LOGIN, and under the owner ruling on `wamn-0h0g.22.6.7` a
 /// host holds ONE guest credential per project-environment. So the property
-/// worth showing is stronger and simpler — a second tenant is REFUSED rather
+/// worth showing is stronger and simpler — a second env_key is REFUSED rather
 /// than quietly served the credential the host does hold.
 ///
 /// The logins are NOSUPERUSER NOBYPASSRLS, so the server cannot be talked
 /// out of the floor either.
 #[tokio::test]
-async fn live_a_second_env_key_is_refused_rather_than_served_the_first_tenants_rows() {
+async fn live_a_second_env_key_is_refused_rather_than_served_the_first_env_keys_rows() {
     const ENV_KEY_A: &str = "seam-live-a";
     const ENV_KEY_B: &str = "seam-live-b";
 
@@ -1754,7 +1754,7 @@ async fn live_a_second_env_key_is_refused_rather_than_served_the_first_tenants_r
     let schema = format!("wamn_seam_{suffix}");
     let database = live_database(admin_url);
     // Named exactly as provisioning names a guest generation, so the
-    // credential the host resolves is bound to TENANT_A by its own digest.
+    // credential the host resolves is bound to ENV_KEY_A by its own digest.
     let role_a = format!(
         "wamn_app_{}_a",
         wamn_run_state::app_scope_hash(ENV_KEY_A, &database)
@@ -1769,7 +1769,7 @@ async fn live_a_second_env_key_is_refused_rather_than_served_the_first_tenants_r
             &schema, &role_a, &role_b, ENV_KEY_A, ENV_KEY_B,
         ))
         .await
-        .expect("seed the two-tenant RLS fixture as the superuser owner");
+        .expect("seed the two-env_key RLS fixture as the superuser owner");
 
     let mut url = url::Url::parse(admin_url).expect("parse the live test url");
     url.set_username(&role_a).expect("set A's login");
@@ -1794,10 +1794,10 @@ async fn live_a_second_env_key_is_refused_rather_than_served_the_first_tenants_r
     };
     pg.bind_session_claims(scope_a, &claims(ENV_KEY_A))
         .await
-        .expect("tenant A's acquisition binds");
+        .expect("env_key A's acquisition binds");
     pg.bind_session_claims(scope_b, &claims(ENV_KEY_B))
         .await
-        .expect("tenant B's acquisition binds");
+        .expect("env_key B's acquisition binds");
 
     // CONTROL: the table is reachable on this path at all, so the refusal
     // below is a refusal and not a broken fixture or search_path.
@@ -1809,17 +1809,17 @@ async fn live_a_second_env_key_is_refused_rather_than_served_the_first_tenants_r
 
     // B's acquisition is legitimate; the HOST simply holds no credential for
     // it. That must refuse. Serving A's credential would hand B two rows
-    // belonging to another tenant, which is the failure this design exists
+    // belonging to another env_key, which is the failure this design exists
     // to make impossible.
     let refused = pg
         .one_shot(scope_b, "SELECT id FROM dispositions", &[], true)
         .await
         .err()
-        .expect("a tenant this host holds no credential for cannot query");
+        .expect("an env_key this host holds no credential for cannot query");
     assert!(
         matches!(&refused, PgError::ConnectionUnavailable),
-        "a second tenant must be REFUSED at credential resolution, not served \
-             the first tenant's connection: {refused:?}"
+        "a second env_key must be REFUSED at credential resolution, not served \
+             the first env_key's connection: {refused:?}"
     );
 
     assert_eq!(
@@ -1829,7 +1829,7 @@ async fn live_a_second_env_key_is_refused_rather_than_served_the_first_tenants_r
     );
 
     // Ending A's checkout revokes A's identity and nothing else. Matched on
-    // the NO-TENANT code specifically: a revoke that cleared only the
+    // the `WAMN0` code specifically: a revoke that cleared only the
     // search_path would also fail this query, for an unrelated reason.
     pg.revoke_session_claims(scope_a);
     assert_eq!(pg.session_claims(scope_a), None);
@@ -1840,7 +1840,7 @@ async fn live_a_second_env_key_is_refused_rather_than_served_the_first_tenants_r
         .expect("an unbound claim scope cannot query at all");
     assert!(
         matches!(&unbound, PgError::QueryError((code, _)) if code == "WAMN0"),
-        "an instance whose checkout ended must resolve NO tenant, not merely \
+        "an instance whose checkout ended must resolve NO env_key, not merely \
              fail for some other reason: {unbound:?}"
     );
 
@@ -2446,7 +2446,7 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
 }
 
 /// The bind refuses a principal that owns no `platform."user"` row in the
-/// tenant, and the refusal names the cause (`wamn-0h0g.9.19`).
+/// env_key, and the refusal names the cause (`wamn-0h0g.9.19`).
 ///
 /// The floor is installed and the row is left out, so the refusal is a
 /// refusal and not a missing table or an unreachable database. The control
