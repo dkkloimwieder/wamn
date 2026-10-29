@@ -390,6 +390,20 @@ pub struct UnsearchableSelector<'a> {
     pub list_operation: &'a str,
 }
 
+/// One input whose declared narrowing no served list of its model takes.
+///
+/// A selector could only read a list that ignores the narrowing or refuses
+/// the input that carries it (wamn-7ymzs), so a generator refuses the screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UnsatisfiedNarrowing<'a> {
+    /// Canonical identity of the screen that renders the selector.
+    pub operation: &'a str,
+    /// Input path the selector fills.
+    pub input: &'a str,
+    /// Input path whose value narrows it.
+    pub narrowed_by: &'a str,
+}
+
 /// One table column that names a record, and the read that shows its text.
 ///
 /// The column carries the record key. The model's served list states the
@@ -795,6 +809,29 @@ impl<'a> ClientPlan<'a> {
                         operation: screen.contract.operation.as_str(),
                         column: column.path.as_str(),
                         model: reference.model.as_str(),
+                    })
+                })
+            })
+            .collect()
+    }
+
+    /// Every input whose declared narrowing no served list honors.
+    ///
+    /// A generator refuses the release when this list is not empty.
+    #[must_use]
+    pub fn unsatisfied_narrowings(&self) -> Vec<UnsatisfiedNarrowing<'a>> {
+        self.screens()
+            .flat_map(|screen| {
+                screen.inputs.iter().filter_map(|input| {
+                    let narrowed_by = input.references.as_ref()?.narrowed_by.as_deref()?;
+                    let honored = screen
+                        .population
+                        .iter()
+                        .any(|populated| populated.input == input.path);
+                    (!honored).then_some(UnsatisfiedNarrowing {
+                        operation: screen.contract.operation.as_str(),
+                        input: input.path.as_str(),
+                        narrowed_by,
                     })
                 })
             })
@@ -1388,22 +1425,43 @@ fn populated_inputs<'a>(
         .iter()
         .filter_map(|input| {
             let reference = input.references.as_ref()?;
-            // An input whose model has no served list stays a plain control.
-            // That is a fact about the release, not a failure.
-            let list = lists.iter().find(|list| {
-                list.model == reference.model && list.operation != screen.contract.operation
-            })?;
-            let narrowed_by = reference.narrowed_by.as_deref().and_then(|path| {
-                let sibling = screen
+            // A declared narrowing names a sibling input, and only a list that
+            // takes a record of the sibling's model can honor it. A narrowing
+            // whose sibling names no record no list honors.
+            let narrowing_model = reference.narrowed_by.as_deref().map(|path| {
+                screen
                     .inputs
                     .iter()
-                    .find(|field| field.path == path)?
-                    .references
-                    .as_ref()?;
+                    .find(|field| field.path == path)
+                    .and_then(|field| field.references.as_ref())
+                    .map(|sibling| sibling.model.as_str())
+            });
+            // The list is chosen by fit, never by declaration order, so a new
+            // list of the same model does not take over a selector
+            // (wamn-7ymzs): the referenced model's own `list` first, then its
+            // other operations, then by canonical identity. An input whose
+            // model has no fitting list stays a plain control, and the plan
+            // reports a narrowing that no list honors.
+            let list = lists
+                .iter()
+                .filter(|list| {
+                    list.model == reference.model && list.operation != screen.contract.operation
+                })
+                .filter(|list| match narrowing_model {
+                    None => true,
+                    Some(None) => false,
+                    Some(Some(model)) => list.references.iter().any(|(_, taken)| *taken == model),
+                })
+                .min_by_key(|list| {
+                    let own = list.owner == reference.model;
+                    (!(own && list.name == "list"), !own, list.operation)
+                })?;
+            let narrowed_by = reference.narrowed_by.as_deref().and_then(|path| {
+                let sibling_model = narrowing_model.flatten()?;
                 let list_input = list
                     .references
                     .iter()
-                    .find(|(_, model)| *model == sibling.model)
+                    .find(|(_, model)| *model == sibling_model)
                     .map(|(path, _)| *path)?;
                 Some(Narrowing {
                     input: screen

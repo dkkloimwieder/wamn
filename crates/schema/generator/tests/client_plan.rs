@@ -2,7 +2,7 @@ use serde_json::json;
 use wamn_schema_generator::client_ir::{ClientContractIr, FieldIr, OperationIr};
 use wamn_schema_generator::client_plan::{
     ChosenRevision, ClientPlan, LinkReason, NoRole, RecordRead, ResolvedColumn, Role, RowLink,
-    Rows, ScreenPlan, SuppliedType, UnresolvedColumn, UnsearchableSelector,
+    Rows, ScreenPlan, SuppliedType, UnresolvedColumn, UnsatisfiedNarrowing, UnsearchableSelector,
     effective_result_fields,
 };
 
@@ -754,6 +754,114 @@ fn selectors_whose_list_declares_no_display_filter_are_reported() {
             },
         ],
         "the report names the screen, the input and the list"
+    );
+}
+
+/// Every selector as (screen, input, list), for screens of the fixture.
+fn selectors(plan: &ClientPlan<'_>) -> Vec<(String, String, String)> {
+    plan.screens()
+        .filter(|screen| !screen.name.starts_with("added_"))
+        .flat_map(|screen| {
+            screen.population.iter().map(|populated| {
+                (
+                    screen.contract.operation.clone(),
+                    populated.input.to_owned(),
+                    populated.list_operation.to_owned(),
+                )
+            })
+        })
+        .collect()
+}
+
+/// A served read of `model` that takes no input, owned by the widget model
+/// and sorted before every fixture operation.
+fn added_list(ir: &ClientContractIr, model: &str, name: &str) -> OperationIr {
+    let mut list = ir
+        .models
+        .iter()
+        .find(|candidate| candidate.name == model)
+        .unwrap()
+        .operations
+        .iter()
+        .find(|operation| operation.name == "query")
+        .unwrap()
+        .clone();
+    list.name = format!("added_{name}");
+    list.operation = format!("platform-fixture:widget/added-{name}@2.1.0");
+    list.input_fields.clear();
+    list
+}
+
+/// EXIT GATE for `wamn-7ymzs`: a list is chosen by fit, so a new read of a
+/// model leaves every existing selector on its list.
+#[test]
+fn a_second_list_of_the_same_model_changes_no_selector() {
+    let mut ir = release();
+    let before = selectors(&ClientPlan::from_ir(&ir));
+    let makers = added_list(&ir, "widget_maker", "makers");
+    let widgets = added_list(&ir, "widget", "widgets");
+    let widget = fixture::widget_index(&ir);
+    ir.models[widget].operations.insert(0, widgets);
+    ir.models[widget].operations.insert(0, makers);
+    let plan = ClientPlan::from_ir(&ir);
+    assert!(
+        plan.screens()
+            .any(|screen| screen.name == "added_widgets" && screen.role == Role::Table),
+        "the added read is a served list"
+    );
+    assert_eq!(selectors(&plan), before);
+}
+
+/// EXIT GATE for `wamn-7ymzs`: a narrowed selector reads only a list that
+/// takes the narrowing, whatever lists sort before it.
+#[test]
+fn a_narrowed_selector_reads_a_list_that_takes_the_narrowing() {
+    let mut ir = release();
+    // The Receiving shape: a read of the line model that takes no input
+    // sorts before the list that takes the order.
+    let widgets = added_list(&ir, "widget", "widgets");
+    let widget = fixture::widget_index(&ir);
+    ir.models[widget].operations.insert(0, widgets);
+    let plan = ClientPlan::from_ir(&ir);
+    let line = screen(&plan, "record_batch")
+        .population
+        .iter()
+        .find(|input| input.input == "value.line[].widget_id")
+        .expect("the line selector has a list");
+    assert_eq!(line.list_operation, "platform-fixture:widget/list@2.1.0");
+    let narrowing = line.narrowed_by.expect("the line list is narrowed");
+    assert_eq!(
+        (narrowing.input, narrowing.list_input),
+        ("value.maker_id", "maker_id")
+    );
+    assert!(plan.unsatisfied_narrowings().is_empty());
+}
+
+/// EXIT GATE for `wamn-7ymzs`: a narrowing that no served list takes is
+/// refused, naming the screen, the input and the narrowing.
+#[test]
+fn a_narrowing_no_list_takes_is_refused() {
+    let mut ir = release();
+    for field in &mut operation(&mut ir, "list").input_fields {
+        field.references = None;
+    }
+    let plan = ClientPlan::from_ir(&ir);
+    assert_eq!(
+        plan.unsatisfied_narrowings(),
+        [UnsatisfiedNarrowing {
+            operation: "platform-fixture:widget/record-batch@2.1.0",
+            input: "value.line[].widget_id",
+            narrowed_by: "value.maker_id",
+        }]
+    );
+    let error = wamn_schema_generator::client_component::emit_ts_components(&plan)
+        .expect_err("the build refuses the narrowing");
+    assert_eq!(error.error_type().code(), "unsatisfied_narrowing");
+    assert_eq!(
+        error.to_string(),
+        "unsatisfied_narrowing: platform-fixture:widget/record-batch@2.1.0: input \
+         value.line[].widget_id is narrowed by value.maker_id, and no served list of its \
+         model takes it"
     );
 }
 

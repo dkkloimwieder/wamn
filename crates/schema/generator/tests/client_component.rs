@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 use wamn_schema_generator::GeneratedFile;
 use wamn_schema_generator::client_component::emit_ts_components;
-use wamn_schema_generator::client_ir::{ClientContractIr, FieldIr};
+use wamn_schema_generator::client_ir::{ClientContractIr, FieldIr, ReferenceIr};
 use wamn_schema_generator::client_plan::{ClientPlan, Role};
 
 #[path = "support/platform_fixture.rs"]
@@ -574,6 +574,18 @@ fn tables_carry_only_the_page_inputs_their_read_declares() {
             ..template.clone()
         })
         .collect();
+    // The record-batch line selector reads this list narrowed by its maker
+    // (wamn-7ymzs), so the list keeps the input that takes the maker.
+    list.input_fields.push(FieldIr {
+        path: "maker_id".into(),
+        type_name: "uuid".into(),
+        children: Vec::new(),
+        references: Some(ReferenceIr {
+            model: "widget_maker".into(),
+            narrowed_by: None,
+        }),
+        ..template.clone()
+    });
     let files = emit(&ir);
     let page = |module: &str, name: &str| {
         description(&files, module, name)["presentation"]["page"].clone()

@@ -305,7 +305,14 @@ describe("Receiving descriptions and bindings", () => {
     ));
     const input = screen.getByRole<HTMLInputElement>("combobox", { name: "Order line" });
     await waitFor(() => expect(input.value).toBe("ITEM-HUMAN"));
-    expect(invoke).toHaveBeenCalledWith(expect.objectContaining({ items: [{ purchase_order_id: "order-id" }] }));
+    // The order's own lines narrow by purchase_order_id. The open lines read
+    // takes no input, so it cannot serve this selector (wamn-7ymzs).
+    expect(invoke).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: expect.stringMatching(/\/load-receipt-screen@/),
+        items: [{ purchase_order_id: "order-id" }],
+      }),
+    );
   });
 
   it("does not expose reference keys when lookups fail", async () => {

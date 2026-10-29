@@ -32,6 +32,8 @@ pub enum ClientComponentErrorType {
     /// A revision input of a form that no declared path supplies: no read is
     /// bound to it, and it names no reference input whose record it guards.
     UnsuppliedRevision,
+    /// An input declares a narrowing that no served list of its model takes.
+    UnsatisfiedNarrowing,
 }
 
 impl ClientComponentErrorType {
@@ -42,6 +44,7 @@ impl ClientComponentErrorType {
             Self::UnwrittenRole => "unwritten_role",
             Self::UnwrittenColumn => "unwritten_column",
             Self::UnsuppliedRevision => "unsupplied_revision",
+            Self::UnsatisfiedNarrowing => "unsatisfied_narrowing",
         }
     }
 }
@@ -80,6 +83,15 @@ pub const COMPONENT_DIRECTORY: &str = "generated/client-ts/components";
 pub fn emit_ts_components(
     plan: &ClientPlan<'_>,
 ) -> Result<Vec<GeneratedFile>, ClientComponentError> {
+    if let Some(narrowing) = plan.unsatisfied_narrowings().first() {
+        return Err(ClientComponentError::new(
+            ClientComponentErrorType::UnsatisfiedNarrowing,
+            format!(
+                "{}: input {} is narrowed by {}, and no served list of its model takes it",
+                narrowing.operation, narrowing.input, narrowing.narrowed_by
+            ),
+        ));
+    }
     let header = "// @generated from the client-contract IR; do not edit.\n";
     let mut files = Vec::new();
     let mut index = String::from(header);
