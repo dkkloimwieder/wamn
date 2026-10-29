@@ -2938,3 +2938,83 @@ async fn fresh_package_owners_preserve_grants_and_exclude_platform_tables() {
     client.batch_execute("RESET ROLE").await.unwrap();
     std::fs::remove_dir_all(package).unwrap();
 }
+
+/// wamn-d5pa0: a package apply grants event admission its history reads, and
+/// introspection accepts exactly those grants and refuses any other grant to
+/// the same role.
+#[tokio::test]
+async fn introspection_accepts_only_the_event_admission_reads() {
+    let url = locked_database::database(wamn_test_postgres::database);
+    let client = connect(&url).await;
+    install(&client).await;
+    client
+        .batch_execute(
+            "DO $role$ BEGIN \
+               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_executor_platform') THEN \
+                 CREATE ROLE wamn_executor_platform NOLOGIN; \
+               END IF; \
+             END $role$;",
+        )
+        .await
+        .expect("create the executor platform role");
+    let package = fixture_root().with_file_name(format!(
+        "apply-package-executor-reads-{}",
+        std::process::id()
+    ));
+    copy_base_fixture(&package);
+    set_audit_log_retention(&package, "panel", "unlimited");
+    apply(&url, &package)
+        .await
+        .expect("apply a declaration that keeps a log");
+    let acl = client
+        .query_one(
+            "SELECT nspacl::text FROM pg_namespace WHERE nspname = 'inventory'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get::<_, String>(0);
+    assert!(acl.contains("wamn_executor_platform=U/"), "{acl}");
+    wamn_schema_generator::introspect_package(&url, &package)
+        .await
+        .expect("introspection accepts the event admission reads");
+
+    for (grant, revoke) in [
+        (
+            "GRANT CREATE ON SCHEMA inventory TO wamn_executor_platform",
+            "REVOKE CREATE ON SCHEMA inventory FROM wamn_executor_platform",
+        ),
+        (
+            "GRANT SELECT ON inventory.panel TO wamn_executor_platform",
+            "REVOKE SELECT ON inventory.panel FROM wamn_executor_platform",
+        ),
+        (
+            "GRANT INSERT ON inventory.wamn_entities TO wamn_executor_platform",
+            "REVOKE INSERT ON inventory.wamn_entities FROM wamn_executor_platform",
+        ),
+        (
+            "GRANT SELECT ON inventory.panel_history TO wamn_executor_platform",
+            "REVOKE SELECT ON inventory.panel_history FROM wamn_executor_platform; \
+             GRANT SELECT (row_key, type, transaction_id, position, changed_by) \
+               ON inventory.panel_history TO wamn_executor_platform",
+        ),
+        (
+            "GRANT SELECT (operation) ON inventory.panel_history TO wamn_executor_platform",
+            "REVOKE SELECT (operation) ON inventory.panel_history FROM wamn_executor_platform",
+        ),
+    ] {
+        client.batch_execute(grant).await.unwrap();
+        let error = wamn_schema_generator::introspect_package(&url, &package)
+            .await
+            .expect_err(grant);
+        assert!(
+            format!("{error:#}").contains("unsupported-acl"),
+            "{grant}: {error:#}"
+        );
+        client.batch_execute(revoke).await.unwrap();
+    }
+    wamn_schema_generator::introspect_package(&url, &package)
+        .await
+        .expect("introspection accepts the reads again after each revoke");
+    std::fs::remove_dir_all(package).unwrap();
+}

@@ -5,7 +5,7 @@ use std::fmt;
 
 use tokio_postgres::{Client, Row};
 use wamn_record_history::{
-    AUDIT_RETENTION_ROLE, LOG_TRIGGER, STAMP_TRIGGER, is_history_table_name,
+    AUDIT_RETENTION_ROLE, HISTORY_TABLE_SUFFIX, LOG_TRIGGER, STAMP_TRIGGER, is_history_table_name,
 };
 
 use crate::ir::{
@@ -278,6 +278,25 @@ pub const DATA_ACCESS_ROLE: &str = "wamn_app";
 /// Platform roles whose ACL entries the catalog reader skips by name.
 const PLATFORM_GRANTEES: [&str; 2] = [AUDIT_RETENTION_ROLE, DATA_ACCESS_ROLE];
 
+/// The role that control-provision's `grant_executor_history_reads_sql` grants
+/// event admission reads. The reader accepts exactly those grants for it:
+/// schema `USAGE`, `SELECT` on the entity map table, and column `SELECT` on
+/// [`EVENT_ADMISSION_HISTORY_COLUMNS`] of each history table.
+const EXECUTOR_HISTORY_READER: &str = "wamn_executor_platform";
+
+/// The history columns that `grant_executor_history_reads_sql` grants the
+/// event admission reader.
+const EVENT_ADMISSION_HISTORY_COLUMNS: [&str; 5] = [
+    "row_key",
+    "type",
+    "transaction_id",
+    "position",
+    "changed_by",
+];
+
+/// The entity map table that event admission reads.
+const ENTITY_MAP_TABLE: &str = "wamn_entities";
+
 // Each `has_acl` column reads whether an ACL holds an entry for a grantee other
 // than the object owner and the `$2` platform roles. The audit retention grants
 // are a record history platform fixture and the application role grants come
@@ -285,6 +304,7 @@ const PLATFORM_GRANTEES: [&str; 2] = [AUDIT_RETENTION_ROLE, DATA_ACCESS_ROLE];
 // Package owner names come from control-provision::package_owner_role. Shared
 // schemas grant those NOLOGIN owners USAGE and CREATE, never a grant option.
 // This exception applies only to schema ACLs, not to table or column grants.
+// The `$3` event admission reader may hold schema USAGE without a grant option.
 const SCHEMAS_SQL: &str = r"
 WITH configured(schema_name) AS (
     SELECT unnest($1::text[])
@@ -303,12 +323,59 @@ SELECT configured.schema_name,
                                    OR role.rolreplication OR role.rolbypassrls)
                           AND entry.privilege_type IN ('USAGE', 'CREATE')
                           AND NOT entry.is_grantable)
+                      OR (role.rolname = $3
+                          AND entry.privilege_type = 'USAGE'
+                          AND NOT entry.is_grantable)
               )
        ) AS has_acl
   FROM configured
   LEFT JOIN pg_catalog.pg_namespace AS namespace
     ON namespace.nspname = configured.schema_name
  ORDER BY configured.schema_name
+";
+
+// Each row is a grant to the `$2` event admission reader beyond its reads: a
+// relation privilege other than SELECT on `$4`, or a column privilege other
+// than SELECT on the `$3` columns of a `$5`-suffixed table. The relation
+// checks below skip the entity map and history tables, so this query is the
+// one that bounds the reader's grants on them.
+const EXECUTOR_GRANTS_SQL: &str = r"
+WITH reader AS (
+    SELECT oid FROM pg_catalog.pg_roles WHERE rolname = $2
+)
+SELECT namespace.nspname::text AS schema_name,
+       relation.relname::text AS object_name,
+       entry.privilege_type::text AS privilege
+  FROM pg_catalog.pg_class AS relation
+  JOIN pg_catalog.pg_namespace AS namespace
+    ON namespace.oid = relation.relnamespace
+ CROSS JOIN LATERAL pg_catalog.aclexplode(relation.relacl) AS entry
+ WHERE namespace.nspname = ANY($1::text[])
+   AND entry.grantee IN (SELECT oid FROM reader)
+   AND NOT (relation.relname = $4
+            AND relation.relkind = 'r'
+            AND entry.privilege_type = 'SELECT'
+            AND NOT entry.is_grantable)
+UNION ALL
+SELECT namespace.nspname::text,
+       relation.relname::text || '.' || attribute.attname::text,
+       entry.privilege_type::text
+  FROM pg_catalog.pg_attribute AS attribute
+  JOIN pg_catalog.pg_class AS relation
+    ON relation.oid = attribute.attrelid
+  JOIN pg_catalog.pg_namespace AS namespace
+    ON namespace.oid = relation.relnamespace
+ CROSS JOIN LATERAL pg_catalog.aclexplode(attribute.attacl) AS entry
+ WHERE namespace.nspname = ANY($1::text[])
+   AND attribute.attnum > 0
+   AND NOT attribute.attisdropped
+   AND entry.grantee IN (SELECT oid FROM reader)
+   AND NOT (relation.relkind = 'r'
+            AND right(relation.relname::text, length($5::text)) = $5::text
+            AND attribute.attname = ANY($3::text[])
+            AND entry.privilege_type = 'SELECT'
+            AND NOT entry.is_grantable)
+ ORDER BY 1, 2, 3
 ";
 
 const RELATIONS_SQL: &str = r"
@@ -803,7 +870,14 @@ async fn validate_schemas(
     schemas: &[String],
 ) -> Result<(), PostgresIntrospectionError> {
     let rows = client
-        .query(SCHEMAS_SQL, &[&schemas, &PLATFORM_GRANTEES.as_slice()])
+        .query(
+            SCHEMAS_SQL,
+            &[
+                &schemas,
+                &PLATFORM_GRANTEES.as_slice(),
+                &EXECUTOR_HISTORY_READER,
+            ],
+        )
         .await
         .map_err(|error| database_error("query configured schemas", error))?;
 
@@ -825,6 +899,38 @@ async fn validate_schemas(
                 "schema has an explicit ACL",
             ));
         }
+    }
+    Ok(())
+}
+
+/// Refuse a grant to the event admission reader beyond its history reads.
+async fn validate_executor_grants(
+    client: &Client,
+    schemas: &[String],
+) -> Result<(), PostgresIntrospectionError> {
+    let rows = client
+        .query(
+            EXECUTOR_GRANTS_SQL,
+            &[
+                &schemas,
+                &EXECUTOR_HISTORY_READER,
+                &EVENT_ADMISSION_HISTORY_COLUMNS.as_slice(),
+                &ENTITY_MAP_TABLE,
+                &HISTORY_TABLE_SUFFIX,
+            ],
+        )
+        .await
+        .map_err(|error| database_error("query event admission reader grants", error))?;
+    if let Some(row) = rows.first() {
+        let schema = row.get::<_, String>("schema_name");
+        let object = row.get::<_, String>("object_name");
+        let privilege = row.get::<_, String>("privilege");
+        return Err(refusal(
+            PostgresIntrospectionErrorType::UnsupportedAcl,
+            Some(&schema),
+            Some(&object),
+            format!("{EXECUTOR_HISTORY_READER} holds {privilege} beyond its history reads"),
+        ));
     }
     Ok(())
 }
@@ -2291,6 +2397,7 @@ pub async fn read_catalog_with_synchronizations(
     }
 
     validate_schemas(client, &schemas).await?;
+    validate_executor_grants(client, &schemas).await?;
     let relations = load_relations(client, &schemas)
         .await?
         .into_iter()
