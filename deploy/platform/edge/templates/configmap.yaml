@@ -18,7 +18,7 @@ metadata:
     app.kubernetes.io/instance: {{ .Release.Name }}
 data:
   nginx.conf: |
-    worker_processes 1;
+    worker_processes auto;
     pid /tmp/nginx.pid;
     events {}
     http {
@@ -40,6 +40,7 @@ data:
       upstream api_{{ $index }} {
         zone api_{{ $index }} 64k;
         server {{ trimPrefix "http://" (trimSuffix "/" $api) }} resolve;
+        keepalive 32;
       }
 {{- with $files }}
       upstream files_{{ $index }} {
@@ -72,6 +73,7 @@ data:
           proxy_redirect {{ trimSuffix "/" $api }}/ /api/;
           proxy_http_version 1.1;
           proxy_set_header Host $host;
+          proxy_set_header Connection "";
         }
 
         # Identity sets the session cookies with no Domain, so the browser

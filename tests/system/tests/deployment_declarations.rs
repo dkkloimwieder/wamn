@@ -1064,6 +1064,26 @@ fn control_edge_serves_the_platform_ui_and_forwards_its_api() {
         .next()
         .unwrap();
     assert!(nginx.contains("server c-dkk-http.hosts.svc.cluster.local resolve;"));
+    assert!(nginx.lines().any(|line| line == "worker_processes auto;"));
+    let upstream = nginx
+        .split("upstream api_0 {")
+        .nth(1)
+        .unwrap()
+        .split('}')
+        .next()
+        .unwrap();
+    assert!(upstream.lines().any(|line| line.trim() == "keepalive 32;"));
+    let api = control
+        .split("location /api/ {")
+        .nth(1)
+        .unwrap()
+        .split('}')
+        .next()
+        .unwrap();
+    assert!(
+        api.lines()
+            .any(|line| line.trim() == "proxy_set_header Connection \"\";")
+    );
     assert!(control.contains("proxy_pass http://api_0/;"));
     assert!(control.contains("proxy_pass https://identity.identity.svc.cluster.local;"));
     assert!(control.contains("location / {"));
