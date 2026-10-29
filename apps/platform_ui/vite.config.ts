@@ -23,7 +23,7 @@ export default defineConfig({
     },
   ],
   resolve: {
-    conditions: ["wfe-source", "browser", "development|production"],
+    conditions: ["browser", "development|production"],
     dedupe: ["solid-js", "@solidjs/web", "@solidjs/signals"],
     alias: {
       "@wamn/web-runtime": fileURLToPath(new URL("../../web/runtime/src/index.ts", import.meta.url)),
