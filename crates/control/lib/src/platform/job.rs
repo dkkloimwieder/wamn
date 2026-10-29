@@ -1435,4 +1435,20 @@ mod tests {
         completion.data.clear();
         assert!(!skip(Some(&completion), &digest));
     }
+
+    #[test]
+    fn install_deadline_outlasts_the_default_readiness_budget_and_helm_cleanup() {
+        let schema = include_str!("../../../../../deploy/sql/system-schema.sql");
+        let budget: u64 = schema
+            .lines()
+            .find_map(|line| {
+                line.trim()
+                    .strip_prefix("readiness_budget_seconds int NOT NULL DEFAULT ")
+            })
+            .expect("system-schema.sql declares the readiness budget default")
+            .trim()
+            .parse()
+            .unwrap();
+        assert!(INSTALL_DEADLINE > Duration::from_secs(budget + 120));
+    }
 }
