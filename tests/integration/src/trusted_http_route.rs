@@ -572,6 +572,9 @@ async fn seed_with_client(
         .await?;
 
     client.batch_execute("SELECT set_config('app.user_id','770df186-ac15-579e-b46b-c297cae2011b',false),set_config('app.operation','admin:seed-http-fixture',false)").await?;
+    client
+        .batch_execute("INSERT INTO platform.role (name) VALUES ('admin') ON CONFLICT DO NOTHING")
+        .await?;
     client.execute("INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'admin') ON CONFLICT DO NOTHING",
         &[&wamn_project_state::workflow_user_id().to_string()]).await?;
     let wiring_version = i32::try_from(WIRING_VERSION).expect("fixture wiring version fits");
