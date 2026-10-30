@@ -1,6 +1,6 @@
 //! Project and environment connection rows copied from the system database.
 
-use anyhow::{Context as _, ensure};
+use anyhow::Context as _;
 use tokio_postgres::Transaction;
 
 use crate::auth_changes::AuthDrops;
@@ -69,7 +69,7 @@ async fn document(
 ) -> anyhow::Result<serde_json::Value> {
     Ok(system
         .query_one(
-            "SELECT registry.project_connection_projection($1,$2,$3)",
+            "SELECT registry.connection_projection($1,$2,$3)",
             &[&org, &project, &env],
         )
         .await
@@ -128,17 +128,6 @@ async fn push(
     project: &str,
     env: &str,
 ) -> anyhow::Result<AuthDrops> {
-    let privileged: bool = target
-        .query_one(
-            "SELECT rolsuper OR rolbypassrls FROM pg_roles WHERE rolname=current_user",
-            &[],
-        )
-        .await?
-        .get(0);
-    ensure!(
-        !privileged,
-        "connection projection requires the administration role"
-    );
     let document = document(system, org, project, env).await?;
     let rows = rows_from_document(&document)?;
     let enabled: Vec<_> = rows

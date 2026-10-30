@@ -20,6 +20,17 @@ struct ApiKey {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct HmacCredential {
+    secret: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HmacParameters {
+    algorithm: String,
+    header: String,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Aws {
     access_key_id: String,
     secret_access_key: String,
@@ -88,6 +99,27 @@ pub(super) fn headers(
                 }
                 _ => Err(unavailable()),
             }
+        }
+        "hmac" => {
+            use hmac::{Hmac, KeyInit as _, Mac as _};
+
+            let credential: HmacCredential =
+                serde_json::from_str(material).map_err(|_| unavailable())?;
+            let parameters: HmacParameters =
+                serde_json::from_value(parameters.clone()).map_err(|_| unavailable())?;
+            let header = reqwest::header::HeaderName::from_bytes(parameters.header.as_bytes())
+                .map_err(|_| unavailable())?;
+            if parameters.algorithm != "sha256"
+                || credential.secret.is_empty()
+                || reserved_header(&header)
+            {
+                return Err(unavailable());
+            }
+            let mut mac = Hmac::<sha2::Sha256>::new_from_slice(credential.secret.as_bytes())
+                .map_err(|_| unavailable())?;
+            mac.update(request.body.as_deref().unwrap_or_default());
+            let signature = format!("sha256={}", hex::encode(mac.finalize().into_bytes()));
+            Ok(HashMap::from([(header.as_str().into(), signature)]))
         }
         "aws_sigv4" => {
             let value: Aws = serde_json::from_str(material).map_err(|_| unavailable())?;
@@ -260,12 +292,130 @@ mod tests {
         for auth in [
             "http_basic",
             "api_key",
+            "hmac",
             "aws_sigv4",
             "oauth2_client_credentials",
             "custom",
         ] {
             assert!(headers(auth, &json!({}), None, &request(), &mut decision()).is_err());
         }
+    }
+    #[test]
+    fn hmac_signs_exact_body_bytes_with_rfc_4231_vector() {
+        let sign = |body: Option<&[u8]>| {
+            let mut request = request();
+            request.body = body.map(<[u8]>::to_vec);
+            headers(
+                "hmac",
+                &json!({"algorithm":"sha256","header":"x-signature"}),
+                Some(r#"{"secret":"Jefe"}"#),
+                &request,
+                &mut decision(),
+            )
+            .unwrap()
+        };
+        // RFC 4231 test case 2 supplies the expected signature.
+        let body = b"what do ya want for nothing?";
+        let signed = sign(Some(body));
+        assert_eq!(
+            signed["x-signature"],
+            "sha256=5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
+        assert_ne!(signed, sign(Some(b"what do ya want for nothing?\n")));
+        assert_eq!(
+            sign(None)["x-signature"],
+            "sha256=923598ca6d64af2a5dba79dcd021a8a0fe5c5f557519adaaf0ad532d4506dd30"
+        );
+        assert_eq!(sign(None), sign(Some(b"")));
+        let mut request = request();
+        request.body = Some(body.to_vec());
+        let result = outbound_headers(&request, signed).unwrap();
+        assert!(result.contains_key("x-signature"));
+        assert!(request.headers.is_empty());
+        assert_eq!(request.body.as_deref(), Some(body.as_slice()));
+    }
+
+    #[test]
+    fn malformed_hmac_credentials_and_parameters_refuse() {
+        let parameters = json!({"algorithm":"sha256","header":"x-signature"});
+        for material in [
+            "not json",
+            "null",
+            "{}",
+            r#"{"secret":"key","extra":true}"#,
+            r#"{"secret":""}"#,
+            r#"{"secret":123}"#,
+        ] {
+            assert!(
+                headers(
+                    "hmac",
+                    &parameters,
+                    Some(material),
+                    &request(),
+                    &mut decision()
+                )
+                .is_err()
+            );
+        }
+        for parameters in [
+            json!(null),
+            json!({"header":"x-signature"}),
+            json!({"algorithm":"sha256"}),
+            json!({"algorithm":"sha512","header":"x-signature"}),
+            json!({"algorithm":"sha256","header":"x-signature","extra":true}),
+        ] {
+            assert!(
+                headers(
+                    "hmac",
+                    &parameters,
+                    Some(r#"{"secret":"key"}"#),
+                    &request(),
+                    &mut decision()
+                )
+                .is_err()
+            );
+        }
+        for header in [
+            "",
+            "bad header",
+            "x-signature\r\n",
+            "Content-Length",
+            "Idempotency-Key",
+            "Host",
+            "X-HTTP-Method",
+            "X-HTTP-Method-Override",
+        ] {
+            assert!(
+                headers(
+                    "hmac",
+                    &json!({"algorithm":"sha256","header":header}),
+                    Some(r#"{"secret":"key"}"#),
+                    &request(),
+                    &mut decision()
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn api_key_header_overrides_guest_authorization_once() {
+        let mut request = request();
+        request.headers.push(super::super::Header {
+            name: "Authorization".into(),
+            value: b"guest-token".to_vec(),
+        });
+        let signed = headers(
+            "api_key",
+            &json!({"in":"header","name":"authorization"}),
+            Some(r#"{"key":"Bearer host-token"}"#),
+            &request,
+            &mut decision(),
+        )
+        .unwrap();
+        let result = outbound_headers(&request, signed).unwrap();
+        assert_eq!(result["authorization"], "Bearer host-token");
+        assert_eq!(result.get_all("authorization").iter().count(), 1);
     }
     #[test]
     fn aws_signature_covers_the_body_and_declared_service() {

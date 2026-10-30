@@ -1,17 +1,17 @@
 {
   "package": {
-    "id": "bind_connection_fixture",
+    "id": "connection_binding_fixture",
     "version": "1.0.0"
   },
   "required_platform_policy_contract": {
-    "id": "bind_connection_fixture_data_access",
+    "id": "connection_binding_fixture_data_access",
     "state": "satisfied"
   },
   "models": {
     "item": {
-      "schema": "bind_connection_fixture",
+      "schema": "connection_binding_fixture",
       "table": "item",
-      "owner": "bind_connection_fixture",
+      "owner": "connection_binding_fixture",
       "server_owned_fields": [],
       "audit_log": {
         "columns": [],

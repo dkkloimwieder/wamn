@@ -55,6 +55,9 @@ enum Command {
     /// Revoke one user's access to one project environment.
     RevokeProjectEnvMembership(identity_verbs::ProjectEnvMembershipArgs),
     /// Ask identity to mail an invitation to one user principal.
+    ///
+    /// The platform's bootstrap write: Provisioning creates the first admin;
+    /// later invitations use user.invite.
     Invite(identity_verbs::InviteArgs),
     /// Give a user or a service one existing role in one environment.
     GrantRole(role_verbs::UserRoleArgs),

@@ -396,6 +396,97 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn http_authentication_reads_generation_references_and_refuses_authorization_code() {
+        use serde_json::json;
+        use wamn_platform_identity::{auth_changes::AuthDrops, connections::administration};
+
+        let _lock = wamn_test_postgres::lock();
+        let mut fixture = Fixture::new().await;
+        let parameters =
+            json!({"client_id":"app","token_url":"https://example.com/token","scopes":["read"]});
+        fixture
+            .put_http(
+                "erp",
+                r#"{"client_secret":"first"}"#,
+                &["project-a"],
+                ("oauth2_client_credentials", parameters.clone()),
+            )
+            .await;
+        let reader = fixture.reader("project-a").await;
+        let (auth_type, auth, material) = reader
+            .http_authentication("project-a", "org:acme:erp")
+            .await
+            .unwrap();
+        assert_eq!(auth_type, "oauth2_client_credentials");
+        assert_eq!(auth, parameters);
+        assert_eq!(material.as_deref(), Some(r#"{"client_secret":"first"}"#));
+        assert!(auth.get("client_secret").is_none());
+        fixture
+            .put_http(
+                "erp",
+                r#"{"client_secret":"second"}"#,
+                &["project-a"],
+                ("oauth2_client_credentials", parameters),
+            )
+            .await;
+        let (_, _, material) = reader
+            .http_authentication("project-a", "org:acme:erp")
+            .await
+            .unwrap();
+        assert_eq!(material.as_deref(), Some(r#"{"client_secret":"second"}"#));
+
+        let parameters = json!({"algorithm":"sha256","header":"x-signature"});
+        fixture
+            .put_http(
+                "signed",
+                r#"{"secret":"private"}"#,
+                &["project-a"],
+                ("hmac", parameters.clone()),
+            )
+            .await;
+        let (auth_type, auth, material) = reader
+            .http_authentication("project-a", "org:acme:signed")
+            .await
+            .unwrap();
+        assert_eq!(auth_type, "hmac");
+        assert_eq!(auth, parameters);
+        assert_eq!(material.as_deref(), Some(r#"{"secret":"private"}"#));
+        let http_only: bool = fixture
+            .admin
+            .query_one(
+                "SELECT http_only FROM registry.auth_type WHERE code='hmac'",
+                &[],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        assert!(http_only);
+
+        let tx = fixture.admin.transaction().await.unwrap();
+        tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+        .await
+        .unwrap();
+        tx.batch_execute("SET LOCAL ROLE wamn_control")
+            .await
+            .unwrap();
+        administration::execute(&tx, "acme", "integration.write", &json!({"project":"project-a","name":"interactive","integration_type":"http","auth_type":"oauth2_authorization_code"}).to_string(), &mut AuthDrops::default()).await.unwrap();
+        let error = administration::execute(
+            &tx,
+            "acme",
+            "connection.write",
+            &json!({"project":"project-a","env":"dev","name":"interactive","parameters":{}})
+                .to_string(),
+            &mut AuthDrops::default(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "unsupported_auth_type");
+        assert_eq!(error.field, "auth_type");
+    }
+
+    #[tokio::test]
     async fn an_absent_reader_is_unavailable() {
         assert!(
             ConnectionCredentials::empty()

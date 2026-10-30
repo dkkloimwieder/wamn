@@ -120,7 +120,7 @@ Admission matches WASI imports the way the host linker does: by package and fami
 
 | # | Ruling | Invariant |
 | --- | --- | --- |
-| W1 | Registry rows stay package-grain (`wasi:io`, `wasi:clocks`, …). A `wasi:*` row names the family `0.2`: any `0.2.N` import of that package is admitted up to W3's ceiling. Rows for `wasi:logging@0.1.0-draft` and every `wamn:*` package keep their exact versions. | Policy test admits `wasi:io@0.2.9`, `@0.2.12`; refuses an unlisted package, an unlisted family, and `wamn:connector/bound@0.1.1` |
+| W1 | Registry rows stay package-grain (`wasi:io`, `wasi:clocks`, …). A `wasi:*` row names the family `0.2`: any `0.2.N` import of that package is admitted up to W3's ceiling. Rows for `wasi:logging@0.1.0-draft` and every `wamn:*` package keep their exact versions. | Policy test admits `wasi:io@0.2.9`, `@0.2.12`. Refuses an unlisted package, an unlisted family, and `wamn:integration/bound@0.1.1` |
 | W2 | The WASI-Virt source revision and adapter digest stay exact. | `tests/conformance/tests/capability_registry.rs` still fails on a changed adapter digest |
 | W3 | The ceiling is the highest `0.2` patch the host's Wasmtime links, derived at build from the linked `wasmtime-wasi` WIT, never typed by hand. An import above it is refused at admission. | Policy test refuses `0.2.(ceiling + 1)`; a Wasmtime bump moves the ceiling with no source edit |
 

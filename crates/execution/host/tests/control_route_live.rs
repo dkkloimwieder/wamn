@@ -1557,7 +1557,7 @@ async fn assert_definer_grantees(client: &Client) -> anyhow::Result<()> {
             &["wamn_db_owner"],
         ),
         (
-            "registry.project_connection_projection(text, text, text)",
+            "registry.connection_projection(text, text, text)",
             &["wamn_control", "wamn_db_owner"],
         ),
         (

@@ -290,6 +290,7 @@ async fn pat_transport_configuration_refuses_before_provisioning_effects() {
         // must occur first, without reaching either provisioning operation.
         args.project = Some("wamn-reserved".to_owned());
         args.system_database_url = Some("invalid-database-url".to_owned());
+        args.target = Some("cloud".to_owned());
         args.pat_issuer = issuer;
         let error = provision(args).await.unwrap_err();
         assert!(error.to_string().contains(expected_error), "{error}");

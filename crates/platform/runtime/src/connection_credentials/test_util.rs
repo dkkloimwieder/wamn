@@ -66,6 +66,38 @@ impl Fixture {
         projects: &[&str],
         integration_type: &str,
     ) {
+        let parameters = if integration_type == "s3" {
+            serde_json::json!({"provider":"s3","endpoint":"http://fixture.invalid","container":"files","prefix":"test/"})
+        } else {
+            serde_json::json!({"primary-authority":"https://fixture.invalid/","tls-verification":"verify-authority"})
+        };
+        self.put_configuration(
+            name,
+            value,
+            projects,
+            (integration_type, "custom", parameters),
+        )
+        .await;
+    }
+
+    pub async fn put_http(
+        &mut self,
+        name: &str,
+        value: &str,
+        projects: &[&str],
+        (auth_type, auth): (&str, serde_json::Value),
+    ) {
+        self.put_configuration(name, value, projects, ("http", auth_type,
+            serde_json::json!({"primary-authority":"https://fixture.invalid/","tls-verification":"verify-authority","auth":auth}))).await;
+    }
+
+    async fn put_configuration(
+        &mut self,
+        name: &str,
+        value: &str,
+        projects: &[&str],
+        (integration_type, auth_type, parameters): (&str, &str, serde_json::Value),
+    ) {
         for project in projects {
             let tx = self.admin.transaction().await.unwrap();
             tx.batch_execute("SET LOCAL ROLE wamn_system")
@@ -81,12 +113,7 @@ impl Fixture {
                 .put(uuid::Uuid::new_v4(), value.as_bytes())
                 .await
                 .unwrap();
-            let parameters = if integration_type == "s3" {
-                serde_json::json!({"provider":"s3","endpoint":"http://fixture.invalid","container":"files","prefix":"test/"})
-            } else {
-                serde_json::json!({"primary-authority":"https://fixture.invalid/","tls-verification":"verify-authority"})
-            };
-            wamn_test_infrastructure::credentials::define(&tx,"acme",&serde_json::json!({"project":project,"env":"dev","name":name,"integration_type":integration_type,"auth_type":"custom","parameters":parameters}),&wamn_test_infrastructure::credentials::ReferencedCredentials(&stored)).await.unwrap();
+            wamn_test_infrastructure::credentials::define(&tx,"acme",&serde_json::json!({"project":project,"env":"dev","name":name,"integration_type":integration_type,"auth_type":auth_type,"parameters":parameters,"credential":if auth_type == "custom" { "{}" } else { value }}),&wamn_test_infrastructure::credentials::ReferencedCredentials(&stored)).await.unwrap();
             tx.commit().await.unwrap();
         }
     }

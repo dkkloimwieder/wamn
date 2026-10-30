@@ -8,7 +8,6 @@ use oci_client::manifest::OCI_IMAGE_MEDIA_TYPE;
 use serde_json::{Value, json};
 use tokio::process::Command;
 use wamn_catalog::RuntimeType;
-use wamn_control_provision::WorkloadRoleFamily;
 use wamn_package_artifact::{PackageRegistry, Repository, sha256_digest};
 
 /// OCI artifact type for one independently published connector.
@@ -247,7 +246,7 @@ pub async fn publish(
     let exports = crate::connection_requirement::exported_interfaces(&pulled)?;
     let mut system = crate::environment::analyse::connect(database_url).await?;
     let tx = system.transaction().await?;
-    crate::connection_configuration::use_role(&tx, WorkloadRoleFamily::Control).await?;
+    tx.batch_execute("SET LOCAL ROLE wamn_system").await?;
     tx.query_one(
         "SELECT registry.publish_integration($1,$2,$3,$4::text::jsonb,$5,$6)",
         &[

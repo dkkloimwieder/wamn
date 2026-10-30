@@ -210,6 +210,10 @@ fn print_membership(state: &str, args: &ProjectEnvMembershipArgs, principal_id: 
 
 /// Invite one user to an org and print what it did. Identity's reply carries
 /// no token, because identity mails the invitation secret.
+///
+/// The platform's bootstrap write: Provisioning creates the first admin;
+/// later invitations use user.invite. One system database transaction runs as
+/// `wamn_system` with the Provisioning platform principal bound.
 pub async fn invite(args: InviteArgs) -> anyhow::Result<()> {
     let outcome = run_invite(
         &InviteRequest {

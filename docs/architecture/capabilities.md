@@ -144,25 +144,36 @@ A 5xx returns `retryable`. Other 4xx responses, including 408, return `terminal`
 The [REST connector](../../apps/rest_connector/README.md) carries the schedule due time and maps items with JSONata.
 It calls the registered command of the separate consumer application, then advances its checkpoint after success.
 
-The credential secret holds exactly one top-level key: `headers`, `hmac`, `oauth1`, or `oauth2`.
-Static headers use `{"headers":{…}}`.
-HMAC credentials use `{"hmac":{"algorithm":"sha256","secret":"…","header":"…"}}`.
+The integration selects its authentication scheme with `auth_type`.
+The credential store holds secret fields. The connection generation holds public authentication fields under `parameters.auth`.
+The host reads both objects and applies the selected scheme.
+
+| `auth_type` | Credential | `parameters.auth` |
+| --- | --- | --- |
+| `http_basic` | `{"username":"…","password":"…"}` | `{}` |
+| `api_key` | `{"key":"…"}` | `{"in":"header","name":"x-api-key"}` or `{"in":"query","name":"api_key"}` |
+| `hmac` | `{"secret":"…"}` | `{"algorithm":"sha256","header":"x-signature"}` |
+| `oauth2_client_credentials` | `{"client_secret":"…"}` | `{"client_id":"…","token_url":"…","scopes":["…"]}` |
+| `aws_sigv4` | `{"access_key_id":"…","secret_access_key":"…"}` | `{"region":"…","service":"…"}` |
+| `custom` | An object defined by the integration implementation | `{}` |
+| `none` | No credential | `{}` |
+
+HTTP Basic authentication sends the username and password in `Authorization`.
+An API key uses the declared header or query parameter.
+AWS SigV4 signs the request for the declared region and service.
+The `custom` scheme gives the credential to the integration implementation through `bound.credential()`.
+Other schemes keep credentials inside the host. The `none` scheme applies no authentication.
+
 HMAC is a signature that uses a shared secret.
 The host signs the exact outbound body bytes and injects `sha256=<lowercase hex>` in the declared header.
 The secret and header name must be nonempty, and the name must be valid and not reserved by the host.
 The HMAC shape refuses unknown fields and algorithms other than `sha256`.
 
-OAuth1 credentials use `{"oauth1":{"consumer-key":"…","consumer-secret":"…","token":"…","token-secret":"…","realm":"…"}}`.
-The `realm` field is optional.
-The host signs each send by RFC 5849 with HMAC-SHA256 and a fresh nonce and timestamp.
-The signature base covers the method, the URL and the query, and excludes the body.
-The host injects `Authorization: OAuth …`, with the realm first and quoted verbatim when it is set.
-
-OAuth2 credentials use `{"oauth2":{"token-url":"…","client-id":"…","client-secret":"…","scope":"…"}}`.
-The `scope` field is optional.
+OAuth2 client credentials use a client secret from the store and public fields from `parameters.auth`.
+The `scopes` field is an array of strings.
 The host requests a client-credentials token with HTTP Basic authentication and a form body.
 The token endpoint stays inside the bound authority and base path and uses the same transport and address policy.
-The host caches tokens by project, credential handle, and selected catalog generation until `expires_in` minus 60 seconds.
+The host caches tokens for the connection and active credential generation until `expires_in` minus 60 seconds.
 Missing expiry, expiry at most 60 seconds, or an unrepresentable expiry permits only the current send.
 
 The host injects `Authorization: Bearer` into the API request.

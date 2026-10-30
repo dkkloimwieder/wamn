@@ -135,6 +135,8 @@ INSERT INTO registry.auth_type (code, credential_schema, parameter_schema, http_
      '{"type":"object","properties":{},"additionalProperties":false}', true),
     ('api_key', '{"type":"object","properties":{"key":{"type":"string"}},"required":["key"]}',
      '{"type":"object","properties":{"in":{"type":"string","enum":["header","query"]},"name":{"type":"string"}},"required":["in","name"]}', true),
+    ('hmac', '{"type":"object","properties":{"secret":{"type":"string","minLength":1}},"required":["secret"],"additionalProperties":false}',
+     '{"type":"object","properties":{"algorithm":{"type":"string","enum":["sha256"]},"header":{"type":"string","minLength":1}},"required":["algorithm","header"],"additionalProperties":false}', true),
     ('oauth2_client_credentials', '{"type":"object","properties":{"client_secret":{"type":"string"}},"required":["client_secret"]}',
      '{"type":"object","properties":{"client_id":{"type":"string"},"token_url":{"type":"string"},"scopes":{"type":"array","items":{"type":"string"}}},"required":["client_id","token_url","scopes"]}', true),
     ('oauth2_authorization_code', '{"type":"object","properties":{"client_secret":{"type":"string"}},"required":["client_secret"]}',
@@ -149,6 +151,7 @@ INSERT INTO registry.auth_type (code, credential_schema, parameter_schema, http_
 INSERT INTO registry.integration_type_auth (integration_type, auth_type) VALUES
     ('http', 'http_basic'),
     ('http', 'api_key'),
+    ('http', 'hmac'),
     ('http', 'oauth2_client_credentials'),
     ('http', 'oauth2_authorization_code'),
     ('http', 'aws_sigv4'),
@@ -1272,7 +1275,7 @@ BEGIN
     SELECT * INTO existing FROM registry.connection
     WHERE integration_id=selected.id AND env=environment FOR UPDATE;
     IF operation = 'connection.prepare' THEN
-        IF selected.auth_type IN ('oauth2_client_credentials','oauth2_authorization_code') THEN
+        IF selected.auth_type = 'oauth2_authorization_code' THEN
             RETURN jsonb_build_object('error','unsupported_auth_type','field','auth_type');
         END IF;
         IF existing.id IS NULL THEN
@@ -1461,7 +1464,7 @@ CREATE TRIGGER wamn_record_history_stamp
 
 DO $control_surface$ BEGIN
   IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_control') THEN
-    REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; REVOKE ALL PRIVILEGES ON SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; GRANT USAGE ON SCHEMA "identity", "registry" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_roles" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."password_logins" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."principals" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_env_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_roles" TO "wamn_control"; GRANT SELECT ON TABLE "registry"."project_envs" TO "wamn_control"; GRANT SELECT, INSERT ON TABLE "registry"."projects" TO "wamn_control"; GRANT UPDATE ("status") ON TABLE "registry"."project_envs" TO "wamn_control"; DO $connection_acl$ BEGIN IF to_regprocedure('registry.retired_connection_credential(text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.retired_connection_credential(text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.project_connection_projection(text,text,text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.project_connection_projection(text,text,text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.publish_integration(text,integer,text,jsonb,text,text[])') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.publish_integration(text,integer,text,jsonb,text,text[]) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.configure_connection(text,text,jsonb)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.configure_connection(text,text,jsonb) TO "wamn_control"; END IF; END $connection_acl$;
+    REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; REVOKE ALL PRIVILEGES ON SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; GRANT USAGE ON SCHEMA "identity", "registry" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_roles" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."password_logins" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."principals" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_env_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_roles" TO "wamn_control"; GRANT SELECT ON TABLE "registry"."project_envs" TO "wamn_control"; GRANT SELECT, INSERT ON TABLE "registry"."projects" TO "wamn_control"; GRANT UPDATE ("status") ON TABLE "registry"."project_envs" TO "wamn_control"; DO $connection_acl$ BEGIN IF to_regprocedure('registry.retired_connection_credential(text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.retired_connection_credential(text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.connection_projection(text,text,text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.connection_projection(text,text,text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.publish_integration(text,integer,text,jsonb,text,text[])') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.publish_integration(text,integer,text,jsonb,text,text[]) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.configure_connection(text,text,jsonb)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.configure_connection(text,text,jsonb) TO "wamn_control"; END IF; END $connection_acl$;
   END IF;
 END $control_surface$;
 
@@ -1520,7 +1523,7 @@ DO $$ BEGIN
 END $$;
 
 -- The control host copies only one project's rows and one environment's connections.
-CREATE FUNCTION registry.project_connection_projection(org_id text, project_id text, environment_id text)
+CREATE FUNCTION registry.connection_projection(org_id text, project_id text, environment_id text)
 RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
  SELECT jsonb_build_object(
    'external_system', (SELECT coalesce(jsonb_agg(jsonb_build_object('id',s.id,'name',s.name) ORDER BY s.id),'[]')
@@ -1538,11 +1541,11 @@ RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog 
      WHERE c.org=org_id AND c.project=project_id AND c.env=environment_id)
  )
 $$;
-ALTER FUNCTION registry.project_connection_projection(text,text,text) OWNER TO wamn_system;
-REVOKE ALL ON FUNCTION registry.project_connection_projection(text,text,text) FROM PUBLIC;
+ALTER FUNCTION registry.connection_projection(text,text,text) OWNER TO wamn_system;
+REVOKE ALL ON FUNCTION registry.connection_projection(text,text,text) FROM PUBLIC;
 DO $$ BEGIN
  IF to_regrole('wamn_control') IS NOT NULL THEN
-   GRANT EXECUTE ON FUNCTION registry.project_connection_projection(text,text,text) TO wamn_control;
+   GRANT EXECUTE ON FUNCTION registry.connection_projection(text,text,text) TO wamn_control;
  END IF;
 END $$;
 
@@ -1596,7 +1599,7 @@ ALTER FUNCTION registry.resolve_environment_connection(text,text,text,text,text,
 REVOKE ALL ON FUNCTION registry.resolve_environment_connection(text,text,text,text,text,integer) FROM PUBLIC;
 GRANT USAGE ON SCHEMA registry TO wamn_db_owner;
 GRANT EXECUTE ON FUNCTION registry.resolve_environment_connection(text,text,text,text,text,integer),
- registry.project_connection_projection(text,text,text) TO wamn_db_owner;
+ registry.connection_projection(text,text,text) TO wamn_db_owner;
 
 CREATE FUNCTION registry.read_connection_version(org_id text, project_id text, environment text, requested_connection uuid, selected_version integer)
 RETURNS TABLE(generation bigint, parameters jsonb, digest text, integration_type text, runtime_type text)

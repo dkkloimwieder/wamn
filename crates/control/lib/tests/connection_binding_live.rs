@@ -21,11 +21,11 @@ use wamn_runtime::plugins::wamn_postgres::{
 use wamn_schema_control::connections::ComponentConnectionRequirement;
 use wamn_test_infrastructure::record_history::assert_stamp;
 
-const ENV_KEY: &str = "bind-connection-tenant--fixture--dev";
+const ENV_KEY: &str = "connection-binding-tenant--fixture--dev";
 const ENVIRONMENT: &str = "dev";
-const PACKAGE: &str = "bind_connection_fixture";
+const PACKAGE: &str = "connection_binding_fixture";
 const PACKAGE_VERSION: &str = "1.0.0";
-const COMPONENT_ID: &str = "bind-connection-component";
+const COMPONENT_ID: &str = "connection-binding-component";
 const BLOB_PUT: &str = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
 const HTTP_SIDECAR: &str =
     "sha256:3333333333333333333333333333333333333333333333333333333333333333";
@@ -37,10 +37,10 @@ const FACT_FINGERPRINT: &str =
 /// which is where the runtime reads wirings (wamn-ps2tj.4).
 const RELEASE_BYTES: &str = concat!(
     r#"{"components":["#,
-    r#"{"descriptor":{"component":"blob-put","component-digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","connections":[{"requirement-type":"blobstore","store-alias":"labels"}],"effects":[],"imports":[],"imports-fingerprint":"sha256:6666666666666666666666666666666666666666666666666666666666666666","interface-version":"0.1.0","operations":{"wamn:node/handler@0.1.0":{"input-ports":[],"output-ports":[],"parameters":[]}}},"package-id":"bind_connection_fixture"},"#,
-    r#"{"descriptor":{"component":"http-sidecar","component-digest":"sha256:3333333333333333333333333333333333333333333333333333333333333333","connections":[{"requirement-type":"http","store-alias":"erp"}],"effects":[],"imports":[],"imports-fingerprint":"sha256:6666666666666666666666666666666666666666666666666666666666666666","interface-version":"0.1.0","operations":{"wamn:node/handler@0.1.0":{"input-ports":[],"output-ports":[],"parameters":[]}}},"package-id":"bind_connection_fixture"},"#,
+    r#"{"descriptor":{"component":"blob-put","component-digest":"sha256:2222222222222222222222222222222222222222222222222222222222222222","connections":[{"requirement-type":"blobstore","store-alias":"labels"}],"effects":[],"imports":[],"imports-fingerprint":"sha256:6666666666666666666666666666666666666666666666666666666666666666","interface-version":"0.1.0","operations":{"wamn:node/handler@0.1.0":{"input-ports":[],"output-ports":[],"parameters":[]}}},"package-id":"connection_binding_fixture"},"#,
+    r#"{"descriptor":{"component":"http-sidecar","component-digest":"sha256:3333333333333333333333333333333333333333333333333333333333333333","connections":[{"requirement-type":"http","store-alias":"erp"}],"effects":[],"imports":[],"imports-fingerprint":"sha256:6666666666666666666666666666666666666666666666666666666666666666","interface-version":"0.1.0","operations":{"wamn:node/handler@0.1.0":{"input-ports":[],"output-ports":[],"parameters":[]}}},"package-id":"connection_binding_fixture"},"#,
     r#"{"descriptor":{"component":"nested-origin","component-digest":"sha256:4444444444444444444444444444444444444444444444444444444444444444","connections":[{"requirement-type":"http","store-alias":"origin-http"}],"effects":[],"imports":[],"imports-fingerprint":"sha256:6666666666666666666666666666666666666666666666666666666666666666","interface-version":"0.1.0","operations":{"origin-call":{"input-ports":[],"output-ports":[],"parameters":[]}}},"package-id":"nested_origin"}],"#,
-    r#""release":{"packages":[{"package-id":"bind_connection_fixture","package-version":"1.0.0"},"#,
+    r#""release":{"packages":[{"package-id":"connection_binding_fixture","package-version":"1.0.0"},"#,
     r#"{"package-id":"nested_origin","package-version":"1.0.0"},"#,
     r#"{"package-id":"nested_wiring","package-version":"1.0.0"}]},"#,
     r#""attachments":{}}"#
@@ -189,7 +189,7 @@ async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedC
         .batch_execute(&wamn_control_provision::sql::grant_administration_surface_sql("wamn_run"))
         .await
         .unwrap();
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bind_connection");
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/connection_binding");
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
     let package = scratch.path().join("package");
     std::fs::create_dir_all(package.join("migrations")).unwrap();
@@ -214,12 +214,12 @@ async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedC
             ),
         },
         database_url: project_url.to_string(),
-        org: "bind-connection-tenant".into(),
+        org: "connection-binding-tenant".into(),
         project: "fixture".into(),
         environment: "dev".into(),
     })
     .await
-    .expect("apply the bind-connection package fixture");
+    .expect("apply the connection-binding package fixture");
     project
         .execute("SELECT set_config('app.env_key', $1, false)", &[&ENV_KEY])
         .await
@@ -305,7 +305,7 @@ impl Authority {
         system
             .batch_execute(
                 &wamn_control_provision::test_database::seed_org_project_env_sql(
-                    "bind-connection-tenant",
+                    "connection-binding-tenant",
                     DEFAULT_PROJECT,
                     "dev",
                 ),
@@ -337,7 +337,7 @@ impl Authority {
                 json!({"username":"fixture","password":"private"}),
             ),
         ] {
-            wamn_test_infrastructure::credentials::define(&tx,"bind-connection-tenant",&json!({"project":DEFAULT_PROJECT,"env":"dev","name":name,"integration_type":integration_type,"auth_type":auth_type,"parameters":parameters,"credential":credential.to_string()}),store.as_ref()).await.unwrap();
+            wamn_test_infrastructure::credentials::define(&tx,"connection-binding-tenant",&json!({"project":DEFAULT_PROJECT,"env":"dev","name":name,"integration_type":integration_type,"auth_type":auth_type,"parameters":parameters,"credential":credential.to_string()}),store.as_ref()).await.unwrap();
         }
         tx.commit().await.unwrap();
         Self {
@@ -347,7 +347,7 @@ impl Authority {
         }
     }
     fn document(digest: &str) -> EnvironmentDocument {
-        serde_json::from_value(json!({"org":"bind-connection-tenant","project":DEFAULT_PROJECT,"env":"dev","target":"cloud","release":digest,"route_host":"fixture.example","policy":"dev", "integrations":{"labels-store":{"version":1},"http-read":{"version":1}},"applications":{PACKAGE:{"packages":[PACKAGE,"nested_origin","nested_wiring"],"connections":{"labels":"labels-store","erp":"http-read"}}}})).unwrap()
+        serde_json::from_value(json!({"org":"connection-binding-tenant","project":DEFAULT_PROJECT,"env":"dev","target":"cloud","release":digest,"route_host":"fixture.example","policy":"dev", "integrations":{"labels-store":{"version":1},"http-read":{"version":1}},"applications":{PACKAGE:{"packages":[PACKAGE,"nested_origin","nested_wiring"],"connections":{"labels":"labels-store","erp":"http-read"}}}})).unwrap()
     }
     async fn apply(
         &mut self,
@@ -407,7 +407,7 @@ impl Authority {
                 &[
                     &role,
                     &ENV_KEY,
-                    &"bind-connection-tenant",
+                    &"connection-binding-tenant",
                     &DEFAULT_PROJECT,
                     &ENVIRONMENT,
                 ],
@@ -419,7 +419,7 @@ impl Authority {
         url.set_username(&role).unwrap();
         url.set_password(Some("fixture-password")).unwrap();
         let (reader, _) = connect(url.as_str()).await;
-        ConnectionCredentials::from_database(Arc::new(reader), "bind-connection-tenant")
+        ConnectionCredentials::from_database(Arc::new(reader), "connection-binding-tenant")
     }
 }
 fn declarations(integration_type: &str, mode: &str) -> wamn_schema_generator::PackageManifest {
@@ -486,7 +486,7 @@ async fn assert_nested_effect_snapshot(
     let resolved = binding::resolve(&snapshot).expect("resolve the executor's bound alias");
     assert!(matches!(
         &resolved.provider,
-        binding::BlobstoreProvider::S3 { credential_handle, .. } if credential_handle.starts_with("org:bind-connection-tenant:labels-store@")
+        binding::BlobstoreProvider::S3 { credential_handle, .. } if credential_handle.starts_with("org:connection-binding-tenant:labels-store@")
     ));
 
     for (changed, refused) in [

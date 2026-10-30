@@ -72,10 +72,10 @@ There are no account ID, realm, mapping, or enable settings.
 
 ## Connection
 
-The org connection definition carries the account host.
-The OAuth1 credential carries the account realm and signing keys.
-The host signs requests. Guests receive neither endpoint authority nor credentials.
-The connection requirement type is `http`. OAuth1 is its credential shape.
+The environment connection parameters carry the account host.
+The `upstream` requirement declares the `wamn:connection/http@0.1.0` interface and `mode = "write"`.
+NetSuite authentication comes with the OAuth work in `wamn-7vh7t`.
+The host applies authentication. Guests receive neither endpoint authority nor credentials.
 
 Use the project-scoped requests from [integration administration](../../docs/operations/deployment.md#project-integrations-and-environment-connections).
 Set `WAMN_CONTROL_URL` and `WAMN_TOKEN` before calling the control routes.
@@ -83,25 +83,18 @@ The connection request names the project, `env`, and integration name.
 Put the account authority and TLS policy in its `parameters` object.
 Keep credential values in a separate private file.
 
-Use the actual account host in the parameters and the actual account realm in the credential.
-For example, a sandbox host uses `1234567-sb1`, while its realm is `1234567_SB1`.
-The credential value has this JSON shape:
-
-```json
-{"oauth1":{"consumer-key":"<consumer key>","consumer-secret":"<consumer secret>","token":"<token>","token-secret":"<token secret>","realm":"1234567_SB1"}}
-```
-
 Keep the credential JSON in a private file.
 Use `wamn-ctl connection write --credential-file <private-file>` for the first credential.
 Use `wamn-ctl connection set-credential --file <target-request> --credential-file <private-file>` for a replacement.
 The target request names the project, `env`, and integration name.
 See [integration administration](../../docs/operations/deployment.md#project-integrations-and-environment-connections) for the supported request format.
 
-Bind each HTTP component's `upstream` requirement with `connections = { upstream = { org = "netsuite" } }` in the environment document.
+Bind each HTTP component's `upstream` requirement with `connections = { upstream = "netsuite" }` in the environment document.
+Select the published version with `integrations = { netsuite = { version = 1 } }`.
 The pull runs as the `workflow` user with its execution role, so grant that role the consumer command.
 
 Oracle publishes separate [SuiteTalk and RESTlet authorities](https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/chapter_157011836591.html).
-For a live RESTlet deployment, bind `http-request` to `<account>.restlets.api.netsuite.com` through its org definition.
+For a live RESTlet deployment, bind `http-request` to `<account>.restlets.api.netsuite.com` through its environment connection parameters.
 That binding also affects record operations in the same deployment.
 Use separate deployment bindings when both authorities are needed.
 The local fixture serves all paths under one authority.
@@ -134,36 +127,9 @@ TMPDIR=/var/tmp RUSTC_WRAPPER='' cargo test --locked --offline \
 
 ## Owner-run live calls
 
-`tools/netsuite/live.sh` prepares the files for a live run against a real NetSuite account.
-Its `run` command still passes a release digest and a principal to `wamn-ctl workflow start`.
-That verb now takes other flags, so `run` fails.
-Use `prepare` only.
-
-Create a private JSON file with the real account values:
-
-```json
-{
-  "account_host": "1234567-sb1.suitetalk.api.netsuite.com",
-  "realm": "1234567_SB1",
-  "consumer_key": "<consumer key>",
-  "consumer_secret": "<consumer secret>",
-  "token_id": "<token id>",
-  "token_secret": "<token secret>"
-}
-```
-
-Prepare files on the owner machine:
-
-```sh
-chmod 600 /private/netsuite.json
-tools/netsuite/live.sh prepare /private/netsuite.json acme /private/netsuite-host
-```
-
-Write `netsuite` with the generated `connection.json` through the connection command above.
-Set the credential through `connection set-credential` with a private credential file and the target request.
-The control host writes the value to the environment store.
-
-Bind `upstream` to `{ org = "netsuite" }`, then apply the environment.
+Live calls against a real NetSuite account depend on the OAuth work in `wamn-7vh7t`.
+That work supplies the supported authentication flow and private inputs.
+Use the project integration and environment connection requests described above when that work is available.
 Publish all seven wirings with the package.
 
 `wamn-ctl workflow start` starts a workflow through the host and prints its run id.
@@ -175,14 +141,11 @@ Read the result of a run from `wamn_run.runs` in the project database.
 
 The ignored `environment_apply_kind` target first applies a release with `wamn_integration`, `rest_connector` and `rest_consumer_fixture`.
 It then applies a second release that replaces `rest_connector` with `netsuite`.
-The NetSuite release binds one org connection to the HTTP fixture, which acts as the SuiteTalk authority.
+The NetSuite release binds one environment connection to the HTTP fixture, which acts as the SuiteTalk authority.
 The case does not call a RESTlet. The fixture unit tests cover the RESTlet echo route.
 
 The test needs the platform images and stamped chart described in `environment_apply_kind.rs`.
 Build `edge_device`, `wamn_integration`, `rest_consumer_fixture`, `rest_connector` and `netsuite`, plus the debug CLI and CDC reader, before the run.
-Export `WAMN_HTTP_FIXTURE_CONSUMER_KEY`, `WAMN_HTTP_FIXTURE_CONSUMER_SECRET`, `WAMN_HTTP_FIXTURE_TOKEN`, `WAMN_HTTP_FIXTURE_TOKEN_SECRET`, and `WAMN_HTTP_FIXTURE_REALM`.
-Use disposable fixture values, not real account credentials.
-The test passes these values independently to the host credential mount and the fixture process.
 The fixture image builds from `tests/support/http-fixture` under `crates/control/lib`.
 
 The case uses two SuiteQL pages, with a limit of two and `hasMore: false` on the second page.

@@ -12,7 +12,6 @@ pub mod author_workflow;
 pub mod capture_gap;
 pub mod component_admission;
 pub mod component_declaration;
-pub mod connection_configuration;
 #[cfg(feature = "ops")]
 pub mod create_user;
 pub mod delivery;

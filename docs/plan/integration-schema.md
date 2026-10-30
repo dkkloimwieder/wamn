@@ -5,7 +5,7 @@
 Integrations are configured per project, connections per project environment, and an application uses a connection through a release-scoped binding.
 
 - **integration\_type** is the platform catalog of integration code (`http`, `s3`, `gcs`, `disk`, `modbus`, `netsuite_rest`, …). Every build or parameter-shape change is an **integration\_type\_version**.
-- **auth\_type** is a seeded platform catalog: exactly the schemes the host implements (`http_basic`, `api_key`, `oauth2_client_credentials`, `oauth2_authorization_code`, `aws_sigv4`, `custom`, `none`). Which auth types a type supports is a bridge table.
+- **auth\_type** is a seeded platform catalog: exactly the schemes the host implements (`http_basic`, `api_key`, `hmac`, `oauth2_client_credentials`, `oauth2_authorization_code`, `aws_sigv4`, `custom`, `none`). Which auth types a type supports is a bridge table.
 - **integration** is one project's named instance of a type: name, type, auth type, optional external system. It holds no parameters. Different credentials against the same external account make a new integration of the same type.
 - **connection** is that integration in one project environment: all its parameters, its credential and its service principal, as immutable generations. Exactly one per integration per env.
 - **binding** maps a name an application declares in `wamn.k` to a connection, per release. Several components and applications may share one connection. `environment.k` apply writes bindings; nobody creates them by hand. No binding, no use for component calls; host-managed file access (`file.get`) reads a file through its own connection under the file permissions.
@@ -436,7 +436,7 @@ Plaintext secrets never sit in Postgres. A credential row holds a reference (`st
 ### Auth runs in the host
 
 - The host applies auth on the outbound call, as it handles application auth today; integration code never holds the secret, except with `custom`, which hands it over through `bound.credential()`.
-- `http_basic`, `api_key`, both OAuth types and `aws_sigv4` are `http_only`. Non-HTTP types (Modbus, serial, raw TCP) use `none` or `custom`.
+- `http_basic`, `api_key`, `hmac`, both OAuth types and `aws_sigv4` are `http_only`. Non-HTTP types (Modbus, serial, raw TCP) use `none` or `custom`.
 - Auth type sits on the integration, so every env of an integration uses the same auth; a different auth is a different integration.
 - The host caches each connection's secret or token, drops it on the invalidation event, re-resolves on any 401 or 403, and holds a 60 s TTL as a backstop for a lost event. No strict emergency revocation.
 - OAuth refresh runs before expiry, once across all pods: a host locks the connection row (`FOR NO KEY UPDATE`), re-reads the token row, and calls the provider only if the token is missing or due. The same lock covers the first client-credentials fetch and serializes refresh with rotation. A failed refresh sets `refresh_status` and notifies; retries continue on a schedule. The cache is warmed at startup for bound connections; the invalidation event for a new generation drops it.

@@ -755,7 +755,7 @@ wait "$environment_pid" || environment_status=$?
 test "$platform_status" -eq 0 && test "$environment_status" -eq 0
 ```
 
-The environment case also needs the package and OAuth1 fixture inputs described below and in its test source.
+The environment case also needs the package fixtures described below and in its test source.
 Each case creates its own cluster.
 Without `WAMN_RELEASE_CHART`, the older fallback reads `deploy/gcp/cluster.k` and requires the agent GCP credentials.
 Always supply the chart for local train tests.

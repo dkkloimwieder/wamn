@@ -255,11 +255,6 @@ pub async fn project_authority(
     source.batch_execute("SET LOCAL ROLE wamn_db_owner").await?;
     let mut project = super::analyse::connect(project_url).await?;
     let target = project.transaction().await?;
-    crate::connection_configuration::use_role(
-        &target,
-        wamn_control_provision::WorkloadRoleFamily::Administration,
-    )
-    .await?;
     target
         .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
             wamn_control_provision::PlatformComponent::Provisioning,

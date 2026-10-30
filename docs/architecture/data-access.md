@@ -913,10 +913,13 @@ The [platform configuration writer](../../crates/identity/platform/src/configura
 The writer runs on the environment's `wamn_administration` login, in one transaction that binds the caller and the operation, so each row write appends its history entry.
 The writer keeps a row that already holds the given values, and it removes no row.
 
-Every relation in [`deploy/sql/app-schema.sql`](../../deploy/sql/app-schema.sql) carries the four stamp columns as `NOT NULL` and a `wamn_record_history_stamp` trigger.
-These relations are `user`, `role`, `user_role`, `permission`, `api_key`, and `environment`, and the platform configuration tables `external_system`, `connection`, `integration_allow`, `project_connection`, `number_sequence`, `number_counter`, and `setting`.
+The stamped relations in [`deploy/sql/app-schema.sql`](../../deploy/sql/app-schema.sql) carry four stamp columns as `NOT NULL` and a `wamn_record_history_stamp` trigger.
+The account relations are `user`, `role`, `user_role`, `permission`, `api_key`, and `environment`.
+The configuration relations are `file`, `number_sequence`, `number_counter`, and `setting`.
 `environment` holds at most one row, the status of the environment that the host reads. No row means active.
-An integration is connector code, and `integration` columns hold its catalog code. A connection is a configured instance of an integration. An external system is the persistent identity that a group of connections reach.
+An integration selects a published type and authentication scheme for one project.
+A connection holds that integration's configuration for one environment.
+An external system identifies the external account that records come from.
 Each relation except `number_counter` also has a `wamn_record_history_log` trigger with the retention `unlimited`, and a history table.
 `number_counter` has no history table, because one entry per counter advance doubles the writes of every create.
 The database separates environments. The platform account and configuration tables and their history tables have no `tenant_id`, row policy, or tenant key index.
@@ -936,9 +939,12 @@ Auth invalidation keys still include the environment key, so equal principal IDs
 `platform.bump_counter(sequence, counter, key)` is `SECURITY DEFINER`. It inserts the counter row at 1 when the row is absent, returns the value, and increments it, under the row lock. It checks no tenant and reads no claim. It refuses an id that is not a sequence with `undefined_object`. The `wamn:postgres` plugin decides which sequences a caller reaches: it takes the application from host state and resolves the sequence id by that application and the sequence name. Component admission parses each statement a package declares with PostgreSQL's grammar (`pg_query`). It refuses a statement that names a counter function, writes a `platform.*` relation, or holds a `DO` block, a function body, a SQL `EXECUTE`, `SET`, `RESET`, `set_config`, `pg_logical_emit_message`, `query_to_xml*`, `cursor_to_xml*` or a `U&` escape (`crates/control/lib/src/component_admission/declared_sql.rs`). Publish checks the pushed descriptors again. Application guests run only declared statements, so only the plugin calls these functions. The host also runs a text guard (`reject_claim_mutation`) on every statement it runs: on declared statements, which covers a release admitted before the parsed check, and on the raw `wamn:postgres/client` interface, which only platform components import.
 `platform.assign_counter(sequence, counter, key)` is `SECURITY DEFINER` and checks the sequence id in the same way. It gives a `per=` counter one value for each key: under a transaction advisory lock on the key, it returns the value of the key row, or takes the next value of the `''` allocator row and inserts the key row with it. It refuses the `''` key with `invalid_parameter_value`.
 `platform.set_counter(sequence, counter, key, value)` is `SECURITY DEFINER` and checks the sequence id in the same way. It is the write of the `number_counter.set` host route: under the row lock, it inserts the counter row with the value or sets the value of the row. It refuses a value below 1 with `invalid_parameter_value`.
-The administration family role `wamn_administration` holds `SELECT`, `INSERT`, `UPDATE` and `DELETE` on `user`, `role`, `user_role`, `permission` and `environment`, and on the platform configuration tables `external_system`, `connection`, `project_connection`, `integration_allow`, `number_sequence` and `setting`.
+The administration family role `wamn_administration` holds `SELECT`, `INSERT`, `UPDATE`, and `DELETE` on `user`, `role`, `user_role`, `permission`, and `environment`.
+It holds the same grants on `external_system`, `integration`, `connection`, `file`, `number_sequence`, and `setting`.
 It holds no grant on `number_counter`: only `platform.bump_counter`, `platform.assign_counter` and `platform.set_counter` write it.
-It holds `INSERT` on the entry columns of their eleven history tables, `USAGE` on `wamn_history`, and `EXECUTE` on `wamn_history.row_image`. No entry column names a tenant, and administration holds no tenant derivation grant.
+It holds `INSERT` on the entry columns of their eight history tables, `USAGE` on `wamn_history`, and `EXECUTE` on `wamn_history.row_image`.
+The `external_system`, `integration`, and `connection` projections have no history tables.
+No entry column names a tenant, and administration holds no tenant derivation grant.
 It holds `USAGE` on `catalog` and `SELECT` on `catalog.releases`.
 The CLI role writer checks the target database against the registry and needs the administration grants. It requires no superuser or row-security bypass.
 It refuses an `env_key` that differs from the registry environment key, so role writes invalidate the selected environment's cached grants.
@@ -960,13 +966,16 @@ Their stamps apply to administrative writes and future writers that bind an acto
 
 ### Catalog stamps
 
-The project catalog stamps `packages`, `package_migrations`, `package_definition_owners`, `releases`, `connection_requirements`, and `connection_generations`.
-It also stamps `connection_bindings`, `wiring_tombstones`, `package_upgrade_qualifications`, `package_upgrade_stages`, and `package_floors`.
+The project catalog stamps `packages`, `package_migrations`, `package_definition_owners`, and `releases`.
+It also stamps `wiring_tombstones`, `package_upgrade_qualifications`, `package_upgrade_stages`, and `package_floors`.
 Each table carries the four stamp columns as `NOT NULL` with no default and a `wamn_record_history_stamp` trigger.
 These tables keep stamps only, with no history table.
+`release_connection` and `connection_binding` carry stamps and record history for changes within a release.
+`connection_requirement` stores each package's declared names, interfaces, and modes without stamps.
+The system database owns immutable `connection_generation` rows with parameters and credential references.
 Package application binds `wamn:apply-package`, including migrations, definition ownership, accepted qualifications, and stage progress.
 Environment staging, connection administration, local development bindings, and floor recording bind `wamn:provisioning`, as the platform configuration projection does.
-`connection_instances` and `workflows` keep their existing metadata and carry no record history trigger.
+The `platform.connection` projection and `workflows` keep their existing metadata and carry no record history trigger.
 Fresh databases create neither `wirings` nor `event_registrations`.
 
 ### Files
@@ -1020,7 +1029,7 @@ The host replaces that file ID with a signed URL after the operation returns. Th
 The roles that hold the operation can read the private file through that result.
 The optional `lifetime_seconds` accepts 1 through 900 and defaults to 900. Signed URLs last at most 15 minutes.
 GCS uses IAM `signBlob` with the pod identity and stores no signing key.
-S3 reads its credential through `registry.lookup_connection_credential`.
+S3 reads its credential through the credential store trait, `wamn_credential_store::Store`.
 Reads and deletes use the bucket and prefix of the recorded generation.
 
 Public exposure requires the optional `cdn_host` store parameter, without a descriptor version change.
@@ -1039,12 +1048,13 @@ The verb makes no changes to a current database.
 
 ### System database
 
-The system database owns `registry.integrations`, the connector catalog, and `registry.target`, the deployment target identities.
-The full system schema files install both tables.
-The catalog seeds `http`, `gcs`, and `s3`, each with `form = host` and `exclusive = false`.
+The system database owns the integration catalog, `registry.integration_type` and `registry.integration_type_version`.
+It also owns `registry.target`, the deployment target identities.
+The full system schema files install these tables.
+The catalog seeds `http`, `gcs`, and `s3`, each with `runtime_type = host` and `exclusive = false`.
 The target table stores `id`, unique `name`, `type` (`local` or `cloud`), `status`, and nullable `last_seen_at`.
 It seeds one active target named `cloud`, with no check-in time. Repeated schema upgrades create no additional seeds.
-Neither table exists in an application database, and neither grants application access.
+These catalog and target tables exist only in the system database and grant no application access.
 An environment stores its target identity on first apply. The target cannot change. `target_application` and the target platform connection remain separate work.
 
 The system database (`wamn_system`) stamps its identity authority relations.
@@ -1287,36 +1297,40 @@ A service never borrows a user's active role. User sessions with a service role 
 
 ### Application connection bindings
 
-A package declares `connections` in `wamn.k`. Each alias names an integration and a mode, `read` or `write`.
-The build rejects malformed connection declarations without reading a registry. Component PostgreSQL capabilities remain in `components.<name>.connections` as `postgres`.
+A package declares `connections` in `wamn.k`. Each name declares WIT interfaces and a mode, `read` or `write`.
+The build refuses malformed declarations without reading a registry.
+Component PostgreSQL capabilities remain in `components.<name>.connections` as `postgres`.
 
 An environment names its target with `target`.
-Its `applications.<app>.connections` map binds package aliases to org connection names.
-Two packages in one application can bind different aliases to one shared org connection, but exclusive media permit only one binding per target.
-The document holds no endpoint, parameter, or credential values. Old inline connection definitions are refused.
+Its `applications.<app>.connections` map binds package names to project integrations.
+Its `integrations` map selects each integration's published version.
+Two packages in one application can bind different names to one shared connection.
+The document holds no endpoint, parameter, or credential values. Apply refuses inline connection definitions.
 
-Environment apply resolves declarations against `registry.integrations` and active org connections.
-It separately refuses an unbound name, a connection without project enablement, an integration mismatch, and a missing permission at any scope.
-An unknown integration is also refused at apply.
-An exclusive connection permits one binding in a target, including read bindings.
-A target lock and a unique index serialize concurrent reservations.
+Environment apply resolves declarations against `registry.integration_type_version` and the active integration and connection rows.
+It refuses an unbound name, an unknown integration, an inactive connection or integration, and a version that lacks a required interface.
+The connection belongs to the project. Its binding supplies application access without a separate enablement or allow policy.
+An exclusive resource permits one active connection per target and resource key.
+The unique index on `registry.connection` enforces that rule during connection writes.
 The environment cannot change an assigned target. The operator must delete and recreate it to move it.
 
-The project catalog uses application-qualified instance names to separate equal aliases in different applications.
-A binding also names its package, so applications can bind identical component bytes to different connections.
-The immutable release binding carries its declared mode.
-The HTTP host permits only GET and HEAD through a read binding.
-The object-store host refuses put, delete, and clear through a read binding.
-GCS bindings use the pod identity and carry no credential handle. S3 and HTTP bindings use the org credential generation.
-The local activation path reads the same org connection rows and freezes the selected generation and mode for the candidate.
+The project catalog stores declarations in `catalog.connection_requirement`, with each package's names, interfaces, and modes.
+`catalog.connection_binding` maps a component, package, and name to a connection for one release.
+Applications can bind identical component bytes to different connections.
+`catalog.release_connection` selects each connection's version for that release.
+The HTTP host permits only GET and HEAD through a read declaration.
+The object-store host refuses put, delete, and clear through a read declaration.
+GCS uses the pod identity. S3 and HTTP resolve credentials through the environment store.
+The system database supplies the active connection generation for runtime and candidate calls.
 
 Connection-only edits do not change the application membership sent to Helm.
-`env show` restores binding names from the system reservation rows.
-With `release = "none"`, apply retains each application's previous declarations and refuses a missing binding.
-A new binding requires a package declaration. Apply refuses an undeclared alias.
+`env show` reads the release's versions and bindings from the project catalog.
+Apply writes versions and bindings before rollout and removes rows for drained releases afterward.
+Apply never creates, disables, or retires a connection.
+A new binding requires a package declaration. Apply refuses an undeclared name.
 Dry-run analysis reads release package declarations, but it does not pull floor artifacts or write connection rows.
 
-Environment apply and local activation use the provisioning system role for target reservations and binding reads.
+Environment apply and local activation read connection projections through scoped system functions.
 They do not add table grants to the control or administration roles.
 
 ### Record provenance
