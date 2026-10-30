@@ -3049,16 +3049,24 @@ async fn host_report_check(run: &mut Run, context: &CheckContext) -> anyhow::Res
     Ok(())
 }
 
+/// The broken release of F2: release H with its route served as an internal
+/// attachment. A synchronous route makes the host preload its component from
+/// the missing base, and without an HTTP attachment the chart renders no http
+/// role, which would need a composed entry.
 fn host_report_release(
     version: &str,
     device: &wamn_catalog::ComponentDescriptor,
 ) -> anyhow::Result<Vec<u8>> {
-    let bytes = release(MANIFEST_H, version, Some(device))?;
+    let internal = MANIFEST_H.replace(r#""type":"http""#, r#""type":"internal""#);
+    let bytes = release(&internal, version, Some(device))?;
     let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
     ensure!(
         manifest.composed_entry.is_none()
-            && wamn_execution_host::synchronous_route_count(&manifest) > 0,
-        "the failed-start fixture requires direct component preload"
+            && wamn_execution_host::synchronous_route_count(&manifest) > 0
+            && !wamn_control::release_chart::roles(&manifest, ORG, PROJECT, "broken")
+                .iter()
+                .any(|role| role.name == wamn_control::release_chart::RoleName::Http),
+        "the failed-start fixture requires direct component preload and no http role"
     );
     Ok(bytes)
 }
@@ -3080,6 +3088,13 @@ fn host_report_release_requires_component_preload() -> anyhow::Result<()> {
         route.component == component.descriptor.component
             && component.operations.contains_key(&route.operation)
     }));
+    let roles = wamn_control::release_chart::roles(&manifest, ORG, PROJECT, "broken");
+    assert!(
+        roles
+            .iter()
+            .all(|role| role.name != wamn_control::release_chart::RoleName::Http),
+        "an http role needs a composed entry that the preload would skip"
+    );
     Ok(())
 }
 

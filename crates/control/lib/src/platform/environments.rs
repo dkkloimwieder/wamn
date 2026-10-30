@@ -369,6 +369,18 @@ fn permissions() -> Vec<Access> {
                     resources: vec!["pods".into()],
                     verbs: ["get", "list", "watch"].map(str::to_owned).into(),
                 },
+                // The host account of the environment and its grant on the
+                // credential Secret (environment::ensure::credential_access).
+                PolicyRule {
+                    api_groups: vec![String::new()],
+                    resources: vec!["serviceaccounts".into()],
+                    verbs: ["get", "create"].map(str::to_owned).into(),
+                },
+                PolicyRule {
+                    api_groups: vec!["rbac.authorization.k8s.io".into()],
+                    resources: vec!["roles".into(), "rolebindings".into()],
+                    verbs: ["get", "create"].map(str::to_owned).into(),
+                },
             ],
         },
     ]

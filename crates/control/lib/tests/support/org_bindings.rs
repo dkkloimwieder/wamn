@@ -43,13 +43,22 @@ pub async fn bind(
         std::fs::remove_file(path)?;
         result?;
     }
+    // The hosts of a cloud target read the environment Secret, and only a
+    // local target reads credential files.
+    let local: bool = system
+        .query_one(
+            "SELECT t.type='local' FROM registry.project_envs e JOIN registry.target t ON t.id=e.target_id \
+             WHERE e.org=$1 AND e.project=$2 AND e.env=$3",
+            &[&document.org, &document.project, &document.env],
+        )
+        .await?
+        .get(0);
     let tx = system.transaction().await?;
     tx.batch_execute("SET LOCAL ROLE wamn_control").await?;
     tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
         wamn_control_provision::PlatformComponent::Provisioning,
     ))
     .await?;
-    let store = wamn_test_infrastructure::credentials::LocalCredentials::create()?;
     let (auth_type, credential) = if integration == "http" {
         if let Some(origin) = parameters["primary-authority"].as_str() {
             parameters["primary-authority"] = origin.trim_end_matches('/').into();
@@ -80,7 +89,23 @@ pub async fn bind(
     } else {
         ("custom", serde_json::json!({}))
     };
-    wamn_test_infrastructure::credentials::define(&tx,&document.org,&serde_json::json!({"project":document.project,"env":document.env,"name":name,"integration_type":integration,"auth_type":auth_type,"external_system":if integration=="http" {Some(name)} else {None},"parameters":parameters,"credential":credential.to_string()}),&store).await?;
+    let referenced;
+    let store: Box<dyn wamn_credential_store::Store + '_> = if local {
+        Box::new(wamn_test_infrastructure::credentials::LocalCredentials::create()?)
+    } else {
+        referenced = cluster_credential(
+            platform,
+            &wamn_credential_store::kubernetes::secret_name(
+                &document.org,
+                &document.project,
+                &document.env,
+            ),
+            credential.to_string().as_bytes(),
+        )
+        .await?;
+        Box::new(wamn_test_infrastructure::credentials::ReferencedCredentials(&referenced))
+    };
+    wamn_test_infrastructure::credentials::define(&tx,&document.org,&serde_json::json!({"project":document.project,"env":document.env,"name":name,"integration_type":integration,"auth_type":auth_type,"external_system":if integration=="http" {Some(name)} else {None},"parameters":parameters,"credential":credential.to_string()}),store.as_ref()).await?;
     tx.commit().await?;
     document
         .applications
@@ -94,6 +119,64 @@ pub async fn bind(
     );
     driver.abort();
     Ok(())
+}
+
+/// Write `value` into the environment Secret of a cloud target, in the layout
+/// of the k8s credential store: one key per credential version.
+async fn cluster_credential(
+    platform: &Platform,
+    secret: &str,
+    value: &[u8],
+) -> anyhow::Result<wamn_credential_store::StoreVersion> {
+    use base64::Engine as _;
+    let target = &platform.target;
+    let version = uuid::Uuid::new_v4().to_string();
+    let data =
+        serde_json::json!({ &version: base64::engine::general_purpose::STANDARD.encode(value) });
+    let kubectl = |arguments: Vec<String>, input: Option<Vec<u8>>| async move {
+        let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
+        wamn_control::kubectl::kubectl(
+            &target.kubeconfig,
+            &target.context,
+            "hosts",
+            &arguments,
+            input.as_deref(),
+        )
+        .await
+    };
+    let existing = kubectl(
+        ["get", "secret", secret, "--ignore-not-found", "-o", "name"]
+            .map(str::to_owned)
+            .into(),
+        None,
+    )
+    .await?;
+    if existing.trim().is_empty() {
+        let created = serde_json::json!({
+            "apiVersion": "v1", "kind": "Secret",
+            "metadata": {"name": secret, "namespace": "hosts"},
+            "data": data,
+        });
+        kubectl(
+            ["create", "-f", "-"].map(str::to_owned).into(),
+            Some(created.to_string().into_bytes()),
+        )
+        .await?;
+    } else {
+        let patch = serde_json::json!({ "data": data }).to_string();
+        kubectl(
+            ["patch", "secret", secret, "--type", "merge", "-p", &patch]
+                .map(str::to_owned)
+                .into(),
+            None,
+        )
+        .await?;
+    }
+    Ok(wamn_credential_store::StoreVersion {
+        store: "k8s",
+        reference: secret.to_owned(),
+        version,
+    })
 }
 
 /// Publish connection fixtures with one unused stateless operation each.

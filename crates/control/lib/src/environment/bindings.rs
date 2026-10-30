@@ -64,7 +64,13 @@ pub async fn analyse(
     packages: &[PackageManifest],
 ) -> Result<Vec<Binding>, BindingError> {
     let mut selected = BTreeMap::new();
-    for (name, version) in &document.integrations {
+    // An apply without a release binds nothing, so its integrations need no
+    // connection yet: the first apply comes before the connections exist.
+    for (name, version) in document
+        .integrations
+        .iter()
+        .filter(|_| document.release != super::document::DeclaredRelease::None)
+    {
         let row = system
             .query_opt(
                 "SELECT * FROM registry.resolve_environment_connection($1,$2,$3,$4,$5,$6)",
