@@ -4,8 +4,8 @@
 //! Every writer of a fact a host keeps records it in a [`ConnectionDrops`]
 //! in its transaction. Its caller deletes the keys with
 //! [`ConnectionChanges::publish`] after the commit. The facts are the active
-//! generation, effective status and credential of a connection, and the
-//! connection map of a release.
+//! generation, effective status and credential of a connection, the
+//! connection map of a release, and the connection map of an environment.
 
 use std::collections::BTreeSet;
 
@@ -32,6 +32,11 @@ pub fn release_key(env_key: &str, manifest_digest: &str) -> String {
     format!("{env_key}.release.{hex}")
 }
 
+/// The key of the map from integration name to connection id of `env_key`.
+pub fn connections_key(env_key: &str) -> String {
+    format!("{env_key}.connections")
+}
+
 /// One connection fact that a committed write changed.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ConnectionChange {
@@ -42,6 +47,8 @@ pub enum ConnectionChange {
         env_key: String,
         manifest_digest: String,
     },
+    /// The map from integration name to connection id of an environment.
+    Connections(String),
     /// Every fact of an environment.
     EnvKey(String),
 }
@@ -64,6 +71,11 @@ impl ConnectionDrops {
             env_key: env_key.to_owned(),
             manifest_digest: manifest_digest.to_owned(),
         });
+    }
+
+    pub fn connections(&mut self, env_key: &str) {
+        self.0
+            .insert(ConnectionChange::Connections(env_key.to_owned()));
     }
 
     pub fn env_key(&mut self, env_key: &str) {
@@ -119,6 +131,7 @@ impl ConnectionChanges {
                     env_key,
                     manifest_digest,
                 } => Deletion::Key(release_key(&env_key, &manifest_digest)),
+                ConnectionChange::Connections(env_key) => Deletion::Key(connections_key(&env_key)),
                 ConnectionChange::EnvKey(env_key) => Deletion::Under(env_key),
             })
             .collect();
@@ -147,6 +160,10 @@ mod tests {
         assert_eq!(
             release_key("acme--shop--dev", &format!("sha256:{}", "ab".repeat(32))),
             format!("acme--shop--dev.release.{}", "ab".repeat(32))
+        );
+        assert_eq!(
+            connections_key("acme--shop--dev"),
+            "acme--shop--dev.connections"
         );
     }
 }

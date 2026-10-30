@@ -700,6 +700,7 @@ The key `<env_key>.connection.<connection id>` holds the active generation, the 
 The effective status is active only when the integration and the connection are both active.
 The key `<env_key>.release.<manifest digest hex>` holds the map of a release from (component digest, package, name) to (connection, version).
 The key carries the hex part of the digest only, because a key token holds no `:`.
+The key `<env_key>.connections` holds the map of the environment from integration name to connection id.
 Each host watches the keys of its `env_key`, and the control host watches every key.
 
 Immutable rows stay in the host under their own ids and never enter the bucket.
@@ -711,6 +712,8 @@ Every writer of these facts records the change in a [`ConnectionDrops`](../../cr
 Its caller deletes the keys of the list after the commit.
 A failed delete is logged, the commit stands, and the 60 seconds bound it.
 A connection write, copy, credential change, disable, enable or delete deletes the key of that connection.
+A connection write, copy or delete also deletes the connection map of its environment, because it can create or remove a connection.
+An integration delete deletes no key, because it refuses while the integration has a connection.
 An integration disable or enable deletes the key of each of its connections, in every environment of the project.
 An `env apply` deletes the release key of each release whose connection rows changed.
 An `env delete` deletes every key of the environment.

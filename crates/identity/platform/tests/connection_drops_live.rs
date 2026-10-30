@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use wamn_credential_store::{Store, StoreVersion};
 use wamn_platform_identity::auth_changes::AuthDrops;
 use wamn_platform_identity::connection_changes::{
-    BUCKET, ConnectionChanges, ConnectionDrops, connection_key, release_key,
+    BUCKET, ConnectionChanges, ConnectionDrops, connection_key, connections_key, release_key,
 };
 use wamn_platform_identity::connections::administration;
 
@@ -142,18 +142,20 @@ async fn every_connection_writer_deletes_exactly_its_connection_keys() {
     let prod = connection_key("acme--app--prod", &ids[1]);
     let release = release_key("acme--app--dev", &format!("sha256:{}", "ab".repeat(32)));
     let other = connection_key("acme--other--dev", &ids[0]);
-    let keys = [&dev, &prod, &release, &other];
+    let dev_map = connections_key("acme--app--dev");
+    let prod_map = connections_key("acme--app--prod");
+    let keys = [&dev, &prod, &release, &other, &dev_map, &prod_map];
 
     let cases: [(&str, Value, &[&String]); 9] = [
         (
             "connection.write",
             json!({"project":"app","env":"dev","name":"erp","parameters":parameters}),
-            &[&dev],
+            &[&dev, &dev_map],
         ),
         (
             "connection.copy",
             json!({"project":"app","env":"prod","source_env":"dev","name":"erp"}),
-            &[&prod],
+            &[&prod, &prod_map],
         ),
         (
             "connection.set_credential",
@@ -183,12 +185,12 @@ async fn every_connection_writer_deletes_exactly_its_connection_keys() {
         (
             "connection.delete",
             json!({"project":"app","env":"prod","name":"erp"}),
-            &[&prod],
+            &[&prod, &prod_map],
         ),
         (
             "connection.delete",
             json!({"project":"app","env":"dev","name":"erp"}),
-            &[&dev],
+            &[&dev, &dev_map],
         ),
     ];
     for (operation, request, deleted) in cases {
