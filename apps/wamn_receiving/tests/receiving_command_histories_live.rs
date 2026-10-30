@@ -28,7 +28,7 @@ use model::{Expected, History, Receipt, Step};
 
 const RECEIPT_PATH: &str = "/receiving/record_receipt";
 const OCCURRED_AT: &str = "2026-09-09T12:00:00.000000Z";
-/// Invalidation delivery bound, far below AUTH_TTL: an expiry-only revocation fails.
+/// Invalidation delivery bound, far below MEMORY_TTL: an expiry-only revocation fails.
 const AUTH_PROPAGATION: Duration = Duration::from_secs(5);
 
 // Secrets cross only through this private file. The evidence excludes them.
@@ -944,7 +944,7 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
     // fixture uses the role writer to revoke and invalidate each holder, then
     // restore it after the denied call. Under
     // `docs/architecture/execution.md#auth-memory`, a host drops grants on
-    // delivery of the invalidation, or at AUTH_TTL if delivery fails. Poll the
+    // delivery of the invalidation, or at MEMORY_TTL if delivery fails. Poll the
     // replay for AUTH_PROPAGATION, so a delivery failure still fails the case.
     // A caller without a role holds no operation, and the denial names the
     // route's own operation.

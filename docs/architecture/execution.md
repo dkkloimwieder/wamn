@@ -690,6 +690,27 @@ Password sessions have no PAT fallback. Renewal happens only when an application
 A local credential refusal occurs before HTTP submission and records a refused operation, not an unknown server outcome.
 Failed renewal or login expiry requires explicit login and submission. Quitting clears local credentials and requests server logout.
 
+### Connection memory
+
+The host answers the connection facts of a call from its memory, so a repeated call reads Postgres and the credential store only on a miss.
+The [memory](../../crates/platform/runtime/src/connection_memory.rs) is the local replica of the NATS KV bucket `wamn-connection` on the NATS of the auth memory.
+It follows the rules of the [auth memory](#auth-memory): the revision rule of a put, the watch, the 60 second limit and the broken watch.
+The [shared replica](../../crates/platform/runtime/src/kv_memory.rs) holds these rules for both memories.
+The key `<env_key>.connection.<connection id>` holds the active generation, the effective status and the credential id of a connection.
+The effective status is active only when the integration and the connection are both active.
+The key `<env_key>.release.<manifest digest hex>` holds the map of a release from (component digest, package, name) to (connection, version).
+The key carries the hex part of the digest only, because a key token holds no `:`.
+Each host watches the keys of its `env_key`, and the control host watches every key.
+
+Immutable rows stay in the host under their own ids and never enter the bucket.
+These rows are the parameters of a generation, the artifact and exports of a version, and the secret of a credential.
+A secret never leaves the host.
+A rotation makes a new credential id, so the delete of the connection key is enough to reach the new secret.
+
+Every writer of these facts records the change in a [`ConnectionDrops`](../../crates/identity/platform/src/connection_changes.rs).
+Its caller deletes the keys of the list after the commit.
+A failed delete is logged, the commit stands, and the 60 seconds bound it.
+
 ### Control sessions
 
 Every org in `registry.orgs` has the control audience `urn:wamn:control:<org>`, and nothing configures it.

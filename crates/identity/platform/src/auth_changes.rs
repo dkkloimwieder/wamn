@@ -12,7 +12,8 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+
+use crate::kv_memory::Deletion;
 
 /// One auth fact that a committed write changed.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -67,10 +68,6 @@ impl AuthDrops {
 /// The NATS KV bucket of the auth memory, on the scheduler NATS.
 pub const BUCKET: &str = "wamn-auth";
 
-/// How long the bucket keeps a value, and a host its copy: the backstop for
-/// a lost delete.
-pub const AUTH_TTL: Duration = Duration::from_secs(60);
-
 /// The key of the grants of `principal` in the environment named `env_key`.
 /// This shared cache key stays scoped after the table tenant columns leave.
 pub fn principal_key(env_key: &str, principal: &str) -> String {
@@ -92,22 +89,11 @@ pub fn identity_key(principal: &str) -> String {
     format!("{IDENTITY_TOKEN}.{principal}")
 }
 
-/// Open the bucket, and make it when it is absent: the scheduler NATS keeps
-/// JetStream in memory of its pod, so a restart loses the bucket.
+/// Open the bucket, and make it when it is absent.
 pub async fn auth_bucket(
     client: &async_nats::Client,
 ) -> anyhow::Result<async_nats::jetstream::kv::Store> {
-    use anyhow::Context as _;
-    async_nats::jetstream::new(client.clone())
-        .create_or_update_key_value(async_nats::jetstream::kv::Config {
-            bucket: BUCKET.to_owned(),
-            history: 1,
-            max_age: AUTH_TTL,
-            storage: async_nats::jetstream::stream::StorageType::Memory,
-            ..Default::default()
-        })
-        .await
-        .with_context(|| format!("open the NATS KV bucket {BUCKET}"))
+    crate::kv_memory::open_bucket(client, BUCKET).await
 }
 
 /// Deletes the keys of the changes of a commit from the bucket. A writer
@@ -128,65 +114,30 @@ impl AuthChanges {
 
     /// Delete the keys of `drops` after the commit that made them. A failed
     /// delete is logged, because the commit stands and the TTL bounds it.
-    /// Each publish opens the bucket, so a writer outlives a restart of the
-    /// scheduler NATS.
     pub async fn publish(&self, drops: AuthDrops) {
         let Some(client) = &self.0 else {
             return;
         };
-        if drops.is_empty() {
-            return;
-        }
-        let store = match auth_bucket(client).await {
-            Ok(store) => store,
-            Err(error) => {
-                tracing::warn!(
-                    error = format!("{error:#}"),
-                    "the auth changes were not deleted; the TTL bounds them"
-                );
-                return;
-            }
-        };
-        for change in drops.0 {
-            if let Err(error) = delete(&store, &change).await {
-                tracing::warn!(
-                    error = format!("{error:#}"),
-                    ?change,
-                    "the auth change was not deleted; the TTL bounds it"
-                );
-            }
-        }
-    }
-}
-
-async fn delete(
-    store: &async_nats::jetstream::kv::Store,
-    change: &AuthChange,
-) -> anyhow::Result<()> {
-    use futures_util::TryStreamExt as _;
-    let keys = match change {
-        AuthChange::Principal { env_key, principal } => vec![principal_key(env_key, principal)],
-        AuthChange::Identity(principal) => vec![identity_key(principal)],
-        // Every key of the environment: the grants of each principal, which hold
-        // the role, and the environment status.
-        AuthChange::EnvKey(env_key) => {
-            let mut subjects = store
-                .stream
-                .info_with_subjects(format!("{}{env_key}.*", store.prefix))
-                .await?;
-            let mut keys = Vec::new();
-            while let Some((subject, _)) = subjects.try_next().await? {
-                if let Some(key) = subject.strip_prefix(&store.prefix) {
-                    keys.push(key.to_owned());
+        let deletions = drops
+            .0
+            .into_iter()
+            .map(|change| match change {
+                AuthChange::Principal { env_key, principal } => {
+                    Deletion::Key(principal_key(&env_key, &principal))
                 }
-            }
-            keys
-        }
-    };
-    for key in keys {
-        store.delete(&key).await?;
+                AuthChange::Identity(principal) => Deletion::Key(identity_key(&principal)),
+                // Every key of the environment: the grants of each principal,
+                // which hold the role, and the environment status.
+                AuthChange::EnvKey(env_key) => Deletion::Under(env_key),
+            })
+            .collect();
+        crate::kv_memory::delete(client, BUCKET, deletions).await;
     }
-    Ok(())
+
+    /// The scheduler NATS client, for the writer of another memory.
+    pub fn client(&self) -> Option<&async_nats::Client> {
+        self.0.as_ref()
+    }
 }
 
 /// The scheduler NATS connection of a writer that is not a host: the identity

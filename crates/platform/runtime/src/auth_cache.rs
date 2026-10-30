@@ -9,7 +9,7 @@
 //! read, so a delete in between refuses the put. Every host watches the keys
 //! of its tenant and keeps each value it sees. Every writer of a fact deletes
 //! its key after the commit ([`wamn_platform_identity::auth_changes`]). The
-//! bucket keeps a value for at most [`AUTH_TTL`], and so does the replica.
+//! bucket keeps a value for at most [`MEMORY_TTL`], and so does the replica.
 //!
 //! An admitted PAT and an active session stay in the host that read them,
 //! because the token answer never leaves the host. A delete of the key
@@ -17,32 +17,26 @@
 //! no identity key changed during its read. Only a positive identity answer
 //! is kept, so a new PAT or a new login works on its first request.
 //!
-//! A host keeps facts only while it watches the bucket, because only the
-//! watch brings the drops. A host without the bucket, such as a test host,
-//! keeps no fact and reads every request from Postgres. So does a host
-//! whose watch broke, until the watch runs again.
+//! The replica follows the rules of [`crate::kv_memory`]: a host without the
+//! bucket, such as a test host, or with a broken watch, keeps no fact and
+//! reads every request from Postgres.
 //!
 //! [`BUCKET`]: wamn_platform_identity::auth_changes::BUCKET
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use async_nats::jetstream::kv::{Operation, Store};
-use futures_util::StreamExt as _;
+use async_nats::jetstream::kv::Store;
 use sha2::{Digest as _, Sha256};
 use wamn_platform_identity::AuthenticatedPrincipal;
-pub use wamn_platform_identity::auth_changes::AUTH_TTL;
 use wamn_platform_identity::auth_changes::{
-    AuthChanges, IDENTITY_TOKEN, auth_bucket, env_key as environment_status_key, principal_key,
+    AuthChanges, BUCKET, IDENTITY_TOKEN, env_key as environment_status_key, principal_key,
 };
+pub use wamn_platform_identity::kv_memory::MEMORY_TTL;
 
-/// A map that grows past this many entries drops its expired ones.
-const SWEEP_AT: usize = 10_000;
-
-/// How long a put to the bucket may take before the host answers without
-/// keeping the fact.
-const PUT_TIMEOUT: Duration = Duration::from_secs(1);
+pub use crate::kv_memory::Ticket;
+use crate::kv_memory::{KvMemory, SWEEP_AT, Watched};
 
 /// The roles a principal holds in one tenant, with the permissions of each.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -71,21 +65,9 @@ enum Answer {
     Environment { inactive: bool },
 }
 
-/// The revision of a key that a host saw before it read the fact of the key.
-/// A put with it fails when a writer changed the key during the read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Ticket(u64);
-
 /// The identity revision that a host saw before it read a PAT or a session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IdentityTicket(u64);
-
-struct Entry {
-    revision: u64,
-    seen: Instant,
-    /// `None` after a delete.
-    answer: Option<Answer>,
-}
 
 struct Token {
     seen: Instant,
@@ -95,8 +77,7 @@ struct Token {
 }
 
 #[derive(Default)]
-struct Replica {
-    entries: HashMap<String, Entry>,
+struct Tokens {
     tokens: HashMap<[u8; 32], Token>,
     /// The highest revision of an identity key this host saw.
     identity_revision: u64,
@@ -106,16 +87,13 @@ struct Replica {
 /// [`WamnPostgres`](crate::plugins::wamn_postgres::WamnPostgres), so the
 /// route authenticator and the claim bind share it.
 pub struct AuthCache {
-    ttl: Duration,
-    replica: Mutex<Replica>,
-    /// The bucket, while the host watches it. Without it, the host keeps no
-    /// fact.
-    bucket: RwLock<Option<Store>>,
+    memory: KvMemory<Answer>,
+    tokens: Mutex<Tokens>,
 }
 
 impl Default for AuthCache {
     fn default() -> Self {
-        Self::with_ttl(AUTH_TTL)
+        Self::with_ttl(MEMORY_TTL)
     }
 }
 
@@ -123,7 +101,7 @@ impl std::fmt::Debug for AuthCache {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("AuthCache")
-            .field("ttl", &self.ttl)
+            .field("ttl", &self.memory.ttl())
             .finish_non_exhaustive()
     }
 }
@@ -136,150 +114,45 @@ impl AuthCache {
     /// A cache whose facts live for `ttl`.
     pub fn with_ttl(ttl: Duration) -> Self {
         Self {
-            ttl,
-            replica: Mutex::new(Replica::default()),
-            bucket: RwLock::new(None),
+            memory: KvMemory::new(BUCKET, ttl),
+            tokens: Mutex::new(Tokens::default()),
         }
     }
 
-    fn replica(&self) -> std::sync::MutexGuard<'_, Replica> {
-        self.replica
+    fn tokens(&self) -> std::sync::MutexGuard<'_, Tokens> {
+        self.tokens
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// The replica, while the host watches the bucket. A caller holds the
-    /// replica lock during the check, so a fact kept here falls to the clear
-    /// that follows a broken watch.
-    fn watched_replica(&self) -> Option<std::sync::MutexGuard<'_, Replica>> {
-        let replica = self.replica();
-        self.bucket().is_some().then_some(replica)
-    }
-
-    fn bucket(&self) -> Option<Store> {
-        self.bucket
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
-    }
-
-    fn set_bucket(&self, bucket: Option<Store>) {
-        *self
-            .bucket
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = bucket;
-    }
-
     /// Drop every fact.
     pub fn clear(&self) {
-        let mut replica = self.replica();
-        replica.entries.clear();
-        replica.tokens.clear();
-    }
-
-    /// The live answer of `key`, or the ticket of a read of it. The bucket
-    /// expires a value at the same age as the replica.
-    fn answer(&self, key: &str) -> Result<Answer, Ticket> {
-        let replica = self.replica();
-        match replica.entries.get(key) {
-            Some(entry) if entry.seen.elapsed() < self.ttl => {
-                entry.answer.clone().ok_or(Ticket(entry.revision))
-            }
-            _ => Err(Ticket(0)),
-        }
-    }
-
-    /// The ticket of a read of `key`.
-    fn ticket(&self, key: &str) -> Ticket {
-        let replica = self.replica();
-        replica
-            .entries
-            .get(key)
-            .filter(|entry| entry.seen.elapsed() < self.ttl)
-            .map_or(Ticket(0), |entry| Ticket(entry.revision))
-    }
-
-    /// The answer that a put with `ticket` replaces, when the replica holds
-    /// the answer of that revision.
-    fn replaced(&self, key: &str, ticket: Ticket) -> Option<Answer> {
-        let replica = self.replica();
-        replica
-            .entries
-            .get(key)
-            .filter(|entry| entry.revision == ticket.0 && entry.seen.elapsed() < self.ttl)
-            .and_then(|entry| entry.answer.clone())
-    }
-
-    fn keep_entry(&self, key: String, revision: u64, answer: Option<Answer>) {
-        let Some(mut replica) = self.watched_replica() else {
-            return;
-        };
-        if replica.entries.len() >= SWEEP_AT {
-            let ttl = self.ttl;
-            replica
-                .entries
-                .retain(|_, entry| entry.seen.elapsed() < ttl);
-        }
-        let entry = replica.entries.entry(key).or_insert(Entry {
-            revision: 0,
-            seen: Instant::now(),
-            answer: None,
-        });
-        // The watch also delivers the revision this host put.
-        if revision >= entry.revision {
-            entry.revision = revision;
-            entry.seen = Instant::now();
-            entry.answer = answer;
-        }
-    }
-
-    /// Put `answer` at `key` if the key still has the revision of `ticket`,
-    /// and keep it. Without the bucket, keep nothing.
-    async fn put(&self, key: String, ticket: Ticket, answer: Answer) {
-        let Some(bucket) = self.bucket() else {
-            return;
-        };
-        let bytes = match serde_json::to_vec(&answer) {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                tracing::warn!(%error, "the auth answer does not encode");
-                return;
-            }
-        };
-        match tokio::time::timeout(PUT_TIMEOUT, bucket.update(&key, bytes.into(), ticket.0)).await {
-            Ok(Ok(revision)) => self.keep_entry(key, revision, Some(answer)),
-            // A writer changed the key during the read, or another host put
-            // it first. The watch brings the current value.
-            Ok(Err(error))
-                if error.kind()
-                    == async_nats::jetstream::kv::UpdateErrorKind::WrongLastRevision => {}
-            Ok(Err(error)) => tracing::warn!(%error, key, "the auth answer was not put"),
-            Err(_) => tracing::warn!(key, "the auth answer put timed out"),
-        }
+        self.memory.clear();
+        self.tokens().tokens.clear();
     }
 
     /// The principal of an admitted PAT.
     pub fn pat(&self, token: &str) -> Option<AuthenticatedPrincipal> {
-        let replica = self.replica();
-        replica
+        let ttl = self.memory.ttl();
+        self.tokens()
             .tokens
             .get(&digest(token))
-            .filter(|token| token.seen.elapsed() < self.ttl)
+            .filter(|token| token.seen.elapsed() < ttl)
             .and_then(|token| token.pat.clone())
     }
 
     /// Whether the login or PAT behind a session token is active.
     pub fn session_active(&self, token: &str) -> bool {
-        let replica = self.replica();
-        replica
+        let ttl = self.memory.ttl();
+        self.tokens()
             .tokens
             .get(&digest(token))
-            .is_some_and(|token| token.seen.elapsed() < self.ttl && token.pat.is_none())
+            .is_some_and(|token| token.seen.elapsed() < ttl && token.pat.is_none())
     }
 
     /// The ticket of a PAT or session read, taken before the read.
     pub fn identity_ticket(&self) -> IdentityTicket {
-        IdentityTicket(self.replica().identity_revision)
+        IdentityTicket(self.tokens().identity_revision)
     }
 
     fn keep_token(
@@ -289,18 +162,21 @@ impl AuthCache {
         principal: &str,
         pat: Option<AuthenticatedPrincipal>,
     ) {
-        let Some(mut replica) = self.watched_replica() else {
+        // The lock is held during the check, so a token kept here falls to
+        // the clear that follows a broken watch.
+        let mut tokens = self.tokens();
+        if self.memory.bucket().is_none() {
             return;
-        };
+        }
         // An identity key changed during the read, so the answer can be stale.
-        if replica.identity_revision != ticket.0 {
+        if tokens.identity_revision != ticket.0 {
             return;
         }
-        if replica.tokens.len() >= SWEEP_AT {
-            let ttl = self.ttl;
-            replica.tokens.retain(|_, token| token.seen.elapsed() < ttl);
+        if tokens.tokens.len() >= SWEEP_AT {
+            let ttl = self.memory.ttl();
+            tokens.tokens.retain(|_, token| token.seen.elapsed() < ttl);
         }
-        replica.tokens.insert(
+        tokens.tokens.insert(
             digest(token),
             Token {
                 seen: Instant::now(),
@@ -322,12 +198,12 @@ impl AuthCache {
     /// The grants of a principal, or the ticket of a read of them.
     pub fn grants(&self, env_key: &str, principal: &str) -> Result<PrincipalGrants, Ticket> {
         let key = principal_key(env_key, principal);
-        match self.answer(&key) {
+        match self.memory.answer(&key) {
             Ok(Answer::Principal {
                 grants: Some(grants),
                 ..
             }) if grants.user.is_some() => Ok(grants),
-            Ok(_) => Err(self.ticket(&key)),
+            Ok(_) => Err(self.memory.ticket(&key)),
             Err(ticket) => Err(ticket),
         }
     }
@@ -344,7 +220,7 @@ impl AuthCache {
         let key = principal_key(env_key, principal);
         let provisioned = grants.present
             || matches!(
-                self.replaced(&key, ticket),
+                self.memory.replaced(&key, ticket),
                 Some(Answer::Principal {
                     provisioned: true,
                     ..
@@ -354,25 +230,25 @@ impl AuthCache {
             grants: Some(grants),
             provisioned,
         };
-        self.put(key, ticket, answer).await;
+        self.memory.put(key, ticket, answer).await;
     }
 
     /// Whether the tenant has the user row of a principal, or the ticket of
     /// a read of it.
     pub fn provisioned(&self, env_key: &str, principal: &str) -> Result<(), Ticket> {
         let key = principal_key(env_key, principal);
-        match self.answer(&key) {
+        match self.memory.answer(&key) {
             Ok(Answer::Principal {
                 provisioned: true, ..
             }) => Ok(()),
-            Ok(_) => Err(self.ticket(&key)),
+            Ok(_) => Err(self.memory.ticket(&key)),
             Err(ticket) => Err(ticket),
         }
     }
 
     pub async fn keep_provisioned(&self, env_key: &str, principal: &str, ticket: Ticket) {
         let key = principal_key(env_key, principal);
-        let grants = match self.replaced(&key, ticket) {
+        let grants = match self.memory.replaced(&key, ticket) {
             Some(Answer::Principal { grants, .. }) => grants,
             _ => None,
         };
@@ -380,53 +256,53 @@ impl AuthCache {
             grants,
             provisioned: true,
         };
-        self.put(key, ticket, answer).await;
+        self.memory.put(key, ticket, answer).await;
     }
 
     /// Whether the environment is inactive, or the ticket of a read of it.
     pub fn environment_inactive(&self, env_key: &str) -> Result<bool, Ticket> {
         let key = environment_status_key(env_key);
-        match self.answer(&key) {
+        match self.memory.answer(&key) {
             Ok(Answer::Environment { inactive }) => Ok(inactive),
-            Ok(_) => Err(self.ticket(&key)),
+            Ok(_) => Err(self.memory.ticket(&key)),
             Err(ticket) => Err(ticket),
         }
     }
 
     pub async fn keep_environment_inactive(&self, env_key: &str, ticket: Ticket, inactive: bool) {
-        self.put(
-            environment_status_key(env_key),
-            ticket,
-            Answer::Environment { inactive },
-        )
-        .await;
+        self.memory
+            .put(
+                environment_status_key(env_key),
+                ticket,
+                Answer::Environment { inactive },
+            )
+            .await;
+    }
+}
+
+impl Watched for AuthCache {
+    fn set_bucket(&self, bucket: Option<Store>) {
+        self.memory.set_bucket(bucket);
     }
 
-    /// Keep what the watch of the bucket delivered.
+    fn clear(&self) {
+        AuthCache::clear(self);
+    }
+
     fn apply(&self, entry: async_nats::jetstream::kv::Entry) {
         if let Some(principal) = entry
             .key
             .strip_prefix(IDENTITY_TOKEN)
             .and_then(|rest| rest.strip_prefix('.'))
         {
-            let mut replica = self.replica();
-            replica.identity_revision = replica.identity_revision.max(entry.revision);
-            replica
+            let mut tokens = self.tokens();
+            tokens.identity_revision = tokens.identity_revision.max(entry.revision);
+            tokens
                 .tokens
                 .retain(|_, token| token.principal != principal);
             return;
         }
-        let answer = match entry.operation {
-            Operation::Put => match serde_json::from_slice(&entry.value) {
-                Ok(answer) => Some(answer),
-                Err(error) => {
-                    tracing::warn!(%error, key = entry.key, "the auth answer does not decode");
-                    None
-                }
-            },
-            Operation::Delete | Operation::Purge => None,
-        };
-        self.keep_entry(entry.key, entry.revision, answer);
+        self.memory.apply(entry);
     }
 }
 
@@ -439,8 +315,7 @@ impl AsRef<AuthCache> for AuthCache {
 /// Watch the bucket on the scheduler NATS into the memory that `holder`
 /// holds, and return the writer of the host's own changes. A host with
 /// `env_key` watches the keys of that `env_key` and the identity keys. The
-/// control host serves every tenant, so it watches every key. The watch runs
-/// until the client closes, and opens the bucket again after it breaks.
+/// control host serves every tenant, so it watches every key.
 pub fn replicate<H: AsRef<AuthCache> + Send + Sync + 'static>(
     client: &async_nats::Client,
     env_key: Option<&str>,
@@ -450,37 +325,10 @@ pub fn replicate<H: AsRef<AuthCache> + Send + Sync + 'static>(
         Some(env_key) => vec![format!("{env_key}.*"), format!("{IDENTITY_TOKEN}.*")],
         None => vec![">".to_owned()],
     };
-    let client = client.clone();
-    let watched = client.clone();
-    tokio::spawn(async move {
-        loop {
-            let cache = (*holder).as_ref();
-            if let Err(error) = watch(&watched, &filters, cache).await {
-                tracing::warn!(error = format!("{error:#}"), "the auth memory watch broke");
-            }
-            // Without the watch, a delete can pass the host unseen.
-            cache.set_bucket(None);
-            cache.clear();
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
+    crate::kv_memory::spawn_watch(client, BUCKET, filters, holder, |holder| {
+        (*holder).as_ref() as &dyn Watched
     });
-    AuthChanges::new(client)
-}
-
-async fn watch(
-    client: &async_nats::Client,
-    filters: &[String],
-    cache: &AuthCache,
-) -> anyhow::Result<()> {
-    let bucket = auth_bucket(client).await?;
-    let mut entries = bucket.watch_many_with_history(filters).await?;
-    // Facts kept before the watch ran can miss a delete.
-    cache.clear();
-    cache.set_bucket(Some(bucket));
-    while let Some(entry) = entries.next().await {
-        cache.apply(entry?);
-    }
-    anyhow::bail!("the watch ended")
+    AuthChanges::new(client.clone())
 }
 
 /// Live auth-cache fixtures shared by writer tests.
@@ -502,15 +350,12 @@ pub(crate) mod tests {
         .unwrap();
         assert_eq!(missing.user, None);
         let key = principal_key("t", "p");
-        cache.replica().entries.insert(
-            key.clone(),
-            Entry {
-                revision: 7,
-                seen: Instant::now(),
-                answer: Some(Answer::Principal {
-                    grants: Some(missing.clone()),
-                    provisioned: true,
-                }),
+        cache.memory.insert(
+            &key,
+            7,
+            Answer::Principal {
+                grants: Some(missing.clone()),
+                provisioned: true,
             },
         );
         assert_eq!(cache.grants("t", "p"), Err(Ticket(7)));
@@ -519,10 +364,14 @@ pub(crate) mod tests {
                 user: Some(user),
                 ..missing.clone()
             };
-            cache.replica().entries.get_mut(&key).unwrap().answer = Some(Answer::Principal {
-                grants: Some(grants.clone()),
-                provisioned: true,
-            });
+            cache.memory.insert(
+                &key,
+                7,
+                Answer::Principal {
+                    grants: Some(grants.clone()),
+                    provisioned: true,
+                },
+            );
             assert_eq!(cache.grants("t", "p"), Ok(grants));
         }
     }
@@ -589,7 +438,7 @@ pub(crate) mod tests {
         replicate(&client, Some("t"), Arc::clone(&b));
         replicate(&client, Some("u"), Arc::clone(&other));
         for cache in [&a, &b, &other] {
-            until("the watch runs", || cache.bucket().is_some()).await;
+            until("the watch runs", || cache.memory.bucket().is_some()).await;
         }
         let present = PrincipalGrants {
             present: true,
@@ -629,7 +478,7 @@ pub(crate) mod tests {
 
         // A tenant change deletes every key of the tenant.
         until("host a sees the second delete", || {
-            a.ticket(&principal_key("t", "p")) != ticket
+            a.memory.ticket(&principal_key("t", "p")) != ticket
         })
         .await;
         let ticket = a.grants("t", "p").unwrap_err();
