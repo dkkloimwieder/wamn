@@ -1416,7 +1416,21 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
                 login.username()
             ),
             json!({"written": written, "history": history, "read": read, "expected": expected}),
-            written == 6 && history.len() == 6 && read == expected,
+            written == 5
+                && history
+                    == [
+                        format!(
+                            "number_sequence insert {} {}",
+                            platform_configuration::OPERATION,
+                            platform_configuration::CALLER
+                        ),
+                        format!(
+                            "setting insert {} {}",
+                            platform_configuration::OPERATION,
+                            platform_configuration::CALLER
+                        ),
+                    ]
+                && read == expected,
         );
 
         Ok(())
@@ -2957,7 +2971,7 @@ async fn host_report_check(run: &mut Run, context: &CheckContext) -> anyhow::Res
     let bound = system
         .query_opt(
             "SELECT 1 FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.org=$1 AND i.name=$2 AND c.env=$3",
-            &[&ORG, &format!("labels-{ENV}")],
+            &[&ORG, &format!("labels-{ENV}"), &ENV],
         )
         .await?
         .is_some();

@@ -122,11 +122,11 @@ pub fn expected(project: &str) -> Vec<Value> {
 pub async fn read_back(client: &tokio_postgres::Client) -> anyhow::Result<Vec<Value>> {
     let mut rows = Vec::new();
     for table in TABLES {
-        let recorded = ["number_sequence", "setting"].contains(&table);
-        let condition = if recorded {
-            format!("created_by = '{CALLER}'::uuid")
-        } else {
-            "true".to_owned()
+        let condition = match table {
+            "external_system" => format!("id = '{EXTERNAL_SYSTEM_ID}'::uuid"),
+            "integration" => format!("id = '{INTEGRATION_ID}'::uuid"),
+            "connection" => format!("id = '{CONNECTION_ID}'::uuid"),
+            _ => format!("created_by = '{CALLER}'::uuid"),
         };
         for row in client
             .query(

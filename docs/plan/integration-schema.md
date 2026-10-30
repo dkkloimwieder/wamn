@@ -107,7 +107,7 @@ CREATE TABLE registry.connection (                     -- the integration in one
     FOREIGN KEY (integration_id, org, project, integration_type)
         REFERENCES registry.integration (id, org, project, integration_type),
     FOREIGN KEY (org, project, env, target_id)
-        REFERENCES registry.project_envs (org, project, env, target_id),
+        REFERENCES registry.project_envs (org, project, env, target_id) ON DELETE CASCADE,
     FOREIGN KEY (service_principal_id, principal_type)
         REFERENCES identity.principals (id, type)
 );
@@ -398,6 +398,7 @@ Disable and delete:
 - Disabling an integration or a connection makes it stop serving and releases its leases.
 - Delete removes a row created by mistake when nothing references it; anything referenced is disabled instead. The control host holds the administration login of every env database in the org, so it checks each env database of the project under the env lifecycle lock, deletes from the system database, then removes the projected rows.
   - A connection needs no binding, no `release_connection` row and no `platform.file` row. Its generations, credential rows and token row cascade with it, and its store secrets are destroyed; its service principal is disabled, not deleted, because the write log and ACL history reference principal ids.
+  - Env delete removes every connection of the env in its own transaction, with no reference refusal; principals are disabled, and the env's credential Secret, ServiceAccount and Role are destroyed after the commit. A kept env database keeps its projected rows.
   - An integration needs its connections deleted first.
   - An external system needs no integration and no record pointing at it. The FK from application records to `platform.external_system` makes deleting the projected row fail, so no scan is needed. Records block only the external system, never its sibling integrations.
 

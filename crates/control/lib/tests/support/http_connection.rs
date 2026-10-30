@@ -335,7 +335,7 @@ pub fn paged_wiring() -> anyhow::Result<WiringDocument> {
     graph["nodes"]["send"]["params"] = json!({
         "requirement": "upstream", "path-and-query": "/pages?limit=2",
         "page": {"style": "offset", "limit": "limit", "offset": "offset"},
-        "items": "/api-key"
+        "items": "/items"
     });
     Ok(serde_json::from_value(graph)?)
 }
@@ -476,7 +476,7 @@ pub fn bindings_match(rows: &Value, document: &super::EnvironmentDocument, diges
                 bindings.len() == if *handle == "upstream" { 2 } else { 1 }
                     && bindings.iter().all(|row| {
                         row["manifest_digest"] == digest
-                            && row["integration_type"] == "http"
+                            && row["package_id"] == "http_fixture"
                             && row["mode"] == "write"
                             && row["integration_name"]
                                 == document.applications[PACKAGE].connections[*handle]
@@ -879,4 +879,58 @@ pub async fn prepare_image(run: &mut Run, repository: &Path) -> anyhow::Result<(
         run.kept.fixture_source = digest;
     }
     run.load_image(&image).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn release_bindings_accept_shared_names_across_components_and_refuse_wrong_scope() {
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let mut document = super::super::fixture_document("http", "http.orders.example", &digest);
+        let handles = ["upstream", OUTBOUND_HANDLE, API_KEY_HANDLE, AWS_HANDLE];
+        document.applications.get_mut(PACKAGE).unwrap().connections = handles
+            .iter()
+            .map(|handle| (handle.to_string(), handle.to_string()))
+            .collect();
+        let mut rows = json!({"versions": [], "bindings": []});
+        for handle in handles {
+            rows["versions"].as_array_mut().unwrap().push(json!({
+                "manifest_digest": digest, "connection_id": handle, "version": 1
+            }));
+            for component in if handle == "upstream" {
+                ["http-request", "http-page"].as_slice()
+            } else {
+                ["http-request"].as_slice()
+            } {
+                rows["bindings"].as_array_mut().unwrap().push(json!({
+                    "manifest_digest": digest, "component_digest": component,
+                    "package_id": "http_fixture", "name": handle,
+                    "connection_id": handle, "mode": "write", "integration_name": handle
+                }));
+            }
+        }
+        assert!(bindings_match(&rows, &document, &digest));
+        for (field, value) in [
+            ("package_id", "other_fixture"),
+            ("manifest_digest", "other-release"),
+            ("mode", "read"),
+            ("integration_name", "other-integration"),
+        ] {
+            let mut wrong = rows.clone();
+            wrong["bindings"][0][field] = value.into();
+            assert!(!bindings_match(&wrong, &document, &digest), "{field}");
+        }
+        rows["bindings"].as_array_mut().unwrap().remove(0);
+        assert!(!bindings_match(&rows, &document, &digest));
+    }
+
+    #[test]
+    fn page_items_pointer_selects_the_peer_response_array() {
+        let graph = serde_json::to_value(paged_wiring().unwrap()).unwrap();
+        let pointer = graph["nodes"]["send"]["params"]["items"].as_str().unwrap();
+        let response = json!({"items": [{"id":"one","name":"First"}]});
+        assert_eq!(response.pointer(pointer), Some(&response["items"]));
+    }
 }

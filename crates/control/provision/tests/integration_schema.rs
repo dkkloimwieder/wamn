@@ -341,3 +341,34 @@ fn apply_cannot_write_system_connection_authority() {
         END LOOP;
     END $$;");
 }
+
+#[test]
+fn environment_delete_removes_its_connections_and_disables_their_principals() {
+    run(&format!(
+        "DO $test$ DECLARE removed text[] := '{{}}'; item record; BEGIN
+           FOR item IN EXECUTE $sql${}$sql$ USING 'acme','app','dev' LOOP
+             removed := removed || (item.store||':'||item.ref||':'||item.version);
+           END LOOP;
+           ASSERT (SELECT array_agg(r ORDER BY r) FROM unnest(removed) r)=ARRAY['file:first:1','k8s:second:1'],removed::text;
+           DELETE FROM registry.project_envs WHERE org='acme' AND project='app' AND env='dev';
+           ASSERT NOT EXISTS(SELECT FROM registry.connection);
+           ASSERT NOT EXISTS(SELECT FROM registry.connection_generation);
+           ASSERT NOT EXISTS(SELECT FROM identity.credential);
+           ASSERT (SELECT array_agg(status||':'||(disabled_at IS NOT NULL) ORDER BY subject) FROM identity.principals
+                   WHERE subject IN ('first','second','third'))
+                  =ARRAY['disabled:true','disabled:true','active:false'];
+           ASSERT EXISTS(SELECT FROM registry.integration WHERE name='first');
+           ASSERT EXISTS(SELECT FROM registry.external_system WHERE name='erp');
+         END $test$;",
+        wamn_control_registry::sql::delete_environment_connections_sql()
+    ));
+}
+
+#[test]
+fn environment_row_delete_cascades_to_its_connections() {
+    run("DO $$ BEGIN
+           DELETE FROM registry.project_envs WHERE org='acme' AND project='app' AND env='dev';
+           ASSERT NOT EXISTS(SELECT FROM registry.connection);
+           ASSERT NOT EXISTS(SELECT FROM identity.credential);
+         END $$;");
+}

@@ -9,8 +9,10 @@
 //! the credential Secrets the verb owns; remove the environment's key from the
 //! org's control administration Secret; delete the event streams; drop the
 //! replication slot; delete the `Database` CR and wait until it is gone; with
-//! `--data`, drop the instance's roles; delete the control rows of the tenant;
-//! delete the environment row last.
+//! `--data`, drop the instance's roles; delete the control rows of the tenant
+//! and the environment's connections, then the environment row; after that
+//! commit, delete the credential store Secret, its host account and the
+//! credential files. A retained database keeps its projected rows.
 //!
 //! The CR keeps `databaseReclaimPolicy: retain`, so the database and its data
 //! stay on the cluster, with the roles that own them, for manual recovery.
@@ -446,6 +448,13 @@ async fn delete_locked(
                 .with_context(|| format!("delete the control rows of {table}"))?;
         }
     }
+    let credentials = transaction
+        .query(
+            wamn_control_registry::sql::delete_environment_connections_sql(),
+            &[&org, &project, &env],
+        )
+        .await
+        .context("delete the environment's connections")?;
     transaction
         .execute(
             "DELETE FROM registry.project_envs WHERE org = $1 AND project = $2 AND env = $3",
@@ -476,8 +485,48 @@ async fn delete_locked(
         .await
         .context("commit the row delete")?;
     lines.push(format!(
-        "deleted the control rows of tenant {env_key} and the environment row of {triple}"
+        "deleted the control rows of tenant {env_key}, {} connection credentials and the \
+         environment row of {triple}",
+        credentials.len()
     ));
+
+    // The credential store, after the commit: the Secret and the host account
+    // that reads it, and the credential files of a file target.
+    let account = wamn_credential_store::kubernetes::service_account_name(org, project, env);
+    let secret = wamn_credential_store::kubernetes::secret_name(org, project, env);
+    for (resource, object) in [
+        ("secret", &secret),
+        ("rolebinding", &account),
+        ("role", &account),
+        ("serviceaccount", &account),
+    ] {
+        let deleted = kubectl(
+            platform,
+            namespace,
+            &["delete", resource, object, "--ignore-not-found"],
+            None,
+        )
+        .await?;
+        if !deleted.is_empty() {
+            lines.push(deleted);
+        }
+    }
+    let files: Vec<(String, String)> = credentials
+        .iter()
+        .filter(|row| row.get::<_, String>(0) == "file")
+        .map(|row| (row.get(1), row.get(2)))
+        .collect();
+    if !files.is_empty() {
+        let store =
+            wamn_credential_store::open("file").context("open the file credential store")?;
+        for (reference, version) in &files {
+            store
+                .destroy(reference, version)
+                .await
+                .with_context(|| format!("destroy credential file {reference}"))?;
+        }
+        lines.push(format!("destroyed {} credential files", files.len()));
+    }
     Ok(lines)
 }
 

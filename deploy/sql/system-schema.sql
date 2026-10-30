@@ -1038,7 +1038,7 @@ CREATE TABLE registry.connection (
     FOREIGN KEY (integration_id, org, project, integration_type)
         REFERENCES registry.integration (id, org, project, integration_type),
     FOREIGN KEY (org, project, env, target_id)
-        REFERENCES registry.project_envs (org, project, env, target_id),
+        REFERENCES registry.project_envs (org, project, env, target_id) ON DELETE CASCADE,
     FOREIGN KEY (service_principal_id, principal_type)
         REFERENCES identity.principals (id, type)
 );
