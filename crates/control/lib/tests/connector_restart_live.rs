@@ -292,7 +292,15 @@ async fn apply(
     for (package, digest) in members {
         tx.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interfaces,mode) VALUES($1,$2,$3,'registers',$4,'read') ON CONFLICT DO NOTHING",&[&env_key,&digest,&package,&vec![READER.to_owned()]]).await?;
     }
-    bindings::write(&tx, env_key, &digest, document, &bindings).await?;
+    bindings::write(
+        &tx,
+        env_key,
+        &digest,
+        document,
+        &bindings,
+        &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
+    )
+    .await?;
     tx.commit().await?;
     Ok(())
 }

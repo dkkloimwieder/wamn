@@ -471,7 +471,7 @@ mod tests {
         tx.batch_execute("SET LOCAL ROLE wamn_control")
             .await
             .unwrap();
-        administration::execute(&tx, "acme", "integration.write", &json!({"project":"project-a","name":"interactive","integration_type":"http","auth_type":"oauth2_authorization_code"}).to_string(), &mut AuthDrops::default()).await.unwrap();
+        administration::execute(&tx, "acme", "integration.write", &json!({"project":"project-a","name":"interactive","integration_type":"http","auth_type":"oauth2_authorization_code"}).to_string(), &mut AuthDrops::default(), &mut wamn_platform_identity::connection_changes::ConnectionDrops::default()).await.unwrap();
         let error = administration::execute(
             &tx,
             "acme",
@@ -479,6 +479,7 @@ mod tests {
             &json!({"project":"project-a","env":"dev","name":"interactive","parameters":{}})
                 .to_string(),
             &mut AuthDrops::default(),
+            &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
         )
         .await
         .unwrap_err();

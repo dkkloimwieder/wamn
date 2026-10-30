@@ -877,6 +877,7 @@ async fn file_id_reads_survive_binding_removal_until_connection_disablement() ->
         "connection.disable",
         &json!({"project":PROJECT,"env":"dev","name":files::STORE_NAME}).to_string(),
         &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
     )
     .await?;
     tx.commit().await?;

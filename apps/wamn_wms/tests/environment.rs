@@ -482,6 +482,7 @@ async fn bind_labels(
         digest,
         &document,
         &bindings,
+        &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
     )
     .await?;
     tx.commit().await?;

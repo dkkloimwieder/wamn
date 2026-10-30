@@ -431,7 +431,7 @@ Plaintext secrets never sit in Postgres. A credential row holds a reference (`st
 
 - Old secret material is never read again, because configuration is never rolled back: it is destroyed asynchronously 5 minutes after a rotation becomes active. The credential row stays as audit metadata.
 - GKE application-layer secrets encryption (Cloud KMS) must be on for the Kubernetes backend.
-- No External Secrets Operator: credentials are created at run time, and one custom resource per credential is churn. The host reads the store directly.
+- No External Secrets Operator: credentials are created at run time, and one custom resource per credential is churn. The host reads the store directly. No Workload secretFrom either: the operator resolves those values before the workload deploys, so a rotation would need a redeploy, and the wasmcloud:secrets plugin hands them to the component, while here the host applies auth and integration code never holds the secret.
 
 ### Auth runs in the host
 

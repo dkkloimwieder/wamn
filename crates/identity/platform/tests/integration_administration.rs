@@ -52,6 +52,7 @@ async fn execute(
         operation,
         &request.to_string(),
         &mut AuthDrops::default(),
+        &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
         Some(store),
     )
     .await

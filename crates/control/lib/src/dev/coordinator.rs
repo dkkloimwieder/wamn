@@ -1799,15 +1799,22 @@ async fn resolve_local_bindings(
             let mut project =
                 crate::environment::analyse::connect(config.target_database_url()).await?;
             let tx = project.transaction().await?;
+            let mut drops = wamn_platform_identity::connection_changes::ConnectionDrops::default();
             crate::environment::bindings::write(
                 &tx,
                 &config.activation_identity().env_key(),
                 digest,
                 &document,
                 &resolved,
+                &mut drops,
             )
             .await?;
             tx.commit().await?;
+            wamn_platform_identity::connection_changes::ConnectionChanges::new(
+                async_nats::connect(config.scheduler_nats_url()).await?,
+            )
+            .publish(drops)
+            .await;
         }
         Ok::<_, anyhow::Error>(bindings)
     }

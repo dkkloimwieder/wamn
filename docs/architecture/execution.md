@@ -710,6 +710,11 @@ A rotation makes a new credential id, so the delete of the connection key is eno
 Every writer of these facts records the change in a [`ConnectionDrops`](../../crates/identity/platform/src/connection_changes.rs).
 Its caller deletes the keys of the list after the commit.
 A failed delete is logged, the commit stands, and the 60 seconds bound it.
+A connection write, copy, credential change, disable, enable or delete deletes the key of that connection.
+An integration disable or enable deletes the key of each of its connections, in every environment of the project.
+An `env apply` deletes the release key of each release whose connection rows changed.
+An `env delete` deletes every key of the environment.
+[`connection_drops_live`](../../crates/identity/platform/tests/connection_drops_live.rs) runs each administration writer once and checks the keys it deletes.
 
 ### Control sessions
 

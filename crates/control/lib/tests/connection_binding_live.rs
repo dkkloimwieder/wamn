@@ -12,6 +12,7 @@ use wamn_catalog::{
 };
 use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::environment::{bindings, document::EnvironmentDocument};
+use wamn_platform_identity::connection_changes::ConnectionDrops;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::plugins::wamn_blobstore::binding::{self, BindingError};
 use wamn_runtime::plugins::wamn_postgres::{
@@ -366,22 +367,25 @@ impl Authority {
         let _ = bindings::project_authority(self.database.url(), url, document)
             .await
             .unwrap();
-        let tx = project.transaction().await.unwrap();
-        bindings::write(
-            &tx,
-            ENV_KEY,
-            match &document.release {
-                wamn_control::environment::document::DeclaredRelease::Digest(digest) => {
-                    digest.as_str()
-                }
-                wamn_control::environment::document::DeclaredRelease::None => unreachable!(),
-            },
-            document,
-            &selected,
-        )
-        .await
-        .unwrap();
-        tx.commit().await.unwrap();
+        let digest = match &document.release {
+            wamn_control::environment::document::DeclaredRelease::Digest(digest) => digest.as_str(),
+            wamn_control::environment::document::DeclaredRelease::None => unreachable!(),
+        };
+        // A write records the memory key of its release only, and a repeated
+        // write that changes no row records nothing.
+        for repeat in [false, true] {
+            let mut drops = ConnectionDrops::default();
+            let tx = project.transaction().await.unwrap();
+            bindings::write(&tx, ENV_KEY, digest, document, &selected, &mut drops)
+                .await
+                .unwrap();
+            tx.commit().await.unwrap();
+            let mut expected = ConnectionDrops::default();
+            if !repeat && !drops.is_empty() {
+                expected.release(ENV_KEY, digest);
+            }
+            assert_eq!(drops, expected, "repeated write: {repeat}");
+        }
     }
     async fn reader(&self) -> ConnectionCredentials {
         let role = format!("reader_{}", self.database.name());

@@ -72,13 +72,14 @@ pub async fn define(
             "external_system.write",
             &json!({"project":request["project"],"name":name}).to_string(),
             &mut drops,
+            &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
         )
         .await?;
     }
     administration::execute(tx,org,"integration.write",&json!({
         "project":request["project"],"name":request["name"],"integration_type":request["integration_type"],
         "auth_type":request["auth_type"],"external_system":request["external_system"],
-    }).to_string(),&mut drops).await?;
+    }).to_string(),&mut drops, &mut wamn_platform_identity::connection_changes::ConnectionDrops::default()).await?;
     let mut connection = json!({"project":request["project"],"env":request["env"],"name":request["name"],"parameters":request["parameters"]});
     if request["auth_type"] != "none" {
         connection["credential"] = request
@@ -92,6 +93,7 @@ pub async fn define(
         "connection.write",
         &connection.to_string(),
         &mut drops,
+        &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
         Some(store),
     )
     .await?;
@@ -114,6 +116,7 @@ pub async fn set_reference(
         &serde_json::json!({"project":project,"env":environment,"name":name,"credential":"{}"})
             .to_string(),
         &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
         Some(&ReferencedCredentials(stored)),
     )
     .await?;
