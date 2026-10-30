@@ -245,8 +245,20 @@ async fn watch(
     // Facts kept before the watch ran can miss a delete.
     memory.clear();
     memory.set_bucket(Some(store));
-    while let Some(entry) = entries.next().await {
-        memory.apply(entry?);
+    // The client reconnects without ending the watch, so a lost connection
+    // breaks the watch here.
+    let mut connection = tokio::time::interval(Duration::from_secs(1));
+    loop {
+        tokio::select! {
+            entry = entries.next() => match entry {
+                Some(entry) => memory.apply(entry?),
+                None => anyhow::bail!("the watch ended"),
+            },
+            _ = connection.tick() => {
+                if client.connection_state() != async_nats::connection::State::Connected {
+                    anyhow::bail!("the connection to the bucket is lost");
+                }
+            }
+        }
     }
-    anyhow::bail!("the watch ended")
 }
