@@ -13,28 +13,14 @@ INSERT INTO platform.connection (id,integration_id,integration_type,status) VALU
     ('20000000-0000-4000-8000-000000000004','10000000-0000-4000-8000-000000000004','http','active');
 INSERT INTO catalog.releases (env_key,manifest_digest,canonical_bytes)
 VALUES ('test','sha256:' || encode(sha256('{}'::bytea),'hex'),'{}'::bytea);
-INSERT INTO catalog.connection_requirement (env_key,component_digest,package_id,name,integration_type,interfaces,mode)
-VALUES ('test','sha256:' || repeat('a',64),'fixture','erp','http',ARRAY['wamn:connection/http@0.1.0'],'read');
-INSERT INTO catalog.release_connection (env_key,manifest_digest,connection_id,integration_type,version) VALUES
-    ('test','sha256:' || encode(sha256('{}'::bytea),'hex'),'20000000-0000-4000-8000-000000000001','http',1),
-    ('test','sha256:' || encode(sha256('{}'::bytea),'hex'),'20000000-0000-4000-8000-000000000002','s3',1),
-    ('test','sha256:' || encode(sha256('{}'::bytea),'hex'),'20000000-0000-4000-8000-000000000004','http',1);
-DO $$ BEGIN
-    BEGIN
-        INSERT INTO catalog.connection_binding (env_key,manifest_digest,component_digest,package_id,name,connection_id,integration_type)
-        VALUES ('test','sha256:' || encode(sha256('{}'::bytea),'hex'),'sha256:' || repeat('a',64),'fixture','erp','20000000-0000-4000-8000-000000000002','s3');
-        RAISE EXCEPTION 'binding type mismatch accepted';
-    EXCEPTION WHEN foreign_key_violation THEN NULL;
-    END;
-    BEGIN
-        INSERT INTO catalog.connection_binding (env_key,manifest_digest,component_digest,package_id,name,connection_id,integration_type)
-        VALUES ('test','sha256:' || encode(sha256('{}'::bytea),'hex'),'sha256:' || repeat('a',64),'fixture','erp','20000000-0000-4000-8000-000000000002','http');
-        RAISE EXCEPTION 'release connection type mismatch accepted';
-    EXCEPTION WHEN foreign_key_violation THEN NULL;
-    END;
-END $$;
-INSERT INTO catalog.connection_binding (env_key,manifest_digest,component_digest,package_id,name,connection_id,integration_type)
-VALUES ('test','sha256:' || encode(sha256('{}'::bytea),'hex'),'sha256:' || repeat('a',64),'fixture','erp','20000000-0000-4000-8000-000000000001','http');
+INSERT INTO catalog.connection_requirement (env_key,component_digest,package_id,name,interfaces,mode)
+VALUES ('test','sha256:' || repeat('a',64),'fixture','erp',ARRAY['wamn:connection/http@0.1.0'],'read');
+INSERT INTO catalog.release_connection (env_key,manifest_digest,connection_id,version) VALUES
+    ('test','sha256:' || encode(sha256('{}'::bytea),'hex'),'20000000-0000-4000-8000-000000000001',1),
+    ('test','sha256:' || encode(sha256('{}'::bytea),'hex'),'20000000-0000-4000-8000-000000000002',1),
+    ('test','sha256:' || encode(sha256('{}'::bytea),'hex'),'20000000-0000-4000-8000-000000000004',1);
+INSERT INTO catalog.connection_binding (env_key,manifest_digest,component_digest,package_id,name,connection_id)
+VALUES ('test','sha256:' || encode(sha256('{}'::bytea),'hex'),'sha256:' || repeat('a',64),'fixture','erp','20000000-0000-4000-8000-000000000001');
 DO $$
 DECLARE refused_connection uuid;
 BEGIN
@@ -57,7 +43,7 @@ COMMIT;
 BEGIN;
 SELECT set_config('app.user_id','00000000-0000-4000-8000-000000000002',true),
        set_config('app.operation','admin:update-connection-schema-test',true);
-UPDATE catalog.release_connection SET version=2 WHERE integration_type='http';
+UPDATE catalog.release_connection SET version=2 WHERE connection_id IN ('20000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000004');
 UPDATE catalog.connection_binding SET name='erp' WHERE name='erp';
 DO $$ BEGIN
     ASSERT (SELECT count(*)=1 FROM catalog.connection_binding_history), 'binding no-op logs no history';

@@ -20,20 +20,10 @@ pub const INBOUND_SECRET: &str = "fixture-inbound-key";
 pub const OUTBOUND_HANDLE: &str = "signed-upstream";
 pub const OUTBOUND_SECRET: &str = "fixture-outbound-key";
 pub const SCHEDULE: &str = "http-minute";
-pub const OAUTH2_HANDLE: &str = "oauth2-upstream";
-pub const OAUTH1_HANDLE: &str = "oauth1-upstream";
+pub const API_KEY_HANDLE: &str = "api-key-upstream";
+pub const AWS_HANDLE: &str = "aws-upstream";
 
 pub async fn deploy(run: &mut Run, repository: &Path, system_url: &str) -> anyhow::Result<()> {
-    let consumer_key = std::env::var("WAMN_HTTP_FIXTURE_CONSUMER_KEY")?;
-    let consumer_secret = std::env::var("WAMN_HTTP_FIXTURE_CONSUMER_SECRET")?;
-    let token = std::env::var("WAMN_HTTP_FIXTURE_TOKEN")?;
-    let token_secret = std::env::var("WAMN_HTTP_FIXTURE_TOKEN_SECRET")?;
-    let realm = std::env::var("WAMN_HTTP_FIXTURE_REALM")?;
-    let oauth1 = json!({"oauth1": {
-        "consumer-key": consumer_key, "consumer-secret": consumer_secret,
-        "token": token, "token-secret": token_secret, "realm": realm
-    }})
-    .to_string();
     let image = format!("{}-http-fixture:debug", run.cluster);
     prepare_image(run, repository).await?;
     let file = run.work.join("http-fixture.json");
@@ -44,25 +34,8 @@ pub async fn deploy(run: &mut Run, repository: &Path, system_url: &str) -> anyho
                 {
                     "apiVersion": "v1", "kind": "Secret",
                     "metadata": {"name": "import-source", "namespace": NAMESPACE},
-                    "stringData": {"credentials.json": json!({"orgs": {ORG: {"netsuite": oauth1}}, "projects": {
-                        PROJECT: {
-                            "upstream": json!({
-                                "headers": {"authorization": "Bearer fixture-token"}
-                            }).to_string(),
-                            OAUTH2_HANDLE: json!({"oauth2": {
-                                "token-url": format!("{ORIGIN}/oauth/token"),
-                                "client-id": "fixture-client", "client-secret": "fixture-client-secret"
-                            }}).to_string(),
-                            OAUTH1_HANDLE: oauth1,
-                            INBOUND_HANDLE: json!({"hmac": {
-                                "algorithm": "sha256", "secret": INBOUND_SECRET
-                            }}).to_string(),
-                            OUTBOUND_HANDLE: json!({"hmac": {
-                                "algorithm": "sha256", "secret": OUTBOUND_SECRET,
-                                "header": "x-wamn-signature"
-                            }}).to_string()
-                        }
-                    }}).to_string()}
+                    "stringData": {"upstream":json!({"username":"fixture","password":"fixture-password"}).to_string(),"rest-fixture":json!({"username":"fixture","password":"fixture-password"}).to_string(),"netsuite":json!({"username":"fixture","password":"fixture-password"}).to_string(),OUTBOUND_HANDLE:json!({"key":OUTBOUND_SECRET}).to_string(),API_KEY_HANDLE:json!({"key":"fixture-api-key"}).to_string(),AWS_HANDLE:json!({"access_key_id":"fixture-access","secret_access_key":"fixture-private"}).to_string(),INBOUND_HANDLE:json!({"hmac":{"algorithm":"sha256","secret":INBOUND_SECRET}}).to_string()}
+
                 },
                 {
                     "apiVersion": "apps/v1", "kind": "Deployment",
@@ -72,17 +45,7 @@ pub async fn deploy(run: &mut Run, repository: &Path, system_url: &str) -> anyho
                             "spec": {"containers": [{
                                 "name": SERVICE, "image": image, "imagePullPolicy": "Never",
                                 "ports": [{"containerPort": 8080}],
-                                "env": [{"name": "WAMN_HTTP_FIXTURE_HMAC_SECRET",
-                                    "value": OUTBOUND_SECRET},
-                                    {"name":"WAMN_HTTP_FIXTURE_CLIENT_ID", "value":"fixture-client"},
-                                    {"name":"WAMN_HTTP_FIXTURE_CLIENT_SECRET", "value":"fixture-client-secret"},
-                                    {"name":"WAMN_HTTP_FIXTURE_CONSUMER_KEY", "value":consumer_key},
-                                    {"name":"WAMN_HTTP_FIXTURE_CONSUMER_SECRET", "value":consumer_secret},
-                                    {"name":"WAMN_HTTP_FIXTURE_TOKEN", "value":token},
-                                    {"name":"WAMN_HTTP_FIXTURE_TOKEN_SECRET", "value":token_secret},
-                                    {"name":"WAMN_HTTP_FIXTURE_ACCESS_TOKEN", "value":"fixture-issued-token"},
-                                    {"name":"WAMN_HTTP_FIXTURE_LIMIT", "value":"2"},
-                                    {"name":"WAMN_HTTP_FIXTURE_REALM", "value":realm}],
+                                "env": [{"name":"WAMN_HTTP_FIXTURE_LIMIT","value":"2"}],
                                 "readinessProbe": {"tcpSocket": {"port": 8080}}
                             }]}}}
                 },
@@ -97,94 +60,28 @@ pub async fn deploy(run: &mut Run, repository: &Path, system_url: &str) -> anyho
     )?;
     let mut manifest: Value = serde_json::from_slice(&std::fs::read(&file)?)?;
     let secret = manifest["items"].as_array_mut().unwrap().remove(0);
-    let source: Value =
-        serde_json::from_str(secret["stringData"]["credentials.json"].as_str().unwrap())?;
-    let mut credentials = source["orgs"][ORG]
+    let credentials = secret["stringData"]
         .as_object()
-        .context("org credential map")?
+        .context("fixture credential values")?
         .clone();
-    for (name, material) in source["projects"][PROJECT]
-        .as_object()
-        .context("project credential map")?
-    {
-        credentials.insert(name.clone(), material.clone());
-    }
-    credentials.insert("rest-fixture".into(), credentials["upstream"].clone());
-    let (mut system, connection) =
-        tokio_postgres::connect(system_url, tokio_postgres::NoTls).await?;
-    let driver = tokio::spawn(connection);
-    // C3.5: a connection is enabled only for a project that exists.
-    system.batch_execute("SET ROLE wamn_system").await?;
-    system
-        .execute(
-            "SELECT set_config('app.user_id',$1,false)",
-            &[&wamn_control_provision::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string()],
-        )
-        .await?;
-    system
-        .execute(
-            wamn_control_registry::sql::upsert_project_sql(),
-            &[&ORG, &PROJECT],
-        )
-        .await?;
-    system.batch_execute("RESET ROLE").await?;
-    let tx = system.transaction().await?;
-    tx.batch_execute("SET LOCAL ROLE wamn_control").await?;
-    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_control_provision::PlatformComponent::Provisioning,
-    ))
-    .await?;
-    for name in credentials.keys() {
-        let origin = if name == OAUTH2_HANDLE {
-            format!("{ORIGIN}/oauth/")
-        } else if name == "netsuite" || name == "rest-fixture" {
-            ORIGIN.to_owned()
-        } else {
-            format!("{ORIGIN}/")
-        };
-        wamn_platform_identity::connections::write_connection(
-            &tx,
-            ORG,
-            &wamn_platform_identity::connections::ConnectionWrite {
-                integration: "http".into(),
-                external_system: (name == "rest-fixture").then(|| "rest-fixture".into()),
-                name: name.clone(),
-                transport: "http".into(),
-                exchange: "request".into(),
-                status: "active".into(),
-                parameters: json!({"primary-authority":origin,"tls-verification":"disabled"}),
-            },
-            &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
-        )
-        .await?;
-        wamn_platform_identity::connections::enable_connection(&tx, ORG, PROJECT, name).await?;
-    }
+    let _ = system_url;
+    let mut references = serde_json::Map::new();
     let secret_name = wamn_credential_store::kubernetes::secret_name(ORG, PROJECT, "http");
     let mut data = serde_json::Map::new();
     for (name, value) in &credentials {
         let version = uuid::Uuid::new_v4().to_string();
         let value = value.as_str().context("credential value")?;
         data.insert(version.clone(), value.into());
-        wamn_test_infrastructure::credentials::set_reference(
-            &tx,
-            ORG,
-            PROJECT,
-            "http",
-            name,
-            &wamn_credential_store::StoreVersion {
-                store: "k8s",
-                reference: secret_name.clone(),
-                version,
-            },
-        )
-        .await?;
+        references.insert(
+            name.clone(),
+            json!({"store":"k8s","reference":secret_name,"version":version}),
+        );
     }
+    std::fs::write(
+        run.work.join("http-credential-reference.json"),
+        serde_json::to_vec(&references)?,
+    )?;
     manifest["items"].as_array_mut().unwrap().push(json!({"apiVersion":"v1","kind":"Secret","metadata":{"name":secret_name,"namespace":NAMESPACE,"labels":{"wamn.org":ORG,"wamn.project":PROJECT,"wamn.env":"http"}},"stringData":data}));
-    tx.commit().await?;
-    drop(system);
-    driver.await??;
     std::fs::write(&file, serde_json::to_vec(&manifest)?)?;
     run.run("kubectl", &["apply", "-f", &file.to_string_lossy()])
         .await?;
@@ -204,6 +101,62 @@ pub async fn deploy(run: &mut Run, repository: &Path, system_url: &str) -> anyho
 }
 
 /// Admit the actual debug guest bytes and upload the production artifact layout.
+pub async fn configure(run: &Run, system_url: &str, environment: &str) -> anyhow::Result<()> {
+    let references: serde_json::Map<String, Value> = serde_json::from_slice(&std::fs::read(
+        run.work.join("http-credential-reference.json"),
+    )?)?;
+    let (mut system, driver) = tokio_postgres::connect(system_url, tokio_postgres::NoTls).await?;
+    let driver = tokio::spawn(driver);
+    system.batch_execute("SET ROLE wamn_system; INSERT INTO registry.integration_type_auth VALUES ('http','custom') ON CONFLICT DO NOTHING").await?;
+    let tx = system.transaction().await?;
+    tx.batch_execute("SET LOCAL ROLE wamn_control").await?;
+    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+        wamn_control_provision::PlatformComponent::Provisioning,
+    ))
+    .await?;
+    for (name, reference) in references {
+        let stored = wamn_credential_store::StoreVersion {
+            store: "k8s",
+            reference: reference["reference"]
+                .as_str()
+                .context("fixture reference")?
+                .into(),
+            version: reference["version"]
+                .as_str()
+                .context("fixture version")?
+                .into(),
+        };
+        let (auth_type, auth) = if name == API_KEY_HANDLE {
+            ("api_key", json!({"in":"query","name":"key"}))
+        } else if name == AWS_HANDLE {
+            (
+                "aws_sigv4",
+                json!({"region":"us-east-1","service":"execute-api"}),
+            )
+        } else if name == OUTBOUND_HANDLE {
+            ("api_key", json!({"in":"header","name":"x-wamn-key"}))
+        } else if name == INBOUND_HANDLE {
+            ("custom", json!({}))
+        } else {
+            ("http_basic", json!({}))
+        };
+        let values: Value =
+            serde_json::from_slice(&std::fs::read(run.work.join("http-fixture.json"))?)?;
+        let material = values["items"]
+            .as_array()
+            .context("fixture resources")?
+            .iter()
+            .find_map(|item| item["stringData"].get(&stored.version))
+            .context("fixture credential reference")?
+            .as_str()
+            .context("fixture material")?;
+        wamn_test_infrastructure::credentials::define(&tx,ORG,&json!({"project":PROJECT,"env":environment,"name":name,"integration_type":"http","auth_type":auth_type,"external_system":name,"parameters":{"primary-authority":ORIGIN,"tls-verification":"disabled","auth":auth},"credential":material}),&wamn_test_infrastructure::credentials::ReferencedCredentials(&stored)).await?;
+    }
+    tx.commit().await?;
+    driver.abort();
+    Ok(())
+}
+
 pub async fn component(
     run: &Run,
     repository: &Path,
@@ -325,7 +278,7 @@ pub fn admit_guest(
 pub fn declaration(template: &str) -> anyhow::Result<Value> {
     let mut declaration: Value = serde_json::from_str(template)?;
     if declaration["component"] == "http-request" {
-        for handle in [OUTBOUND_HANDLE, OAUTH2_HANDLE, OAUTH1_HANDLE] {
+        for handle in [OUTBOUND_HANDLE, API_KEY_HANDLE, AWS_HANDLE] {
             declaration["connections"]
                 .as_array_mut()
                 .expect("HTTP requirements")
@@ -358,14 +311,10 @@ pub fn signed_wiring() -> anyhow::Result<WiringDocument> {
     Ok(serde_json::from_value(graph)?)
 }
 
-pub fn oauth_wirings() -> anyhow::Result<Vec<WiringDocument>> {
+pub fn authentication_wirings() -> anyhow::Result<Vec<WiringDocument>> {
     [
-        ("http-oauth2", OAUTH2_HANDLE, "/items"),
-        (
-            "http-oauth1",
-            OAUTH1_HANDLE,
-            "/oauth1?z=a%2Bb&x=hello%20world&x=two",
-        ),
+        ("http-api-key", API_KEY_HANDLE, "/api-key"),
+        ("http-aws", AWS_HANDLE, "/aws?z=a%2Bb&x=hello%20world&x=two"),
     ]
     .into_iter()
     .map(|(id, handle, path)| {
@@ -386,7 +335,7 @@ pub fn paged_wiring() -> anyhow::Result<WiringDocument> {
     graph["nodes"]["send"]["params"] = json!({
         "requirement": "upstream", "path-and-query": "/pages?limit=2",
         "page": {"style": "offset", "limit": "limit", "offset": "offset"},
-        "items": "/items"
+        "items": "/api-key"
     });
     Ok(serde_json::from_value(graph)?)
 }
@@ -400,13 +349,13 @@ pub fn scheduled_wiring() -> anyhow::Result<WiringDocument> {
 
 pub fn release(
     h: &[u8],
-    version: &str,
+    _version: &str,
     components: Vec<ComponentDescriptor>,
 ) -> anyhow::Result<Vec<u8>> {
     let scope = ComponentPackageScope {
         env_key: wamn_control_registry::project_env_key(ORG, PROJECT, "http"),
-        package_id: PACKAGE.to_owned(),
-        package_version: version.to_owned(),
+        package_id: "http_fixture".to_owned(),
+        package_version: "1.0.0".to_owned(),
     };
     let facts: Vec<_> = components
         .iter()
@@ -414,6 +363,9 @@ pub fn release(
         .map(|descriptor| descriptor.into_admitted(scope.clone()).component)
         .collect();
     let (mut manifest, _) = ServingManifest::from_canonical_bytes(h)?;
+    manifest
+        .components
+        .retain(|component| component.package_id != "label_fixture");
     manifest
         .release
         .packages
@@ -472,7 +424,7 @@ pub fn assert_observed_request(status: u16, body: &str, log: &str) -> anyhow::Re
         .map(|(_, value)| value.trim())
         .collect();
     ensure!(
-        authorization == ["Bearer fixture-token"],
+        authorization == ["Basic Zml4dHVyZTpmaXh0dXJlLXBhc3N3b3Jk"],
         "wrong credential reached the wire"
     );
     ensure!(
@@ -506,41 +458,30 @@ fn route_requests(log: &str) -> anyhow::Result<Vec<Value>> {
 }
 
 pub fn bindings_match(rows: &Value, document: &super::EnvironmentDocument, digest: &str) -> bool {
-    ["instances", "generations", "bindings"].iter().all(|name| {
-        rows[name]
+    rows["versions"]
+        .as_array()
+        .is_some_and(|rows| rows.len() == 4 && rows.iter().all(|row| row["version"] == 1))
+        && rows["bindings"]
             .as_array()
-            .is_some_and(|rows| rows.len() == if *name == "bindings" { 5 } else { 4 })
-    }) && ["upstream", OUTBOUND_HANDLE, OAUTH2_HANDLE, OAUTH1_HANDLE]
-        .iter()
-        .all(|handle| {
-            let find = |table: &str| {
-                rows[table]
+            .is_some_and(|rows| rows.len() == 5)
+        && ["upstream", OUTBOUND_HANDLE, API_KEY_HANDLE, AWS_HANDLE]
+            .iter()
+            .all(|handle| {
+                let bindings: Vec<_> = rows["bindings"]
                     .as_array()
-                    .and_then(|rows| rows.iter().find(|row| row["instance_id"] == format!("{PACKAGE}/{handle}")))
-            };
-            let (Some(instance), Some(generation)) = (find("instances"), find("generations"))
-            else {
-                return false;
-            };
-            let bindings: Vec<_> = rows["bindings"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter(|row| row["instance_id"] == format!("{PACKAGE}/{handle}"))
-                .collect();
-            instance["requirement_type"] == "http"
-                && instance["active_generation"] == 1
-                && generation["definition_json"]
-                    == json!({"primary-authority":format!("{}/{}", ORIGIN, if *handle == OAUTH2_HANDLE {"oauth/"} else {""}),"tls-verification":"disabled"})
-                && generation["credential_set_handle"].as_str().is_some_and(|value| value.starts_with(&format!("org:{ORG}:{}@", document.applications[PACKAGE].connections[*handle])))
-                && bindings.len() == if *handle == "upstream" { 2 } else { 1 }
-                && bindings.iter().all(|binding| {
-                    binding["manifest_digest"] == digest
-                        && binding["store_alias"] == *handle
-                        && binding["binding_status"] == "active"
-                        && binding["validation_status"] == "valid"
-                })
-        })
+                    .unwrap()
+                    .iter()
+                    .filter(|row| row["name"] == *handle)
+                    .collect();
+                bindings.len() == if *handle == "upstream" { 2 } else { 1 }
+                    && bindings.iter().all(|row| {
+                        row["manifest_digest"] == digest
+                            && row["integration_type"] == "http"
+                            && row["mode"] == "write"
+                            && row["integration_name"]
+                                == document.applications[PACKAGE].connections[*handle]
+                    })
+            })
 }
 
 pub async fn request_log(run: &Run) -> anyhow::Result<String> {
@@ -579,7 +520,7 @@ async fn assert_triggers_inner(
 ) -> anyhow::Result<()> {
     for document in [wiring()?, signed_wiring()?, paged_wiring()?]
         .into_iter()
-        .chain(oauth_wirings()?)
+        .chain(authentication_wirings()?)
     {
         super::integration::enable_trigger(
             environment,
@@ -625,25 +566,25 @@ async fn assert_triggers_inner(
             && serde_json::from_str::<Value>(&body)?
                 == serde_json::from_str::<Value>(&unsigned_body)?
             && signed.len() == 1
-            && signed[0]["signature_verified"] == true
+            && signed[0]["key_verified"] == true
             && signed[0]["body"] == json!(br#"{"id":1}"#.as_slice());
         run.pass(
-            "HTTP guest sends once with a verified host signature",
+            "HTTP guest sends once with a verified API key",
             "POST /http/signed-send; GET /recorded",
             json!({"status": status, "body": body, "requests": signed}),
             passed,
         );
         ensure!(
             passed,
-            "the fixture did not verify one signed outbound request"
+            "the fixture did not verify one authenticated outbound request"
         );
 
         Ok(())
     })
     .await;
     run.collect("4 HTTP signed request", result);
-    let result = assert_oauth(run, database, environment).await;
-    run.collect("4 HTTP OAuth", result);
+    let result = assert_authentication(run, database, environment).await;
+    run.collect("4 HTTP authentication", result);
     let result = assert_paged(run, database, environment).await;
     run.collect("4 HTTP paging", result);
 
@@ -801,7 +742,7 @@ async fn scheduled_runs_inner(
     }
 }
 
-async fn assert_oauth(
+async fn assert_authentication(
     run: &mut Run,
     database: &tokio_postgres::Client,
     environment: &super::integration::WorkflowEnvironment<'_>,
@@ -809,73 +750,37 @@ async fn assert_oauth(
     let work = run.work.clone();
     wamn_gate_harness::run_check::check(
         &work,
-        "assert_oauth",
+        "assert_authentication",
         database,
-        assert_oauth_inner(run, database, environment),
+        assert_authentication_inner(run, database, environment),
     )
     .await
 }
 
-async fn assert_oauth_inner(
+async fn assert_authentication_inner(
     run: &mut Run,
     database: &tokio_postgres::Client,
     environment: &super::integration::WorkflowEnvironment<'_>,
 ) -> anyhow::Result<()> {
-    for (index, route) in ["oauth2", "oauth2", "oauth1", "oauth1"]
-        .into_iter()
-        .enumerate()
-    {
+    for (route, field) in [("api-key", "key_verified"), ("aws", "aws_verified")] {
         let (status, body) = run_manual(
             &run.work,
             database,
             environment,
             &format!("http-{route}"),
-            &format!("{route}-{index}"),
+            route,
         )
         .await?;
         ensure!(
             status == 200 && serde_json::from_str::<Value>(&body)?["status"] == 200,
-            "{route} refused: {status}: {body}"
+            "HTTP authentication refused: {route}"
+        );
+        let records = request_records(&request_log(run).await?)?;
+        ensure!(
+            records.iter().any(|record| record[field] == true),
+            "HTTP authentication was not verified: {route}"
         );
     }
-    let records = request_records(&request_log(run).await?)?;
-    let matching = |prefix: &str| {
-        records
-            .iter()
-            .filter(|record| {
-                record["head"]
-                    .as_str()
-                    .is_some_and(|head| head.starts_with(prefix))
-            })
-            .collect::<Vec<_>>()
-    };
-    let tokens = matching("POST /oauth/token ");
-    let bearer = matching("GET /oauth/items ");
-    let oauth1 = matching("GET /oauth1?");
-    let passed = tokens.len() == 1
-        && tokens[0]["token_verified"] == true
-        && bearer.len() == 2
-        && bearer
-            .iter()
-            .all(|record| record["bearer_verified"] == true && record["token_fetches"] == 1)
-        && oauth1.len() == 2
-        && oauth1
-            .iter()
-            .all(|record| record["oauth1_verified"] == true)
-        && oauth1[0]["oauth_nonce"]
-            .as_str()
-            .is_some_and(|nonce| !nonce.is_empty())
-        && oauth1[0]["oauth_nonce"] != oauth1[1]["oauth_nonce"];
-    run.pass(
-        "OAuth2 reuses its issued bearer and OAuth1 signatures verify",
-        "POST /http/oauth2 twice; POST /http/oauth1 twice; GET /recorded",
-        json!({"tokens":tokens,"bearer":bearer,"oauth1":oauth1}),
-        passed,
-    );
-    ensure!(
-        passed,
-        "OAuth fixture evidence differs from the credential contract"
-    );
     Ok(())
 }
 

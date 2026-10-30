@@ -1,12 +1,9 @@
 {
-  "integration": "http",
-  "external_system": "rest-fixture",
+  "project": "wms",
+  "env": "dev",
   "name": "rest-fixture",
-  "transport": "http",
-  "exchange": "request",
   "parameters": {
     "primary-authority": "http://http-fixture:8080",
     "tls-verification": "disabled"
-  },
-  "status": "active"
+  }
 }

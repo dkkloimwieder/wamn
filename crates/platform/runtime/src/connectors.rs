@@ -91,17 +91,58 @@ impl Connectors {
     /// This method logs new pin errors and database failures for the host poller.
     pub async fn refresh(&self, source: &ConnectorSource) -> anyhow::Result<()> {
         let mut pins = self.pins.lock().await;
-        let rows = source.database.query(
-            "SELECT application, alias, integration, connector, connection_name, generation, parameters FROM registry.lookup_connector_bindings($1,$2,$3)",
-            &[&source.org, &source.project, &source.environment],
-        ).await.inspect_err(|error| {
-            tracing::warn!(%error, "read applied connector pins failed");
-        }).context("read applied connector pins")?;
-        let mut enabled: HashMap<String, HashSet<String>> = HashMap::new();
-        for row in &rows {
-            let application: String = row.get(0);
+        let rows = source
+            .postgres
+            .released_connection_bindings(
+                &source.project,
+                &source.env_key,
+                &source.manifest_digest,
+                wamn_run_state::AuthorityClass::ExecutorPlatform,
+            )
+            .await?;
+        let mut selected = Vec::new();
+        for row in rows {
+            let package: String = row.get(0);
+            let application = wamn_catalog::application_for_package(&source.applications, &package)
+                .context("integration binding has no application")?
+                .to_owned();
             let alias: String = row.get(1);
-            enabled.entry(application).or_default().insert(alias);
+            let connection_id: String = row.get(2);
+            let version: i32 = row.get(3);
+            let name: String = row.get(4);
+            let configuration = source
+                .credentials
+                .version(
+                    &source.project,
+                    &source.environment,
+                    &connection_id,
+                    version,
+                )
+                .await?;
+            if configuration.runtime_type != "wasm" {
+                continue;
+            }
+            let pin = Pin {
+                digest: configuration
+                    .digest
+                    .context("integration version has no digest")?,
+                connection: name,
+                generation: configuration.generation,
+            };
+            selected.push((
+                application,
+                alias,
+                configuration.integration_type,
+                pin,
+                configuration.parameters,
+            ));
+        }
+        let mut enabled: HashMap<String, HashSet<String>> = HashMap::new();
+        for (application, alias, _, _, _) in &selected {
+            enabled
+                .entry(application.clone())
+                .or_default()
+                .insert(alias.clone());
         }
         for (application, reader) in &self.readers {
             reader
@@ -110,16 +151,7 @@ impl Connectors {
         }
         pins.retain(|(app, alias), _| enabled.get(app).is_some_and(|names| names.contains(alias)));
         let mut failure = None;
-        for row in rows {
-            let application: String = row.get(0);
-            let alias: String = row.get(1);
-            let integration: String = row.get(2);
-            let pin = Pin {
-                digest: row.get(3),
-                connection: row.get(4),
-                generation: row.get(5),
-            };
-            let parameters: serde_json::Value = row.get(6);
+        for (application, alias, integration, pin, parameters) in selected {
             let key = (application.clone(), alias.clone());
             if pins
                 .get(&key)
@@ -198,7 +230,10 @@ impl Connectors {
 
 /// Host-owned inputs. Debug output omits credentials and connection material.
 pub struct ConnectorSource {
-    pub database: Arc<tokio_postgres::Client>,
+    pub postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
+    pub env_key: String,
+    pub manifest_digest: String,
+    pub applications: wamn_catalog::EnvironmentApplications,
     pub credentials: Arc<ConnectionCredentials>,
     pub registry: PackageRegistry,
     pub registry_credentials: RegistryCredentialSource,
@@ -270,6 +305,8 @@ mod tests {
 /// Reader for the native HTTP entry. Operation workloads bind their own application.
 #[derive(Debug)]
 pub struct ConnectorIngress {
+    pub postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
+    pub project: String,
     pub connectors: Arc<Connectors>,
     pub release: Arc<wamn_engine::release_manifest::LoadedRelease>,
 }
@@ -304,6 +341,26 @@ impl wash_runtime::plugin::HostPlugin for ConnectorIngress {
         let application =
             wamn_catalog::application_for_package(&self.release.scope().applications, package)
                 .context("connector entry application is ambiguous")?;
-        self.connectors.reader(application)?.add_to_linker(item)
+        let mut names = HashSet::new();
+        for component in manifest.components.iter().filter(|component| {
+            wamn_catalog::application_for_package(
+                &self.release.scope().applications,
+                &component.package_id,
+            ) == Some(application)
+        }) {
+            names.extend(
+                self.postgres
+                    .declared_connection_names(
+                        &self.project,
+                        &self.release.scope().env_key,
+                        &component.package_id,
+                        &component.descriptor.component_digest,
+                    )
+                    .await?,
+            );
+        }
+        self.connectors
+            .reader(application)?
+            .add_to_linker(item, names)
     }
 }

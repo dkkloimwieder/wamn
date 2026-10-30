@@ -1,6 +1,4 @@
 {
-  "integration": "http",
-  "name": "rest-fixture",
-  "parameters": {},
-  "status": "active"
+  "project": "wms",
+  "name": "rest-fixture"
 }

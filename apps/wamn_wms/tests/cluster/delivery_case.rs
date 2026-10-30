@@ -206,6 +206,7 @@ async fn run(
             release_artifact_base: format!("{}/wamn/releases", kept.registry),
             registry_auth_file: document.registry_auth_file.clone(),
             oci_ca_paths: vec![kept.ca.clone()],
+            component_artifact_base: Some(format!("{}/wamn/components", kept.registry)),
             package_artifact_base: Some(format!("{}/wamn/packages", kept.registry)),
             database_namespace: DATABASE_NAMESPACE.to_owned(),
             database_host: Some(database.host.clone()),

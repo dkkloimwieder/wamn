@@ -180,7 +180,8 @@ fn a_component_with_no_operation_refuses_over_base_sql() {
         "package": "wamn_integration", "version": "0.1.0",
         "digest": format!("sha256:{}", "a".repeat(64)), "operations": ["setting.read"]
     }});
-    adapter["connections"] = json!({"reporting": {"integration": "http", "mode": "read"}});
+    adapter["connections"] =
+        json!({"reporting": {"interfaces":["wamn:connection/http@0.1.0"], "mode": "read"}});
     adapter["components"]["reporting"] = json!({"connections": ["postgres", "reporting"]});
     assert_eq!(
         validate_operation_vocabulary(&parsed_manifest(&adapter))
@@ -246,7 +247,8 @@ fn component_grouping_defaults_one_group_and_refuses_invalid_splits() {
     );
 
     let mut distinct = manifest();
-    distinct["connections"] = json!({"reporting": {"integration": "http", "mode": "read"}});
+    distinct["connections"] =
+        json!({"reporting": {"interfaces":["wamn:connection/http@0.1.0"], "mode": "read"}});
     distinct["components"]["reporting"] = json!({"connections": ["postgres", "reporting"]});
     distinct["models"]["gadget"]["operations"]["query"]["component"] = json!("reporting");
     let error = validate_operation_vocabulary(&parsed_manifest(&distinct))

@@ -405,21 +405,44 @@ impl ConnectorReader {
     }
 
     /// Link this application's reader into its existing workload.
-    pub fn add_to_linker(self: &Arc<Self>, item: &mut WorkloadItem<'_>) -> anyhow::Result<()> {
+    pub fn add_to_linker(
+        self: &Arc<Self>,
+        item: &mut WorkloadItem<'_>,
+        names: HashSet<String>,
+    ) -> anyhow::Result<()> {
         let reader = Arc::clone(self);
+        let names = Arc::new(names);
         item.linker().instance(READER)?.func_wrap_async(
             "get",
             move |_, (connection, request): (String, Vec<u8>)| {
                 let reader = Arc::clone(&reader);
+                let names = Arc::clone(&names);
                 Box::new(async move {
-                    let result = reader.get(connection, request).await.map_err(|error| {
-                        wash_runtime::wasmtime::Error::msg(format!("{error:#}"))
-                    })?;
+                    let result = reader
+                        .get_declared(&names, connection, request)
+                        .await
+                        .map_err(|error| {
+                            wash_runtime::wasmtime::Error::msg(format!("{error:#}"))
+                        })?;
                     Ok((result,))
                 })
             },
         )?;
         Ok(())
+    }
+
+    /// Refuse a name outside the calling component's declarations.
+    pub async fn get_declared(
+        &self,
+        names: &HashSet<String>,
+        connection: String,
+        request: Vec<u8>,
+    ) -> anyhow::Result<Result<Vec<u8>, ConnectorError>> {
+        anyhow::ensure!(
+            names.contains(&connection),
+            "connection undeclared: {connection}"
+        );
+        self.get(connection, request).await
     }
 
     /// Forward bytes to the named binding, or return unbound.
@@ -440,6 +463,7 @@ impl ConnectorReader {
     }
 }
 
+#[cfg(any(test, feature = "test-util"))]
 #[async_trait::async_trait]
 impl HostPlugin for ConnectorReader {
     fn id(&self) -> &'static str {
@@ -477,3 +501,28 @@ impl HostPlugin for ConnectorReader {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod declaration_tests {
+    use super::*;
+    #[tokio::test]
+    async fn an_undeclared_name_refuses_before_dispatch() {
+        let reader = ConnectorReader::new(HashMap::new());
+        let names = HashSet::from(["meter".to_owned()]);
+        assert!(
+            reader
+                .get_declared(&names, "other".into(), Vec::new())
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("connection undeclared")
+        );
+        assert!(matches!(
+            reader
+                .get_declared(&names, "meter".into(), Vec::new())
+                .await
+                .unwrap(),
+            Err(ConnectorError::Unbound)
+        ));
+    }
+}

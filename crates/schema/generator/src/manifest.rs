@@ -53,7 +53,7 @@ pub struct PackageManifest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectionDeclaration {
-    pub integration: String,
+    pub interfaces: Vec<String>,
     pub mode: ConnectionMode,
 }
 
@@ -684,7 +684,19 @@ impl PackageManifest {
         }
         for (name, connection) in &manifest.connections {
             validate_identifier(&name.replace('-', "_"), "connection")?;
-            validate_identifier(&connection.integration, "integration")?;
+            if connection.interfaces.is_empty()
+                || connection.interfaces.iter().any(|interface| {
+                    !matches!(
+                        wit_parser::parse_use_path(interface),
+                        Ok(wit_parser::ParsedUsePath::Package(_, _))
+                    )
+                })
+            {
+                return Err(GenerateError::new(
+                    GenerateErrorType::InvalidConnection,
+                    "connection interfaces must contain WIT interface identities",
+                ));
+            }
             if name == "postgres" {
                 return Err(GenerateError::new(
                     GenerateErrorType::InvalidConnection,

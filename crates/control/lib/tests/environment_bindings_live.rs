@@ -1,755 +1,411 @@
-//! Environment declarations resolve only through enabled org connections.
+//! Apply refusals against project integrations and environment connections.
+
 use serde_json::json;
 use wamn_control::environment::{bindings, document::EnvironmentDocument};
-use wamn_platform_identity::{
-    auth_changes::AuthDrops,
-    connections::{self, ConnectionWrite},
-};
+use wamn_platform_identity::{auth_changes::AuthDrops, connections::administration};
 use wamn_schema_generator::PackageManifest;
 
-async fn connect(url: &str) -> Result<tokio_postgres::Client, tokio_postgres::Error> {
-    let (client, driver) = tokio_postgres::connect(url, tokio_postgres::NoTls).await?;
-    tokio::spawn(driver);
-    Ok(client)
-}
-
-fn document() -> EnvironmentDocument {
-    EnvironmentDocument::from_json(
-        &serde_json::to_vec(&json!({
-            "org":"acme", "project":"one", "env":"dev", "target":"cloud",
-            "release":"none", "route_host":"one.example", "policy":"dev",
-            "applications":{"app":{"packages":["fixture"], "connectors":{"http":"host", "gcs":"host"}, "connections":{"upstream":"erp"}}}
-        }))
-        .unwrap(),
-    )
-    .unwrap()
-}
-fn package(integration: &str) -> PackageManifest {
-    PackageManifest::from_slice(
-        &serde_json::to_vec(&json!({
-            "package":{"id":"fixture","version":"0.1.0"},
-        "required_platform_policy_contract":{"id":"fixture_data_access","state":"satisfied"},
-            "connections":{"upstream":{"integration":integration,"mode":"read"}},
-            "models":{}, "components":{}
-        }))
-        .unwrap(),
-    )
-    .unwrap()
-}
-
-#[tokio::test]
-async fn apply_refuses_each_invalid_binding_and_target_change() {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_control_provision::test_database::system();
-    let (mut client, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
+async fn connect(url: &str) -> tokio_postgres::Client {
+    let (client, driver) = tokio_postgres::connect(url, tokio_postgres::NoTls)
         .await
         .unwrap();
-    let driver = tokio::spawn(driver);
-    client.batch_execute("SET ROLE wamn_system; SET app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'; INSERT INTO registry.orgs(id,placement_type) VALUES ('acme','dedicated'); INSERT INTO registry.projects(org,id) VALUES ('acme','one'); INSERT INTO registry.env_policies(org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('acme','dev','{}',0,1,'1Gi','1','1Gi','image'); INSERT INTO registry.project_envs(org,project,env,secret_name,instance_suffix,policy_name) VALUES ('acme','one','dev','secret','aaaaaaaa','dev'),('acme','one','other','secret','bbbbbbbb','dev')").await.unwrap();
+    tokio::spawn(driver);
+    client
+}
+fn document() -> EnvironmentDocument {
+    EnvironmentDocument::from_json(&serde_json::to_vec(&json!({
+        "org":"acme","project":"one","env":"dev","target":"cloud",
+        "release":format!("sha256:{}","a".repeat(64)),"route_host":"one.example","policy":"dev",
+        "integrations":{"erp":{"version":1}},"applications":{"app":{"packages":["fixture"],"connections":{"upstream":"erp"}}}
+    })).unwrap()).unwrap()
+}
+fn package(integration_type: &str) -> PackageManifest {
+    let interfaces = vec![match integration_type {
+        "http" => "wamn:connection/http@0.1.0",
+        "gcs" | "s3" => "wasmcloud:blobstore/blobstore@0.1.0",
+        _ => "wamn:connector/reader@0.1.0",
+    }];
+    PackageManifest::from_slice(&serde_json::to_vec(&json!({
+        "package":{"id":"fixture","version":"1"},"required_platform_policy_contract":{"id":"fixture_access","state":"satisfied"},
+        "models":{},"components":{},"connections":{"upstream":{"interfaces":interfaces,"mode":"write"}}
+    })).unwrap()).unwrap()
+}
+async fn seed(client: &mut tokio_postgres::Client) {
+    client.batch_execute("SET ROLE wamn_system").await.unwrap();
+    client
+        .batch_execute(
+            &wamn_control_provision::test_database::seed_org_project_env_sql("acme", "one", "dev"),
+        )
+        .await
+        .unwrap();
+    client.batch_execute(&format!("BEGIN; {} INSERT INTO registry.target(name,type,status) VALUES('cloud','cloud','active') ON CONFLICT DO NOTHING; UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT;",wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning))).await.unwrap();
     let tx = client.transaction().await.unwrap();
+    tx.batch_execute("SET LOCAL ROLE wamn_control")
+        .await
+        .unwrap();
     tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
         wamn_control_provision::PlatformComponent::Provisioning,
     ))
     .await
     .unwrap();
-    let _name = connections::write_connection(&tx, "acme", &ConnectionWrite {
-        integration:"http".into(), external_system: None, name:"erp".into(),
-        transport:"http".into(), exchange:"request".into(),
-        parameters:json!({"primary-authority":"https://erp.example", "tls-verification":"verify-authority"}), status:"active".into()
-    }, &mut AuthDrops::default()).await.unwrap();
+    let store = wamn_test_infrastructure::credentials::LocalCredentials::create().unwrap();
+    wamn_test_infrastructure::credentials::define(&tx,"acme",&json!({"project":"one","env":"dev","name":"erp","integration_type":"http","auth_type":"none","parameters":{"primary-authority":"https://erp.example/","tls-verification":"verify-authority"}}),&store).await.unwrap();
     tx.commit().await.unwrap();
-    let id: String = client
-        .query_one(
-            "SELECT id::text FROM registry.connection WHERE name='erp'",
-            &[],
-        )
-        .await
-        .unwrap()
-        .get(0);
-    let (authority, authority_driver) =
-        tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
-            .await
-            .unwrap();
-    let authority_driver = tokio::spawn(authority_driver);
-    authority
-        .batch_execute("SET ROLE wamn_control")
+}
+
+#[tokio::test]
+async fn apply_refuses_invalid_names_interfaces_environments_and_versions() {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_control_provision::test_database::system();
+    let mut client = connect(database.url()).await;
+    seed(&mut client).await;
+    client
+        .batch_execute("SET ROLE wamn_db_owner")
         .await
         .unwrap();
-    assert_eq!(
-        authority
-            .query_one("SELECT current_user::text", &[])
-            .await
-            .unwrap()
-            .get::<_, String>(0),
-        "wamn_control"
-    );
-    assert!(
-        authority
-            .query("SELECT * FROM registry.connection", &[])
-            .await
-            .is_err()
-    );
     let mut doc = document();
-    let platform = wamn_control::environment::Platform {
-        system_database_url: database.url().into(),
-        target: wamn_control::release_chart::Target {
-            kubeconfig: "unused".into(),
-            context: "unused".into(),
-            namespace: "unused".into(),
-        },
-        chart: "unused".into(),
-        release_artifact_base: "unused".into(),
-        registry_auth_file: "unused".into(),
-        oci_ca_paths: vec![],
-        package_artifact_base: None,
-        database_namespace: "unused".into(),
-        database_host: None,
-        database_port: 5432,
-        host_group: None,
-        pat_issuer: wamn_control::pat_client::PatIssuerConfig::default(),
-        events: None,
-        auth_nats: None,
-    };
-    let invalid_file =
-        std::env::temp_dir().join(format!("wamn-c35-invalid-binding-{}.k", std::process::id()));
-    let kcl = doc.to_kcl();
-    assert!(kcl.contains("\"upstream\" = \"erp\""));
-    std::fs::write(
-        &invalid_file,
-        kcl.replace(
-            "\"upstream\" = \"erp\"",
-            "\"upstream\" = {type = \"http\", definition = {}}",
-        ),
-    )
-    .unwrap();
-    let before: String = client
-        .query_one(
-            "SELECT xmin::text FROM registry.project_envs WHERE env='dev'",
-            &[],
-        )
-        .await
-        .unwrap()
-        .get(0);
-    assert!(
-        wamn_control::environment::apply(&platform, &invalid_file)
-            .await
-            .is_err()
-    );
-    assert_eq!(
-        client
-            .query_one(
-                "SELECT xmin::text FROM registry.project_envs WHERE env='dev'",
-                &[]
-            )
-            .await
-            .unwrap()
-            .get::<_, String>(0),
-        before
-    );
-    std::fs::remove_file(invalid_file).unwrap();
     let packages = [package("http")];
+    let selected = bindings::analyse(&client, &doc, &packages).await.unwrap();
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].version, 1);
+    assert_eq!(
+        bindings::analyse(&client, &doc, &[package("gcs")])
+            .await
+            .unwrap_err()
+            .code,
+        "integration_import_unsatisfied"
+    );
+    doc.applications
+        .get_mut("app")
+        .unwrap()
+        .connections
+        .insert("other".into(), "erp".into());
+    assert_eq!(
+        bindings::analyse(&client, &doc, &packages)
+            .await
+            .unwrap_err()
+            .code,
+        "connection_undeclared"
+    );
     doc.applications.get_mut("app").unwrap().connections.clear();
     assert_eq!(
-        bindings::analyse(&authority, &doc, &packages)
+        bindings::analyse(&client, &doc, &packages)
             .await
             .unwrap_err()
             .code,
         "connection_unbound"
     );
     doc = document();
+    doc.integrations.clear();
     assert_eq!(
-        bindings::analyse(&authority, &doc, &packages)
+        bindings::analyse(&client, &doc, &packages)
             .await
             .unwrap_err()
             .code,
-        "connection_not_enabled"
+        "integration_version_missing"
     );
-    let tx = client.transaction().await.unwrap();
-    connections::enable_connection(&tx, "acme", "one", "erp")
-        .await
-        .unwrap();
-    tx.commit().await.unwrap();
+    doc = document();
+    doc.integrations.get_mut("erp").unwrap().version = 99;
     assert_eq!(
-        bindings::analyse(&authority, &doc, &[package("s3")])
+        bindings::analyse(&client, &doc, &packages)
             .await
             .unwrap_err()
             .code,
-        "connection_integration_mismatch"
+        "integration_version_unpublished"
     );
+    doc = document();
+    doc.env = "other".into();
     assert_eq!(
-        bindings::analyse(&authority, &doc, &[package("unregistered")])
+        bindings::analyse(&client, &doc, &packages)
             .await
             .unwrap_err()
             .code,
-        "integration_not_found"
+        "connection_unavailable"
     );
-    for (scope, name) in [
-        ("org", "acme"),
-        ("project", "one"),
-        ("environment", "one/dev"),
-    ] {
-        let error = bindings::analyse(&authority, &doc, &packages)
+    doc = document();
+    doc.target = "other".into();
+    assert_eq!(
+        bindings::analyse(&client, &doc, &packages)
             .await
-            .unwrap_err();
-        assert_eq!(error.code, "integration_not_allowed");
-        assert!(error.context.contains(scope));
-        let tx = client.transaction().await.unwrap();
-        connections::allow_integration(&tx, "acme", scope, name, "http")
-            .await
-            .unwrap();
-        tx.commit().await.unwrap();
-    }
-    let resolved = bindings::analyse(&authority, &doc, &packages)
-        .await
-        .unwrap();
-    assert_eq!(resolved.len(), 1);
-    assert_eq!(resolved[0].connection_id, id);
-    // A test-only exclusive flag exercises the rule without inventing a device connector.
+            .unwrap_err()
+            .code,
+        "connection_unavailable"
+    );
+    client.batch_execute("SET ROLE wamn_system; INSERT INTO registry.integration_type_version(integration_type,version,parameter_schema,operations,exports,published_at) SELECT integration_type,2,parameter_schema,operations,exports,now() FROM registry.integration_type_version WHERE integration_type='http' AND version=1").await.unwrap();
     client
-        .execute(
-            "UPDATE registry.integrations SET exclusive = true WHERE code = 'http'",
-            &[],
-        )
+        .batch_execute("SET ROLE wamn_db_owner")
         .await
         .unwrap();
-    let mut second_package = packages[0].clone();
-    second_package.package.id = "other_fixture".into();
-    let mut second = doc.applications["app"].clone();
-    second.packages = ["other_fixture".to_owned()].into();
-    doc.applications.insert("second".into(), second);
+    doc = document();
+    doc.integrations.get_mut("erp").unwrap().version = 2;
     assert_eq!(
-        bindings::analyse(&authority, &doc, &[packages[0].clone(), second_package])
+        bindings::analyse(&client, &doc, &packages)
             .await
             .unwrap_err()
-            .to_string(),
-        "exclusive_connection_bound: [\"second\", \"upstream\"]"
+            .code,
+        "integration_version_unserved"
     );
-    doc.applications.remove("second");
     let tx = client.transaction().await.unwrap();
     tx.batch_execute("SET LOCAL ROLE wamn_control")
         .await
         .unwrap();
-    bindings::reserve(&tx, &doc, &packages).await.unwrap();
-    tx.commit().await.unwrap();
-    let binding_xmin: String = client
-        .query_one(
-            "SELECT xmin::text FROM registry.environment_connection_binding WHERE env='dev'",
-            &[],
-        )
-        .await
-        .unwrap()
-        .get(0);
-    let environment_xmin: String = client
-        .query_one(
-            "SELECT xmin::text FROM registry.project_envs WHERE env='dev'",
-            &[],
-        )
-        .await
-        .unwrap()
-        .get(0);
-    let replay = client.transaction().await.unwrap();
-    replay
-        .batch_execute("SET LOCAL ROLE wamn_control")
-        .await
-        .unwrap();
-    bindings::reserve(&replay, &doc, &packages).await.unwrap();
-    replay.commit().await.unwrap();
-    assert_eq!(
-        client
-            .query_one(
-                "SELECT xmin::text FROM registry.environment_connection_binding WHERE env='dev'",
-                &[]
-            )
-            .await
-            .unwrap()
-            .get::<_, String>(0),
-        binding_xmin
-    );
-    assert_eq!(
-        client
-            .query_one(
-                "SELECT xmin::text FROM registry.project_envs WHERE env='dev'",
-                &[]
-            )
-            .await
-            .unwrap()
-            .get::<_, String>(0),
-        environment_xmin
-    );
-    let retained = bindings::analyse(&authority, &doc, &[]).await.unwrap();
-    assert_eq!(
-        retained[0].mode,
-        wamn_schema_generator::ConnectionMode::Read
-    );
-    let mut unbound = doc.clone();
-    unbound
-        .applications
-        .get_mut("app")
-        .unwrap()
-        .connections
-        .clear();
-    assert_eq!(
-        bindings::analyse(&authority, &unbound, &[])
-            .await
-            .unwrap_err()
-            .code,
-        "connection_unbound"
-    );
-    let tx = client.transaction().await.unwrap();
-    connections::allow_integration(&tx, "acme", "environment", "one/other", "http")
-        .await
-        .unwrap();
-    tx.commit().await.unwrap();
-    let mut other = doc.clone();
-    other.env = "other".into();
-    assert_eq!(
-        bindings::analyse(&authority, &other, &packages)
-            .await
-            .unwrap_err()
-            .to_string(),
-        "exclusive_connection_bound: [\"app\", \"upstream\"]"
-    );
-    client
-        .execute("INSERT INTO registry.target(name,type,status) SELECT 'other',type,status FROM registry.target WHERE name='cloud'", &[])
-        .await
-        .unwrap();
-    doc.target = "other".into();
-    assert_eq!(
-        bindings::analyse(&authority, &doc, &packages)
-            .await
-            .unwrap_err()
-            .code,
-        "environment_target_changed"
-    );
-    let changed = client.execute("UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='other') WHERE env='dev'", &[]).await.unwrap_err();
-    assert_eq!(
-        changed.as_db_error().unwrap().message(),
-        "environment_target_changed"
-    );
-    let error = client
-        .execute(
-            "UPDATE registry.project_envs SET target_id = NULL WHERE env = 'dev'",
-            &[],
-        )
-        .await
-        .unwrap_err();
-    assert_eq!(
-        error.as_db_error().unwrap().message(),
-        "environment_target_changed"
-    );
-    let tx = client.transaction().await.unwrap();
-    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_control_provision::PlatformComponent::Provisioning,
-    ))
-    .await
-    .unwrap();
-    let files = connections::write_connection(
+    administration::execute(
         &tx,
         "acme",
-        &ConnectionWrite {
-            integration: "gcs".into(),
-            external_system: None,
-            name: "files".into(),
-            transport: "http".into(),
-            exchange: "request".into(),
-            parameters: json!({"provider":"gcs","container":"files","prefix":"app/"}),
-            status: "active".into(),
-        },
+        "connection.disable",
+        &json!({"project":"one","env":"dev","name":"erp"}).to_string(),
         &mut AuthDrops::default(),
     )
     .await
     .unwrap();
-    connections::enable_connection(&tx, "acme", "one", &files)
-        .await
-        .unwrap();
-    for (scope, name) in [
-        ("org", "acme"),
-        ("project", "one"),
-        ("environment", "one/dev"),
-    ] {
-        connections::allow_integration(&tx, "acme", scope, name, "gcs")
-            .await
-            .unwrap();
-    }
     tx.commit().await.unwrap();
-    doc.target = "cloud".into();
+    assert_eq!(
+        bindings::analyse(&client, &document(), &packages)
+            .await
+            .unwrap_err()
+            .code,
+        "connection_unavailable"
+    );
+}
+
+#[tokio::test]
+async fn two_packages_can_bind_distinct_names_to_one_connection_without_authority_writes() {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_control_provision::test_database::system();
+    let mut client = connect(database.url()).await;
+    seed(&mut client).await;
+    let mut doc = document();
+    doc.applications
+        .get_mut("app")
+        .unwrap()
+        .packages
+        .insert("other".into());
     doc.applications
         .get_mut("app")
         .unwrap()
         .connections
-        .insert("upstream".into(), "files".into());
-    let files = bindings::analyse(&authority, &doc, &[package("gcs")])
-        .await
-        .unwrap();
-    assert!(
-        files[0]
-            .resolved
-            .as_ref()
-            .unwrap()
-            .credential_handle
-            .is_none()
-    );
-    wamn_control::bind_connection::prepare_org_instance(files[0].resolved.as_ref().unwrap())
-        .unwrap();
-    authority_driver.abort();
-    driver.abort();
-}
-
-#[tokio::test]
-async fn two_packages_bind_distinct_aliases_to_one_shared_org_connection() {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_control_provision::test_database::system();
-    let (mut client, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
-        .await
-        .unwrap();
-    let driver = tokio::spawn(driver);
-    client.batch_execute("SET ROLE wamn_system; SET app.user_id = '770df186-ac15-579e-b46b-c297cae2011b'; INSERT INTO registry.orgs(id,placement_type) VALUES ('acme','dedicated'); INSERT INTO registry.projects(org,id) VALUES ('acme','one'); INSERT INTO registry.env_policies(org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('acme','dev','{}',0,1,'1Gi','1','1Gi','image'); INSERT INTO registry.project_envs(org,project,env,secret_name,instance_suffix,policy_name) VALUES ('acme','one','dev','secret','aaaaaaaa','dev')").await.unwrap();
-    let tx = client.transaction().await.unwrap();
-    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_control_provision::PlatformComponent::Provisioning,
-    ))
-    .await
-    .unwrap();
-    let _name = connections::write_connection(&tx, "acme", &ConnectionWrite {
-        integration: "http".into(), external_system: None, name: "erp".into(),
-        transport: "http".into(), exchange: "request".into(),
-        parameters: json!({"primary-authority":"https://erp.example", "tls-verification":"verify-authority"}), status: "active".into(),
-    }, &mut AuthDrops::default()).await.unwrap();
-    connections::enable_connection(&tx, "acme", "one", "erp")
-        .await
-        .unwrap();
-    for (scope, name) in [
-        ("org", "acme"),
-        ("project", "one"),
-        ("environment", "one/dev"),
-    ] {
-        connections::allow_integration(&tx, "acme", scope, name, "http")
-            .await
-            .unwrap();
-    }
-    tx.commit().await.unwrap();
+        .insert("second".into(), "erp".into());
     let first = package("http");
-    let mut second = package("http");
-    second.package.id = "second_fixture".into();
+    let mut second = first.clone();
+    second.package.id = "other".into();
     let declaration = second.connections.remove("upstream").unwrap();
-    second.connections.insert("netsuite".into(), declaration);
-    let id: String = client
-        .query_one(
-            "SELECT id::text FROM registry.connection WHERE name='erp'",
-            &[],
-        )
-        .await
-        .unwrap()
-        .get(0);
-    let (authority, authority_driver) =
-        tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
-            .await
-            .unwrap();
-    let authority_driver = tokio::spawn(authority_driver);
-    authority
-        .batch_execute("SET ROLE wamn_control")
-        .await
-        .unwrap();
-    assert_eq!(
-        authority
-            .query_one("SELECT current_user::text", &[])
-            .await
-            .unwrap()
-            .get::<_, String>(0),
-        "wamn_control"
-    );
-    assert!(
-        authority
-            .query("SELECT * FROM registry.connection", &[])
-            .await
-            .is_err()
-    );
-    let mut doc = document();
-    let app = doc.applications.get_mut("app").unwrap();
-    app.packages.insert("second_fixture".into());
-    app.connections.insert("netsuite".into(), "erp".into());
-    let packages = [first, second];
-    let tx = client.transaction().await.unwrap();
-    tx.batch_execute("SET LOCAL ROLE wamn_control")
-        .await
-        .unwrap();
-    let resolved = bindings::reserve(&tx, &doc, &packages).await.unwrap();
-    tx.commit().await.unwrap();
-    assert_eq!(resolved.len(), 2);
-    assert_eq!(
-        resolved
-            .iter()
-            .map(|binding| binding.alias.as_str())
-            .collect::<Vec<_>>(),
-        ["netsuite", "upstream"]
-    );
-    for binding in &resolved {
-        assert_eq!(binding.application, "app");
-        assert_eq!(binding.connection_id, id);
-    }
-    let snapshot = [("erp".into(), resolved[0].resolved.clone().unwrap())].into();
-    let local = wamn_control::environment::analyse::resolve_connections(&doc, &snapshot).unwrap();
-    assert_eq!(local.len(), 2);
-    assert_eq!(local["app/netsuite"], local["app/upstream"]);
+    second.connections.insert("second".into(), declaration);
     client
-        .execute(
-            "UPDATE registry.integrations SET exclusive = true WHERE code = 'http'",
-            &[],
-        )
+        .batch_execute("SET ROLE wamn_db_owner")
         .await
         .unwrap();
+    let selected = bindings::analyse(&client, &doc, &[first, second])
+        .await
+        .unwrap();
+    assert_eq!(selected.len(), 2);
+    assert_eq!(selected[0].connection_id, selected[1].connection_id);
+    client.batch_execute("SET ROLE wamn_system").await.unwrap();
     assert_eq!(
-        bindings::analyse(&authority, &doc, &packages)
-            .await
-            .unwrap_err()
-            .to_string(),
-        "exclusive_connection_bound: [\"app\", \"upstream\"]"
-    );
-    authority_driver.abort();
-    driver.abort();
-}
-
-#[tokio::test]
-async fn projection_retains_references_and_reapply_repairs_without_history_writes() {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_control_provision::test_database::system();
-    let environment = wamn_project_state::test_database::tenant_platform();
-    let mut system = connect(database.url()).await.unwrap();
-    system.batch_execute(&format!(
-        "SET ROLE wamn_system; {} INSERT INTO registry.orgs(id,placement_type) VALUES ('acme','dedicated'); INSERT INTO registry.projects(org,id) VALUES ('acme','one'); UPDATE registry.meta SET platform_domain='example.test'; INSERT INTO registry.env_policies(org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('acme','dev','{{}}',0,1,'1Gi','1','1Gi','image'); INSERT INTO registry.project_envs(org,project,env,secret_name,instance_suffix,policy_name) VALUES ('acme','one','dev','secret','aaaaaaaa','dev')",
-        wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
-        ),
-    )).await.unwrap();
-    let project = connect(environment.url()).await.unwrap();
-    project
-        .batch_execute("CREATE SCHEMA IF NOT EXISTS wamn_run")
-        .await
-        .unwrap();
-    project
-        .batch_execute(&wamn_control_provision::sql::grant_administration_surface_sql("wamn_run"))
-        .await
-        .unwrap();
-    let doc = document();
-    let tx = system.transaction().await.unwrap();
-    tx.batch_execute("SET LOCAL ROLE wamn_control")
-        .await
-        .unwrap();
-    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_control_provision::PlatformComponent::Provisioning,
-    ))
-    .await
-    .unwrap();
-    connections::write_external_system(
-        &tx,
-        "acme",
-        &connections::ExternalSystemWrite {
-            integration: "http".into(),
-            name: "shared".into(),
-            parameters: json!({}),
-            status: "active".into(),
-        },
-    )
-    .await
-    .unwrap();
-    for name in ["erp", "other"] {
-        connections::write_connection(&tx,"acme",&ConnectionWrite {
-            integration:"http".into(),external_system:Some("shared".into()),name:name.into(),transport:"http".into(),exchange:"request".into(),
-            parameters:json!({"primary-authority":"https://erp.example","tls-verification":"verify-authority"}),status:"active".into(),
-        },&mut AuthDrops::default()).await.unwrap();
-        connections::enable_connection(&tx, "acme", "one", name)
-            .await
-            .unwrap();
-    }
-    for (scope, id) in [
-        ("org", "acme"),
-        ("project", "one"),
-        ("environment", "one/dev"),
-    ] {
-        connections::allow_integration(&tx, "acme", scope, id, "http")
-            .await
-            .unwrap();
-    }
-    bindings::reserve(&tx, &doc, &[package("http")])
-        .await
-        .unwrap();
-    tx.commit().await.unwrap();
-    let _ = bindings::project_authority(database.url(), environment.url(), &doc)
-        .await
-        .unwrap();
-    project.batch_execute("CREATE TABLE public.connection_reference (connection_id uuid REFERENCES platform.connection(id), external_system_id uuid REFERENCES platform.external_system(id)); INSERT INTO public.connection_reference SELECT id,external_system_id FROM platform.connection WHERE name='erp'").await.unwrap();
-    let history_sql = "SELECT (SELECT count(*) FROM platform.connection_history) + (SELECT count(*) FROM platform.external_system_history) + (SELECT count(*) FROM platform.integration_allow_history) + (SELECT count(*) FROM platform.project_connection_history) + (SELECT count(*) FROM platform.user_history)";
-    let history: i64 = project.query_one(history_sql, &[]).await.unwrap().get(0);
-    let _ = bindings::project_authority(database.url(), environment.url(), &doc)
-        .await
-        .unwrap();
-    assert_eq!(
-        project
-            .query_one(history_sql, &[])
+        client
+            .query_one("SELECT count(*) FROM registry.connection_generation", &[])
             .await
             .unwrap()
             .get::<_, i64>(0),
-        history,
-        "replay appends no history"
+        1
     );
-    let tx = system.transaction().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_version_change_refuses_stored_values_that_do_not_validate() {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_control_provision::test_database::system();
+    let mut client = connect(database.url()).await;
+    seed(&mut client).await;
+    let tx = client.transaction().await.unwrap();
     tx.batch_execute("SET LOCAL ROLE wamn_control")
         .await
         .unwrap();
-    connections::disable_connection(&tx, "acme", "one", "erp")
-        .await
-        .unwrap();
+    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+        wamn_control_provision::PlatformComponent::Provisioning,
+    ))
+    .await
+    .unwrap();
+    let store = wamn_test_infrastructure::credentials::LocalCredentials::create().unwrap();
+    wamn_test_infrastructure::credentials::define(&tx,"acme",&json!({"project":"one","env":"dev","name":"meter","integration_type":"modbus","auth_type":"none","parameters":{"authority":"127.0.0.1:502"}}),&store).await.unwrap();
     tx.commit().await.unwrap();
-    let _ = bindings::project_authority(database.url(), environment.url(), &doc)
-        .await
-        .unwrap();
-    assert_eq!(project.query_one("SELECT c.status FROM platform.connection c JOIN public.connection_reference r ON r.connection_id=c.id",&[]).await.unwrap().get::<_,String>(0),"disabled");
-    assert_eq!(
-        project
-            .query_one(
-                "SELECT status FROM platform.external_system WHERE name='shared'",
-                &[]
-            )
-            .await
-            .unwrap()
-            .get::<_, String>(0),
-        "active",
-        "another enabled connection retains the system"
+    client.batch_execute("SET ROLE wamn_system; INSERT INTO registry.integration_type_version(integration_type,version,digest,parameter_schema,operations,exports,published_at) SELECT integration_type,2,digest,'{\"type\":\"object\",\"properties\":{\"authority\":{\"type\":\"string\"},\"unit\":{\"type\":\"integer\"}},\"required\":[\"authority\",\"unit\"]}',operations,exports,now() FROM registry.integration_type_version WHERE integration_type='modbus' AND version=1; SET ROLE wamn_db_owner").await.unwrap();
+    let mut doc = document();
+    doc.integrations.clear();
+    doc.integrations.insert(
+        "meter".into(),
+        wamn_control::environment::document::Integration { version: 2 },
     );
-    system.batch_execute("SET ROLE wamn_control").await.unwrap();
+    doc.applications
+        .get_mut("app")
+        .unwrap()
+        .connections
+        .insert("upstream".into(), "meter".into());
     assert_eq!(
-        bindings::analyse(&system, &doc, &[package("http")])
+        bindings::analyse(&client, &doc, &[package("modbus")])
             .await
             .unwrap_err()
             .code,
-        "connection_not_enabled"
+        "connection_parameters_invalid"
     );
-    let tx = system.transaction().await.unwrap();
-    connections::disable_connection(&tx, "acme", "one", "other")
+}
+
+#[tokio::test]
+async fn administration_refuses_values_incompatible_with_a_retained_release_version() {
+    let _lock = wamn_test_postgres::lock();
+    let system_database = wamn_control_provision::test_database::system();
+    let mut system = connect(system_database.url()).await;
+    seed(&mut system).await;
+    system.batch_execute("INSERT INTO registry.integration_type_version(integration_type,version,parameter_schema,operations,exports,published_at) SELECT integration_type,2,jsonb_set(parameter_schema,'{required}',(parameter_schema->'required') || '\"unit\"'::jsonb) || jsonb_build_object('properties',(parameter_schema->'properties') || '{\"unit\":{\"type\":\"integer\"}}'::jsonb),operations,exports,now() FROM registry.integration_type_version WHERE integration_type='http' AND version=1").await.unwrap();
+    let environment_database = wamn_project_state::test_database::tenant_platform();
+    let mut environment = connect(environment_database.url()).await;
+    environment
+        .batch_execute("CREATE SCHEMA IF NOT EXISTS wamn_run")
         .await
         .unwrap();
-    tx.commit().await.unwrap();
-    let _ = bindings::project_authority(database.url(), environment.url(), &doc)
+    environment
+        .batch_execute(&wamn_control_provision::sql::grant_administration_surface_sql("wamn_run"))
         .await
         .unwrap();
-    assert_eq!(project.query_one("SELECT s.status FROM platform.external_system s JOIN public.connection_reference r ON r.external_system_id=s.id",&[]).await.unwrap().get::<_,String>(0),"disabled");
-    assert!(
-        project
-            .query("SELECT FROM platform.project_connection", &[])
+    let document = document();
+    let _ =
+        bindings::project_authority(system_database.url(), environment_database.url(), &document)
             .await
-            .unwrap()
-            .is_empty()
-    );
-    // Repair a stale route projection through the same reconciliation that env apply calls.
-    project
+            .unwrap();
+    environment
         .batch_execute(&format!(
-            "BEGIN; {} UPDATE platform.connection SET status='active' WHERE name='erp'; COMMIT;",
+            "BEGIN; {}",
             wamn_control_provision::bind_platform_principal_sql(
                 wamn_control_provision::PlatformComponent::Provisioning
             )
         ))
         .await
         .unwrap();
-    let _ = bindings::project_authority(database.url(), environment.url(), &doc)
+    let connection: String = environment
+        .query_one("SELECT id::text FROM platform.connection", &[])
+        .await
+        .unwrap()
+        .get(0);
+    // The sha256 of the canonical bytes `{}`, which catalog.releases checks.
+    let digest = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
+    environment.execute("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES('acme--one--dev',$1,$2)",&[&digest,&b"{}".as_slice()]).await.unwrap();
+    environment.execute("INSERT INTO catalog.release_connection(env_key,manifest_digest,connection_id,version) VALUES('acme--one--dev',$1,$2::text::uuid,2)",&[&digest,&connection]).await.unwrap();
+    environment.batch_execute("COMMIT").await.unwrap();
+    let request = json!({"project":"one","env":"dev","name":"erp","parameters":{"primary-authority":"https://erp.example/","tls-verification":"disabled"}}).to_string();
+    let source = system.transaction().await.unwrap();
+    source
+        .batch_execute("SET LOCAL ROLE wamn_control")
         .await
         .unwrap();
-    assert_eq!(
-        project
-            .query_one(
-                "SELECT status FROM platform.connection WHERE name='erp'",
-                &[]
-            )
-            .await
-            .unwrap()
-            .get::<_, String>(0),
-        "disabled"
-    );
-    let history: i64 = project.query_one(history_sql, &[]).await.unwrap().get(0);
-    let _ = bindings::project_authority(database.url(), environment.url(), &doc)
-        .await
-        .unwrap();
-    assert_eq!(
-        project
-            .query_one(history_sql, &[])
-            .await
-            .unwrap()
-            .get::<_, i64>(0),
-        history
-    );
-}
-
-async fn connector_pin_case(pin: Option<&str>, expected: Option<&str>) {
-    let _lock = wamn_test_postgres::lock();
-    let database = wamn_control_provision::test_database::system();
-    let mut system = connect(database.url()).await.unwrap();
-    system
-        .batch_execute(&format!(
-            "SET ROLE wamn_system; BEGIN; {} INSERT INTO registry.integration_type(code,runtime_type,exclusive) VALUES ('fixture','wasm',false); COMMIT;",
-            wamn_control_provision::test_database::seed_org_project_env_sql("acme", "one", "dev"),
+    source
+        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
         ))
         .await
         .unwrap();
-    let digest = format!("sha256:{}", "a".repeat(64));
-    let tx = system.transaction().await.unwrap();
-    tx.batch_execute("SET LOCAL ROLE wamn_control")
-        .await
-        .unwrap();
-    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-        wamn_control_provision::PlatformComponent::Provisioning,
-    ))
-    .await
-    .unwrap();
-    tx.query_one(
-        "SELECT registry.publish_integration('fixture',$1)",
-        &[&digest],
+    let target = environment.transaction().await.unwrap();
+    let error = administration::execute_in_environment(
+        &source,
+        &target,
+        "acme",
+        "connection.write",
+        &request,
+        &mut AuthDrops::default(),
     )
     .await
-    .unwrap();
-    connections::write_connection(
-        &tx,
+    .unwrap_err();
+    assert_eq!(error.code, "invalid_input");
+    source.rollback().await.unwrap();
+    target.rollback().await.unwrap();
+    assert_eq!(
+        system
+            .query_one(
+                "SELECT active_generation FROM registry.connection WHERE id=$1::text::uuid",
+                &[&connection]
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        1
+    );
+    environment
+        .batch_execute(&format!(
+            "BEGIN; {} DELETE FROM catalog.release_connection; COMMIT",
+            wamn_control_provision::bind_platform_principal_sql(
+                wamn_control_provision::PlatformComponent::Provisioning
+            )
+        ))
+        .await
+        .unwrap();
+    let source = system.transaction().await.unwrap();
+    source
+        .batch_execute("SET LOCAL ROLE wamn_control")
+        .await
+        .unwrap();
+    source
+        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+        .await
+        .unwrap();
+    let target = environment.transaction().await.unwrap();
+    administration::execute_in_environment(
+        &source,
+        &target,
         "acme",
-        &ConnectionWrite {
-            integration: "fixture".into(),
-            external_system: None,
-            name: "erp".into(),
-            transport: "tcp".into(),
-            exchange: "request".into(),
-            parameters: json!({"port":502}),
-            status: "active".into(),
-        },
+        "connection.write",
+        &request,
         &mut AuthDrops::default(),
     )
     .await
     .unwrap();
-    connections::enable_connection(&tx, "acme", "one", "erp")
+    source.commit().await.unwrap();
+    target.rollback().await.unwrap();
+    assert_eq!(
+        system
+            .query_one(
+                "SELECT active_generation FROM registry.connection WHERE id=$1::text::uuid",
+                &[&connection]
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        2
+    );
+}
+
+#[tokio::test]
+async fn apply_refuses_a_connection_version_missing_one_required_interface() {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_control_provision::test_database::system();
+    let mut client = connect(database.url()).await;
+    seed(&mut client).await;
+    client
+        .batch_execute("SET ROLE wamn_db_owner")
         .await
         .unwrap();
-    for (scope, name) in [
-        ("org", "acme"),
-        ("project", "one"),
-        ("environment", "one/dev"),
-    ] {
-        connections::allow_integration(&tx, "acme", scope, name, "fixture")
-            .await
-            .unwrap();
-    }
-    tx.commit().await.unwrap();
-    let mut doc = document();
-    let pins = &mut doc.applications.get_mut("app").unwrap().connectors;
-    pins.clear();
-    if let Some(pin) = pin {
-        pins.insert("fixture".into(), pin.into());
-    }
-    let packages = [package("fixture")];
-    let before = system
-        .query_one(
-            "SELECT count(*) FROM registry.environment_connection_binding",
-            &[],
-        )
-        .await
+    let mut package = package("http");
+    package
+        .connections
+        .get_mut("upstream")
         .unwrap()
-        .get::<_, i64>(0);
-    let tx = system.transaction().await.unwrap();
+        .interfaces
+        .push("wamn:connection/metadata@0.1.0".into());
+    assert_eq!(
+        bindings::analyse(&client, &document(), &[package])
+            .await
+            .unwrap_err()
+            .code,
+        "integration_import_unsatisfied"
+    );
+}
+
+#[tokio::test]
+async fn blobstore_interfaces_accept_another_storage_provider() {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_control_provision::test_database::system();
+    let mut client = connect(database.url()).await;
+    seed(&mut client).await;
+    let tx = client.transaction().await.unwrap();
     tx.batch_execute("SET LOCAL ROLE wamn_control")
         .await
         .unwrap();
@@ -758,60 +414,35 @@ async fn connector_pin_case(pin: Option<&str>, expected: Option<&str>) {
     ))
     .await
     .unwrap();
-    let result = bindings::analyse(&tx, &doc, &packages).await;
-    if let Some(expected) = expected {
-        assert_eq!(result.unwrap_err().code, expected);
-        assert_eq!(
-            bindings::reserve(&tx, &doc, &packages)
-                .await
-                .unwrap_err()
-                .code,
-            expected
-        );
-    } else {
-        let binding = result.unwrap().remove(0);
-        assert_eq!(binding.connector, digest);
-        assert!(binding.resolved.is_none());
-        let reserved = bindings::reserve(&tx, &doc, &packages).await.unwrap();
-        assert_eq!(reserved[0].connector, digest);
-    }
+    let store = wamn_test_infrastructure::credentials::LocalCredentials::create().unwrap();
+    wamn_test_infrastructure::credentials::define(
+        &tx,
+        "acme",
+        &json!({"project":"one","env":"dev","name":"labels",
+        "integration_type":"gcs","auth_type":"custom","parameters":{
+            "provider":"gcs","container":"labels","prefix":"labels/"}}),
+        &store,
+    )
+    .await
+    .unwrap();
     tx.commit().await.unwrap();
-    let count = system
-        .query_one(
-            "SELECT count(*) FROM registry.environment_connection_binding",
-            &[],
-        )
+    client
+        .batch_execute("SET ROLE wamn_db_owner")
         .await
+        .unwrap();
+    let mut doc = document();
+    doc.integrations = std::collections::BTreeMap::from([(
+        "labels".into(),
+        wamn_control::environment::document::Integration { version: 1 },
+    )]);
+    doc.applications
+        .get_mut("app")
         .unwrap()
-        .get::<_, i64>(0);
-    assert_eq!(
-        count,
-        if expected.is_some() {
-            before
-        } else {
-            before + 1
-        }
-    );
-}
-
-#[tokio::test]
-async fn apply_refuses_a_bound_connection_without_a_connector_pin() {
-    connector_pin_case(None, Some("connector_unpinned")).await;
-}
-
-#[tokio::test]
-async fn apply_refuses_a_host_pin_for_a_wasm_integration() {
-    connector_pin_case(Some("host"), Some("integration_runtime_type_mismatch")).await;
-}
-
-#[tokio::test]
-async fn apply_refuses_an_unpublished_connector_digest() {
-    let digest = format!("sha256:{}", "b".repeat(64));
-    connector_pin_case(Some(&digest), Some("connector_digest_unpublished")).await;
-}
-
-#[tokio::test]
-async fn apply_accepts_and_reserves_a_published_connector_pin() {
-    let digest = format!("sha256:{}", "a".repeat(64));
-    connector_pin_case(Some(&digest), None).await;
+        .connections
+        .insert("upstream".into(), "labels".into());
+    let bindings = bindings::analyse(&client, &doc, &[package("s3")])
+        .await
+        .unwrap();
+    assert_eq!(bindings.len(), 1);
+    assert_eq!(bindings[0].integration_type, "gcs");
 }

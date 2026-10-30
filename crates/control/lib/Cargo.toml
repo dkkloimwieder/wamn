@@ -99,6 +99,7 @@ wamn-schema-introspection = { workspace = true }
 wamn-test-postgres = { workspace = true }
 
 [dev-dependencies]
+syn = { workspace = true, features = ["full", "visit"] }
 wamn-gate-harness = { workspace = true }
 wamn-package-artifact = { workspace = true, features = ["test-util"] }
 wamn-runtime = { workspace = true, features = ["test-util"] }

@@ -15,8 +15,7 @@
 //!    one Helm revision.
 //! 2. A second apply of the same document writes no Helm revision.
 //! 3. A connection-only change writes no Helm revision and changes the
-//!    connection's generation. The fixture's components declare no store
-//!    alias, so there is no binding to change.
+//!    release binding without changing a connection generation.
 //! 4. `env show` output applied again writes nothing.
 //!    A separate HTTP environment binds HTTP requirements, reproduces its
 //!    document through show, and preserves its rows and Helm revision on reapply.
@@ -25,7 +24,7 @@
 //!    A signed inbound POST delivers inline like the unsigned route and sends once.
 //!    Wrong and missing signatures return 401 with an empty body and no fixture request.
 //!    A second wiring sends a POST that the fixture verifies with its HMAC secret.
-//!    OAuth2 reuses one token for two sends, and the fixture verifies OAuth1 signatures.
+//!    The fixture verifies API keys and AWS SigV4 authentication.
 //!    A minutely schedule workflow, authored and enabled in the environment,
 //!    leaves one completed run at each of two ticks, run as the `workflow`
 //!    user with its role.
@@ -70,8 +69,8 @@
 //! check 1:
 //! 17. The dev environment's `wamn_administration` login, which env apply
 //!     prepares for the control host, writes one row of each of
-//!     `platform.external_system`, `connection`, `project_connection`,
-//!     `integration_allow`, `number_sequence` and `setting` into the dev
+//!     `platform.external_system`, `integration`, `connection`,
+//!     `number_sequence` and `setting` into the dev
 //!     database in one transaction that binds a caller and an operation, as
 //!     the control host writes the application rows. Each write appends one
 //!     history entry, and generation a of the environment's `wamn_app` login
@@ -119,10 +118,7 @@
 //! schemas. Authored event workflows observe one update in each schema. Each
 //! delivery creates exactly one run of its own trigger and none of the other.
 //! A second release replaces
-//! `rest_connector` with `netsuite`, using an org-scoped OAuth1 credential.
-//! Export WAMN_HTTP_FIXTURE_CONSUMER_KEY, WAMN_HTTP_FIXTURE_CONSUMER_SECRET,
-//! WAMN_HTTP_FIXTURE_TOKEN, WAMN_HTTP_FIXTURE_TOKEN_SECRET and
-//! WAMN_HTTP_FIXTURE_REALM with disposable fixture values before the run.
+//! `rest_connector` with `netsuite`, using HTTP Basic authentication.
 //! Epic 4 waits at most 150 seconds. NetSuite waits at most 360 seconds for
 //! its one scheduled pull. HTTP evidence comes from GET /recorded.
 //!
@@ -642,7 +638,7 @@ impl Run {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires: docker, kind, helm 4, kubectl, openssl, debug ctl and CDC reader, built packages, debug blob-put input, stamped chart, OAuth1 fixture env; epic closeout only"]
+#[ignore = "requires: docker, kind, helm 4, kubectl, openssl, debug ctl and CDC reader, built packages, debug blob-put input, stamped chart, HTTP fixture env; epic closeout only"]
 async fn environment_apply_kind() -> anyhow::Result<()> {
     let keep = keep_on_failure(std::env::var("WAMN_KIND_KEEP").ok().as_deref())?;
     let reuse = std::env::var("WAMN_KIND_REUSE").ok();
@@ -657,18 +653,6 @@ async fn environment_apply_kind() -> anyhow::Result<()> {
         })
         .transpose()?;
     if previous.is_none() {
-        for name in [
-            "WAMN_HTTP_FIXTURE_CONSUMER_KEY",
-            "WAMN_HTTP_FIXTURE_CONSUMER_SECRET",
-            "WAMN_HTTP_FIXTURE_TOKEN",
-            "WAMN_HTTP_FIXTURE_TOKEN_SECRET",
-            "WAMN_HTTP_FIXTURE_REALM",
-        ] {
-            ensure!(
-                std::env::var(name).is_ok_and(|value| !value.is_empty()),
-                "set {name} to a disposable fixture value before the kind case"
-            );
-        }
         ensure!(
             std::env::var_os(native_files::COMPONENT_INPUT)
                 .is_some_and(|path| Path::new(&path).is_file()),
@@ -1081,25 +1065,6 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         .batch_execute(&wamn_control_provision::sql::grant_control_surface_sql())
         .await?;
 
-    // Use the deployment inputs before an environment enables either connection.
-    for (operation, file) in [
-        ("external_system.write", "rest-fixture.external-system.json"),
-        ("connection.write", "rest-fixture.json"),
-        ("connection.write", "wms-labels.json"),
-    ] {
-        let payload =
-            std::fs::read_to_string(repository.join("deploy/gcp/connections").join(file))?;
-        wamn_control::connection_configuration::write(
-            &system_url,
-            ORG,
-            operation,
-            &payload,
-            &wamn_platform_identity::auth_changes::AuthChanges::default(),
-            None,
-        )
-        .await?;
-    }
-
     // The package and the release, pushed from this machine.
     let package = repository.join("apps").join(PACKAGE);
     wamn_schema_generator::receipt::check_current(&package)?;
@@ -1119,13 +1084,6 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         insecure_registry: false,
         oci_ca_paths: ca.clone(),
     };
-    Box::pin(org_bindings::publish_declarations(
-        &work.join("connection-packages"),
-        &package_registry,
-        &format!("{local}/wamn/components"),
-        &admin_url,
-    ))
-    .await?;
     let mut pushed = None;
     for _ in 0..30 {
         match push_package(&PushPackageRequest {
@@ -1148,16 +1106,68 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         .into_iter()
         .find(|descriptor| descriptor.component == "device")
         .context("the fixture package admits its device component")?;
-    let manifest_a = release(MANIFEST, &version, None)?;
-    let manifest_b = release(MANIFEST_B, &version, None)?;
-    let manifest_h = release(MANIFEST_H, &version, Some(&device))?;
-    let transform =
-        http_connection::component(run, repository, &local, &version, PACKAGE, "transform").await?;
-    let request =
-        http_connection::component(run, repository, &local, &version, PACKAGE, "http-request")
-            .await?;
-    let page =
-        http_connection::component(run, repository, &local, &version, PACKAGE, "http-page").await?;
+    let transform = http_connection::component(
+        run,
+        repository,
+        &local,
+        "1.0.0",
+        "http_fixture",
+        "transform",
+    )
+    .await?;
+    let request = http_connection::component(
+        run,
+        repository,
+        &local,
+        "1.0.0",
+        "http_fixture",
+        "http-request",
+    )
+    .await?;
+    let page = http_connection::component(
+        run,
+        repository,
+        &local,
+        "1.0.0",
+        "http_fixture",
+        "http-page",
+    )
+    .await?;
+    Box::pin(org_bindings::publish_declarations(
+        run,
+        &work.join("connection-packages"),
+        &package_registry,
+        &format!("{local}/wamn/components"),
+        &admin_url,
+    ))
+    .await?;
+    let label =
+        wamn_package_artifact::read_descriptors(&package_registry, "label_fixture", "1.0.0")
+            .await?
+            .into_iter()
+            .find(|descriptor| descriptor.component == "blob-put")
+            .context("label fixture descriptor")?;
+    let add_label = |bytes: Vec<u8>| -> anyhow::Result<Vec<u8>> {
+        let (mut manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
+        let fact = label
+            .clone()
+            .into_admitted(wamn_catalog::ComponentPackageScope {
+                env_key: String::new(),
+                package_id: "label_fixture".into(),
+                package_version: "1.0.0".into(),
+            })
+            .component;
+        manifest
+            .components
+            .insert(wamn_catalog::ServingComponent::project(
+                &fact,
+                label.connections.clone(),
+            )?);
+        Ok(manifest.canonical_bytes())
+    };
+    let manifest_a = add_label(release(MANIFEST, &version, None)?)?;
+    let manifest_b = add_label(release(MANIFEST_B, &version, None)?)?;
+    let manifest_h = add_label(release(MANIFEST_H, &version, Some(&device))?)?;
     let manifest_http =
         http_connection::release(&manifest_h, &version, vec![transform, request, page])?;
     let [manifest_h, manifest_http] = compose_http_releases(
@@ -1269,8 +1279,8 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
             let (system, driver) = connect(&platform.system_database_url).await?;
             let exists = system
                 .query_opt(
-                    "SELECT 1 FROM registry.connection WHERE org=$1 AND name=$2",
-                    &[&ORG, connection],
+                    "SELECT 1 FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.org=$1 AND i.name=$2 AND c.env=$3",
+                    &[&ORG, connection, &document.env],
                 )
                 .await?
                 .is_some();
@@ -1437,27 +1447,33 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     .await;
     run.collect("2 unchanged apply", result);
 
-    // 3. A connection-only change writes no revision and moves the generation.
+    // 3. A binding change writes no revision or system generation.
     let generation = async |system: &tokio_postgres::Client| -> anyhow::Result<Option<i64>> {
         connection_generation(system, &admin_url).await
     };
     let mut connected = dev.clone();
-    org_bindings::bind(&platform, &mut connected, PACKAGE, "labels", "labels-dev", "s3",
+    org_bindings::bind(&platform, &mut connected, PACKAGE, "labels", "labels-dev-next", "s3",
         json!({"provider":"s3", "endpoint":"http://store.invalid", "container":"labels", "prefix":"a/"})).await?;
     apply(&connected, "dev-connection").await?;
     run.phase("bindings")?;
     let generation_one = generation(system.as_ref()).await?;
-    org_bindings::bind(&platform, &mut connected, PACKAGE, "labels", "labels-dev", "s3",
-        json!({"provider":"s3", "endpoint":"http://store.invalid", "container":"labels", "prefix":"b/"})).await?;
+    connected
+        .applications
+        .get_mut(PACKAGE)
+        .context("fixture application")?
+        .connections
+        .insert("labels".into(), "labels-dev".into());
     apply(&connected, "dev-connection-changed").await?;
     let generation_two = generation(system.as_ref()).await?;
     let after_connection = run.revisions(&name).await?;
     run.pass(
         "connection-only change writes no Helm revision",
-        &format!("helm -n {NAMESPACE} history {name}; SELECT active_generation FROM catalog.connection_instances"),
+        &format!(
+            "helm -n {NAMESPACE} history {name}; SELECT active_generation FROM registry.connection"
+        ),
         json!({"revisions": after_connection, "generations": [generation_one, generation_two],
-            "binding": "the fixture's components declare no store alias, so no binding exists"}),
-        after_connection == first && generation_one == Some(1) && generation_two == Some(2),
+            "binding": "the labels requirement changes its release binding"}),
+        after_connection == first && generation_one.is_some() && generation_one == generation_two,
     );
 
     // 4. The output of env show, applied, writes nothing.
@@ -1477,17 +1493,17 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     .as_str()
     .to_owned();
     let mut http = document("http", "http.orders.example");
+    http.integrations.clear();
     http.release = DeclaredRelease::Digest(http_digest.clone());
     let application = http.applications.get_mut(PACKAGE).unwrap();
     application.packages.remove("label_fixture");
     application.packages.insert("http_fixture".into());
     application.connections.clear();
-    application.connectors.clear();
     for handle in [
         "upstream",
         http_connection::OUTBOUND_HANDLE,
-        http_connection::OAUTH2_HANDLE,
-        http_connection::OAUTH1_HANDLE,
+        http_connection::API_KEY_HANDLE,
+        http_connection::AWS_HANDLE,
     ] {
         org_bindings::bind(
             &platform,
@@ -1497,13 +1513,13 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
             handle,
             "http",
             json!({
-                "primary-authority": format!("{}/{}", http_connection::ORIGIN,
-                    if handle == http_connection::OAUTH2_HANDLE { "oauth/" } else { "" }),
+                "primary-authority": http_connection::ORIGIN,
                 "tls-verification": "disabled"
             }),
         )
         .await?;
     }
+    http_connection::configure(run, &platform.system_database_url, "http").await?;
     apply(&http, "http-first").await?;
     let http_name = release_name(ORG, PROJECT, "http")?;
     let http_revisions = run.revisions(&http_name).await?;
@@ -1523,34 +1539,33 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         Ok(http_project
             .query_one(
                 "SELECT jsonb_build_object(\
-                    'instances', (SELECT jsonb_agg(to_jsonb(i) ORDER BY instance_id) \
-                        FROM catalog.connection_instances i WHERE env_key = $1 AND environment = 'http'), \
-                    'generations', (SELECT jsonb_agg(to_jsonb(g) ORDER BY instance_id, generation) \
-                        FROM catalog.connection_generations g WHERE env_key = $1 AND environment = 'http'), \
-                    'bindings', (SELECT jsonb_agg(to_jsonb(b) ORDER BY manifest_digest, component_digest, store_alias) \
-                        FROM catalog.connection_bindings b WHERE env_key = $1 AND environment = 'http'))",
+                    'versions', (SELECT jsonb_agg(to_jsonb(r) ORDER BY connection_id) \
+                        FROM catalog.release_connection r WHERE env_key = $1), \
+                    'bindings', (SELECT jsonb_agg(to_jsonb(b) || jsonb_build_object('mode',q.mode,'integration_name',i.name) ORDER BY b.manifest_digest,b.component_digest,b.name) \
+                        FROM catalog.connection_binding b JOIN catalog.connection_requirement q USING(env_key,component_digest,package_id,name) \
+                        JOIN platform.connection c ON c.id=b.connection_id JOIN platform.integration i ON i.id=c.integration_id WHERE b.env_key = $1))",
                 &[&http_env_key],
             )
             .await?
             .get(0))
     };
     let result = async {
-    let http_before = http_rows().await?;
-    let http_shown = environment::show::show(&platform, &http.triple()).await?;
-    run.pass(
-        "HTTP binds its instance, generation and release requirement and show reproduces the document",
-        &format!("wamn-ctl env show {ORG}/{PROJECT}/http; SELECT connection rows"),
-        json!({"document": http_shown.to_kcl(), "rows": http_before}),
-        http_shown == http
-            && http_connection::bindings_match(&http_before, &http, &http_digest),
-    );
-    apply(&http, "http-again").await?;
-    let http_second = http_rows().await?;
-    let http_second_revisions = run.revisions(&http_name).await?;
-    apply(&http_shown, "http-shown").await?;
-    let http_after_show = http_rows().await?;
-    let http_shown_revisions = run.revisions(&http_name).await?;
-    run.pass(
+        let http_before = http_rows().await?;
+        let http_shown = environment::show::show(&platform, &http.triple()).await?;
+        run.pass(
+            "HTTP binds its release requirement and version and show reproduces the document",
+            &format!("wamn-ctl env show {ORG}/{PROJECT}/http; SELECT connection rows"),
+            json!({"document": http_shown.to_kcl(), "rows": http_before}),
+            http_shown == http
+                && http_connection::bindings_match(&http_before, &http, &http_digest),
+        );
+        apply(&http, "http-again").await?;
+        let http_second = http_rows().await?;
+        let http_second_revisions = run.revisions(&http_name).await?;
+        apply(&http_shown, "http-shown").await?;
+        let http_after_show = http_rows().await?;
+        let http_shown_revisions = run.revisions(&http_name).await?;
+        run.pass(
         "HTTP second apply and show output applied write no rows or Helm revision",
         &format!(
             "wamn-ctl env apply; helm -n {NAMESPACE} history {http_name}; SELECT connection rows"
@@ -1562,24 +1577,25 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
             && http_revisions == http_second_revisions
             && http_revisions == http_shown_revisions,
     );
-    let (auth, _auth_forward) = integration::auth_changes(run).await?;
-    http_connection::assert_triggers(
-        run,
-        &http_project,
-        &integration::WorkflowEnvironment {
-            system_url: &platform.system_database_url,
-            project_url: &http_project_url,
-            scope: &http.triple(),
-            env_key: &http_env_key,
-            digest: &http_digest,
-            applications: &environment::show::serving_applications(&platform, &http.triple())
-                .await?,
-            auth: &auth,
-        },
-    )
-    .await?;
-    Ok(())
-    }.await;
+        let (auth, _auth_forward) = integration::auth_changes(run).await?;
+        http_connection::assert_triggers(
+            run,
+            &http_project,
+            &integration::WorkflowEnvironment {
+                system_url: &platform.system_database_url,
+                project_url: &http_project_url,
+                scope: &http.triple(),
+                env_key: &http_env_key,
+                digest: &http_digest,
+                applications: &environment::show::serving_applications(&platform, &http.triple())
+                    .await?,
+                auth: &auth,
+            },
+        )
+        .await?;
+        Ok(())
+    }
+    .await;
     run.collect("4 HTTP connections and triggers", result);
     run.retain_failure_diagnostics("http").await?;
     let digest_b = push_manifest_bytes(
@@ -2158,9 +2174,8 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     let qa_env_key = wamn_control_registry::project_env_key(ORG, PROJECT, "qa");
     let enabled: Vec<String> = project
         .query(
-            "SELECT instance_id FROM catalog.connection_instances \
-              WHERE env_key = $1 AND environment = 'qa' AND lifecycle_status = 'enabled'",
-            &[&qa_env_key],
+            "SELECT i.name FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id WHERE c.status='active' AND i.status='active'",
+            &[],
         )
         .await?
         .iter()
@@ -2168,7 +2183,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         .collect();
     let bindings: i64 = project
         .query_one(
-            "SELECT count(*) FROM catalog.connection_bindings WHERE env_key = $1",
+            "SELECT count(*) FROM catalog.connection_binding WHERE env_key = $1",
             &[&qa_env_key],
         )
         .await?
@@ -2181,7 +2196,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         ),
         json!({"live": qa_live, "enabled": enabled, "bindings": bindings,
             "note": "the fixture's components declare no store alias, so A had no binding"}),
-        qa_live.is_empty() && enabled == ["edge_device/labels"] && bindings == 0,
+        qa_live.is_empty() && enabled.contains(&"qa-labels".to_owned()) && bindings == 0,
     );
 
     Ok(())
@@ -2346,6 +2361,11 @@ fn fixture_host_group(local: &str) -> Value {
 
 fn fixture_document(env: &str, route_host: &str, digest: &str) -> EnvironmentDocument {
     EnvironmentDocument {
+        integrations: [(
+            format!("labels-{env}"),
+            environment::document::Integration { version: 1 },
+        )]
+        .into(),
         target: "cloud".into(),
         client_package: None,
         org: ORG.to_owned(),
@@ -2357,7 +2377,6 @@ fn fixture_document(env: &str, route_host: &str, digest: &str) -> EnvironmentDoc
         applications: std::collections::BTreeMap::from([(
             PACKAGE.to_owned(),
             wamn_catalog::ApplicationDefinition {
-                connectors: [("s3".into(), "host".into())].into(),
                 connections: [("labels".to_owned(), format!("labels-{env}"))].into(),
                 packages: std::collections::BTreeSet::from([
                     PACKAGE.to_owned(),
@@ -2937,7 +2956,7 @@ async fn host_report_check(run: &mut Run, context: &CheckContext) -> anyhow::Res
     let (system, task) = connect(&platform.system_database_url).await?;
     let bound = system
         .query_opt(
-            "SELECT 1 FROM registry.connection WHERE org=$1 AND name=$2",
+            "SELECT 1 FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.org=$1 AND i.name=$2 AND c.env=$3",
             &[&ORG, &format!("labels-{ENV}")],
         )
         .await?
@@ -3041,6 +3060,7 @@ fn check_platform(run: &Run, system_url: String, chart: PathBuf) -> Platform {
         release_artifact_base: format!("{local}/wamn/releases"),
         registry_auth_file: work.join("auth.json"),
         oci_ca_paths: vec![work.join("ca.crt")],
+        component_artifact_base: Some(format!("{local}/wamn/components")),
         package_artifact_base: Some(format!("{local}/wamn/packages")),
         database_namespace: NAMESPACE.to_owned(),
         database_host: None,
@@ -3172,33 +3192,8 @@ async fn connection_generation(
     system: &tokio_postgres::Client,
     admin_url: &str,
 ) -> anyhow::Result<Option<i64>> {
-    let env_key = wamn_control_registry::project_env_key(ORG, PROJECT, "dev");
-    let row = system
-        .query_opt(
-            "SELECT instance_suffix FROM registry.project_envs \
-                  WHERE org = $1 AND project = $2 AND env = 'dev'",
-            &[&ORG, &PROJECT],
-        )
-        .await?
-        .context("the dev row")?;
-    let database = wamn_control_provision::project_env_database_name(
-        ORG,
-        PROJECT,
-        "dev",
-        &row.get::<_, String>(0),
-    );
-    let mut url = url::Url::parse(admin_url)?;
-    url.set_path(&database);
-    let (project, task) = connect(url.as_str()).await?;
-    let active = project
-            .query_opt(
-                "SELECT active_generation FROM catalog.connection_instances \
-                  WHERE env_key = $1 AND environment = 'dev' AND instance_id = 'edge_device/labels'",
-                &[&env_key],
-            )
-            .await?
-            .and_then(|row| row.get(0));
-    task.abort();
+    let _ = admin_url;
+    let active=system.query_opt("SELECT c.active_generation FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.org=$1 AND c.project=$2 AND c.env='dev' AND i.name='labels-dev'",&[&ORG,&PROJECT]).await?.map(|row|row.get(0));
     Ok(active)
 }
 

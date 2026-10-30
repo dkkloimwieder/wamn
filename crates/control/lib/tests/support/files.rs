@@ -181,6 +181,8 @@ pub struct Registry {
     pub unmapped: Client,
     pub unenabled: Client,
     pub org: String,
+    project: String,
+    pub credentials: std::sync::Arc<wamn_test_infrastructure::credentials::LocalCredentials>,
     pub connection_id: String,
     pub generation: i64,
     pub definition: serde_json::Value,
@@ -190,59 +192,52 @@ pub struct Registry {
 
 impl Registry {
     pub async fn configure(
-        &self,
+        &mut self,
         operation: &str,
-        payload: serde_json::Value,
+        mut payload: serde_json::Value,
     ) -> anyhow::Result<()> {
-        let row: serde_json::Value = self
-            .control
-            .query_one(
-                "SELECT registry.configure_connection($1,$2,$3)",
-                &[&self.org, &operation, &payload],
-            )
-            .await?
-            .get(0);
-        anyhow::ensure!(
-            row.get("error").is_none(),
-            "connection fixture refused: {row}"
-        );
+        payload["project"] = self.project.clone().into();
+        payload["env"] = "dev".into();
+        let tx = self.control.transaction().await?;
+        wamn_platform_identity::connections::administration::execute_with_store(
+            &tx,
+            &self.org,
+            operation,
+            &payload.to_string(),
+            &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+            Some(self.credentials.as_ref()),
+        )
+        .await?;
+        tx.commit().await?;
         Ok(())
     }
-
-    pub async fn move_store(&self, definition: &serde_json::Value) -> anyhow::Result<()> {
+    pub async fn define_store(
+        &mut self,
+        project: &str,
+        name: &str,
+        parameters: &serde_json::Value,
+    ) -> anyhow::Result<()> {
+        let tx = self.control.transaction().await?;
+        wamn_test_infrastructure::credentials::define(&tx,&self.org,&serde_json::json!({"project":project,"env":"dev","name":name,"integration_type":"s3","auth_type":"custom","parameters":parameters,"credential":serde_json::json!({"ACCESS_KEY_ID":"file-fixture","ACCESS_SECRET_KEY":STORE_PASSWORD}).to_string()}),self.credentials.as_ref()).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+    pub async fn move_store(&mut self, definition: &serde_json::Value) -> anyhow::Result<()> {
         self.configure(
             "connection.write",
-            serde_json::json!({
-                "name": STORE_NAME, "integration": "s3", "transport": "s3", "exchange": "request",
-                "parameters": definition, "status": "active",
-            }),
+            serde_json::json!({"name":STORE_NAME,"parameters":definition}),
         )
         .await
     }
 }
 
-pub async fn lookup(
+pub async fn active_file_connections(
     client: &Client,
     org: &str,
     project: &str,
-    application: &str,
-    binding: Option<&str>,
-    pin: Option<(&str, i64)>,
+    connection: Option<&str>,
 ) -> anyhow::Result<Vec<tokio_postgres::Row>> {
-    Ok(client
-        .query(
-            "SELECT connection_id::text,connection_name,generation,parameters,mode \
-         FROM registry.lookup_file_connection($1,$2,'dev',$3,$4,$5,$6)",
-            &[
-                &org,
-                &project,
-                &application,
-                &binding,
-                &pin.map(|p| p.0),
-                &pin.map(|p| p.1),
-            ],
-        )
-        .await?)
+    Ok(client.query("SELECT connection_id::text,connection_name,generation,parameters FROM registry.read_file_connection($1,$2,'dev',$3::text::uuid)", &[&org,&project,&connection]).await?)
 }
 
 pub async fn registry(
@@ -290,6 +285,9 @@ pub async fn registry(
         principal.principal_name(),
     );
     owner.batch_execute(&bind_actor).await?;
+    owner
+        .batch_execute("UPDATE registry.meta SET platform_domain='example.invalid'")
+        .await?;
     for name in [project, "unenabled"] {
         owner
             .batch_execute(
@@ -297,6 +295,7 @@ pub async fn registry(
             )
             .await?;
     }
+    owner.batch_execute("UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud')").await?;
     bootstrap.batch_execute(
         "CREATE ROLE file_fixture_control LOGIN PASSWORD 'file-fixture-only' NOSUPERUSER NOBYPASSRLS; \
          GRANT wamn_control TO file_fixture_control",
@@ -364,6 +363,8 @@ pub async fn registry(
         unmapped,
         unenabled,
         org: org.into(),
+        project: project.into(),
+        credentials: Arc::new(wamn_test_infrastructure::credentials::LocalCredentials::create()?),
         connection_id: String::new(),
         generation: 0,
         definition: definition.clone(),
@@ -375,50 +376,19 @@ pub async fn registry(
         if !cdn {
             parameters.as_object_mut().unwrap().remove("cdn_host");
         }
-        fixture
-            .configure(
-                "connection.write",
-                serde_json::json!({"name":name,"integration":"s3",
-            "transport":"s3","exchange":"request","parameters":parameters,"status":"active"}),
-            )
-            .await?;
-        fixture
-            .configure(
-                "project_connection.enable",
-                serde_json::json!({"project":project,"connection":name}),
-            )
-            .await?;
-        let secret =
-            serde_json::json!({"ACCESS_KEY_ID":"file-fixture", "ACCESS_SECRET_KEY":STORE_PASSWORD})
-                .to_string();
-        fixture
-            .control
-            .query_one(
-                "SELECT registry.rotate_connection($1,$2,$3)",
-                &[&org, &name, &secret],
-            )
-            .await?;
+        let tx = fixture.control.transaction().await?;
+        wamn_test_infrastructure::credentials::define(&tx,org,&serde_json::json!({"project":project,"env":"dev","name":name,"integration_type":"s3","auth_type":"custom","parameters":parameters,"credential":serde_json::json!({"ACCESS_KEY_ID":"file-fixture","ACCESS_SECRET_KEY":STORE_PASSWORD}).to_string()}),fixture.credentials.as_ref()).await?;
+        tx.commit().await?;
     }
     let row = fixture
         .owner
         .query_one(
-            "SELECT id::text,current_generation FROM registry.connection WHERE org=$1 AND name=$2",
-            &[&org, &STORE_NAME],
+            "SELECT c.id::text,c.active_generation FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.org=$1 AND c.project=$3 AND i.name=$2",
+            &[&org, &STORE_NAME, &project],
         )
         .await?;
     fixture.connection_id = row.get(0);
     fixture.generation = row.get(1);
-    for (alias, name, mode) in [
-        ("files", STORE_NAME, "write"),
-        ("files_read", STORE_NAME, "read"),
-        ("files_no_cdn", "files-no-cdn", "write"),
-    ] {
-        fixture.owner.execute(
-            "INSERT INTO registry.environment_connection_binding (org,project,env,application,alias,connection_id,mode,target_id,generation,exclusive) \
-             SELECT $1,$2,'dev','files',$3,id,$4,(SELECT id FROM registry.target WHERE name='cloud'),current_generation,false FROM registry.connection WHERE org=$1 AND name=$5",
-            &[&org,&project,&alias,&mode,&name],
-        ).await?;
-    }
     Ok(fixture)
 }
 

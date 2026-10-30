@@ -768,18 +768,15 @@ async fn seed_effectful_unreleased_candidate(project: &Client) -> anyhow::Result
         )
         .await
         .context("seed the unreleased package root")?;
-    let requirement_json = String::from_utf8(requirement.canonical_bytes())
-        .context("connection requirement is canonical UTF-8")?;
-    let requirement_hash = requirement.requirement_hash();
     project
         .execute(
-            wamn_schema_control::connections::insert_component_connection_requirement_sql(),
+            "INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interfaces,mode) VALUES($1,$2,$3,$4,$5,'write')",
             &[
                 &ENV_KEY,
                 &requirement.component_digest(),
+                &EFFECTFUL_PACKAGE,
                 &requirement.store_alias(),
-                &requirement_json,
-                &requirement_hash,
+                &vec![requirement.requirement().contract.clone()],
             ],
         )
         .await

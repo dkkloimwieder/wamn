@@ -348,7 +348,6 @@ pub(crate) mod test_util {
             "scale".into(),
             wamn_catalog::ApplicationDefinition {
                 packages: BTreeSet::from(["scale".into()]),
-                connectors: BTreeMap::new(),
                 connections: BTreeMap::new(),
             },
         )]));

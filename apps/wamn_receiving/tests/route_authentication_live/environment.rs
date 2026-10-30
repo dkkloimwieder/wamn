@@ -494,7 +494,6 @@ pub(super) async fn publish_journey_release(
             applications: [(
                 "receiving".into(),
                 wamn_catalog::ApplicationDefinition {
-                    connectors: std::collections::BTreeMap::new(),
                     connections: std::collections::BTreeMap::new(),
                     packages: released_journey_packages()
                         .map(|package| package.id.to_owned())
@@ -656,7 +655,6 @@ pub(super) async fn author_materializer_workflow(
     let declared = BTreeMap::from([(
         "receiving".into(),
         wamn_catalog::ApplicationDefinition {
-            connectors: std::collections::BTreeMap::new(),
             connections: std::collections::BTreeMap::new(),
             packages: std::collections::BTreeSet::from([
                 BASE_PACKAGE_ID.into(),

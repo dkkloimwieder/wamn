@@ -186,7 +186,7 @@ pub(crate) async fn connection_components(
     root: &Path,
     manifest: &PackageManifest,
     source: Option<&wamn_runtime::component_artifact_source::ComponentArtifactSourceConfig>,
-) -> anyhow::Result<Vec<(String, Vec<ComponentConnection>, Vec<u8>)>> {
+) -> anyhow::Result<Vec<(String, Vec<String>, Vec<u8>)>> {
     let descriptors = read_descriptors(root)?;
     if !descriptors.is_empty() {
         use wamn_engine::artifact_source::ArtifactSource as _;
@@ -197,10 +197,15 @@ pub(crate) async fn connection_components(
             &manifest.package.version,
         )?;
         let mut result = Vec::new();
-        for descriptor in descriptors
-            .into_iter()
-            .filter(|descriptor| !descriptor.connections.is_empty())
-        {
+        for descriptor in descriptors {
+            let names = component_connection_names(
+                manifest,
+                &descriptor.component,
+                &descriptor.connections,
+            );
+            if names.is_empty() {
+                continue;
+            }
             let source = ComponentArtifactSource::new(
                 source
                     .context("set WAMN_COMPONENT_ARTIFACT_BASE for package install")?
@@ -208,7 +213,7 @@ pub(crate) async fn connection_components(
             )?;
             let facts = descriptor.into_admitted(scope.clone());
             let bytes = source.pull_verified(&facts.component).await?;
-            result.push((facts.component.component_digest, facts.connections, bytes));
+            result.push((facts.component.component_digest, names, bytes));
         }
         return Ok(result);
     }
@@ -232,9 +237,34 @@ pub(crate) async fn connection_components(
             };
             let declaration: ComponentDeclaration = serde_json::from_value(document)?;
             let bytes = std::fs::read(source.file).context("read package component binary")?;
-            Ok((source.sha256, declaration.connections, bytes))
+            let names =
+                component_connection_names(manifest, &source.name, &declaration.connections);
+            Ok((source.sha256, names, bytes))
         })
         .collect()
+}
+
+pub(crate) fn component_connection_names(
+    manifest: &PackageManifest,
+    component: &str,
+    connections: &[ComponentConnection],
+) -> Vec<String> {
+    let mut names = std::collections::BTreeSet::new();
+    names.extend(
+        connections
+            .iter()
+            .map(|connection| connection.store_alias.clone()),
+    );
+    if let Some(declaration) = manifest.components.get(component) {
+        names.extend(
+            declaration
+                .connections
+                .iter()
+                .filter(|name| manifest.connections.contains_key(*name))
+                .cloned(),
+        );
+    }
+    names.into_iter().collect()
 }
 
 /// Each file of [`DESCRIPTOR_DIRECTORY`] under `root`, parsed, with its exact

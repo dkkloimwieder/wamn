@@ -209,6 +209,8 @@ pub struct WamnPostgres {
     pub(super) operation_workloads:
         std::sync::RwLock<HashMap<String, Arc<super::operation::OperationWorkload>>>,
     pub(super) local_application: Option<Arc<crate::local_application::LocalApplication>>,
+    connection_credentials:
+        std::sync::RwLock<Option<Arc<crate::connection_credentials::ConnectionCredentials>>>,
     /// Resolves a project id → its database connection + policy.
     provider: Arc<dyn CredentialProvider>,
     /// Guest-visible project pools, built lazily and never shared with host-owned
@@ -654,7 +656,7 @@ WITH release_manifest AS MATERIALIZED ( \
 SELECT wiring.graph_json::text, component.component, component.interface_version, \
        $18::text, \
        component.operations #>> ARRAY[$18, 'registered-operation'], \
-       requirement.requirement_json::text, requirement.requirement_hash, \
+       connection.integration_type, requirement.mode, \
        COALESCE( \
            CASE WHEN $5::text IS NULL THEN \
                origin_component.operations ? $17 \
@@ -669,12 +671,8 @@ SELECT wiring.graph_json::text, component.component, component.interface_version
            END, \
            false \
        ), \
-       binding.binding_status = 'active', binding.validation_status = 'valid', \
-       instance.instance_id, binding.validation_hash, \
-       instance.requirement_type, instance.contract, \
-       instance.lifecycle_status = 'enabled', instance.active_generation, instance.revision, \
-       generation.generation, generation.definition_json::text, generation.definition_hash, \
-       generation.credential_set_handle, binding.mode, instance.org_connection_name \
+       connection.id::text, connection.status='active' AND integration.status='active', \
+       selected.version, integration.name, $11::bigint \
   FROM member \
   LEFT JOIN selected_wiring AS wiring ON true \
   LEFT JOIN release_member AS origin_member \
@@ -696,27 +694,19 @@ SELECT wiring.graph_json::text, component.component, component.interface_version
   LEFT JOIN LATERAL ( \
       SELECT wiring.graph_json #> ARRAY['nodes', $7] AS value \
   ) AS node ON true \
-  LEFT JOIN catalog.connection_requirements AS requirement \
-    ON requirement.env_key = $1 \
-   AND requirement.component_digest = $8 \
-   AND requirement.store_alias = $9 \
-  LEFT JOIN catalog.connection_bindings AS binding \
-    ON binding.env_key = $1 \
-   AND binding.manifest_digest = $3 \
-   AND binding.component_digest = $8 \
-   AND binding.store_alias = $9 \
-   AND binding.environment = $4 \
-   AND binding.package_id = $2 \
-   AND ($10::text IS NULL OR binding.instance_id = $10) \
-  LEFT JOIN catalog.connection_instances AS instance \
-    ON instance.env_key = binding.env_key \
-   AND instance.environment = binding.environment \
-   AND instance.instance_id = binding.instance_id \
-  LEFT JOIN catalog.connection_generations AS generation \
-    ON generation.env_key = instance.env_key \
-   AND generation.environment = instance.environment \
-   AND generation.instance_id = instance.instance_id \
-   AND generation.generation = COALESCE($11::bigint, instance.active_generation) \
+  LEFT JOIN catalog.connection_requirement AS requirement \
+    ON requirement.env_key = $1 AND requirement.component_digest = $8 \
+   AND requirement.package_id=$2 AND requirement.name = $9 \
+  LEFT JOIN catalog.connection_binding AS binding \
+    ON binding.env_key=requirement.env_key AND binding.manifest_digest=$3 \
+   AND binding.component_digest=requirement.component_digest AND binding.package_id=requirement.package_id \
+   AND binding.name=requirement.name \
+   AND ($10::text IS NULL OR binding.connection_id::text=$10) \
+  LEFT JOIN catalog.release_connection AS selected \
+    ON (selected.env_key,selected.manifest_digest,selected.connection_id) \
+      =(binding.env_key,binding.manifest_digest,binding.connection_id) \
+  LEFT JOIN platform.connection AS connection ON connection.id=selected.connection_id \
+  LEFT JOIN platform.integration AS integration ON integration.id=connection.integration_id \
  WHERE $5::text IS NULL OR wiring.graph_json IS NOT NULL";
 
 /// Reject guest SQL that would set or reset a session variable or role in-band.
@@ -1116,6 +1106,7 @@ impl WamnPostgres {
     pub fn with_provider(provider: Arc<dyn CredentialProvider>) -> Self {
         Self {
             local_application: None,
+            connection_credentials: std::sync::RwLock::default(),
             provider,
             guest_pools: std::sync::RwLock::new(HashMap::new()),
             platform_pools: std::sync::RwLock::new(HashMap::new()),
@@ -1939,6 +1930,10 @@ impl WamnPostgres {
         credentials: Arc<crate::connection_credentials::ConnectionCredentials>,
         project: &str,
     ) {
+        *self
+            .connection_credentials
+            .write()
+            .expect("connection reader lock") = Some(Arc::clone(&credentials));
         if let Some(local) = &self.local_application {
             local.set_connection_credentials(credentials, project);
         }
@@ -2067,37 +2062,110 @@ impl WamnPostgres {
                     })
                     .transpose()
             };
+            let integration_type: Option<String> = row.try_get(5)?;
+            let descriptor = integration_type
+                .as_deref()
+                .and_then(wamn_catalog::RequirementType::for_integration)
+                .map(wamn_catalog::RequirementType::descriptor);
+            let requirement = descriptor.as_ref().map(|descriptor| {
+                wamn_catalog::ComponentConnectionRequirement::new(
+                    lookup.component_digest,
+                    lookup.store_alias,
+                    descriptor.clone(),
+                )
+            });
+            let connection: Option<String> = row.try_get(8)?;
+            let active = row.try_get::<_, Option<bool>>(9)?.unwrap_or(false);
+            let version: Option<i32> = row.try_get(10)?;
+            let configuration = if let (Some(id), Some(version)) = (&connection, version) {
+                let reader = self
+                    .connection_credentials
+                    .read()
+                    .expect("connection reader lock")
+                    .clone()
+                    .context("connection reader unavailable")?;
+                Some(
+                    reader
+                        .version(project, lookup.environment, id, version)
+                        .await?,
+                )
+            } else {
+                None
+            };
+            let generation = configuration
+                .as_ref()
+                .map(|configuration| configuration.generation);
+            let definition = configuration.map(|configuration| configuration.parameters);
+            let definition_hash = definition
+                .as_ref()
+                .map(crate::connection_generation::definition_hash);
+            let requirement_hash = requirement
+                .as_ref()
+                .map(wamn_catalog::ComponentConnectionRequirement::requirement_hash);
+            let validation_hash = descriptor
+                .as_ref()
+                .zip(requirement_hash.as_ref())
+                .zip(definition_hash.as_ref())
+                .map(|((descriptor, requirement), definition)| {
+                    crate::connection_generation::definition_hash(
+                        &crate::connection_generation::binding_validation_subject(
+                            descriptor,
+                            requirement,
+                            definition,
+                        ),
+                    )
+                });
+            let name: Option<String> = row.try_get(11)?;
+            let credential_handle = if integration_type.as_deref() == Some("gcs") {
+                None
+            } else {
+                name.as_deref()
+                    .zip(generation)
+                    .map(|(name, generation)| {
+                        let reader = self
+                            .connection_credentials
+                            .read()
+                            .expect("connection reader lock")
+                            .clone()
+                            .context("connection reader unavailable")?;
+                        reader.connection_handle(name, generation)
+                    })
+                    .transpose()?
+            };
             let snapshot = ConnectionEffectSnapshot {
-                read_only: row.try_get::<_, Option<String>>(21)?.as_deref() != Some("write"),
-                connection_name: row.try_get(22)?,
+                read_only: row.try_get::<_, Option<String>>(6)?.as_deref() != Some("write"),
+                connection_name: name,
                 wiring_hash: json(0)?
                     .map(|graph| {
                         wamn_catalog::WiringDocument::parse(&graph)
                             .map(|graph| graph.wiring_hash().as_str().to_owned())
-                            .context("validate the released wiring graph")
                     })
                     .transpose()?,
                 component: row.try_get(1)?,
                 interface_version: row.try_get(2)?,
                 operation: row.try_get(3)?,
                 registered_operation: row.try_get(4)?,
-                requirement_json: json(5)?,
-                requirement_hash: row.try_get(6)?,
+                requirement_json: requirement.map(|requirement| {
+                    serde_json::to_value(requirement).expect("requirement JSON")
+                }),
+                requirement_hash,
                 node_permitted: row.try_get::<_, Option<bool>>(7)?.unwrap_or(false),
-                binding_active: row.try_get::<_, Option<bool>>(8)?.unwrap_or(false),
-                binding_valid: row.try_get::<_, Option<bool>>(9)?.unwrap_or(false),
-                instance_id: row.try_get(10)?,
-                validation_hash: row.try_get(11)?,
-                requirement_type: row.try_get(12)?,
-                contract: row.try_get(13)?,
-                instance_enabled: row.try_get::<_, Option<bool>>(14)?.unwrap_or(false),
-                active_generation: row.try_get(15)?,
+                binding_active: connection.is_some(),
+                binding_valid: descriptor.is_some(),
+                instance_id: connection,
+                validation_hash,
+                requirement_type: descriptor
+                    .as_ref()
+                    .map(|descriptor| descriptor.requirement_type.clone()),
+                contract: descriptor.map(|descriptor| descriptor.contract),
+                instance_enabled: active,
+                active_generation: generation,
                 pinned_generation: candidate_generation,
-                instance_revision: row.try_get(16)?,
-                generation: row.try_get(17)?,
-                definition: json(18)?,
-                definition_hash: row.try_get(19)?,
-                credential_handle: row.try_get(20)?,
+                instance_revision: generation,
+                generation,
+                definition,
+                definition_hash,
+                credential_handle,
             };
             Ok(Some(snapshot))
         }

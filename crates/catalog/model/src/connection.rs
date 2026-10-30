@@ -641,7 +641,7 @@ mod tests {
         assert_eq!(blobstore.descriptor_version, CONNECTION_DESCRIPTOR_VERSION);
     }
 
-    /// `requirement_hash` is persisted in `catalog.connection_requirements` and
+    /// `requirement_hash` identifies a portable requirement and
     /// compared on promotion, so its bytes must never move. The golden value is
     /// the sha256 of the literal JSON below, computed outside this code.
     #[test]

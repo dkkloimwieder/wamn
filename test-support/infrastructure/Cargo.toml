@@ -13,6 +13,7 @@ name = "wamn-test-postgres"
 path = "postgres-run.rs"
 
 [dependencies]
+wamn-platform-identity = { workspace = true }
 wamn-credential-store = { workspace = true }
 async-trait = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
@@ -37,7 +38,6 @@ tokio-postgres = { workspace = true }
 wamn-test-postgres = { workspace = true }
 
 [dev-dependencies]
-wamn-platform-identity = { workspace = true }
 wamn-control = { workspace = true }
 wamn-event-wire = { workspace = true }
 

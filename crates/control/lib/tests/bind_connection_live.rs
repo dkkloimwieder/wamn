@@ -1,40 +1,24 @@
-//! `[BIND-CONNECTION-LIVE]` — the connection-admin verb, shown by the round
-//! trip and not by the rows.
-//!
-//! The ruling (wamn-362o.33): bind, then the PLUGIN resolves the binding from
-//! a real snapshot. Existing rows do not show what the plugin accepts, so
-//! the assertion here is `wamn_blobstore::binding::resolve` returning the
-//! coordinates that were bound, over a snapshot the postgres plugin's own
-//! `connection_effect_snapshot` loaded from the rows the verb wrote. Nothing
-//! between the verb and the resolver is this file's: the fixture is a
-//! package applied by the real verb, a component with the facts admission
-//! produces, a wiring authored by the real author under a
-//! green report, and a release row of the shape the publish writes.
-//!
-//! Two databases on the PostgreSQL server of the test process: a project
-//! database with the tenant+platform floor and a control database with the
-//! system floor. The test holds the process lock of that server.
+//! Release bindings, scope refusals, and native read authority on the environment catalog.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
+use serde_json::json;
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{
     AdmittedComponent, AdmittedComponentOperation, ComponentPackageScope, ConnectionTypeDescriptor,
     RequirementType, WiringDocument, WiringNode, WiringTerminal,
 };
 use wamn_control::apply_package::{self, ApplyPackageRequest};
-use wamn_control::bind_connection::{self, BindConnectionRequest};
+use wamn_control::environment::{bindings, document::EnvironmentDocument};
+use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::plugins::wamn_blobstore::binding::{self, BindingError};
 use wamn_runtime::plugins::wamn_postgres::{
     CandidateConnectionBinding, ClassCredentials, ConnectionEffectLookup, DEFAULT_PROJECT,
     WamnPostgres, WamnPostgresConfig,
 };
-use wamn_schema_control::connections::{
-    ComponentConnectionRequirement, activate_connection_generation_sql,
-    insert_component_connection_requirement_sql,
-};
+use wamn_schema_control::connections::ComponentConnectionRequirement;
 use wamn_test_infrastructure::record_history::assert_stamp;
 
 const ENV_KEY: &str = "bind-connection-tenant--fixture--dev";
@@ -148,16 +132,16 @@ async fn admit_component(
         effects: Vec::new(),
     };
     let requirement = ComponentConnectionRequirement::new(digest, store_alias, descriptor);
-    let canonical = String::from_utf8(requirement.canonical_bytes()).expect("canonical utf-8");
     project
         .execute(
-            insert_component_connection_requirement_sql(),
+            "INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interfaces,mode) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING",
             &[
                 &ENV_KEY,
                 &requirement.component_digest(),
+                &package_id,
                 &requirement.store_alias(),
-                &canonical,
-                &requirement.requirement_hash(),
+                &vec![requirement.requirement().contract.clone()],
+                &if requirement.requirement().requirement_type=="http" {"read"} else {"write"},
             ],
         )
         .await
@@ -197,6 +181,14 @@ async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedC
         ))
         .await
         .expect("ensure the CallableHttp class ACL role the pool probes for");
+    project
+        .batch_execute("CREATE SCHEMA IF NOT EXISTS wamn_run")
+        .await
+        .unwrap();
+    project
+        .batch_execute(&wamn_control_provision::sql::grant_administration_surface_sql("wamn_run"))
+        .await
+        .unwrap();
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bind_connection");
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
     let package = scratch.path().join("package");
@@ -300,50 +292,145 @@ async fn provision_project(project: &Client, project_url: &str) -> Vec<AdmittedC
     vec![blob_put, http_sidecar]
 }
 
-fn definition_file(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
-    let path = dir.join(name);
-    std::fs::write(&path, body).expect("write a generation definition");
-    path
+struct Authority {
+    database: wamn_test_postgres::Database,
+    system: Client,
+    _store: Arc<wamn_test_infrastructure::credentials::LocalCredentials>,
 }
-
-fn args(
-    project_url: &str,
-    definition: std::path::PathBuf,
-    store_alias: &str,
-    digest: &str,
-) -> BindConnectionRequest {
-    BindConnectionRequest {
-        database_url: project_url.to_owned(),
-        org: "bind-connection-tenant".into(),
-        project: "fixture".into(),
-        environment: ENVIRONMENT.to_owned(),
-        instance_id: "labels-store".to_owned(),
-        requirement_type: RequirementType::Blobstore,
-        definition: serde_json::from_slice(&std::fs::read(definition).expect("read a definition"))
-            .expect("a JSON definition"),
-        credential_handle: Some("labels-store".to_owned()),
-        org_connection_name: None,
-        manifest_digest: digest_of(RELEASE_BYTES),
-        component_digest: digest.to_owned(),
-        store_alias: store_alias.to_owned(),
+impl Authority {
+    async fn new(http_origin: &str) -> Self {
+        let database = wamn_control_provision::test_database::system();
+        let (mut system, _) = connect(database.url()).await;
+        system.batch_execute("SET ROLE wamn_system").await.unwrap();
+        system
+            .batch_execute(
+                &wamn_control_provision::test_database::seed_org_project_env_sql(
+                    "bind-connection-tenant",
+                    DEFAULT_PROJECT,
+                    "dev",
+                ),
+            )
+            .await
+            .unwrap();
+        system.batch_execute(&format!("BEGIN; {} INSERT INTO registry.target(name,type,status) VALUES('cloud','cloud','active') ON CONFLICT DO NOTHING; UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT;",wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning))).await.unwrap();
+        let store =
+            Arc::new(wamn_test_infrastructure::credentials::LocalCredentials::create().unwrap());
+        let tx = system.transaction().await.unwrap();
+        tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+        .await
+        .unwrap();
+        for (name, integration_type, auth_type, parameters, credential) in [
+            (
+                "labels-store",
+                "s3",
+                "custom",
+                json!({"provider":"s3","endpoint":"http://10.0.0.7:9000","container":"labels","prefix":"fixture/"}),
+                json!({"ACCESS_KEY_ID":"fixture","ACCESS_SECRET_KEY":"private"}),
+            ),
+            (
+                "http-read",
+                "http",
+                "http_basic",
+                json!({"primary-authority":http_origin,"tls-verification":"disabled"}),
+                json!({"username":"fixture","password":"private"}),
+            ),
+        ] {
+            wamn_test_infrastructure::credentials::define(&tx,"bind-connection-tenant",&json!({"project":DEFAULT_PROJECT,"env":"dev","name":name,"integration_type":integration_type,"auth_type":auth_type,"parameters":parameters,"credential":credential.to_string()}),store.as_ref()).await.unwrap();
+        }
+        tx.commit().await.unwrap();
+        Self {
+            database,
+            system,
+            _store: store,
+        }
+    }
+    fn document(digest: &str) -> EnvironmentDocument {
+        serde_json::from_value(json!({"org":"bind-connection-tenant","project":DEFAULT_PROJECT,"env":"dev","target":"cloud","release":digest,"route_host":"fixture.example","policy":"dev", "integrations":{"labels-store":{"version":1},"http-read":{"version":1}},"applications":{PACKAGE:{"packages":[PACKAGE,"nested_origin","nested_wiring"],"connections":{"labels":"labels-store","erp":"http-read"}}}})).unwrap()
+    }
+    async fn apply(
+        &mut self,
+        project: &mut Client,
+        url: &str,
+        document: &EnvironmentDocument,
+        packages: &[wamn_schema_generator::PackageManifest],
+    ) {
+        self.system
+            .batch_execute("SET ROLE wamn_db_owner")
+            .await
+            .unwrap();
+        let selected = bindings::analyse(&self.system, document, packages)
+            .await
+            .unwrap();
+        let _ = bindings::project_authority(self.database.url(), url, document)
+            .await
+            .unwrap();
+        let tx = project.transaction().await.unwrap();
+        bindings::write(
+            &tx,
+            ENV_KEY,
+            match &document.release {
+                wamn_control::environment::document::DeclaredRelease::Digest(digest) => {
+                    digest.as_str()
+                }
+                wamn_control::environment::document::DeclaredRelease::None => unreachable!(),
+            },
+            document,
+            &selected,
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+    }
+    async fn reader(&self) -> ConnectionCredentials {
+        let role = format!("reader_{}", self.database.name());
+        self.system
+            .batch_execute(&format!(
+                "RESET ROLE; BEGIN; {} {}",
+                wamn_control_provision::bind_platform_principal_sql(
+                    wamn_control_provision::PlatformComponent::Provisioning
+                ),
+                wamn_control_provision::sql::prepare_workload_generation_sql(
+                    wamn_control_provision::WorkloadRoleFamily::ConnectionReader,
+                    self.database.name(),
+                    &role,
+                    "fixture-password",
+                    "2099-01-01T00:00:00Z"
+                )
+            ))
+            .await
+            .unwrap();
+        self.system
+            .execute(
+                wamn_control_provision::sql::upsert_control_author_env_key_mapping_sql(),
+                &[
+                    &role,
+                    &ENV_KEY,
+                    &"bind-connection-tenant",
+                    &DEFAULT_PROJECT,
+                    &ENVIRONMENT,
+                ],
+            )
+            .await
+            .unwrap();
+        self.system.batch_execute("COMMIT").await.unwrap();
+        let mut url = url::Url::parse(self.database.url()).unwrap();
+        url.set_username(&role).unwrap();
+        url.set_password(Some("fixture-password")).unwrap();
+        let (reader, _) = connect(url.as_str()).await;
+        ConnectionCredentials::from_database(Arc::new(reader), "bind-connection-tenant")
     }
 }
-
-async fn rows(project: &Client) -> (i64, i64, i64) {
-    let count = |sql: &'static str| async move {
-        project
-            .query_one(sql, &[&ENV_KEY])
-            .await
-            .expect("count rows")
-            .get::<_, i64>(0)
+fn declarations(integration_type: &str, mode: &str) -> wamn_schema_generator::PackageManifest {
+    let interfaces = vec!["wamn:connection/http@0.1.0"];
+    let connections = if integration_type == "s3" {
+        json!({"labels":{"interfaces":["wasmcloud:blobstore/blobstore@0.1.0"],"mode":"write"},"erp":{"interfaces":["wamn:connection/http@0.1.0"],"mode":"read"}})
+    } else {
+        json!({"erp":{"interfaces":interfaces,"mode":mode}})
     };
-    (
-        count("SELECT count(*) FROM catalog.connection_instances WHERE env_key = $1").await,
-        count("SELECT count(*) FROM catalog.connection_generations WHERE env_key = $1").await,
-        count("SELECT count(*) FROM catalog.connection_bindings WHERE env_key = $1").await,
-    )
+    serde_json::from_value(json!({"package":{"id":PACKAGE,"version":PACKAGE_VERSION},"required_platform_policy_contract":{"id":"fixture_access","state":"satisfied"},"models":{},"components":{},"connections":connections})).unwrap()
 }
-
 async fn assert_nested_effect_snapshot(
     project: &Client,
     postgres: &WamnPostgres,
@@ -399,7 +486,7 @@ async fn assert_nested_effect_snapshot(
     let resolved = binding::resolve(&snapshot).expect("resolve the executor's bound alias");
     assert!(matches!(
         &resolved.provider,
-        binding::BlobstoreProvider::S3 { credential_handle, .. } if credential_handle == "labels-rotated"
+        binding::BlobstoreProvider::S3 { credential_handle, .. } if credential_handle.starts_with("org:bind-connection-tenant:labels-store@")
     ));
 
     for (changed, refused) in [
@@ -489,20 +576,18 @@ async fn assert_nested_effect_snapshot(
     }
 }
 
+async fn rows(project: &Client) -> serde_json::Value {
+    project.query_one("SELECT jsonb_build_object('versions',(SELECT jsonb_agg(to_jsonb(r)||jsonb_build_object('xmin',r.xmin::text) ORDER BY r.connection_id) FROM catalog.release_connection r),'bindings',(SELECT jsonb_agg(to_jsonb(b)||jsonb_build_object('xmin',b.xmin::text) ORDER BY b.component_digest,b.name) FROM catalog.connection_binding b))",&[]).await.unwrap().get::<_,serde_json::Value>(0)
+}
+
 #[tokio::test]
-async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
+async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
     let _lock = wamn_test_postgres::lock();
     let project_database = wamn_project_state::test_database::tenant_platform();
     let project_url = project_database.url().to_owned();
-    let (project, project_task) = connect(&project_url).await;
+    let (mut project, project_task) = connect(&project_url).await;
     provision_project(&project, &project_url).await;
-    // No tempfile dev-dependency in this crate: a pid-named scratch directory,
-    // removed at the end.
-    let scratch_dir =
-        std::env::temp_dir().join(format!("wamn-bind-connection-{}", std::process::id()));
-    std::fs::create_dir_all(&scratch_dir).expect("scratch directory");
-    let scratch = scratch_dir.as_path();
-
+    let mut authority = Authority::new("http://127.0.0.1:9/").await;
     // The plugin, constructed the way the host constructs it, scoped to the
     // component the way the host scopes it at bind time.
     let postgres = Arc::new(
@@ -519,6 +604,13 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
     postgres
         .set_env_key(COMPONENT_ID, ENV_KEY)
         .expect("register the component's tenant");
+    let _reader = wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore::new(
+        Arc::clone(&postgres),
+        Arc::new(authority.reader().await),
+        ENV_KEY,
+        DEFAULT_PROJECT,
+        None,
+    );
     let release: &'static str = Box::leak(digest_of(RELEASE_BYTES).into_boxed_str());
     let lookup = ConnectionEffectLookup {
         entry: wamn_runtime::plugins::wamn_postgres::ConnectionEntryLookup {
@@ -552,71 +644,45 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
             .expect("the declared alias has a snapshot, bound or not")
     };
 
-    // CONTROL FIRST: before the verb runs, the plugin sees the requirement and
-    // refuses to resolve it as unbound. This is what makes the pass below the
-    // verb's doing and not the fixture's.
     let before = snapshot_of().await;
-    // An unbound alias fails the plugin's authorization, which the blobstore
-    // resolver surfaces as Unauthorized -- the same refusal a host would give.
+    assert!(matches!(
+        binding::resolve(&before),
+        Err(BindingError::Unauthorized)
+    ));
+    let document = Authority::document(release);
+    authority
+        .apply(
+            &mut project,
+            &project_url,
+            &document,
+            &[declarations("s3", "write")],
+        )
+        .await;
+    let before_reapply = rows(&project).await;
+    authority
+        .apply(
+            &mut project,
+            &project_url,
+            &document,
+            &[declarations("s3", "write")],
+        )
+        .await;
+    assert_eq!(rows(&project).await, before_reapply);
     assert!(
-        matches!(binding::resolve(&before), Err(BindingError::Unauthorized)),
-        "before bind-connection the plugin must refuse the unbound alias, got {:?}",
-        binding::resolve(&before)
+        postgres
+            .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, "other", &lookup)
+            .await
+            .is_err()
     );
-    assert_eq!(rows(&project).await, (0, 0, 0));
-
-    // REFUSALS LEAVE NO ROWS. A definition missing a coordinate is refused by
-    // name before a connection is opened; a blobstore instance bound to an
-    // alias declared as HTTP is refused naming both types.
-    let lacking = definition_file(
-        scratch,
-        "lacking.json",
-        r#"{"endpoint":"http://10.0.0.7:9000","container":"labels"}"#,
-    );
-    let error = bind_connection::bind(&args(&project_url, lacking.clone(), "labels", BLOB_PUT))
-        .await
-        .expect_err("a definition without prefix cannot be bound");
-    assert!(format!("{error:#}").contains("lacks prefix"), "{error:#}");
-    let good = definition_file(
-        scratch,
-        "good.json",
-        r#"{"endpoint":"http://10.0.0.7:9000","container":"labels","prefix":"fixture/"}"#,
-    );
-    let error = bind_connection::bind(&args(&project_url, good.clone(), "erp", HTTP_SIDECAR))
-        .await
-        .expect_err("a blobstore instance cannot bind an HTTP alias");
-    let text = format!("{error:#}");
-    assert!(
-        text.contains("declared erp as http/") && text.contains("not blobstore/"),
-        "{text}"
-    );
-    let error = bind_connection::bind(&args(&project_url, good.clone(), "nothing", BLOB_PUT))
-        .await
-        .expect_err("an alias the component never declared cannot be bound");
-    assert!(
-        format!("{error:#}").contains("declares no connection requirement named nothing"),
-        "{error:#}"
-    );
-    assert_eq!(rows(&project).await, (0, 0, 0), "a refusal writes nothing");
-
-    // THE VERB.
-    let bound = bind_connection::bind(&args(&project_url, good.clone(), "labels", BLOB_PUT))
-        .await
-        .expect("bind the labels store");
-    assert_eq!(bound.instance_id, "labels-store");
-    assert_eq!(bound.generation, 1);
-    assert!(bound.definition_hash.starts_with("sha256:"));
-    assert!(bound.validation_hash.starts_with("sha256:"));
-    assert_ne!(bound.definition_hash, bound.validation_hash);
-    assert_eq!(rows(&project).await, (1, 1, 1));
-    for relation in [
-        "catalog.connection_generations",
-        "catalog.connection_bindings",
-    ] {
+    let after = snapshot_of().await;
+    let resolved = binding::resolve(&after).unwrap();
+    assert_eq!(resolved.container, "labels");
+    assert_eq!(resolved.prefix, "fixture/");
+    for relation in ["catalog.release_connection", "catalog.connection_binding"] {
         assert_stamp(
             &project,
             relation,
-            &format!("env_key = '{ENV_KEY}'"),
+            &format!("env_key='{ENV_KEY}'"),
             &wamn_control_provision::PlatformComponent::Provisioning
                 .principal_id()
                 .to_string(),
@@ -626,25 +692,80 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
         )
         .await;
     }
-
-    // THE ROUND TRIP: the plugin loads the snapshot from the rows the verb
-    // wrote and the blobstore resolver accepts it, returning what was bound.
-    let after = snapshot_of().await;
-    let resolved = binding::resolve(&after).expect("the plugin resolves the bound connection");
+    let pinned = CandidateConnectionBinding {
+        read_only: false,
+        component_digest: BLOB_PUT.into(),
+        store_alias: "labels".into(),
+        requirement_hash: after.requirement_hash.clone().unwrap(),
+        instance_id: after.instance_id.clone().unwrap(),
+        instance_revision: after.instance_revision.unwrap(),
+        requirement_type: after.requirement_type.clone().unwrap(),
+        contract: after.contract.clone().unwrap(),
+        validation_hash: after.validation_hash.clone().unwrap(),
+        generation: after.generation.unwrap(),
+        definition_hash: after.definition_hash.clone().unwrap(),
+        credential_set_handle: after.credential_handle.clone(),
+    };
+    for candidate in [
+        CandidateConnectionBinding {
+            instance_id: uuid::Uuid::new_v4().to_string(),
+            ..pinned.clone()
+        },
+        CandidateConnectionBinding {
+            generation: 99,
+            ..pinned.clone()
+        },
+    ] {
+        let snapshot = postgres
+            .connection_effect_snapshot(
+                COMPONENT_ID,
+                DEFAULT_PROJECT,
+                ENV_KEY,
+                &ConnectionEffectLookup {
+                    candidate_binding: Some(&candidate),
+                    ..lookup
+                },
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(binding::resolve(&snapshot).is_err());
+    }
+    for refused in [
+        ConnectionEffectLookup {
+            store_alias: "undeclared",
+            ..lookup
+        },
+        ConnectionEffectLookup {
+            manifest_digest: &digest_of(OTHER_RELEASE_BYTES),
+            ..lookup
+        },
+    ] {
+        let snapshot = postgres
+            .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, ENV_KEY, &refused)
+            .await
+            .unwrap();
+        assert!(snapshot.is_none_or(|snapshot| binding::resolve(&snapshot).is_err()));
+    }
+    let mut wrong = document.clone();
+    wrong
+        .applications
+        .get_mut(PACKAGE)
+        .unwrap()
+        .connections
+        .insert("erp".into(), "labels-store".into());
+    authority
+        .system
+        .batch_execute("SET ROLE wamn_db_owner")
+        .await
+        .unwrap();
     assert_eq!(
-        resolved.provider,
-        binding::BlobstoreProvider::S3 {
-            endpoint: "http://10.0.0.7:9000".to_owned(),
-            credential_handle: "labels-store".to_owned(),
-        }
+        bindings::analyse(&authority.system, &wrong, &[declarations("s3", "write")])
+            .await
+            .unwrap_err()
+            .code,
+        "integration_import_unsatisfied"
     );
-    assert_eq!(resolved.container, "labels");
-    assert_eq!(resolved.prefix, "fixture/");
-    assert_eq!(
-        after.definition_hash.as_deref(),
-        Some(bound.definition_hash.as_str())
-    );
-
     // A ROUTE ENTRY: no wiring row participates. The same origin export
     // resolves the same bound connection, and the snapshot names no wiring.
     let route = ConnectionEffectLookup {
@@ -693,307 +814,9 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
         foreign.is_none(),
         "a route in a package outside the release has no snapshot"
     );
-    assert_eq!(
-        after.validation_hash.as_deref(),
-        Some(bound.validation_hash.as_str())
-    );
-
-    // Identical rebinding preserves every stored row.
-    let again = definition_file(
-        scratch,
-        "again.json",
-        r#"{"endpoint":"http://10.0.0.7:9000","container":"labels","prefix":"fixture/"}"#,
-    );
-    let rebound = bind_connection::bind(&args(&project_url, again, "labels", BLOB_PUT))
-        .await
-        .expect("identical rebinding is a no-op");
-    assert_eq!(rebound.previous_generation, Some(1));
-    assert_eq!(rebound.generation, 1);
-    assert_eq!(rows(&project).await, (1, 1, 1));
-    for relation in [
-        "catalog.connection_generations",
-        "catalog.connection_bindings",
-    ] {
-        assert_stamp(
-            &project,
-            relation,
-            &format!("env_key = '{ENV_KEY}'"),
-            &wamn_control_provision::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string(),
-            &wamn_control_provision::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string(),
-        )
-        .await;
-    }
-
-    // A STALE ACTIVATION CHANGES NOTHING. The bind left generation 1 active at
-    // revision 2. An activation that expects any other state matches no row,
-    // and the instance row stays exactly as it was.
-    let instance = || async {
-        project
-            .query_one(
-                "SELECT active_generation, revision, row_to_json(instance)::text \
-                   FROM catalog.connection_instances AS instance \
-                  WHERE env_key = $1 AND environment = $2 AND instance_id = $3",
-                &[&ENV_KEY, &ENVIRONMENT, &"labels-store"],
-            )
-            .await
-            .map(|row| {
-                (
-                    row.get::<_, Option<i64>>(0),
-                    row.get::<_, i64>(1),
-                    row.get::<_, String>(2),
-                )
-            })
-            .expect("read the bound instance")
-    };
-    let current = instance().await;
-    assert_eq!((current.0, current.1), (Some(1), 2));
-    for (expected_active_generation, expected_revision) in
-        [(None::<i64>, 1_i64), (Some(1), 1), (None, 2)]
-    {
-        let activated = project
-            .execute(
-                activate_connection_generation_sql(),
-                &[
-                    &ENV_KEY,
-                    &ENVIRONMENT,
-                    &"labels-store",
-                    &1_i64,
-                    &expected_active_generation,
-                    &expected_revision,
-                ],
-            )
-            .await
-            .expect("a stale activation is not an error");
-        assert_eq!(
-            activated, 0,
-            "expecting ({expected_active_generation:?}, {expected_revision}) is stale"
-        );
-        assert_eq!(instance().await, current);
-    }
-
-    // Invalid configuration cannot disturb the already selected generation.
-    bind_connection::bind(&args(&project_url, lacking, "labels", BLOB_PUT))
-        .await
-        .expect_err("invalid rotation refuses");
-    assert_eq!(instance().await, current);
-    assert_eq!(rows(&project).await, (1, 1, 1));
-    for relation in [
-        "catalog.connection_generations",
-        "catalog.connection_bindings",
-    ] {
-        assert_stamp(
-            &project,
-            relation,
-            &format!("env_key = '{ENV_KEY}'"),
-            &wamn_control_provision::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string(),
-            &wamn_control_provision::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string(),
-        )
-        .await;
-    }
-
-    project
-        .execute(
-            "INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) \
-             VALUES ($1, $2, $3)",
-            &[
-                &ENV_KEY,
-                &digest_of(OTHER_RELEASE_BYTES),
-                &OTHER_RELEASE_BYTES.as_bytes(),
-            ],
-        )
-        .await
-        .unwrap();
-    let mut wrong_scope = args(&project_url, good.clone(), "labels", BLOB_PUT);
-    wrong_scope.manifest_digest = digest_of(OTHER_RELEASE_BYTES);
-    bind_connection::bind(&wrong_scope)
-        .await
-        .expect_err("a release without this component refuses");
-    assert_eq!(instance().await, current);
-    assert_eq!(rows(&project).await, (1, 1, 1));
-    for relation in [
-        "catalog.connection_generations",
-        "catalog.connection_bindings",
-    ] {
-        assert_stamp(
-            &project,
-            relation,
-            &format!("env_key = '{ENV_KEY}'"),
-            &wamn_control_provision::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string(),
-            &wamn_control_provision::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string(),
-        )
-        .await;
-    }
-
-    let pinned = CandidateConnectionBinding {
-        read_only: false,
-        component_digest: BLOB_PUT.to_owned(),
-        store_alias: "labels".to_owned(),
-        requirement_hash: after.requirement_hash.clone().unwrap(),
-        instance_id: after.instance_id.clone().unwrap(),
-        instance_revision: after.instance_revision.unwrap(),
-        requirement_type: after.requirement_type.clone().unwrap(),
-        contract: after.contract.clone().unwrap(),
-        validation_hash: after.validation_hash.clone().unwrap(),
-        generation: 1,
-        definition_hash: after.definition_hash.clone().unwrap(),
-        credential_set_handle: after.credential_handle.clone(),
-    };
-    let changed = definition_file(
-        scratch,
-        "changed.json",
-        r#"{"endpoint":"http://10.0.0.8:9000","container":"labels","prefix":"new/"}"#,
-    );
-    let mut changed_args = args(&project_url, changed.clone(), "labels", BLOB_PUT);
-    changed_args.credential_handle = Some("labels-rotated".to_owned());
-    let rotated = bind_connection::bind(&changed_args)
-        .await
-        .expect("rotate the instance");
-    assert_eq!(rotated.previous_generation, Some(1));
-    assert_eq!(rotated.generation, 2);
-    assert_eq!(rows(&project).await, (1, 2, 1));
-    for relation in [
-        "catalog.connection_generations",
-        "catalog.connection_bindings",
-    ] {
-        assert_stamp(
-            &project,
-            relation,
-            &format!("env_key = '{ENV_KEY}'"),
-            &wamn_control_provision::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string(),
-            &wamn_control_provision::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string(),
-        )
-        .await;
-    }
-    let new_snapshot = snapshot_of().await;
-    let new_binding = binding::resolve(&new_snapshot).expect("new selection resolves");
-    assert_eq!(
-        new_binding.provider,
-        binding::BlobstoreProvider::S3 {
-            endpoint: "http://10.0.0.8:9000".to_owned(),
-            credential_handle: "labels-rotated".to_owned(),
-        }
-    );
-    let old_snapshot = postgres
-        .connection_effect_snapshot(
-            COMPONENT_ID,
-            DEFAULT_PROJECT,
-            ENV_KEY,
-            &ConnectionEffectLookup {
-                candidate_binding: Some(&pinned),
-                ..lookup
-            },
-        )
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(old_snapshot.active_generation, Some(2));
-    assert_eq!(old_snapshot.generation, Some(1));
-    for candidate in [
-        CandidateConnectionBinding {
-            instance_id: "another-instance".to_owned(),
-            ..pinned.clone()
-        },
-        CandidateConnectionBinding {
-            generation: 99,
-            ..pinned.clone()
-        },
-    ] {
-        let snapshot = postgres
-            .connection_effect_snapshot(
-                COMPONENT_ID,
-                DEFAULT_PROJECT,
-                ENV_KEY,
-                &ConnectionEffectLookup {
-                    candidate_binding: Some(&candidate),
-                    ..lookup
-                },
-            )
-            .await
-            .expect("load a mismatched candidate snapshot")
-            .expect("the released wiring still exists");
-        assert!(
-            binding::resolve(&snapshot).is_err(),
-            "a candidate must not fall back to another instance or generation"
-        );
-    }
-    let old_binding =
-        binding::resolve(&old_snapshot).expect("the pinned generation remains usable");
-    assert_eq!(
-        old_binding.provider,
-        binding::BlobstoreProvider::S3 {
-            endpoint: "http://10.0.0.7:9000".to_owned(),
-            credential_handle: "labels-store".to_owned(),
-        }
-    );
-
-    // Hold the row after the competing bind reads it, then advance its revision.
-    let (mut blocker, blocker_task) = connect(&project_url).await;
-    let transaction = blocker.transaction().await.unwrap();
-    transaction.query_one("SELECT instance_id FROM catalog.connection_instances WHERE env_key=$1 AND instance_id='labels-store' FOR UPDATE", &[&ENV_KEY]).await.unwrap();
-    let stale_args = args(&project_url, good, "labels", BLOB_PUT);
-    let stale_bind = tokio::spawn(async move { bind_connection::bind(&stale_args).await });
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        loop {
-            let activation_waits: bool = project.query_one(
-                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'UPDATE catalog.connection_instances%')", &[])
-                .await.unwrap().get(0);
-            if activation_waits { break; }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-    }).await.expect("the competing activation reaches its row lock");
-    transaction.execute("UPDATE catalog.connection_instances SET revision=revision+1 WHERE env_key=$1 AND instance_id='labels-store'", &[&ENV_KEY]).await.unwrap();
-    transaction.commit().await.unwrap();
-    let error = stale_bind
-        .await
-        .unwrap()
-        .expect_err("stale bind refuses atomically");
-    assert!(
-        error.to_string().contains("connection inputs changed"),
-        "{error:#}"
-    );
-    assert_eq!(rows(&project).await, (1, 2, 1));
-    for relation in [
-        "catalog.connection_generations",
-        "catalog.connection_bindings",
-    ] {
-        assert_stamp(
-            &project,
-            relation,
-            &format!("env_key = '{ENV_KEY}'"),
-            &wamn_control_provision::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string(),
-            &wamn_control_provision::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string(),
-        )
-        .await;
-    }
-    assert_eq!(instance().await.0, Some(2));
-    drop(blocker);
-    blocker_task.abort();
-
     assert_nested_effect_snapshot(&project, &postgres, lookup).await;
-
     drop(project);
     project_task.abort();
-    let _ = std::fs::remove_dir_all(&scratch_dir);
 }
 
 fn provision_project_components_for_http_manifest()
@@ -1033,14 +856,13 @@ fn provision_project_components_for_http_manifest()
 
 #[tokio::test]
 async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
-    use wamn_runtime::connection_credentials::ConnectionCredentials;
     use wamn_runtime::plugins::connection_http::{
         ConnectionExecutionClosure, ConnectionHttp, ConnectionInvocation, ConnectionOrigin,
         InvocationEntry, WiringPosition, transport::HttpTransport,
     };
     let _lock = wamn_test_postgres::lock();
     let database = wamn_project_state::test_database::tenant_platform();
-    let (project, task) = connect(database.url()).await;
+    let (mut project, task) = connect(database.url()).await;
     provision_project(&project, database.url()).await;
     let document = WiringDocument::new(
         "http_read",
@@ -1076,27 +898,22 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
     let manifest_digest = manifest.digest().as_str().to_owned();
     project.execute("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES ($1,$2,$3)", &[&ENV_KEY,&manifest_digest,&manifest.canonical_bytes()]).await.unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let request = BindConnectionRequest {
-        database_url: database.url().to_owned(),
-        org: "bind-connection-tenant".into(),
-        project: "fixture".into(),
-        environment: ENVIRONMENT.into(),
-        instance_id: "http-read".into(),
-        requirement_type: RequirementType::Http,
-        definition: serde_json::json!({"primary-authority":format!("http://{}",listener.local_addr().unwrap()), "tls-verification":"disabled"}),
-        credential_handle: Some("unused".into()),
-        org_connection_name: None,
-        manifest_digest: manifest_digest.clone(),
-        component_digest: HTTP_SIDECAR.into(),
-        store_alias: "erp".into(),
-    };
-    bind_connection::bind_with_mode(
-        &request,
-        wamn_schema_generator::ConnectionMode::Read,
-        PACKAGE,
-    )
-    .await
-    .unwrap();
+    let mut authority = Authority::new(&format!("http://{}", listener.local_addr().unwrap())).await;
+    let mut declaration = Authority::document(&manifest_digest);
+    declaration
+        .applications
+        .get_mut(PACKAGE)
+        .unwrap()
+        .connections = BTreeMap::from([("erp".into(), "http-read".into())]);
+    declaration.integrations.remove("labels-store");
+    authority
+        .apply(
+            &mut project,
+            database.url(),
+            &declaration,
+            &[declarations("http", "read")],
+        )
+        .await;
     let postgres = Arc::new(
         WamnPostgres::new(WamnPostgresConfig {
             credentials: Some(ClassCredentials::every_class(database.url().to_owned())),
@@ -1109,6 +926,13 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
         .unwrap(),
     );
     postgres.set_env_key(COMPONENT_ID, ENV_KEY).unwrap();
+    let _reader = wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore::new(
+        Arc::clone(&postgres),
+        Arc::new(authority.reader().await),
+        ENV_KEY,
+        DEFAULT_PROJECT,
+        None,
+    );
     let release = Arc::new(
         wamn_engine::release_manifest::LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
@@ -1143,7 +967,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
     let plugin = ConnectionHttp::new(
         Arc::clone(&postgres),
         Arc::new(HttpTransport::new().unwrap()),
-        Arc::new(ConnectionCredentials::empty()),
+        Arc::new(authority.reader().await),
         ENV_KEY,
         DEFAULT_PROJECT,
         vec![
@@ -1199,7 +1023,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
                 origin_operation: "wamn:node/handler@0.1.0",
                 package_id: PACKAGE,
                 operation: "wamn:node/handler@0.1.0",
-                manifest_digest: &request.manifest_digest,
+                manifest_digest: &manifest_digest,
                 environment: ENVIRONMENT,
                 component_digest: HTTP_SIDECAR,
                 store_alias: "erp",
@@ -1225,7 +1049,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
         credential_set_handle: snapshot.credential_handle,
     };
     invocation.closure = ConnectionExecutionClosure::Candidate {
-        manifest_digest: request.manifest_digest,
+        manifest_digest,
         environment: ENVIRONMENT.into(),
         wiring_hash: document.wiring_hash().as_str().into(),
         component: "http-sidecar".into(),
@@ -1240,7 +1064,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
     let plugin = ConnectionHttp::new(
         postgres,
         Arc::new(HttpTransport::new().unwrap()),
-        Arc::new(ConnectionCredentials::empty()),
+        Arc::new(authority.reader().await),
         ENV_KEY,
         DEFAULT_PROJECT,
         vec![
@@ -1266,4 +1090,84 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
     );
     drop(project);
     task.abort();
+}
+
+fn blobstore(definition: &serde_json::Value) -> anyhow::Result<()> {
+    RequirementType::Blobstore
+        .check_definition(definition)
+        .map_err(anyhow::Error::msg)
+}
+use wamn_runtime::connection_generation::{
+    binding_validation_subject as validation_subject, definition_hash,
+};
+#[test]
+fn a_blobstore_definition_needs_exactly_the_coordinates_the_plugin_reads() {
+    blobstore(&serde_json::json!({
+        "endpoint": "http://10.0.0.7:9000", "container": "labels", "prefix": "wms/"
+    }))
+    .expect("the three coordinates the plugin reads are a complete definition");
+}
+
+#[test]
+fn a_missing_coordinate_is_refused_by_name() {
+    let error = blobstore(&serde_json::json!({"endpoint": "http://x", "container": "c"}))
+        .expect_err("prefix is read at resolve time");
+    assert!(format!("{error:#}").contains("lacks prefix"), "{error:#}");
+}
+
+#[test]
+fn an_empty_coordinate_is_refused_by_name() {
+    let error = blobstore(&serde_json::json!({"endpoint": "", "container": "c", "prefix": "p"}))
+        .expect_err("an empty endpoint is not an endpoint");
+    assert!(
+        format!("{error:#}").contains("endpoint is empty"),
+        "{error:#}"
+    );
+}
+
+#[test]
+fn a_coordinate_nobody_reads_is_refused_by_name() {
+    let error = blobstore(&serde_json::json!({
+        "endpoint": "http://x", "container": "c", "prefix": "p", "region": "eu-3"
+    }))
+    .expect_err("a key the plugin never reads is a key nobody validates");
+    assert!(format!("{error:#}").contains("carries region"), "{error:#}");
+}
+
+#[test]
+fn the_http_shape_is_not_a_blobstore_definition() {
+    let error = blobstore(&serde_json::json!({
+        "primary-authority": "https://erp.example", "failover-authorities": [],
+        "tls-policy": "verify-authority", "redirect-policy": "same-authority"
+    }))
+    .expect_err("an HTTP definition has none of blobstore's coordinates");
+    assert!(format!("{error:#}").contains("lacks endpoint"), "{error:#}");
+}
+
+#[test]
+fn a_non_object_definition_is_refused() {
+    let error = blobstore(&serde_json::json!(["endpoint"])).expect_err("not an object");
+    assert!(
+        format!("{error:#}").contains("must be a JSON object"),
+        "{error:#}"
+    );
+}
+
+#[test]
+fn the_validation_subject_names_everything_that_was_validated() {
+    let descriptor = ConnectionTypeDescriptor::blobstore_v1();
+    let subject = validation_subject(&descriptor, "sha256:req", "sha256:def");
+    assert_eq!(subject["requirement-type"], "blobstore");
+    assert_eq!(subject["contract"], "wasmcloud:blobstore/blobstore@0.1.0");
+    assert_eq!(subject["requirement-hash"], "sha256:req");
+    assert_eq!(subject["definition-hash"], "sha256:def");
+    // One hasher: the runtime's. Changing any named input changes the hash.
+    let baseline = definition_hash(&subject);
+    let moved = definition_hash(&validation_subject(
+        &descriptor,
+        "sha256:req",
+        "sha256:other",
+    ));
+    assert_ne!(baseline, moved);
+    assert!(baseline.starts_with("sha256:") && baseline.len() == 71);
 }

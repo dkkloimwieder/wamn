@@ -13,10 +13,12 @@ schema Application:
     """An application of the environment: the packages of the release that belong to it."""
     packages: [str]
     connections: {str:str} = {}
-    connectors: {str:str} = {}
+
+schema Integration:
+    version: int
 
     check:
-        all code, pin in connectors {len(code) > 0 and (pin == "host" or regex.match(pin, r"^sha256:[0-9a-f]{64}$"))}, "connectors require host or a full sha256: digest"
+        version > 0, "version must be positive"
 
 schema Environment:
     org: str
@@ -33,6 +35,7 @@ schema Environment:
     # Application name to its packages. Every package of the release belongs
     # to exactly one application.
     applications: {str:Application}
+    integrations: {str:Integration} = {}
     # The package versions to contract to: package id to version (R13).
     floors: {str:str} = {}
 

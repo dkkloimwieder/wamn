@@ -261,12 +261,12 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
              VALUES ('00000000-0000-4000-8000-000000000011','http','a-store','active'); \
              INSERT INTO platform.connection (id,integration_id,integration_type,status) \
              VALUES ('00000000-0000-4000-8000-000000000012','00000000-0000-4000-8000-000000000011','http','active'); \
-             INSERT INTO catalog.connection_requirement (env_key,component_digest,package_id,name,integration_type,interfaces,mode) \
-             VALUES ('{ENV_KEY}','{component_digest}','{PACKAGE_ID}','a-store','http',ARRAY['wamn:connection/http@0.1.0'],'write'); \
-             INSERT INTO catalog.release_connection (env_key,manifest_digest,connection_id,integration_type,version) \
-             SELECT '{ENV_KEY}',manifest_digest,'00000000-0000-4000-8000-000000000012','http',1 FROM catalog.releases; \
-             INSERT INTO catalog.connection_binding (env_key,manifest_digest,component_digest,package_id,name,connection_id,integration_type) \
-             SELECT '{ENV_KEY}',manifest_digest,'{component_digest}','{PACKAGE_ID}','a-store','00000000-0000-4000-8000-000000000012','http' FROM catalog.releases; \
+             INSERT INTO catalog.connection_requirement (env_key,component_digest,package_id,name,interfaces,mode) \
+             VALUES ('{ENV_KEY}','{component_digest}','{PACKAGE_ID}','a-store',ARRAY['wamn:connection/http@0.1.0'],'write'); \
+             INSERT INTO catalog.release_connection (env_key,manifest_digest,connection_id,version) \
+             SELECT '{ENV_KEY}',manifest_digest,'00000000-0000-4000-8000-000000000012',1 FROM catalog.releases; \
+             INSERT INTO catalog.connection_binding (env_key,manifest_digest,component_digest,package_id,name,connection_id) \
+             SELECT '{ENV_KEY}',manifest_digest,'{component_digest}','{PACKAGE_ID}','a-store','00000000-0000-4000-8000-000000000012' FROM catalog.releases; \
              INSERT INTO wamn_run.environment_policies \
                (env_key,expected_environment,durability_class) \
              VALUES ('{ENV_KEY}','{ENVIRONMENT}','standard'); \

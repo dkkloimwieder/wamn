@@ -1,0 +1,6 @@
+{
+  "project": "wms",
+  "name": "wms-labels",
+  "integration_type": "gcs",
+  "auth_type": "custom"
+}

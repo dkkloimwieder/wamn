@@ -368,11 +368,12 @@ schema Routes:
 
 schema Connection:
     """An external connection requirement. Deployment supplies the named row."""
-    integration: str
+    interfaces: [str]
     mode: "read" | "write"
 
     check:
-        integration != "", "integration is empty"
+        len(interfaces) > 0, "interfaces is empty"
+        all interface in interfaces { interface != "" }, "interface is empty"
 
 schema Package:
     """The whole manifest. A package's wamn.k is one Package instance."""

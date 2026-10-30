@@ -97,6 +97,19 @@ impl ControlRoutes<'_> {
             .into_iter()
             .map(|row| (row.get(0), row.get(1)))
             .collect();
+        if group == "connection" {
+            for (_, env) in &environments {
+                let held: bool=transaction.query_one(
+                    "SELECT pg_try_advisory_xact_lock(hashtextextended('wamn-env/' || $1 || '/' || $2 || '/' || $3,0))", &[&self.org,&project,env],
+                ).await?.get(0);
+                if !held {
+                    return Err(Refusal::Declared {
+                        code: "deployment_in_progress",
+                        detail: json!({"field":"env"}),
+                    });
+                }
+            }
+        }
         let identity = if deleting {
             let id = deletion_identity(&transaction, self.org, group, &request).await?;
             for (_, env) in &environments {
@@ -140,8 +153,21 @@ impl ControlRoutes<'_> {
             }
             targets.push(target);
         }
-        let mut result =
-            administration::execute(&transaction, self.org, operation, payload, &mut drops).await?;
+        let mut result = if group == "connection"
+            && let Some(target) = targets.first()
+        {
+            administration::execute_in_environment(
+                &transaction,
+                target,
+                self.org,
+                operation,
+                payload,
+                &mut drops,
+            )
+            .await?
+        } else {
+            administration::execute(&transaction, self.org, operation, payload, &mut drops).await?
+        };
         if let Some(principal) = result["principal_id"].as_str() {
             drops.identity(principal);
         }

@@ -36,9 +36,18 @@ pub struct EnvironmentDocument {
     pub policy: String,
     /// Application name to the packages of the release that belong to it.
     pub applications: EnvironmentApplications,
+    #[serde(default)]
+    pub integrations: BTreeMap<String, Integration>,
     /// Package id to the version to contract to (R13).
     #[serde(default)]
     pub floors: BTreeMap<String, String>,
+}
+
+/// The published version of a project integration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Integration {
+    pub version: i32,
 }
 
 /// The `release` field: a full digest or `none`.
@@ -146,15 +155,6 @@ impl EnvironmentDocument {
         }
         ensure!(!self.target.trim().is_empty(), "target is empty");
         for (application, definition) in &self.applications {
-            for (integration, pin) in &definition.connectors {
-                ensure!(
-                    !integration.is_empty(),
-                    "application {application} has an empty connector code"
-                );
-                if pin != "host" {
-                    wamn_package_artifact::ensure_digest(pin)?;
-                }
-            }
             for (alias, name) in &definition.connections {
                 ensure!(
                     !alias.is_empty(),
@@ -162,6 +162,12 @@ impl EnvironmentDocument {
                 );
                 wamn_catalog::org_credential_handle(&self.org, name).map_err(anyhow::Error::msg)?;
             }
+        }
+        for (name, integration) in &self.integrations {
+            ensure!(
+                !name.is_empty() && integration.version > 0,
+                "integration {name} requires a positive version"
+            );
         }
         for (package, version) in &self.floors {
             ensure!(
@@ -207,6 +213,15 @@ impl EnvironmentDocument {
         if let Some(package) = &self.client_package {
             lines.push(format!("    client_package = {}", quote(package)));
         }
+        lines.push("    integrations = {".to_owned());
+        for (name, integration) in &self.integrations {
+            lines.push(format!(
+                "        {} = {{version = {}}}",
+                quote(name),
+                integration.version
+            ));
+        }
+        lines.push("    }".to_owned());
         lines.push("    applications = {".to_owned());
         for (name, application) in &self.applications {
             let packages: Vec<String> = application.packages.iter().map(|id| quote(id)).collect();
@@ -216,14 +231,8 @@ impl EnvironmentDocument {
                 .map(|(alias, name)| format!("{} = {}", quote(alias), quote(name)))
                 .collect::<Vec<_>>()
                 .join(", ");
-            let connectors = application
-                .connectors
-                .iter()
-                .map(|(code, pin)| format!("{} = {}", quote(code), quote(pin)))
-                .collect::<Vec<_>>()
-                .join(", ");
             lines.push(format!(
-                "        {} = {{packages = [{}], connections = {{{bindings}}}, connectors = {{{connectors}}}}}",
+                "        {} = {{packages = [{}], connections = {{{bindings}}}}}",
                 quote(name),
                 packages.join(", ")
             ));
@@ -257,25 +266,26 @@ mod tests {
             "route_host": "wms.acme.example",
             "policy": "prod",
             "target": "cloud",
-            "applications": {"wms": {"packages": ["wamn_wms"], "connections": {"erp": "shared_erp", "files": "files"}, "connectors": {"http":"host", "fixture":format!("sha256:{}", "c".repeat(64))}}},
+            "applications": {"wms": {"packages": ["wamn_wms"], "connections": {"erp": "shared_erp", "files": "files"}}},
+            "integrations": {"shared_erp":{"version":1}, "files":{"version":1}},
             "floors": {"wamn_wms": "2.4.0"}
         })
     }
 
     #[test]
-    fn connector_pins_refuse_partial_digests_and_values() {
-        for pin in [
+    fn integration_versions_require_positive_integers() {
+        for version in [
+            json!(0),
+            json!(-1),
             json!("latest"),
-            json!("sha256:abcd"),
             json!({"digest":"host"}),
-            json!(42),
         ] {
             let mut input = document();
-            input["applications"]["wms"]["connectors"]["http"] = pin;
+            input["integrations"]["shared_erp"]["version"] = version;
             assert!(EnvironmentDocument::from_json(input.to_string().as_bytes()).is_err());
         }
         let parsed = EnvironmentDocument::from_json(document().to_string().as_bytes()).unwrap();
-        assert_eq!(parsed.applications["wms"].connectors["http"], "host");
+        assert_eq!(parsed.integrations["shared_erp"].version, 1);
     }
 
     #[test]
@@ -286,8 +296,15 @@ mod tests {
             serde_json::from_value::<EnvironmentDocument>(input)
                 .unwrap_err()
                 .to_string(),
-            "unknown field `connections`, expected one of `org`, `project`, `env`, `target`, `release`, `route_host`, `client_package`, `policy`, `applications`, `floors`"
+            "unknown field `connections`, expected one of `org`, `project`, `env`, `target`, `release`, `route_host`, `client_package`, `policy`, `applications`, `integrations`, `floors`"
         );
+    }
+
+    #[test]
+    fn binding_refuses_a_handle_from_another_org_before_connecting() {
+        let mut input = document();
+        input["applications"]["wms"]["connections"]["erp"] = json!("org:other:erp");
+        assert!(EnvironmentDocument::from_json(input.to_string().as_bytes()).is_err());
     }
 
     #[test]

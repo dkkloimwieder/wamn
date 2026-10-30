@@ -18,21 +18,29 @@ fn prekind_deploy_connections_cover_the_wms_environment() -> anyhow::Result<()> 
         .values()
         .flat_map(|app| app.connections.values())
     {
-        let connection: wamn_platform_identity::connections::ConnectionWrite =
+        let connection: Value =
             serde_json::from_slice(&std::fs::read(directory.join(format!("{name}.json")))?)?;
-        assert_eq!(&connection.name, name);
-        assert_eq!(connection.status, "active");
-        wamn_catalog::RequirementType::for_integration(&connection.integration)
-            .context("the deploy connection has a supported integration")?
-            .check_definition(&connection.parameters)
-            .map_err(anyhow::Error::msg)?;
-        if let Some(system) = &connection.external_system {
-            let external: wamn_platform_identity::connections::ExternalSystemWrite =
-                serde_json::from_slice(&std::fs::read(
-                    directory.join(format!("{system}.external-system.json")),
-                )?)?;
-            assert_eq!(&external.name, system);
-            assert_eq!(external.integration, connection.integration);
+        let integration: Value = serde_json::from_slice(&std::fs::read(
+            directory.join(format!("{name}.integration.json")),
+        )?)?;
+        assert_eq!(connection["name"], name.as_str());
+        assert_eq!(connection["project"], document.project);
+        assert_eq!(connection["env"], document.env);
+        assert!(document.integrations.contains_key(name));
+        wamn_catalog::RequirementType::for_integration(
+            integration["integration_type"]
+                .as_str()
+                .context("integration type")?,
+        )
+        .context("supported host integration")?
+        .check_definition(&connection["parameters"])
+        .map_err(anyhow::Error::msg)?;
+        if let Some(system) = integration["external_system"].as_str() {
+            let external: Value = serde_json::from_slice(&std::fs::read(
+                directory.join(format!("{system}.external-system.json")),
+            )?)?;
+            assert_eq!(external["name"], system);
+            assert_eq!(external["project"], document.project);
         }
     }
     Ok(())
@@ -295,7 +303,6 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
         applications: [(
             project.into(),
             wamn_catalog::ApplicationDefinition {
-                connectors: std::collections::BTreeMap::new(),
                 connections: std::collections::BTreeMap::new(),
                 packages: manifest
                     .release

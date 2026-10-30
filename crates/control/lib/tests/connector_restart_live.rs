@@ -23,10 +23,6 @@ use wamn_package_artifact::{
     PackageRegistry,
     registry_credentials::{RegistryCredentialSource, read_registry_credentials},
 };
-use wamn_platform_identity::{
-    auth_changes::AuthDrops,
-    connections::{self, ConnectionWrite},
-};
 use wamn_runtime::{
     connection_credentials::ConnectionCredentials,
     connectors::{ConnectorSource, Connectors, REFRESH_INTERVAL},
@@ -256,28 +252,60 @@ impl Application {
 
 async fn apply(
     client: &mut tokio_postgres::Client,
+    system_url: &str,
+    project_url: &str,
     document: &EnvironmentDocument,
     packages: &[wamn_schema_generator::PackageManifest],
 ) -> anyhow::Result<()> {
     let tx = client.transaction().await?;
-    tx.batch_execute("SET LOCAL ROLE wamn_control").await?;
+    tx.batch_execute("SET LOCAL ROLE wamn_db_owner").await?;
+    let bindings = bindings::analyse(&tx, document, packages).await?;
+    tx.commit().await?;
+    let mut project = connect(project_url).await?;
+    project
+        .batch_execute("CREATE SCHEMA IF NOT EXISTS wamn_run")
+        .await?;
+    project
+        .batch_execute(&wamn_control_provision::sql::grant_administration_surface_sql("wamn_run"))
+        .await?;
+    project
+        .batch_execute(&wamn_control_provision::sql::ensure_workload_acl_role_sql(
+            wamn_control_provision::WorkloadRoleFamily::ExecutorPlatform,
+        ))
+        .await?;
+    let _ = bindings::project_authority(system_url, project_url, document).await?;
+    let tx = project.transaction().await?;
     tx.batch_execute(&bind_platform_principal_sql(
         PlatformComponent::Provisioning,
     ))
     .await?;
-    bindings::reserve(&tx, document, packages).await?;
+    let env_key = "acme--one--dev";
+    let digest = document.release.to_string();
+    let members = [
+        ("modbus_reader", format!("sha256:{}", "a".repeat(64))),
+        ("observer_fixture", format!("sha256:{}", "b".repeat(64))),
+    ];
+    let canonical = serde_json::to_vec(
+        &json!({"components":members.iter().map(|(package,digest)|json!({"package-id":package,"descriptor":{"component-digest":digest}})).collect::<Vec<_>>()}),
+    )?;
+    tx.execute("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",&[&env_key,&digest,&canonical]).await?;
+    for (package, digest) in members {
+        tx.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interfaces,mode) VALUES($1,$2,$3,'registers',$4,'read') ON CONFLICT DO NOTHING",&[&env_key,&digest,&package,&vec![READER.to_owned()]]).await?;
+    }
+    bindings::write(&tx, env_key, &digest, document, &bindings).await?;
     tx.commit().await?;
     Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires: docker, PostgreSQL 18, wasm32-wasip2"]
-async fn published_modbus_pins_restart_only_the_bound_connector() -> anyhow::Result<()> {
+async fn published_modbus_versions_refresh_only_the_selected_connection() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&["docker"]);
     let _lock = wamn_test_postgres::lock();
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
     fixture(scratch.path())?;
     let database = wamn_control_provision::test_database::system();
+    let project_database = wamn_project_state::test_database::tenant_platform();
     let mut admin = connect(database.url()).await?;
     admin
         .batch_execute(&format!(
@@ -285,6 +313,7 @@ async fn published_modbus_pins_restart_only_the_bound_connector() -> anyhow::Res
             wamn_control_provision::test_database::seed_org_project_env_sql("acme", "one", "dev")
         ))
         .await?;
+    admin.batch_execute(&format!("BEGIN; {} UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning))).await?;
     let registry = local_registry::LocalRegistry::start("modbus-restart");
     registry.ready().await;
     let auth = scratch.path().join("auth.json");
@@ -315,43 +344,31 @@ async fn published_modbus_pins_restart_only_the_bound_connector() -> anyhow::Res
         PlatformComponent::Provisioning,
     ))
     .await?;
-    connections::write_connection(
-        &tx,
-        "acme",
-        &ConnectionWrite {
-            integration: "modbus".into(),
-            external_system: None,
-            name: "meter".into(),
-            transport: "tcp".into(),
-            exchange: "request".into(),
-            parameters: json!({"authority":authority}),
-            status: "active".into(),
-        },
-        &mut AuthDrops::default(),
-    )
-    .await?;
-    connections::enable_connection(&tx, "acme", "one", "meter").await?;
-    for (scope, name) in [
-        ("org", "acme"),
-        ("project", "one"),
-        ("environment", "one/dev"),
-    ] {
-        connections::allow_integration(&tx, "acme", scope, name, "modbus").await?;
+    let store = wamn_test_infrastructure::credentials::LocalCredentials::create()?;
+    for name in ["meter", "observer-meter"] {
+        wamn_test_infrastructure::credentials::define(&tx,"acme",&json!({"project":"one","env":"dev","name":name,"integration_type":"modbus","auth_type":"none","parameters":{"authority":authority}}),&store).await?;
     }
     tx.commit().await?;
     let mut document = EnvironmentDocument::from_json(&serde_json::to_vec(
-        &json!({"org":"acme","project":"one","env":"dev","target":"cloud","release":"none","route_host":"reader.example","policy":"dev","applications":{
-            "reader":{"packages":["modbus_reader"],"connectors":{"modbus":first.digest},"connections":{"registers":"meter"}},
-            "observer":{"packages":["observer_fixture"],"connectors":{"modbus":first.digest},"connections":{"registers":"meter"}}
+        &json!({"org":"acme","project":"one","env":"dev","target":"cloud","release":format!("sha256:{}","c".repeat(64)),"integrations":{"meter":{"version":2},"observer-meter":{"version":2}},"route_host":"reader.example","policy":"dev","applications":{
+            "reader":{"packages":["modbus_reader"],"connections":{"registers":"meter"}},
+            "observer":{"packages":["observer_fixture"],"connections":{"registers":"observer-meter"}}
         }}),
     )?)?;
     let package = wamn_schema_generator::PackageManifest::from_slice(&serde_json::to_vec(
-        &json!({"package":{"id":"modbus_reader","version":"0.1.0"},"required_platform_policy_contract":{"id":"modbus_reader_data_access","state":"satisfied"},"models":{},"components":{},"connections":{"registers":{"integration":"modbus","mode":"read"}}}),
+        &json!({"package":{"id":"modbus_reader","version":"0.1.0"},"required_platform_policy_contract":{"id":"modbus_reader_data_access","state":"satisfied"},"models":{},"components":{},"connections":{"registers":{"interfaces":["wamn:connector/reader@0.1.0"],"mode":"read"}}}),
     )?)?;
     let mut observer_package = package.clone();
     observer_package.package.id = "observer_fixture".into();
     let packages = [package, observer_package];
-    apply(&mut admin, &document, &packages).await?;
+    apply(
+        &mut admin,
+        database.url(),
+        project_database.url(),
+        &document,
+        &packages,
+    )
+    .await?;
     // A dedicated reader login fixes scope through session_user, independent of GUCs.
     let login = format!("c9_connector_{}", std::process::id());
     database.execute(&[
@@ -368,7 +385,7 @@ async fn published_modbus_pins_restart_only_the_bound_connector() -> anyhow::Res
     assert_eq!(
         reader_database
             .query_one(
-                "SELECT count(*) FROM registry.lookup_connector_bindings('forged','one','dev')",
+                "SELECT count(*) FROM registry.read_connection_version('forged','one','dev','00000000-0000-0000-0000-000000000001',2)",
                 &[]
             )
             .await?
@@ -386,7 +403,19 @@ async fn published_modbus_pins_restart_only_the_bound_connector() -> anyhow::Res
         "acme",
     ));
     let source = ConnectorSource {
-        database: reader_database,
+        postgres: Arc::new(
+            wamn_runtime::plugins::wamn_postgres::WamnPostgres::from_env_for_project(
+                "one",
+                Some(
+                    wamn_runtime::plugins::wamn_postgres::ClassCredentials::every_class(
+                        project_database.url().to_owned(),
+                    ),
+                ),
+            )?,
+        ),
+        env_key: "acme--one--dev".into(),
+        manifest_digest: document.release.to_string(),
+        applications: document.applications.clone(),
         credentials,
         registry: configuration,
         registry_credentials: RegistryCredentialSource::Fixed(read_registry_credentials(
@@ -416,28 +445,32 @@ async fn published_modbus_pins_restart_only_the_bound_connector() -> anyhow::Res
     control.batch_execute("SET ROLE wamn_control").await?;
     control
         .query_one(
-            "SELECT registry.publish_integration('modbus',$1)",
-            &[&absent],
+            "SELECT registry.publish_integration('modbus',4,$1,(SELECT parameter_schema FROM registry.integration_type_version WHERE integration_type='modbus' AND version=2),'wamn:modbus/modbus',$2)",
+            &[&absent, &vec!["wamn:connector/reader@0.1.0".to_string()]],
         )
         .await?;
-    document
-        .applications
-        .get_mut("reader")
-        .unwrap()
-        .connectors
-        .insert("modbus".into(), absent);
-    apply(&mut admin, &document, &packages).await?;
+    document.integrations.get_mut("meter").unwrap().version = 4;
+    apply(
+        &mut admin,
+        database.url(),
+        project_database.url(),
+        &document,
+        &packages,
+    )
+    .await?;
     let before_failed_pull = reader.store_id("registers").await;
     assert!(connectors.refresh(&source).await.is_err());
     assert_eq!(reader.store_id("registers").await, before_failed_pull);
     assert_eq!(application.read().await?.unwrap().payload, "4660");
-    document
-        .applications
-        .get_mut("reader")
-        .unwrap()
-        .connectors
-        .insert("modbus".into(), first.digest.clone());
-    apply(&mut admin, &document, &packages).await?;
+    document.integrations.get_mut("meter").unwrap().version = 2;
+    apply(
+        &mut admin,
+        database.url(),
+        project_database.url(),
+        &document,
+        &packages,
+    )
+    .await?;
     connectors.refresh(&source).await?;
     let pid = std::process::id();
     let mut measurements = Vec::new();
@@ -458,14 +491,17 @@ async fn published_modbus_pins_restart_only_the_bound_connector() -> anyhow::Res
     .into_iter()
     .enumerate()
     {
-        document
-            .applications
-            .get_mut("reader")
-            .unwrap()
-            .connectors
-            .insert("modbus".into(), pin.clone());
+        document.integrations.get_mut("meter").unwrap().version =
+            if *pin == second.digest { 3 } else { 2 };
         let changed = Instant::now();
-        apply(&mut admin, &document, &packages).await?;
+        apply(
+            &mut admin,
+            database.url(),
+            project_database.url(),
+            &document,
+            &packages,
+        )
+        .await?;
         let finished = std::sync::atomic::AtomicBool::new(false);
         let refresh = async {
             let waiting = Instant::now();

@@ -480,6 +480,7 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
         load_role_grants(&admin_url, WorkloadRoleFamily::ConnectionReader.acl_role()),
         vec![
             "routine|registry|read_connection_credential|EXECUTE|false".to_owned(),
+            "routine|registry|read_connection_version|EXECUTE|false".to_owned(),
             "routine|registry|read_file_connection|EXECUTE|false".to_owned(),
             "schema|registry|registry|USAGE|false".to_owned(),
         ],

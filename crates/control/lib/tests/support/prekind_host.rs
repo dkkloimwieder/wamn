@@ -2,7 +2,6 @@
 
 use std::net::TcpListener;
 use std::process::Stdio;
-use wamn_credential_store::Store as _;
 
 use super::*;
 use futures_util::StreamExt as _;
@@ -445,7 +444,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
             ],
         )
         .await?;
-    system.batch_execute("RESET ROLE").await?;
+    system.batch_execute("UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); RESET ROLE").await?;
     // C3.5: a credential imports only into a declared, project-enabled connection.
     let (mut seed, seed_connection) =
         tokio_postgres::connect(control.url(), tokio_postgres::NoTls).await?;
@@ -456,44 +455,8 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         wamn_control_provision::PlatformComponent::Provisioning,
     ))
     .await?;
-    let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
-    wamn_platform_identity::connections::write_connection(
-        &tx,
-        ORG,
-        &wamn_platform_identity::connections::ConnectionWrite {
-            integration: "http".into(),
-            external_system: None,
-            name: "upstream".into(),
-            transport: "http".into(),
-            exchange: "request".into(),
-            parameters: json!({"primary-authority":origin,"tls-verification":"disabled"}),
-            status: "active".into(),
-        },
-        &mut drops,
-    )
-    .await?;
-    wamn_platform_identity::connections::enable_connection(&tx, ORG, PROJECT, "upstream").await?;
-    for (scope, id) in [
-        ("org", ORG.to_owned()),
-        ("project", PROJECT.to_owned()),
-        ("environment", format!("{PROJECT}/http")),
-    ] {
-        wamn_platform_identity::connections::allow_integration(&tx, ORG, scope, &id, "http")
-            .await?;
-    }
-    tx.commit().await?;
     let credential_store = wamn_test_infrastructure::credentials::LocalCredentials::create()?;
-    let stored = credential_store
-        .put(
-            uuid::Uuid::new_v4(),
-            br#"{"headers":{"authorization":"Bearer fixture-token"}}"#,
-        )
-        .await?;
-    let tx = seed.transaction().await?;
-    wamn_test_infrastructure::credentials::set_reference(
-        &tx, ORG, PROJECT, "http", "upstream", &stored,
-    )
-    .await?;
+    wamn_test_infrastructure::credentials::define(&tx,ORG,&json!({"project":PROJECT,"env":"http","name":"upstream","integration_type":"http","auth_type":"http_basic","parameters":{"primary-authority":origin,"tls-verification":"disabled"},"credential":json!({"username":"fixture","password":"fixture-password"}).to_string()}),&credential_store).await?;
     tx.commit().await?;
 
     let scheduler_address = address()?;
@@ -584,7 +547,8 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
                 .join("wasm32-wasip2/debug")
                 .join(format!("{}.wasm", name.replace('-', "_"))),
         )?;
-        let admitted = http_connection::admit_guest(&repository, version, PACKAGE, name, &bytes)?;
+        let admitted =
+            http_connection::admit_guest(&repository, "1.0.0", "http_fixture", name, &bytes)?;
         std::fs::write(
             local_component_path(directory, &admitted.component.component_digest)?,
             bytes,
@@ -628,33 +592,42 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         .applications
         .get_mut(PACKAGE)
         .context("application")?
-        .connections = [("upstream".into(), "upstream".into())].into();
-    document
-        .applications
-        .get_mut(PACKAGE)
-        .context("application")?
-        .connectors
-        .insert("http".into(), "host".into());
+        .connections = [
+        "upstream",
+        http_connection::OUTBOUND_HANDLE,
+        http_connection::API_KEY_HANDLE,
+        http_connection::AWS_HANDLE,
+    ]
+    .map(|name| (name.into(), "upstream".into()))
+    .into();
+    document.integrations.clear();
+    document.integrations.insert(
+        "upstream".into(),
+        wamn_control::environment::document::Integration { version: 1 },
+    );
     // Match the write mode declared by org_bindings::publish_declarations.
-    let package =
-        wamn_schema_generator::PackageManifest::from_slice(&serde_json::to_vec(&json!({
+    let package = wamn_schema_generator::PackageManifest::from_slice(&serde_json::to_vec(
+        &json!({
             "package":{"id":"http_fixture","version":"1.0.0"},
             "required_platform_policy_contract":{"id":"fixture_data_access","state":"satisfied"},
             "models":{},"components":{},
-            "connections":{"upstream":{"integration":"http","mode":"write"}}
-        }))?)?;
+            "connections":{"upstream":{"interfaces":["wamn:connection/http@0.1.0"],"mode":"write"},"signed-upstream":{"interfaces":["wamn:connection/http@0.1.0"],"mode":"write"},"api-key-upstream":{"interfaces":["wamn:connection/http@0.1.0"],"mode":"write"},"aws-upstream":{"interfaces":["wamn:connection/http@0.1.0"],"mode":"write"}}
+        }),
+    )?)?;
     // The system floor seeds the active cloud target used by this document.
     let tx = wamn_control::provision_project_env::provisioning_transaction(&mut seed).await?;
-    let reserved = wamn_control::environment::bindings::reserve(&tx, &document, &[package]).await?;
+    tx.batch_execute("SET LOCAL ROLE wamn_db_owner").await?;
+    let reserved = wamn_control::environment::bindings::analyse(&tx, &document, &[package]).await?;
     tx.commit().await?;
     seed_task.abort();
-    let upstream = reserved
-        .first()
-        .context("reserved upstream connection")?
-        .resolved
-        .as_ref()
-        .context("host HTTP fixture")?;
-    let input = wamn_control::bind_connection::prepare_org_instance(upstream)?;
+    let _ = wamn_control::environment::bindings::project_authority(
+        control.url(),
+        database.url(),
+        &document,
+    )
+    .await?;
+    let upstream = reserved.first().context("resolved upstream connection")?;
+    let definition = upstream.resolved.as_ref().context("host HTTP fixture")?;
     let mut bindings = Vec::new();
     for component in &published.manifest.components {
         for connection in &component.descriptor.connections {
@@ -663,23 +636,15 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
                 &connection.store_alias,
                 ConnectionTypeDescriptor::http_v1(),
             );
-            let id = format!("{}/{}", component.package_id, connection.store_alias);
-            wamn_control::bind_connection::prepare_local_instance(
-                project.as_ref(),
-                &env_key,
-                "http",
-                &id,
-                &input,
-            )
-            .await?;
-            let selection = wamn_runtime::local_application::read_local_binding(
-                &project,
-                &env_key,
-                "http",
+            project.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interfaces,mode) VALUES($1,$2,$3,$4,ARRAY['wamn:connection/http@0.1.0'],'write') ON CONFLICT DO NOTHING",&[&env_key,&component.descriptor.component_digest,&component.package_id,&connection.store_alias]).await?;
+            let selection = wamn_runtime::local_application::selection(
                 &requirement,
-                &id,
-            )
-            .await?;
+                &upstream.connection_id,
+                upstream.generation,
+                &definition.definition,
+                Some(format!("org:{ORG}:upstream@{}", upstream.generation)),
+                false,
+            );
             bindings.push(LocalBindingFacts {
                 package_id: component.package_id.clone(),
                 requirement,
@@ -687,6 +652,12 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
             });
         }
     }
+    let (mut target, driver) =
+        tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
+    tokio::spawn(driver);
+    let tx = target.transaction().await?;
+    wamn_control::environment::bindings::write(&tx, &env_key, digest, &document, &reserved).await?;
+    tx.commit().await?;
     std::fs::write(
         directory.join(LOCAL_FACTS_FILE),
         serde_json::to_vec(&LocalApplicationFacts {

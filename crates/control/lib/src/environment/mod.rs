@@ -29,6 +29,9 @@ pub mod stage;
 pub mod status;
 pub mod write;
 
+#[cfg(test)]
+mod system_sql_tests;
+
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, bail};
@@ -58,6 +61,8 @@ pub struct Platform {
     /// `<registry>/<repository>` of package artifacts. Needed only when a
     /// release names a package the environment does not have yet.
     pub package_artifact_base: Option<String>,
+    /// The repository of component artifacts used during package admission.
+    pub component_artifact_base: Option<String>,
     /// The namespace of the CloudNativePG `Cluster`, which the environment's
     /// `Database` CR shares.
     pub database_namespace: String,
@@ -124,6 +129,7 @@ impl Platform {
                 })
                 .unwrap_or_default(),
             package_artifact_base: std::env::var("WAMN_PACKAGE_ARTIFACT_BASE").ok(),
+            component_artifact_base: std::env::var("WAMN_COMPONENT_ARTIFACT_BASE").ok(),
             database_namespace: std::env::var("WAMN_DATABASE_NAMESPACE")
                 .unwrap_or_else(|_| namespace.clone()),
             database_host: std::env::var("WAMN_DATABASE_HOST").ok(),
@@ -147,6 +153,27 @@ impl Platform {
                 namespace,
             },
         })
+    }
+
+    pub(crate) fn component_source(
+        &self,
+    ) -> anyhow::Result<
+        Option<wamn_runtime::component_artifact_source::ComponentArtifactSourceConfig>,
+    > {
+        self.component_artifact_base
+            .as_deref()
+            .map(|base| -> anyhow::Result<_> {
+                Ok(
+                    wamn_runtime::component_artifact_source::ComponentArtifactSourceConfig::new(
+                        base,
+                        false,
+                        std::time::Duration::from_secs(30),
+                    )?
+                    .with_registry_auth_file(&self.registry_auth_file)?
+                    .with_ca_paths(&self.oci_ca_paths)?,
+                )
+            })
+            .transpose()
     }
 
     /// The publisher of the auth changes of a verb.

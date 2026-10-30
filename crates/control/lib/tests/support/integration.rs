@@ -676,6 +676,8 @@ pub async fn exercise(
     )
     .await?;
 
+    http_connection::configure(run, &platform.system_database_url, ENVIRONMENT).await?;
+
     let (system, system_task) = connect(&platform.system_database_url).await?;
     let suffix: String = system.query_one(
         "SELECT instance_suffix FROM registry.project_envs WHERE org=$1 AND project=$2 AND env=$3",
@@ -1009,7 +1011,6 @@ async fn publish(
         applications: [(
             connector.to_owned(),
             wamn_catalog::ApplicationDefinition {
-                connectors: std::collections::BTreeMap::new(),
                 connections: std::collections::BTreeMap::new(),
                 packages: manifests.iter().map(|m| m.package.id.clone()).collect(),
             },
@@ -1126,6 +1127,7 @@ pub(super) fn event_secret(password: &str, binding: &str) -> Value {
 
 pub(super) fn fixture_document(connector: &str) -> EnvironmentDocument {
     EnvironmentDocument {
+        integrations: std::collections::BTreeMap::new(),
         target: "cloud".into(),
         org: ORG.into(),
         project: PROJECT.into(),
@@ -1139,7 +1141,6 @@ pub(super) fn fixture_document(connector: &str) -> EnvironmentDocument {
         applications: BTreeMap::from([(
             connector.to_owned(),
             wamn_catalog::ApplicationDefinition {
-                connectors: std::collections::BTreeMap::new(),
                 connections: std::collections::BTreeMap::new(),
                 packages: [connector, "wamn_integration", CONSUMER]
                     .map(str::to_owned)

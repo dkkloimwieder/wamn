@@ -55,26 +55,27 @@ Reference names remain valid. This pattern check cannot identify every arbitrary
 The platform supplies the complete connection semantics.
 Publication and activation refuse absent or incompatible bindings before executing effects.
 
-An org can declare an HTTP connection in `registry.org_connections` of the control database.
-The org and name identify its type and non-secret definition.
-An environment references it with `connections.<alias> = { org = "<name>" }`.
-An environment document refuses two aliases for the same org connection.
+An administrator creates each project integration and its environment connection in the system database.
+The connection stores its active generation of parameters and a reference to private credentials.
+The environment database holds a projection of each integration and connection.
 
-Each `env apply` reads one snapshot of the org definitions.
-It binds that snapshot through the existing connection path in each project catalog.
-The instance records `org_connection_name`, so `env show` and rollback preserve the reference.
-Rollback reconciles the current org definition.
-A changed definition appends one generation in each environment at its next apply.
-An unchanged apply writes no generation, even if the definition changed and returned to the selected value between applies.
+A package declares each connection name, WIT interfaces, and access mode in `wamn.k`.
+Install refuses a declared interface that the component does not import.
+An environment document maps these names to integrations and selects each integration version.
+Several declared names can use the same integration.
+Apply refuses missing or inactive connections and versions that do not export every required interface.
+Interface versions follow component-model compatibility rules.
+Apply writes no connection generation and changes no connection lifecycle.
 
-The host derives the credential handle as `org:<org>:<name>`.
-It resolves that handle only when the org matches its trusted startup org.
-The version 2 credentials file holds separate `projects` and `orgs` maps.
-The legacy project map still works.
-Org lookup never falls back to project credentials.
+The host reads the loaded release's names, modes, and versions from the environment catalog.
+The system database supplies each selected Wasm digest and the active connection parameters.
+The host refuses a name that the calling component did not declare.
+HTTP method authorization and object-store access enforce a declaration's read mode.
 
-Route authentication keeps its project lookup.
-The file remains a process-lifetime snapshot, so secret rotation requires a host restart.
+The host resolves private credentials through the environment store.
+Each lookup requires the trusted organization, project, and environment scope.
+Credential changes use the current generation without a host restart.
+The existing refresh behavior remains in place.
 
 Guest SQL, queue maintenance, HTTP admission, and event materialization use distinct authority classes.
 Private event binding files remain outside guest configuration, and workload configuration cannot replace them.

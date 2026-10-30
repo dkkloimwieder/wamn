@@ -679,7 +679,21 @@ impl HostPlugin for NativePolicy {
                     .all(|member| &member.application == application),
                 "connector entry has ambiguous application"
             );
-            connectors.reader(application)?.add_to_linker(item)?;
+            let mut names = std::collections::HashSet::new();
+            for member in policy.iter() {
+                names.extend(
+                    self.resources
+                        .postgres
+                        .declared_connection_names(
+                            &self.resources.project,
+                            &member.fact.scope.env_key,
+                            &member.fact.scope.package_id,
+                            &member.fact.component_digest,
+                        )
+                        .await?,
+                );
+            }
+            connectors.reader(application)?.add_to_linker(item, names)?;
         }
         item.add_plugin(INVOCATION_TRACES_ID, Arc::clone(&self.traces) as _);
         item.add_plugin(WAMN_POSTGRES_ID, Arc::clone(&self.resources.postgres) as _);

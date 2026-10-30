@@ -117,9 +117,10 @@ async fn publish_pushes_by_digest_and_records_the_catalog_as_control() {
         .await
         .unwrap();
     tokio::spawn(driver);
-    let row = client.query_one("SELECT digest, count(*) OVER () FROM registry.integration_type_version WHERE integration_type='fixture'", &[]).await.unwrap();
+    let row = client.query_one("SELECT digest, count(*) OVER (), exports FROM registry.integration_type_version WHERE integration_type='fixture'", &[]).await.unwrap();
     assert_eq!(row.get::<_, String>(0), built.digest);
     assert_eq!(row.get::<_, i64>(1), 1);
+    assert!(row.get::<_, Vec<String>>(2).is_empty());
     let repository = Repository::open(&configuration, &built.digest).unwrap();
     let (manifest, digest) = repository.manifest().await.unwrap().unwrap();
     assert_eq!(digest, built.digest);

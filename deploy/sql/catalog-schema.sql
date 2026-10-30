@@ -231,8 +231,7 @@ CREATE TABLE platform.connection (
     id uuid PRIMARY KEY,
     integration_id uuid NOT NULL UNIQUE REFERENCES platform.integration (id),
     integration_type text NOT NULL,
-    status text NOT NULL,
-    UNIQUE (id, integration_type)
+    status text NOT NULL
 );
 
 GRANT USAGE ON SCHEMA platform TO wamn_app;
@@ -243,27 +242,23 @@ CREATE TABLE catalog.connection_requirement (
     component_digest text NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
     package_id text NOT NULL,
     name text NOT NULL,
-    integration_type text NOT NULL,
     interfaces text[] NOT NULL CHECK (cardinality(interfaces) > 0),
     mode text NOT NULL CHECK (mode IN ('read', 'write')),
-    PRIMARY KEY (env_key, component_digest, package_id, name),
-    UNIQUE (env_key, component_digest, package_id, name, integration_type)
+    PRIMARY KEY (env_key, component_digest, package_id, name)
 );
 
 CREATE TABLE catalog.release_connection (
     env_key text NOT NULL,
     manifest_digest text NOT NULL,
     connection_id uuid NOT NULL,
-    integration_type text NOT NULL,
     version integer NOT NULL,
     created_at timestamptz NOT NULL,
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
     PRIMARY KEY (env_key, manifest_digest, connection_id),
-    UNIQUE (env_key, manifest_digest, connection_id, integration_type),
     FOREIGN KEY (env_key, manifest_digest) REFERENCES catalog.releases (env_key, manifest_digest),
-    FOREIGN KEY (connection_id, integration_type) REFERENCES platform.connection (id, integration_type)
+    FOREIGN KEY (connection_id) REFERENCES platform.connection (id)
 );
 
 CREATE TABLE catalog.connection_binding (
@@ -273,16 +268,15 @@ CREATE TABLE catalog.connection_binding (
     package_id text NOT NULL,
     name text NOT NULL,
     connection_id uuid NOT NULL,
-    integration_type text NOT NULL,
     created_at timestamptz NOT NULL,
     created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
     PRIMARY KEY (env_key, manifest_digest, component_digest, package_id, name),
-    FOREIGN KEY (env_key, manifest_digest, connection_id, integration_type)
-        REFERENCES catalog.release_connection (env_key, manifest_digest, connection_id, integration_type),
-    FOREIGN KEY (env_key, component_digest, package_id, name, integration_type)
-        REFERENCES catalog.connection_requirement (env_key, component_digest, package_id, name, integration_type)
+    FOREIGN KEY (env_key, manifest_digest, connection_id)
+        REFERENCES catalog.release_connection (env_key, manifest_digest, connection_id),
+    FOREIGN KEY (env_key, component_digest, package_id, name)
+        REFERENCES catalog.connection_requirement (env_key, component_digest, package_id, name)
 );
 
 DO $connection_history$

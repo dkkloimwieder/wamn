@@ -154,7 +154,7 @@ pub(super) fn render_host(
     use wamn_control_provision::WorkloadRoleFamily;
     use wamn_test_infrastructure::rendering::{
         EventIdentity, HostIdentity, HostRoleSecret, HostValuesInput, assert_rendered_identity,
-        object_store_overlay, overlay_values, render_host_values,
+        overlay_values, render_host_values,
     };
 
     let HostBinding {
@@ -192,7 +192,15 @@ pub(super) fn render_host(
     if candidate.is_some() {
         overlay = overlay_values(&overlay, &event)?;
     }
-    overlay = object_store_overlay(&overlay, &crate::environment::object_store_secret_name())?;
+    let mut values: serde_yaml::Value = serde_yaml::from_str(&overlay)?;
+    values["runtime"]["serviceAccount"] = serde_yaml::to_value(json!({
+        "name": wamn_credential_store::kubernetes::service_account_name(
+            &event.org, &event.project, &event.environment,
+        ),
+        "create": false,
+    }))?;
+    values["runtime"]["automountServiceAccountToken"] = true.into();
+    let overlay = serde_yaml::to_string(&values)?;
     let mut rendered = render_host_values(
         &std::fs::read_to_string(repository.join("deploy/platform/values-host-default.yaml"))?,
         &overlay,
@@ -209,7 +217,7 @@ pub(super) fn render_host(
             event,
             guest_secret_name: guest.name.clone(),
             role_secrets,
-            object_store_secret_name: Some(crate::environment::object_store_secret_name()),
+            object_store_secret_name: None,
         },
     )?;
     if let Some(candidate) = candidate {

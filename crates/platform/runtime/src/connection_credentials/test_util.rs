@@ -76,27 +76,17 @@ impl Fixture {
             ))
             .await
             .unwrap();
-            let integration: String = tx.query_one("INSERT INTO registry.integration(org,project,name,integration_type,auth_type) VALUES ('acme',$1,$2,$3,'custom') ON CONFLICT (org,project,name) DO UPDATE SET status=registry.integration.status RETURNING id::text", &[project, &name, &integration_type]).await.unwrap().get(0);
-            let existing = tx.query_opt("SELECT id::text,active_generation FROM registry.connection WHERE integration_id=$1::text::uuid AND env='dev'", &[&integration]).await.unwrap();
-            let (connection, generation) = if let Some(row) = existing {
-                (row.get::<_, String>(0), row.get::<_, i64>(1) + 1)
+            let stored = self
+                .store
+                .put(uuid::Uuid::new_v4(), value.as_bytes())
+                .await
+                .unwrap();
+            let parameters = if integration_type == "s3" {
+                serde_json::json!({"provider":"s3","endpoint":"http://fixture.invalid","container":"files","prefix":"test/"})
             } else {
-                let connection_id = uuid::Uuid::new_v4().to_string();
-                let principal: String = tx.query_one("INSERT INTO identity.principals(type,subject,display_name) VALUES ('service',$1,$1) RETURNING id::text", &[&format!("connection-{connection_id}")]).await.unwrap().get(0);
-                let id: String = tx.query_one("INSERT INTO registry.connection(id,integration_id,org,project,env,integration_type,target_id,active_generation,service_principal_id) SELECT $4::text::uuid,$1::text::uuid,'acme',$2,'dev',$5,target_id,2,$3::text::uuid FROM registry.project_envs WHERE org='acme' AND project=$2 AND env='dev' RETURNING id::text", &[&integration, project, &principal, &connection_id, &integration_type]).await.unwrap().get(0);
-                (id, 2)
+                serde_json::json!({"primary-authority":"https://fixture.invalid/","tls-verification":"verify-authority"})
             };
-            let id = uuid::Uuid::new_v4();
-            let stored = self.store.put(id, value.as_bytes()).await.unwrap();
-            let id = id.to_string();
-            tx.execute("INSERT INTO identity.credential(id,connection_id,store,ref,version,created_at,created_by) VALUES ($1::text::uuid,$2::text::uuid,$3,$4,$5,now(),'00000000-0000-0000-0000-000000000001')", &[&id,&connection,&stored.store,&stored.reference,&stored.version]).await.unwrap();
-            tx.execute("INSERT INTO registry.connection_generation(connection_id,generation,credential_id,created_at,created_by) VALUES ($1::text::uuid,$2,$3::text::uuid,now(),'00000000-0000-0000-0000-000000000001')", &[&connection,&generation,&id]).await.unwrap();
-            tx.execute(
-                "UPDATE registry.connection SET active_generation=$2 WHERE id=$1::text::uuid",
-                &[&connection, &generation],
-            )
-            .await
-            .unwrap();
+            wamn_test_infrastructure::credentials::define(&tx,"acme",&serde_json::json!({"project":project,"env":"dev","name":name,"integration_type":integration_type,"auth_type":"custom","parameters":parameters}),&wamn_test_infrastructure::credentials::ReferencedCredentials(&stored)).await.unwrap();
             tx.commit().await.unwrap();
         }
     }

@@ -4,7 +4,7 @@ use std::net::{IpAddr, SocketAddr};
 
 use hyper::Uri;
 use url::{Host, Url};
-use wamn_execution_contract::node_contract::{CanonicalHttpTarget, normalize_portable_http_target};
+use wamn_execution_contract::node_contract::CanonicalHttpTarget;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 
 /// Supported outbound HTTP schemes.
@@ -268,26 +268,6 @@ where
         )
     })?;
     resolve_target(connection, target, platform_hosts, network, dns).await
-}
-
-/// Convert an absolute credential endpoint to a target inside the binding.
-pub(crate) fn bound_http_target(
-    connection: &HttpConnectionAuthority,
-    endpoint: &str,
-) -> Result<(CanonicalHttpTarget, Box<str>), AuthorityError> {
-    let url = parse_absolute_url(endpoint, "credential endpoint")?;
-    validate_target_url(connection, &url)?;
-    let relative = &url[url::Position::BeforePath..][connection.base_path.len()..];
-    // The portable target requires a nonempty spelling. An empty query resolves
-    // the base itself; retain the endpoint URL so it need not gain a `?`.
-    let relative = if relative.is_empty() { "?" } else { relative };
-    let target = normalize_portable_http_target(&format!("/{relative}")).map_err(|_| {
-        AuthorityError::new(
-            AuthorityErrorType::InvalidRequestTarget,
-            "invalid credential endpoint target",
-        )
-    })?;
-    Ok((target, url.as_str().into()))
 }
 
 /// Re-enter the resolver for one redirect without widening authority or base path.

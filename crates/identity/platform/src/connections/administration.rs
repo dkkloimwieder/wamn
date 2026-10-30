@@ -23,7 +23,7 @@ pub async fn execute(
     payload: &str,
     drops: &mut AuthDrops,
 ) -> Result<Value, ConnectionError> {
-    execute_with_store(tx, org, operation, payload, drops, None).await
+    execute_in(tx, org, operation, payload, drops, None, None).await
 }
 
 /// The store injection point for administration tests.
@@ -35,6 +35,30 @@ pub async fn execute_with_store(
     drops: &mut AuthDrops,
     store: Option<&dyn Store>,
 ) -> Result<Value, ConnectionError> {
+    execute_in(tx, org, operation, payload, drops, store, None).await
+}
+
+/// Execute a connection write against every version retained by live releases.
+pub async fn execute_in_environment(
+    tx: &Transaction<'_>,
+    environment: &Transaction<'_>,
+    org: &str,
+    operation: &str,
+    payload: &str,
+    drops: &mut AuthDrops,
+) -> Result<Value, ConnectionError> {
+    execute_in(tx, org, operation, payload, drops, None, Some(environment)).await
+}
+
+async fn execute_in(
+    tx: &Transaction<'_>,
+    org: &str,
+    operation: &str,
+    payload: &str,
+    drops: &mut AuthDrops,
+    store: Option<&dyn Store>,
+    environment: Option<&Transaction<'_>>,
+) -> Result<Value, ConnectionError> {
     let mut request: Value =
         serde_json::from_str(payload).map_err(|_| refuse("invalid_input", "value"))?;
     validate_request(operation, &request)?;
@@ -44,7 +68,16 @@ pub async fn execute_with_store(
         operation,
         "connection.write" | "connection.copy" | "connection.set_credential"
     ) {
-        return generation(tx, org, operation, request, credential, drops, store).await;
+        return generation(
+            tx,
+            org,
+            operation,
+            (request, credential),
+            drops,
+            store,
+            environment,
+        )
+        .await;
     }
     configure(tx, org, operation, &request).await
 }
@@ -167,10 +200,10 @@ async fn generation(
     tx: &Transaction<'_>,
     org: &str,
     operation: &str,
-    mut request: Value,
-    credential: Option<Value>,
+    (mut request, credential): (Value, Option<Value>),
     drops: &mut AuthDrops,
     store: Option<&dyn Store>,
+    environment: Option<&Transaction<'_>>,
 ) -> Result<Value, ConnectionError> {
     request["action"] = operation.into();
     let context = configure(tx, org, "connection.prepare", &request).await?;
@@ -191,7 +224,16 @@ async fn generation(
         schemas,
         &context["auth_schema"],
     )?;
-    let required = required_connection_versions(tx, org, &request, schemas);
+    let required = if let Some(environment) = environment {
+        required_connection_versions(
+            environment,
+            context["id"].as_str().expect("connection id"),
+            &context["versions"],
+        )
+        .await?
+    } else {
+        Vec::new()
+    };
     for schema in required {
         validate_required_fields(&request["parameters"], &schema)?;
         if let Some(fields) = schema["properties"].as_object() {
@@ -311,14 +353,22 @@ async fn store_credential(store: &dyn Store, value: &str) -> Result<Value, Conne
     Ok(json!({"id":id.to_string(),"store":store,"ref":reference,"version":version,"hint":hint}))
 }
 
-/// IS1.5/IS1.6 replace this published-version fallback with versions of live releases.
-pub fn required_connection_versions(
-    _tx: &Transaction<'_>,
-    _org: &str,
-    _request: &Value,
-    published: &[Value],
-) -> Vec<Value> {
-    published.to_vec()
+/// Read versions retained until apply contracts releases outside the live set.
+pub async fn required_connection_versions(
+    environment: &Transaction<'_>,
+    connection: &str,
+    published: &Value,
+) -> Result<Vec<Value>, ConnectionError> {
+    let mut schemas = Vec::new();
+    for row in environment.query(
+        "SELECT DISTINCT version FROM catalog.release_connection WHERE connection_id=$1::text::uuid",
+        &[&connection],
+    ).await? {
+        let version: i32 = row.get(0);
+        let schema = published.get(version.to_string()).ok_or_else(|| refuse("invalid_input", "version"))?;
+        schemas.push(schema.clone());
+    }
+    Ok(schemas)
 }
 
 fn validate_required_fields(parameters: &Value, schema: &Value) -> Result<(), ConnectionError> {
@@ -344,6 +394,12 @@ pub fn validate_connection_parameters(
     let values = parameters
         .as_object()
         .ok_or_else(|| refuse("invalid_input", "parameters"))?;
+    if !schemas
+        .iter()
+        .any(|schema| validate_required_fields(parameters, schema).is_ok())
+    {
+        return Err(refuse("invalid_input", "parameters"));
+    }
     for (field, value) in values {
         if field == "auth" {
             continue;

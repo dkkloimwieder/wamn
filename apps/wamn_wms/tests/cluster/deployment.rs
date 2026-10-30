@@ -153,12 +153,29 @@ pub(super) async fn install_application_secrets(
         let body: Value = serde_json::from_slice(&fs::read(secret.path)?)?;
         apply_secret(cluster, work, &body).await?;
     }
+    let account = wamn_credential_store::kubernetes::service_account_name(
+        &crate::environment::identity().org,
+        &crate::environment::identity().project,
+        &crate::environment::identity().environment,
+    );
+    let reference = wamn_credential_store::kubernetes::secret_name(
+        &crate::environment::identity().org,
+        &crate::environment::identity().project,
+        &crate::environment::identity().environment,
+    );
+    for (_, mut resource) in
+        wamn_control::environment::ensure::credential_access(&account, &reference)
+    {
+        resource["metadata"]["namespace"] = document.host_secret_namespace.clone().into();
+        if let Some(subjects) = resource["subjects"].as_array_mut() {
+            for subject in subjects {
+                subject["namespace"] = document.host_secret_namespace.clone().into();
+            }
+        }
+        apply_secret(cluster, work, &resource).await?;
+    }
     let credentials = bootstrap::object_store_credentials(files);
-    let body = json!({"apiVersion":"v1","kind":"Secret",
-        "metadata":{"name":crate::environment::object_store_secret_name(),"namespace":document.host_secret_namespace},
-        "type":"Opaque","stringData":{"credentials.json":serde_json::to_string(&json!({
-            "projects":{"wms":{"labels":serde_json::to_string(&credentials)?}},"orgs":{}
-        }))?}});
+    let body = json!({"apiVersion":"v1","kind":"Secret","metadata":{"name":wamn_credential_store::kubernetes::secret_name(&crate::environment::identity().org,&crate::environment::identity().project,&crate::environment::identity().environment),"namespace":document.host_secret_namespace},"stringData":{crate::environment::labels_credential_version():credentials.to_string()}});
     apply_secret(cluster, work, &body).await?;
     let registry = fs::read_to_string(&document.registry_auth_file)?;
     apply_secret(

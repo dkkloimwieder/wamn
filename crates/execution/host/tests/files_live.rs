@@ -133,12 +133,29 @@ impl FileHost {
             writer.execute("INSERT INTO platform.connection(id,integration_id,integration_type,status) VALUES ($1::text::uuid,$2::text::uuid,$3,$4)",
                 &[&row.get::<_,String>(0),&row.get::<_,String>(1),&row.get::<_,String>(2),&row.get::<_,String>(5)]).await?;
         }
+        host.admin.execute("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)",&[&ENV_KEY,&release.release().manifest_digest.as_str(),&release.manifest().canonical_bytes()]).await?;
+        let component = release
+            .manifest()
+            .components
+            .first()
+            .context("file fixture component")?;
+        for (alias, name, mode) in [
+            ("files", files::STORE_NAME, "write"),
+            ("files_read", files::STORE_NAME, "read"),
+            ("files_no_cdn", "files-no-cdn", "write"),
+        ] {
+            let id: String=host.admin.query_one("SELECT c.id::text FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id WHERE i.name=$1",&[&name]).await?.get(0);
+            host.admin.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interfaces,mode) VALUES($1,$2,$3,$4,ARRAY['wasmcloud:blobstore/blobstore@0.1.0'],$5)",&[&ENV_KEY,&component.descriptor.component_digest,&component.package_id,&alias,&mode]).await?;
+            host.admin.execute("INSERT INTO catalog.release_connection(env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,1) ON CONFLICT DO NOTHING",&[&ENV_KEY,&release.release().manifest_digest.as_str(),&id]).await?;
+            host.admin.execute("INSERT INTO catalog.connection_binding(env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES($1,$2,$3,$4,$5,$6::text::uuid)",&[&ENV_KEY,&release.release().manifest_digest.as_str(),&component.descriptor.component_digest,&component.package_id,&alias,&id]).await?;
+        }
+        let credentials = Arc::new(
+            ConnectionCredentials::from_database(Arc::clone(&registry.reader), ORG)
+                .with_store(registry.credentials.clone()),
+        );
         let blobstore = Arc::new(WamnBlobstore::new(
             Arc::clone(&postgres),
-            Arc::new(ConnectionCredentials::from_database(
-                Arc::clone(&registry.reader),
-                ORG,
-            )),
+            Arc::clone(&credentials),
             ENV_KEY,
             PROJECT,
             Some(Arc::clone(&release)),
@@ -149,6 +166,9 @@ impl FileHost {
             Arc::clone(&blobstore),
             Arc::new(RegistryFileConnections {
                 client: Some(Arc::clone(&registry.reader)),
+                postgres: Arc::clone(&postgres),
+                release: Arc::clone(&release),
+                credentials: Arc::clone(&credentials),
                 org: ORG.into(),
                 project: PROJECT.into(),
                 environment: "dev".into(),
@@ -355,7 +375,7 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
     let proxy = file_delete_proxy::DeleteProxy::start(minio.endpoint.clone()).await?;
     let mut definition = minio.definition();
     definition["endpoint"] = json!(proxy.endpoint);
-    let fixture =
+    let mut fixture =
         FileHost::start_on_store("file_orphan_collector", release()?, minio, definition).await?;
     let generations_sql =
         "SELECT connection_id::text, generation FROM registry.read_file_connection($1,$2,$3)";
@@ -485,6 +505,61 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
         .await?;
     proxy.refuse.store(false, Ordering::SeqCst);
 
+    // A credential rotation keeps the same physical store and its existing files.
+    let equivalent = fixture.registry.definition.clone();
+    fixture.registry.move_store(&equivalent).await?;
+    fixture.registry.configure("connection.set_credential",json!({"name":files::STORE_NAME,"credential":json!({"ACCESS_KEY_ID":"file-fixture","ACCESS_SECRET_KEY":files::STORE_PASSWORD}).to_string()})).await?;
+    let mut moved = fixture.registry.definition.clone();
+    moved["container"] = json!("files-b");
+    moved["prefix"] = json!("generation-two/");
+    assert!(fixture.registry.move_store(&moved).await.is_err());
+    fixture
+        .registry
+        .define_store(PROJECT, "other-files", &moved)
+        .await?;
+    let moved_backend = AmazonS3Builder::new()
+        .with_endpoint(&fixture.minio.endpoint)
+        .with_bucket_name("files-b")
+        .with_region("us-east-1")
+        .with_access_key_id("file-fixture")
+        .with_secret_access_key(files::STORE_PASSWORD)
+        .with_allow_http(true)
+        .build()?;
+    let moved_key = Path::from(format!("generation-two/dev/_wamn_files/live/{kept}"));
+    let response = client
+        .put(
+            moved_backend
+                .signed_url(Method::PUT, &moved_key, Duration::from_secs(60))
+                .await?,
+        )
+        .header("x-minio-source-mtime", "2000-01-01T00:00:00Z")
+        .body("orphan in the moved store")
+        .send()
+        .await?;
+    anyhow::ensure!(response.status().is_success(), "seed moved-store orphan");
+
+    // An independent project uses the same storage through its own authority.
+    fixture
+        .registry
+        .define_store("unenabled", files::STORE_NAME, &equivalent)
+        .await?;
+    let source = fixture.registry.control.transaction().await?;
+    let mut administration = application_fixture::connect(&fixture.administration_url).await?;
+    let target = administration.transaction().await?;
+    target
+        .execute(
+            "SELECT set_config('app.user_id',$1,true), \
+             set_config('app.operation','admin:file-host-fixture',true)",
+            &[&fixture.host.first],
+        )
+        .await?;
+    let _ = wamn_platform_identity::connection_projection::project(
+        &source, &target, ORG, PROJECT, "dev",
+    )
+    .await?;
+    target.commit().await?;
+    source.commit().await?;
+
     // Hold an uncommitted row while its fresh object exists. The collector's
     // separate SELECT-only connection cannot see this transaction's row.
     let fresh = Uuid::new_v4();
@@ -509,57 +584,6 @@ async fn orphan_collector_retries_failed_deletes_and_protects_rows_young_and_unk
         0
     );
 
-    // A new generation with identical coordinates must not erase the old
-    // generation's files. Later collection must still enumerate the old store.
-    let mut equivalent = fixture.registry.definition.clone();
-    equivalent["prefix"] = json!("generation-one//");
-    fixture.registry.move_store(&equivalent).await?;
-    fixture
-        .registry
-        .control
-        .query_one(
-            "SELECT registry.rotate_connection($1,$2,$3)",
-            &[
-                &ORG,
-                &files::STORE_NAME,
-                &json!({"ACCESS_KEY_ID":"file-fixture","ACCESS_SECRET_KEY":files::STORE_PASSWORD})
-                    .to_string(),
-            ],
-        )
-        .await?;
-    let mut moved = fixture.registry.definition.clone();
-    moved["container"] = json!("files-b");
-    moved["prefix"] = json!("generation-two/");
-    fixture.registry.move_store(&moved).await?;
-    let moved_backend = AmazonS3Builder::new()
-        .with_endpoint(&fixture.minio.endpoint)
-        .with_bucket_name("files-b")
-        .with_region("us-east-1")
-        .with_access_key_id("file-fixture")
-        .with_secret_access_key(files::STORE_PASSWORD)
-        .with_allow_http(true)
-        .build()?;
-    let moved_key = Path::from(format!("generation-two/dev/_wamn_files/live/{kept}"));
-    let response = client
-        .put(
-            moved_backend
-                .signed_url(Method::PUT, &moved_key, Duration::from_secs(60))
-                .await?,
-        )
-        .header("x-minio-source-mtime", "2000-01-01T00:00:00Z")
-        .body("orphan in the moved store")
-        .send()
-        .await?;
-    anyhow::ensure!(response.status().is_success(), "seed moved-store orphan");
-
-    // Collection stays complete when another environment shares the store.
-    fixture
-        .registry
-        .configure(
-            "project_connection.enable",
-            json!({"project":"unenabled","connection":files::STORE_NAME}),
-        )
-        .await?;
     // A second host must skip a pass while the first host holds the lease.
     let lease = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
@@ -822,16 +846,13 @@ async fn file_id_reads_survive_binding_removal_until_connection_disablement() ->
     assert_eq!(read.0, 200);
     assert_eq!(read.2, b"retained bytes");
 
-    let bindings: Value = fixture
-        .registry
-        .control
-        .query_one(
-            "SELECT registry.reserve_connection_bindings($1,$2,'dev','cloud','[]'::jsonb)",
-            &[&ORG, &PROJECT],
+    fixture
+        .host
+        .admin
+        .batch_execute(
+            "DELETE FROM catalog.connection_binding; DELETE FROM catalog.release_connection",
         )
-        .await?
-        .get(0);
-    assert_eq!(bindings, json!({"bindings":[]}));
+        .await?;
     let read = fixture.read("files", id, Some(&token)).await?;
     assert_eq!(read.0, 200);
     assert_eq!(read.2, b"retained bytes");
@@ -850,8 +871,14 @@ async fn file_id_reads_survive_binding_removal_until_connection_disablement() ->
     );
 
     let tx = fixture.registry.control.transaction().await?;
-    wamn_platform_identity::connections::disable_connection(&tx, ORG, PROJECT, files::STORE_NAME)
-        .await?;
+    wamn_platform_identity::connections::administration::execute(
+        &tx,
+        ORG,
+        "connection.disable",
+        &json!({"project":PROJECT,"env":"dev","name":files::STORE_NAME}).to_string(),
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+    )
+    .await?;
     tx.commit().await?;
     let read = fixture.read("files", id, Some(&token)).await?;
     assert_eq!(read.0, 403);
@@ -999,7 +1026,7 @@ async fn native_operation_signed_url_reads_private_bytes_then_expires_and_caps_l
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn public_origin_returns_bytes_then_404_after_idempotent_unexpose() -> anyhow::Result<()> {
-    let fixture = FileHost::start("file_public").await?;
+    let mut fixture = FileHost::start("file_public").await?;
     let id = fixture.upload("files", b"public bytes").await?;
     let anonymous = fixture.minio.client()?;
     assert_eq!(
@@ -1122,7 +1149,7 @@ async fn referenced_file_delete_refuses_and_disablement_keeps_the_application_fo
     use wamn_control_provision::{
         CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
     };
-    let fixture = FileHost::start("file_referenced_delete").await?;
+    let mut fixture = FileHost::start("file_referenced_delete").await?;
     let id = fixture.upload("files", b"referenced bytes").await?;
     fixture.host.admin.batch_execute(files::DOCUMENTS).await?;
     fixture.host.admin.batch_execute("GRANT USAGE ON SCHEMA file_fixture TO wamn_app; GRANT SELECT,INSERT,DELETE ON file_fixture.document TO wamn_app").await?;
@@ -1154,15 +1181,9 @@ async fn referenced_file_delete_refuses_and_disablement_keeps_the_application_fo
             .2,
         b"referenced bytes"
     );
-    let mut disabled = fixture.registry.definition.clone();
-    disabled["prefix"] = json!("disabled/");
     fixture
         .registry
-        .configure(
-            "connection.write",
-            json!({"name":files::STORE_NAME,"integration":"s3",
-        "transport":"s3","exchange":"request","parameters":disabled,"status":"disabled"}),
-        )
+        .configure("connection.disable", json!({"name":files::STORE_NAME}))
         .await?;
     fixture
         .writer

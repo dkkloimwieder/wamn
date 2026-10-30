@@ -3,10 +3,7 @@
 //!
 //! Step 8 returned, so no pod of another release remains and no run is
 //! stranded. The verb removes the bindings of every release outside the live
-//! set, and disables each instance the document no longer names that no
-//! surviving binding uses. An instance is never deleted. Under
-//! `release = none` no release is live, so every binding goes, and every
-//! declared instance stays enabled.
+//! set. Connection lifecycle remains administration.
 //!
 //! A declared floor that differs from the recorded one is contracted only
 //! when the live set is exactly one release: a version the environment has
@@ -18,9 +15,6 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Context as _, bail, ensure};
-use wamn_schema_control::connections::{
-    disable_unbound_connection_instances_sql, remove_connection_bindings_outside_live_set_sql,
-};
 use wamn_schema_generator::{PackageManifest, UpgradeStagePhase};
 
 use super::Platform;
@@ -38,7 +32,7 @@ DO UPDATE SET version = EXCLUDED.version, recorded_at = now()";
 /// # Errors
 ///
 /// When a write fails, a floor's artifact is refused, or a floor is waiting.
-/// The bindings and instances are contracted before a floor waits.
+/// The release versions and bindings are contracted before a floor waits.
 pub async fn contract(
     platform: &Platform,
     document: &EnvironmentDocument,
@@ -50,7 +44,6 @@ pub async fn contract(
         wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
     let project_url = super::ensure::project_url(platform, &document.triple()).await?;
     let live_digests: Vec<String> = live.keys().cloned().collect();
-    let declared: Vec<String> = analysis.authorities.connections.keys().cloned().collect();
 
     let mut client = connect(&project_url).await?;
     let transaction = client
@@ -61,32 +54,24 @@ pub async fn contract(
         .query_one("SELECT set_config('app.env_key', $1, true)", &[&env_key])
         .await
         .context("claim the tenant")?;
-    let removed = transaction
-        .query(
-            remove_connection_bindings_outside_live_set_sql(),
-            &[&env_key, &document.env, &live_digests],
-        )
-        .await
-        .context("remove the bindings of releases outside the live set")?;
-    let disabled = transaction
-        .query(
-            disable_unbound_connection_instances_sql(),
-            &[&env_key, &document.env, &declared],
-        )
-        .await
-        .context("disable the instances the document no longer names")?;
     transaction
-        .commit()
-        .await
-        .context("commit the connection contract")?;
-    if !removed.is_empty() {
+        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+        .await?;
+    let removed = transaction.execute(
+        "DELETE FROM catalog.connection_binding WHERE env_key=$1 AND NOT (manifest_digest=ANY($2::text[]))",
+        &[&env_key,&live_digests],
+    ).await?;
+    transaction.execute(
+        "DELETE FROM catalog.release_connection WHERE env_key=$1 AND NOT (manifest_digest=ANY($2::text[]))",
+        &[&env_key,&live_digests],
+    ).await?;
+    transaction.commit().await?;
+    if removed > 0 {
         lines.push(format!(
-            "removed {} bindings of releases outside the live set",
-            removed.len()
+            "removed {removed} bindings of releases outside the live set"
         ));
-    }
-    for row in disabled {
-        lines.push(format!("disabled connection {}", row.get::<_, String>(0)));
     }
 
     let recorded = analysis
@@ -162,14 +147,7 @@ async fn apply_contract(
         manifest.package.predecessor_version
     );
     crate::apply_package::apply_package(crate::apply_package::ApplyPackageRequest {
-        component_source: crate::apply_package::component_source_from_env(Some(
-            &crate::package_artifact::PackageRegistry {
-                artifact_base: platform.package_artifact_base.clone().unwrap_or_default(),
-                registry_auth_file: platform.registry_auth_file.clone(),
-                insecure_registry: false,
-                oci_ca_paths: platform.oci_ca_paths.clone(),
-            },
-        ))?,
+        component_source: platform.component_source()?,
         changes: platform.auth_changes().await?,
         package: opened.package_root(),
         database_url: project_url.to_owned(),

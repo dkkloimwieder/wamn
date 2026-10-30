@@ -5,9 +5,9 @@ manifest.Package {
     required_platform_policy_contract = {id = "file_fixture_data_access", state = "satisfied"}
     models = {}
     connections = {
-        files = {integration = "s3", mode = "write"}
-        files_read = {integration = "s3", mode = "read"}
-        files_no_cdn = {integration = "s3", mode = "write"}
+        files = {interfaces = ["wasmcloud:blobstore/blobstore@0.1.0"], mode = "write"}
+        files_read = {interfaces = ["wasmcloud:blobstore/blobstore@0.1.0"], mode = "read"}
+        files_no_cdn = {interfaces = ["wasmcloud:blobstore/blobstore@0.1.0"], mode = "write"}
     }
     components = {fixture = {connections = []}}
     routes = {auth_modes = ["session"]}

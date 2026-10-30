@@ -188,6 +188,8 @@ pub fn http_admitter_relations() -> impl Iterator<Item = (&'static str, &'static
         .iter()
         .map(|relation| ("catalog", *relation))
         .chain([
+            ("platform", "connection"),
+            ("platform", "integration"),
             ("platform", "permission"),
             ("platform", "user"),
             ("platform", "user_role"),
@@ -722,6 +724,14 @@ pub fn grant_executor_platform_surface_sql(schema: &str) -> String {
         )
         .expect("writing to a String cannot fail");
     }
+    for relation in ["connection", "integration"] {
+        write!(
+            sql,
+            " GRANT SELECT ON TABLE platform.{} TO {role};",
+            quote_ident(relation)
+        )
+        .expect("writing to a String cannot fail");
+    }
     let run_update = quoted_column_list(&EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS);
     let queue_update = quoted_column_list(&EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS);
     let run_insert = quoted_column_list(&EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS);
@@ -937,7 +947,7 @@ pub fn grant_connection_reader_surface_sql() -> String {
     let role = quote_ident(WorkloadRoleFamily::ConnectionReader.acl_role());
     write!(
         sql,
-        " REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA registry, identity FROM {role}; GRANT EXECUTE ON FUNCTION registry.read_connection_credential(text,text,text,uuid), registry.read_file_connection(text,text,text,uuid) TO {role};"
+        " REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA registry, identity FROM {role}; GRANT EXECUTE ON FUNCTION registry.read_connection_credential(text,text,text,uuid), registry.read_file_connection(text,text,text,uuid), registry.read_connection_version(text,text,text,uuid,integer) TO {role};"
     )
     .expect("writing to a String cannot fail");
     sql
@@ -947,7 +957,7 @@ pub fn grant_connection_reader_surface_sql() -> String {
 pub const CONTROL_CONNECTION_FUNCTIONS: &[&str] = &[
     "retired_connection_credential(text)",
     "project_connection_projection(text,text,text)",
-    "publish_integration(text,integer,text,jsonb,text)",
+    "publish_integration(text,integer,text,jsonb,text,text[])",
     "configure_connection(text,text,jsonb)",
     "configure_external_system(text,text,jsonb)",
     "configure_integration(text,text,jsonb)",
@@ -1280,12 +1290,14 @@ mod tests {
              TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"connection_binding\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE catalog.\"release_connection\" TO \"wamn_http_admitter\"; \
+             GRANT SELECT ON TABLE platform.\"connection\" TO \"wamn_http_admitter\"; \
+             GRANT SELECT ON TABLE platform.\"integration\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE platform.\"permission\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE platform.\"user\" TO \"wamn_http_admitter\"; \
              GRANT SELECT ON TABLE platform.\"user_role\" TO \"wamn_http_admitter\"; \
              GRANT SELECT (\"env_key\", \"environment\", \"application\", \"workflow_id\", \
              \"version\", \"graph_json\") ON TABLE catalog.\"workflows\" TO \"wamn_http_admitter\";",
-            "the callable-HTTP admitter reads four catalog relations, the selected workflow columns and three platform relations, and holds nothing on the run plane, no write of any grain, and no EXECUTE"
+            "the callable-HTTP admitter reads four catalog relations, the selected workflow columns and five platform relations, and holds nothing on the run plane, no write of any grain, and no EXECUTE"
         );
         // The schema is an identifier position and is quoted, not interpolated.
         assert!(grant_http_admitter_surface_sql("we\"ird").contains("\"we\"\"ird\""));
@@ -1321,6 +1333,8 @@ mod tests {
              GRANT SELECT ON TABLE catalog.\"release_connection\" \
              TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE catalog.\"releases\" TO \"wamn_executor_platform\"; \
+             GRANT SELECT ON TABLE platform.\"connection\" TO \"wamn_executor_platform\"; \
+             GRANT SELECT ON TABLE platform.\"integration\" TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE \"wamn_run\".\"runs\" TO \"wamn_executor_platform\"; \
              GRANT UPDATE (\"status\", \"terminal_reason\", \"fail_type\", \"result_json\", \
              \"deadline_adjustments_json\", \"state_json\", \"caller_outcome_type\", \

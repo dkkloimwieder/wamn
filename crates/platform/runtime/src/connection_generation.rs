@@ -31,8 +31,7 @@ mod tests {
         })
     }
 
-    /// `definition_hash` is persisted in `catalog.connection_generations`, so its
-    /// bytes must never move. The JSON value serializes with sorted keys. The golden
+    /// Local admission retains `definition_hash`, so its bytes stay fixed. The JSON value serializes with sorted keys. The golden
     /// value is the sha256 of the literal JSON below, computed outside this code.
     #[test]
     fn the_definition_hash_bytes_are_pinned() {

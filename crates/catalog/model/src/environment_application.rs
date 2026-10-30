@@ -16,12 +16,9 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields)]
 pub struct ApplicationDefinition {
     pub packages: BTreeSet<String>,
-    /// Package connection name to an enabled org connection name.
+    /// Package connection name to a project integration name.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub connections: BTreeMap<String, String>,
-    /// Integration code to a published digest, or `host`.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub connectors: BTreeMap<String, String>,
 }
 
 /// Application name to its definition.
@@ -47,7 +44,6 @@ mod tests {
     #[test]
     fn a_package_has_one_declared_application_without_a_fallback() {
         let definition = ApplicationDefinition {
-            connectors: std::collections::BTreeMap::new(),
             connections: std::collections::BTreeMap::new(),
             packages: ["base".to_owned(), "overlay".to_owned()].into(),
         };

@@ -7,29 +7,43 @@ use tokio_postgres::Transaction;
 use wamn_schema_generator::PackageManifest;
 
 /// Read canonical interface identities from the component's import world.
-pub(crate) fn interfaces(bytes: &[u8], package: &str) -> anyhow::Result<Vec<String>> {
+pub(crate) fn imported_interfaces(bytes: &[u8]) -> anyhow::Result<Vec<String>> {
+    world_interfaces(bytes, false)
+}
+pub(crate) fn exported_interfaces(bytes: &[u8]) -> anyhow::Result<Vec<String>> {
+    world_interfaces(bytes, true)
+}
+fn world_interfaces(bytes: &[u8], exports: bool) -> anyhow::Result<Vec<String>> {
     let wit_component::DecodedWasm::Component(resolve, world) = wit_component::decode(bytes)?
     else {
-        anyhow::bail!("a connection requirement needs a component binary");
+        anyhow::bail!("connection authority needs a component binary")
     };
-    let mut interfaces = Vec::new();
-    for item in resolve.worlds[world].imports.values() {
-        if let wit_parser::WorldItem::Interface { id, .. } = item
-            && let Some(name) = resolve.id_of(*id)
-            && name
-                .split_once('/')
-                .is_some_and(|(import, _)| import == package)
-        {
-            interfaces.push(name);
-        }
+    let world = &resolve.worlds[world];
+    let items = if exports {
+        &world.exports
+    } else {
+        &world.imports
+    };
+    let mut names = items
+        .values()
+        .filter_map(|item| match item {
+            wit_parser::WorldItem::Interface { id, .. } => resolve.id_of(*id),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+pub(crate) fn require_imports(bytes: &[u8], declared: &[String]) -> anyhow::Result<Vec<String>> {
+    let imports = imported_interfaces(bytes)?;
+    for interface in declared {
+        ensure!(
+            imports.contains(interface),
+            "declared interface {interface} is not imported by the component"
+        );
     }
-    interfaces.sort();
-    interfaces.dedup();
-    ensure!(
-        !interfaces.is_empty(),
-        "component imports no interface from {package}"
-    );
-    Ok(interfaces)
+    Ok(declared.to_vec())
 }
 
 pub(crate) async fn install(
@@ -52,33 +66,31 @@ pub(crate) async fn install(
             wamn_engine::component_admission::component_digest(&bytes) == digest,
             "component differs from its admitted digest {digest}"
         );
-        for connection in &connections {
-            let name = &connection.store_alias;
+        for name in &connections {
             let declaration = manifest
                 .connections
                 .get(name)
                 .with_context(|| format!("package declares no connection {name}"))?;
-            let interfaces = interfaces(&bytes, connection.requirement_type.import_package())?;
+            let interfaces = require_imports(&bytes, &declaration.interfaces)?;
             let mode = match declaration.mode {
                 wamn_schema_generator::ConnectionMode::Read => "read",
                 wamn_schema_generator::ConnectionMode::Write => "write",
             };
-            let params: [&(dyn tokio_postgres::types::ToSql + Sync); 7] = [
+            let params: [&(dyn tokio_postgres::types::ToSql + Sync); 6] = [
                 &env_key,
                 &digest,
                 &manifest.package.id,
                 &name,
-                &declaration.integration,
                 &interfaces,
                 &mode,
             ];
             written += tx.execute(
-                "INSERT INTO catalog.connection_requirement (env_key,component_digest,package_id,name,integration_type,interfaces,mode) \
-                 VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING", &params,
+                "INSERT INTO catalog.connection_requirement (env_key,component_digest,package_id,name,interfaces,mode) \
+                 VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING", &params,
             ).await?;
             let exact: bool = tx.query_one(
                 "SELECT EXISTS (SELECT FROM catalog.connection_requirement WHERE env_key=$1 AND component_digest=$2 \
-                 AND package_id=$3 AND name=$4 AND integration_type=$5 AND interfaces=$6 AND mode=$7)", &params,
+                 AND package_id=$3 AND name=$4 AND interfaces=$5 AND mode=$6)", &params,
             ).await?.get(0);
             ensure!(
                 exact,
@@ -93,7 +105,7 @@ pub(crate) async fn install(
 #[cfg(test)]
 mod tests {
     #[test]
-    fn reads_every_imported_interface_of_the_declared_family() {
+    fn install_refuses_a_declared_interface_not_imported() {
         let mut resolve = test_wit_parser::Resolve::new();
         let package = resolve
             .push_str(
@@ -102,7 +114,7 @@ mod tests {
             package wamn:connection@0.1.0;
             interface http { get: func(); }
             interface metadata { describe: func(); }
-            world client { import http; import metadata; }
+            world client { import http; import metadata; export http; }
         ",
             )
             .unwrap();
@@ -126,12 +138,20 @@ mod tests {
             .encode()
             .unwrap();
         assert_eq!(
-            super::interfaces(&bytes, "wamn:connection").unwrap(),
+            super::imported_interfaces(&bytes).unwrap(),
             [
                 "wamn:connection/http@0.1.0",
                 "wamn:connection/metadata@0.1.0",
             ]
         );
-        assert!(super::interfaces(&bytes, "wasmcloud:blobstore").is_err());
+        assert_eq!(
+            super::exported_interfaces(&bytes).unwrap(),
+            ["wamn:connection/http@0.1.0"]
+        );
+        assert!(
+            super::require_imports(&bytes, &["wasmcloud:blobstore/blobstore@0.1.0".into()])
+                .is_err()
+        );
+        super::require_imports(&bytes, &["wamn:connection/http@0.1.0".into()]).unwrap();
     }
 }

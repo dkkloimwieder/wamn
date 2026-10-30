@@ -840,9 +840,9 @@ INSERT INTO platform.connection (id, integration_id, integration_type, status) V
      '20000000-0000-4000-8000-000000000001', 's3', 'active') ON CONFLICT DO NOTHING; \
 INSERT INTO catalog.releases (env_key, manifest_digest, canonical_bytes) VALUES \
     ('local-target', 'sha256:' || encode(sha256('{}'::bytea), 'hex'), '{}') ON CONFLICT DO NOTHING; \
-INSERT INTO catalog.release_connection (env_key, manifest_digest, connection_id, integration_type, version) VALUES \
+INSERT INTO catalog.release_connection (env_key, manifest_digest, connection_id, version) VALUES \
     ('local-target', 'sha256:' || encode(sha256('{}'::bytea), 'hex'), \
-     '30000000-0000-4000-8000-000000000001', 's3', 1) ON CONFLICT DO NOTHING;";
+     '30000000-0000-4000-8000-000000000001', 1) ON CONFLICT DO NOTHING;";
         let read_projection = "\
 SELECT jsonb_build_array(external.name, integration.name, integration.integration_type, \
                         integration.status, connection.integration_type, connection.status)::text \

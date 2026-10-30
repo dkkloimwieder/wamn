@@ -9,9 +9,8 @@ use wamn_platform_identity::auth_changes::AuthChanges;
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use wamn_catalog::{ComponentPackageScope, PackageCoordinate, RequirementType};
+use wamn_catalog::{ComponentPackageScope, PackageCoordinate};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
-use wamn_control::bind_connection::{self, BindConnectionRequest};
 use wamn_control::component_admission::AdmitComponentRequest;
 use wamn_control::component_declaration::declared_platform_packages;
 use wamn_control::delivery::{Candidate, ReleaseIdentity};
@@ -70,17 +69,6 @@ pub(crate) fn identity() -> &'static ReleaseIdentity {
         }
     });
     &IDENTITY
-}
-
-/// The object-store credential Secret of the released environment, which the
-/// host overlay mounts and the cluster fixture writes.
-pub(crate) fn object_store_secret_name() -> String {
-    format!(
-        "wamn-object-store-credentials-{}--{}--{}",
-        identity().org,
-        identity().project,
-        identity().environment,
-    )
 }
 
 fn package_root() -> PathBuf {
@@ -390,30 +378,112 @@ pub async fn install(
         after_install(route, package.root().to_path_buf()).await?;
     }
     let (manifest, digest) = candidate.manifest()?;
-    for component in &manifest.components {
-        for connection in &component.descriptor.connections {
-            ensure!(
-                connection.requirement_type == wamn_catalog::ComponentConnectionType::Blobstore,
-                "the WMS case binds only the labels store, not {}",
-                connection.store_alias
-            );
-            bind_connection::bind(&BindConnectionRequest {
-                database_url: route.database_url.clone(),
-                org: identity().org.clone(),
-                project: identity().project.clone(),
-                environment: identity().environment.clone(),
-                instance_id: connection.store_alias.clone(),
-                requirement_type: RequirementType::Blobstore,
-                definition: json!({"endpoint":minio_endpoint,"container":"labels","prefix":"wms/"}),
-                credential_handle: Some(connection.store_alias.clone()),
-                org_connection_name: None,
-                manifest_digest: digest.as_str().to_owned(),
-                component_digest: component.descriptor.component_digest.as_str().to_owned(),
-                store_alias: connection.store_alias.clone(),
-            })
-            .await?;
-        }
+    bind_labels(inputs, route, &manifest, digest.as_str(), minio_endpoint).await?;
+    Ok(())
+}
+
+pub(crate) fn labels_credential_version() -> &'static str {
+    "770df186-ac15-579e-b46b-c297cae2011b"
+}
+
+async fn bind_labels(
+    inputs: &JourneyDocument,
+    route: &ProvisionedRoute,
+    manifest: &wamn_catalog::ServingManifest,
+    digest: &str,
+    endpoint: &str,
+) -> anyhow::Result<()> {
+    let (mut system, driver) =
+        tokio_postgres::connect(&inputs.system_pg_url, tokio_postgres::NoTls).await?;
+    tokio::spawn(driver);
+    let tx = wamn_control::provision_project_env::provisioning_transaction(&mut system).await?;
+    tx.execute("UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud') WHERE org=$1 AND project=$2 AND env=$3",&[&identity().org,&identity().project,&identity().environment]).await?;
+    tx.batch_execute("SET LOCAL ROLE wamn_control").await?;
+    let names: BTreeSet<_> = manifest
+        .components
+        .iter()
+        .flat_map(|component| {
+            component
+                .descriptor
+                .connections
+                .iter()
+                .map(|connection| connection.store_alias.clone())
+        })
+        .collect();
+    let stored = wamn_credential_store::StoreVersion {
+        store: "k8s",
+        reference: wamn_credential_store::kubernetes::secret_name(
+            &identity().org,
+            &identity().project,
+            &identity().environment,
+        ),
+        version: labels_credential_version().into(),
+    };
+    for name in &names {
+        wamn_test_infrastructure::credentials::define(&tx,&identity().org,&json!({"project":identity().project,"env":identity().environment,"name":name,"integration_type":"s3","auth_type":"custom","parameters":{"provider":"s3","endpoint":endpoint,"container":"labels","prefix":"wms/"}}),&wamn_test_infrastructure::credentials::ReferencedCredentials(&stored)).await?;
     }
+    tx.commit().await?;
+    let document = EnvironmentDocument {
+        integrations: names
+            .iter()
+            .map(|name| {
+                (
+                    name.clone(),
+                    wamn_control::environment::document::Integration { version: 1 },
+                )
+            })
+            .collect(),
+        target: "cloud".into(),
+        org: identity().org.clone(),
+        project: identity().project.clone(),
+        env: identity().environment.clone(),
+        release: DeclaredRelease::Digest(digest.into()),
+        route_host: identity().route_host.clone(),
+        client_package: None,
+        policy: "dev".into(),
+        applications: BTreeMap::from([(
+            "wamn_wms".into(),
+            wamn_catalog::ApplicationDefinition {
+                packages: manifest
+                    .release
+                    .packages
+                    .iter()
+                    .map(|package| package.package_id().to_owned())
+                    .collect(),
+                connections: names
+                    .iter()
+                    .map(|name| (name.clone(), name.clone()))
+                    .collect(),
+            },
+        )]),
+        floors: BTreeMap::new(),
+    };
+    let packages = [package_manifest()?];
+    system.batch_execute("SET ROLE wamn_db_owner").await?;
+    let bindings =
+        wamn_control::environment::bindings::analyse(&system, &document, &packages).await?;
+    let (mut project, driver) =
+        tokio_postgres::connect(&route.database_url, tokio_postgres::NoTls).await?;
+    tokio::spawn(driver);
+    project
+        .batch_execute(&sql::grant_administration_surface_sql("wamn_run"))
+        .await?;
+    let _ = wamn_control::environment::bindings::project_authority(
+        &inputs.system_pg_url,
+        &route.database_url,
+        &document,
+    )
+    .await?;
+    let tx = project.transaction().await?;
+    wamn_control::environment::bindings::write(
+        &tx,
+        &identity().env_key(),
+        digest,
+        &document,
+        &bindings,
+    )
+    .await?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -711,6 +781,7 @@ pub async fn publish(
     stage::stage(
         platform,
         &EnvironmentDocument {
+            integrations: std::collections::BTreeMap::new(),
             target: "cloud".into(),
             org: identity().org.clone(),
             project: identity().project.clone(),
@@ -722,7 +793,6 @@ pub async fn publish(
             applications: BTreeMap::from([(
                 package.package_id().to_owned(),
                 wamn_catalog::ApplicationDefinition {
-                    connectors: std::collections::BTreeMap::new(),
                     connections: std::collections::BTreeMap::new(),
                     packages: BTreeSet::from([package.package_id().to_owned()]),
                 },
@@ -742,22 +812,7 @@ pub async fn publish(
         &route.database_url,
     )
     .await?;
-    let definition = json!({"endpoint":minio_endpoint,"container":"labels","prefix":"wms/"});
-    bind_connection::bind(&BindConnectionRequest {
-        database_url: route.database_url.clone(),
-        org: identity().org.clone(),
-        project: identity().project.clone(),
-        environment: identity().environment.clone(),
-        instance_id: store_alias.clone(),
-        requirement_type: RequirementType::Blobstore,
-        definition,
-        credential_handle: Some(store_alias.clone()),
-        org_connection_name: None,
-        manifest_digest: release_digest.clone(),
-        component_digest: blob_digest,
-        store_alias,
-    })
-    .await?;
+    bind_labels(inputs, route, &manifest, &release_digest, minio_endpoint).await?;
     Ok(ReleaseCarrier {
         artifact_base: inputs.release_artifact_base.clone(),
         manifest_digest: wamn_catalog::ManifestDigest::parse(release_digest)?,
@@ -816,7 +871,6 @@ async fn author_event_workflow(
     let declared = BTreeMap::from([(
         "wamn_wms".into(),
         wamn_catalog::ApplicationDefinition {
-            connectors: std::collections::BTreeMap::new(),
             connections: std::collections::BTreeMap::new(),
             packages: BTreeSet::from(["wamn_wms".into()]),
         },

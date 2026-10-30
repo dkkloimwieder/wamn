@@ -226,6 +226,7 @@ pub async fn deliver(app: &Application<'_>, inputs: &Inputs<'_>) -> anyhow::Resu
         oci_ca_paths: vec![app.kept.ca.clone()],
         // The fixture pushed the packages to the HTTP twin, whose storage is
         // the TLS registry's; the package stage opens them over TLS.
+        component_artifact_base: Some(format!("{}/wamn/components", app.kept.registry)),
         package_artifact_base: Some(format!("{}/wamn/packages", app.kept.registry)),
         database_namespace: inputs.database_namespace.to_owned(),
         database_host: Some(inputs.database_host.to_owned()),
@@ -409,7 +410,6 @@ async fn apply(app: &Application<'_>, platform: &Platform) -> anyhow::Result<Str
         document.applications.insert(
             app.triple.project.clone(),
             wamn_catalog::ApplicationDefinition {
-                connectors: std::collections::BTreeMap::new(),
                 connections: std::collections::BTreeMap::new(),
                 packages: manifest
                     .release

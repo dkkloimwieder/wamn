@@ -29,10 +29,10 @@ pub async fn seed(project: &tokio_postgres::Client) -> anyhow::Result<()> {
 async fn requests(run: &Run) -> anyhow::Result<Vec<Value>> {
     let records = http_connection::request_records(&http_connection::request_log(run).await?)?;
     ensure!(
-        records.iter().all(|r| r["netsuite"] == true
-            && r["oauth1_verified"] == true
-            && r["realm"].as_str().is_some_and(|v| !v.is_empty())),
-        "unsigned or wrong-realm NetSuite request: {records:?}"
+        records
+            .iter()
+            .all(|r| r["netsuite"] == true && r["basic_verified"] == true),
+        "unauthenticated NetSuite request: {records:?}"
     );
     Ok(records)
 }

@@ -552,7 +552,6 @@ async fn run_created(
                 applications: [(
                     "wamn_wms".to_owned(),
                     wamn_catalog::ApplicationDefinition {
-                        connectors: std::collections::BTreeMap::new(),
                         connections: std::collections::BTreeMap::new(),
                         packages: manifest
                             .release

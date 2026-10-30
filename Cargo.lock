@@ -5775,6 +5775,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "syn 3.0.6",
  "tar",
  "tokio",
  "tokio-postgres",
@@ -6355,6 +6356,7 @@ dependencies = [
  "uuid",
  "wamn-catalog",
  "wamn-control-provision",
+ "wamn-project-state",
  "wamn-runtime",
  "wamn-test-postgres",
 ]
@@ -6597,6 +6599,7 @@ dependencies = [
  "wamn-record-history",
  "wamn-schema-introspection",
  "wamn-test-postgres",
+ "wit-parser 0.259.0",
 ]
 
 [[package]]
@@ -6717,6 +6720,7 @@ dependencies = [
  "wamn-control",
  "wamn-control-provision",
  "wamn-control-registry",
+ "wamn-credential-store",
  "wamn-event-wire",
  "wamn-execution-contract",
  "wamn-gate-harness",

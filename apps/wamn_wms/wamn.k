@@ -351,6 +351,6 @@ manifest.Package {
             }
         }
     }
-    connections = {labels = {integration = "gcs", mode = "write"}}
+    connections = {labels = {interfaces = ["wasmcloud:blobstore/blobstore@0.1.0"], mode = "write"}}
     components = {wms = {connections = ["postgres"]}}
 }

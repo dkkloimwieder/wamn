@@ -81,7 +81,7 @@ async fn assertions(run: &Run, fixture: &Fixture) -> anyhow::Result<()> {
         ensure!(insert.code()==Some(&tokio_postgres::error::SqlState::INSUFFICIENT_PRIVILEGE),
             "the deployed application login refuses direct file INSERT");
         let row = connections.query_one(
-            "SELECT parameters FROM registry.lookup_file_connection($1,$2,$3,'files','files',NULL,NULL)",
+            "SELECT parameters FROM registry.read_file_connection($1,$2,$3) WHERE connection_name='file-store'",
             &[&fixture.org,&fixture.project,&fixture.environment],
         ).await?;
         let definition: Value = row.get(0);
@@ -118,11 +118,11 @@ async fn assertions(run: &Run, fixture: &Fixture) -> anyhow::Result<()> {
         };
         let bytes = b"kind native file bytes";
         let id = upload("files",bytes).await?;
-        let row = reader.query_one("SELECT application,size,sha256,connection_generation FROM platform.file WHERE id=$1",&[&id]).await?;
+        let row = reader.query_one("SELECT application,size,sha256,connection_id::text FROM platform.file WHERE id=$1",&[&id]).await?;
         ensure!(row.get::<_,String>(0)=="files" && row.get::<_,i64>(1)==i64::try_from(bytes.len())?,
             "the committed row owns the deployed upload and records its size");
         ensure!(row.get::<_,String>(2)==hex::encode(ring::digest::digest(&ring::digest::SHA256,bytes).as_ref()),"row hash matches the deployed bytes");
-        ensure!(row.get::<_,i64>(3)>0,"the row pins its storage generation");
+        ensure!(!row.get::<_,String>(3).is_empty(),"the row identifies its storage connection");
         let read_url = format!("{base}/api/files/files/{id}");
         let response = client.get(&read_url).header("host",&fixture.route_host)
             .header("authorization",&fixture.session).send().await?;
@@ -328,7 +328,6 @@ fn release_request() -> anyhow::Result<wamn_control::publish_release::PublishRel
             "files".into(),
             wamn_catalog::ApplicationDefinition {
                 packages: ["file_fixture".into()].into(),
-                connectors: BTreeMap::new(),
                 connections: BTreeMap::new(),
             },
         )]
@@ -471,6 +470,7 @@ pub async fn exercise(
     )?;
     let document = EnvironmentDocument::compile(&environment)?;
     let mut bootstrap = document.clone();
+    bootstrap.integrations.clear();
     bootstrap.release = DeclaredRelease::None;
     bootstrap
         .applications
@@ -496,15 +496,6 @@ pub async fn exercise(
                 .context("store parameters")?
                 .remove("cdn_host");
         }
-        wamn_control::connection_configuration::write(
-            &platform.system_database_url,
-            ORG,
-            "connection.write",
-            &connection.to_string(),
-            &wamn_platform_identity::auth_changes::AuthChanges::default(),
-            None,
-        )
-        .await?;
         let version = uuid::Uuid::new_v4().to_string();
         credential_data.insert(
             version.clone(),
@@ -512,6 +503,7 @@ pub async fn exercise(
         );
         credential_references.push((
             name,
+            connection["parameters"].clone(),
             wamn_credential_store::StoreVersion {
                 store: "k8s",
                 reference: credential_secret.clone(),
@@ -528,21 +520,8 @@ pub async fn exercise(
         wamn_control_provision::PlatformComponent::Provisioning,
     ))
     .await?;
-    for name in ["file-store", "files-no-cdn"] {
-        wamn_platform_identity::connections::enable_connection(&tx, ORG, PROJECT, name).await?;
-    }
-    for (scope, id) in [
-        ("org", ORG.to_owned()),
-        ("project", PROJECT.to_owned()),
-        ("environment", format!("{PROJECT}/files")),
-    ] {
-        wamn_platform_identity::connections::allow_integration(&tx, ORG, scope, &id, "s3").await?;
-    }
-    for (name, stored) in &credential_references {
-        wamn_test_infrastructure::credentials::set_reference(
-            &tx, ORG, PROJECT, "files", name, stored,
-        )
-        .await?;
+    for (name, parameters, stored) in &credential_references {
+        wamn_test_infrastructure::credentials::define(&tx,ORG,&json!({"project":PROJECT,"env":"files","name":name,"integration_type":"s3","auth_type":"custom","parameters":parameters}),&wamn_test_infrastructure::credentials::ReferencedCredentials(stored)).await?;
     }
     tx.commit().await?;
     let credential_manifest = run.work.join("files-credential.json");

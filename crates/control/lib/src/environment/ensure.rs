@@ -746,6 +746,7 @@ mod tests {
             release_artifact_base: String::new(),
             registry_auth_file: PathBuf::new(),
             oci_ca_paths: Vec::new(),
+            component_artifact_base: None,
             package_artifact_base: None,
             database_namespace: String::new(),
             database_host: Some("database".into()),
@@ -851,7 +852,8 @@ async fn ensure_credential_access(
     Ok(())
 }
 
-fn credential_access(account: &str, secret: &str) -> [(&'static str, serde_json::Value); 3] {
+/// The account and grants used by hosts to read the environment credential store.
+pub fn credential_access(account: &str, secret: &str) -> [(&'static str, serde_json::Value); 3] {
     use serde_json::json;
     [
         (

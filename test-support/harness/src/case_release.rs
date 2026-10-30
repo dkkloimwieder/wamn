@@ -668,6 +668,7 @@ pub async fn install_candidate(
         release_artifact_base: candidate.releases.artifact_base.clone(),
         registry_auth_file: registry.registry_auth_file,
         oci_ca_paths: registry.oci_ca_paths,
+        component_artifact_base: Some(sibling_bases(&candidate.releases.artifact_base)?.1),
         package_artifact_base: Some(registry.artifact_base),
         database_namespace: NAMESPACE.to_owned(),
         database_host: None,
@@ -677,6 +678,7 @@ pub async fn install_candidate(
         events: None,
     };
     let document = EnvironmentDocument {
+        integrations: std::collections::BTreeMap::new(),
         target: "cloud".into(),
         org: triple.org.clone(),
         project: triple.project.clone(),
@@ -689,7 +691,6 @@ pub async fn install_candidate(
         applications: [(
             application.to_owned(),
             wamn_catalog::ApplicationDefinition {
-                connectors: std::collections::BTreeMap::new(),
                 connections: std::collections::BTreeMap::new(),
                 packages: manifest
                     .release

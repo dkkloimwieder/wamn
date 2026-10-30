@@ -201,6 +201,9 @@ pub trait FileConnections: Send + Sync + fmt::Debug {
 /// Existing files use their connection identity without a binding.
 pub struct RegistryFileConnections {
     pub client: Option<Arc<tokio_postgres::Client>>,
+    pub postgres: Arc<wamn_runtime::plugins::wamn_postgres::WamnPostgres>,
+    pub release: Arc<wamn_engine::release_manifest::LoadedRelease>,
+    pub credentials: Arc<wamn_runtime::connection_credentials::ConnectionCredentials>,
     pub org: String,
     pub project: String,
     pub environment: String,
@@ -256,22 +259,45 @@ impl FileConnections for RegistryFileConnections {
                 read_only: false,
             });
         }
-        let row = client.query_opt(
-            "SELECT connection_id::text, connection_name, generation, parameters, mode FROM registry.lookup_file_connection($1,$2,$3,$4,$5,$6,$7)",
-            &[&self.org, &self.project, &self.environment, &application, &binding, &pinned, &Option::<i64>::None],
-        ).await?.ok_or_else(|| refused(FileRefusal::BindingRefused, "binding"))?;
-        let mode: String = row.try_get(4)?;
-        let read_only = match mode.as_str() {
-            "read" => true,
-            "write" => false,
-            _ => return Err(refused(FileRefusal::BindingRefused, "binding")),
-        };
+        let binding = binding.ok_or_else(|| refused(FileRefusal::BindingRefused, "binding"))?;
+        let rows = self
+            .postgres
+            .released_connection_bindings(
+                &self.project,
+                &self.release.scope().env_key,
+                self.release.release().manifest_digest.as_str(),
+                wamn_run_state::AuthorityClass::CallableHttp,
+            )
+            .await
+            .map_err(|error| failed("binding", error))?;
+        let row = rows
+            .iter()
+            .find(|row| {
+                let package: &str = row.get(0);
+                let name: &str = row.get(1);
+                let id: &str = row.get(2);
+                let integration_type: &str = row.get(5);
+                name == binding
+                    && pinned.is_none_or(|pinned| pinned == id)
+                    && matches!(integration_type, "gcs" | "s3" | "disk")
+                    && wamn_catalog::application_for_package(
+                        &self.release.scope().applications,
+                        package,
+                    ) == Some(application)
+            })
+            .ok_or_else(|| refused(FileRefusal::BindingRefused, "binding"))?;
+        let id: String = row.get(2);
+        let configuration = self
+            .credentials
+            .version(&self.project, &self.environment, &id, row.get(3))
+            .await
+            .map_err(|error| failed("binding", error))?;
         Ok(FileConnection {
-            id: row.try_get(0)?,
-            name: row.try_get(1)?,
-            generation: row.try_get(2)?,
-            definition: row.try_get(3)?,
-            read_only,
+            id,
+            name: row.get(4),
+            generation: configuration.generation,
+            definition: configuration.parameters,
+            read_only: row.get::<_, String>(6) == "read",
         })
     }
 }
@@ -1131,7 +1157,6 @@ mod tests {
                 ReleaseScope::new("acme", "dev").with_applications(BTreeMap::from([(
                     "orders".into(),
                     ApplicationDefinition {
-                        connectors: std::collections::BTreeMap::new(),
                         packages: BTreeSet::from(["app".into()]),
                         connections: BTreeMap::new(),
                     },

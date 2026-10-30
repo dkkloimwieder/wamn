@@ -1,12 +1,8 @@
 //! One router-invoked `wamn:node` guest performing a real trusted HTTP effect.
 //!
-//! Shared test support: it seeds exactly the facts
-//! `ConnectionHttp::send` reads — a component-grain
-//! `catalog.connection_requirements` row, an `active`/`valid`
-//! `catalog.connection_bindings` row over an `enabled`
-//! `catalog.connection_instances` whose `active_generation` matches the
-//! `catalog.connection_generations` row carrying the credential handle — and
-//! builds the production `RouterDriver` over them.
+//! Shared test support seeds the declared requirement, selected version, and
+//! release binding in the environment database. The system database supplies
+//! active parameters and credential references through its scoped reader.
 //!
 //! Two beads need this same closure. `wamn-0h0g.11.8` drives it to witness
 //! trace propagation at the wire; `wamn-0h0g.11.3` needs it to test HTTP
@@ -35,8 +31,8 @@ use tokio_postgres::NoTls;
 use wamn_catalog::component_artifact_reference;
 use wamn_catalog::{
     AdmittedComponent, ComponentConnection, ComponentConnectionType, ComponentDeclaration,
-    ComponentDescriptor, ConnectionTypeDescriptor, SERVING_MANIFEST_FORMAT_VERSION,
-    ServingComponentOperation, WiringDocument, WiringNode, WiringTerminal,
+    ComponentDescriptor, SERVING_MANIFEST_FORMAT_VERSION, ServingComponentOperation,
+    WiringDocument, WiringNode, WiringTerminal,
 };
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
@@ -54,7 +50,6 @@ use wamn_runtime::connection_credentials::ConnectionCredentials;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 use wamn_runtime::plugins::wamn_postgres::{ClassCredentials, WamnPostgres, WamnPostgresConfig};
-use wamn_schema_control::connections::ComponentConnectionRequirement;
 use wamn_workflow::RouterDriver;
 
 /// The one tenant every seeded row and every claim is scoped to.
@@ -75,9 +70,7 @@ pub const OPERATION: &str = "wamn:node/async-handler@0.1.0";
 pub const ATTACHMENT_ID: &str = "orders-http";
 pub const ROUTE_AUTHORITY: &str = "trusted.example.test";
 pub const ROUTE_PATH: &str = "/deliver";
-const INSTANCE_ID: &str = "upstream-instance";
 const CREDENTIAL_HANDLE: &str = "org:acme:upstream-v1";
-const GENERATION: i64 = 1;
 const CONTRACT: &str = "wamn:connection/http@0.1.0";
 const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
 const GENERATION_PASSWORD: &str = "trusted-http-route";
@@ -108,6 +101,7 @@ impl std::fmt::Debug for TrustedHttpRoute {
         formatter
             .debug_struct("TrustedHttpRoute")
             .field("component_digest", &self.component_digest)
+            .field("authority_database", &self.credential_database.name())
             .finish_non_exhaustive()
     }
 }
@@ -123,7 +117,7 @@ pub struct TrustedHttpRoute {
     pub component_digest: String,
     /// The immutable graph hash stored on the workflow row and frozen on each run.
     pub wiring_hash: String,
-    _credential_database: wamn_test_infrastructure::postgres::Database,
+    credential_database: wamn_test_infrastructure::postgres::Database,
 }
 
 impl TrustedHttpRoute {
@@ -149,13 +143,17 @@ impl TrustedHttpRoute {
 
 /// Seed the closure and build the production driver over it.
 pub async fn build(options: &RouteOptions) -> anyhow::Result<TrustedHttpRoute> {
-    let (credentials, database) =
-        credential_fixture(&[(CREDENTIAL_HANDLE, credential_secret())]).await?;
+    let (credentials, database) = credential_fixture(
+        &[(CREDENTIAL_HANDLE, credential_secret())],
+        &options.upstream_base_url,
+    )
+    .await?;
     build_with_credentials(options, credentials, database).await
 }
 
 async fn credential_fixture(
     secrets: &[(&str, String)],
+    upstream: &str,
 ) -> anyhow::Result<(
     ConnectionCredentials,
     wamn_test_infrastructure::postgres::Database,
@@ -173,6 +171,7 @@ async fn credential_fixture(
             ),
         )
         .await?;
+    admin.batch_execute(&format!("BEGIN; {} INSERT INTO registry.target(name,type,status) VALUES('cloud','cloud','active') ON CONFLICT DO NOTHING; UPDATE registry.meta SET platform_domain='example.invalid'; UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT",wamn_control_provision::bind_platform_principal_sql(wamn_control_provision::PlatformComponent::Provisioning))).await?;
     let credential_store =
         Arc::new(wamn_test_infrastructure::credentials::LocalCredentials::create()?);
     let tx = admin.transaction().await?;
@@ -184,24 +183,10 @@ async fn credential_fixture(
     for (handle, secret) in secrets {
         let (_, name) =
             wamn_catalog::parse_org_credential_handle(handle).map_err(anyhow::Error::msg)?;
-        wamn_platform_identity::connections::write_connection(&tx, "acme", &wamn_platform_identity::connections::ConnectionWrite {
-            integration: "http".into(), external_system: None, name: name.into(),
-            transport: "http".into(), exchange: "request".into(), status: "active".into(),
-            parameters: serde_json::json!({"primary-authority":"https://fixture.invalid", "tls-verification":"verify-authority"}),
-        }, &mut wamn_platform_identity::auth_changes::AuthDrops::default()).await?;
-        wamn_platform_identity::connections::enable_connection(&tx, "acme", PROJECT, name).await?;
         let stored = credential_store
             .put(uuid::Uuid::new_v4(), secret.as_bytes())
             .await?;
-        wamn_test_infrastructure::credentials::set_reference(
-            &tx,
-            "acme",
-            PROJECT,
-            ENVIRONMENT,
-            name,
-            &stored,
-        )
-        .await?;
+        wamn_test_infrastructure::credentials::define(&tx,"acme",&serde_json::json!({"project":PROJECT,"env":ENVIRONMENT,"name":name,"integration_type":"http","auth_type":"http_basic","parameters":{"primary-authority":upstream,"tls-verification":"disabled"},"credential":secret}),&wamn_test_infrastructure::credentials::ReferencedCredentials(&stored)).await?;
     }
     tx.commit().await?;
     admin.batch_execute("RESET ROLE").await?;
@@ -284,7 +269,6 @@ async fn build_with_credentials(
                     [(
                         "orders".to_owned(),
                         wamn_catalog::ApplicationDefinition {
-                            connectors: std::collections::BTreeMap::new(),
                             connections: std::collections::BTreeMap::new(),
                             packages: [PACKAGE.to_owned()].into(),
                         },
@@ -294,10 +278,16 @@ async fn build_with_credentials(
         )
         .context("load the fixture serving manifest")?,
     );
-    let postgres_credentials =
-        seed_catalog(options, &admitted, &document, &wiring_hash, &release, None)
-            .await
-            .context("seed the catalog closure")?;
+    let postgres_credentials = seed_catalog(
+        options,
+        &admitted,
+        &document,
+        &release,
+        None,
+        credential_database.url(),
+    )
+    .await
+    .context("seed the catalog closure")?;
 
     let postgres = Arc::new(
         WamnPostgres::new(WamnPostgresConfig {
@@ -346,7 +336,7 @@ async fn build_with_credentials(
         release,
         component_digest: admitted.component_digest.clone(),
         wiring_hash,
-        _credential_database: credential_database,
+        credential_database,
     })
 }
 
@@ -451,9 +441,9 @@ fn release_manifest(
     })
 }
 
-/// `credential_headers` admits exactly `{"headers": {..}}` and nothing else.
+/// The fixture supplies the declared Basic authentication fields.
 fn credential_secret() -> String {
-    serde_json::json!({"headers": {"authorization": "Bearer fixture-token"}}).to_string()
+    serde_json::json!({"username":"fixture","password":"fixture-token"}).to_string()
 }
 
 /// Publish the exact bytes the production puller will verify, in the layout
@@ -506,9 +496,9 @@ async fn seed_catalog(
     options: &RouteOptions,
     component: &AdmittedComponent,
     document: &WiringDocument,
-    wiring_hash: &str,
     release: &LoadedRelease,
     additional_wiring: Option<(&AdmittedComponent, &[WiringDocument])>,
+    system_url: &str,
 ) -> anyhow::Result<ClassCredentials> {
     let (client, connection) = tokio_postgres::connect(&options.database_url, NoTls)
         .await
@@ -519,9 +509,9 @@ async fn seed_catalog(
         options,
         component,
         document,
-        wiring_hash,
         release,
         additional_wiring,
+        system_url,
     )
     .await;
     drop(client);
@@ -534,9 +524,9 @@ async fn seed_with_client(
     options: &RouteOptions,
     component: &AdmittedComponent,
     document: &WiringDocument,
-    wiring_hash: &str,
     release: &LoadedRelease,
     additional_wiring: Option<(&AdmittedComponent, &[WiringDocument])>,
+    system_url: &str,
 ) -> anyhow::Result<ClassCredentials> {
     // The complete catalog bootstrap includes its own transaction and applies
     // only to a fresh database. Submit that complete string as one batch.
@@ -572,29 +562,12 @@ async fn seed_with_client(
         )?)
         .await?;
 
+    client.batch_execute("SELECT set_config('app.user_id','770df186-ac15-579e-b46b-c297cae2011b',false),set_config('app.operation','admin:seed-http-fixture',false)").await?;
     client.execute("INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'admin') ON CONFLICT DO NOTHING",
         &[&wamn_project_state::workflow_user_id().to_string()]).await?;
     let wiring_version = i32::try_from(WIRING_VERSION).expect("fixture wiring version fits");
     let graph_json = serde_json::to_string(document).context("serialize the wiring document")?;
-    // The whole portable record component admission mints, not just its
-    // descriptor: `requirement_hash` is the SHA-256 of exactly these bytes.
-    let requirement = ComponentConnectionRequirement::new(
-        &component.component_digest,
-        STORE_ALIAS,
-        ConnectionTypeDescriptor::http_v1(),
-    );
-    let requirement_json = String::from_utf8(requirement.canonical_bytes())
-        .context("portable requirement bytes are UTF-8")?;
-    let requirement_hash = requirement.requirement_hash();
-    // `require_direct_transport` demands an EXPLICIT null proxy-transport: an
-    // absent key is a refusal, not a default.
-    let definition_json = serde_json::json!({
-        "primary-authority": options.upstream_base_url,
-        "tls-verification": "disabled",
-        "proxy-transport": serde_json::Value::Null,
-    })
-    .to_string();
-
+    let wiring_hash = document.wiring_hash().as_str().to_owned();
     // Every catalog table FORCEs RLS on `app.env_key`, and a superuser is not
     // exempt from FORCE — the claim is what makes these writes land at all.
     client
@@ -657,80 +630,22 @@ async fn seed_with_client(
         .await
         .context("seed the wiring version")?;
     client
-        .execute(
-            "INSERT INTO catalog.connection_requirements (\
-                 env_key, component_digest, store_alias, requirement_json, requirement_hash\
-             ) VALUES ($1, $2, $3, $4::text::jsonb, $5)",
-            &[
-                &ENV_KEY,
-                &component.component_digest,
-                &STORE_ALIAS,
-                &requirement_json,
-                &requirement_hash,
-            ],
-        )
-        .await
-        .context("seed the component-grain connection requirement")?;
-    client
-        .execute(
-            "INSERT INTO catalog.connection_instances (\
-                 env_key, environment, instance_id, requirement_type, contract, \
-                 lifecycle_status\
-             ) VALUES ($1, $2, $3, 'http', $4, 'enabled')",
-            &[&ENV_KEY, &ENVIRONMENT, &INSTANCE_ID, &CONTRACT],
-        )
-        .await
-        .context("seed the connection instance")?;
-    client
-        .execute(
-            "INSERT INTO catalog.connection_generations (\
-                 env_key, environment, instance_id, generation, definition_json, \
-                 definition_hash, credential_set_handle\
-             ) VALUES ($1, $2, $3, $4, $5::text::jsonb, $6, $7)",
-            &[
-                &ENV_KEY,
-                &ENVIRONMENT,
-                &INSTANCE_ID,
-                &GENERATION,
-                &definition_json,
-                &format!("sha256:{}", "c".repeat(64)),
-                &CREDENTIAL_HANDLE,
-            ],
-        )
-        .await
-        .context("seed the connection generation")?;
-    // `catalog.guard_connection_instance_update` demands revision+1 and a
-    // STRICTLY later `updated_at`, so the pointer cannot be moved by a bare
-    // UPDATE — and `now()` is the transaction timestamp, which can tie.
-    client
-        .execute(
-            "UPDATE catalog.connection_instances \
-                SET active_generation = $4, revision = revision + 1, \
-                    updated_at = clock_timestamp() + interval '1 second' \
-              WHERE env_key = $1 AND environment = $2 AND instance_id = $3",
-            &[&ENV_KEY, &ENVIRONMENT, &INSTANCE_ID, &GENERATION],
-        )
-        .await
-        .context("point the instance at its active generation")?;
-    client
-        .execute(
-            "INSERT INTO catalog.connection_bindings (\
-                 env_key, manifest_digest, component_digest, store_alias, \
-                 environment, instance_id, binding_status, validation_status, validation_hash, package_id\
-             ) VALUES ($1, $2, $3, $4, $5, $6, 'active', 'valid', $7, $8)",
-            &[
-                &ENV_KEY,
-                &manifest_digest,
-                &component.component_digest,
-                &STORE_ALIAS,
-                &ENVIRONMENT,
-                &INSTANCE_ID,
-                &format!("sha256:{}", "e".repeat(64)),
-                &PACKAGE,
-            ],
-        )
-        .await
-        .context("bind the requirement to the instance")?;
+        .batch_execute(&wamn_control_provision::sql::grant_administration_surface_sql("wamn_run"))
+        .await?;
+    let authority: wamn_control::environment::document::EnvironmentDocument =
+        serde_json::from_value(
+            serde_json::json!({"org":"acme","project":PROJECT,"env":ENVIRONMENT,"target":"cloud","release":"none","route_host":"fixture.example","policy":"dev","applications":{}}),
+        )?;
+    let _ = wamn_control::environment::bindings::project_authority(
+        system_url,
+        &options.database_url,
+        &authority,
+    )
+    .await?;
+    let connection: String=client.query_one("SELECT c.id::text FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id WHERE i.name='upstream-v1'",&[]).await?.get(0);
+    client.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interfaces,mode) VALUES($1,$2,$3,$4,$5,'write')",&[&ENV_KEY,&component.component_digest,&PACKAGE,&STORE_ALIAS,&vec![CONTRACT]]).await?;
+    client.execute("INSERT INTO catalog.release_connection(env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,1)",&[&ENV_KEY,&manifest_digest,&connection]).await?;
+    client.execute("INSERT INTO catalog.connection_binding(env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES($1,$2,$3,$4,$5,$6::text::uuid)",&[&ENV_KEY,&manifest_digest,&component.component_digest,&PACKAGE,&STORE_ALIAS,&connection]).await?;
 
     if let Some((component, documents)) = additional_wiring {
         seed_additional_wirings(client, component, documents).await?;
@@ -872,17 +787,17 @@ mod tests {
     use tokio::net::{TcpListener, TcpStream};
     use tokio::sync::mpsc;
     use tokio::task::{JoinHandle, JoinSet};
-    use tokio_postgres::{Client, NoTls};
+    use tokio_postgres::NoTls;
 
     use wamn_workflow::{RouterDelivery, RouterDriverRequest};
 
     use super::{
-        CREDENTIAL_HANDLE, ENV_KEY, ENVIRONMENT, INSTANCE_ID, NODE_ID, PACKAGE, RouteOptions,
+        CREDENTIAL_HANDLE, ENV_KEY, ENVIRONMENT, NODE_ID, PACKAGE, PROJECT, RouteOptions,
         WIRING_ID, WIRING_VERSION, build_with_credentials, credential_fixture, credential_secret,
     };
 
     const ROTATED_HANDLE: &str = "org:acme:upstream-v2";
-    const ROTATED_AUTHORIZATION: &str = "Bearer rotated-fixture-token";
+    const ROTATED_AUTHORIZATION: &str = "Basic Zml4dHVyZTpyb3RhdGVkLWZpeHR1cmUtdG9rZW4=";
 
     struct ObservedRequest {
         connection_id: u64,
@@ -1048,48 +963,46 @@ mod tests {
         Ok(observed_request.connection_id)
     }
 
-    async fn set_instance_status(client: &Client, status: &str) -> anyhow::Result<()> {
-        assert_eq!(
-            client
-                .execute(
-                    "UPDATE catalog.connection_instances \
-                        SET lifecycle_status = $4, revision = revision + 1 \
-                      WHERE env_key = $1 AND environment = $2 AND instance_id = $3",
-                    &[&ENV_KEY, &ENVIRONMENT, &INSTANCE_ID, &status],
-                )
-                .await?,
-            1
-        );
+    async fn set_instance_status(system_url: &str, status: &str) -> anyhow::Result<()> {
+        let (mut client, driver) = tokio_postgres::connect(system_url, NoTls).await?;
+        tokio::spawn(driver);
+        let tx = wamn_control::provision_project_env::provisioning_transaction(&mut client).await?;
+        tx.batch_execute("SET LOCAL ROLE wamn_control").await?;
+        wamn_platform_identity::connections::administration::execute(
+            &tx,
+            "acme",
+            if status == "disabled" {
+                "connection.disable"
+            } else {
+                "connection.enable"
+            },
+            &serde_json::json!({"project":PROJECT,"env":ENVIRONMENT,"name":"upstream-v1"})
+                .to_string(),
+            &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        )
+        .await?;
+        tx.commit().await?;
         Ok(())
     }
 
-    async fn rotate(client: &Client, generation: i64, handle: &str) -> anyhow::Result<()> {
-        // Keep definition bytes and hash identical. The gen-2 check therefore
-        // fails if the pool key omits the generation number.
-        assert_eq!(
-            client
-                .execute(
-                    "INSERT INTO catalog.connection_generations (env_key, environment, \
-                 instance_id, generation, definition_json, definition_hash, credential_set_handle) \
-             SELECT env_key, environment, instance_id, $4, definition_json, definition_hash, $5 \
-               FROM catalog.connection_generations \
-              WHERE env_key = $1 AND environment = $2 AND instance_id = $3 AND generation = 1",
-                    &[&ENV_KEY, &ENVIRONMENT, &INSTANCE_ID, &generation, &handle],
-                )
-                .await?,
-            1
-        );
-        assert_eq!(
-            client
-                .execute(
-                    "UPDATE catalog.connection_instances \
-                SET active_generation = $4, revision = revision + 1 \
-              WHERE env_key = $1 AND environment = $2 AND instance_id = $3",
-                    &[&ENV_KEY, &ENVIRONMENT, &INSTANCE_ID, &generation],
-                )
-                .await?,
-            1
-        );
+    async fn rotate(system_url: &str, generation: i64, handle: &str) -> anyhow::Result<()> {
+        let (mut client, driver) = tokio_postgres::connect(system_url, NoTls).await?;
+        tokio::spawn(driver);
+        let (_, name) =
+            wamn_catalog::parse_org_credential_handle(handle).map_err(anyhow::Error::msg)?;
+        let tx = wamn_control::provision_project_env::provisioning_transaction(&mut client).await?;
+        let row=tx.query_one("SELECT g.credential_id::text,k.store,k.ref,k.version FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id JOIN registry.connection_generation g ON(g.connection_id,g.generation)=(c.id,c.active_generation) JOIN identity.credential k ON k.id=g.credential_id WHERE i.org='acme' AND i.project=$1 AND i.name=$2",&[&PROJECT,&name]).await?;
+        assert_eq!(row.get::<_, String>(1), "file");
+        let stored = wamn_credential_store::StoreVersion {
+            store: "file",
+            reference: row.get(2),
+            version: row.get(3),
+        };
+        tx.batch_execute("SET LOCAL ROLE wamn_control").await?;
+        wamn_platform_identity::connections::administration::execute_with_store(&tx,"acme","connection.set_credential",&serde_json::json!({"project":PROJECT,"env":ENVIRONMENT,"name":"upstream-v1","credential":if handle==CREDENTIAL_HANDLE {credential_secret()} else {serde_json::json!({"username":"fixture","password":"rotated-fixture-token"}).to_string()}}).to_string(),&mut wamn_platform_identity::auth_changes::AuthDrops::default(),Some(&wamn_test_infrastructure::credentials::ReferencedCredentials(&stored))).await?;
+        tx.commit().await?;
+        let actual: i64=client.query_one("SELECT c.active_generation FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE i.project=$1 AND i.name='upstream-v1'",&[&PROJECT]).await?.get(0);
+        assert_eq!(actual, generation);
         Ok(())
     }
 
@@ -1128,13 +1041,17 @@ mod tests {
             "test requires PostgreSQL 18"
         );
         let mut origin = origin().await?;
-        let (credentials, credential_database) = credential_fixture(&[
-            (CREDENTIAL_HANDLE, credential_secret()),
-            (
-                ROTATED_HANDLE,
-                serde_json::json!({"headers":{"authorization":ROTATED_AUTHORIZATION}}).to_string(),
-            ),
-        ])
+        let (credentials, credential_database) = credential_fixture(
+            &[
+                (CREDENTIAL_HANDLE, credential_secret()),
+                (
+                    ROTATED_HANDLE,
+                    serde_json::json!({"username":"fixture","password":"rotated-fixture-token"})
+                        .to_string(),
+                ),
+            ],
+            &format!("http://{}", origin.address),
+        )
         .await?;
         let route = build_with_credentials(
             &RouteOptions {
@@ -1154,14 +1071,14 @@ mod tests {
             &mut origin,
             route.execute(request(1)).await?,
             1,
-            "Bearer fixture-token",
+            "Basic Zml4dHVyZTpmaXh0dXJlLXRva2Vu",
         )
         .await?;
         let second = assert_observed_request(
             &mut origin,
             route.execute(request(2)).await?,
             2,
-            "Bearer fixture-token",
+            "Basic Zml4dHVyZTpmaXh0dXJlLXRva2Vu",
         )
         .await?;
         assert_eq!(
@@ -1169,7 +1086,7 @@ mod tests {
             "fresh guest stores did not reuse the accepted connection"
         );
 
-        set_instance_status(&admin, "disabled").await?;
+        set_instance_status(route.credential_database.url(), "disabled").await?;
         let denied = route.execute(request(3)).await?;
         let failure = denied
             .outcome
@@ -1188,21 +1105,21 @@ mod tests {
             origin.requests.try_recv().is_err(),
             "denied effect reached the warm socket"
         );
-        set_instance_status(&admin, "enabled").await?;
+        set_instance_status(route.credential_database.url(), "enabled").await?;
 
-        rotate(&admin, 2, CREDENTIAL_HANDLE).await?;
+        rotate(route.credential_database.url(), 2, CREDENTIAL_HANDLE).await?;
         let generation_two = assert_observed_request(
             &mut origin,
             route.execute(request(7)).await?,
             7,
-            "Bearer fixture-token",
+            "Basic Zml4dHVyZTpmaXh0dXJlLXRva2Vu",
         )
         .await?;
         assert_ne!(
             generation_two, first,
             "new generation reused the old generation socket"
         );
-        rotate(&admin, 3, ROTATED_HANDLE).await?;
+        rotate(route.credential_database.url(), 3, ROTATED_HANDLE).await?;
         let generation_three = assert_observed_request(
             &mut origin,
             route.execute(request(10)).await?,

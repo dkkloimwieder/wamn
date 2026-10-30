@@ -1901,7 +1901,7 @@ mod tests {
         ).unwrap();
         let authorities = Authorities {
             release_name: "acme--erp--dev".to_owned(),
-            connector_bindings: BTreeSet::new(),
+            artifact_bindings: BTreeSet::new(),
             connections: BTreeMap::new(),
             policy: Policy {
                 name: "dev".to_owned(),
@@ -2381,7 +2381,6 @@ mod tests {
         let applications = [(
             "orders".into(),
             wamn_catalog::ApplicationDefinition {
-                connectors: std::collections::BTreeMap::new(),
                 connections: std::collections::BTreeMap::new(),
                 packages: ["base".into(), "overlay".into()].into(),
             },

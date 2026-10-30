@@ -883,17 +883,23 @@ impl ProductionDevStageRunner {
             .iter()
             .map(|package| package.manifest.clone())
             .collect::<Vec<_>>();
-        let binding_inputs =
-            prepare_local_bindings(&self.config, &self.admissions, &self.environment, &packages)
-                .await
-                .map_err(|source| {
-                    ProductionDevStageError::owner("prepare local connection selections", source)
-                })?;
+        let binding_inputs = prepare_local_bindings(
+            &self.config,
+            &self.admissions,
+            &self.environment,
+            &packages,
+            published.digest.as_str(),
+        )
+        .await
+        .map_err(|source| {
+            ProductionDevStageError::owner("prepare local connection selections", source)
+        })?;
         local_facts.bindings = resolve_local_bindings(
             &self.config,
             &self.environment,
             &packages,
             &binding_inputs,
+            published.digest.as_str(),
             None,
         )
         .await
@@ -1007,11 +1013,24 @@ impl ProductionDevStageRunner {
             .iter()
             .map(|package| package.manifest.clone())
             .collect::<Vec<_>>();
+        let digest = self
+            .release
+            .as_ref()
+            .ok_or_else(|| {
+                ProductionDevStageError::invalid(
+                    "read local release",
+                    "the candidate has no release",
+                )
+            })?
+            .manifest_digest
+            .as_str()
+            .to_owned();
         reserve_local_bindings(
             &self.config,
             &self.environment,
             &packages,
             &self.local_binding_inputs,
+            &digest,
         )
         .await
         .map_err(|source| {
@@ -1025,6 +1044,7 @@ impl ProductionDevStageRunner {
             &self.environment,
             &packages,
             &self.local_binding_inputs,
+            &digest,
             Some(&self.local_bindings),
         )
         .await
@@ -1484,10 +1504,6 @@ struct LocalBindingSelection {
     package_id: String,
     component: String,
     store_alias: String,
-    #[serde(rename = "instance-id")]
-    _instance_id: String,
-    #[serde(default, rename = "instance")]
-    _instance: Option<crate::bind_connection::LocalInstanceInput>,
 }
 
 #[derive(Debug)]
@@ -1496,7 +1512,6 @@ struct PreparedLocalBinding {
     read_only: bool,
     requirement: wamn_catalog::ComponentConnectionRequirement,
     instance_id: String,
-    instance: Option<crate::bind_connection::PreparedLocalInstance>,
 }
 
 /// The store alias that the binding selections give a component: the one name
@@ -1572,10 +1587,14 @@ async fn prepare_local_bindings(
     admissions: &[ComponentAdmission],
     environment: &crate::environment::document::EnvironmentDocument,
     packages: &[wamn_schema_generator::PackageManifest],
+    manifest_digest: &str,
 ) -> anyhow::Result<Vec<PreparedLocalBinding>> {
     let system = crate::environment::analyse::connect(config.system_database_url()).await?;
-    system.batch_execute("SET ROLE wamn_control").await?;
-    let bindings = crate::environment::bindings::analyse(&system, environment, packages).await?;
+    system.batch_execute("SET ROLE wamn_db_owner").await?;
+    let mut document = environment.clone();
+    document.release =
+        crate::environment::document::DeclaredRelease::Digest(manifest_digest.into());
+    let bindings = crate::environment::bindings::analyse(&system, &document, packages).await?;
     let drops = crate::environment::bindings::project_authority(
         config.system_database_url(),
         config.target_database_url(),
@@ -1619,12 +1638,33 @@ async fn prepare_local_bindings(
                 package_id: admission.package_id().to_owned(),
                 read_only: binding.mode == wamn_schema_generator::ConnectionMode::Read,
                 requirement: requirement.clone(),
-                // A candidate pins an immutable org generation, including across rotation.
-                instance_id: format!("{}@{}", binding.connection_id, binding.generation),
-                instance: Some(crate::bind_connection::prepare_org_instance(resolved)?),
+                instance_id: binding.connection_id.clone(),
             });
         }
     }
+    let mut project = crate::environment::analyse::connect(config.target_database_url()).await?;
+    let tx = project.transaction().await?;
+    for input in &prepared {
+        let admission = admissions
+            .iter()
+            .find(|admission| {
+                admission.package_id() == input.package_id
+                    && admission.facts().component_digest == input.requirement.component_digest()
+            })
+            .context("local admitted requirement missing")?;
+        let declaration = packages
+            .iter()
+            .find(|package| package.package.id == input.package_id)
+            .and_then(|package| package.connections.get(input.requirement.store_alias()))
+            .context("local connection declaration missing")?;
+        let interfaces = crate::connection_requirement::require_imports(
+            admission.bytes(),
+            &declaration.interfaces,
+        )?;
+        let mode = if input.read_only { "read" } else { "write" };
+        tx.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interfaces,mode) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING", &[&config.activation_identity().env_key(),&input.requirement.component_digest(),&input.package_id,&input.requirement.store_alias(),&interfaces,&mode]).await?;
+    }
+    tx.commit().await?;
     Ok(prepared)
 }
 
@@ -1633,17 +1673,20 @@ async fn reserve_local_bindings(
     environment: &crate::environment::document::EnvironmentDocument,
     packages: &[wamn_schema_generator::PackageManifest],
     prepared: &[PreparedLocalBinding],
+    digest: &str,
 ) -> anyhow::Result<()> {
     let mut system = crate::environment::analyse::connect(config.system_database_url()).await?;
     let tx = system.transaction().await?;
     tx.batch_execute(&format!(
-        "SET LOCAL ROLE wamn_control; {}",
+        "SET LOCAL ROLE wamn_db_owner; {}",
         wamn_control_provision::bind_platform_principal_sql(
             wamn_control_provision::PlatformComponent::Provisioning,
         ),
     ))
     .await?;
-    let bindings = crate::environment::bindings::reserve(&tx, environment, packages).await?;
+    let mut document = environment.clone();
+    document.release = crate::environment::document::DeclaredRelease::Digest(digest.into());
+    let bindings = crate::environment::bindings::analyse(&tx, &document, packages).await?;
     for input in prepared {
         let application =
             wamn_catalog::application_for_package(&environment.applications, &input.package_id)
@@ -1652,8 +1695,7 @@ async fn reserve_local_bindings(
             bindings.iter().any(|binding| {
                 binding.application == application
                     && input.requirement.store_alias() == binding.alias
-                    && input.instance_id
-                        == format!("{}@{}", binding.connection_id, binding.generation)
+                    && input.instance_id == binding.connection_id
                     && input.read_only
                         == (binding.mode == wamn_schema_generator::ConnectionMode::Read)
             }),
@@ -1669,6 +1711,7 @@ async fn resolve_local_bindings(
     environment: &crate::environment::document::EnvironmentDocument,
     packages: &[wamn_schema_generator::PackageManifest],
     prepared: &[PreparedLocalBinding],
+    digest: &str,
     apply: Option<&[wamn_runtime::local_application::LocalBindingFacts]>,
 ) -> anyhow::Result<Vec<wamn_runtime::local_application::LocalBindingFacts>> {
     wamn_runtime::local_application::require_local_target(
@@ -1677,31 +1720,21 @@ async fn resolve_local_bindings(
         &config.activation_identity().environment,
     )
     .await?;
-    if prepared.is_empty() {
-        return Ok(Vec::new());
-    }
     let (client, connection) = tokio_postgres::connect(config.target_database_url(), NoTls).await?;
     let driver = tokio::spawn(connection);
     let mut system = crate::environment::analyse::connect(config.system_database_url()).await?;
     let authority = system.transaction().await?;
     authority
         .batch_execute(&format!(
-            "SET LOCAL ROLE wamn_control; {}",
+            "SET LOCAL ROLE wamn_db_owner; {}",
             wamn_control_provision::bind_platform_principal_sql(
                 wamn_control_provision::PlatformComponent::Provisioning,
             ),
         ))
         .await?;
-    if apply.is_none() {
-        crate::environment::bindings::reserve(&authority, environment, packages).await?;
-    }
-    let identity = config.activation_identity();
-    let modes = authority
-        .query(
-            "SELECT application, alias, mode FROM registry.connection_binding_rows($1,$2,$3)",
-            &[&identity.org, &identity.project, &identity.environment],
-        )
-        .await?;
+    let mut document = environment.clone();
+    document.release = crate::environment::document::DeclaredRelease::Digest(digest.into());
+    let resolved = crate::environment::bindings::analyse(&authority, &document, packages).await?;
     let result = async {
         client.batch_execute("BEGIN").await?;
         client
@@ -1716,47 +1749,42 @@ async fn resolve_local_bindings(
             )
             .await?;
         let mut bindings = Vec::new();
-        for binding in prepared {
-            if let Some(input) = &binding.instance {
-                crate::bind_connection::prepare_local_instance(
-                    &client,
-                    &config.activation_identity().env_key(),
-                    &config.activation_identity().environment,
-                    &binding.instance_id,
-                    input,
-                )
-                .await?;
-            }
-            let mut selection = wamn_runtime::local_application::read_local_binding(
-                &client,
-                &config.activation_identity().env_key(),
-                &config.activation_identity().environment,
-                &binding.requirement,
-                &binding.instance_id,
-            )
-            .await?;
-            let application = wamn_catalog::application_for_package(
-                &environment.applications,
-                &binding.package_id,
-            )
-            .context("local binding has no application")?
-            .to_owned();
-            let mode = modes
+        for input in prepared {
+            let binding = resolved
                 .iter()
-                .find(|row| {
-                    row.get::<_, String>(0) == application
-                        && row.get::<_, String>(1) == binding.requirement.store_alias()
+                .find(|binding| {
+                    binding.connection_id == input.instance_id
+                        && binding.alias == input.requirement.store_alias()
                 })
-                .context("local connection binding mode unavailable")?
-                .get::<_, String>(2);
-            selection.read_only = match mode.as_str() {
-                "read" => true,
-                "write" => false,
-                _ => anyhow::bail!("local connection binding mode unavailable"),
+                .context("local connection authority changed")?;
+            let definition = binding
+                .resolved
+                .as_ref()
+                .context("local binding needs a host integration")?;
+            let handle = if binding.integration_type == "gcs" {
+                None
+            } else {
+                Some(format!(
+                    "org:{}:{}@{}",
+                    document.org,
+                    definition
+                        .org_connection_name
+                        .as_deref()
+                        .context("local integration name missing")?,
+                    binding.generation
+                ))
             };
+            let selection = wamn_runtime::local_application::selection(
+                &input.requirement,
+                &binding.connection_id,
+                binding.generation,
+                &definition.definition,
+                handle,
+                binding.mode == wamn_schema_generator::ConnectionMode::Read,
+            );
             bindings.push(wamn_runtime::local_application::LocalBindingFacts {
-                package_id: binding.package_id.clone(),
-                requirement: binding.requirement.clone(),
+                package_id: input.package_id.clone(),
+                requirement: input.requirement.clone(),
                 selection,
             });
         }
@@ -1766,13 +1794,21 @@ async fn resolve_local_bindings(
                 "local live authority changed after candidate validation"
             );
         }
-        client
-            .batch_execute(if apply.is_some() {
-                "COMMIT"
-            } else {
-                "ROLLBACK"
-            })
+        client.batch_execute("ROLLBACK").await?;
+        if apply.is_some() {
+            let mut project =
+                crate::environment::analyse::connect(config.target_database_url()).await?;
+            let tx = project.transaction().await?;
+            crate::environment::bindings::write(
+                &tx,
+                &config.activation_identity().env_key(),
+                digest,
+                &document,
+                &resolved,
+            )
             .await?;
+            tx.commit().await?;
+        }
         Ok::<_, anyhow::Error>(bindings)
     }
     .await;

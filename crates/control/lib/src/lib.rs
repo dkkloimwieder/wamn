@@ -9,7 +9,6 @@
 
 pub mod apply_package;
 pub mod author_workflow;
-pub mod bind_connection;
 pub mod capture_gap;
 pub mod component_admission;
 pub mod component_declaration;

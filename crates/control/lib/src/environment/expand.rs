@@ -4,25 +4,16 @@
 //! The policy name and the route host of the environment row are written
 //! together, then the durability projection is reconciled from the declared
 //! policy. With a release, the package stage runs (§10.2) and CDC is ensured
-//! for its packages. Then every declared connection is ensured: its instance
-//! is enabled at the generation of its definition, and the release's
-//! components that declare its instance id as their store alias are bound to
-//! it, keyed by the release digest. Nothing is retired: the live set still
-//! reads its own bindings.
+//! for its packages. The release's
+//! components receive their catalog bindings before Helm writes.
 
-use anyhow::{Context as _, ensure};
-#[cfg(test)]
-use wamn_catalog::RequirementType;
+use anyhow::Context as _;
 use wamn_schema_control::BareSchemaName;
 
 use super::Platform;
 use super::analyse::{Analysis, connect};
 use super::document::EnvironmentDocument;
 use super::ensure::{RUN_SCHEMA, ensure_cdc, project_url};
-use crate::bind_connection::{
-    BindConnectionRequest, ConnectionInstance, bind_with_mode, ensure_instance,
-};
-
 /// Write the policy name and the route host where they differ.
 const UPDATE_ROW_SQL: &str = "\
 UPDATE registry.project_envs SET policy_name = $4, route_host = $5 \
@@ -61,8 +52,8 @@ pub async fn expand(
     )
     .await
     .context("write the policy name and the route host")?;
-    tx.batch_execute("SET LOCAL ROLE wamn_control").await?;
-    let bindings = super::bindings::reserve(&tx, document, &analysis.packages).await?;
+    tx.batch_execute("SET LOCAL ROLE wamn_db_owner").await?;
+    let bindings = super::bindings::analyse(&tx, document, &analysis.packages).await?;
     tx.commit().await?;
     drop(system);
 
@@ -121,167 +112,10 @@ pub async fn expand(
         )?;
         ensure_cdc(platform, document, &manifests).await?;
     }
-    let mut targets = Vec::new();
     if let Some(release) = &analysis.authorities.release {
-        for component in &release.manifest.components {
-            let application = wamn_catalog::application_for_package(
-                &document.applications,
-                &component.package_id,
-            )
-            .context("component has no application")?;
-            for requirement in &component.descriptor.connections {
-                let binding = bindings
-                    .iter()
-                    .find(|binding| {
-                        binding.application == application
-                            && binding.alias == requirement.store_alias
-                    })
-                    .context("connection_unbound")?;
-                if binding.resolved.is_none() {
-                    continue;
-                }
-                targets.push(ConnectionTarget {
-                    instance_id: super::bindings::key(application, &binding.alias),
-                    manifest_digest: release.digest.clone(),
-                    component_digest: component.descriptor.component_digest.clone(),
-                    store_alias: binding.alias.clone(),
-                    package_id: component.package_id.clone(),
-                    mode: binding.mode,
-                });
-            }
-        }
+        let tx = project.transaction().await?;
+        super::bindings::write(&tx, &env_key, &release.digest, document, &bindings).await?;
+        tx.commit().await?;
     }
-    let connections = bindings
-        .into_iter()
-        .filter_map(|binding| {
-            binding.resolved.map(|resolved| {
-                (
-                    super::bindings::key(&binding.application, &binding.alias),
-                    resolved,
-                )
-            })
-        })
-        .collect();
-    materialize_connections(&project_url, document, &connections, &targets).await?;
     Ok(clients)
-}
-
-/// One release component's application-qualified connection binding.
-#[derive(Debug, Clone)]
-pub struct ConnectionTarget {
-    pub instance_id: String,
-    pub manifest_digest: String,
-    pub component_digest: String,
-    pub store_alias: String,
-    pub package_id: String,
-    pub mode: wamn_schema_generator::ConnectionMode,
-}
-
-/// Materialize one apply snapshot through the existing instance and bind paths.
-pub async fn materialize_connections(
-    project_url: &str,
-    document: &EnvironmentDocument,
-    connections: &std::collections::BTreeMap<String, crate::org_connection::ResolvedConnection>,
-    targets: &[ConnectionTarget],
-) -> anyhow::Result<()> {
-    for (instance_id, declared) in connections {
-        let instance = ConnectionInstance {
-            database_url: project_url.to_owned(),
-            org: document.org.clone(),
-            project: document.project.clone(),
-            environment: document.env.clone(),
-            instance_id: instance_id.clone(),
-            requirement_type: declared.requirement_type,
-            definition: declared.definition.clone(),
-            credential_handle: declared.credential_handle.clone(),
-            org_connection_name: declared.org_connection_name.clone(),
-        };
-        ensure_instance(&instance)
-            .await
-            .with_context(|| format!("ensure connection {instance_id}"))?;
-        for target in targets
-            .iter()
-            .filter(|target| target.instance_id == *instance_id)
-        {
-            bind_with_mode(
-                &BindConnectionRequest {
-                    database_url: instance.database_url.clone(),
-                    org: instance.org.clone(),
-                    project: instance.project.clone(),
-                    environment: instance.environment.clone(),
-                    instance_id: instance.instance_id.clone(),
-                    requirement_type: instance.requirement_type,
-                    definition: instance.definition.clone(),
-                    credential_handle: instance.credential_handle.clone(),
-                    org_connection_name: instance.org_connection_name.clone(),
-                    manifest_digest: target.manifest_digest.clone(),
-                    component_digest: target.component_digest.clone(),
-                    store_alias: target.store_alias.clone(),
-                },
-                target.mode,
-                &target.package_id,
-            )
-            .await
-            .with_context(|| {
-                format!(
-                    "bind connection {instance_id} to {}",
-                    target.component_digest
-                )
-            })?;
-        }
-    }
-    let unbound: Vec<&str> = targets
-        .iter()
-        .filter(|target| !connections.contains_key(&target.instance_id))
-        .map(|target| target.instance_id.as_str())
-        .collect();
-    ensure!(
-        unbound.is_empty(),
-        "the release requires the connections {unbound:?}, which the document does not declare"
-    );
-    Ok(())
-}
-
-/// The credential handle of a declared instance. Credentials are provisioned,
-/// never declared: a definition that needs a handle names the host-held
-/// credential set by its instance id.
-#[cfg(test)]
-fn credential_handle(
-    requirement_type: RequirementType,
-    definition: &serde_json::Value,
-    instance_id: &str,
-) -> Option<String> {
-    requirement_type
-        .check_credential_handle(definition, None)
-        .is_err()
-        .then(|| instance_id.to_owned())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn an_http_definition_takes_its_instance_id_as_the_handle() {
-        let definition = json!({
-            "primary-authority": "http://http-fixture:8080/", "tls-verification": "disabled"
-        });
-        let handle = credential_handle(RequirementType::Http, &definition, "erp");
-        assert_eq!(handle.as_deref(), Some("erp"));
-        RequirementType::Http
-            .check_credential_handle(&definition, handle.as_deref())
-            .expect("the instance id is a valid handle");
-    }
-
-    #[test]
-    fn a_definition_that_needs_a_handle_takes_its_instance_id() {
-        let definition = json!({"endpoint": "http://x", "container": "c", "prefix": "p"});
-        let handle = credential_handle(RequirementType::Blobstore, &definition, "labels");
-        assert!(
-            RequirementType::Blobstore
-                .check_credential_handle(&definition, handle.as_deref())
-                .is_ok()
-        );
-    }
 }

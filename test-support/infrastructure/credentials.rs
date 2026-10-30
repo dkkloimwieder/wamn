@@ -34,7 +34,71 @@ impl Store for LocalCredentials {
     }
 }
 
-/// Seed a reference after the test creates its environment connection.
+/// A reference to material that the fixture already wrote outside Postgres.
+#[derive(Debug)]
+pub struct ReferencedCredentials<'a>(pub &'a StoreVersion);
+
+#[async_trait::async_trait]
+impl Store for ReferencedCredentials<'_> {
+    async fn put(&self, _: uuid::Uuid, _: &[u8]) -> Result<StoreVersion, Error> {
+        Ok(StoreVersion {
+            store: self.0.store,
+            reference: self.0.reference.clone(),
+            version: self.0.version.clone(),
+        })
+    }
+    async fn get(&self, _: &str, _: &str) -> Result<Vec<u8>, Error> {
+        unreachable!("fixture only writes references")
+    }
+    async fn destroy(&self, _: &str, _: &str) -> Result<(), Error> {
+        unreachable!("fixture retains its store")
+    }
+}
+
+/// Create project authority through the administration functions.
+pub async fn define(
+    tx: &tokio_postgres::Transaction<'_>,
+    org: &str,
+    request: &serde_json::Value,
+    store: &dyn Store,
+) -> anyhow::Result<()> {
+    use serde_json::json;
+    use wamn_platform_identity::{auth_changes::AuthDrops, connections::administration};
+    let mut drops = AuthDrops::default();
+    if let Some(name) = request["external_system"].as_str() {
+        administration::execute(
+            tx,
+            org,
+            "external_system.write",
+            &json!({"project":request["project"],"name":name}).to_string(),
+            &mut drops,
+        )
+        .await?;
+    }
+    administration::execute(tx,org,"integration.write",&json!({
+        "project":request["project"],"name":request["name"],"integration_type":request["integration_type"],
+        "auth_type":request["auth_type"],"external_system":request["external_system"],
+    }).to_string(),&mut drops).await?;
+    let mut connection = json!({"project":request["project"],"env":request["env"],"name":request["name"],"parameters":request["parameters"]});
+    if request["auth_type"] != "none" {
+        connection["credential"] = request
+            .get("credential")
+            .cloned()
+            .unwrap_or_else(|| json!("{}"));
+    }
+    administration::execute_with_store(
+        tx,
+        org,
+        "connection.write",
+        &connection.to_string(),
+        &mut drops,
+        Some(store),
+    )
+    .await?;
+    Ok(())
+}
+
+/// Rotate an existing fixture through the administration path.
 pub async fn set_reference(
     tx: &tokio_postgres::Transaction<'_>,
     org: &str,
@@ -43,19 +107,14 @@ pub async fn set_reference(
     name: &str,
     stored: &StoreVersion,
 ) -> anyhow::Result<()> {
-    tx.batch_execute("SET LOCAL ROLE wamn_system").await?;
-    let row = tx.query_one("SELECT c.id::text,c.active_generation+1 FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.org=$1 AND c.project=$2 AND c.env=$3 AND i.name=$4 FOR UPDATE OF c", &[&org,&project,&environment,&name]).await?;
-    let connection: String = row.get(0);
-    let generation: i64 = row.get(1);
-    let id = stored.version.clone();
-    let actor = wamn_control_provision::PlatformComponent::Provisioning
-        .principal_id()
-        .to_string();
-    tx.execute("INSERT INTO identity.credential(id,connection_id,store,ref,version,created_at,created_by) VALUES ($1::text::uuid,$2::text::uuid,$3,$4,$5,now(),$6::text::uuid)", &[&id,&connection,&stored.store,&stored.reference,&stored.version,&actor]).await?;
-    tx.execute("INSERT INTO registry.connection_generation(connection_id,generation,credential_id,created_at,created_by) VALUES ($1::text::uuid,$2,$3::text::uuid,now(),$4::text::uuid)", &[&connection,&generation,&id,&actor]).await?;
-    tx.execute(
-        "UPDATE registry.connection SET active_generation=$2 WHERE id=$1::text::uuid",
-        &[&connection, &generation],
+    wamn_platform_identity::connections::administration::execute_with_store(
+        tx,
+        org,
+        "connection.set_credential",
+        &serde_json::json!({"project":project,"env":environment,"name":name,"credential":"{}"})
+            .to_string(),
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        Some(&ReferencedCredentials(stored)),
     )
     .await?;
     Ok(())

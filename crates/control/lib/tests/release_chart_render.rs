@@ -100,7 +100,6 @@ fn input(env: &str) -> ValuesInput {
         applications: [(
             "wms".to_owned(),
             wamn_catalog::ApplicationDefinition {
-                connectors: std::collections::BTreeMap::new(),
                 connections: std::collections::BTreeMap::new(),
                 packages: ["wamn_wms".to_owned()].into(),
             },

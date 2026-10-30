@@ -422,6 +422,8 @@ fn expected_executor_grants() -> Vec<String> {
     ] {
         rows.push(format!("relation|catalog|{relation}|SELECT"));
     }
+    rows.push("relation|platform|connection|SELECT".to_owned());
+    rows.push("relation|platform|integration|SELECT".to_owned());
     rows.push("relation|wamn_run|effect_attempts|SELECT".to_owned());
     rows.push("relation|wamn_run|run_queue|DELETE".to_owned());
     rows.push("relation|wamn_run|run_queue|SELECT".to_owned());
@@ -721,8 +723,8 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
 
 /// THE CALLABLE-HTTP ADMITTER SURFACE, AS THE SERVER SEES IT.
 ///
-/// Seven catalog relations, three fresh permission relations, and no run plane
-/// — asserted by EQUALITY over the complete grant set, so acquiring any adjacent
+/// Catalog reads, projected connection reads, permission reads, and no run plane
+/// are asserted by EQUALITY over the complete grant set, so acquiring adjacent
 /// authority fails here rather than at the next incident.
 #[test]
 fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
@@ -753,6 +755,8 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
         .iter()
         .map(|relation| format!("relation|catalog|{relation}|SELECT"))
         .collect();
+    expected.push("relation|platform|connection|SELECT".to_owned());
+    expected.push("relation|platform|integration|SELECT".to_owned());
     expected.push("relation|platform|permission|SELECT".to_owned());
     expected.push("relation|platform|user_role|SELECT".to_owned());
     expected.push("relation|platform|user|SELECT".to_owned());
@@ -899,12 +903,12 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
              VALUES ('00000000-0000-4000-8000-000000000011','http','upstream','active');\n\
              INSERT INTO platform.connection (id,integration_id,integration_type,status) \
              VALUES ('00000000-0000-4000-8000-000000000012','00000000-0000-4000-8000-000000000011','http','active');\n\
-             INSERT INTO catalog.connection_requirement (env_key,component_digest,package_id,name,integration_type,interfaces,mode) \
-             VALUES ('tenant-a','{digest}','orders','upstream','http',ARRAY['wamn:connection/http@0.1.0'],'write');\n\
-             INSERT INTO catalog.release_connection (env_key,manifest_digest,connection_id,integration_type,version) \
-             VALUES ('tenant-a','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','00000000-0000-4000-8000-000000000012','http',1);\n\
-             INSERT INTO catalog.connection_binding (env_key,manifest_digest,component_digest,package_id,name,connection_id,integration_type) \
-             VALUES ('tenant-a','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{digest}','orders','upstream','00000000-0000-4000-8000-000000000012','http');\n\
+             INSERT INTO catalog.connection_requirement (env_key,component_digest,package_id,name,interfaces,mode) \
+             VALUES ('tenant-a','{digest}','orders','upstream',ARRAY['wamn:connection/http@0.1.0'],'write');\n\
+             INSERT INTO catalog.release_connection (env_key,manifest_digest,connection_id,version) \
+             VALUES ('tenant-a','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','00000000-0000-4000-8000-000000000012',1);\n\
+             INSERT INTO catalog.connection_binding (env_key,manifest_digest,component_digest,package_id,name,connection_id) \
+             VALUES ('tenant-a','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','{digest}','orders','upstream','00000000-0000-4000-8000-000000000012');\n\
              INSERT INTO catalog.workflows \
                (env_key, environment, application, workflow_id, version, graph_json, \
                 wiring_hash, trigger, execution_type, execution_role, created_by) \
@@ -982,4 +986,23 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
         "wamn-widgets:widget/get",
         "the callable-HTTP generation cannot read the user's fresh permission"
     );
+}
+
+#[test]
+fn control_routes_cannot_write_release_connections_or_bindings() {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    run_admin(database.url(),"release connection grants",&format!(
+        "{} DO $roles$ BEGIN IF to_regrole('wamn_app') IS NULL THEN CREATE ROLE wamn_app NOLOGIN; END IF; IF to_regrole('wamn_control') IS NULL THEN CREATE ROLE wamn_control NOLOGIN; END IF; END $roles$; CREATE SCHEMA wamn_run; {} {} {} DO $$ DECLARE role_name text; relation text; privilege text; BEGIN
+          FOREACH role_name IN ARRAY ARRAY['wamn_control','wamn_administration'] LOOP
+            FOREACH relation IN ARRAY ARRAY['release_connection','connection_binding'] LOOP
+              FOREACH privilege IN ARRAY ARRAY['INSERT','UPDATE','DELETE','TRUNCATE'] LOOP
+                ASSERT NOT has_table_privilege(role_name,'catalog.'||relation,privilege),role_name||':'||relation||':'||privilege;
+              END LOOP;
+              ASSERT NOT has_any_column_privilege(role_name,'catalog.'||relation,'INSERT,UPDATE'),role_name||':'||relation;
+            END LOOP;
+          END LOOP;
+        END $$;",
+        sql::ensure_db_owner_role_sql(),CATALOG_SCHEMA,APP_SCHEMA,sql::grant_administration_surface_sql("wamn_run"),
+    ));
 }

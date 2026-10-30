@@ -50,21 +50,10 @@ pub struct Installed {
     pub evidence: BTreeSet<String>,
 }
 
-/// One connection instance in the project database.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Instance {
-    pub requirement_type: String,
-    pub enabled: bool,
-    pub definition: Option<Value>,
-    pub credential_handle: Option<String>,
-    pub org_connection_name: Option<String>,
-}
-
 /// What the project database holds.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProjectState {
     pub installed: BTreeMap<String, Installed>,
-    pub instances: BTreeMap<String, Instance>,
     /// `(manifest_digest, component_digest, store_alias, instance_id)`.
     pub bindings: BTreeSet<(String, String, String, String)>,
     /// Package id to recorded floor version.
@@ -113,8 +102,8 @@ pub struct FloorArtifact {
 pub struct Authorities {
     pub release_name: String,
     pub connections: BTreeMap<String, crate::org_connection::ResolvedConnection>,
-    /// Application-qualified aliases resolved to published wasm connectors.
-    pub connector_bindings: BTreeSet<String>,
+    /// Application-qualified names resolved to published wasm artifacts.
+    pub artifact_bindings: BTreeSet<String>,
     pub policy: Policy,
     pub row: Option<EnvironmentRow>,
     pub project: Option<ProjectState>,
@@ -179,7 +168,7 @@ pub async fn analyse(
     };
     let binding_system = connect(&platform.system_database_url).await?;
     binding_system
-        .batch_execute("SET ROLE wamn_control")
+        .batch_execute("SET ROLE wamn_db_owner")
         .await?;
     let bindings = super::bindings::analyse(&binding_system, document, &packages).await?;
     let connections = bindings
@@ -195,7 +184,7 @@ pub async fn analyse(
         .collect();
     let authorities = Authorities {
         release_name,
-        connector_bindings: bindings
+        artifact_bindings: bindings
             .iter()
             .filter(|binding| binding.resolved.is_none())
             .map(|binding| super::bindings::key(&binding.application, &binding.alias))
@@ -224,27 +213,6 @@ pub async fn analyse(
         plan,
         packages,
     })
-}
-
-/// Resolve every reference from one org snapshot, retaining the inputs through apply.
-pub fn resolve_connections(
-    document: &EnvironmentDocument,
-    org_connections: &BTreeMap<String, crate::org_connection::ResolvedConnection>,
-) -> anyhow::Result<BTreeMap<String, crate::org_connection::ResolvedConnection>> {
-    let mut resolved = BTreeMap::new();
-    for (application, definition) in &document.applications {
-        for (alias, name) in &definition.connections {
-            let connection = org_connections
-                .get(name)
-                .with_context(|| format!("org {} has no connection {name}", document.org))?;
-            ensure!(
-                connection.requirement_type == wamn_catalog::RequirementType::Http,
-                "org connections support only http"
-            );
-            resolved.insert(super::bindings::key(application, alias), connection.clone());
-        }
-    }
-    Ok(resolved)
 }
 
 /// The declared floor versions of installed packages that the environment has
@@ -466,37 +434,11 @@ pub(crate) async fn read_project(
             package.evidence.insert(row.get(1));
         }
     }
-    let mut instances = BTreeMap::new();
-    for row in transaction
-        .query(
-            "SELECT i.instance_id, i.requirement_type, i.lifecycle_status = 'enabled', \
-                    g.definition_json, g.credential_set_handle, to_jsonb(i)->>'org_connection_name' \
-               FROM catalog.connection_instances i \
-               LEFT JOIN catalog.connection_generations g \
-                 ON g.env_key = i.env_key AND g.environment = i.environment \
-                AND g.instance_id = i.instance_id AND g.generation = i.active_generation \
-              WHERE i.env_key = $1 AND i.environment = $2",
-            &[&env_key, &document.env],
-        )
-        .await
-        .context("read the connection instances")?
-    {
-        instances.insert(
-            row.get(0),
-            Instance {
-                requirement_type: row.get(1),
-                enabled: row.get(2),
-                definition: row.get(3),
-                credential_handle: row.get(4),
-                org_connection_name: row.get(5),
-            },
-        );
-    }
     let bindings = transaction
         .query(
-            "SELECT manifest_digest, component_digest, store_alias, instance_id \
-               FROM catalog.connection_bindings WHERE env_key = $1 AND environment = $2",
-            &[&env_key, &document.env],
+            "SELECT manifest_digest, component_digest, name, connection_id::text \
+               FROM catalog.connection_binding WHERE env_key = $1",
+            &[&env_key],
         )
         .await
         .context("read the connection bindings")?
@@ -528,7 +470,6 @@ pub(crate) async fn read_project(
     transaction.commit().await.context("end the project read")?;
     Ok(Some(ProjectState {
         installed,
-        instances,
         bindings,
         floors,
     }))
@@ -922,7 +863,7 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
             for requirement in &component.descriptor.connections {
                 let key = super::bindings::key(application, &requirement.store_alias);
                 if !authorities.connections.contains_key(&key)
-                    && !authorities.connector_bindings.contains(&key)
+                    && !authorities.artifact_bindings.contains(&key)
                 {
                     refusals.push(format!(
                         "connection_unbound: {key} is required by release {}",
@@ -1039,29 +980,11 @@ fn plan(document: &EnvironmentDocument, authorities: &Authorities) -> Vec<String
     {
         plan.push(format!("set the policy to {}", document.policy));
     }
-    let instances = authorities
-        .project
-        .as_ref()
-        .map(|project| &project.instances);
-    for (instance, connection) in &authorities.connections {
-        match instances.and_then(|instances| instances.get(instance)) {
-            None => plan.push(format!("add connection {instance}")),
-            Some(existing)
-                if !existing.enabled
-                    || existing.definition.as_ref() != Some(&connection.definition)
-                    || existing.requirement_type
-                        != connection.requirement_type.descriptor().requirement_type
-                    || existing.credential_handle != connection.credential_handle
-                    || existing.org_connection_name != connection.org_connection_name =>
-            {
-                plan.push(format!("update connection {instance}"));
-            }
-            Some(_) => {}
-        }
-    }
-    for (instance, existing) in instances.into_iter().flatten() {
-        if existing.enabled && !authorities.connections.contains_key(instance) {
-            plan.push(format!("retire connection {instance} after the drain"));
+    for (application, definition) in &document.applications {
+        for (name, integration) in &definition.connections {
+            plan.push(format!(
+                "bind {application}.{name} to integration {integration}"
+            ));
         }
     }
     let current = authorities
@@ -1184,7 +1107,7 @@ mod tests {
         Authorities {
             release_name: "r-prod-0".to_owned(),
             connections: BTreeMap::new(),
-            connector_bindings: BTreeSet::new(),
+            artifact_bindings: BTreeSet::new(),
             policy: Policy {
                 name: "prod".to_owned(),
                 readiness_budget_seconds: 600,
@@ -1219,6 +1142,7 @@ mod tests {
 
     fn document(release: DeclaredRelease, floors: &[(&str, &str)]) -> EnvironmentDocument {
         EnvironmentDocument {
+            integrations: std::collections::BTreeMap::new(),
             target: "cloud".into(),
             org: "acme".to_owned(),
             project: "wms".to_owned(),
@@ -1233,65 +1157,6 @@ mod tests {
                 .map(|(package, version)| ((*package).to_owned(), (*version).to_owned()))
                 .collect(),
         }
-    }
-
-    #[test]
-    fn org_resolution_refuses_missing_and_wrong_type_references() {
-        let mut document = document(DeclaredRelease::None, &[]);
-        document.applications.insert(
-            "app".into(),
-            wamn_catalog::ApplicationDefinition {
-                connectors: std::collections::BTreeMap::new(),
-                packages: ["fixture".into()].into(),
-                connections: [("erp".into(), "shared".into())].into(),
-            },
-        );
-        let mut snapshot = BTreeMap::new();
-        assert_eq!(
-            resolve_connections(&document, &snapshot)
-                .unwrap_err()
-                .to_string(),
-            "org acme has no connection shared"
-        );
-        snapshot.insert("shared".to_owned(), crate::org_connection::ResolvedConnection {
-            requirement_type: wamn_catalog::RequirementType::Http,
-            definition: json!({"primary-authority": "https://erp.example", "tls-verification": "verify-authority"}),
-            credential_handle: Some("org:acme:shared".to_owned()),
-            org_connection_name: Some("shared".to_owned()),
-        });
-        let resolved = resolve_connections(&document, &snapshot).unwrap();
-        let mut state = authorities(&[]);
-        state.connections = resolved.clone();
-        let connection = &resolved["app/erp"];
-        state.project.as_mut().unwrap().instances.insert(
-            "app/erp".to_owned(),
-            Instance {
-                requirement_type: "http".to_owned(),
-                enabled: true,
-                definition: Some(connection.definition.clone()),
-                credential_handle: Some("old-project-handle".to_owned()),
-                org_connection_name: None,
-            },
-        );
-        assert!(plan(&document, &state).contains(&"update connection app/erp".to_owned()));
-        let instance = state
-            .project
-            .as_mut()
-            .unwrap()
-            .instances
-            .get_mut("app/erp")
-            .unwrap();
-        instance.credential_handle = connection.credential_handle.clone();
-        instance.org_connection_name = connection.org_connection_name.clone();
-        assert!(!plan(&document, &state).contains(&"update connection app/erp".to_owned()));
-        snapshot.get_mut("shared").unwrap().requirement_type =
-            wamn_catalog::RequirementType::Blobstore;
-        assert_eq!(
-            resolve_connections(&document, &snapshot)
-                .unwrap_err()
-                .to_string(),
-            "org connections support only http"
-        );
     }
 
     #[test]
@@ -1379,7 +1244,6 @@ mod tests {
                 (
                     (*name).to_owned(),
                     wamn_catalog::ApplicationDefinition {
-                        connectors: std::collections::BTreeMap::new(),
                         connections: std::collections::BTreeMap::new(),
                         packages: packages.iter().map(|id| (*id).to_owned()).collect(),
                     },

@@ -8,10 +8,8 @@
 //! record participates.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::Arc;
 
-use tokio::time::Instant;
 use tracing::Instrument as _;
 use wamn_catalog::{ArtifactHash, ConnectionTypeDescriptor, ServingComponent, ServingManifest};
 use wamn_execution_contract::EffectOutcome;
@@ -23,8 +21,8 @@ use wash_runtime::wasmtime::component::{Accessor, Linker};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 use crate::connection_authority::{
-    AuthorityDecision, AuthorityError, HttpConnectionAuthority, TlsPolicy, TokioDnsResolver,
-    bound_http_target, parse_http_connection_authority, resolve_http_request,
+    AuthorityDecision, AuthorityError, TlsPolicy, TokioDnsResolver,
+    parse_http_connection_authority, resolve_http_request,
 };
 use crate::plugins::effect_span::{
     EFFECT_OPERATION, EffectEvidence, EffectIdentity, EffectOutcomeGuard, EffectWiring,
@@ -38,6 +36,7 @@ use super::wamn_postgres::{
 };
 use crate::connection_credentials::ConnectionCredentials;
 
+mod authentication;
 mod network_policy;
 pub mod transport;
 
@@ -210,7 +209,6 @@ pub struct ConnectionHttp {
     /// instance. The production driver binds before `handler.run` and revokes
     /// before returning the instance to the pool.
     invocations: std::sync::RwLock<HashMap<String, ConnectionInvocation>>,
-    oauth2: Oauth2Cache,
 }
 
 impl ConnectionHttp {
@@ -234,10 +232,6 @@ impl ConnectionHttp {
             allowed_hosts,
             release,
             invocations: std::sync::RwLock::new(HashMap::new()),
-            oauth2: Oauth2Cache {
-                entries: Mutex::new(HashMap::new()),
-                now: Instant::now,
-            },
         }
     }
 
@@ -541,7 +535,7 @@ impl ConnectionHttp {
             .await
             .map_err(|_| ConnectionError::CredentialUnavailable)?;
         let mut response = self
-            .execute_authenticated(scope, &authority, decision, request, handle)
+            .execute_authenticated(scope, decision, request, handle)
             .await?;
         response.external_system = external_system_id;
         Ok(response)
@@ -550,202 +544,24 @@ impl ConnectionHttp {
     async fn execute_authenticated(
         &self,
         scope: ClientScope,
-        authority: &HttpConnectionAuthority,
-        decision: AuthorityDecision,
+        mut decision: AuthorityDecision,
         request: &Request,
         handle: &str,
     ) -> Result<Response, ConnectionError> {
-        let secret = self
+        let (auth_type, parameters, material) = self
             .vault
-            .read_connection(&self.project, handle)
+            .http_authentication(&self.project, handle)
             .await
-            .map_err(|_| ConnectionError::CredentialUnavailable)?
-            .ok_or(ConnectionError::CredentialUnavailable)?;
-        let object = credential_object(&secret)?;
-        let Some(oauth2) = object.get("oauth2") else {
-            let headers = credential_headers(
-                request
-                    .headers
-                    .iter()
-                    .find(|header| header.name.eq_ignore_ascii_case("content-type"))
-                    .map(|header| header.value.as_slice()),
-                &secret,
-                &request.method,
-                &decision.logical_url,
-                request.body.as_deref().unwrap_or_default(),
-            )?;
-            return execute(&self.transport, scope, decision, request, headers).await;
-        };
-        let credential: Oauth2Credential = serde_json::from_value(oauth2.clone())
             .map_err(|_| ConnectionError::CredentialUnavailable)?;
-        if credential.client_id.is_empty() || credential.client_secret.is_empty() {
-            return Err(ConnectionError::CredentialUnavailable);
-        }
-        let key = (self.project.clone(), handle.into(), scope.generation);
-        let token = self
-            .oauth2_token(&scope, authority, &credential, &key)
-            .await?;
-        let first = execute(
-            &self.transport,
-            scope.clone(),
-            decision.clone(),
+        let headers = authentication::headers(
+            &auth_type,
+            &parameters,
+            material.as_deref(),
             request,
-            [("authorization".into(), token)].into(),
-        )
-        .await?;
-        if first.status != 401 {
-            return Ok(first);
-        }
-        self.oauth2
-            .entries
-            .lock()
-            .expect("OAuth2 cache lock")
-            .remove(&key);
-        let Ok(token) = self
-            .oauth2_token(&scope, authority, &credential, &key)
-            .await
-        else {
-            return Ok(first);
-        };
-        let second = execute(
-            &self.transport,
-            scope,
-            decision,
-            request,
-            [("authorization".into(), token)].into(),
-        )
-        .await?;
-        if second.status == 401 {
-            self.oauth2
-                .entries
-                .lock()
-                .expect("OAuth2 cache lock")
-                .remove(&key);
-        }
-        Ok(second)
+            &mut decision,
+        )?;
+        execute(&self.transport, scope, decision, request, headers).await
     }
-
-    async fn oauth2_token(
-        &self,
-        scope: &ClientScope,
-        authority: &HttpConnectionAuthority,
-        credential: &Oauth2Credential,
-        key: &Oauth2CacheKey,
-    ) -> Result<String, ConnectionError> {
-        let (target, endpoint) = bound_http_target(authority, &credential.token_url)
-            .map_err(|_| ConnectionError::CredentialUnavailable)?;
-        let now = (self.oauth2.now)();
-        {
-            let mut entries = self.oauth2.entries.lock().expect("OAuth2 cache lock");
-            entries.retain(|_, (_, expires)| *expires > now);
-            if let Some((token, _)) = entries.get(key) {
-                return Ok(token.clone());
-            }
-        }
-        let mut decision = resolve_http_request(
-            authority,
-            &target,
-            &self.allowed_hosts,
-            &ConnectionNetworkPolicy,
-            &TokioDnsResolver,
-        )
-        .await
-        .map_err(|_| ConnectionError::CredentialUnavailable)?;
-        decision.logical_url = endpoint;
-        let token =
-            fetch_oauth2_token(&self.transport, scope.clone(), &decision, credential).await?;
-        let header = format!("Bearer {}", token.access_token);
-        // Missing or short expiry permits this send only. Start at fetch time,
-        // so time spent obtaining the token never extends its cached lifetime.
-        if let Some(expires) = token
-            .expires_in
-            .and_then(|seconds| seconds.checked_sub(60))
-            .and_then(|seconds| now.checked_add(Duration::from_secs(seconds)))
-            .filter(|expires| *expires > (self.oauth2.now)())
-        {
-            self.oauth2
-                .entries
-                .lock()
-                .expect("OAuth2 cache lock")
-                .insert(key.clone(), (header.clone(), expires));
-        }
-        Ok(header)
-    }
-}
-
-type Oauth2CacheKey = (Box<str>, Box<str>, i64);
-
-struct Oauth2Cache {
-    entries: Mutex<HashMap<Oauth2CacheKey, (String, Instant)>>,
-    now: fn() -> Instant,
-}
-
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "kebab-case")]
-struct Oauth2Credential {
-    token_url: String,
-    client_id: String,
-    client_secret: String,
-    scope: Option<String>,
-}
-
-#[derive(serde::Deserialize)]
-struct Oauth2Token {
-    access_token: String,
-    token_type: String,
-    expires_in: Option<u64>,
-}
-
-async fn fetch_oauth2_token(
-    transport: &HttpTransport,
-    scope: ClientScope,
-    decision: &AuthorityDecision,
-    credential: &Oauth2Credential,
-) -> Result<Oauth2Token, ConnectionError> {
-    use base64::Engine as _;
-
-    // RFC 6749 section 2.3.1 form-encodes both Basic components first.
-    let encode =
-        |value: &str| url::form_urlencoded::byte_serialize(value.as_bytes()).collect::<String>();
-    let basic = base64::engine::general_purpose::STANDARD.encode(format!(
-        "{}:{}",
-        encode(&credential.client_id),
-        encode(&credential.client_secret),
-    ));
-    let body = {
-        let mut form = url::form_urlencoded::Serializer::new(String::new());
-        form.append_pair("grant_type", "client_credentials");
-        if let Some(scope) = &credential.scope {
-            form.append_pair("scope", scope);
-        }
-        form.finish()
-    };
-    let request = hyper::Request::builder()
-        .method("POST")
-        .uri(decision.logical_url.as_ref())
-        .header("content-type", "application/x-www-form-urlencoded")
-        .header("authorization", format!("Basic {basic}"))
-        .body(body.as_bytes())
-        .map_err(|_| ConnectionError::CredentialUnavailable)?;
-    let response = transport
-        .execute(scope, decision, request)
-        .await
-        .map_err(|_| ConnectionError::CredentialUnavailable)?;
-    if response.status() != hyper::StatusCode::OK {
-        return Err(ConnectionError::CredentialUnavailable);
-    }
-    let token: Oauth2Token = serde_json::from_slice(response.body())
-        .map_err(|_| ConnectionError::CredentialUnavailable)?;
-    if !token.token_type.eq_ignore_ascii_case("bearer")
-        || token.access_token.is_empty()
-        || !token
-            .access_token
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"-._~+/=".contains(&byte))
-    {
-        return Err(ConnectionError::CredentialUnavailable);
-    }
-    Ok(token)
 }
 
 fn authorize_method(read_only: bool, method: &str) -> Result<(), ConnectionError> {
@@ -971,260 +787,6 @@ pub(crate) fn authorize_snapshot(
         return Err(ConnectionError::Incompatible);
     }
     Ok(())
-}
-
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct HmacCredential {
-    algorithm: String,
-    secret: String,
-    header: String,
-}
-
-fn credential_headers(
-    content_type: Option<&[u8]>,
-    secret: &str,
-    method: &str,
-    url: &str,
-    body: &[u8],
-) -> Result<HashMap<String, String>, ConnectionError> {
-    credential_headers_with(
-        content_type,
-        secret,
-        method,
-        url,
-        body,
-        oauth1_request_values,
-    )
-}
-
-fn credential_headers_with(
-    content_type: Option<&[u8]>,
-    secret: &str,
-    method: &str,
-    url: &str,
-    body: &[u8],
-    request_values: fn() -> Result<(String, u64), ConnectionError>,
-) -> Result<HashMap<String, String>, ConnectionError> {
-    let object = credential_object(secret)?;
-    if let Some(oauth1) = object.get("oauth1") {
-        let credential: Oauth1Credential = serde_json::from_value(oauth1.clone())
-            .map_err(|_| ConnectionError::CredentialUnavailable)?;
-        if [
-            &credential.consumer_key,
-            &credential.consumer_secret,
-            &credential.token,
-            &credential.token_secret,
-        ]
-        .iter()
-        .any(|value| value.is_empty())
-        {
-            return Err(ConnectionError::CredentialUnavailable);
-        }
-        let (nonce, timestamp) = request_values()?;
-        let form = content_type
-            .and_then(|value| std::str::from_utf8(value).ok())
-            .is_some_and(|value| {
-                value
-                    .split(';')
-                    .next()
-                    .unwrap_or_default()
-                    .trim()
-                    .eq_ignore_ascii_case("application/x-www-form-urlencoded")
-            });
-        let body_params = if form {
-            url::form_urlencoded::parse(body).collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
-        let body_params = body_params
-            .iter()
-            .map(|(name, value)| (name.as_ref(), value.as_ref()))
-            .collect::<Vec<_>>();
-        let header = oauth1_header(&credential, method, url, &body_params, &nonce, timestamp)?;
-        return Ok([("authorization".to_string(), header)].into());
-    }
-    if let Some(hmac) = object.get("hmac") {
-        use hmac::{Hmac, KeyInit as _, Mac as _};
-
-        let credential: HmacCredential = serde_json::from_value(hmac.clone())
-            .map_err(|_| ConnectionError::CredentialUnavailable)?;
-        let header = reqwest::header::HeaderName::from_bytes(credential.header.as_bytes())
-            .map_err(|_| ConnectionError::CredentialUnavailable)?;
-        if credential.algorithm != "sha256"
-            || credential.secret.is_empty()
-            || reserved_header(&header)
-        {
-            return Err(ConnectionError::CredentialUnavailable);
-        }
-        let mut mac = Hmac::<sha2::Sha256>::new_from_slice(credential.secret.as_bytes())
-            .map_err(|_| ConnectionError::CredentialUnavailable)?;
-        mac.update(body);
-        let signature = format!("sha256={}", hex::encode(mac.finalize().into_bytes()));
-        return Ok([(credential.header, signature)].into());
-    }
-    object
-        .get("headers")
-        .and_then(serde_json::Value::as_object)
-        .ok_or(ConnectionError::CredentialUnavailable)?
-        .iter()
-        .map(|(name, value)| {
-            let value = value
-                .as_str()
-                .ok_or(ConnectionError::CredentialUnavailable)?;
-            let header = reqwest::header::HeaderName::from_bytes(name.as_bytes())
-                .map_err(|_| ConnectionError::CredentialUnavailable)?;
-            if reserved_header(&header) {
-                return Err(ConnectionError::CredentialUnavailable);
-            }
-            reqwest::header::HeaderValue::from_str(value)
-                .map_err(|_| ConnectionError::CredentialUnavailable)?;
-            Ok((name.clone(), value.to_string()))
-        })
-        .collect()
-}
-
-fn credential_object(
-    secret: &str,
-) -> Result<serde_json::Map<String, serde_json::Value>, ConnectionError> {
-    let object: serde_json::Map<String, serde_json::Value> =
-        serde_json::from_str(secret).map_err(|_| ConnectionError::CredentialUnavailable)?;
-    if object.len() != 1 {
-        return Err(ConnectionError::CredentialUnavailable);
-    }
-    Ok(object)
-}
-
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "kebab-case")]
-struct Oauth1Credential {
-    consumer_key: String,
-    consumer_secret: String,
-    token: String,
-    token_secret: String,
-    realm: Option<String>,
-}
-
-fn oauth1_request_values() -> Result<(String, u64), ConnectionError> {
-    use ring::rand::SecureRandom as _;
-
-    // A fresh 128-bit nonce for every dispatch, including retries.
-    let mut nonce = [0u8; 16];
-    ring::rand::SystemRandom::new()
-        .fill(&mut nonce)
-        .map_err(|_| ConnectionError::CredentialUnavailable)?;
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|_| ConnectionError::CredentialUnavailable)?
-        .as_secs();
-    Ok((hex::encode(nonce), timestamp))
-}
-
-fn oauth1_encode(value: &str) -> String {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    let mut encoded = String::new();
-    for byte in value.bytes() {
-        if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
-            encoded.push(char::from(byte));
-        } else {
-            encoded.push('%');
-            encoded.push(char::from(HEX[usize::from(byte >> 4)]));
-            encoded.push(char::from(HEX[usize::from(byte & 15)]));
-        }
-    }
-    encoded
-}
-
-fn oauth1_base_string(method: &str, url: &url::Url, params: &[(&str, &str)]) -> String {
-    let mut params: Vec<_> = url
-        .query()
-        .into_iter()
-        .flat_map(|query| query.split('&'))
-        .filter(|pair| !pair.is_empty())
-        .map(|pair| {
-            let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
-            (
-                percent_encoding::percent_decode_str(name).decode_utf8_lossy(),
-                percent_encoding::percent_decode_str(value).decode_utf8_lossy(),
-            )
-        })
-        .map(|(name, value)| (oauth1_encode(&name), oauth1_encode(&value)))
-        .chain(
-            params
-                .iter()
-                .map(|(name, value)| (oauth1_encode(name), oauth1_encode(value))),
-        )
-        .filter(|(name, _)| name != "oauth_signature")
-        .collect();
-    params.sort_unstable();
-    let normalized = params
-        .iter()
-        .map(|(name, value)| format!("{name}={value}"))
-        .collect::<Vec<_>>()
-        .join("&");
-    // Url normalizes the scheme, host, default port and empty HTTP path.
-    let base_uri = &url[url::Position::BeforeScheme..url::Position::AfterPath];
-    format!(
-        "{}&{}&{}",
-        oauth1_encode(&method.to_ascii_uppercase()),
-        oauth1_encode(base_uri),
-        oauth1_encode(&normalized)
-    )
-}
-
-fn oauth1_signature(credential: &Oauth1Credential, base: &str) -> String {
-    use base64::Engine as _;
-
-    let key = format!(
-        "{}&{}",
-        oauth1_encode(&credential.consumer_secret),
-        oauth1_encode(&credential.token_secret)
-    );
-    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key.as_bytes());
-    base64::engine::general_purpose::STANDARD.encode(ring::hmac::sign(&key, base.as_bytes()))
-}
-
-fn oauth1_header(
-    credential: &Oauth1Credential,
-    method: &str,
-    url: &str,
-    body_params: &[(&str, &str)],
-    nonce: &str,
-    timestamp: u64,
-) -> Result<String, ConnectionError> {
-    let url = url::Url::parse(url).map_err(|_| ConnectionError::Incompatible)?;
-    let timestamp = timestamp.to_string();
-    let mut params = vec![
-        ("oauth_consumer_key", credential.consumer_key.as_str()),
-        ("oauth_token", credential.token.as_str()),
-        ("oauth_signature_method", "HMAC-SHA256"),
-        ("oauth_timestamp", timestamp.as_str()),
-        ("oauth_nonce", nonce),
-        ("oauth_version", "1.0"),
-    ];
-    let signature_params = params
-        .iter()
-        .copied()
-        .chain(body_params.iter().copied())
-        .collect::<Vec<_>>();
-    let base = oauth1_base_string(method, &url, &signature_params);
-    let signature = oauth1_signature(credential, &base);
-    params.push(("oauth_signature", &signature));
-    let mut fields = Vec::new();
-    if let Some(realm) = &credential.realm {
-        // NetSuite expects the realm verbatim, with HTTP quoted-string escaping.
-        let realm = realm.replace('\\', "\\\\").replace('"', "\\\"");
-        fields.push(format!("realm=\"{realm}\""));
-    }
-    fields.extend(
-        params
-            .iter()
-            .map(|(name, value)| format!("{}=\"{}\"", oauth1_encode(name), oauth1_encode(value))),
-    );
-    let header = format!("OAuth {}", fields.join(", "));
-    reqwest::header::HeaderValue::from_str(&header)
-        .map_err(|_| ConnectionError::CredentialUnavailable)?;
-    Ok(header)
 }
 
 fn reserved_header(name: &reqwest::header::HeaderName) -> bool {
@@ -1568,7 +1130,6 @@ impl<T: 'static + Send> http::HostWithStore<T> for SharedCtx {
 
 #[cfg(test)]
 mod tests {
-    mod oauth2_tests;
     use std::collections::{BTreeMap, BTreeSet};
 
     use wamn_catalog::{
@@ -1935,344 +1496,6 @@ mod tests {
     }
 
     #[test]
-    fn hmac_credential_signs_exact_body_bytes_with_rfc_4231_vector() {
-        // RFC 4231 test case 2: the expected value is independent of this signer.
-        let secret = r#"{"hmac":{"algorithm":"sha256","secret":"Jefe","header":"x-signature"}}"#;
-        let body = b"what do ya want for nothing?";
-        let credentials =
-            credential_headers(None, secret, "POST", "https://example.com/notify", body)
-                .expect("HMAC credential");
-        assert_eq!(
-            credentials["x-signature"],
-            "sha256=5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
-        );
-        assert_ne!(
-            credentials,
-            credential_headers(
-                None,
-                secret,
-                "POST",
-                "https://example.com/notify",
-                b"what do ya want for nothing?\n"
-            )
-            .unwrap()
-        );
-        assert_eq!(
-            credential_headers(None, secret, "POST", "https://example.com/notify", b"").unwrap()["x-signature"],
-            "sha256=923598ca6d64af2a5dba79dcd021a8a0fe5c5f557519adaaf0ad532d4506dd30"
-        );
-        let request = Request {
-            body: Some(body.to_vec()),
-            ..effect_request(Vec::new())
-        };
-        let headers = outbound_headers(&request, credentials).expect("signed headers");
-        assert!(headers.contains_key("x-signature"));
-        assert!(
-            request.headers.is_empty(),
-            "the guest supplied no credential"
-        );
-        assert_eq!(request.body.as_deref(), Some(body.as_slice()));
-    }
-
-    const OAUTH1_SECRET: &str = r#"{"oauth1":{"consumer-key":"consumer","consumer-secret":"consumer/secret&","token":"token","token-secret":"token secret+","realm":"123456"}}"#;
-    const OAUTH1_URL: &str =
-        "https://123456.suitetalk.api.netsuite.com/services/rest/record/v1/customer?limit=5";
-
-    fn independent_oauth1_signature(key: &str, base: &str) -> String {
-        use base64::Engine as _;
-        use hmac::{Hmac, KeyInit as _, Mac as _};
-
-        let mut mac = Hmac::<sha2::Sha256>::new_from_slice(key.as_bytes()).unwrap();
-        mac.update(base.as_bytes());
-        base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes())
-    }
-
-    fn oauth1_header_param(header: &str, name: &str) -> String {
-        let prefix = format!("{name}=\"");
-        let value = header
-            .strip_prefix("OAuth ")
-            .unwrap()
-            .split(", ")
-            .find_map(|field| field.strip_prefix(&prefix))
-            .unwrap()
-            .strip_suffix('"')
-            .unwrap();
-        url::form_urlencoded::parse(format!("value={value}").as_bytes())
-            .next()
-            .unwrap()
-            .1
-            .into_owned()
-    }
-
-    #[test]
-    fn oauth1_rfc_5849_base_string_and_sha256_signature() {
-        let url = url::Url::parse("http://EXAMPLE.COM:80/request?b5=%3D%253D&a3=a&c%40=&a2=r%20b")
-            .unwrap();
-        // RFC 5849 section 3.4.1.1 includes these decoded form fields and
-        // omits oauth_version. Exercise its exact normalization vector here;
-        // the production signer includes oauth_version.
-        let params = [
-            ("c2", ""),
-            ("a3", "2 q"),
-            ("oauth_consumer_key", "9djdj82h48djs9d2"),
-            ("oauth_token", "kkk9d7dh3k39sjv7"),
-            ("oauth_signature_method", "HMAC-SHA256"),
-            ("oauth_timestamp", "137131201"),
-            ("oauth_nonce", "7d8f3e4a"),
-        ];
-        let expected = concat!(
-            "POST&http%3A%2F%2Fexample.com%2Frequest&a2%3Dr%2520b%26a3%3D2%2520q",
-            "%26a3%3Da%26b5%3D%253D%25253D%26c%2540%3D%26c2%3D%26oauth_consumer_",
-            "key%3D9djdj82h48djs9d2%26oauth_nonce%3D7d8f3e4a%26oauth_signature_m",
-            "ethod%3DHMAC-SHA256%26oauth_timestamp%3D137131201%26oauth_token%3Dkkk",
-            "9d7dh3k39sjv7"
-        );
-        let base = oauth1_base_string("POST", &url, &params);
-        assert_eq!(base.as_bytes(), expected.as_bytes());
-        let credential = Oauth1Credential {
-            consumer_key: "9djdj82h48djs9d2".into(),
-            consumer_secret: "j49sk3j29djd".into(),
-            token: "kkk9d7dh3k39sjv7".into(),
-            token_secret: "dh893hdasih9".into(),
-            realm: None,
-        };
-        assert_eq!(
-            oauth1_signature(&credential, &base),
-            independent_oauth1_signature("j49sk3j29djd&dh893hdasih9", expected)
-        );
-    }
-
-    #[test]
-    fn oauth1_netsuite_header_signs_query_and_excludes_body() {
-        let sign = |body: &[u8]| {
-            credential_headers_with(None, OAUTH1_SECRET, "GET", OAUTH1_URL, body, || {
-                Ok(("fixed-nonce".into(), 1_700_000_000))
-            })
-            .unwrap()
-        };
-        let credentials = sign(b"c2&a3=2+q");
-        assert_eq!(credentials, sign(b"different body"));
-        let header = &credentials["authorization"];
-        assert!(header.starts_with("OAuth realm=\"123456\", oauth_consumer_key=\"consumer\", "));
-        assert!(header.contains("oauth_signature_method=\"HMAC-SHA256\""));
-        assert_eq!(oauth1_header_param(header, "oauth_version"), "1.0");
-        let expected = concat!(
-            "GET&https%3A%2F%2F123456.suitetalk.api.netsuite.com%2Fservices%2Frest%2Frecord%2Fv1%2Fcustomer&",
-            "limit%3D5%26oauth_consumer_key%3Dconsumer%26oauth_nonce%3Dfixed-nonce",
-            "%26oauth_signature_method%3DHMAC-SHA256%26oauth_timestamp%3D1700000000",
-            "%26oauth_token%3Dtoken%26oauth_version%3D1.0"
-        );
-        assert_eq!(
-            oauth1_header_param(header, "oauth_signature"),
-            independent_oauth1_signature("consumer%2Fsecret%26&token%20secret%2B", expected)
-        );
-    }
-
-    #[test]
-    fn oauth1_preserves_query_plus_and_signs_form_body() {
-        let url = url::Url::parse("https://example.com/?x=a+b").unwrap();
-        assert_eq!(
-            oauth1_base_string("GET", &url, &[]),
-            "GET&https%3A%2F%2Fexample.com%2F&x%3Da%252Bb"
-        );
-        let sign = |body: &[u8], content_type| {
-            credential_headers_with(
-                content_type,
-                OAUTH1_SECRET,
-                "POST",
-                "https://example.com/?x=a+b",
-                body,
-                || Ok(("nonce".into(), 1)),
-            )
-            .unwrap()
-        };
-        let headers = sign(
-            b"a=one+two&a=%2B",
-            Some(b"application/x-www-form-urlencoded".as_slice()),
-        );
-        let expected = concat!(
-            "POST&https%3A%2F%2Fexample.com%2F&",
-            "a%3D%252B%26a%3Done%2520two%26oauth_consumer_key%3Dconsumer%26oauth_nonce%3Dnonce",
-            "%26oauth_signature_method%3DHMAC-SHA256%26oauth_timestamp%3D1%26oauth_token%3Dtoken",
-            "%26oauth_version%3D1.0%26x%3Da%252Bb"
-        );
-        assert_eq!(
-            oauth1_header_param(&headers["authorization"], "oauth_signature"),
-            independent_oauth1_signature("consumer%2Fsecret%26&token%20secret%2B", expected)
-        );
-        assert_ne!(
-            headers,
-            sign(
-                b"a=changed",
-                Some(b"application/x-www-form-urlencoded".as_slice())
-            )
-        );
-        assert_eq!(
-            sign(b"a=one", Some(b"application/json".as_slice())),
-            sign(b"a=two", None)
-        );
-    }
-
-    #[test]
-    fn oauth1_repeated_requests_get_fresh_nonces() {
-        let first = credential_headers(None, OAUTH1_SECRET, "GET", OAUTH1_URL, b"").unwrap();
-        let second = credential_headers(None, OAUTH1_SECRET, "GET", OAUTH1_URL, b"").unwrap();
-        assert_ne!(
-            oauth1_header_param(&first["authorization"], "oauth_nonce"),
-            oauth1_header_param(&second["authorization"], "oauth_nonce")
-        );
-    }
-
-    #[test]
-    fn oauth1_overrides_guest_authorization_without_changing_guest_request() {
-        let request = effect_request(vec![
-            Header {
-                name: "Authorization".into(),
-                value: b"guest-token".to_vec(),
-            },
-            Header {
-                name: "authorization".into(),
-                value: b"second-guest-token".to_vec(),
-            },
-        ]);
-        let credentials = credential_headers(None, OAUTH1_SECRET, "GET", OAUTH1_URL, b"").unwrap();
-        let signed = credentials["authorization"].clone();
-        let headers = outbound_headers(&request, credentials).unwrap();
-        assert_eq!(headers["authorization"], signed);
-        assert_eq!(headers.get_all("authorization").iter().count(), 1);
-        assert_eq!(request.headers[0].value, b"guest-token");
-        assert_eq!(request.headers[1].value, b"second-guest-token");
-        assert!(!signed.contains("consumer/secret&"));
-        assert!(!signed.contains("token secret+"));
-    }
-
-    #[test]
-    fn oauth1_realm_is_optional_and_quoted_without_percent_encoding() {
-        let mut secret: serde_json::Value = serde_json::from_str(OAUTH1_SECRET).unwrap();
-        secret["oauth1"].as_object_mut().unwrap().remove("realm");
-        let without =
-            credential_headers_with(None, &secret.to_string(), "GET", OAUTH1_URL, b"", || {
-                Ok(("fixed-nonce".into(), 1_700_000_000))
-            })
-            .unwrap();
-        assert!(without["authorization"].starts_with("OAuth oauth_consumer_key="));
-        secret["oauth1"]["realm"] = serde_json::json!("account /\"\\");
-        let with =
-            credential_headers_with(None, &secret.to_string(), "GET", OAUTH1_URL, b"", || {
-                Ok(("fixed-nonce".into(), 1_700_000_000))
-            })
-            .unwrap();
-        assert!(with["authorization"].starts_with("OAuth realm=\"account /\\\"\\\\\", "));
-        assert_eq!(
-            oauth1_header_param(&with["authorization"], "oauth_signature"),
-            oauth1_header_param(&without["authorization"], "oauth_signature")
-        );
-    }
-
-    #[test]
-    fn oauth1_malformed_and_multiple_credential_arms_are_refused() {
-        let valid: serde_json::Value = serde_json::from_str(OAUTH1_SECRET).unwrap();
-        let refuses = |secret: serde_json::Value| {
-            assert!(matches!(
-                credential_headers(None, &secret.to_string(), "GET", OAUTH1_URL, b""),
-                Err(ConnectionError::CredentialUnavailable)
-            ));
-        };
-        for field in ["consumer-key", "consumer-secret", "token", "token-secret"] {
-            let mut missing = valid.clone();
-            missing["oauth1"].as_object_mut().unwrap().remove(field);
-            refuses(missing);
-            for value in [
-                serde_json::json!(""),
-                serde_json::json!(123),
-                serde_json::Value::Null,
-            ] {
-                let mut malformed = valid.clone();
-                malformed["oauth1"][field] = value;
-                refuses(malformed);
-            }
-        }
-        for arm in ["headers", "hmac"] {
-            let mut two = valid.clone();
-            two[arm] = serde_json::json!({});
-            refuses(two);
-        }
-        refuses(serde_json::json!({"oauth1": null}));
-        let mut extra = valid.clone();
-        extra["oauth1"]["algorithm"] = serde_json::json!("HMAC-SHA1");
-        refuses(extra);
-        for realm in [serde_json::json!(123), serde_json::json!("bad\r\nrealm")] {
-            let mut malformed = valid.clone();
-            malformed["oauth1"]["realm"] = realm;
-            refuses(malformed);
-        }
-    }
-
-    #[test]
-    fn malformed_credentials_are_refused() {
-        for secret in [
-            "not json",
-            "null",
-            "{}",
-            r#"{"other":{}}"#,
-            r#"{"hmac":null}"#,
-            r#"{"hmac":{"algorithm":"sha256","secret":"key","header":"x-signature","extra":true}}"#,
-            r#"{"hmac":{"algorithm":"sha256","secret":"key","header":"x-signature"},"extra":true}"#,
-            r#"{"hmac":{"algorithm":"sha256","secret":"key","header":"x-signature"},"headers":{}}"#,
-            r#"{"hmac":{"secret":"key","header":"x-signature"}}"#,
-            r#"{"hmac":{"algorithm":"sha256","header":"x-signature"}}"#,
-            r#"{"hmac":{"algorithm":"sha256","secret":"key"}}"#,
-            r#"{"hmac":{"algorithm":"sha512","secret":"key","header":"x-signature"}}"#,
-            r#"{"hmac":{"algorithm":"sha256","secret":"","header":"x-signature"}}"#,
-            r#"{"hmac":{"algorithm":"sha256","secret":123,"header":"x-signature"}}"#,
-            r#"{"hmac":{"algorithm":"sha256","secret":"key","header":""}}"#,
-            r#"{"hmac":{"algorithm":"sha256","secret":"key","header":"bad header"}}"#,
-            r#"{"hmac":{"algorithm":"sha256","secret":"key","header":"x-signature\r\n"}}"#,
-            r#"{"hmac":{"algorithm":"sha256","secret":"key","header":"Content-Length"}}"#,
-            r#"{"hmac":{"algorithm":"sha256","secret":"key","header":"Idempotency-Key"}}"#,
-            r#"{"headers":{"authorization":123}}"#,
-            r#"{"headers":{"host":"elsewhere"}}"#,
-            r#"{"headers":{"authorization":"bad\r\nvalue"}}"#,
-        ] {
-            assert!(
-                matches!(
-                    credential_headers(None, secret, "POST", "https://example.com/notify", b"body"),
-                    Err(ConnectionError::CredentialUnavailable)
-                ),
-                "accepted malformed credential: {secret}"
-            );
-        }
-    }
-
-    #[test]
-    fn headers_credential_keeps_its_shape_and_overrides_guest_values() {
-        let secret = r#"{"headers":{"authorization":"Bearer host-token"}}"#;
-        let request = effect_request(vec![Header {
-            name: "Authorization".into(),
-            value: b"guest-token".to_vec(),
-        }]);
-        let headers = outbound_headers(
-            &request,
-            credential_headers(None, secret, "POST", "https://example.com/notify", b"body")
-                .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(headers["authorization"], "Bearer host-token");
-        assert_eq!(headers.get_all("authorization").iter().count(), 1);
-        assert!(
-            credential_headers(
-                None,
-                r#"{"headers":{}}"#,
-                "POST",
-                "https://example.com/notify",
-                b""
-            )
-            .unwrap()
-            .is_empty()
-        );
-    }
-
-    #[test]
     fn guest_headers_cannot_spoof_the_host_owned_idempotency_key() {
         let spoofed = Request {
             requirement: "manager".to_string(),
@@ -2330,6 +1553,24 @@ mod tests {
             }
         }
         assert!(outbound_headers(&effect_request(Vec::new()), HashMap::new()).is_ok());
+    }
+
+    #[test]
+    fn guest_method_override_headers_are_removed() {
+        let request = effect_request(vec![
+            Header {
+                name: "x-http-method".into(),
+                value: b"DELETE".to_vec(),
+            },
+            Header {
+                name: "X-HTTP-Method-Override".into(),
+                value: b"PUT".to_vec(),
+            },
+        ]);
+        let headers = outbound_headers(&request, HashMap::new()).unwrap();
+        assert!(!headers.contains_key("x-http-method"));
+        assert!(!headers.contains_key("x-http-method-override"));
+        assert_eq!(request.method, "POST");
     }
 
     /// A `tracing` subscriber whose OTel layer gives the effect span a real,
@@ -2818,37 +2059,6 @@ mod tests {
 
 #[cfg(test)]
 mod connection_mode_tests {
-    #[test]
-    fn method_override_headers_are_stripped_and_credentials_cannot_supply_them() {
-        use super::*;
-        let request = Request {
-            requirement: "erp".into(),
-            method: "GET".into(),
-            path_and_query: "/".into(),
-            headers: vec![
-                Header {
-                    name: "X-HTTP-Method-Override".into(),
-                    value: b"POST".to_vec(),
-                },
-                Header {
-                    name: "X-HTTP-Method".into(),
-                    value: b"DELETE".to_vec(),
-                },
-            ],
-            body: None,
-            idempotency_key: None,
-        };
-        let headers = outbound_headers(&request, HashMap::new()).unwrap();
-        assert!(!headers.contains_key("x-http-method-override"));
-        assert!(!headers.contains_key("x-http-method"));
-        for name in ["X-HTTP-Method-Override", "X-HTTP-Method"] {
-            let secret = serde_json::json!({"headers": {(name): "POST"}}).to_string();
-            assert!(
-                credential_headers(None, &secret, "GET", "https://example.test/", b"body").is_err()
-            );
-        }
-    }
-
     #[test]
     fn read_mode_refuses_every_mutating_http_method() {
         for method in ["GET", "HEAD"] {

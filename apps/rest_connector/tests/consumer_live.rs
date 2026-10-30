@@ -178,7 +178,6 @@ pub fn declared(
     [(
         application.to_owned(),
         wamn_catalog::ApplicationDefinition {
-            connectors: std::collections::BTreeMap::new(),
             connections: std::collections::BTreeMap::new(),
             packages: manifest
                 .release
@@ -454,7 +453,7 @@ pub async fn source(admin: &tokio_postgres::Client, name: &str) -> anyhow::Resul
         .await?;
     let id = admin
         .query_one(
-            "INSERT INTO platform.external_system(integration,name) VALUES ('http',$1) RETURNING id",
+            "INSERT INTO platform.external_system(id,name) VALUES (gen_random_uuid(),$1) RETURNING id",
             &[&name],
         )
         .await?

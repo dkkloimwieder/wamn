@@ -136,7 +136,6 @@ pub fn write_package(
         applications: [(
             admission.package_id().to_owned(),
             wamn_catalog::ApplicationDefinition {
-                connectors: std::collections::BTreeMap::new(),
                 connections: std::collections::BTreeMap::new(),
                 packages: [admission.package_id().to_owned()].into(),
             },

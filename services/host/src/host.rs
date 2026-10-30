@@ -1249,7 +1249,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         file_connection_reader.as_ref(),
         args.component_artifact_base.as_deref(),
     ) {
-        (Some(release), Some(database), Some(base)) => {
+        (Some(release), Some(_database), Some(base)) => {
             let registry_name = wamn_catalog::parse_component_artifact_base(base)?;
             let registry_credentials = match RegistryPullCredential::select(args.registry_auth_file.as_deref(), args.registry_token_metadata)? {
                 RegistryPullCredential::AuthFile(path) => wamn_package_artifact::registry_credentials::RegistryCredentialSource::Fixed(
@@ -1257,7 +1257,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 RegistryPullCredential::TokenMetadata => wamn_package_artifact::registry_credentials::RegistryCredentialSource::MetadataServer,
             };
             Some(wamn_runtime::connectors::ConnectorSource {
-                database: Arc::clone(database),
+                postgres: Arc::clone(&postgres),
+                env_key: release.scope().env_key.clone(),
+                manifest_digest: release.release().manifest_digest.to_string(),
+                applications: release.scope().applications.clone(),
                 credentials: Arc::clone(&credentials),
                 registry: wamn_package_artifact::PackageRegistry {
                     artifact_base: base.to_owned(),
@@ -1441,6 +1444,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let files = application.map(|release| {
         let connections = Arc::new(wamn_execution_host::file_route::RegistryFileConnections {
             client: file_connection_reader,
+            postgres: Arc::clone(&postgres),
+            release: Arc::clone(release),
+            credentials: Arc::clone(&credentials),
             org: args.org.clone().unwrap_or_default(),
             project: args.project.clone(),
             environment: release.scope().environment.clone(),
@@ -1604,6 +1610,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
 
     if let (Some(connectors), Some(release)) = (&connectors, application) {
         plugins.push(Arc::new(wamn_runtime::connectors::ConnectorIngress {
+            postgres: Arc::clone(&postgres),
+            project: args.project.clone(),
             connectors: Arc::clone(connectors),
             release: Arc::clone(release),
         }));

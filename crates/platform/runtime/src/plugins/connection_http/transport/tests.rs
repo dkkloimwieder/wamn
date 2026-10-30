@@ -34,7 +34,6 @@ struct Observed {
     method: String,
     version: Version,
     authorization: Option<String>,
-    signature: Option<String>,
     body: Vec<u8>,
 }
 
@@ -187,7 +186,6 @@ async fn serve_h1<I: AsyncRead + AsyncWrite + Unpin>(
             .to_owned();
         let mut host = String::new();
         let mut authorization = None;
-        let mut signature = None;
         let mut length = 0;
         loop {
             line.clear();
@@ -201,7 +199,6 @@ async fn serve_h1<I: AsyncRead + AsyncWrite + Unpin>(
                 match name.to_ascii_lowercase().as_str() {
                     "host" => host = value.trim().to_owned(),
                     "authorization" => authorization = Some(value.trim().to_owned()),
-                    "x-signature" => signature = Some(value.trim().to_owned()),
                     "content-length" => length = value.trim().parse().expect("body length"),
                     _ => {}
                 }
@@ -216,7 +213,6 @@ async fn serve_h1<I: AsyncRead + AsyncWrite + Unpin>(
             method,
             version: Version::HTTP_11,
             authorization,
-            signature,
             body,
         });
         requests.fetch_add(1, Ordering::SeqCst);
@@ -309,10 +305,6 @@ async fn serve_h2<I: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
                     .headers
                     .get(header::AUTHORIZATION)
                     .map(|value| value.to_str().expect("test auth").to_owned()),
-                signature: request
-                    .headers
-                    .get("x-signature")
-                    .map(|value| value.to_str().expect("test signature").to_owned()),
                 body,
             });
             requests.fetch_add(1, Ordering::SeqCst);
@@ -363,8 +355,8 @@ async fn serve_h2<I: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
 }
 
 #[tokio::test]
-async fn the_host_signature_reaches_the_peer_without_changing_the_guest_request() {
-    use crate::plugins::connection_http::{Request as GuestRequest, credential_headers, execute};
+async fn host_authentication_reaches_the_peer_without_changing_the_guest_request() {
+    use crate::plugins::connection_http::{Request as GuestRequest, authentication, execute};
 
     let server = Server::start(Reply::Ok, None).await;
     let request = GuestRequest {
@@ -375,18 +367,19 @@ async fn the_host_signature_reaches_the_peer_without_changing_the_guest_request(
         body: Some(b"what do ya want for nothing?".to_vec()),
         idempotency_key: None,
     };
-    let credentials = credential_headers(
-        None,
-        r#"{"hmac":{"algorithm":"sha256","secret":"Jefe","header":"x-signature"}}"#,
-        &request.method,
-        &server.decision().logical_url,
-        request.body.as_deref().unwrap(),
+    let mut decision = server.decision();
+    let credentials = authentication::headers(
+        "http_basic",
+        &serde_json::json!({}),
+        Some(r#"{"username":"fixture","password":"private"}"#),
+        &request,
+        &mut decision,
     )
     .unwrap();
     let response = execute(
         &server.transport(),
         scope(1),
-        server.decision(),
+        decision,
         &request,
         credentials,
     )
@@ -396,11 +389,10 @@ async fn the_host_signature_reaches_the_peer_without_changing_the_guest_request(
     let observed = server.observed.lock().unwrap();
     assert_eq!(observed.len(), 1);
     assert_eq!(
-        observed[0].signature.as_deref(),
-        Some("sha256=5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843")
+        observed[0].authorization.as_deref(),
+        Some("Basic Zml4dHVyZTpwcml2YXRl")
     );
     assert_eq!(observed[0].body, request.body.as_deref().unwrap());
-    assert!(observed[0].authorization.is_none());
     assert!(request.headers.is_empty());
 }
 

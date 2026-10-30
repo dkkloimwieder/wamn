@@ -53,6 +53,8 @@ Supply `--materializer-component` with the absolute path to a `materializer.wasm
 The emitted `local_artifacts` configuration names the local output directory and these components.
 For declared connections, pass `--local-bindings` with an absolute path to the selection file.
 The emitted configuration stores that path in `local_artifacts.bindings`.
+Each selection contains `package-id`, `component`, and `store-alias`.
+The environment document supplies the integration name and version.
 The host reads credential references from Postgres and resolves values through the environment store.
 Set `WAMN_CONTROL_URL` to the control host URL and `WAMN_TOKEN` to the caller session token.
 Before activation, write connections with `wamn-ctl connection write`.

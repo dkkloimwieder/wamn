@@ -55,31 +55,16 @@ SELECT COALESCE( \
 /// closure has one exact usable environment binding.
 pub(crate) const RELEASE_COMPONENT_BINDINGS_READY_SQL: &str = "\
 SELECT NOT EXISTS ( \
-    SELECT 1 \
-     FROM catalog.connection_requirements AS requirement \
-     WHERE requirement.env_key = $1 \
-       AND requirement.component_digest = ANY($4::text[]) \
+    SELECT FROM catalog.connection_requirement requirement \
+     WHERE requirement.env_key=$1 AND requirement.component_digest=ANY($3::text[]) \
        AND NOT EXISTS ( \
-           SELECT 1 \
-             FROM catalog.connection_bindings AS binding \
-             JOIN catalog.connection_instances AS instance \
-               ON instance.env_key = binding.env_key \
-              AND instance.environment = binding.environment \
-              AND instance.instance_id = binding.instance_id \
-             JOIN catalog.connection_generations AS generation \
-               ON generation.env_key = instance.env_key \
-              AND generation.environment = instance.environment \
-              AND generation.instance_id = instance.instance_id \
-              AND generation.generation = instance.active_generation \
-            WHERE binding.env_key = requirement.env_key \
-              AND binding.manifest_digest = $2 \
-              AND binding.environment = $3 \
-              AND binding.component_digest = requirement.component_digest \
-              AND binding.store_alias = requirement.store_alias \
-              AND binding.binding_status = 'active' \
-              AND binding.validation_status = 'valid' \
-              AND instance.lifecycle_status = 'enabled' \
-              AND instance.active_generation IS NOT NULL \
+        SELECT FROM catalog.connection_binding binding \
+        JOIN catalog.release_connection selected USING(env_key,manifest_digest,connection_id) \
+        JOIN platform.connection connection ON connection.id=selected.connection_id \
+        JOIN platform.integration integration ON integration.id=connection.integration_id \
+        WHERE binding.env_key=requirement.env_key AND binding.manifest_digest=$2 \
+          AND binding.component_digest=requirement.component_digest AND binding.package_id=requirement.package_id \
+          AND binding.name=requirement.name AND connection.status='active' AND integration.status='active' \
        ) \
 )";
 
@@ -109,6 +94,39 @@ impl ResolvedActiveWiring {
 }
 
 impl WamnPostgres {
+    /// Read only names declared by the selected package and component closure.
+    pub async fn declared_connection_names(
+        &self,
+        project: &str,
+        env_key: &str,
+        package: &str,
+        digest: &str,
+    ) -> anyhow::Result<std::collections::HashSet<String>> {
+        let (connection, _) = self
+            .checkout_platform(project, AuthorityClass::ExecutorPlatform)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        Ok(connection.query("SELECT name FROM catalog.connection_requirement WHERE env_key=$1 AND package_id=$2 AND component_digest=$3",&[&env_key,&package,&digest]).await?.into_iter().map(|row|row.get(0)).collect())
+    }
+
+    /// Read the names and versions of the loaded release from its environment catalog.
+    pub async fn released_connection_bindings(
+        &self,
+        project: &str,
+        env_key: &str,
+        digest: &str,
+        authority: AuthorityClass,
+    ) -> anyhow::Result<Vec<tokio_postgres::Row>> {
+        let (connection, _) = self
+            .checkout_platform(project, authority)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        Ok(connection.query(
+            "SELECT DISTINCT b.package_id,b.name,c.id::text,r.version,i.name,c.integration_type,q.mode FROM catalog.connection_binding b JOIN catalog.connection_requirement q USING(env_key,component_digest,package_id,name) JOIN catalog.release_connection r USING(env_key,manifest_digest,connection_id) JOIN platform.connection c ON c.id=b.connection_id JOIN platform.integration i ON i.id=c.integration_id WHERE b.env_key=$1 AND b.manifest_digest=$2 AND c.status='active' AND i.status='active'",
+            &[&env_key,&digest],
+        ).await?)
+    }
+
     pub async fn resolve_release_components(
         &self,
         project: &str,
@@ -229,8 +247,7 @@ impl WamnPostgres {
             return Err(anyhow::anyhow!(error.to_string()));
         }
 
-        let params: [&(dyn ToSql + Sync); 4] =
-            [&env_key, &manifest_digest, &environment, &component_digests];
+        let params: [&(dyn ToSql + Sync); 3] = [&env_key, &manifest_digest, &component_digests];
         let result = if let Some(local) = &self.local_application {
             if local.scope.env_key != env_key
                 || local.scope.environment != environment
@@ -445,15 +462,14 @@ mod tests {
     #[test]
     fn readiness_query_requires_the_exact_component_grain_and_live_binding() {
         for predicate in [
-            "requirement.component_digest = ANY($4::text[])",
-            "binding.manifest_digest = $2",
-            "binding.environment = $3",
-            "binding.component_digest = requirement.component_digest",
-            "binding.store_alias = requirement.store_alias",
-            "binding.binding_status = 'active'",
-            "binding.validation_status = 'valid'",
-            "instance.lifecycle_status = 'enabled'",
-            "generation.generation = instance.active_generation",
+            "requirement.component_digest=ANY($3::text[])",
+            "binding.manifest_digest=$2",
+            "binding.component_digest=requirement.component_digest",
+            "binding.package_id=requirement.package_id",
+            "binding.name=requirement.name",
+            "connection.status='active'",
+            "integration.status='active'",
+            "JOIN catalog.release_connection selected USING(env_key,manifest_digest,connection_id)",
         ] {
             assert!(
                 RELEASE_COMPONENT_BINDINGS_READY_SQL.contains(predicate),

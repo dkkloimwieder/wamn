@@ -21,16 +21,22 @@
   },
   "connections": {
     "files": {
-      "integration": "s3",
-      "mode": "write"
+      "mode": "write",
+      "interfaces": [
+        "wasmcloud:blobstore/blobstore@0.1.0"
+      ]
     },
     "files_read": {
-      "integration": "s3",
-      "mode": "read"
+      "mode": "read",
+      "interfaces": [
+        "wasmcloud:blobstore/blobstore@0.1.0"
+      ]
     },
     "files_no_cdn": {
-      "integration": "s3",
-      "mode": "write"
+      "mode": "write",
+      "interfaces": [
+        "wasmcloud:blobstore/blobstore@0.1.0"
+      ]
     }
   },
   "components": {

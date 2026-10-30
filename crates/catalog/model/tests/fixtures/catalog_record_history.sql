@@ -18,12 +18,12 @@ INSERT INTO platform.integration (id,integration_type,name,status)
 VALUES ('10000000-0000-4000-8000-000000000001','http','history-http','active');
 INSERT INTO platform.connection (id,integration_id,integration_type,status)
 VALUES ('10000000-0000-4000-8000-000000000002','10000000-0000-4000-8000-000000000001','http','active');
-INSERT INTO catalog.connection_requirement (env_key,component_digest,package_id,name,integration_type,interfaces,mode)
-VALUES ('history','sha256:' || repeat('a',64),'fixture','store','http',ARRAY['wamn:connection/http@0.1.0'],'write');
-INSERT INTO catalog.release_connection (env_key,manifest_digest,connection_id,integration_type,version)
-VALUES ('history','sha256:' || encode(sha256('{}'::bytea),'hex'),'10000000-0000-4000-8000-000000000002','http',1);
-INSERT INTO catalog.connection_binding (env_key,manifest_digest,component_digest,package_id,name,connection_id,integration_type)
-VALUES ('history','sha256:' || encode(sha256('{}'::bytea),'hex'),'sha256:' || repeat('a',64),'fixture','store','10000000-0000-4000-8000-000000000002','http');
+INSERT INTO catalog.connection_requirement (env_key,component_digest,package_id,name,interfaces,mode)
+VALUES ('history','sha256:' || repeat('a',64),'fixture','store',ARRAY['wamn:connection/http@0.1.0'],'write');
+INSERT INTO catalog.release_connection (env_key,manifest_digest,connection_id,version)
+VALUES ('history','sha256:' || encode(sha256('{}'::bytea),'hex'),'10000000-0000-4000-8000-000000000002',1);
+INSERT INTO catalog.connection_binding (env_key,manifest_digest,component_digest,package_id,name,connection_id)
+VALUES ('history','sha256:' || encode(sha256('{}'::bytea),'hex'),'sha256:' || repeat('a',64),'fixture','store','10000000-0000-4000-8000-000000000002');
 INSERT INTO catalog.wiring_tombstones (env_key, package_id, environment, wiring_id, reason)
 VALUES ('history', 'fixture', 'dev', 'retired', 'fixture');
 INSERT INTO catalog.package_upgrade_qualifications

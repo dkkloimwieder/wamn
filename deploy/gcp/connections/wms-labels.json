@@ -1,12 +1,10 @@
 {
-  "integration": "gcs",
+  "project": "wms",
+  "env": "dev",
   "name": "wms-labels",
-  "transport": "http",
-  "exchange": "request",
   "parameters": {
     "provider": "gcs",
     "container": "wamn-dev-labels",
     "prefix": "labels/"
-  },
-  "status": "active"
+  }
 }

@@ -8,10 +8,13 @@ environment.Environment {
     release = "__RELEASE_DIGEST__"
     route_host = "files.orders.example"
     policy = "dev"
+    integrations = {
+        "file-store" = {version = 1}
+        "files-no-cdn" = {version = 1}
+    }
     applications = {
         files = {
             packages = ["file_fixture"]
-            connectors = {s3 = "host"}
             connections = {
                 files = "file-store"
                 files_read = "file-store"

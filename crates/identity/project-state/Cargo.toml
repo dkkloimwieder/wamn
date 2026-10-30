@@ -16,6 +16,7 @@ wamn-catalog = { workspace = true, optional = true, features = ["test-util"] }
 wamn-test-postgres = { workspace = true, optional = true }
 
 [dev-dependencies]
+wamn-project-state = { path = ".", features = ["test-util"] }
 wamn-control-provision = { workspace = true }
 # The row image test compares wamn_history.row_image with the one platform
 # timestamptz canonicalizer, which lives in the runtime.

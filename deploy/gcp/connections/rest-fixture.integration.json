@@ -1,0 +1,7 @@
+{
+  "project": "wms",
+  "name": "rest-fixture",
+  "integration_type": "http",
+  "auth_type": "none",
+  "external_system": "rest-fixture"
+}

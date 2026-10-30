@@ -225,7 +225,7 @@ fn retired_material_stays_during_the_five_minute_grace() {
 fn publish_refuses(schema: &str, operations: &str, digest: &str, code: &str, message: &str) {
     run(&format!("DO $$ BEGIN
         BEGIN
-            PERFORM registry.publish_integration('{code}',2,{digest},'{schema}'::jsonb,'{operations}');
+            PERFORM registry.publish_integration('{code}',2,{digest},'{schema}'::jsonb,'{operations}',ARRAY['wamn:connection/http@0.1.0']);
             ASSERT false, 'invalid publication must refuse';
         EXCEPTION WHEN invalid_parameter_value THEN
             ASSERT SQLERRM LIKE '{message}%', SQLERRM;
@@ -305,7 +305,7 @@ fn publish_refuses_native_without_a_digest() {
         r#"INSERT INTO registry.integration_type(code,runtime_type,exclusive) VALUES ('native_test','native',false);
         DO $$ BEGIN
             BEGIN
-                PERFORM registry.publish_integration('native_test',1,NULL,'{"type":"object","properties":{}}','example:native/client');
+                PERFORM registry.publish_integration('native_test',1,NULL,'{"type":"object","properties":{}}','example:native/client',ARRAY['example:native/call@1.0.0']);
                 ASSERT false, 'native publication needs a digest';
             EXCEPTION WHEN invalid_parameter_value THEN ASSERT SQLERRM='digest_required', SQLERRM; END;
         END $$;"#,
@@ -327,5 +327,17 @@ fn integration_refuses_external_system_deletion() {
         result := registry.configure_external_system('acme','external_system.delete','{\"project\":\"app\",\"name\":\"erp\"}');
         ASSERT result->>'error'='referenced' AND result->>'field'='integration',result::text;
         ASSERT EXISTS(SELECT FROM registry.external_system WHERE name='erp');
+    END $$;");
+}
+
+#[test]
+fn apply_cannot_write_system_connection_authority() {
+    run("DO $$ DECLARE relation text; privilege text; BEGIN
+        FOREACH relation IN ARRAY ARRAY['connection','integration','connection_generation'] LOOP
+            FOREACH privilege IN ARRAY ARRAY['INSERT','UPDATE','DELETE','TRUNCATE'] LOOP
+                ASSERT NOT has_table_privilege('wamn_db_owner','registry.'||relation,privilege), relation||':'||privilege;
+            END LOOP;
+            ASSERT NOT has_any_column_privilege('wamn_db_owner','registry.'||relation,'INSERT,UPDATE'),relation;
+        END LOOP;
     END $$;");
 }

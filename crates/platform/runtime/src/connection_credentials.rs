@@ -74,7 +74,7 @@ impl ConnectionCredentials {
             .as_deref()
             .context("credential reader has no org")?;
         client.query_opt(
-            "SELECT store, ref, version, principal_id, external_system FROM registry.read_connection_credential($1,$2,$3)",
+            "SELECT store, ref, version, principal_id, external_system, auth_type, parameters FROM registry.read_connection_credential($1,$2,$3)",
             &[&org, &project, &name],
         ).await.context("read connection credential authority")
     }
@@ -110,6 +110,37 @@ impl ConnectionCredentials {
         let Some(row) = self.connection(project, name).await? else {
             return Ok(None);
         };
+        self.material(&row).await
+    }
+
+    pub(crate) async fn http_authentication(
+        &self,
+        project: &str,
+        handle: &str,
+    ) -> anyhow::Result<(String, serde_json::Value, Option<String>)> {
+        let (name, _) = self.handle(handle)?;
+        let row = self
+            .connection(project, name)
+            .await?
+            .context("connection unavailable")?;
+        let auth_type: String = row.get(5);
+        let parameters: serde_json::Value = row.get(6);
+        let material = if auth_type == "none" {
+            None
+        } else {
+            self.material(&row).await?
+        };
+        Ok((
+            auth_type,
+            parameters
+                .get("auth")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({})),
+            material,
+        ))
+    }
+
+    async fn material(&self, row: &tokio_postgres::Row) -> anyhow::Result<Option<String>> {
         let Some(store) = row.get::<_, Option<String>>(0) else {
             return Ok(None);
         };
@@ -189,35 +220,44 @@ impl ConnectionCredentials {
         Ok((name, generation))
     }
 
-    /// Read a binding mode from the registry under the reader login's scope.
-    pub async fn binding_read_only(
+    /// Read one selected version through the existing environment system reader.
+    pub async fn version(
         &self,
         project: &str,
         environment: &str,
-        application: &str,
-        alias: &str,
-    ) -> anyhow::Result<bool> {
+        id: &str,
+        version: i32,
+    ) -> anyhow::Result<ConnectionVersion> {
         let client = self
             .database
             .as_ref()
-            .context("connection credentials unavailable")?;
+            .context("connection reader unavailable")?;
         let org = self
             .org
             .as_deref()
-            .context("credential reader has no org")?;
-        let mode: Option<String> = client
-            .query_one(
-                "SELECT registry.lookup_connection_binding_mode($1,$2,$3,$4,$5)",
-                &[&org, &project, &environment, &application, &alias],
-            )
-            .await?
-            .get(0);
-        match mode.as_deref() {
-            Some("read") => Ok(true),
-            Some("write") => Ok(false),
-            _ => anyhow::bail!("connection binding mode unavailable"),
-        }
+            .context("connection reader has no org")?;
+        let row = client.query_opt(
+            "SELECT generation,parameters,digest,integration_type,runtime_type FROM registry.read_connection_version($1,$2,$3,$4::text::uuid,$5)",
+            &[&org,&project,&environment,&id,&version],
+        ).await?.context("connection version unavailable")?;
+        Ok(ConnectionVersion {
+            generation: row.get(0),
+            parameters: row.get(1),
+            digest: row.get(2),
+            integration_type: row.get(3),
+            runtime_type: row.get(4),
+        })
     }
+}
+
+/// The active non-secret configuration of a release's selected version.
+#[derive(Clone, Debug)]
+pub struct ConnectionVersion {
+    pub generation: i64,
+    pub parameters: serde_json::Value,
+    pub digest: Option<String>,
+    pub integration_type: String,
+    pub runtime_type: String,
 }
 
 #[cfg(test)]

@@ -22,6 +22,6 @@ manifest.Package {
             error_details = {unavailable = {}}
         }
     }
-    connections = {registers = {integration = "modbus", mode = "read"}}
+    connections = {registers = {interfaces = ["wamn:connector/reader@0.1.0"], mode = "read"}}
     components = {modbus_reader = {connections = ["registers"]}}
 }

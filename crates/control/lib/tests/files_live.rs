@@ -28,7 +28,10 @@ fn file_fixture_declares_each_binding_mode() {
     .expect("render the file fixture's current blobstore declaration");
     let _: wamn_catalog::ComponentDeclaration = serde_json::from_value(declaration)
         .expect("the fixture uses the current component declaration");
-    assert_eq!(package["connections"]["files"]["integration"], "s3");
+    assert_eq!(
+        package["connections"]["files"]["interfaces"],
+        serde_json::json!(["wasmcloud:blobstore/blobstore@0.1.0"])
+    );
     assert_eq!(package["connections"]["files"]["mode"], "write");
     assert_eq!(package["connections"]["files_read"]["mode"], "read");
     assert_eq!(package["connections"]["files_no_cdn"]["mode"], "write");
@@ -163,90 +166,61 @@ fn registry_definition() -> serde_json::Value {
 #[tokio::test]
 async fn file_connection_lookup_refuses_wrong_login_and_forged_scope() -> anyhow::Result<()> {
     let registry = files::registry("file-org", "project", registry_definition()).await?;
-    let allowed = files::lookup(
-        &registry.reader,
-        "file-org",
-        "project",
-        "files",
-        Some("files"),
-        None,
-    )
-    .await?;
-    assert_eq!(allowed.len(), 1);
-    assert_eq!(allowed[0].get::<_, String>(0), registry.connection_id);
-    registry.unmapped.batch_execute("SET app.org='file-org'; SET app.project='project'; SET app.env_key='file-org--project--dev'").await?;
+    assert_eq!(
+        files::active_file_connections(
+            &registry.reader,
+            "file-org",
+            "project",
+            Some(&registry.connection_id)
+        )
+        .await?
+        .len(),
+        1
+    );
+    registry
+        .unmapped
+        .batch_execute("SET app.org='file-org'; SET app.project='project'")
+        .await?;
     for (client, org, project) in [
         (&registry.unmapped, "file-org", "project"),
         (registry.reader.as_ref(), "other-org", "project"),
         (registry.reader.as_ref(), "file-org", "unenabled"),
+        (&registry.unenabled, "file-org", "unenabled"),
     ] {
-        for (binding, pin) in [
-            (Some("files"), None),
-            (
-                None,
-                Some((registry.connection_id.as_str(), registry.generation)),
-            ),
-        ] {
-            assert!(
-                files::lookup(client, org, project, "files", binding, pin)
-                    .await?
-                    .is_empty()
-            );
-        }
-    }
-    for (application, binding) in [("other", "files"), ("files", "undeclared"), ("", "files")] {
         assert!(
-            files::lookup(
-                &registry.reader,
-                "file-org",
-                "project",
-                application,
-                Some(binding),
-                None
-            )
-            .await?
-            .is_empty()
+            files::active_file_connections(client, org, project, Some(&registry.connection_id))
+                .await?
+                .is_empty()
         );
     }
-    let error = registry
-        .reader
-        .query("SELECT * FROM registry.connection_generation", &[])
-        .await
-        .unwrap_err();
-    assert_eq!(error.code(), Some(&SqlState::INSUFFICIENT_PRIVILEGE));
+    assert_eq!(
+        registry
+            .reader
+            .query("SELECT * FROM registry.connection_generation", &[])
+            .await
+            .unwrap_err()
+            .code(),
+        Some(&SqlState::INSUFFICIENT_PRIVILEGE)
+    );
     Ok(())
 }
 
 #[tokio::test]
-async fn file_connection_lookup_requires_its_environment_and_an_active_connection()
--> anyhow::Result<()> {
-    let registry = files::registry("file-org", "project", registry_definition()).await?;
-    assert!(
-        files::lookup(
-            &registry.unenabled,
-            "file-org",
-            "unenabled",
-            "files",
-            None,
-            Some((&registry.connection_id, registry.generation))
-        )
-        .await?
-        .is_empty()
-    );
+async fn file_connection_lookup_requires_an_active_connection_and_integration() -> anyhow::Result<()>
+{
+    let mut registry = files::registry("file-org", "project", registry_definition()).await?;
     registry
         .configure(
             "connection.disable",
-            serde_json::json!({"project":"project","env":"dev","name":files::STORE_NAME}),
+            serde_json::json!({"name":files::STORE_NAME}),
         )
         .await?;
     assert!(
-        files::lookup(
+        files::active_file_connections(
             &registry.reader,
             "file-org",
             "project",
-            "files",
-            None,
-            Some((&registry.connection_id, registry.generation))
+            Some(&registry.connection_id)
         )
         .await?
         .is_empty()
@@ -254,38 +228,23 @@ async fn file_connection_lookup_requires_its_environment_and_an_active_connectio
     registry
         .configure(
             "connection.enable",
-            serde_json::json!({"project":"project","env":"dev","name":files::STORE_NAME}),
+            serde_json::json!({"name":files::STORE_NAME}),
         )
         .await?;
-    let mut parameters = registry_definition();
-    parameters["prefix"] = serde_json::json!("disabled/");
     registry
-        .configure(
-            "connection.write",
-            serde_json::json!({"name":files::STORE_NAME,"integration":"s3",
-        "transport":"s3","exchange":"request","parameters":parameters,"status":"disabled"}),
-        )
+        .owner
+        .batch_execute("UPDATE registry.integration SET status='disabled' WHERE name='file-store'")
         .await?;
-    for (binding, pin) in [
-        (Some("files"), None),
-        (
-            None,
-            Some((registry.connection_id.as_str(), registry.generation)),
-        ),
-    ] {
-        assert!(
-            files::lookup(
-                &registry.reader,
-                "file-org",
-                "project",
-                "files",
-                binding,
-                pin
-            )
-            .await?
-            .is_empty()
-        );
-    }
+    assert!(
+        files::active_file_connections(
+            &registry.reader,
+            "file-org",
+            "project",
+            Some(&registry.connection_id)
+        )
+        .await?
+        .is_empty()
+    );
     Ok(())
 }
 
@@ -467,54 +426,29 @@ async fn aged_staging_expires_while_unlinked_metadata_and_aged_live_bytes_stay()
 }
 
 #[tokio::test]
-async fn file_connection_lookup_accepts_only_the_matching_binding_and_pinned_generation()
+async fn file_reads_select_the_active_generation_and_refuse_another_connection()
 -> anyhow::Result<()> {
     let original = registry_definition();
-    let registry = files::registry("file-org", "project", original.clone()).await?;
-    let moved = serde_json::json!({"provider":"s3","endpoint":"http://127.0.0.1:9000",
-        "container":"files-b","prefix":"new/"});
-    registry.move_store(&moved).await?;
-    for (binding, mode) in [("files", "write"), ("files_read", "read")] {
-        let rows = files::lookup(
-            &registry.reader,
-            "file-org",
-            "project",
-            "files",
-            Some(binding),
-            Some((&registry.connection_id, registry.generation)),
-        )
-        .await?;
-        if binding == "files_read" {
-            assert!(
-                rows.is_empty(),
-                "a combined binding and pin refuses read authority"
-            );
-        } else {
-            assert_eq!(
-                rows.len(),
-                1,
-                "native mutations carry both their write binding and their file's pin"
-            );
-            assert_eq!(rows[0].get::<_, serde_json::Value>(3), original);
-            assert_eq!(rows[0].get::<_, String>(4), mode);
-        }
-    }
-    let other: String = registry
-        .owner
-        .query_one(
-            "SELECT id::text FROM registry.connection WHERE org='file-org' AND name='files-no-cdn'",
-            &[],
-        )
-        .await?
-        .get(0);
+    let mut registry = files::registry("file-org", "project", original.clone()).await?;
+    let mut changed = original;
+    changed["cdn_host"] = serde_json::json!("https://files.example");
+    registry.move_store(&changed).await?;
+    let rows = files::active_file_connections(
+        &registry.reader,
+        "file-org",
+        "project",
+        Some(&registry.connection_id),
+    )
+    .await?;
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].get::<_, i64>(2) > registry.generation);
+    assert_eq!(rows[0].get::<_, serde_json::Value>(3), changed);
     assert!(
-        files::lookup(
+        files::active_file_connections(
             &registry.reader,
             "file-org",
             "project",
-            "files",
-            Some("files"),
-            Some((&other, registry.generation))
+            Some("00000000-0000-0000-0000-000000000001")
         )
         .await?
         .is_empty()

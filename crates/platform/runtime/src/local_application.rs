@@ -87,25 +87,26 @@ impl LocalApplication {
         });
     }
 
-    async fn binding_read_only(&self, binding: &LocalBindingFacts) -> anyhow::Result<bool> {
-        let application =
-            wamn_catalog::application_for_package(&self.scope.applications, &binding.package_id)
-                .context("local binding has no application")?;
-        let reader = self
-            .credentials
+    fn connection_reader(&self) -> anyhow::Result<LocalConnectionReader> {
+        self.credentials
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
-            .context("local bindings require the connection reader")?;
-        reader
-            .credentials
-            .binding_read_only(
-                &reader.project,
-                &self.scope.environment,
-                application,
-                binding.requirement.store_alias(),
-            )
-            .await
+            .context("local bindings require the connection reader")
+    }
+
+    fn binding_scope<'a>(
+        &'a self,
+        package: &'a str,
+        reader: &'a LocalConnectionReader,
+    ) -> LocalBindingScope<'a> {
+        LocalBindingScope {
+            env_key: &self.scope.env_key,
+            environment: &self.scope.environment,
+            manifest_digest: self.facts.manifest_digest.as_str(),
+            package_id: package,
+            project: &reader.project,
+        }
     }
 
     pub(crate) async fn require_instance(
@@ -141,15 +142,15 @@ impl LocalApplication {
             {
                 continue;
             }
-            let mut current = read_local_binding(
+            let reader = self.connection_reader()?;
+            let current = read_local_binding(
                 client,
-                &self.scope.env_key,
-                &self.scope.environment,
+                &self.binding_scope(&binding.package_id, &reader),
                 &binding.requirement,
                 &binding.selection.instance_id,
+                &reader.credentials,
             )
             .await?;
-            current.read_only = self.binding_read_only(binding).await?;
             if current != binding.selection {
                 return Ok(false);
             }
@@ -188,16 +189,15 @@ impl LocalApplication {
         }) else {
             return Ok(None);
         };
-        let (mut current, definition, active_generation) = read_binding(
+        let reader = self.connection_reader()?;
+        let (current, definition, active_generation) = read_binding(
             client,
-            env_key,
-            lookup.environment,
+            &self.binding_scope(&binding.package_id, &reader),
             &binding.requirement,
             &binding.selection.instance_id,
-            Some(&binding.selection),
+            &reader.credentials,
         )
         .await?;
-        current.read_only = self.binding_read_only(binding).await?;
         let node_permitted = entry_permitted && component.operations.contains_key(lookup.operation);
         let valid = current == binding.selection
             && lookup
@@ -205,13 +205,7 @@ impl LocalApplication {
                 .is_none_or(|candidate| candidate == &current);
         Ok(Some(
             crate::plugins::wamn_postgres::ConnectionEffectSnapshot {
-                connection_name: read_local_connection_name(
-                    client,
-                    env_key,
-                    lookup.environment,
-                    &current.instance_id,
-                )
-                .await?,
+                connection_name: read_local_connection_name(client, &current.instance_id).await?,
                 read_only: current.read_only,
                 wiring_hash,
                 component: Some(component.component.clone()),
@@ -304,88 +298,124 @@ async fn entry_facts(
 
 async fn read_local_connection_name(
     client: &tokio_postgres::Client,
-    env_key: &str,
-    environment: &str,
     instance: &str,
 ) -> anyhow::Result<Option<String>> {
-    Ok(client.query_one("SELECT org_connection_name FROM catalog.connection_instances WHERE env_key=$1 AND environment=$2 AND instance_id=$3", &[&env_key,&environment,&instance]).await?.get(0))
+    Ok(client.query_one("SELECT i.name FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id WHERE c.id=$1::text::uuid", &[&instance]).await?.get(0))
 }
 
-/// Resolve an explicit local selection through the live instance and generation.
+/// Build the local selection from resolved administration facts.
+pub fn selection(
+    requirement: &ComponentConnectionRequirement,
+    connection: &str,
+    generation: i64,
+    definition: &serde_json::Value,
+    credential_set_handle: Option<String>,
+    read_only: bool,
+) -> CandidateConnectionBinding {
+    let descriptor = requirement.requirement();
+    let definition_hash = crate::connection_generation::definition_hash(definition);
+    let requirement_hash = requirement.requirement_hash();
+    let validation_hash = crate::connection_generation::definition_hash(
+        &crate::connection_generation::binding_validation_subject(
+            descriptor,
+            &requirement_hash,
+            &definition_hash,
+        ),
+    );
+    CandidateConnectionBinding {
+        read_only,
+        component_digest: requirement.component_digest().into(),
+        store_alias: requirement.store_alias().into(),
+        requirement_hash,
+        instance_id: connection.into(),
+        instance_revision: generation,
+        requirement_type: descriptor.requirement_type.clone(),
+        contract: descriptor.contract.clone(),
+        validation_hash,
+        generation,
+        definition_hash,
+        credential_set_handle,
+    }
+}
+
+/// The exact release and package that own a local binding.
+#[derive(Debug)]
+pub struct LocalBindingScope<'a> {
+    pub env_key: &'a str,
+    pub environment: &'a str,
+    pub manifest_digest: &'a str,
+    pub package_id: &'a str,
+    pub project: &'a str,
+}
+
+/// Resolve a local selection from the same catalog records as released calls.
 pub async fn read_local_binding(
     client: &tokio_postgres::Client,
-    env_key: &str,
-    environment: &str,
+    scope: &LocalBindingScope<'_>,
     requirement: &ComponentConnectionRequirement,
-    instance_id: &str,
+    connection: &str,
+    credentials: &crate::connection_credentials::ConnectionCredentials,
 ) -> anyhow::Result<CandidateConnectionBinding> {
-    read_binding(client, env_key, environment, requirement, instance_id, None)
+    read_binding(client, scope, requirement, connection, credentials)
         .await
         .map(|(binding, _, _)| binding)
 }
 
 async fn read_binding(
     client: &tokio_postgres::Client,
-    env_key: &str,
-    environment: &str,
+    scope: &LocalBindingScope<'_>,
     requirement: &ComponentConnectionRequirement,
-    instance_id: &str,
-    pin: Option<&CandidateConnectionBinding>,
+    connection: &str,
+    credentials: &crate::connection_credentials::ConnectionCredentials,
 ) -> anyhow::Result<(CandidateConnectionBinding, serde_json::Value, Option<i64>)> {
-    let generation = pin.map(|binding| binding.generation);
-    let row = client.query_opt("SELECT instance.revision, instance.requirement_type, instance.contract, generation.generation, generation.definition_json::text, generation.definition_hash, generation.credential_set_handle, instance.active_generation FROM catalog.connection_instances AS instance JOIN catalog.connection_generations AS generation ON generation.env_key = instance.env_key AND generation.environment = instance.environment AND generation.instance_id = instance.instance_id AND generation.generation = COALESCE($4::bigint, instance.active_generation) WHERE instance.env_key = $1 AND instance.environment = $2 AND instance.instance_id = $3 AND instance.lifecycle_status = 'enabled'", &[&env_key, &environment, &instance_id, &generation]).await?.context("local connection selection has no enabled instance and active generation")?;
-    if let Some(pin) = pin {
-        anyhow::ensure!(
-            row.try_get::<_, i64>(0)? >= pin.instance_revision,
-            "local connection revision predates its admission pin"
-        );
-    }
-    let requirement_type: String = row.try_get(1)?;
-    let contract: String = row.try_get(2)?;
+    let row=client.query_opt(
+        "SELECT c.integration_type,q.mode,r.version FROM catalog.connection_requirement q JOIN catalog.connection_binding b USING(env_key,component_digest,package_id,name) JOIN catalog.release_connection r USING(env_key,manifest_digest,connection_id) JOIN platform.connection c ON c.id=b.connection_id JOIN platform.integration i ON i.id=c.integration_id WHERE q.env_key=$1 AND q.package_id=$2 AND q.component_digest=$3 AND q.name=$4 AND b.manifest_digest=$5 AND b.connection_id=$6::text::uuid AND c.status='active' AND i.status='active'",
+        &[&scope.env_key,&scope.package_id,&requirement.component_digest(),&requirement.store_alias(),&scope.manifest_digest,&connection],
+    ).await?.context("local connection binding unavailable")?;
+    let integration_type: String = row.get(0);
+    let descriptor = wamn_catalog::RequirementType::for_integration(&integration_type)
+        .context("local binding requires a host integration")?
+        .descriptor();
     anyhow::ensure!(
-        requirement_type == requirement.requirement().requirement_type
-            && contract == requirement.requirement().contract,
+        &descriptor == requirement.requirement(),
         "local connection selection has another type or contract"
     );
-    let definition: serde_json::Value = serde_json::from_str(&row.try_get::<_, String>(4)?)?;
-    let definition_hash: String = row.try_get(5)?;
-    anyhow::ensure!(
-        crate::connection_generation::definition_hash(&definition) == definition_hash,
-        "local connection generation definition hash mismatch"
-    );
-    let credential_set_handle: Option<String> = row.try_get(6)?;
-    anyhow::ensure!(
-        (definition["provider"] == "gcs" && credential_set_handle.is_none())
-            || credential_set_handle
-                .as_deref()
-                .is_some_and(|handle| !handle.is_empty()),
-        "local connection generation has no credential handle"
-    );
+    let configuration = credentials
+        .version(scope.project, scope.environment, connection, row.get(2))
+        .await?;
+    let definition = configuration.parameters;
+    let definition_hash = crate::connection_generation::definition_hash(&definition);
     let requirement_hash = requirement.requirement_hash();
     let validation_hash = crate::connection_generation::definition_hash(
         &crate::connection_generation::binding_validation_subject(
-            requirement.requirement(),
+            &descriptor,
             &requirement_hash,
             &definition_hash,
         ),
     );
+    let credential_set_handle = if integration_type == "gcs" {
+        None
+    } else {
+        let name: String=client.query_one("SELECT i.name FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id WHERE c.id=$1::text::uuid",&[&connection]).await?.get(0);
+        Some(credentials.connection_handle(&name, configuration.generation)?)
+    };
     Ok((
         CandidateConnectionBinding {
-            read_only: false,
-            component_digest: requirement.component_digest().to_owned(),
-            store_alias: requirement.store_alias().to_owned(),
+            read_only: row.get::<_, String>(1) == "read",
+            component_digest: requirement.component_digest().into(),
+            store_alias: requirement.store_alias().into(),
             requirement_hash,
-            instance_id: instance_id.to_owned(),
-            instance_revision: pin.map_or(row.try_get(0)?, |binding| binding.instance_revision),
-            requirement_type,
-            contract,
+            instance_id: connection.into(),
+            instance_revision: configuration.generation,
+            requirement_type: descriptor.requirement_type,
+            contract: descriptor.contract,
             validation_hash,
-            generation: row.try_get(3)?,
+            generation: configuration.generation,
             definition_hash,
             credential_set_handle,
         },
         definition,
-        row.try_get(7)?,
+        Some(configuration.generation),
     ))
 }
 
@@ -856,7 +886,9 @@ mod tests {
         let _lock = wamn_test_postgres::lock();
         let mut authority = crate::connection_credentials::test_util::Fixture::new().await;
         authority.put("erp", "secret", &["project-a"]).await;
-        authority.admin.batch_execute("SET ROLE wamn_system; INSERT INTO registry.environment_connection_binding(org,project,env,application,alias,target_id,connection_id,generation,mode,exclusive) SELECT 'acme','project-a','dev','app','erp',t.id,c.id,c.current_generation,'read',false FROM registry.target t,registry.connection c WHERE t.name='cloud' AND c.org='acme' AND c.name='erp'; RESET ROLE").await.unwrap();
+        let row=authority.admin.query_one("SELECT c.id::text,i.id::text FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.project='project-a' AND i.name='erp'",&[]).await.unwrap();
+        let connection: String = row.get(0);
+        let integration: String = row.get(1);
         let database = wamn_project_state::test_database::tenant_platform();
         let (client, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
             .await
@@ -869,30 +901,31 @@ mod tests {
             "erp",
             wamn_catalog::ConnectionTypeDescriptor::http_v1(),
         );
-        let definition = serde_json::json!({"primary-authority":"https://example.invalid","tls-verification":"verify-authority"});
-        let definition_hash = crate::connection_generation::definition_hash(&definition);
-        client.batch_execute("BEGIN; SELECT set_config('app.env_key','tenant-a',true), set_config('app.user_id','770df186-ac15-579e-b46b-c297cae2011b',true), set_config('app.operation','admin:seed-local-binding',true); INSERT INTO catalog.connection_instances(env_key,environment,instance_id,requirement_type,contract,org_connection_name) VALUES ('tenant-a','dev','erp','http','wamn:connection/http@0.1.0','erp')").await.unwrap();
-        client
-            .execute(
-                wamn_schema_control::connections::insert_connection_generation_sql(),
-                &[
-                    &"tenant-a",
-                    &"dev",
-                    &"erp",
-                    &1_i64,
-                    &definition.to_string(),
-                    &definition_hash,
-                    &Some("org:acme:erp@2"),
-                ],
-            )
-            .await
-            .unwrap();
-        client.batch_execute("UPDATE catalog.connection_instances SET active_generation=1,revision=revision+1 WHERE env_key='tenant-a' AND environment='dev' AND instance_id='erp'; COMMIT").await.unwrap();
-        let mut selection =
-            super::read_local_binding(&client, "tenant-a", "dev", &requirement, "erp")
-                .await
-                .unwrap();
-        selection.read_only = true;
+        client.batch_execute("BEGIN; SELECT set_config('app.user_id','770df186-ac15-579e-b46b-c297cae2011b',true),set_config('app.operation','admin:seed-local-binding',true)").await.unwrap();
+        client.execute("INSERT INTO platform.integration(id,integration_type,name,status) VALUES($1::text::uuid,'http','erp','active');",&[&integration]).await.unwrap();
+        client.execute("INSERT INTO platform.connection(id,integration_id,integration_type,status) VALUES($1::text::uuid,$2::text::uuid,'http','active')",&[&connection,&integration]).await.unwrap();
+        client.execute("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES('tenant-a',$1,$2)",&[&facts.manifest_digest.as_str(),&manifest.canonical_bytes()]).await.unwrap();
+        client.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interfaces,mode) VALUES('tenant-a',$1,'orders','erp',ARRAY['wamn:connection/http@0.1.0'],'read')",&[&component.component_digest]).await.unwrap();
+        client.execute("INSERT INTO catalog.release_connection(env_key,manifest_digest,connection_id,version) VALUES('tenant-a',$1,$2::text::uuid,1)",&[&facts.manifest_digest.as_str(),&connection]).await.unwrap();
+        client.execute("INSERT INTO catalog.connection_binding(env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES('tenant-a',$1,$2,'orders','erp',$3::text::uuid)",&[&facts.manifest_digest.as_str(),&component.component_digest,&connection]).await.unwrap();
+        client.batch_execute("COMMIT").await.unwrap();
+        let credentials = std::sync::Arc::new(authority.reader("project-a").await);
+        let selection = super::read_local_binding(
+            &client,
+            &super::LocalBindingScope {
+                env_key: "tenant-a",
+                environment: "dev",
+                manifest_digest: facts.manifest_digest.as_str(),
+                package_id: "orders",
+                project: "project-a",
+            },
+            &requirement,
+            &connection,
+            &credentials,
+        )
+        .await
+        .unwrap();
+        assert!(selection.read_only);
         facts.requirements.push(requirement.clone());
         facts.bindings.push(super::LocalBindingFacts {
             package_id: "orders".into(),
@@ -917,10 +950,7 @@ mod tests {
                 .get(0),
             credentials: std::sync::Arc::default(),
         };
-        local.set_connection_credentials(
-            std::sync::Arc::new(authority.reader("project-a").await),
-            "project-a",
-        );
+        local.set_connection_credentials(credentials, "project-a");
         assert!(
             local
                 .bindings_ready(&client, std::slice::from_ref(&component.component_digest))
@@ -962,7 +992,7 @@ mod tests {
                 .await
                 .unwrap()
         );
-        authority.admin.batch_execute("SET ROLE wamn_system; DELETE FROM registry.environment_connection_binding; RESET ROLE").await.unwrap();
+        client.batch_execute("BEGIN; SELECT set_config('app.user_id','770df186-ac15-579e-b46b-c297cae2011b',true),set_config('app.operation','admin:remove-binding',true); DELETE FROM catalog.connection_binding; COMMIT").await.unwrap();
         assert!(
             local
                 .bindings_ready(&client, std::slice::from_ref(&component.component_digest))

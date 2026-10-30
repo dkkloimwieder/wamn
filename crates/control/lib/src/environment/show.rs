@@ -32,6 +32,7 @@ pub async fn show(platform: &Platform, triple: &Triple) -> anyhow::Result<Enviro
         client_package: None,
         policy: String::new(),
         applications: BTreeMap::new(),
+        integrations: BTreeMap::new(),
         floors: BTreeMap::new(),
     };
     let system = connect(&platform.system_database_url).await?;
@@ -55,11 +56,27 @@ pub async fn show(platform: &Platform, triple: &Triple) -> anyhow::Result<Enviro
             .map(str::to_owned);
         document.applications = revision_applications(&revision.values)?;
     }
-    for binding in system.query("SELECT b.application, b.alias, c.name, c.integration, b.connector FROM registry.environment_connection_binding b JOIN registry.connection c ON c.id=b.connection_id WHERE b.org=$1 AND b.project=$2 AND b.env=$3", &[&document.org,&document.project,&document.env]).await? {
-        let application: String = binding.get(0);
-        if let Some(definition) = document.applications.get_mut(&application) {
-            definition.connections.insert(binding.get(1),binding.get(2));
-            definition.connectors.insert(binding.get(3),binding.get(4));
+    if let DeclaredRelease::Digest(digest) = &document.release {
+        let url = super::ensure::project_url(platform, &document.triple()).await?;
+        let project = connect(&url).await?;
+        let env_key = wamn_control_provision::project_env_key(
+            &document.org,
+            &document.project,
+            &document.env,
+        );
+        for row in project.query("SELECT i.name,r.version FROM catalog.release_connection r JOIN platform.connection c ON c.id=r.connection_id JOIN platform.integration i ON i.id=c.integration_id WHERE r.env_key=$1 AND r.manifest_digest=$2",&[&env_key,digest]).await? {
+            document.integrations.insert(row.get(0),super::document::Integration {version:row.get(1)});
+        }
+        for binding in project.query(
+            "SELECT b.package_id,b.name,i.name,r.version FROM catalog.connection_binding b JOIN catalog.release_connection r USING(env_key,manifest_digest,connection_id) JOIN platform.connection c ON c.id=b.connection_id JOIN platform.integration i ON i.id=c.integration_id WHERE b.env_key=$1 AND b.manifest_digest=$2",
+            &[&env_key,digest],
+        ).await? {
+            let package: String = binding.get(0);
+            let integration: String = binding.get(2);
+            if let Some(application) = wamn_catalog::application_for_package(&document.applications,&package).map(str::to_owned) {
+                document.applications.get_mut(&application).expect("declared application").connections.insert(binding.get(1), integration.clone());
+                document.integrations.insert(integration, super::document::Integration {version:binding.get(3)});
+            }
         }
     }
     if let Some(project) = read_project(platform, &document, &row).await? {

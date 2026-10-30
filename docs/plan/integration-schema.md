@@ -38,6 +38,7 @@ CREATE TABLE registry.integration_type_version (    -- every build, every parame
     digest           text CHECK (digest ~ '^sha256:[0-9a-f]{64}$'),  -- the bytes; NULL only for host types (publish check); not unique
     parameter_schema jsonb NOT NULL,                 -- flat object; per field: optional immutable, optional deprecated
     operations       text NOT NULL,                  -- the one exported WIT world, e.g. wamn:modbus/client@1.0.0
+    exports          text[] NOT NULL,                -- every interface that world exports; decoded at publish (host types: seeded)
     published_at     timestamptz NOT NULL,
     PRIMARY KEY (integration_type, version)
 );
@@ -94,7 +95,7 @@ CREATE TABLE registry.connection (                     -- the integration in one
     org                  text NOT NULL,
     project              text NOT NULL,
     env                  text NOT NULL,
-    integration_type     text NOT NULL,                  -- projected, so the env database can check types
+    integration_type     text NOT NULL,                  -- projected, so apply can find the version's exports
     target_id            uuid NOT NULL,                  -- where the env runs: the cloud cluster or a local box
     resource_key         text,                           -- NOT NULL iff the type is exclusive (checked at write)
     active_generation    bigint NOT NULL,
@@ -186,34 +187,28 @@ CREATE TABLE platform.connection (
     id               uuid PRIMARY KEY,
     integration_id   uuid NOT NULL UNIQUE REFERENCES platform.integration (id),  -- one per env
     integration_type text NOT NULL,
-    status           text NOT NULL,       -- effective: active only if the integration and the connection are active
-    UNIQUE (id, integration_type)
+    status           text NOT NULL        -- effective: active only if the integration and the connection are active
 );
 
 -- catalog: what a component declares, materialized at package install (today catalog.connection_requirements)
 CREATE TABLE catalog.connection_requirement (
     env_key          text NOT NULL,
     component_digest text NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
-    package_id       text NOT NULL,          -- name, type and mode come from the package's wamn.k
+    package_id       text NOT NULL,          -- name, interfaces and mode come from the package's wamn.k
     name             text NOT NULL,          -- declared in wamn.k
-    integration_type text NOT NULL,
-    interfaces       text[] NOT NULL CHECK (cardinality(interfaces) > 0),  -- every interface it imports for the name, from its WIT
+    interfaces       text[] NOT NULL CHECK (cardinality(interfaces) > 0),  -- declared in wamn.k; install checks the component imports each
     mode             text NOT NULL CHECK (mode IN ('read', 'write')),
-    PRIMARY KEY (env_key, component_digest, package_id, name),
-    UNIQUE (env_key, component_digest, package_id, name, integration_type)
+    PRIMARY KEY (env_key, component_digest, package_id, name)
 );
 
 -- catalog: the version one release uses of one connection
 CREATE TABLE catalog.release_connection (
     env_key          text NOT NULL,
     manifest_digest  text NOT NULL,          -- the release
-    connection_id    uuid NOT NULL,
-    integration_type text NOT NULL,
+    connection_id    uuid NOT NULL REFERENCES platform.connection (id),
     version          integer NOT NULL,       -- from environment.k; validated at apply against the system catalog
     PRIMARY KEY (env_key, manifest_digest, connection_id),
-    UNIQUE (env_key, manifest_digest, connection_id, integration_type),
-    FOREIGN KEY (env_key, manifest_digest) REFERENCES catalog.releases (env_key, manifest_digest),
-    FOREIGN KEY (connection_id, integration_type) REFERENCES platform.connection (id, integration_type)
+    FOREIGN KEY (env_key, manifest_digest) REFERENCES catalog.releases (env_key, manifest_digest)
 );
 
 -- catalog: name to connection, per release (today catalog.connection_bindings)
@@ -224,13 +219,13 @@ CREATE TABLE catalog.connection_binding (
     package_id       text NOT NULL,
     name             text NOT NULL,
     connection_id    uuid NOT NULL,
-    integration_type text NOT NULL,          -- in every FK: a type mismatch is a database error
     PRIMARY KEY (env_key, manifest_digest, component_digest, package_id, name),
-    FOREIGN KEY (env_key, manifest_digest, connection_id, integration_type)
-        REFERENCES catalog.release_connection (env_key, manifest_digest, connection_id, integration_type),
-    FOREIGN KEY (env_key, component_digest, package_id, name, integration_type)
-        REFERENCES catalog.connection_requirement (env_key, component_digest, package_id, name, integration_type)
+    FOREIGN KEY (env_key, manifest_digest, connection_id)
+        REFERENCES catalog.release_connection (env_key, manifest_digest, connection_id),
+    FOREIGN KEY (env_key, component_digest, package_id, name)
+        REFERENCES catalog.connection_requirement (env_key, component_digest, package_id, name)
 );
+-- apply refuses a binding whose connection's version does not export every interface the requirement declares
 ```
 
 - Admission is per component: the host refuses a call on a name the calling component did not declare.
@@ -354,8 +349,8 @@ On main (fact): `wamn:connector@0.1.0` `bound` exposes only `authority()` and `c
 The developer declares a need in `wamn.k`, the admin configures integrations and connections in the UI or API, and `environment.k` joins the two. Main has both `.k` halves (fact: `apps/netsuite/wamn.k`, `deploy/gcp/environments/dkk--wms--dev.k`).
 
 ```
-# wamn.k: the name the code uses, the type and the mode
-connections = {erp = {integration_type = "netsuite_rest", mode = "write"}}
+# wamn.k: the name the code uses, the interfaces it imports for it, and the mode
+connections = {erp = {interfaces = ["wamn:netsuite/rest@0.1.0"], mode = "write"}}
 
 # environment.k: the version each integration runs in this env, and which integration fills each name
 integrations = {"acme-netsuite" = {version = 4}}
@@ -371,8 +366,8 @@ applications = {
 | per env parameters, credential, disable | admin | a new `connection_generation` and the secret in the store | `connection.*` routes |
 | `environment.k` apply | deployment | `release_connection` and `connection_binding` | `wamn-ctl env apply` |
 
-- Apply refuses when the integration's type differs from the declared type, when the env has no active connection for it, or when the version does not export a compatible interface.
-- Changes from main: `wamn.k` renames `integration` to `integration_type`; `environment.k` names a project integration instead of an org connection, gains `integrations = {name = {version}}`, and loses `connectors = {…}`.
+- Apply refuses when the env has no active connection for the named integration, or when the version it uses does not export every interface the requirement declares (component-model semver). The type never has to match: any type whose version exports the interfaces fits, so a blobstore requirement binds gcs, s3 or disk.
+- Changes from main: `wamn.k` replaces `integration` with `interfaces` (checked at install against the component's imports); `environment.k` names a project integration instead of an org connection, gains `integrations = {name = {version}}`, and loses `connectors = {…}`.
 
 ## Headless interface
 
@@ -480,14 +475,14 @@ Each is checked by the named test type: SQL (a statement against a fresh schema)
 
 | # | Invariant | Check |
 | --- | --- | --- |
-| 1 | A binding whose connection type differs from the requirement's type cannot exist. | SQL: insert a mismatched `connection_binding` → FK violation |
+| 1 | A binding whose connection's version does not export every interface the requirement declares is refused. | apply: bind a requirement to a connection missing one interface → refused; install: a declared interface the component does not import → refused |
 | 2 | One connection per integration per env. | SQL: second `connection` for (integration, env) → unique violation |
 | 3 | A connection's active generation exists and its credential belongs to the same connection. | SQL: point `active_generation` or `credential_id` elsewhere → FK violation at commit |
 | 4 | Generations and credential rows never change; they are removed only with their connection. | SQL: UPDATE or DELETE of a generation or credential → 55000; `connection.delete` removes them |
 | 5 | Configuration never moves back: `active_generation` only increases. | SQL: set it lower → refused |
 | 6 | No plaintext secret in Postgres. | SQL: no column of `identity.credential` holds the value; unit: the write route stores the value only through the store trait |
 | 7 | A parameter change in one env never reaches another. | unit: `connection.write` and `connection.copy` write only the target env's generation; copy never sets `credential_id` from the source |
-| 8 | Apply never creates, edits or disables a connection, and nothing but apply writes `release_connection` or `connection_binding`. | SQL: the apply role has no write grant on `registry.connection`, `registry.integration`, `registry.connection_generation`; the control route roles have none on the two catalog tables |
+| 8 | Apply never creates, edits or disables a connection, and nothing but apply writes `release_connection` or `connection_binding`. | SQL: wamn_db_owner has no write grant on registry.connection, registry.integration or registry.connection_generation; unit: apply's system statements write only registry.project_envs; the control route roles have no write grant on the two catalog tables |
 | 9 | Every administration action is a control route; `wamn-ctl` connection and integration verbs call routes, never SQL. | unit: each verb in the Headless table maps to a route in `host_route.rs` |
 | 10 | At most one active connection per (target, resource\_key). | SQL: second active row → unique violation |
 | 11 | An env with an exclusive binding runs one host replica. | apply: a host group body without `replicas: 1` → refused |

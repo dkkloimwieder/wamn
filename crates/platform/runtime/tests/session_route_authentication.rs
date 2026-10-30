@@ -216,7 +216,6 @@ fn load_release_serving(modes: &[&str], operations: &[&str]) -> anyhow::Result<A
             [(
                 "purchasing".to_owned(),
                 wamn_catalog::ApplicationDefinition {
-                    connectors: std::collections::BTreeMap::new(),
                     connections: std::collections::BTreeMap::new(),
                     packages: ["session_test".to_owned()].into(),
                 },

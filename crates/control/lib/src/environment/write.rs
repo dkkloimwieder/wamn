@@ -70,7 +70,6 @@ pub async fn write(
     let mut applications = document.applications.clone();
     for application in applications.values_mut() {
         application.connections.clear();
-        application.connectors.clear();
     }
     let mut rendered = render(
         &ValuesInput {

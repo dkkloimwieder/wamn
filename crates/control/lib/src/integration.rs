@@ -244,17 +244,19 @@ pub async fn publish(
         pulled == built.component,
         "published connector bytes differ from its build"
     );
+    let exports = crate::connection_requirement::exported_interfaces(&pulled)?;
     let mut system = crate::environment::analyse::connect(database_url).await?;
     let tx = system.transaction().await?;
     crate::connection_configuration::use_role(&tx, WorkloadRoleFamily::Control).await?;
     tx.query_one(
-        "SELECT registry.publish_integration($1,$2,$3,$4::text::jsonb,$5)",
+        "SELECT registry.publish_integration($1,$2,$3,$4::text::jsonb,$5,$6)",
         &[
             &built.code,
             &publication.version,
             &built.digest,
             &publication.parameter_schema.to_string(),
             &publication.operations,
+            &exports,
         ],
     )
     .await?;
