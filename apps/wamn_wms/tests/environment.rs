@@ -399,6 +399,10 @@ async fn bind_labels(
     tokio::spawn(driver);
     let tx = wamn_control::provision_project_env::provisioning_transaction(&mut system).await?;
     tx.execute("UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud') WHERE org=$1 AND project=$2 AND env=$3",&[&identity().org,&identity().project,&identity().environment]).await?;
+    // No control host runs in the case cluster, so no generation made the
+    // control role. Make it the way a control generation does.
+    tx.batch_execute(&wamn_control_provision::sql::grant_control_surface_sql())
+        .await?;
     tx.batch_execute("SET LOCAL ROLE wamn_control").await?;
     let names: BTreeSet<_> = manifest
         .components
