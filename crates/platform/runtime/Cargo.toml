@@ -55,7 +55,7 @@ http-body-util = { workspace = true }
 hyper = { workspace = true, features = ["client", "http1", "http2"] }
 hyper-util = { workspace = true, features = ["client-legacy", "http1", "http2", "tokio"] }
 url = { workspace = true }
-uuid = { workspace = true, features = ["v4"] }
+uuid = { workspace = true, features = ["serde", "v4"] }
 # wamn-0h0g.12.6: `trace` carries `opentelemetry::propagation` and
 # `global::get_text_map_propagator`, both `cfg(feature = "trace")`, which the
 # trusted HTTP effect needs to write its span onto the outbound wire.

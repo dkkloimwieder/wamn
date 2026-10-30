@@ -74,7 +74,10 @@ pub async fn watched<H: AsRef<AuthCache> + Send + Sync + 'static>(
     holder: Arc<H>,
 ) -> AuthChanges {
     let writer = replicate(client, env_key, Arc::clone(&holder));
-    until("the watch runs", || (*holder).as_ref().bucket().is_some()).await;
+    until("the watch runs", || {
+        (*holder).as_ref().memory.bucket().is_some()
+    })
+    .await;
     writer
 }
 
