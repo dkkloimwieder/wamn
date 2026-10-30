@@ -119,7 +119,10 @@ async fn execute_in(
 /// Record the memory key of each connection a committed write changes
 /// (docs/architecture/execution.md#connection-memory). The integration
 /// writers return the connections of the integration in every environment,
-/// which the route does not show.
+/// which the route does not show. A write, copy or delete can create or
+/// remove a connection, so it also records the environment's connection map.
+/// An integration delete changes no map, because it refuses while the
+/// integration has a connection.
 fn record_connection_drops(
     org: &str,
     operation: &str,
@@ -128,6 +131,13 @@ fn record_connection_drops(
     connections: &mut ConnectionDrops,
 ) {
     let project = request["project"].as_str().unwrap_or_default();
+    if matches!(
+        operation,
+        "connection.write" | "connection.copy" | "connection.delete"
+    ) && let Some(env) = result["env"].as_str()
+    {
+        connections.connections(&format!("{org}--{project}--{env}"));
+    }
     let mut record = |env: &Value, id: &Value| {
         if let (Some(env), Some(id)) = (
             env.as_str(),
