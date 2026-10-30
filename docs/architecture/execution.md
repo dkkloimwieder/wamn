@@ -639,6 +639,8 @@ A delete of the key `=identity.<principal>` drops the PATs and sessions of the p
 An `env_key` holds only `[A-Za-z0-9_-]`, so that key never meets an environment cache key.
 A host does not keep a token answer when any identity key changed during its read.
 While the watch is broken, the host keeps no fact and opens the bucket again.
+If the stream ends or the NATS client loses its connection, the watch breaks.
+The host checks the connection, because the client reconnects without ending the stream.
 A host without the bucket keeps no fact either, and reads every request from Postgres.
 
 Every function that writes one of these facts takes an [`AuthDrops`](../../crates/identity/platform/src/auth_changes.rs) and records the change in it.
@@ -707,6 +709,11 @@ Immutable rows stay in the host under their own ids and never enter the bucket.
 These rows are the parameters of a generation, the artifact and exports of a version, and the secret of a credential.
 A secret never leaves the host.
 A rotation makes a new credential id, so the delete of the connection key is enough to reach the new secret.
+
+The [engine](../../crates/platform/engine/src/connector.rs) compiles the component of a wasm or native version once per component digest and keeps it in host memory.
+The [dispatch](../../crates/platform/runtime/src/connectors.rs) links an instance per (connection id, generation, credential id) from that compiled component.
+A connection write or a credential change links again, but it never compiles again.
+The dispatch keeps at most 1024 links, and it drops a link that no current fact names on the next fact change of that connection.
 
 Every writer of these facts records the change in a [`ConnectionDrops`](../../crates/identity/platform/src/connection_changes.rs).
 Its caller deletes the keys of the list after the commit.
