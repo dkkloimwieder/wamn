@@ -511,12 +511,11 @@ async fn delete_locked(
             lines.push(deleted);
         }
     }
-    // A cloud target's credentials are in the Secret deleted above.
-    let files: Vec<(String, String)> = credentials
-        .iter()
-        .filter(|row| row.get::<_, String>(3) == "local")
-        .map(|row| (row.get(1), row.get(2)))
-        .collect();
+    let files = credential_files(
+        credentials
+            .iter()
+            .map(|row| (row.get(1), row.get(2), row.get(3))),
+    );
     if !files.is_empty() {
         let store =
             wamn_credential_store::open("file").context("open the file credential store")?;
@@ -529,6 +528,19 @@ async fn delete_locked(
         lines.push(format!("destroyed {} credential files", files.len()));
     }
     Ok(lines)
+}
+
+/// The credential files to destroy after the commit, from the removed
+/// credentials' `ref, version, target_type`. A cloud target's credentials are
+/// in the Secret that the delete removes, whatever store a row names.
+fn credential_files(
+    credentials: impl IntoIterator<Item = (String, String, String)>,
+) -> Vec<(String, String)> {
+    credentials
+        .into_iter()
+        .filter(|(_, _, target_type)| target_type == "local")
+        .map(|(reference, version, _)| (reference, version))
+        .collect()
 }
 
 /// Delete one stream; a stream delete removes its consumers. Returns whether
@@ -548,6 +560,22 @@ fn stream_not_found(kind: GetStreamErrorKind) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_local_targets_destroy_credential_files() {
+        let row = |reference: &str, target_type: &str| {
+            (
+                reference.to_owned(),
+                reference.to_owned(),
+                target_type.to_owned(),
+            )
+        };
+        assert_eq!(
+            credential_files([row("on-local", "local"), row("on-cloud", "cloud")]),
+            [("on-local".to_owned(), "on-local".to_owned())]
+        );
+        assert!(credential_files([row("on-cloud", "cloud")]).is_empty());
+    }
 
     fn triple() -> Triple {
         Triple::new("dkk", "receiving", "dev")

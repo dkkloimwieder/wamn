@@ -347,9 +347,9 @@ fn environment_delete_removes_its_connections_and_disables_their_principals() {
     run(&format!(
         "DO $test$ DECLARE removed text[] := '{{}}'; item record; BEGIN
            FOR item IN EXECUTE $sql${}$sql$ USING 'acme','app','dev' LOOP
-             removed := removed || (item.store||':'||item.ref||':'||item.version);
+             removed := removed || (item.store||':'||item.ref||':'||item.version||':'||item.type);
            END LOOP;
-           ASSERT (SELECT array_agg(r ORDER BY r) FROM unnest(removed) r)=ARRAY['file:first:1','k8s:second:1'],removed::text;
+           ASSERT (SELECT array_agg(r ORDER BY r) FROM unnest(removed) r)=ARRAY['file:first:1:local','k8s:second:1:local'],removed::text;
            DELETE FROM registry.project_envs WHERE org='acme' AND project='app' AND env='dev';
            ASSERT NOT EXISTS(SELECT FROM registry.connection);
            ASSERT NOT EXISTS(SELECT FROM registry.connection_generation);
