@@ -697,6 +697,14 @@ fn verify_executor_platform_grants(
             "SELECT".to_string(),
         ));
     }
+    for relation in ["connection", "integration"] {
+        expected.insert((
+            "relation".to_string(),
+            "platform".to_string(),
+            relation.to_string(),
+            "SELECT".to_string(),
+        ));
+    }
     for (relation, privilege, columns) in [
         (
             "runs",
@@ -965,6 +973,7 @@ fn verify_connection_reader_grants(
             "EXECUTE",
         ),
         ("routine", "registry", "read_file_connection", "EXECUTE"),
+        ("routine", "registry", "read_connection_version", "EXECUTE"),
     ]);
     anyhow::ensure!(
         actual == expected,

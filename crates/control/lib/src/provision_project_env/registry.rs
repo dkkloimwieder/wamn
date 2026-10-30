@@ -188,6 +188,7 @@ pub(super) async fn record_project_env(
     system_url: &str,
     triple: &Triple,
     policy: Option<&str>,
+    target: &str,
     secret_name: &str,
     secret_namespace: Option<&str>,
     minted: &str,
@@ -205,6 +206,7 @@ pub(super) async fn record_project_env(
         triple,
         Some(&env_key),
         policy,
+        target,
         secret_name,
         secret_namespace,
         minted,
@@ -223,6 +225,7 @@ pub(super) async fn do_record_project_env(
     triple: &Triple,
     env_key: Option<&str>,
     policy: Option<&str>,
+    target: &str,
     secret_name: &str,
     secret_namespace: Option<&str>,
     minted: &str,
@@ -242,6 +245,15 @@ pub(super) async fn do_record_project_env(
         .await
         .context("upsert registry.projects row")?;
     let env = triple.env.as_str();
+    let target_id: String = transaction
+        .query_opt(
+            "SELECT id::text FROM registry.target WHERE name = $1",
+            &[&target],
+        )
+        .await
+        .context("read the registry.target row")?
+        .with_context(|| format!("target {target:?} is not in registry.target"))?
+        .get(0);
     let row = transaction
         .query_one(
             wamn_control_registry::sql::upsert_project_env_with_policy_sql(),
@@ -254,6 +266,7 @@ pub(super) async fn do_record_project_env(
                 &minted,
                 &disposable,
                 &policy.unwrap_or(env),
+                &target_id,
             ],
         )
         .await

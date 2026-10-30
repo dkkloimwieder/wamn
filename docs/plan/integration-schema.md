@@ -85,8 +85,9 @@ CREATE TABLE registry.integration (
         REFERENCES registry.integration_type_auth (integration_type, auth_type)
 );
 
--- project_envs.target_id is nullable on main (system-schema.sql registry.project_envs): an env needs its
--- target set before a connection can be created in it
+-- project_envs.target_id (system-schema.sql registry.project_envs): environment provisioning takes a
+-- required target, refuses a name that registry.target does not hold, and writes target_id once
+-- (environment_target_immutable). A connection can be created only in an env with its target set.
 ALTER TABLE registry.project_envs ADD UNIQUE (org, project, env, target_id);
 
 CREATE TABLE registry.connection (                     -- the integration in one env

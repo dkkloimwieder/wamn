@@ -151,6 +151,12 @@ pub struct ProvisionProjectEnvRequest {
     /// derived from the coordinate (`project_env_key`).
     pub policy: Option<String>,
 
+    /// The `registry.target` name where the environment runs. The first
+    /// provision records it, and it never changes
+    /// (`environment_target_immutable`). A name that `registry.target` does
+    /// not hold is refused.
+    pub target: String,
+
     /// Mark this environment DISPOSABLE: its admitted component facts may be
     /// REPLACED rather than frozen (wamn-10yt.38). The marker is recorded on the
     /// environment's registry row and projected into the control store.
@@ -517,6 +523,7 @@ pub async fn provision_project_env(
             system_url,
             &triple,
             args.policy.as_deref(),
+            &args.target,
             &secret_name,
             args.secret_namespace.as_deref(),
             &mint_instance_suffix()?,

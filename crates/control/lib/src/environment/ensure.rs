@@ -78,6 +78,7 @@ pub async fn ensure(
         project: document.project.clone(),
         env: document.env.clone(),
         policy: Some(policy.to_owned()),
+        target: document.target.clone(),
         disposable: None,
         system_database_url: Some(platform.system_database_url.clone()),
         cluster: Some(cluster.clone()),

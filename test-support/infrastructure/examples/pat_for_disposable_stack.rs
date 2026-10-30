@@ -37,6 +37,7 @@ async fn main() -> anyhow::Result<()> {
         project: arguments[1].clone(),
         env: arguments[2].clone(),
         policy: None,
+        target: "cloud".to_owned(),
         disposable: None,
         system_database_url: Some(system_url),
         cluster: None,

@@ -92,6 +92,8 @@ async fn cli(
             PROJECT,
             "--env",
             ENVIRONMENT,
+            "--target",
+            "cloud",
             "--system-database-url",
             system_url,
             "--target-admin-database-url",
@@ -271,18 +273,14 @@ async fn setup(admin: &Client, system_url: &str) -> anyhow::Result<Client> {
     project
         .batch_execute(&sql::ensure_app_acl_role_sql())
         .await?;
+    project.batch_execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_scenario_author') THEN CREATE ROLE wamn_scenario_author NOLOGIN; END IF; END $$;").await?;
     project
-        .batch_execute(include_str!("../../../deploy/sql/record-history.sql"))
-        .await?;
-    project
-        .batch_execute(include_str!(
-            "../../../deploy/sql/record-history-app-grants.sql"
-        ))
+        .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
         .await?;
     project
         .batch_execute(include_str!("../../../deploy/sql/app-schema.sql"))
         .await?;
-    project.batch_execute("CREATE SCHEMA catalog; CREATE SCHEMA wamn_run; CREATE TABLE catalog.probe (id int); CREATE TABLE wamn_run.probe (id int);").await?;
+    project.batch_execute("CREATE SCHEMA wamn_run; CREATE TABLE catalog.probe (id int); CREATE TABLE wamn_run.probe (id int);").await?;
     project
         .batch_execute(&format!(
             "REVOKE TEMPORARY ON DATABASE {} FROM PUBLIC",
@@ -293,12 +291,7 @@ async fn setup(admin: &Client, system_url: &str) -> anyhow::Result<Client> {
     project.batch_execute("SET app.user_id = '11111111-1111-1111-1111-111111111111'; SET app.operation = 'admin:seed-session-audience-fixture'; INSERT INTO platform.\"user\" (id,type,email) VALUES ('11111111-1111-1111-1111-111111111111','user','one@example.invalid'); INSERT INTO platform.role (name) VALUES ('member'); INSERT INTO platform.user_role (user_id,role_name) VALUES ('11111111-1111-1111-1111-111111111111','member');").await?;
     let other = connect(&database_url(system_url, &database(OTHER_INSTANCE))?).await?;
     other
-        .batch_execute(include_str!("../../../deploy/sql/record-history.sql"))
-        .await?;
-    other
-        .batch_execute(include_str!(
-            "../../../deploy/sql/record-history-app-grants.sql"
-        ))
+        .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
         .await?;
     other
         .batch_execute(include_str!("../../../deploy/sql/app-schema.sql"))

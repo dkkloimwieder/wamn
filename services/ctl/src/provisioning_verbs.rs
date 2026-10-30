@@ -115,6 +115,12 @@ pub struct ProvisionProjectEnvArgs {
     #[arg(long, required_unless_present = "revoke_pat_prefix")]
     pub env: Option<String>,
 
+    /// The `registry.target` name where the environment runs, for example
+    /// `cloud`. Required to provision. The first provision records it, and it
+    /// never changes.
+    #[arg(long)]
+    pub target: Option<String>,
+
     /// Mark this environment DISPOSABLE: its admitted component facts may be
     /// REPLACED rather than frozen, so an author's no-op edit does not lock them
     /// out of their own package version (wamn-10yt.38).
@@ -753,6 +759,11 @@ pub async fn provision(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
         "--emit-control-administration-patch is valid only for an administration prepare"
     );
 
+    anyhow::ensure!(
+        args.target.is_some(),
+        "--target is required to provision a project-env"
+    );
+
     let mut request = provisioning_request(args);
     if request.emit_management_author_pat_secret.is_some()
         || request.emit_operator_pat_secret.is_some()
@@ -823,6 +834,9 @@ fn provisioning_request(args: ProvisionProjectEnvArgs) -> ProvisionProjectEnvReq
             "clap parser invariant: --env is required unless --revoke-pat-prefix is present",
         ),
         policy: None,
+        target: args
+            .target
+            .expect("provision checks --target before it builds the request"),
         disposable: args.disposable.then_some(true),
         system_database_url: args.system_database_url,
         cluster: args.cluster,

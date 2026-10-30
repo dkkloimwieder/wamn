@@ -321,6 +321,7 @@ fn provisioning_args(
         project: scope.project.clone(),
         env: scope.environment.clone(),
         policy: None,
+        target: "cloud".to_owned(),
         // The development target is disposable, and its registry row is where
         // that is written down (wamn-10yt.38). Admit reads the projection of
         // THIS row, so an author's re-run replaces its own component fact

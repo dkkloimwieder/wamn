@@ -1131,6 +1131,7 @@ async fn env_key_projection_and_instance_claim_hold_on_postgres() {
         &triple,
         Some("tenant-a"),
         None,
+        "cloud",
         "db-first",
         Some("system"),
         "abcd1234",
@@ -1170,6 +1171,7 @@ async fn env_key_projection_and_instance_claim_hold_on_postgres() {
         &triple,
         Some("tenant-a"),
         None,
+        "cloud",
         "db-second",
         Some("system"),
         "efgh5678",
@@ -1194,6 +1196,7 @@ async fn env_key_projection_and_instance_claim_hold_on_postgres() {
         &other,
         Some("tenant-a"),
         None,
+        "cloud",
         "db-other",
         Some("system"),
         "efgh5678",
@@ -1206,6 +1209,24 @@ async fn env_key_projection_and_instance_claim_hold_on_postgres() {
         error
             .to_string()
             .starts_with("tenant-environment-identity-projection-content-conflict:")
+    );
+    let error = do_record_project_env(
+        &mut first,
+        &other,
+        Some("tenant-b"),
+        None,
+        "nowhere",
+        "db-other",
+        Some("system"),
+        "efgh5678",
+        Some(true),
+        &wamn_platform_identity::auth_changes::AuthChanges::default(),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        format!("{error:#}").contains("target \"nowhere\" is not in registry.target"),
+        "{error:#}"
     );
     let row = first
         .query_one(
@@ -1331,6 +1352,7 @@ async fn a_record_without_a_marker_keeps_the_disposable_row() {
             &triple,
             Some("tenant-a"),
             None,
+            "cloud",
             "db-first",
             Some("system"),
             "abcd1234",
@@ -1375,6 +1397,7 @@ async fn a_pat_only_run_refuses_the_registry_values_of_a_provisioning_run() {
             project: "billing".into(),
             env: "dev".into(),
             policy: None,
+            target: "cloud".to_owned(),
             disposable,
             system_database_url: Some("postgres://unused.invalid/wamn_system".into()),
             cluster: None,

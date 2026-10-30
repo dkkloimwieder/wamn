@@ -172,17 +172,20 @@ pub fn upsert_project_env_sql() -> &'static str {
      RETURNING instance_suffix, disposable"
 }
 
-/// [`upsert_project_env_sql`] with the policy a new row names as `$8`. A
-/// conflict keeps the stored policy name.
+/// [`upsert_project_env_sql`] with the policy a new row names as `$8` and the
+/// target id as `$9`. A conflict keeps the stored policy name. A conflict
+/// writes the target, and the `environment_target_immutable` trigger refuses a
+/// target that differs from the stored one.
 pub fn upsert_project_env_with_policy_sql() -> &'static str {
     "INSERT INTO registry.project_envs \
        (org, project, env, secret_name, secret_namespace, instance_suffix, disposable, \
-        policy_name) \
-     VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, false), $8) \
+        policy_name, target_id) \
+     VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, false), $8, $9::text::uuid) \
      ON CONFLICT (org, project, env) DO UPDATE SET \
        secret_name = EXCLUDED.secret_name, \
        secret_namespace = EXCLUDED.secret_namespace, \
-       disposable = COALESCE($7, registry.project_envs.disposable) \
+       disposable = COALESCE($7, registry.project_envs.disposable), \
+       target_id = EXCLUDED.target_id \
      RETURNING instance_suffix, disposable"
 }
 

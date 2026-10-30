@@ -46,6 +46,7 @@ async fn provision_browser_environment(
         project: BROWSER_PROJECT.to_owned(),
         env: ENVIRONMENT.to_owned(),
         policy: None,
+        target: "cloud".to_owned(),
         disposable: None,
         system_database_url: Some(system_url.to_owned()),
         cluster: Some("route-auth-pg18".to_owned()),

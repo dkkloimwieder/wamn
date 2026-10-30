@@ -39,7 +39,7 @@ spec:
             - |
               umask 077
               /usr/local/bin/wamn-ctl provision-project-env \
-                --org __ORG__ --project __PROJECT__ --env __ENV__ \
+                --org __ORG__ --project __PROJECT__ --env __ENV__ --target cloud \
                 --namespace __NAMESPACE__ \
                 __PAT_FLAG__ /out/pat.json
               waited=0
