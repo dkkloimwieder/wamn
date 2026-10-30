@@ -484,6 +484,13 @@ async fn delete_locked(
         .commit()
         .await
         .context("commit the row delete")?;
+    let mut drops = wamn_platform_identity::connection_changes::ConnectionDrops::default();
+    drops.env_key(&env_key);
+    wamn_platform_identity::connection_changes::ConnectionChanges::from(
+        &platform.auth_changes().await?,
+    )
+    .publish(drops)
+    .await;
     lines.push(format!(
         "deleted the control rows of tenant {env_key}, {} connection credentials and the \
          environment row of {triple}",

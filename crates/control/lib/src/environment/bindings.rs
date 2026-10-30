@@ -209,14 +209,17 @@ pub(crate) fn interface_compatible(import: &str, export: &str) -> bool {
     }
 }
 
-/// Write the release's versions and names after its requirements exist.
+/// Write the release's versions and names after its requirements exist. A
+/// changed row records the memory key of the release in `drops`.
 pub async fn write(
     tx: &tokio_postgres::Transaction<'_>,
     env_key: &str,
     digest: &str,
     document: &EnvironmentDocument,
     bindings: &[Binding],
+    drops: &mut wamn_platform_identity::connection_changes::ConnectionDrops,
 ) -> anyhow::Result<()> {
+    let mut changed = 0;
     tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
         wamn_control_provision::PlatformComponent::Provisioning,
     ))
@@ -225,7 +228,7 @@ pub async fn write(
     for (name, integration) in &document.integrations {
         let row=tx.query_one("SELECT c.id::text,c.integration_type FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id WHERE i.name=$1 AND i.status='active' AND c.status='active'",&[name]).await?;
         let id: String = row.get(0);
-        tx.execute("INSERT INTO catalog.release_connection(env_key,manifest_digest,connection_id,version) VALUES ($1,$2,$3::text::uuid,$4) ON CONFLICT (env_key,manifest_digest,connection_id) DO UPDATE SET version=EXCLUDED.version WHERE catalog.release_connection.version IS DISTINCT FROM EXCLUDED.version", &[&env_key,&digest,&id,&integration.version]).await?;
+        changed += tx.execute("INSERT INTO catalog.release_connection(env_key,manifest_digest,connection_id,version) VALUES ($1,$2,$3::text::uuid,$4) ON CONFLICT (env_key,manifest_digest,connection_id) DO UPDATE SET version=EXCLUDED.version WHERE catalog.release_connection.version IS DISTINCT FROM EXCLUDED.version", &[&env_key,&digest,&id,&integration.version]).await?;
     }
     for row in tx.query("SELECT component_digest,package_id,name,interfaces FROM catalog.connection_requirement WHERE env_key=$1", &[&env_key]).await? {
         let package: String=row.get(1);
@@ -236,12 +239,15 @@ pub async fn write(
         anyhow::ensure!(exports_satisfy(&binding.exports,&required),"integration_import_unsatisfied: {application}.{name}");
         let component: String=row.get(0);
         names.push(serde_json::json!({"component_digest":component,"package_id":package,"name":name}));
-        tx.execute("INSERT INTO catalog.connection_binding(env_key,manifest_digest,component_digest,package_id,name,connection_id) SELECT $1,$2,$3,$4,$5,$6::text::uuid WHERE EXISTS(SELECT FROM catalog.releases r CROSS JOIN LATERAL jsonb_array_elements(convert_from(r.canonical_bytes,'UTF8')::jsonb->'components') c WHERE r.env_key=$1 AND r.manifest_digest=$2 AND c->>'package-id'=$4 AND c->'descriptor'->>'component-digest'=$3) ON CONFLICT (env_key,manifest_digest,component_digest,package_id,name) DO UPDATE SET connection_id=EXCLUDED.connection_id WHERE catalog.connection_binding.connection_id IS DISTINCT FROM EXCLUDED.connection_id", &[&env_key,&digest,&component,&package,&name,&binding.connection_id]).await?;
+        changed += tx.execute("INSERT INTO catalog.connection_binding(env_key,manifest_digest,component_digest,package_id,name,connection_id) SELECT $1,$2,$3,$4,$5,$6::text::uuid WHERE EXISTS(SELECT FROM catalog.releases r CROSS JOIN LATERAL jsonb_array_elements(convert_from(r.canonical_bytes,'UTF8')::jsonb->'components') c WHERE r.env_key=$1 AND r.manifest_digest=$2 AND c->>'package-id'=$4 AND c->'descriptor'->>'component-digest'=$3) ON CONFLICT (env_key,manifest_digest,component_digest,package_id,name) DO UPDATE SET connection_id=EXCLUDED.connection_id WHERE catalog.connection_binding.connection_id IS DISTINCT FROM EXCLUDED.connection_id", &[&env_key,&digest,&component,&package,&name,&binding.connection_id]).await?;
     }
     let names = serde_json::to_string(&names)?;
-    tx.execute("DELETE FROM catalog.connection_binding b WHERE env_key=$1 AND manifest_digest=$2 AND NOT EXISTS(SELECT FROM jsonb_to_recordset($3::text::jsonb) AS desired(component_digest text,package_id text,name text) WHERE (desired.component_digest,desired.package_id,desired.name)=(b.component_digest,b.package_id,b.name))", &[&env_key,&digest,&names]).await?;
+    changed += tx.execute("DELETE FROM catalog.connection_binding b WHERE env_key=$1 AND manifest_digest=$2 AND NOT EXISTS(SELECT FROM jsonb_to_recordset($3::text::jsonb) AS desired(component_digest text,package_id text,name text) WHERE (desired.component_digest,desired.package_id,desired.name)=(b.component_digest,b.package_id,b.name))", &[&env_key,&digest,&names]).await?;
     let integrations: Vec<&str> = document.integrations.keys().map(String::as_str).collect();
-    tx.execute("DELETE FROM catalog.release_connection r WHERE env_key=$1 AND manifest_digest=$2 AND NOT EXISTS(SELECT FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id WHERE c.id=r.connection_id AND i.name=ANY($3::text[]))", &[&env_key,&digest,&integrations]).await?;
+    changed += tx.execute("DELETE FROM catalog.release_connection r WHERE env_key=$1 AND manifest_digest=$2 AND NOT EXISTS(SELECT FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id WHERE c.id=r.connection_id AND i.name=ANY($3::text[]))", &[&env_key,&digest,&integrations]).await?;
+    if changed > 0 {
+        drops.release(env_key, digest);
+    }
     Ok(())
 }
 

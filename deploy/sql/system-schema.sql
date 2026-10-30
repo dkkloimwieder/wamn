@@ -1214,6 +1214,10 @@ BEGIN
     ELSIF operation IN ('integration.enable','integration.disable') THEN
         UPDATE registry.integration SET status=CASE WHEN operation='integration.enable' THEN 'active' ELSE 'disabled' END
         WHERE id=existing.id;
+        -- The caller deletes the memory key of each connection after the commit.
+        RETURN jsonb_build_object('name',row_name,'connections',COALESCE((
+            SELECT jsonb_agg(jsonb_build_object('env',c.env,'id',c.id) ORDER BY c.env)
+            FROM registry.connection c WHERE c.integration_id=existing.id), '[]'::jsonb));
     ELSIF operation = 'integration.delete' THEN
         IF EXISTS(SELECT FROM registry.connection WHERE integration_id=existing.id) THEN
             RETURN jsonb_build_object('error','referenced','field','connection');
@@ -1360,11 +1364,13 @@ BEGIN
         INTO credentials FROM identity.credential k WHERE k.connection_id=existing.id;
         DELETE FROM registry.connection WHERE id=existing.id;
         UPDATE identity.principals SET status='disabled',disabled_at=transaction_timestamp() WHERE id=existing.service_principal_id;
-        RETURN jsonb_build_object('name',row_name,'credentials',credentials,'principal_id',existing.service_principal_id);
+        RETURN jsonb_build_object('name',row_name,'credentials',credentials,'principal_id',existing.service_principal_id,
+            'id',existing.id,'env',environment);
     ELSE
         RETURN jsonb_build_object('error','invalid_input','field','operation');
     END IF;
-    RETURN jsonb_build_object('name',row_name,'principal_id',existing.service_principal_id);
+    RETURN jsonb_build_object('name',row_name,'principal_id',existing.service_principal_id,
+        'id',existing.id,'env',environment);
 EXCEPTION WHEN unique_violation THEN
     RETURN jsonb_build_object('error','resource_in_use','field','resource_key');
 END $$;

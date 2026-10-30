@@ -114,8 +114,22 @@ pub async fn expand(
     }
     if let Some(release) = &analysis.authorities.release {
         let tx = project.transaction().await?;
-        super::bindings::write(&tx, &env_key, &release.digest, document, &bindings).await?;
+        let mut drops = wamn_platform_identity::connection_changes::ConnectionDrops::default();
+        super::bindings::write(
+            &tx,
+            &env_key,
+            &release.digest,
+            document,
+            &bindings,
+            &mut drops,
+        )
+        .await?;
         tx.commit().await?;
+        wamn_platform_identity::connection_changes::ConnectionChanges::from(
+            &platform.auth_changes().await?,
+        )
+        .publish(drops)
+        .await;
     }
     Ok(clients)
 }

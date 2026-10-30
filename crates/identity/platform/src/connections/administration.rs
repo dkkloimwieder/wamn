@@ -6,6 +6,7 @@ use wamn_credential_store::{Store, StoreVersion};
 
 use super::{ConnectionError, refuse};
 use crate::auth_changes::AuthDrops;
+use crate::connection_changes::ConnectionDrops;
 
 fn store_error(source: wamn_credential_store::Error) -> ConnectionError {
     ConnectionError {
@@ -22,8 +23,18 @@ pub async fn execute(
     operation: &str,
     payload: &str,
     drops: &mut AuthDrops,
+    connections: &mut ConnectionDrops,
 ) -> Result<Value, ConnectionError> {
-    execute_in(tx, org, operation, payload, drops, None, None).await
+    execute_in(
+        tx,
+        org,
+        operation,
+        payload,
+        (drops, connections),
+        None,
+        None,
+    )
+    .await
 }
 
 /// The store injection point for administration tests.
@@ -33,9 +44,19 @@ pub async fn execute_with_store(
     operation: &str,
     payload: &str,
     drops: &mut AuthDrops,
+    connections: &mut ConnectionDrops,
     store: Option<&dyn Store>,
 ) -> Result<Value, ConnectionError> {
-    execute_in(tx, org, operation, payload, drops, store, None).await
+    execute_in(
+        tx,
+        org,
+        operation,
+        payload,
+        (drops, connections),
+        store,
+        None,
+    )
+    .await
 }
 
 /// Execute a connection write against every version retained by live releases.
@@ -46,8 +67,18 @@ pub async fn execute_in_environment(
     operation: &str,
     payload: &str,
     drops: &mut AuthDrops,
+    connections: &mut ConnectionDrops,
 ) -> Result<Value, ConnectionError> {
-    execute_in(tx, org, operation, payload, drops, None, Some(environment)).await
+    execute_in(
+        tx,
+        org,
+        operation,
+        payload,
+        (drops, connections),
+        None,
+        Some(environment),
+    )
+    .await
 }
 
 async fn execute_in(
@@ -55,7 +86,7 @@ async fn execute_in(
     org: &str,
     operation: &str,
     payload: &str,
-    drops: &mut AuthDrops,
+    (drops, connections): (&mut AuthDrops, &mut ConnectionDrops),
     store: Option<&dyn Store>,
     environment: Option<&Transaction<'_>>,
 ) -> Result<Value, ConnectionError> {
@@ -64,22 +95,66 @@ async fn execute_in(
     validate_request(operation, &request)?;
     // Remove the value before any database call, including reads and lock queries.
     let credential = request.as_object_mut().unwrap().remove("credential");
-    if matches!(
+    let mut result = if matches!(
         operation,
         "connection.write" | "connection.copy" | "connection.set_credential"
     ) {
-        return generation(
+        generation(
             tx,
             org,
             operation,
-            (request, credential),
+            (request.clone(), credential),
             drops,
             store,
             environment,
         )
-        .await;
+        .await?
+    } else {
+        configure(tx, org, operation, &request).await?
+    };
+    record_connection_drops(org, operation, &request, &mut result, connections);
+    Ok(result)
+}
+
+/// Record the memory key of each connection a committed write changes
+/// (docs/architecture/execution.md#connection-memory). The integration
+/// writers return the connections of the integration in every environment,
+/// which the route does not show.
+fn record_connection_drops(
+    org: &str,
+    operation: &str,
+    request: &Value,
+    result: &mut Value,
+    connections: &mut ConnectionDrops,
+) {
+    let project = request["project"].as_str().unwrap_or_default();
+    let mut record = |env: &Value, id: &Value| {
+        if let (Some(env), Some(id)) = (
+            env.as_str(),
+            id.as_str().and_then(|id| id.parse::<uuid::Uuid>().ok()),
+        ) {
+            connections.connection(&format!("{org}--{project}--{env}"), id);
+        }
+    };
+    match operation {
+        "connection.write"
+        | "connection.copy"
+        | "connection.set_credential"
+        | "connection.enable"
+        | "connection.disable"
+        | "connection.delete" => record(&result["env"], &result["id"]),
+        "integration.enable" | "integration.disable" => {
+            if let Some(Value::Array(rows)) = result
+                .as_object_mut()
+                .and_then(|result| result.remove("connections"))
+            {
+                for row in &rows {
+                    record(&row["env"], &row["id"]);
+                }
+            }
+        }
+        _ => {}
     }
-    configure(tx, org, operation, &request).await
 }
 
 fn validate_request(operation: &str, request: &Value) -> Result<(), ConnectionError> {

@@ -155,6 +155,7 @@ async fn apply_refuses_invalid_names_interfaces_environments_and_versions() {
         "connection.disable",
         &json!({"project":"one","env":"dev","name":"erp"}).to_string(),
         &mut AuthDrops::default(),
+        &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
     )
     .await
     .unwrap();
@@ -310,6 +311,7 @@ async fn administration_refuses_values_incompatible_with_a_retained_release_vers
         "connection.write",
         &request,
         &mut AuthDrops::default(),
+        &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
     )
     .await
     .unwrap_err();
@@ -355,6 +357,7 @@ async fn administration_refuses_values_incompatible_with_a_retained_release_vers
         "connection.write",
         &request,
         &mut AuthDrops::default(),
+        &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
     )
     .await
     .unwrap();

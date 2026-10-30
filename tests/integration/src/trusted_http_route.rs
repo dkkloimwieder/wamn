@@ -979,6 +979,7 @@ mod tests {
             &serde_json::json!({"project":PROJECT,"env":ENVIRONMENT,"name":"upstream-v1"})
                 .to_string(),
             &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+            &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
         )
         .await?;
         tx.commit().await?;
@@ -999,7 +1000,7 @@ mod tests {
             version: row.get(3),
         };
         tx.batch_execute("SET LOCAL ROLE wamn_control").await?;
-        wamn_platform_identity::connections::administration::execute_with_store(&tx,"acme","connection.set_credential",&serde_json::json!({"project":PROJECT,"env":ENVIRONMENT,"name":"upstream-v1","credential":if handle==CREDENTIAL_HANDLE {credential_secret()} else {serde_json::json!({"username":"fixture","password":"rotated-fixture-token"}).to_string()}}).to_string(),&mut wamn_platform_identity::auth_changes::AuthDrops::default(),Some(&wamn_test_infrastructure::credentials::ReferencedCredentials(&stored))).await?;
+        wamn_platform_identity::connections::administration::execute_with_store(&tx,"acme","connection.set_credential",&serde_json::json!({"project":PROJECT,"env":ENVIRONMENT,"name":"upstream-v1","credential":if handle==CREDENTIAL_HANDLE {credential_secret()} else {serde_json::json!({"username":"fixture","password":"rotated-fixture-token"}).to_string()}}).to_string(),&mut wamn_platform_identity::auth_changes::AuthDrops::default(), &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),Some(&wamn_test_infrastructure::credentials::ReferencedCredentials(&stored))).await?;
         tx.commit().await?;
         let actual: i64=client.query_one("SELECT c.active_generation FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE i.project=$1 AND i.name='upstream-v1'",&[&PROJECT]).await?.get(0);
         assert_eq!(actual, generation);

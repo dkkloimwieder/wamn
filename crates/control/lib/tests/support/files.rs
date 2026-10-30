@@ -205,6 +205,7 @@ impl Registry {
             operation,
             &payload.to_string(),
             &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+            &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
             Some(self.credentials.as_ref()),
         )
         .await?;

@@ -6,6 +6,7 @@ use anyhow::Context as _;
 use serde_json::{Value, json};
 use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_catalog::HostAttachment;
+use wamn_platform_identity::connection_changes::{ConnectionChanges, ConnectionDrops};
 use wamn_platform_identity::{PrincipalId, auth_changes::AuthDrops};
 
 use super::{ControlRoutes, ProjectScope, Refusal, incomplete, parse};
@@ -58,10 +59,17 @@ impl ControlRoutes<'_> {
             .begin_in(writer, attachment, caller, Some(&project))
             .await?;
         let mut drops = AuthDrops::default();
+        let mut connection_drops = ConnectionDrops::default();
         if attachment.route.type_.is_read() {
-            let result =
-                administration::execute(&transaction, self.org, operation, payload, &mut drops)
-                    .await?;
+            let result = administration::execute(
+                &transaction,
+                self.org,
+                operation,
+                payload,
+                &mut drops,
+                &mut connection_drops,
+            )
+            .await?;
             transaction.commit().await?;
             return Ok(result);
         }
@@ -163,10 +171,19 @@ impl ControlRoutes<'_> {
                 operation,
                 payload,
                 &mut drops,
+                &mut connection_drops,
             )
             .await?
         } else {
-            administration::execute(&transaction, self.org, operation, payload, &mut drops).await?
+            administration::execute(
+                &transaction,
+                self.org,
+                operation,
+                payload,
+                &mut drops,
+                &mut connection_drops,
+            )
+            .await?
         };
         if let Some(principal) = result["principal_id"].as_str() {
             drops.identity(principal);
@@ -176,6 +193,9 @@ impl ControlRoutes<'_> {
             .and_then(|result| result.remove("credentials"));
         transaction.commit().await?;
         self.changes.publish(drops).await;
+        ConnectionChanges::from(self.changes)
+            .publish(connection_drops)
+            .await;
         let source = self
             .begin_in(writer, attachment, caller, Some(&project))
             .await?;

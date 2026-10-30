@@ -59,15 +59,25 @@ pub async fn contract(
             wamn_control_provision::PlatformComponent::Provisioning,
         ))
         .await?;
-    let removed = transaction.execute(
-        "DELETE FROM catalog.connection_binding WHERE env_key=$1 AND NOT (manifest_digest=ANY($2::text[]))",
+    let removed = transaction.query(
+        "DELETE FROM catalog.connection_binding WHERE env_key=$1 AND NOT (manifest_digest=ANY($2::text[])) RETURNING manifest_digest",
         &[&env_key,&live_digests],
     ).await?;
-    transaction.execute(
-        "DELETE FROM catalog.release_connection WHERE env_key=$1 AND NOT (manifest_digest=ANY($2::text[]))",
+    let released = transaction.query(
+        "DELETE FROM catalog.release_connection WHERE env_key=$1 AND NOT (manifest_digest=ANY($2::text[])) RETURNING manifest_digest",
         &[&env_key,&live_digests],
     ).await?;
     transaction.commit().await?;
+    let mut drops = wamn_platform_identity::connection_changes::ConnectionDrops::default();
+    for row in removed.iter().chain(&released) {
+        drops.release(&env_key, row.get(0));
+    }
+    let removed = removed.len();
+    wamn_platform_identity::connection_changes::ConnectionChanges::from(
+        &platform.auth_changes().await?,
+    )
+    .publish(drops)
+    .await;
     if removed > 0 {
         lines.push(format!(
             "removed {removed} bindings of releases outside the live set"

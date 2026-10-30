@@ -656,7 +656,15 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         tokio_postgres::connect(database.url(), tokio_postgres::NoTls).await?;
     tokio::spawn(driver);
     let tx = target.transaction().await?;
-    wamn_control::environment::bindings::write(&tx, &env_key, digest, &document, &reserved).await?;
+    wamn_control::environment::bindings::write(
+        &tx,
+        &env_key,
+        digest,
+        &document,
+        &reserved,
+        &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
+    )
+    .await?;
     tx.commit().await?;
     std::fs::write(
         directory.join(LOCAL_FACTS_FILE),
