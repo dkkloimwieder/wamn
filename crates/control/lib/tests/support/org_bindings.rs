@@ -121,8 +121,9 @@ pub async fn bind(
     Ok(())
 }
 
-/// Write `value` into the environment Secret of a cloud target, in the layout
-/// of the k8s credential store: one key per credential version.
+/// Write `value` into the environment Secret of a cloud target, in the
+/// release namespace where its hosts run and in the layout of the k8s
+/// credential store: one key per credential version.
 async fn cluster_credential(
     platform: &Platform,
     secret: &str,
@@ -138,7 +139,7 @@ async fn cluster_credential(
         wamn_control::kubectl::kubectl(
             &target.kubeconfig,
             &target.context,
-            "hosts",
+            &target.namespace,
             &arguments,
             input.as_deref(),
         )
@@ -154,7 +155,7 @@ async fn cluster_credential(
     if existing.trim().is_empty() {
         let created = serde_json::json!({
             "apiVersion": "v1", "kind": "Secret",
-            "metadata": {"name": secret, "namespace": "hosts"},
+            "metadata": {"name": secret, "namespace": target.namespace},
             "data": data,
         });
         kubectl(

@@ -531,10 +531,10 @@ pub fn compose_release_entry(
 ) -> anyhow::Result<ComposedApplication> {
     compose_covering_entry(
         published,
-        admissions
+        &admissions
             .iter()
             .map(|admission| (admission.facts(), admission.bytes()))
-            .collect(),
+            .collect::<Vec<_>>(),
         route_bytes,
         applications,
         application,
@@ -544,7 +544,7 @@ pub fn compose_release_entry(
 /// Compose the unique member of the declared application that covers its routes.
 pub fn compose_covering_entry(
     published: &PublishedRelease,
-    candidates: Vec<(&AdmittedComponent, &[u8])>,
+    candidates: &[(&AdmittedComponent, &[u8])],
     route_bytes: &[u8],
     applications: &wamn_catalog::EnvironmentApplications,
     application: Option<&str>,
@@ -568,42 +568,68 @@ pub(crate) fn compose_pinned_application(
     compose_verified_application(member, bytes, route_bytes, &pin)
 }
 
+/// Select the member that covers every route. Without a selector, the
+/// application is the one whose members cover the routes, because a release
+/// has one routed entry and every other application loads on its own.
 fn covering_application<'a>(
     published: &PublishedRelease,
-    candidates: Vec<(&'a AdmittedComponent, &'a [u8])>,
+    candidates: &[(&'a AdmittedComponent, &'a [u8])],
     applications: &wamn_catalog::EnvironmentApplications,
     application: Option<&str>,
 ) -> anyhow::Result<(&'a AdmittedComponent, &'a [u8])> {
-    let selected = match application {
-        Some(name) => applications.get_key_value(name),
-        None if applications.len() == 1 => applications.first_key_value(),
-        None => None,
-    };
-    let (name, definition) = selected.ok_or_else(|| {
+    let selection = |requested: Vec<&String>| {
         PublishManifestError::new(
             PublishManifestErrorType::ApplicationSelection,
             format!(
                 "select one application from environment.k: {}; requested {:?}",
-                applications.keys().cloned().collect::<Vec<_>>().join(", "),
+                requested
+                    .into_iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", "),
                 application
             ),
         )
-    })?;
-    let mut covering = Vec::new();
-    for (member, bytes) in candidates {
-        if definition
-            .packages
-            .contains(member.scope.package_id.as_str())
-            && published.manifest.components.iter().any(|released| {
-                released.package_id == member.scope.package_id
-                    && released.descriptor.component == member.component
-                    && released.descriptor.component_digest == member.component_digest
-            })
-            && covers_routes(published, member, bytes)?
-        {
-            covering.push((member, bytes));
+    };
+    let named: Vec<_> = match application {
+        Some(name) => applications.get_key_value(name).into_iter().collect(),
+        None => applications.iter().collect(),
+    };
+    if named.is_empty() {
+        return Err(selection(applications.keys().collect()).into());
+    }
+    let mut covered = Vec::new();
+    for (name, definition) in &named {
+        let mut covering = Vec::new();
+        for (member, bytes) in candidates {
+            if definition
+                .packages
+                .contains(member.scope.package_id.as_str())
+                && published.manifest.components.iter().any(|released| {
+                    released.package_id == member.scope.package_id
+                        && released.descriptor.component == member.component
+                        && released.descriptor.component_digest == member.component_digest
+                })
+                && covers_routes(published, member, bytes)?
+            {
+                covering.push((*member, *bytes));
+            }
+        }
+        if named.len() == 1 || !covering.is_empty() {
+            covered.push((*name, covering));
         }
     }
+    let (name, covering) = match covered.as_slice() {
+        [one] => one,
+        [] => {
+            return Err(PublishManifestError::new(
+                PublishManifestErrorType::ApplicationCoverage,
+                "no application of environment.k has a released member covering every route",
+            )
+            .into());
+        }
+        many => return Err(selection(many.iter().map(|(name, _)| *name).collect()).into()),
+    };
     match covering.as_slice() {
         [member] => Ok(*member),
         [] => Err(PublishManifestError::new(
@@ -2396,17 +2422,16 @@ mod tests {
         // No selector is needed for a single application. The larger outer
         // component is outside its declared packages and cannot become its member.
         let (member, _) =
-            covering_application(&published, candidates(), &applications, None).unwrap();
+            covering_application(&published, &candidates(), &applications, None).unwrap();
         assert_eq!(member.scope.package_id, "overlay");
         assert_eq!(
-            covering_application(&published, candidates(), &applications, Some("orders"))
+            covering_application(&published, &candidates(), &applications, Some("orders"))
                 .unwrap()
                 .0,
             member
         );
         let error =
-            covering_application(&published, candidates()[..1].to_vec(), &applications, None)
-                .unwrap_err();
+            covering_application(&published, &candidates()[..1], &applications, None).unwrap_err();
         assert_eq!(
             error
                 .downcast_ref::<PublishManifestError>()
@@ -2415,13 +2440,49 @@ mod tests {
             PublishManifestErrorType::ApplicationCoverage
         );
 
+        // Without a selector, the application whose members cover the
+        // routes is the entry, and another application leaves it alone.
+        let mut two = applications.clone();
+        two.insert(
+            "rest".into(),
+            wamn_catalog::ApplicationDefinition {
+                connections: std::collections::BTreeMap::new(),
+                packages: ["base".into()].into(),
+            },
+        );
+        assert_eq!(
+            covering_application(&published, &candidates(), &two, None)
+                .unwrap()
+                .0,
+            member
+        );
+        let mut both = two.clone();
+        both.get_mut("rest")
+            .unwrap()
+            .packages
+            .insert("overlay".into());
+        let error = covering_application(&published, &candidates(), &both, None).unwrap_err();
+        assert_eq!(
+            error
+                .downcast_ref::<PublishManifestError>()
+                .unwrap()
+                .error_type(),
+            PublishManifestErrorType::ApplicationSelection
+        );
+        assert_eq!(
+            covering_application(&published, &candidates(), &both, Some("orders"))
+                .unwrap()
+                .0,
+            member
+        );
+
         let mut ambiguous = applications.clone();
         ambiguous
             .get_mut("orders")
             .unwrap()
             .packages
             .insert("outer".into());
-        let error = covering_application(&published, candidates(), &ambiguous, None).unwrap_err();
+        let error = covering_application(&published, &candidates(), &ambiguous, None).unwrap_err();
         let error = error.downcast_ref::<PublishManifestError>().unwrap();
         assert_eq!(
             error.error_type(),

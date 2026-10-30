@@ -56,10 +56,10 @@ pub(super) async fn publish(
     }
     let entry = super::compose_covering_entry(
         published,
-        candidates
+        &candidates
             .iter()
             .map(|(application, bytes)| (*application, bytes.as_slice()))
-            .collect(),
+            .collect::<Vec<_>>(),
         &route,
         applications,
         application,
