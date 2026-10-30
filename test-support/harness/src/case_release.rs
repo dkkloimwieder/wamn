@@ -808,7 +808,8 @@ pub struct Install<'a> {
 
 /// Stamp the release chart that `WAMN_RELEASE_CHART` names with `images`,
 /// render the values of `input`, and install the release in the operator
-/// namespace, as `env apply` does (R6).
+/// namespace, as `env apply` does (R6). Like `env apply`, it first creates
+/// the environment's host account and its grant on the credential Secret.
 /// Returns the release name, which is the host group, and the `wamn.release`
 /// label of the manifest digest, which the roles' `hostSelector` names.
 ///
@@ -832,12 +833,30 @@ pub async fn install(
     let name = release_chart::release_name(&input.org, &input.project, &input.env)?;
     let path = at.work.join(format!("values-{name}.yaml"));
     fs::write(&path, serde_yaml::to_string(&render(input)?)?)?;
+    let target = Target {
+        kubeconfig: at.work.join("kubeconfig"),
+        context: format!("kind-{}", at.cluster),
+        namespace: NAMESPACE.to_owned(),
+    };
+    let account = wamn_credential_store::kubernetes::service_account_name(
+        &input.org,
+        &input.project,
+        &input.env,
+    );
+    let secret =
+        wamn_credential_store::kubernetes::secret_name(&input.org, &input.project, &input.env);
+    for (_, object) in wamn_control::environment::ensure::credential_access(&account, &secret) {
+        wamn_control::kubectl::kubectl(
+            &target.kubeconfig,
+            &target.context,
+            &target.namespace,
+            &["apply", "-f", "-"],
+            Some(&serde_json::to_vec(&object)?),
+        )
+        .await?;
+    }
     release_chart::upgrade(
-        &Target {
-            kubeconfig: at.work.join("kubeconfig"),
-            context: format!("kind-{}", at.cluster),
-            namespace: NAMESPACE.to_owned(),
-        },
+        &target,
         &chart,
         &name,
         &path,

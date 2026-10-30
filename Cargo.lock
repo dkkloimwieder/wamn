@@ -6094,6 +6094,7 @@ dependencies = [
  "wamn-control",
  "wamn-control-provision",
  "wamn-control-registry",
+ "wamn-credential-store",
  "wamn-engine",
  "wamn-event-wire",
  "wamn-package-artifact",

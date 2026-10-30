@@ -13,6 +13,8 @@ schemars = { workspace = true }
 url = { workspace = true }
 wamn-control = { workspace = true }
 wamn-control-provision = { workspace = true }
+# The host account of a case release (case_release.rs).
+wamn-credential-store = { workspace = true }
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
 # The session issuer of the cluster fixtures (session_issuer.rs).
 serde_yaml = { workspace = true }
