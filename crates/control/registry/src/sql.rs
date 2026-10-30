@@ -292,15 +292,15 @@ pub fn select_connection_projection_environments_sql() -> &'static str {
 /// Delete every connection of one environment, with no reference refusal, and
 /// disable their service principals. Generations, credential rows and the
 /// token row cascade. Params: `$1` org, `$2` project, `$3` env. Columns:
-/// `store, ref, version` of each removed credential, for the store cleanup
-/// after the commit.
+/// `store, ref, version, target_type` of each removed credential, for the
+/// store cleanup after the commit.
 pub fn delete_environment_connections_sql() -> &'static str {
     "WITH removed AS ( \
        DELETE FROM registry.connection WHERE org = $1 AND project = $2 AND env = $3 \
-       RETURNING id, service_principal_id), \
+       RETURNING id, service_principal_id, target_id), \
      disabled AS ( \
        UPDATE identity.principals SET status = 'disabled', disabled_at = transaction_timestamp() \
        WHERE id IN (SELECT service_principal_id FROM removed) AND status <> 'disabled') \
-     SELECT k.store, k.ref, k.version FROM identity.credential k \
-     JOIN removed r ON r.id = k.connection_id"
+     SELECT k.store, k.ref, k.version, t.type FROM identity.credential k \
+     JOIN removed r ON r.id = k.connection_id JOIN registry.target t ON t.id = r.target_id"
 }

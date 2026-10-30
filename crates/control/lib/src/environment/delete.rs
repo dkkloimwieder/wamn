@@ -511,9 +511,10 @@ async fn delete_locked(
             lines.push(deleted);
         }
     }
+    // A cloud target's credentials are in the Secret deleted above.
     let files: Vec<(String, String)> = credentials
         .iter()
-        .filter(|row| row.get::<_, String>(0) == "file")
+        .filter(|row| row.get::<_, String>(3) == "local")
         .map(|row| (row.get(1), row.get(2)))
         .collect();
     if !files.is_empty() {
