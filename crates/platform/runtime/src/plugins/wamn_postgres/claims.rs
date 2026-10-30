@@ -2068,7 +2068,11 @@ impl WamnPostgres {
         );
         let release = facts.release(lookup.manifest_digest).await?;
         let binding = release
-            .binding(lookup.component_digest, lookup.package_id, lookup.store_alias)
+            .binding(
+                lookup.component_digest,
+                lookup.package_id,
+                lookup.store_alias,
+            )
             .filter(|binding| {
                 lookup.candidate_binding.is_none_or(|candidate| {
                     candidate.instance_id == binding.connection_id.to_string()
@@ -2122,7 +2126,9 @@ impl WamnPostgres {
                     ),
                 )
             });
-        let name = generation.as_ref().map(|generation| generation.name.clone());
+        let name = generation
+            .as_ref()
+            .map(|generation| generation.name.clone());
         let credential_handle = if integration_type == Some("gcs") {
             None
         } else {
