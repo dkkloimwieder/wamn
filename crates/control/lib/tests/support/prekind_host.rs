@@ -403,6 +403,9 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     system.execute("SELECT set_config('app.user_id',$1,false), set_config('app.operation','admin:prekind',false)", &[&wamn_control_provision::PlatformComponent::Provisioning.principal_id().to_string()]).await?;
     system.execute("INSERT INTO registry.orgs(id,placement_type,pool_cluster) VALUES ($1,'pooled','prekind')", &[&ORG]).await?;
     system
+        .batch_execute("UPDATE registry.meta SET platform_domain='example.invalid'")
+        .await?;
+    system
         .execute(
             "INSERT INTO registry.projects(org,id) VALUES ($1,$2)",
             &[&ORG, &PROJECT],
@@ -429,6 +432,13 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
             ],
         )
         .await?;
+    let target: String = system
+        .query_one(
+            "SELECT id::text FROM registry.target WHERE name='cloud'",
+            &[],
+        )
+        .await?
+        .get(0);
     system
         .query_one(
             wamn_control_registry::sql::upsert_project_env_with_policy_sql(),
@@ -441,10 +451,11 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
                 &"aaaaaaa1",
                 &Some(true),
                 &POLICY,
+                &target,
             ],
         )
         .await?;
-    system.batch_execute("UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); RESET ROLE").await?;
+    system.batch_execute("RESET ROLE").await?;
     // C3.5: a credential imports only into a declared, project-enabled connection.
     let (mut seed, seed_connection) =
         tokio_postgres::connect(control.url(), tokio_postgres::NoTls).await?;
