@@ -662,13 +662,8 @@ impl ConnectionHttp {
         };
         let material = secret.as_deref().map(Secret::expose);
         if auth_type != "oauth2_client_credentials" {
-            let headers = authentication::headers(
-                auth_type,
-                &parameters,
-                material,
-                request,
-                &mut decision,
-            )?;
+            let headers =
+                authentication::headers(auth_type, &parameters, material, request, &mut decision)?;
             return execute(&self.transport, scope, decision, request, headers).await;
         }
         let credential = oauth2_credential(&parameters, material)?;
@@ -1448,6 +1443,7 @@ mod tests {
     use crate::connection_memory::ConnectionMemory;
     use wamn_platform_identity::connection_changes::ConnectionChanges;
 
+    mod credential_retry_tests;
     mod oauth2_tests;
 
     use crate::plugins::effect_span::span_tests::{SpanHarness, expected_attributes};

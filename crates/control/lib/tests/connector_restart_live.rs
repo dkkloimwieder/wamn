@@ -397,7 +397,10 @@ async fn published_modbus_versions_link_before_the_next_call() -> anyhow::Result
     let source_bytes = std::fs::read_to_string(&source_path)?;
     std::fs::write(
         &source_path,
-        format!("{source_bytes}\n// A second published source revision.\n"),
+        source_bytes.replace(
+            "super::response_registers(&frame, &response).map_err(transport)",
+            "super::response_registers(&frame, &response).map(|mut registers| { registers[1] = registers[1].wrapping_add(1); registers }).map_err(transport)",
+        ),
     )?;
     let second = integration::build(scratch.path(), "modbus").await?;
     integration::publish(&second, &configuration, database.url(), &integration::Publication {version:3, parameter_schema:json!({"type":"object","properties":{"authority":{"type":"string","minLength":1,"immutable":true}},"required":["authority"]}),operations:"wamn:modbus/modbus".into()}).await?;
@@ -561,16 +564,36 @@ async fn published_modbus_versions_link_before_the_next_call() -> anyhow::Result
     let (first_code, second_code) = (code(&first)?, code(&second)?);
     let compiled = wamn_engine::connector::compile_count(&first_code);
     assert_eq!(compiled, 1);
+    assert_eq!(wamn_engine::connector::compile_count(&second_code), 0);
+    let id = facts.env_connections().await?.connections["meter"];
+    let old = facts.connection(&id).await?.unwrap();
     let tx = admin.transaction().await?;
     tx.batch_execute(&bind_platform_principal_sql(
         PlatformComponent::Provisioning,
     ))
     .await?;
-    wamn_test_infrastructure::credentials::define(
-        &tx, "acme", &json!({"project":"one","env":"dev","name":"meter","integration_type":"modbus","auth_type":"none","parameters":{"authority":authority}}), &store,
-    ).await?;
+    let mut drops = wamn_platform_identity::connection_changes::ConnectionDrops::default();
+    wamn_platform_identity::connections::administration::execute_with_store(
+        &tx,
+        "acme",
+        "connection.write",
+        &json!({"project":"one","env":"dev","name":"meter","parameters":{"authority":authority}})
+            .to_string(),
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+        &mut drops,
+        Some(&store),
+    )
+    .await?;
     tx.commit().await?;
+    assert!(!drops.is_empty());
+    wamn_platform_identity::connection_changes::ConnectionChanges::default()
+        .publish(drops)
+        .await;
     assert_eq!(application.read().await?.unwrap().payload, "4660");
+    assert_eq!(
+        facts.connection(&id).await?.unwrap().active_generation,
+        old.active_generation + 1
+    );
     assert_ne!(
         reader.store_id("registers").await?.unwrap(),
         before_generation
@@ -602,7 +625,14 @@ async fn published_modbus_versions_link_before_the_next_call() -> anyhow::Result
         )
         .await?;
         // This call itself observes the version, compiles on a miss and links it.
-        assert_eq!(application.read().await?.unwrap().payload, "4660");
+        assert_eq!(
+            application.read().await?.unwrap().payload,
+            if *pin == second.digest {
+                "4661"
+            } else {
+                "4660"
+            }
+        );
         let pin_code = if *pin == second.digest {
             &second_code
         } else {

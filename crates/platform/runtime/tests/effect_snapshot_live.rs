@@ -29,11 +29,30 @@ async fn connect(url: &str) -> anyhow::Result<Client> {
     Ok(client)
 }
 
+async fn reads(admin: &Client) -> anyhow::Result<i64> {
+    Ok(admin
+        .query_one(
+            "SELECT COALESCE(sum(calls),0)::bigint FROM pg_stat_statements \
+         WHERE userid=(SELECT oid FROM pg_roles WHERE rolname=$1) \
+         AND dbid=(SELECT oid FROM pg_database WHERE datname=current_database())",
+            &[&GENERATION],
+        )
+        .await?
+        .get(0))
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires: PostgreSQL 18, WAMN_AUTH_NATS_URL (private JetStream)"]
 async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&["WAMN_AUTH_NATS_URL"]);
     let _lock = wamn_test_postgres::lock();
-    let database = wamn_test_postgres::database();
+    let mut server =
+        wamn_test_postgres::start(&[("shared_preload_libraries", "pg_stat_statements")])?;
+    let database = server.create_database("effect_snapshot")?;
     let admin = connect(database.url()).await?;
+    admin
+        .batch_execute("CREATE EXTENSION pg_stat_statements")
+        .await?;
     admin.batch_execute(&sql::ensure_app_acl_role_sql()).await?;
     admin
         .batch_execute(wamn_schema_control::ensure_scenario_author_role_sql())
@@ -49,7 +68,7 @@ async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
     admin
         .batch_execute(&sql::prepare_workload_generation_sql(
             WorkloadRoleFamily::HttpAdmitter,
-            database.name(),
+            "effect_snapshot",
             GENERATION,
             PASSWORD,
             "2099-01-01T00:00:00Z",
@@ -81,6 +100,11 @@ async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
         )
         .await?
         .get(0);
+    admin.execute(
+        "INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interfaces,mode) \
+         VALUES($1,$2,$3,'erp',ARRAY['wamn:connection/http@0.1.0'],'write')",
+        &[&ENV_KEY,&component_digest,&PACKAGE],
+    ).await?;
     let graph = WiringDocument::new(
         "snapshot",
         1,
@@ -170,9 +194,23 @@ async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
         store_alias: "erp",
         candidate_binding: None,
     };
+    let memory = std::sync::Arc::new(wamn_runtime::connection_memory::ConnectionMemory::default());
+    let broker = async_nats::connect(std::env::var("WAMN_AUTH_NATS_URL")?).await?;
+    let changes = wamn_runtime::connection_memory::replicate(
+        &broker,
+        Some(ENV_KEY),
+        std::sync::Arc::clone(&memory),
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !memory.watched() {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .context("the snapshot connection watch starts")?;
     let facts = wamn_runtime::connection_facts::ConnectionFacts::new(
-        std::sync::Arc::new(wamn_runtime::connection_memory::ConnectionMemory::default()),
-        wamn_platform_identity::connection_changes::ConnectionChanges::default(),
+        std::sync::Arc::clone(&memory),
+        changes,
         std::sync::Arc::new(wamn_runtime::connection_credentials::ConnectionCredentials::empty()),
         std::sync::Arc::clone(&postgres),
         ENV_KEY,
@@ -196,5 +234,20 @@ async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
         Some("snapshot_fixture/request")
     );
     assert!(snapshot.node_permitted);
+    assert!(memory.release(ENV_KEY, &manifest_digest).is_ok());
+    let first_reads = reads(&admin).await?;
+    assert!(first_reads > 0, "the cold snapshot reads PostgreSQL");
+    let repeated = postgres
+        .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, ENV_KEY, &lookup, &facts)
+        .await?
+        .context("the repeated snapshot resolves")?;
+    assert_eq!(repeated.wiring_hash, snapshot.wiring_hash);
+    assert_eq!(repeated.registered_operation, snapshot.registered_operation);
+    assert_eq!(repeated.node_permitted, snapshot.node_permitted);
+    let repeated_reads = reads(&admin).await?;
+    assert_eq!(
+        repeated_reads, first_reads,
+        "the warm snapshot reads no PostgreSQL statement"
+    );
     Ok(())
 }

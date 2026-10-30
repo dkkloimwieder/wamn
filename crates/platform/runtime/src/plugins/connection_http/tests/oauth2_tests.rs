@@ -21,28 +21,37 @@ struct Observed {
     body: Vec<u8>,
 }
 
-struct Fixture {
+type ResponsePause = (
+    tokio::sync::oneshot::Sender<()>,
+    tokio::sync::oneshot::Receiver<()>,
+);
+
+pub(super) struct Fixture {
     base: String,
     observed: Arc<Mutex<Vec<Observed>>>,
     task: JoinHandle<()>,
     credentials: crate::connection_credentials::test_util::Fixture,
     applications: Vec<wamn_test_postgres::Database>,
+    pause: Arc<Mutex<Option<ResponsePause>>>,
 }
 
 impl Fixture {
-    async fn start(tokens: Vec<(u16, String)>, api: Vec<u16>) -> Self {
+    pub(super) async fn start(tokens: Vec<(u16, String)>, api: Vec<u16>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/bound/", listener.local_addr().unwrap());
         let observed = Arc::new(Mutex::new(Vec::new()));
         let recorded = observed.clone();
         let tokens = Arc::new(Mutex::new(VecDeque::from(tokens)));
         let api = Arc::new(Mutex::new(VecDeque::from(api)));
+        let pause = Arc::new(Mutex::new(None::<ResponsePause>));
+        let response_pause = Arc::clone(&pause);
         let task = tokio::spawn(async move {
             loop {
                 let (tcp, _) = listener.accept().await.unwrap();
                 let observed = recorded.clone();
                 let tokens = tokens.clone();
                 let api = api.clone();
+                let pause = Arc::clone(&response_pause);
                 hyper::server::conn::http1::Builder::new()
                     .serve_connection(
                         TokioIo::new(tcp),
@@ -50,6 +59,7 @@ impl Fixture {
                             let observed = observed.clone();
                             let tokens = tokens.clone();
                             let api = api.clone();
+                            let pause = Arc::clone(&pause);
                             async move {
                                 let (parts, body) = request.into_parts();
                                 let body = body.collect().await.unwrap().to_bytes().to_vec();
@@ -70,6 +80,15 @@ impl Fixture {
                                     let status = api.lock().unwrap().pop_front().unwrap_or(500);
                                     (status, format!("api-{status}"))
                                 };
+                                let paused = if token {
+                                    None
+                                } else {
+                                    pause.lock().unwrap().take()
+                                };
+                                if let Some((arrived, resume)) = paused {
+                                    arrived.send(()).unwrap();
+                                    resume.await.unwrap();
+                                }
                                 Ok::<_, Infallible>(
                                     hyper::Response::builder()
                                         .status(status)
@@ -90,6 +109,7 @@ impl Fixture {
             observed,
             task,
             applications: Vec::new(),
+            pause,
         }
     }
 
@@ -103,6 +123,24 @@ impl Fixture {
 
     async fn put_http(&mut self, name: &str, parameters: &serde_json::Value, projects: &[&str]) {
         let secret = serde_json::json!({"client_secret": CLIENT_SECRET}).to_string();
+        self.put_auth(
+            name,
+            parameters,
+            projects,
+            "oauth2_client_credentials",
+            &secret,
+        )
+        .await;
+    }
+
+    async fn put_auth(
+        &mut self,
+        name: &str,
+        parameters: &serde_json::Value,
+        projects: &[&str],
+        auth_type: &str,
+        secret: &str,
+    ) {
         for project in projects {
             let tx = self.credentials.admin.transaction().await.unwrap();
             tx.batch_execute("SET LOCAL ROLE wamn_system")
@@ -118,7 +156,7 @@ impl Fixture {
                 "acme",
                 &serde_json::json!({
                     "project": project, "env": "dev", "name": name,
-                    "integration_type": "http", "auth_type": "oauth2_client_credentials",
+                    "integration_type": "http", "auth_type": auth_type,
                     "parameters": {"primary-authority": self.base, "tls-verification": "disabled", "auth": parameters},
                     "credential": secret,
                 }),
@@ -129,6 +167,20 @@ impl Fixture {
     }
 
     async fn plugin(&mut self, parameters: &serde_json::Value) -> ConnectionHttp {
+        self.plugin_with_auth(
+            parameters,
+            "oauth2_client_credentials",
+            &serde_json::json!({"client_secret": CLIENT_SECRET}).to_string(),
+        )
+        .await
+    }
+
+    async fn plugin_with_auth(
+        &mut self,
+        parameters: &serde_json::Value,
+        auth_type: &str,
+        secret: &str,
+    ) -> ConnectionHttp {
         use crate::plugins::wamn_postgres::{
             ClassCredentials, ProjectConfig, StaticCredentialProvider,
         };
@@ -136,8 +188,14 @@ impl Fixture {
         use wamn_run_state::AuthorityClass;
 
         for name in ["handle", "other-handle"] {
-            self.put_http(name, parameters, &["project-a", "project-b"])
-                .await;
+            self.put_auth(
+                name,
+                parameters,
+                &["project-a", "project-b"],
+                auth_type,
+                secret,
+            )
+            .await;
         }
         let mut manifest = manifest();
         let mut invocation = invocation();
@@ -316,13 +374,71 @@ impl Fixture {
         result
     }
 
-    fn counts(&self) -> (usize, usize) {
+    pub(super) fn counts(&self) -> (usize, usize) {
         let observed = self.observed.lock().unwrap();
         let tokens = observed
             .iter()
             .filter(|request| request.path.starts_with("/bound/token"))
             .count();
         (tokens, observed.len() - tokens)
+    }
+
+    pub(super) async fn basic_plugin(&mut self) -> ConnectionHttp {
+        self.plugin_with_auth(
+            &serde_json::json!({}),
+            "http_basic",
+            r#"{"username":"fixture","password":"old"}"#,
+        )
+        .await
+    }
+
+    pub(super) async fn write_basic(&mut self) {
+        let tx = self.credentials.admin.transaction().await.unwrap();
+        tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+        .await
+        .unwrap();
+        tx.batch_execute("SET LOCAL ROLE wamn_control")
+            .await
+            .unwrap();
+        let mut drops = wamn_platform_identity::connection_changes::ConnectionDrops::default();
+        wamn_platform_identity::connections::administration::execute_with_store(
+            &tx, "acme", "connection.write",
+            &serde_json::json!({
+                "project":"project-a", "env":"dev", "name":"handle",
+                "parameters":{"primary-authority":self.base,"tls-verification":"disabled","auth":{}},
+                "credential":r#"{"username":"fixture","password":"new"}"#
+            }).to_string(),
+            &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+            &mut drops, Some(self.credentials.store.as_ref()),
+        ).await.unwrap();
+        tx.commit().await.unwrap();
+        assert!(!drops.is_empty());
+        wamn_platform_identity::connection_changes::ConnectionChanges::default()
+            .publish(drops)
+            .await;
+    }
+
+    pub(super) fn pause_next_response(&self) -> ResponsePause {
+        let (arrived, arrival) = tokio::sync::oneshot::channel();
+        let (resume, resumed) = tokio::sync::oneshot::channel();
+        *self.pause.lock().unwrap() = Some((arrived, resumed));
+        (resume, arrival)
+    }
+
+    pub(super) fn authorizations(&self) -> Vec<String> {
+        self.observed
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|request| {
+                request.headers["authorization"]
+                    .to_str()
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect()
     }
 }
 

@@ -23,6 +23,9 @@ use crate::connection_credentials::{
 use crate::connection_memory::{ConnectionFact, ConnectionMemory, EnvConnections, ReleaseFact};
 use crate::plugins::wamn_postgres::WamnPostgres;
 
+#[cfg(test)]
+mod tests;
+
 /// The number of entries of each bounded map.
 pub const MAP_ENTRIES: u64 = 1024;
 
@@ -255,9 +258,7 @@ impl ConnectionFacts {
         version: Option<i32>,
     ) -> anyhow::Result<Arc<IntegrationVersion>> {
         if let Some(version) = version
-            && let Some(found) = self
-                .versions
-                .get(&(integration_type.to_owned(), version))
+            && let Some(found) = self.versions.get(&(integration_type.to_owned(), version))
         {
             return Ok(found);
         }
