@@ -993,7 +993,7 @@ fn control_routes_cannot_write_release_connections_or_bindings() {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     run_admin(database.url(),"release connection grants",&format!(
-        "{} DO $roles$ BEGIN IF to_regrole('wamn_app') IS NULL THEN CREATE ROLE wamn_app NOLOGIN; END IF; IF to_regrole('wamn_control') IS NULL THEN CREATE ROLE wamn_control NOLOGIN; END IF; END $roles$; CREATE SCHEMA wamn_run; {} {} {} DO $$ DECLARE role_name text; relation text; privilege text; BEGIN
+        "{} DO $roles$ BEGIN IF to_regrole('wamn_app') IS NULL THEN CREATE ROLE wamn_app NOLOGIN; END IF; IF to_regrole('wamn_control') IS NULL THEN CREATE ROLE wamn_control NOLOGIN; END IF; IF to_regrole('wamn_scenario_author') IS NULL THEN CREATE ROLE wamn_scenario_author NOLOGIN; END IF; END $roles$; CREATE SCHEMA wamn_run; {} {} {} DO $$ DECLARE role_name text; relation text; privilege text; BEGIN
           FOREACH role_name IN ARRAY ARRAY['wamn_control','wamn_administration'] LOOP
             FOREACH relation IN ARRAY ARRAY['release_connection','connection_binding'] LOOP
               FOREACH privilege IN ARRAY ARRAY['INSERT','UPDATE','DELETE','TRUNCATE'] LOOP
