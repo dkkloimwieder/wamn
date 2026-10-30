@@ -14,6 +14,8 @@ use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::environment::{bindings, document::EnvironmentDocument};
 use wamn_platform_identity::connection_changes::ConnectionDrops;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
+use wamn_runtime::connection_facts::ConnectionFacts;
+use wamn_runtime::connection_memory::ConnectionMemory;
 use wamn_runtime::plugins::wamn_blobstore::binding::{self, BindingError};
 use wamn_runtime::plugins::wamn_postgres::{
     CandidateConnectionBinding, ClassCredentials, ConnectionEffectLookup, DEFAULT_PROJECT,
@@ -439,6 +441,7 @@ async fn assert_nested_effect_snapshot(
     project: &Client,
     postgres: &WamnPostgres,
     direct: ConnectionEffectLookup<'_>,
+    facts: &ConnectionFacts,
 ) {
     const WIRING_PACKAGE: &str = "nested_wiring";
     const ORIGIN_PACKAGE: &str = "nested_origin";
@@ -480,7 +483,7 @@ async fn assert_nested_effect_snapshot(
         ..direct
     };
     let snapshot = postgres
-        .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, ENV_KEY, &nested)
+        .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, ENV_KEY, &nested, facts)
         .await
         .expect("load the nested snapshot")
         .expect("the released wiring exists");
@@ -570,7 +573,7 @@ async fn assert_nested_effect_snapshot(
         ),
     ] {
         let snapshot = postgres
-            .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, ENV_KEY, &refused)
+            .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, ENV_KEY, &refused, facts)
             .await
             .expect("load the mismatched snapshot");
         assert!(
@@ -608,9 +611,18 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
     postgres
         .set_env_key(COMPONENT_ID, ENV_KEY)
         .expect("register the component's tenant");
+    let facts = Arc::new(ConnectionFacts::new(
+        Arc::new(ConnectionMemory::default()),
+        wamn_platform_identity::connection_changes::ConnectionChanges::default(),
+        Arc::new(authority.reader().await),
+        Arc::clone(&postgres),
+        ENV_KEY,
+        DEFAULT_PROJECT,
+        ENVIRONMENT,
+    ));
     let _reader = wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore::new(
         Arc::clone(&postgres),
-        Arc::new(authority.reader().await),
+        Arc::clone(&facts),
         ENV_KEY,
         DEFAULT_PROJECT,
         None,
@@ -642,7 +654,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
         postgres
             // WamnPostgres::new registers its one pool under DEFAULT_PROJECT;
             // the host names the project it serves, a fixture has only this.
-            .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, ENV_KEY, &lookup)
+            .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, ENV_KEY, &lookup, &facts)
             .await
             .expect("the plugin loads a snapshot for a declared alias")
             .expect("the declared alias has a snapshot, bound or not")
@@ -674,7 +686,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
     assert_eq!(rows(&project).await, before_reapply);
     assert!(
         postgres
-            .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, "other", &lookup)
+            .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, "other", &lookup, &facts)
             .await
             .is_err()
     );
@@ -729,6 +741,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
                     candidate_binding: Some(&candidate),
                     ..lookup
                 },
+                &facts,
             )
             .await
             .unwrap()
@@ -746,7 +759,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
         },
     ] {
         let snapshot = postgres
-            .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, ENV_KEY, &refused)
+            .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, ENV_KEY, &refused, &facts)
             .await
             .unwrap();
         assert!(snapshot.is_none_or(|snapshot| binding::resolve(&snapshot).is_err()));
@@ -781,9 +794,10 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
     };
     let route_snapshot = |lookup: ConnectionEffectLookup<'static>| {
         let postgres = Arc::clone(&postgres);
+        let facts = Arc::clone(&facts);
         async move {
             postgres
-                .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, ENV_KEY, &lookup)
+                .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, ENV_KEY, &lookup, &facts)
                 .await
                 .expect("the plugin loads a route snapshot")
         }
@@ -818,7 +832,7 @@ async fn release_bindings_round_trip_through_the_plugins_own_resolution() {
         foreign.is_none(),
         "a route in a package outside the release has no snapshot"
     );
-    assert_nested_effect_snapshot(&project, &postgres, lookup).await;
+    assert_nested_effect_snapshot(&project, &postgres, lookup, &facts).await;
     drop(project);
     project_task.abort();
 }
@@ -930,9 +944,18 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
         .unwrap(),
     );
     postgres.set_env_key(COMPONENT_ID, ENV_KEY).unwrap();
+    let facts = Arc::new(ConnectionFacts::new(
+        Arc::new(ConnectionMemory::default()),
+        wamn_platform_identity::connection_changes::ConnectionChanges::default(),
+        Arc::new(authority.reader().await),
+        Arc::clone(&postgres),
+        ENV_KEY,
+        DEFAULT_PROJECT,
+        ENVIRONMENT,
+    ));
     let _reader = wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore::new(
         Arc::clone(&postgres),
-        Arc::new(authority.reader().await),
+        Arc::clone(&facts),
         ENV_KEY,
         DEFAULT_PROJECT,
         None,
@@ -971,7 +994,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
     let plugin = ConnectionHttp::new(
         Arc::clone(&postgres),
         Arc::new(HttpTransport::new().unwrap()),
-        Arc::new(authority.reader().await),
+        Arc::clone(&facts),
         ENV_KEY,
         DEFAULT_PROJECT,
         vec![
@@ -1033,6 +1056,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
                 store_alias: "erp",
                 candidate_binding: None,
             },
+            &facts,
         )
         .await
         .unwrap()
@@ -1068,7 +1092,7 @@ async fn read_binding_refuses_post_and_forged_candidate_mode_before_dispatch() {
     let plugin = ConnectionHttp::new(
         postgres,
         Arc::new(HttpTransport::new().unwrap()),
-        Arc::new(authority.reader().await),
+        Arc::clone(&facts),
         ENV_KEY,
         DEFAULT_PROJECT,
         vec![

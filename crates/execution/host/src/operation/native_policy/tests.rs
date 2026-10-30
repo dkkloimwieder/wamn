@@ -17,8 +17,11 @@ use wamn_catalog::{
 };
 use wamn_engine::component_admission::component_digest;
 use wamn_engine::release_manifest::LoadedRelease;
+use wamn_platform_identity::connection_changes::ConnectionChanges;
 use wamn_project_state::PlatformComponent;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
+use wamn_runtime::connection_facts::ConnectionFacts;
+use wamn_runtime::connection_memory::ConnectionMemory;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::connection_http::{
     ConnectionExecutionClosure, ConnectionHttp, ConnectionInvocation, ConnectionOrigin,
@@ -761,7 +764,15 @@ impl Fixture {
                 StaticCredentialProvider::new(HashMap::new(), None),
             )))
         });
-        let vault = Arc::new(ConnectionCredentials::empty());
+        let facts = Arc::new(ConnectionFacts::new(
+            Arc::new(ConnectionMemory::default()),
+            ConnectionChanges::default(),
+            Arc::new(ConnectionCredentials::empty()),
+            Arc::clone(&postgres),
+            "tenant-a",
+            "test",
+            release.scope().environment.as_str(),
+        ));
         let policy = new_native_policy(
             &native,
             None,
@@ -771,7 +782,7 @@ impl Fixture {
                 connection_http: Arc::new(ConnectionHttp::new(
                     Arc::clone(&postgres),
                     Arc::new(HttpTransport::new().expect("HTTP transport")),
-                    Arc::clone(&vault),
+                    Arc::clone(&facts),
                     "tenant-a",
                     "test",
                     Arc::from(Vec::new()),
@@ -779,7 +790,7 @@ impl Fixture {
                 )),
                 blobstore: Arc::new(WamnBlobstore::new(
                     Arc::clone(&postgres),
-                    vault,
+                    facts,
                     "tenant-a",
                     "test",
                     Some(Arc::clone(&release)),

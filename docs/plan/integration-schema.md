@@ -438,7 +438,7 @@ Plaintext secrets never sit in Postgres. A credential row holds a reference (`st
 - The host applies auth on the outbound call, as it handles application auth today; integration code never holds the secret, except with `custom`, which hands it over through `bound.credential()`.
 - `http_basic`, `api_key`, `hmac`, both OAuth types and `aws_sigv4` are `http_only`. Non-HTTP types (Modbus, serial, raw TCP) use `none` or `custom`.
 - Auth type sits on the integration, so every env of an integration uses the same auth; a different auth is a different integration.
-- The host keeps each credential's secret under its credential id. A rotation makes a new credential id, so the new generation's key delete is enough. A 401 or 403 drops the secret and the connection fact and reads both again. No strict emergency revocation.
+- The host keeps each credential's secret under its credential id. A rotation makes a new credential id, so the new generation's key delete is enough. A 401 or 403 drops the secret and the connection fact and reads both again; the host sends once more only when the fact names a new generation or credential, so a repeated send never carries the credential that was just refused. No strict emergency revocation.
 - OAuth refresh runs before expiry, once across all pods: a host locks the connection row (`FOR NO KEY UPDATE`), re-reads the token row, and calls the provider only if the token is missing or due. The same lock covers the first client-credentials fetch and serializes refresh with rotation. A failed refresh sets `refresh_status` and notifies; retries continue on a schedule. The cache is warmed at startup for bound connections; the connection key delete for a new generation drops it.
 
 ### Admin flow (no deployment)

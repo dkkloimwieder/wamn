@@ -50,6 +50,8 @@ use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
 };
 use wamn_runtime::connection_credentials::ConnectionCredentials;
+use wamn_runtime::connection_facts::ConnectionFacts;
+use wamn_runtime::connection_memory::{self, ConnectionMemory};
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::route_authentication::{
     ControlRouteAuthenticator, EnvironmentStatusReader, PlatformRouteAuthenticator,
@@ -1239,40 +1241,45 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         _ => (ConnectionCredentials::empty(), None),
     };
     let credentials = Arc::new(credentials);
-    let connectors = application.map(|release| {
-        Arc::new(wamn_runtime::connectors::Connectors::new(
-            release.scope().applications.keys().cloned(),
-        ))
-    });
-    let connector_source = match (
-        application,
-        file_connection_reader.as_ref(),
-        args.component_artifact_base.as_deref(),
-    ) {
-        (Some(release), Some(_database), Some(base)) => {
+    let memory = Arc::new(ConnectionMemory::default());
+    let changes = connection_memory::replicate(
+        &scheduler_nats_client,
+        application.map(|release| release.scope().env_key.as_str()),
+        Arc::clone(&memory),
+    );
+    let facts = Arc::new(ConnectionFacts::new(
+        memory,
+        changes,
+        Arc::clone(&credentials),
+        Arc::clone(&postgres),
+        application.map_or("", |release| release.scope().env_key.as_str()),
+        &args.project,
+        application.map_or("", |release| release.scope().environment.as_str()),
+    ));
+    let connectors = match (application, args.component_artifact_base.as_deref()) {
+        (Some(release), Some(base)) => {
             let registry_name = wamn_catalog::parse_component_artifact_base(base)?;
             let registry_credentials = match RegistryPullCredential::select(args.registry_auth_file.as_deref(), args.registry_token_metadata)? {
                 RegistryPullCredential::AuthFile(path) => wamn_package_artifact::registry_credentials::RegistryCredentialSource::Fixed(
                     wamn_package_artifact::registry_credentials::read_registry_credentials(path, registry_name.registry())?),
                 RegistryPullCredential::TokenMetadata => wamn_package_artifact::registry_credentials::RegistryCredentialSource::MetadataServer,
             };
-            Some(wamn_runtime::connectors::ConnectorSource {
-                postgres: Arc::clone(&postgres),
-                env_key: release.scope().env_key.clone(),
-                manifest_digest: release.release().manifest_digest.to_string(),
-                applications: release.scope().applications.clone(),
-                credentials: Arc::clone(&credentials),
-                registry: wamn_package_artifact::PackageRegistry {
-                    artifact_base: base.to_owned(),
-                    registry_auth_file: args.registry_auth_file.clone().unwrap_or_default(),
-                    insecure_registry: args.allow_insecure_registries,
-                    oci_ca_paths: args.oci_ca_paths.clone(),
-                },
-                registry_credentials,
-                org: args.org.clone().context("connector host org missing")?,
-                project: args.project.clone(),
-                environment: release.scope().environment.clone(),
-            })
+            Some(Arc::new(
+                wamn_runtime::connectors::Connectors::new(
+                    Arc::clone(&facts),
+                    release,
+                    &postgres,
+                    &args.project,
+                    wamn_package_artifact::PackageRegistry {
+                        artifact_base: base.to_owned(),
+                        registry_auth_file: args.registry_auth_file.clone().unwrap_or_default(),
+                        insecure_registry: args.allow_insecure_registries,
+                        oci_ca_paths: args.oci_ca_paths.clone(),
+                    },
+                    registry_credentials,
+                )
+                .await?,
+            ))
         }
         _ => None,
     };
@@ -1318,7 +1325,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 Arc::clone(&engine),
                 Arc::clone(&postgres),
                 Arc::clone(&http_transport),
-                Arc::clone(&credentials),
+                Arc::clone(&facts),
                 Arc::clone(&logging),
                 allowed_hosts.into(),
                 Arc::clone(release),
@@ -1444,9 +1451,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let files = application.map(|release| {
         let connections = Arc::new(wamn_execution_host::file_route::RegistryFileConnections {
             client: file_connection_reader,
-            postgres: Arc::clone(&postgres),
             release: Arc::clone(release),
-            credentials: Arc::clone(&credentials),
+            facts: Arc::clone(&facts),
             org: args.org.clone().unwrap_or_default(),
             project: args.project.clone(),
             environment: release.scope().environment.clone(),
@@ -1454,7 +1460,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         let blobstore = Arc::new(
             wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore::new(
                 Arc::clone(&postgres),
-                Arc::clone(&credentials),
+                Arc::clone(&facts),
                 release.scope().env_key.clone(),
                 args.project.clone(),
                 Some(Arc::clone(release)),
@@ -1851,13 +1857,13 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     };
     // The host heartbeats from here on. The preload compiles after it, so a
     // cold compile cache delays the workload and not the heartbeat.
-    if connectors.is_some() || files.is_some() {
+    if files.is_some() {
         let mut stopped = stopping.clone();
         let files = files.clone();
         schedule_tasks.spawn(async move {
-            let mut ticks = tokio::time::interval(wamn_runtime::connectors::REFRESH_INTERVAL);
+            let mut ticks =
+                tokio::time::interval(wamn_execution_host::file_collector::COLLECTION_INTERVAL);
             ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            let mut collection_due = tokio::time::Instant::now();
             let mut collection = tokio::task::JoinSet::new();
             loop {
                 tokio::select! {
@@ -1871,18 +1877,11 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                     }
                     _ = ticks.tick() => {}
                 }
-                // The reader logs new pin errors and database failures.
-                if let (Some(connectors), Some(source)) = (&connectors, &connector_source) {
-                    let _ = connectors.refresh(source).await;
-                }
                 if let Some(files) = &files
-                    && tokio::time::Instant::now() >= collection_due
                     && collection.is_empty()
                 {
                     let files = Arc::clone(files);
                     collection.spawn(async move { files.collect_orphan_files().await });
-                    collection_due = tokio::time::Instant::now()
-                        + wamn_execution_host::file_collector::COLLECTION_INTERVAL;
                 }
             }
         });

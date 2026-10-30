@@ -7,7 +7,8 @@
 //! `<env_key>.connection.<connection id>` holds the active generation, the
 //! effective status and the credential id of a connection. The key
 //! `<env_key>.release.<manifest digest hex>` holds the connection map of a
-//! release. Every writer of a fact deletes its key after the commit
+//! release. The key `<env_key>.connections` holds the map from integration
+//! name to connection id of the environment. Every writer of a fact deletes its key after the commit
 //! ([`wamn_platform_identity::connection_changes`]).
 //!
 //! Immutable rows, such as the parameters of a generation or the secret of a
@@ -16,12 +17,13 @@
 //!
 //! [`BUCKET`]: wamn_platform_identity::connection_changes::BUCKET
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_nats::jetstream::kv::Store;
 use wamn_platform_identity::connection_changes::{
-    BUCKET, ConnectionChanges, connection_key, release_key,
+    BUCKET, ConnectionChanges, connection_key, connections_key, release_key,
 };
 use wamn_platform_identity::kv_memory::MEMORY_TTL;
 
@@ -48,7 +50,7 @@ pub struct ConnectionFact {
 }
 
 /// One name a release binds: (component, package, name) to (connection,
-/// version).
+/// version, mode).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReleaseBinding {
@@ -57,16 +59,23 @@ pub struct ReleaseBinding {
     pub name: String,
     pub connection_id: uuid::Uuid,
     pub version: i32,
+    pub mode: String,
 }
 
 /// The connection map of one release.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReleaseFact {
+    pub versions: BTreeMap<uuid::Uuid, i32>,
     pub bindings: Vec<ReleaseBinding>,
 }
 
 impl ReleaseFact {
+    /// The released version of a connection, including one with no binding.
+    pub fn version(&self, connection_id: &uuid::Uuid) -> Option<i32> {
+        self.versions.get(connection_id).copied()
+    }
+
     /// The binding of `name` for one component of one package.
     pub fn binding(
         &self,
@@ -82,12 +91,20 @@ impl ReleaseFact {
     }
 }
 
+/// The map from integration name to connection id of one environment.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnvConnections {
+    pub connections: BTreeMap<String, uuid::Uuid>,
+}
+
 /// The value of a key of the bucket.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 enum Answer {
     Connection(ConnectionFact),
     Release(ReleaseFact),
+    Connections(EnvConnections),
 }
 
 /// The connection facts one host keeps.
@@ -177,6 +194,24 @@ impl ConnectionMemory {
     }
 }
 
+impl ConnectionMemory {
+    /// The connection map of `env_key`, or the ticket of a read of it.
+    pub fn connections(&self, env_key: &str) -> Result<EnvConnections, Ticket> {
+        let key = connections_key(env_key);
+        match self.memory.answer(&key) {
+            Ok(Answer::Connections(map)) => Ok(map),
+            Ok(_) => Err(self.memory.ticket(&key)),
+            Err(ticket) => Err(ticket),
+        }
+    }
+
+    pub async fn keep_connections(&self, env_key: &str, ticket: Ticket, map: EnvConnections) {
+        self.memory
+            .put(connections_key(env_key), ticket, Answer::Connections(map))
+            .await;
+    }
+}
+
 impl Watched for ConnectionMemory {
     fn set_bucket(&self, bucket: Option<Store>) {
         self.memory.set_bucket(bucket);
@@ -240,6 +275,18 @@ mod tests {
         (memory, writer)
     }
 
+    #[test]
+    fn a_release_version_does_not_require_a_binding() {
+        let id = uuid::Uuid::new_v4();
+        let fact = ReleaseFact {
+            versions: BTreeMap::from([(id, 7)]),
+            bindings: Vec::new(),
+        };
+        assert_eq!(fact.version(&id), Some(7));
+        assert_eq!(fact.version(&uuid::Uuid::new_v4()), None);
+        assert!(fact.bindings.is_empty());
+    }
+
     #[tokio::test]
     async fn a_host_without_the_bucket_keeps_no_fact() {
         let memory = ConnectionMemory::default();
@@ -290,12 +337,14 @@ mod tests {
         let id = uuid::Uuid::new_v4();
         let digest = format!("sha256:{}", "ab".repeat(32));
         let release = ReleaseFact {
+            versions: BTreeMap::from([(id, 1)]),
             bindings: vec![ReleaseBinding {
                 component_digest: format!("sha256:{}", "cd".repeat(32)),
                 package_id: "shop".into(),
                 name: "erp".into(),
                 connection_id: id,
                 version: 1,
+                mode: "write".into(),
             }],
         };
         let first = fact(1);

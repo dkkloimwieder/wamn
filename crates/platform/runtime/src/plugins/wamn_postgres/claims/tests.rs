@@ -1396,15 +1396,17 @@ async fn live_guest_cannot_override_the_injected_role_or_user_claim() {
 #[tokio::test]
 async fn effect_snapshot_refuses_a_env_key_that_disagrees_with_the_bound_claim() {
     const COMPONENT: &str = "warm-instance-0";
-    let pg = WamnPostgres::new(WamnPostgresConfig {
-        credentials: None,
-        guest_pool_max_size: 1,
-        platform_pool_max_size: 1,
-        wait_timeout_ms: 100,
-        statement_timeout_ms: 100,
-        row_limit: 10,
-    })
-    .unwrap();
+    let pg = Arc::new(
+        WamnPostgres::new(WamnPostgresConfig {
+            credentials: None,
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
+            wait_timeout_ms: 100,
+            statement_timeout_ms: 100,
+            row_limit: 10,
+        })
+        .unwrap(),
+    );
     pg.bind_session_claims(
         COMPONENT,
         &SessionClaims {
@@ -1414,6 +1416,16 @@ async fn effect_snapshot_refuses_a_env_key_that_disagrees_with_the_bound_claim()
     )
     .await
     .expect("the acquiring env_key binds");
+
+    let facts = crate::connection_facts::ConnectionFacts::new(
+        Arc::new(crate::connection_memory::ConnectionMemory::default()),
+        wamn_platform_identity::connection_changes::ConnectionChanges::default(),
+        Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),
+        Arc::clone(&pg),
+        "tenant-a",
+        DEFAULT_PROJECT,
+        "dev",
+    );
 
     let lookup = ConnectionEffectLookup {
         entry: crate::plugins::wamn_postgres::ConnectionEntryLookup {
@@ -1441,7 +1453,7 @@ async fn effect_snapshot_refuses_a_env_key_that_disagrees_with_the_bound_claim()
     // A stale ConnectionHttp still carrying the env_key its store was BUILT
     // for is refused before it can read a row.
     let stale = pg
-        .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "tenant-a", &lookup)
+        .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "tenant-a", &lookup, &facts)
         .await
         .expect_err("a disagreeing env_key is refused");
     assert!(
@@ -1454,7 +1466,7 @@ async fn effect_snapshot_refuses_a_env_key_that_disagrees_with_the_bound_claim()
     // The agreeing env_key gets past the guard and fails only on the absent
     // connection, so the guard is not simply refusing everything.
     let agreeing = pg
-        .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "tenant-b", &lookup)
+        .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "tenant-b", &lookup, &facts)
         .await
         .expect_err("an offline plugin has no connection to resolve against");
     assert!(
@@ -1480,19 +1492,31 @@ async fn effect_snapshot_refuses_a_env_key_that_disagrees_with_the_bound_claim()
 #[tokio::test]
 async fn effect_snapshot_refuses_a_component_with_no_bound_env_key() {
     const COMPONENT: &str = "never-acquired-instance";
-    let pg = WamnPostgres::new(WamnPostgresConfig {
-        credentials: None,
-        guest_pool_max_size: 1,
-        platform_pool_max_size: 1,
-        wait_timeout_ms: 100,
-        statement_timeout_ms: 100,
-        row_limit: 10,
-    })
-    .unwrap();
+    let pg = Arc::new(
+        WamnPostgres::new(WamnPostgresConfig {
+            credentials: None,
+            guest_pool_max_size: 1,
+            platform_pool_max_size: 1,
+            wait_timeout_ms: 100,
+            statement_timeout_ms: 100,
+            row_limit: 10,
+        })
+        .unwrap(),
+    );
     assert_eq!(
         pg.session_claims(COMPONENT),
         None,
         "the scope under test resolves no identity at all"
+    );
+
+    let facts = crate::connection_facts::ConnectionFacts::new(
+        Arc::new(crate::connection_memory::ConnectionMemory::default()),
+        wamn_platform_identity::connection_changes::ConnectionChanges::default(),
+        Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),
+        Arc::clone(&pg),
+        "tenant-a",
+        DEFAULT_PROJECT,
+        "dev",
     );
 
     let lookup = ConnectionEffectLookup {
@@ -1519,7 +1543,7 @@ async fn effect_snapshot_refuses_a_component_with_no_bound_env_key() {
     };
 
     let unbound = pg
-        .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "tenant-a", &lookup)
+        .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "tenant-a", &lookup, &facts)
         .await
         .expect_err("an unbound claim scope resolves nothing");
     assert!(
@@ -1611,7 +1635,9 @@ impl CredentialProvider for RecordingProvider {
 async fn effect_snapshot_checks_out_under_the_callable_http_authority() {
     const COMPONENT: &str = "warm-instance-0";
     let provider = Arc::new(RecordingProvider::default());
-    let pg = WamnPostgres::with_provider(Arc::clone(&provider) as Arc<dyn CredentialProvider>);
+    let pg = Arc::new(WamnPostgres::with_provider(
+        Arc::clone(&provider) as Arc<dyn CredentialProvider>
+    ));
     pg.bind_session_claims(
         COMPONENT,
         &SessionClaims {
@@ -1621,6 +1647,16 @@ async fn effect_snapshot_checks_out_under_the_callable_http_authority() {
     )
     .await
     .expect("the acquiring env_key binds");
+
+    let facts = crate::connection_facts::ConnectionFacts::new(
+        Arc::new(crate::connection_memory::ConnectionMemory::default()),
+        wamn_platform_identity::connection_changes::ConnectionChanges::default(),
+        Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),
+        Arc::clone(&pg),
+        "tenant-a",
+        DEFAULT_PROJECT,
+        "dev",
+    );
 
     let lookup = ConnectionEffectLookup {
         entry: crate::plugins::wamn_postgres::ConnectionEntryLookup {
@@ -1646,7 +1682,7 @@ async fn effect_snapshot_checks_out_under_the_callable_http_authority() {
     };
 
     let refused = pg
-        .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "tenant-a", &lookup)
+        .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, "tenant-a", &lookup, &facts)
         .await
         .expect_err("a provider that names no credential resolves nothing");
     assert!(

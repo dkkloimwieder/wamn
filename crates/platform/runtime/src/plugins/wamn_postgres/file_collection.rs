@@ -11,20 +11,6 @@ pub struct FileCollection {
 }
 
 impl WamnPostgres {
-    /// Read an active store connection from the environment projection.
-    pub async fn file_connection_id(
-        &self,
-        project: &str,
-        env_key: &str,
-        name: &str,
-    ) -> anyhow::Result<Option<String>> {
-        let (client, _) = self
-            .checkout_guest(project, env_key)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        Ok(client.query_opt("SELECT c.id::text FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id WHERE i.name=$1 AND i.status='active' AND c.status='active' AND c.integration_type IN ('gcs','s3','disk')", &[&name]).await?.map(|row| row.get(0)))
-    }
-
     /// Acquire the environment's collector lease with the existing guest SELECT login.
     /// A second host skips the pass while another collector holds the session lock.
     pub async fn file_collection(

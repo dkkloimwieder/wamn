@@ -6477,6 +6477,7 @@ dependencies = [
  "http-route",
  "hyper",
  "hyper-util",
+ "moka",
  "object_store",
  "oci-client",
  "opentelemetry",

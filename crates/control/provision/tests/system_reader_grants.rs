@@ -480,8 +480,12 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
         load_role_grants(&admin_url, WorkloadRoleFamily::ConnectionReader.acl_role()),
         vec![
             "routine|registry|read_connection_credential|EXECUTE|false".to_owned(),
-            "routine|registry|read_connection_version|EXECUTE|false".to_owned(),
+            "routine|registry|read_connection_fact|EXECUTE|false".to_owned(),
+            "routine|registry|read_connection_generation|EXECUTE|false".to_owned(),
+            "routine|registry|read_connection_secret|EXECUTE|false".to_owned(),
+            "routine|registry|read_env_connections|EXECUTE|false".to_owned(),
             "routine|registry|read_file_connection|EXECUTE|false".to_owned(),
+            "routine|registry|read_integration_version|EXECUTE|false".to_owned(),
             "schema|registry|registry|USAGE|false".to_owned(),
         ],
         "the connection reader holds only registry schema access and credential reader execution"

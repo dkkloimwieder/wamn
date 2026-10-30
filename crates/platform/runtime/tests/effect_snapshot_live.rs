@@ -137,7 +137,7 @@ async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
     assert!(identity.get::<_, bool>(3));
 
     // No LocalApplication: this is the same SQL path that the cluster host uses.
-    let postgres = WamnPostgres::new(WamnPostgresConfig {
+    let postgres = std::sync::Arc::new(WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(
             ClassCredentials::default().with_class(AuthorityClass::CallableHttp, credential),
         ),
@@ -146,7 +146,7 @@ async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
         wait_timeout_ms: 5_000,
         statement_timeout_ms: 10_000,
         row_limit: 10_000,
-    })?;
+    })?);
     postgres.set_env_key(COMPONENT, ENV_KEY)?;
     let lookup = ConnectionEffectLookup {
         entry: ConnectionEntryLookup {
@@ -170,8 +170,17 @@ async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
         store_alias: "erp",
         candidate_binding: None,
     };
+    let facts = wamn_runtime::connection_facts::ConnectionFacts::new(
+        std::sync::Arc::new(wamn_runtime::connection_memory::ConnectionMemory::default()),
+        wamn_platform_identity::connection_changes::ConnectionChanges::default(),
+        std::sync::Arc::new(wamn_runtime::connection_credentials::ConnectionCredentials::empty()),
+        std::sync::Arc::clone(&postgres),
+        ENV_KEY,
+        DEFAULT_PROJECT,
+        "dev",
+    );
     let snapshot = postgres
-        .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, ENV_KEY, &lookup)
+        .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, ENV_KEY, &lookup, &facts)
         .await
         .context("run the cluster effect snapshot as the HTTP admitter")?
         .context("the provisioned role must read the workflow and release")?;

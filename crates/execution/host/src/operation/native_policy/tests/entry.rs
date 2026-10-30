@@ -11,8 +11,11 @@ use wamn_engine::artifact_source::{LocalComponentSource, local_component_path};
 use wamn_engine::component_admission::component_digest;
 use wamn_engine::operation::{OperationCall, OperationClosure, invoke_operation, node_types};
 use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope};
+use wamn_platform_identity::connection_changes::ConnectionChanges;
 use wamn_project_state::PlatformComponent;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
+use wamn_runtime::connection_facts::ConnectionFacts;
+use wamn_runtime::connection_memory::ConnectionMemory;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::connection_http::{
     ConnectionExecutionClosure, InvocationEntry, WiringPosition,
@@ -188,9 +191,17 @@ fn release(with_entry: bool, postgres: Option<Arc<WamnPostgres>>) -> Release {
     });
     let host = OperationHost::new(
         Arc::new(wamn_engine::build_engine(&[]).expect("production native engine")),
-        postgres,
+        Arc::clone(&postgres),
         Arc::new(HttpTransport::new().expect("HTTP transport")),
-        Arc::new(ConnectionCredentials::empty()),
+        Arc::new(ConnectionFacts::new(
+            Arc::new(ConnectionMemory::default()),
+            ConnectionChanges::default(),
+            Arc::new(ConnectionCredentials::empty()),
+            postgres,
+            release.scope().env_key.as_str(),
+            "test",
+            release.scope().environment.as_str(),
+        )),
         Arc::new(WamnLogging::new(&WamnLoggingConfig::default()).expect("logging plugin")),
         Arc::from([]),
         release,

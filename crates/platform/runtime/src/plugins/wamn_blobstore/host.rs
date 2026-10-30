@@ -129,7 +129,7 @@ impl<T: 'static + Send> HostContainerWithStore<T> for SharedCtx {
         Result<wash_runtime::wasmtime::component::StreamReader<u8>, WitError>,
     > {
         let container = container_of(accessor, &handle)?;
-        let body = match instrumented(accessor, "get-data", container.get(&name)).await? {
+        let body = match Box::pin(instrumented(accessor, "get-data", container.get(&name))).await? {
             Ok(body) => body,
             Err(error) => return Ok(Err(to_wit(&error))),
         };
@@ -161,11 +161,13 @@ impl<T: 'static + Send> HostContainerWithStore<T> for SharedCtx {
             Ok(body) => body,
             Err(error) => return Ok(Err(to_wit(&StoreError::Intake(error)))),
         };
-        Ok(
-            instrumented(accessor, "write-data", container.put(&name, body))
-                .await?
-                .map_err(|error| to_wit(&error)),
-        )
+        Ok(Box::pin(instrumented(
+            accessor,
+            "write-data",
+            container.put(&name, body),
+        ))
+        .await?
+        .map_err(|error| to_wit(&error)))
     }
 
     async fn list_objects(
@@ -175,7 +177,7 @@ impl<T: 'static + Send> HostContainerWithStore<T> for SharedCtx {
         Result<wash_runtime::wasmtime::component::StreamReader<String>, WitError>,
     > {
         let container = container_of(accessor, &handle)?;
-        let keys = match instrumented(accessor, "list-objects", container.list()).await? {
+        let keys = match Box::pin(instrumented(accessor, "list-objects", container.list())).await? {
             Ok(keys) => keys,
             Err(error) => return Ok(Err(to_wit(&error))),
         };
@@ -191,11 +193,13 @@ impl<T: 'static + Send> HostContainerWithStore<T> for SharedCtx {
         name: String,
     ) -> wash_runtime::wasmtime::Result<Result<(), WitError>> {
         let container = container_of(accessor, &handle)?;
-        Ok(
-            instrumented(accessor, "delete-object", container.delete(&name))
-                .await?
-                .map_err(|error| to_wit(&error)),
-        )
+        Ok(Box::pin(instrumented(
+            accessor,
+            "delete-object",
+            container.delete(&name),
+        ))
+        .await?
+        .map_err(|error| to_wit(&error)))
     }
 
     async fn delete_objects(
@@ -213,7 +217,7 @@ impl<T: 'static + Send> HostContainerWithStore<T> for SharedCtx {
             }
             Ok(())
         };
-        Ok(instrumented(accessor, "delete-objects", batch)
+        Ok(Box::pin(instrumented(accessor, "delete-objects", batch))
             .await?
             .map_err(|error| to_wit(&error)))
     }
@@ -224,9 +228,11 @@ impl<T: 'static + Send> HostContainerWithStore<T> for SharedCtx {
         name: String,
     ) -> wash_runtime::wasmtime::Result<Result<bool, WitError>> {
         let container = container_of(accessor, &handle)?;
-        Ok(instrumented(accessor, "has-object", container.has(&name))
-            .await?
-            .map_err(|error| to_wit(&error)))
+        Ok(
+            Box::pin(instrumented(accessor, "has-object", container.has(&name)))
+                .await?
+                .map_err(|error| to_wit(&error)),
+        )
     }
 
     /// `created-at` reports the store's last-modified time.
@@ -245,7 +251,7 @@ impl<T: 'static + Send> HostContainerWithStore<T> for SharedCtx {
         name: String,
     ) -> wash_runtime::wasmtime::Result<Result<ObjectMetadata, WitError>> {
         let container = container_of(accessor, &handle)?;
-        match instrumented(accessor, "object-info", container.head(&name)).await? {
+        match Box::pin(instrumented(accessor, "object-info", container.head(&name))).await? {
             Ok(meta) => Ok(Ok(ObjectMetadata {
                 name,
                 container: container.container().to_owned(),
@@ -264,7 +270,7 @@ impl<T: 'static + Send> HostContainerWithStore<T> for SharedCtx {
         handle: Resource<Container>,
     ) -> wash_runtime::wasmtime::Result<Result<(), WitError>> {
         let container = container_of(accessor, &handle)?;
-        Ok(instrumented(accessor, "clear", container.clear())
+        Ok(Box::pin(instrumented(accessor, "clear", container.clear()))
             .await?
             .map_err(|error| to_wit(&error)))
     }

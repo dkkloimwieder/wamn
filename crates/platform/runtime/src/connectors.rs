@@ -1,304 +1,257 @@
-//! Pull and prepare application connectors while their host keeps serving.
+//! Resolve wasm connection calls through the connection memory.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
+use moka::sync::Cache;
 use oci_client::secrets::RegistryAuth;
 use tokio::sync::Mutex;
-use wamn_engine::connector::{Connector, ConnectorBinding, ConnectorReader};
+use wamn_engine::connector::{ConnectionDispatch, Connector, ConnectorBinding, ConnectorReader};
 use wamn_package_artifact::registry_credentials::RegistryCredentialSource;
 use wamn_package_artifact::{PackageRegistry, Repository};
 
-use crate::connection_credentials::ConnectionCredentials;
+use crate::connection_facts::{ConnectionFacts, bounded};
+use crate::connection_memory::{ConnectionFact, ConnectionStatus};
+use crate::plugins::wamn_postgres::WamnPostgres;
 
-/// Poll bindings every two seconds when no binding-change signal is available.
-pub const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
+type InstanceKey = (uuid::Uuid, i64, Option<uuid::Uuid>);
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Pin {
+#[derive(Debug, Clone)]
+struct LinkedRead {
     digest: String,
-    connection: String,
-    generation: i64,
+    instance: Arc<Connector>,
 }
 
 #[derive(Debug)]
-struct Retry {
-    after: Instant,
-    delay: Duration,
-    error: String,
+struct ReadState {
+    linked: Cache<InstanceKey, LinkedRead>,
+    seen: HashMap<uuid::Uuid, ConnectionFact>,
+    bytes: HashMap<String, Arc<Vec<u8>>>,
 }
 
-#[derive(Debug)]
-struct PinState {
-    pin: Pin,
-    retry: Option<Retry>,
+struct ReadResources {
+    facts: Arc<ConnectionFacts>,
+    manifest_digest: String,
+    registry: PackageRegistry,
+    registry_credentials: RegistryCredentialSource,
+    state: Mutex<ReadState>,
 }
 
-impl PinState {
-    fn ready(&self, pin: &Pin, now: Instant) -> bool {
-        self.pin != *pin || self.retry.as_ref().is_some_and(|retry| now >= retry.after)
-    }
-
-    /// Record the next attempt and report whether this error needs a log entry.
-    fn failed(&mut self, pin: Pin, error: String, now: Instant) -> bool {
-        let previous = self.retry.take().filter(|_| self.pin == pin);
-        let changed = previous.as_ref().is_none_or(|retry| retry.error != error);
-        // Failed pins retry after 2, 4, 8, 16, 32, then at most 60 seconds.
-        let delay = previous.as_ref().map_or(Duration::from_secs(2), |retry| {
-            (retry.delay * 2).min(Duration::from_secs(60))
-        });
-        self.pin = pin;
-        self.retry = Some(Retry {
-            after: now + delay,
-            delay,
-            error,
-        });
-        changed
-    }
-}
-
-/// Process-owned connector readers. Application stores retain these same readers.
-#[derive(Debug)]
-pub struct Connectors {
-    readers: HashMap<String, Arc<ConnectorReader>>,
-    pins: Mutex<HashMap<(String, String), PinState>>,
-}
-
-impl Connectors {
-    /// Allocate readers for the declared applications before their stores load.
-    pub fn new(applications: impl IntoIterator<Item = String>) -> Self {
-        Self {
-            readers: applications
-                .into_iter()
-                .map(|name| (name, Arc::new(ConnectorReader::new(HashMap::new()))))
-                .collect(),
-            pins: Mutex::new(HashMap::new()),
-        }
-    }
-
-    /// The retained reader of one declared application.
-    pub fn reader(&self, application: &str) -> anyhow::Result<Arc<ConnectorReader>> {
-        self.readers
-            .get(application)
-            .cloned()
-            .context("connector application is not declared")
-    }
-
-    /// Read applied pins with the connection reader's authenticated scope.
-    /// A failed pull or compile retains the serving store and backs off per pin.
-    /// This method logs new pin errors and database failures for the host poller.
-    pub async fn refresh(&self, source: &ConnectorSource) -> anyhow::Result<()> {
-        let mut pins = self.pins.lock().await;
-        let rows = source
-            .postgres
-            .released_connection_bindings(
-                &source.project,
-                &source.env_key,
-                &source.manifest_digest,
-                wamn_run_state::AuthorityClass::ExecutorPlatform,
-            )
-            .await?;
-        let mut selected = Vec::new();
-        for row in rows {
-            let package: String = row.get(0);
-            let application = wamn_catalog::application_for_package(&source.applications, &package)
-                .context("integration binding has no application")?
-                .to_owned();
-            let alias: String = row.get(1);
-            let connection_id: String = row.get(2);
-            let version: i32 = row.get(3);
-            let name: String = row.get(4);
-            let configuration = source
-                .credentials
-                .version(
-                    &source.project,
-                    &source.environment,
-                    &connection_id,
-                    version,
-                )
-                .await?;
-            if configuration.runtime_type != "wasm" {
-                continue;
-            }
-            let pin = Pin {
-                digest: configuration
-                    .digest
-                    .context("integration version has no digest")?,
-                connection: name,
-                generation: configuration.generation,
-            };
-            selected.push((
-                application,
-                alias,
-                configuration.integration_type,
-                pin,
-                configuration.parameters,
-            ));
-        }
-        let mut enabled: HashMap<String, HashSet<String>> = HashMap::new();
-        for (application, alias, _, _, _) in &selected {
-            enabled
-                .entry(application.clone())
-                .or_default()
-                .insert(alias.clone());
-        }
-        for (application, reader) in &self.readers {
-            reader
-                .retain(enabled.get(application).unwrap_or(&HashSet::new()))
-                .await;
-        }
-        pins.retain(|(app, alias), _| enabled.get(app).is_some_and(|names| names.contains(alias)));
-        let mut failure = None;
-        for (application, alias, integration, pin, parameters) in selected {
-            let key = (application.clone(), alias.clone());
-            if pins
-                .get(&key)
-                .is_some_and(|state| !state.ready(&pin, Instant::now()))
-            {
-                continue;
-            }
-            // A sibling's failure must not prevent another connector from updating.
-            let result = async {
-                let reader = self.reader(&application)?;
-                let authority = parameters["authority"]
-                    .as_str()
-                    .context("connector connection needs authority")?;
-                let handle = source
-                    .credentials
-                    .connection_handle(&pin.connection, pin.generation)?;
-                let credential = source
-                    .credentials
-                    .read_connection(&source.project, &handle)
-                    .await?;
-                let binding = ConnectorBinding::new(authority, credential)?;
-                let registry_name =
-                    wamn_catalog::parse_component_artifact_base(&source.registry.artifact_base)?;
-                let credential = source
-                    .registry_credentials
-                    .credentials(registry_name.registry())
-                    .await?;
-                let repository = Repository::with_auth(
-                    &source.registry,
-                    &pin.digest,
-                    RegistryAuth::Basic(
-                        credential.username().to_owned(),
-                        credential.password().to_owned(),
-                    ),
-                )?;
-                let bytes = wamn_package_artifact::connector::pull_from(
-                    &repository,
-                    &integration,
-                    &pin.digest,
-                )
-                .await?;
-                let prepared = Connector::prepare(bytes, binding).await?;
-                reader.replace(&alias, prepared).await
-            }
-            .await;
-            match result {
-                Ok(()) => {
-                    pins.insert(key, PinState { pin, retry: None });
-                }
-                Err(error) => {
-                    let state = pins.entry(key).or_insert_with(|| PinState {
-                        pin: pin.clone(),
-                        retry: None,
-                    });
-                    let message = format!("{error:#}");
-                    if state.failed(pin, message.clone(), Instant::now()) {
-                        tracing::warn!(
-                            application,
-                            binding = alias,
-                            digest = state.pin.digest,
-                            error = message,
-                            "connector refresh failed"
-                        );
-                    }
-                    failure =
-                        Some(error.context(format!("refresh connector {application}/{alias}")));
-                }
-            }
-        }
-        match failure {
-            Some(error) => Err(error),
-            None => Ok(()),
-        }
-    }
-}
-
-/// Host-owned inputs. Debug output omits credentials and connection material.
-pub struct ConnectorSource {
-    pub postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
-    pub env_key: String,
-    pub manifest_digest: String,
-    pub applications: wamn_catalog::EnvironmentApplications,
-    pub credentials: Arc<ConnectionCredentials>,
-    pub registry: PackageRegistry,
-    pub registry_credentials: RegistryCredentialSource,
-    pub org: String,
-    pub project: String,
-    pub environment: String,
-}
-
-impl std::fmt::Debug for ConnectorSource {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ConnectorSource")
-            .field("org", &self.org)
-            .field("project", &self.project)
-            .field("environment", &self.environment)
+impl std::fmt::Debug for ReadResources {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ReadResources")
+            .field("manifest_digest", &self.manifest_digest)
             .finish_non_exhaustive()
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{Pin, PinState};
-    use std::time::{Duration, Instant};
+#[derive(Debug)]
+struct ApplicationReads {
+    resources: Arc<ReadResources>,
+    // Immutable declarations map each name to its component and package.
+    names: HashMap<String, (String, String)>,
+}
 
-    #[test]
-    fn failed_pins_back_off_and_log_only_changed_errors() {
-        let pin = Pin {
-            digest: format!("sha256:{}", "a".repeat(64)),
-            connection: "meter".into(),
-            generation: 1,
+#[async_trait::async_trait]
+impl ConnectionDispatch for ApplicationReads {
+    async fn resolve(&self, name: &str) -> anyhow::Result<Option<Arc<Connector>>> {
+        let Some((component, package)) = self.names.get(name) else {
+            return Ok(None);
         };
-        let mut state = PinState {
-            pin: pin.clone(),
-            retry: None,
+        let resources = &self.resources;
+        // Serialize fact observations and first links so an old observation cannot
+        // evict a newer link, and concurrent misses prepare only one instance.
+        let mut state = resources.state.lock().await;
+        let release = resources.facts.release(&resources.manifest_digest).await?;
+        let Some(binding) = release.binding(component, package, name) else {
+            return Ok(None);
         };
-        let mut now = Instant::now();
-        assert!(!state.ready(&pin, now), "an applied pin needs no refresh");
-        assert!(state.failed(pin.clone(), "pull failed".into(), now));
-        for seconds in [2, 4, 8, 16, 32, 60, 60] {
-            let due = now + Duration::from_secs(seconds);
-            let before = due.checked_sub(Duration::from_millis(1)).unwrap();
-            assert!(!state.ready(&pin, before));
-            assert!(state.ready(&pin, due));
-            now = due;
-            assert!(!state.failed(pin.clone(), "pull failed".into(), now));
+        let id = binding.connection_id;
+        let fact = resources.facts.connection(&id).await?;
+        state.observe(id, fact.as_ref());
+        let Some(fact) = fact.filter(|fact| fact.status == ConnectionStatus::Active) else {
+            return Ok(None);
+        };
+        let key = (id, fact.active_generation, fact.credential_id);
+        let generation = resources
+            .facts
+            .generation(&id, fact.active_generation)
+            .await?;
+        if generation.runtime_type != "wasm" {
+            return Ok(None);
         }
-        now += Duration::from_secs(60);
-        assert!(state.failed(pin.clone(), "compile failed".into(), now));
-        assert!(!state.ready(&pin, now + Duration::from_secs(59)));
-        assert!(state.ready(&pin, now + Duration::from_secs(60)));
-
-        let mut changed = pin.clone();
-        changed.digest = format!("sha256:{}", "b".repeat(64));
-        assert!(state.ready(&changed, now), "a new digest tries immediately");
-        assert!(state.failed(changed.clone(), "compile failed".into(), now));
-        assert!(!state.ready(&changed, now + Duration::from_millis(1999)));
-        assert!(state.ready(&changed, now + Duration::from_secs(2)));
-
-        changed.generation += 1;
-        assert!(
-            state.ready(&changed, now),
-            "a new generation tries immediately"
+        let version = resources
+            .facts
+            .version(&generation.integration_type, Some(binding.version))
+            .await?;
+        let digest = version
+            .digest
+            .as_deref()
+            .context("wasm version has no digest")?;
+        if let Some(linked) = state.linked.get(&key)
+            && linked.digest == digest
+        {
+            return Ok(Some(linked.instance));
+        }
+        let authority = generation.parameters["authority"]
+            .as_str()
+            .context("wasm connection needs authority")?;
+        let credential = match fact.credential_id {
+            Some(id) => Some(resources.facts.secret(&id).await?.expose().to_owned()),
+            None => None,
+        };
+        let bound = ConnectorBinding::new(authority, credential)?;
+        let bytes = if let Some(bytes) = state.bytes.get(digest) {
+            Arc::clone(bytes)
+        } else {
+            let registry_name =
+                wamn_catalog::parse_component_artifact_base(&resources.registry.artifact_base)?;
+            let credential = resources
+                .registry_credentials
+                .credentials(registry_name.registry())
+                .await?;
+            let repository = Repository::with_auth(
+                &resources.registry,
+                digest,
+                RegistryAuth::Basic(
+                    credential.username().to_owned(),
+                    credential.password().to_owned(),
+                ),
+            )?;
+            let bytes = Arc::new(
+                wamn_package_artifact::connector::pull_from(
+                    &repository,
+                    &generation.integration_type,
+                    digest,
+                )
+                .await?,
+            );
+            state.bytes.insert(digest.to_owned(), Arc::clone(&bytes));
+            bytes
+        };
+        let instance = Arc::new(Connector::load(&bytes, bound).await?);
+        state.linked.insert(
+            key,
+            LinkedRead {
+                digest: digest.to_owned(),
+                instance: Arc::clone(&instance),
+            },
         );
-        assert!(state.failed(changed.clone(), "compile failed".into(), now));
-        assert!(state.ready(&changed, now + Duration::from_secs(2)));
-        assert!(!state.ready(&changed, now + Duration::from_millis(1999)));
+        Ok(Some(instance))
+    }
+}
+
+impl ReadState {
+    fn observe(&mut self, id: uuid::Uuid, fact: Option<&ConnectionFact>) {
+        if self.seen.get(&id) == fact {
+            return;
+        }
+        for (key, _) in &self.linked {
+            if key.0 == id
+                && fact.is_none_or(|fact| {
+                    fact.status != ConnectionStatus::Active
+                        || (key.1, key.2) != (fact.active_generation, fact.credential_id)
+                })
+            {
+                self.linked.invalidate(key.as_ref());
+            }
+        }
+        match fact {
+            Some(fact) => {
+                self.seen.insert(id, fact.clone());
+            }
+            None => {
+                self.seen.remove(&id);
+            }
+        }
+    }
+}
+
+/// Process-owned readers with immutable declarations and shared links by identity.
+#[derive(Debug)]
+pub struct Connectors {
+    readers: HashMap<String, Arc<ConnectorReader>>,
+}
+
+impl Connectors {
+    /// Read immutable declarations before the application stores load.
+    pub async fn new(
+        facts: Arc<ConnectionFacts>,
+        release: &wamn_engine::release_manifest::LoadedRelease,
+        postgres: &WamnPostgres,
+        project: &str,
+        registry: PackageRegistry,
+        registry_credentials: RegistryCredentialSource,
+    ) -> anyhow::Result<Self> {
+        let resources = Arc::new(ReadResources {
+            facts,
+            manifest_digest: release.release().manifest_digest.to_string(),
+            registry,
+            registry_credentials,
+            state: Mutex::new(ReadState {
+                linked: bounded(),
+                seen: HashMap::new(),
+                bytes: HashMap::new(),
+            }),
+        });
+        let mut declarations = release
+            .scope()
+            .applications
+            .keys()
+            .map(|name| (name.clone(), HashMap::new()))
+            .collect::<HashMap<_, _>>();
+        for component in &release.manifest().components {
+            let application = wamn_catalog::application_for_package(
+                &release.scope().applications,
+                &component.package_id,
+            )
+            .context("connection component has no application")?;
+            let names = postgres
+                .declared_connection_names(
+                    project,
+                    &release.scope().env_key,
+                    &component.package_id,
+                    &component.descriptor.component_digest,
+                )
+                .await?;
+            let declared = declarations
+                .get_mut(application)
+                .context("connection application is not declared")?;
+            for name in names {
+                // The application declares one target for each name, even when
+                // several of its components declare that same name.
+                declared.entry(name).or_insert_with(|| {
+                    (
+                        component.descriptor.component_digest.clone(),
+                        component.package_id.clone(),
+                    )
+                });
+            }
+        }
+        Ok(Self {
+            readers: declarations
+                .into_iter()
+                .map(|(application, names)| {
+                    let dispatch = Arc::new(ApplicationReads {
+                        resources: Arc::clone(&resources),
+                        names,
+                    });
+                    (
+                        application,
+                        Arc::new(ConnectorReader::from_dispatch(dispatch)),
+                    )
+                })
+                .collect(),
+        })
+    }
+
+    pub fn reader(&self, application: &str) -> anyhow::Result<Arc<ConnectorReader>> {
+        self.readers
+            .get(application)
+            .cloned()
+            .context("connection application is not declared")
     }
 }
 

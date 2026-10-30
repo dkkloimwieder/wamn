@@ -947,7 +947,7 @@ pub fn grant_connection_reader_surface_sql() -> String {
     let role = quote_ident(WorkloadRoleFamily::ConnectionReader.acl_role());
     write!(
         sql,
-        " REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA registry, identity FROM {role}; GRANT EXECUTE ON FUNCTION registry.read_connection_credential(text,text,text,uuid), registry.read_file_connection(text,text,text,uuid), registry.read_connection_version(text,text,text,uuid,integer) TO {role};"
+        " REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA registry, identity FROM {role}; GRANT EXECUTE ON FUNCTION registry.read_connection_credential(text,text,text,uuid), registry.read_file_connection(text,text,text,uuid), registry.read_connection_fact(text,text,text,uuid), registry.read_connection_generation(text,text,text,uuid,bigint), registry.read_connection_secret(text,text,text,uuid), registry.read_env_connections(text,text,text), registry.read_integration_version(text,integer) TO {role};"
     )
     .expect("writing to a String cannot fail");
     sql

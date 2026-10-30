@@ -1,4 +1,4 @@
-//! Real registry pulls and Modbus TCP reads retain the application store across pins.
+//! Real registry pulls and Modbus TCP reads follow the connection facts per call.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -24,8 +24,8 @@ use wamn_package_artifact::{
     registry_credentials::{RegistryCredentialSource, read_registry_credentials},
 };
 use wamn_runtime::{
-    connection_credentials::ConnectionCredentials,
-    connectors::{ConnectorSource, Connectors, REFRESH_INTERVAL},
+    connection_credentials::ConnectionCredentials, connection_facts::ConnectionFacts,
+    connection_memory::ConnectionMemory, connectors::Connectors,
 };
 use wash_runtime::{
     engine::{ctx::SharedCtx, workload::ResolvedWorkload},
@@ -250,6 +250,57 @@ impl Application {
     }
 }
 
+fn loaded_release(
+    document: &EnvironmentDocument,
+) -> anyhow::Result<wamn_engine::release_manifest::LoadedRelease> {
+    use std::collections::{BTreeMap, BTreeSet};
+    use wamn_catalog::{
+        PackageCoordinate, ServingComponent, ServingComponentOperation, ServingManifest,
+        ServingRelease,
+    };
+
+    let members = [("modbus_reader", "a"), ("observer_fixture", "b")];
+    let manifest = ServingManifest::new(
+        ServingRelease {
+            packages: members
+                .iter()
+                .map(|(package, _)| PackageCoordinate::new(*package, "0.1.0").unwrap())
+                .collect(),
+        },
+        members
+            .into_iter()
+            .map(|(package, byte)| ServingComponent {
+                runtime_schema: None,
+                statement_instances: BTreeMap::new(),
+                package_id: package.into(),
+                operations: BTreeMap::from([(
+                    "wamn:node/handler@0.1.0".into(),
+                    ServingComponentOperation {
+                        committed_result_schema: None,
+                        registered_operation: None,
+                        permissions: BTreeSet::new(),
+                        statements: BTreeMap::new(),
+                    },
+                )]),
+                descriptor: wamn_catalog::ComponentDescriptor::named(
+                    "reader",
+                    "0.1.0",
+                    format!("sha256:{}", byte.repeat(64)),
+                ),
+            })
+            .collect(),
+        BTreeSet::new(),
+        BTreeMap::new(),
+    )?;
+    wamn_engine::release_manifest::LoadedRelease::load_canonical_bytes(
+        &manifest.canonical_bytes(),
+        "connection read fixture",
+        wamn_engine::release_manifest::ReleaseScope::new("acme--one--dev", "dev")
+            .with_applications(document.applications.clone()),
+    )
+    .map_err(Into::into)
+}
+
 async fn apply(
     client: &mut tokio_postgres::Client,
     system_url: &str,
@@ -273,6 +324,13 @@ async fn apply(
             wamn_control_provision::WorkloadRoleFamily::ExecutorPlatform,
         ))
         .await?;
+    // The connection memory reads the release fact as CallableHttp, and the
+    // pool probes membership of its ACL role on every new connection.
+    project
+        .batch_execute(&wamn_control_provision::sql::ensure_workload_acl_role_sql(
+            wamn_control_provision::WorkloadRoleFamily::HttpAdmitter,
+        ))
+        .await?;
     let _ = bindings::project_authority(system_url, project_url, document).await?;
     let tx = project.transaction().await?;
     tx.batch_execute(&bind_platform_principal_sql(
@@ -285,9 +343,7 @@ async fn apply(
         ("modbus_reader", format!("sha256:{}", "a".repeat(64))),
         ("observer_fixture", format!("sha256:{}", "b".repeat(64))),
     ];
-    let canonical = serde_json::to_vec(
-        &json!({"components":members.iter().map(|(package,digest)|json!({"package-id":package,"descriptor":{"component-digest":digest}})).collect::<Vec<_>>()}),
-    )?;
+    let canonical = loaded_release(document)?.manifest().canonical_bytes();
     tx.execute("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",&[&env_key,&digest,&canonical]).await?;
     for (package, digest) in members {
         tx.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interfaces,mode) VALUES($1,$2,$3,'registers',$4,'read') ON CONFLICT DO NOTHING",&[&env_key,&digest,&package,&vec![READER.to_owned()]]).await?;
@@ -307,7 +363,7 @@ async fn apply(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires: docker, PostgreSQL 18, wasm32-wasip2"]
-async fn published_modbus_versions_refresh_only_the_selected_connection() -> anyhow::Result<()> {
+async fn published_modbus_versions_link_before_the_next_call() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&["docker"]);
     let _lock = wamn_test_postgres::lock();
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
@@ -363,6 +419,10 @@ async fn published_modbus_versions_refresh_only_the_selected_connection() -> any
             "observer":{"packages":["observer_fixture"],"connections":{"registers":"observer-meter"}}
         }}),
     )?)?;
+    let release = loaded_release(&document)?;
+    document.release = wamn_control::environment::document::DeclaredRelease::Digest(
+        release.release().manifest_digest.to_string(),
+    );
     let package = wamn_schema_generator::PackageManifest::from_slice(&serde_json::to_vec(
         &json!({"package":{"id":"modbus_reader","version":"0.1.0"},"required_platform_policy_contract":{"id":"modbus_reader_data_access","state":"satisfied"},"models":{},"components":{},"connections":{"registers":{"interfaces":["wamn:connector/reader@0.1.0"],"mode":"read"}}}),
     )?)?;
@@ -393,7 +453,7 @@ async fn published_modbus_versions_refresh_only_the_selected_connection() -> any
     assert_eq!(
         reader_database
             .query_one(
-                "SELECT count(*) FROM registry.read_connection_version('forged','one','dev','00000000-0000-0000-0000-000000000001',2)",
+                "SELECT count(*) FROM registry.read_connection_fact('forged','one','dev','00000000-0000-0000-0000-000000000001')",
                 &[]
             )
             .await?
@@ -410,51 +470,65 @@ async fn published_modbus_versions_refresh_only_the_selected_connection() -> any
         Arc::clone(&reader_database),
         "acme",
     ));
-    let source = ConnectorSource {
-        postgres: Arc::new(
-            wamn_runtime::plugins::wamn_postgres::WamnPostgres::from_env_for_project(
-                "one",
-                Some(
-                    wamn_runtime::plugins::wamn_postgres::ClassCredentials::every_class(
-                        project_database.url().to_owned(),
-                    ),
+    let postgres = Arc::new(
+        wamn_runtime::plugins::wamn_postgres::WamnPostgres::from_env_for_project(
+            "one",
+            Some(
+                wamn_runtime::plugins::wamn_postgres::ClassCredentials::every_class(
+                    project_database.url().to_owned(),
                 ),
-            )?,
-        ),
-        env_key: "acme--one--dev".into(),
-        manifest_digest: document.release.to_string(),
-        applications: document.applications.clone(),
+            ),
+        )?,
+    );
+    let facts = Arc::new(ConnectionFacts::new(
+        Arc::new(ConnectionMemory::default()),
+        wamn_platform_identity::connection_changes::ConnectionChanges::default(),
         credentials,
-        registry: configuration,
-        registry_credentials: RegistryCredentialSource::Fixed(read_registry_credentials(
-            &auth,
-            &registry.address,
-        )?),
-        org: "acme".into(),
-        project: "one".into(),
-        environment: "dev".into(),
-    };
-    let connectors = Arc::new(Connectors::new(["reader".into(), "observer".into()]));
-    connectors.refresh(&source).await?;
+        Arc::clone(&postgres),
+        "acme--one--dev",
+        "one",
+        "dev",
+    ));
+    let connectors = Arc::new(
+        Connectors::new(
+            Arc::clone(&facts),
+            &release,
+            &postgres,
+            "one",
+            configuration,
+            RegistryCredentialSource::Fixed(read_registry_credentials(&auth, &registry.address)?),
+        )
+        .await?,
+    );
     let reader = connectors.reader("reader")?;
     let observer = connectors.reader("observer")?;
-    let sibling = observer.store_id("registers").await.unwrap();
+    let sibling = observer.store_id("registers").await?.unwrap();
     let mut application = Application::load(Arc::clone(&reader)).await?;
     let app_store = application.store.data().active_ctx.store_id.clone();
     assert_eq!(application.read().await?.unwrap().payload, "4660");
-    connectors.refresh(&source).await?;
     assert_eq!(
-        observer.store_id("registers").await.as_deref(),
+        observer.store_id("registers").await?.as_deref(),
         Some(sibling.as_str())
     );
-    // Publication alone cannot make a missing artifact replace a serving store.
+    // A missing new digest refuses its first call before the old instance runs.
     let absent = format!("sha256:{}", "f".repeat(64));
     let control = connect(database.url()).await?;
+    let parameters: serde_json::Value = control
+        .query_one(
+            "SELECT parameter_schema FROM registry.integration_type_version WHERE integration_type='modbus' AND version=2",
+            &[],
+        )
+        .await?
+        .get(0);
     control.batch_execute("SET ROLE wamn_control").await?;
     control
         .query_one(
-            "SELECT registry.publish_integration('modbus',4,$1,(SELECT parameter_schema FROM registry.integration_type_version WHERE integration_type='modbus' AND version=2),'wamn:modbus/modbus',$2)",
-            &[&absent, &vec!["wamn:connector/reader@0.1.0".to_string()]],
+            "SELECT registry.publish_integration('modbus',4,$1,$2,'wamn:modbus/modbus',$3)",
+            &[
+                &absent,
+                &parameters,
+                &vec!["wamn:connector/reader@0.1.0".to_string()],
+            ],
         )
         .await?;
     document.integrations.get_mut("meter").unwrap().version = 4;
@@ -466,10 +540,7 @@ async fn published_modbus_versions_refresh_only_the_selected_connection() -> any
         &packages,
     )
     .await?;
-    let before_failed_pull = reader.store_id("registers").await;
-    assert!(connectors.refresh(&source).await.is_err());
-    assert_eq!(reader.store_id("registers").await, before_failed_pull);
-    assert_eq!(application.read().await?.unwrap().payload, "4660");
+    assert!(application.read().await?.is_err());
     document.integrations.get_mut("meter").unwrap().version = 2;
     apply(
         &mut admin,
@@ -479,15 +550,35 @@ async fn published_modbus_versions_refresh_only_the_selected_connection() -> any
         &packages,
     )
     .await?;
-    connectors.refresh(&source).await?;
+    assert_eq!(application.read().await?.unwrap().payload, "4660");
+    let before_generation = reader.store_id("registers").await?.unwrap();
+    // The engine counts compiles by the digest of the component bytes.
+    let code = |built: &integration::BuiltIntegration| -> anyhow::Result<String> {
+        Ok(wamn_engine::component_admission::component_digest(
+            &std::fs::read(built.directory.join("connector.wasm"))?,
+        ))
+    };
+    let (first_code, second_code) = (code(&first)?, code(&second)?);
+    let compiled = wamn_engine::connector::compile_count(&first_code);
+    assert_eq!(compiled, 1);
+    let tx = admin.transaction().await?;
+    tx.batch_execute(&bind_platform_principal_sql(
+        PlatformComponent::Provisioning,
+    ))
+    .await?;
+    wamn_test_infrastructure::credentials::define(
+        &tx, "acme", &json!({"project":"one","env":"dev","name":"meter","integration_type":"modbus","auth_type":"none","parameters":{"authority":authority}}), &store,
+    ).await?;
+    tx.commit().await?;
+    assert_eq!(application.read().await?.unwrap().payload, "4660");
+    assert_ne!(
+        reader.store_id("registers").await?.unwrap(),
+        before_generation
+    );
+    assert_eq!(wamn_engine::connector::compile_count(&first_code), compiled);
     let pid = std::process::id();
     let mut measurements = Vec::new();
-    let mut previous = reader.store_id("registers").await.unwrap();
-    let mut polls = tokio::time::interval_at(
-        tokio::time::Instant::now() + REFRESH_INTERVAL,
-        REFRESH_INTERVAL,
-    );
-    polls.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut previous = reader.store_id("registers").await?.unwrap();
     for (change, pin) in [
         &second.digest,
         &first.digest,
@@ -510,45 +601,14 @@ async fn published_modbus_versions_refresh_only_the_selected_connection() -> any
             &packages,
         )
         .await?;
-        let finished = std::sync::atomic::AtomicBool::new(false);
-        let refresh = async {
-            let waiting = Instant::now();
-            polls.tick().await;
-            let poll_wait = waiting.elapsed();
-            let result = connectors.refresh(&source).await;
-            finished.store(true, Ordering::SeqCst);
-            result.map(|()| poll_wait)
-        };
-        let calls = async {
-            let mut unavailable = 0;
-            let mut reads = 0;
-            let mut first_unavailable = None;
-            while !finished.load(Ordering::SeqCst) {
-                match application.read().await? {
-                    Ok(emission) => {
-                        assert_eq!(emission.payload, "4660");
-                        reads += 1;
-                    }
-                    Err(NodeError::Retryable(detail)) => {
-                        assert_eq!(detail.message, "unavailable");
-                        assert_eq!(detail.code.as_deref(), Some("unavailable"));
-                        unavailable += 1;
-                        first_unavailable.get_or_insert_with(|| changed.elapsed());
-                    }
-                    Err(error) => panic!("unexpected read error: {error:?}"),
-                }
-                tokio::task::yield_now().await;
-            }
-            anyhow::Ok((unavailable, reads, first_unavailable))
-        };
-        let (refreshed, calls) = tokio::time::timeout(
-            Duration::from_secs(120),
-            Box::pin(async { tokio::join!(refresh, calls) }),
-        )
-        .await?;
-        let poll_wait = refreshed?;
-        let (unavailable, reads, first_unavailable) = calls?;
+        // This call itself observes the version, compiles on a miss and links it.
         assert_eq!(application.read().await?.unwrap().payload, "4660");
+        let pin_code = if *pin == second.digest {
+            &second_code
+        } else {
+            &first_code
+        };
+        assert_eq!(wamn_engine::connector::compile_count(pin_code), 1);
         let elapsed = changed.elapsed();
         assert_eq!(
             observer
@@ -557,22 +617,17 @@ async fn published_modbus_versions_refresh_only_the_selected_connection() -> any
                 .unwrap(),
             [0x12, 0x34]
         );
-        let current = reader.store_id("registers").await.unwrap();
+        let current = reader.store_id("registers").await?.unwrap();
         assert_ne!(previous, current);
         previous = current;
         assert_eq!(application.store.data().active_ctx.store_id, app_store);
         assert_eq!(std::process::id(), pid);
         assert_eq!(
-            observer.store_id("registers").await.as_deref(),
+            observer.store_id("registers").await?.as_deref(),
             Some(sibling.as_str())
         );
-        measurements.push(json!({"change":change,"digest":pin,"pin_to_success_ms":elapsed.as_secs_f64()*1000.0,"poll_wait_ms":poll_wait.as_secs_f64()*1000.0,"unavailable":unavailable,"reads_during_pull":reads,"unavailable_to_success_ms":first_unavailable.map(|start| elapsed.saturating_sub(start).as_secs_f64()*1000.0)}));
+        measurements.push(json!({"change":change,"digest":pin,"change_to_success_ms":elapsed.as_secs_f64()*1000.0}));
     }
-    assert!(
-        measurements
-            .iter()
-            .any(|sample| sample["unavailable"].as_u64().unwrap() > 0)
-    );
     assert!(matches!(
         reader.get("unknown".into(), vec![]).await?,
         Err(ConnectorError::Unbound)
@@ -609,7 +664,7 @@ async fn published_modbus_versions_refresh_only_the_selected_connection() -> any
     std::fs::write(
         results.join("restart.json"),
         serde_json::to_vec_pretty(
-            &json!({"process_id":pid,"application_store":app_store.to_string(),"poll_interval_ms":REFRESH_INTERVAL.as_millis(),"samples":measurements}),
+            &json!({"process_id":pid,"application_store":app_store.to_string(),"samples":measurements}),
         )?,
     )?;
     simulator_task.abort();

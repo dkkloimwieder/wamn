@@ -26,7 +26,7 @@ use wamn_engine::release_manifest::{LoadedRelease, validate_component_in_release
 use wamn_engine::router_delivery::bounded_node_deadline_ms;
 use wamn_event_wire::Causation;
 use wamn_project_state::PlatformComponent;
-use wamn_runtime::connection_credentials::ConnectionCredentials;
+use wamn_runtime::connection_facts::ConnectionFacts;
 use wamn_runtime::plugins::EffectEvidence;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::connection_http::{
@@ -197,7 +197,7 @@ pub struct OperationHost {
     pub postgres: Arc<WamnPostgres>,
     /// Shared by every driver in this process, independently of fresh stores.
     http_transport: Arc<HttpTransport>,
-    credentials: Arc<ConnectionCredentials>,
+    facts: Arc<ConnectionFacts>,
     logging: Arc<WamnLogging>,
     allowed_hosts: Arc<[AllowedHost]>,
     pub release: Arc<LoadedRelease>,
@@ -278,7 +278,7 @@ impl OperationHost {
         engine: Arc<Engine>,
         postgres: Arc<WamnPostgres>,
         http_transport: Arc<HttpTransport>,
-        credentials: Arc<ConnectionCredentials>,
+        facts: Arc<ConnectionFacts>,
         logging: Arc<WamnLogging>,
         allowed_hosts: Arc<[AllowedHost]>,
         release: Arc<LoadedRelease>,
@@ -294,7 +294,7 @@ impl OperationHost {
             engine,
             postgres,
             http_transport,
-            credentials,
+            facts,
             logging,
             allowed_hosts,
             release,
@@ -542,7 +542,7 @@ impl OperationHost {
                 connection_http: Arc::new(ConnectionHttp::new(
                     Arc::clone(&self.postgres),
                     Arc::clone(&self.http_transport),
-                    Arc::clone(&self.credentials),
+                    Arc::clone(&self.facts),
                     self.release.scope().env_key.as_str(),
                     self.project.as_str(),
                     Arc::clone(&self.allowed_hosts),
@@ -550,7 +550,7 @@ impl OperationHost {
                 )),
                 blobstore: Arc::new(WamnBlobstore::new(
                     Arc::clone(&self.postgres),
-                    Arc::clone(&self.credentials),
+                    Arc::clone(&self.facts),
                     self.release.scope().env_key.as_str(),
                     self.project.as_str(),
                     Some(Arc::clone(&self.release)),

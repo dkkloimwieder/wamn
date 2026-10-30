@@ -380,9 +380,25 @@ async fn read_binding(
         &descriptor == requirement.requirement(),
         "local connection selection has another type or contract"
     );
+    let id = connection.parse()?;
+    let fact = credentials
+        .connection_fact(scope.project, scope.environment, &id)
+        .await?
+        .filter(|fact| fact.status == crate::connection_memory::ConnectionStatus::Active)
+        .context("local connection is absent or disabled")?;
     let configuration = credentials
-        .version(scope.project, scope.environment, connection, row.get(2))
-        .await?;
+        .connection_generation(
+            scope.project,
+            scope.environment,
+            &id,
+            fact.active_generation,
+        )
+        .await?
+        .context("local connection generation unavailable")?;
+    credentials
+        .integration_version(&integration_type, Some(row.get(2)))
+        .await?
+        .context("local connection version unavailable")?;
     let definition = configuration.parameters;
     let definition_hash = crate::connection_generation::definition_hash(&definition);
     let requirement_hash = requirement.requirement_hash();
@@ -397,7 +413,7 @@ async fn read_binding(
         None
     } else {
         let name: String=client.query_one("SELECT i.name FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id WHERE c.id=$1::text::uuid",&[&connection]).await?.get(0);
-        Some(credentials.connection_handle(&name, configuration.generation)?)
+        Some(credentials.connection_handle(&name, fact.active_generation)?)
     };
     Ok((
         CandidateConnectionBinding {
@@ -406,16 +422,16 @@ async fn read_binding(
             store_alias: requirement.store_alias().into(),
             requirement_hash,
             instance_id: connection.into(),
-            instance_revision: configuration.generation,
+            instance_revision: fact.active_generation,
             requirement_type: descriptor.requirement_type,
             contract: descriptor.contract,
             validation_hash,
-            generation: configuration.generation,
+            generation: fact.active_generation,
             definition_hash,
             credential_set_handle,
         },
         definition,
-        Some(configuration.generation),
+        Some(fact.active_generation),
     ))
 }
 

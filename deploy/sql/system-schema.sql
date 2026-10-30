@@ -1607,26 +1607,95 @@ GRANT USAGE ON SCHEMA registry TO wamn_db_owner;
 GRANT EXECUTE ON FUNCTION registry.resolve_environment_connection(text,text,text,text,text,integer),
  registry.connection_projection(text,text,text) TO wamn_db_owner;
 
-CREATE FUNCTION registry.read_connection_version(org_id text, project_id text, environment text, requested_connection uuid, selected_version integer)
-RETURNS TABLE(generation bigint, parameters jsonb, digest text, integration_type text, runtime_type text)
+-- The connection memory reads (docs/architecture/execution.md#connection-memory).
+-- The reader login fixes the environment. The fact is mutable; every other
+-- read returns rows that never change under their keys.
+CREATE FUNCTION registry.read_connection_fact(org_id text, project_id text, environment text, requested_connection uuid)
+RETURNS TABLE(active_generation bigint, active boolean, credential_id uuid)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
 #variable_conflict use_variable
 BEGIN
  RETURN QUERY
- SELECT c.active_generation, g.parameters, v.digest, i.integration_type, t.runtime_type
+ SELECT c.active_generation, c.status='active' AND i.status='active' AND p.status='active', g.credential_id
  FROM wamn_authority.author_login_tenants login
  JOIN registry.connection c ON (c.org,c.project,c.env)=(login.org_id,login.project_id,login.environment)
- JOIN registry.integration i ON i.id=c.integration_id AND i.status='active'
- JOIN registry.integration_type t ON t.code=i.integration_type
- JOIN registry.integration_type_version v ON v.integration_type=i.integration_type AND v.version=selected_version
+ JOIN registry.integration i ON i.id=c.integration_id
+ JOIN identity.principals p ON p.id=c.service_principal_id
  JOIN registry.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation)
  WHERE login.login_identity=session_user AND login.org_id=org_id AND login.project_id=project_id
-   AND login.environment=environment AND c.id=requested_connection AND c.status='active';
+   AND login.environment=environment AND c.id=requested_connection;
 END $$;
-ALTER FUNCTION registry.read_connection_version(text,text,text,uuid,integer) OWNER TO wamn_system;
-REVOKE ALL ON FUNCTION registry.read_connection_version(text,text,text,uuid,integer) FROM PUBLIC;
+
+CREATE FUNCTION registry.read_connection_generation(org_id text, project_id text, environment text, requested_connection uuid, requested_generation bigint)
+RETURNS TABLE(name text, integration_type text, runtime_type text, auth_type text, external_system text, principal_id text, parameters jsonb)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
+#variable_conflict use_variable
+BEGIN
+ RETURN QUERY
+ SELECT i.name, c.integration_type, t.runtime_type, i.auth_type, i.external_system_id::text,
+        c.service_principal_id::text, g.parameters
+ FROM wamn_authority.author_login_tenants login
+ JOIN registry.connection c ON (c.org,c.project,c.env)=(login.org_id,login.project_id,login.environment)
+ JOIN registry.integration i ON i.id=c.integration_id
+ JOIN registry.integration_type t ON t.code=c.integration_type
+ JOIN registry.connection_generation g ON g.connection_id=c.id AND g.generation=requested_generation
+ WHERE login.login_identity=session_user AND login.org_id=org_id AND login.project_id=project_id
+   AND login.environment=environment AND c.id=requested_connection;
+END $$;
+
+CREATE FUNCTION registry.read_connection_secret(org_id text, project_id text, environment text, requested_credential uuid)
+RETURNS TABLE(store text, ref text, version text)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
+#variable_conflict use_variable
+BEGIN
+ RETURN QUERY
+ SELECT k.store, k.ref, k.version
+ FROM wamn_authority.author_login_tenants login
+ JOIN registry.connection c ON (c.org,c.project,c.env)=(login.org_id,login.project_id,login.environment)
+ JOIN identity.credential k ON k.connection_id=c.id
+ WHERE login.login_identity=session_user AND login.org_id=org_id AND login.project_id=project_id
+   AND login.environment=environment AND k.id=requested_credential;
+END $$;
+
+CREATE FUNCTION registry.read_env_connections(org_id text, project_id text, environment text)
+RETURNS TABLE(name text, id uuid)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
+#variable_conflict use_variable
+BEGIN
+ RETURN QUERY
+ SELECT i.name, c.id
+ FROM wamn_authority.author_login_tenants login
+ JOIN registry.connection c ON (c.org,c.project,c.env)=(login.org_id,login.project_id,login.environment)
+ JOIN registry.integration i ON i.id=c.integration_id
+ WHERE login.login_identity=session_user AND login.org_id=org_id AND login.project_id=project_id
+   AND login.environment=environment
+ ORDER BY i.name;
+END $$;
+
+-- A NULL version selects the newest published version of the type.
+CREATE FUNCTION registry.read_integration_version(requested_type text, requested_version integer)
+RETURNS TABLE(version integer, digest text)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
+ SELECT v.version, v.digest FROM registry.integration_type_version v
+ WHERE v.integration_type=requested_type AND (requested_version IS NULL OR v.version=requested_version)
+ ORDER BY v.version DESC LIMIT 1
+$$;
+ALTER FUNCTION registry.read_connection_fact(text,text,text,uuid) OWNER TO wamn_system;
+ALTER FUNCTION registry.read_connection_generation(text,text,text,uuid,bigint) OWNER TO wamn_system;
+ALTER FUNCTION registry.read_connection_secret(text,text,text,uuid) OWNER TO wamn_system;
+ALTER FUNCTION registry.read_env_connections(text,text,text) OWNER TO wamn_system;
+ALTER FUNCTION registry.read_integration_version(text,integer) OWNER TO wamn_system;
+REVOKE ALL ON FUNCTION registry.read_connection_fact(text,text,text,uuid),
+ registry.read_connection_generation(text,text,text,uuid,bigint),
+ registry.read_connection_secret(text,text,text,uuid),
+ registry.read_env_connections(text,text,text),
+ registry.read_integration_version(text,integer) FROM PUBLIC;
 DO $$ BEGIN
  IF to_regrole('wamn_conn_reader') IS NOT NULL THEN
-  GRANT EXECUTE ON FUNCTION registry.read_connection_version(text,text,text,uuid,integer) TO wamn_conn_reader;
+  GRANT EXECUTE ON FUNCTION registry.read_connection_fact(text,text,text,uuid),
+   registry.read_connection_generation(text,text,text,uuid,bigint),
+   registry.read_connection_secret(text,text,text,uuid),
+   registry.read_env_connections(text,text,text),
+   registry.read_integration_version(text,integer) TO wamn_conn_reader;
  END IF;
 END $$;

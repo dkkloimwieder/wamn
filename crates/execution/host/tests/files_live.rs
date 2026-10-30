@@ -17,7 +17,10 @@ use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope};
 use wamn_engine::router_delivery::{DeliveryOutcome, DeliveryRequest, RouteDelivery as _, Source};
 use wamn_execution_host::file_route::{FileRefusal, FileRoutes, RegistryFileConnections};
 use wamn_execution_host::{HostRouteDelivery, HostRouteHandlers};
+use wamn_platform_identity::connection_changes::ConnectionChanges;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
+use wamn_runtime::connection_facts::ConnectionFacts;
+use wamn_runtime::connection_memory::ConnectionMemory;
 use wamn_runtime::plugins::connection_http::{
     ConnectionExecutionClosure, ConnectionInvocation, ConnectionOrigin, InvocationEntry,
 };
@@ -153,9 +156,18 @@ impl FileHost {
             ConnectionCredentials::from_database(Arc::clone(&registry.reader), ORG)
                 .with_store(registry.credentials.clone()),
         );
+        let facts = Arc::new(ConnectionFacts::new(
+            Arc::new(ConnectionMemory::default()),
+            ConnectionChanges::default(),
+            credentials,
+            Arc::clone(&postgres),
+            ENV_KEY,
+            PROJECT,
+            "dev",
+        ));
         let blobstore = Arc::new(WamnBlobstore::new(
             Arc::clone(&postgres),
-            Arc::clone(&credentials),
+            Arc::clone(&facts),
             ENV_KEY,
             PROJECT,
             Some(Arc::clone(&release)),
@@ -166,9 +178,8 @@ impl FileHost {
             Arc::clone(&blobstore),
             Arc::new(RegistryFileConnections {
                 client: Some(Arc::clone(&registry.reader)),
-                postgres: Arc::clone(&postgres),
                 release: Arc::clone(&release),
-                credentials: Arc::clone(&credentials),
+                facts: Arc::clone(&facts),
                 org: ORG.into(),
                 project: PROJECT.into(),
                 environment: "dev".into(),
@@ -1289,9 +1300,17 @@ async fn package_operation_returns_a_private_file_signed_url_that_expires() -> a
         Arc::new(wamn_engine::build_engine(&[])?),
         Arc::clone(&fixture.postgres),
         Arc::new(HttpTransport::new()?),
-        Arc::new(ConnectionCredentials::from_database(
-            Arc::clone(&fixture.registry.reader),
-            ORG,
+        Arc::new(ConnectionFacts::new(
+            Arc::new(ConnectionMemory::default()),
+            ConnectionChanges::default(),
+            Arc::new(ConnectionCredentials::from_database(
+                Arc::clone(&fixture.registry.reader),
+                ORG,
+            )),
+            Arc::clone(&fixture.postgres),
+            ENV_KEY,
+            PROJECT,
+            "dev",
         )),
         Arc::new(WamnLogging::new(&WamnLoggingConfig::default())?),
         Arc::from([]),

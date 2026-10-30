@@ -201,9 +201,8 @@ pub trait FileConnections: Send + Sync + fmt::Debug {
 /// Existing files use their connection identity without a binding.
 pub struct RegistryFileConnections {
     pub client: Option<Arc<tokio_postgres::Client>>,
-    pub postgres: Arc<wamn_runtime::plugins::wamn_postgres::WamnPostgres>,
     pub release: Arc<wamn_engine::release_manifest::LoadedRelease>,
-    pub credentials: Arc<wamn_runtime::connection_credentials::ConnectionCredentials>,
+    pub facts: Arc<wamn_runtime::connection_facts::ConnectionFacts>,
     pub org: String,
     pub project: String,
     pub environment: String,
@@ -240,64 +239,68 @@ impl FileConnections for RegistryFileConnections {
         binding: Option<&str>,
         pinned: Option<&str>,
     ) -> Result<FileConnection, FileError> {
-        let client = self
-            .client
-            .as_ref()
-            .ok_or_else(|| failed("binding", anyhow::anyhow!("connection reader unavailable")))?;
-        if binding.is_none()
-            && let Some(id) = pinned
+        let (id, read_only, version) = match binding {
+            None => (
+                pinned
+                    .and_then(|id| id.parse::<Uuid>().ok())
+                    .ok_or_else(|| refused(FileRefusal::BindingRefused, "connection"))?,
+                false,
+                None,
+            ),
+            Some(name) => {
+                let release = self
+                    .facts
+                    .release(self.release.release().manifest_digest.as_str())
+                    .await
+                    .map_err(|error| failed("binding", error))?;
+                let binding = release
+                    .bindings
+                    .iter()
+                    .find(|binding| {
+                        binding.name == name
+                            && pinned.is_none_or(|id| id == binding.connection_id.to_string())
+                            && wamn_catalog::application_for_package(
+                                &self.release.scope().applications,
+                                &binding.package_id,
+                            ) == Some(application)
+                    })
+                    .ok_or_else(|| refused(FileRefusal::BindingRefused, "binding"))?;
+                (
+                    binding.connection_id,
+                    binding.mode == "read",
+                    Some(binding.version),
+                )
+            }
+        };
+        let fact = self
+            .facts
+            .connection(&id)
+            .await
+            .map_err(|error| failed("binding", error))?
+            .filter(|fact| fact.status == wamn_runtime::connection_memory::ConnectionStatus::Active)
+            .ok_or_else(|| refused(FileRefusal::BindingRefused, "connection"))?;
+        let generation = self
+            .facts
+            .generation(&id, fact.active_generation)
+            .await
+            .map_err(|error| failed("binding", error))?;
+        if generation.runtime_type != "host"
+            || !matches!(generation.integration_type.as_str(), "gcs" | "s3" | "disk")
         {
-            let row = client.query_opt(
-                "SELECT connection_id::text, connection_name, generation, parameters FROM registry.read_file_connection($1,$2,$3,$4::text::uuid)",
-                &[&self.org, &self.project, &self.environment, &id],
-            ).await?.ok_or_else(|| refused(FileRefusal::BindingRefused, "connection"))?;
-            return Ok(FileConnection {
-                id: row.try_get(0)?,
-                name: row.try_get(1)?,
-                generation: row.try_get(2)?,
-                definition: row.try_get(3)?,
-                read_only: false,
-            });
+            return Err(refused(FileRefusal::BindingRefused, "connection"));
         }
-        let binding = binding.ok_or_else(|| refused(FileRefusal::BindingRefused, "binding"))?;
-        let rows = self
-            .postgres
-            .released_connection_bindings(
-                &self.project,
-                &self.release.scope().env_key,
-                self.release.release().manifest_digest.as_str(),
-                wamn_run_state::AuthorityClass::CallableHttp,
-            )
-            .await
-            .map_err(|error| failed("binding", error))?;
-        let row = rows
-            .iter()
-            .find(|row| {
-                let package: &str = row.get(0);
-                let name: &str = row.get(1);
-                let id: &str = row.get(2);
-                let integration_type: &str = row.get(5);
-                name == binding
-                    && pinned.is_none_or(|pinned| pinned == id)
-                    && matches!(integration_type, "gcs" | "s3" | "disk")
-                    && wamn_catalog::application_for_package(
-                        &self.release.scope().applications,
-                        package,
-                    ) == Some(application)
-            })
-            .ok_or_else(|| refused(FileRefusal::BindingRefused, "binding"))?;
-        let id: String = row.get(2);
-        let configuration = self
-            .credentials
-            .version(&self.project, &self.environment, &id, row.get(3))
-            .await
-            .map_err(|error| failed("binding", error))?;
+        if let Some(version) = version {
+            self.facts
+                .version(&generation.integration_type, Some(version))
+                .await
+                .map_err(|error| failed("binding", error))?;
+        }
         Ok(FileConnection {
-            id,
-            name: row.get(4),
-            generation: configuration.generation,
-            definition: configuration.parameters,
-            read_only: row.get::<_, String>(6) == "read",
+            id: id.to_string(),
+            name: generation.name.clone(),
+            generation: fact.active_generation,
+            definition: generation.parameters.clone(),
+            read_only,
         })
     }
 }
@@ -1116,7 +1119,10 @@ mod tests {
         AuthRejection, AuthenticationRequest, RouteAuthenticator, RouteInFlightLimit, unauthorized,
     };
     use wamn_engine::release_manifest::ReleaseScope;
+    use wamn_platform_identity::connection_changes::ConnectionChanges;
     use wamn_runtime::connection_credentials::ConnectionCredentials;
+    use wamn_runtime::connection_facts::ConnectionFacts;
+    use wamn_runtime::connection_memory::ConnectionMemory;
     use wamn_runtime::plugins::wamn_postgres::WamnPostgresConfig;
 
     fn release() -> Arc<LoadedRelease> {
@@ -1219,7 +1225,15 @@ mod tests {
         let release = release();
         let blobstore = Arc::new(WamnBlobstore::new(
             postgres.clone(),
-            Arc::new(ConnectionCredentials::empty()),
+            Arc::new(ConnectionFacts::new(
+                Arc::new(ConnectionMemory::default()),
+                ConnectionChanges::default(),
+                Arc::new(ConnectionCredentials::empty()),
+                Arc::clone(&postgres),
+                "acme",
+                "project",
+                "dev",
+            )),
             "acme",
             "project",
             Some(release.clone()),

@@ -26,6 +26,7 @@ struct Fixture {
     observed: Arc<Mutex<Vec<Observed>>>,
     task: JoinHandle<()>,
     credentials: crate::connection_credentials::test_util::Fixture,
+    applications: Vec<wamn_test_postgres::Database>,
 }
 
 impl Fixture {
@@ -88,6 +89,7 @@ impl Fixture {
             base,
             observed,
             task,
+            applications: Vec::new(),
         }
     }
 
@@ -99,58 +101,199 @@ impl Fixture {
         })
     }
 
-    async fn plugin(&mut self, parameters: &serde_json::Value) -> ConnectionHttp {
-        let mut plugin = offline_plugin();
-        plugin.allowed_hosts =
-            vec![self.base.strip_suffix("bound/").unwrap().parse().unwrap()].into();
+    async fn put_http(&mut self, name: &str, parameters: &serde_json::Value, projects: &[&str]) {
         let secret = serde_json::json!({"client_secret": CLIENT_SECRET}).to_string();
+        for project in projects {
+            let tx = self.credentials.admin.transaction().await.unwrap();
+            tx.batch_execute("SET LOCAL ROLE wamn_system")
+                .await
+                .unwrap();
+            tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+                wamn_control_provision::PlatformComponent::Provisioning,
+            ))
+            .await
+            .unwrap();
+            wamn_test_infrastructure::credentials::define(
+                &tx,
+                "acme",
+                &serde_json::json!({
+                    "project": project, "env": "dev", "name": name,
+                    "integration_type": "http", "auth_type": "oauth2_client_credentials",
+                    "parameters": {"primary-authority": self.base, "tls-verification": "disabled", "auth": parameters},
+                    "credential": secret,
+                }),
+                self.credentials.store.as_ref(),
+            ).await.unwrap();
+            tx.commit().await.unwrap();
+        }
+    }
+
+    async fn plugin(&mut self, parameters: &serde_json::Value) -> ConnectionHttp {
+        use crate::plugins::wamn_postgres::{
+            ClassCredentials, ProjectConfig, StaticCredentialProvider,
+        };
+        use wamn_engine::release_manifest::ReleaseScope;
+        use wamn_run_state::AuthorityClass;
+
         for name in ["handle", "other-handle"] {
-            self.credentials
-                .put_http(
-                    name,
-                    &secret,
-                    &["project-a", "project-b"],
-                    ("oauth2_client_credentials", parameters.clone()),
-                )
+            self.put_http(name, parameters, &["project-a", "project-b"])
                 .await;
         }
-        plugin.vault = Arc::new(self.credentials.reader("project-a").await);
+        let mut manifest = manifest();
+        let mut invocation = invocation();
+        invocation.entry = InvocationEntry::Route;
+        let mut component = manifest.components.pop_first().unwrap();
+        let operation = component.operations.get_mut(&invocation.operation).unwrap();
+        operation.registered_operation = None;
+        operation.permissions.clear();
+        component.descriptor.operations.insert(
+            invocation.operation.clone(),
+            serde_json::from_value(serde_json::json!({
+                "input-ports": [], "output-ports": [], "parameters": []
+            }))
+            .unwrap(),
+        );
+        manifest.components.insert(component);
+        manifest.routes.insert(ServingRoute {
+            package_id: invocation.origin.package_id.clone(),
+            component: invocation.origin.component.clone(),
+            operation: invocation.origin.operation.clone(),
+            type_: OperationType::Command,
+            reads: BTreeSet::new(),
+            revision: None,
+            idempotency: None,
+            canonicalization: None,
+        });
+        let bytes = manifest.canonical_bytes();
+        let release = Arc::new(
+            LoadedRelease::load_canonical_bytes(
+                &bytes,
+                "oauth2-test",
+                ReleaseScope::new("acme--project-a--dev", "dev"),
+            )
+            .unwrap(),
+        );
+        let manifest_digest = release.release().manifest_digest.as_str();
+        let mut projects = HashMap::new();
+        for project in ["project-a", "project-b"] {
+            let database = wamn_project_state::test_database::tenant_platform();
+            let (admin, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
+                .await
+                .unwrap();
+            tokio::spawn(driver);
+            admin.batch_execute("BEGIN; SELECT set_config('app.user_id','770df186-ac15-579e-b46b-c297cae2011b',true),set_config('app.operation','admin:seed-oauth2',true)").await.unwrap();
+            let env_key = format!("acme--{project}--dev");
+            admin.execute("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3)", &[&env_key,&manifest_digest,&bytes]).await.unwrap();
+            let rows = self.credentials.admin.query("SELECT c.id,i.id,i.name FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.project=$1 AND c.env='dev'", &[&project]).await.unwrap();
+            for row in rows {
+                let connection: uuid::Uuid = row.get(0);
+                let integration: uuid::Uuid = row.get(1);
+                let name: String = row.get(2);
+                admin.execute("INSERT INTO platform.integration(id,integration_type,name,status) VALUES($1,'http',$2,'active')", &[&integration,&name]).await.unwrap();
+                admin.execute("INSERT INTO platform.connection(id,integration_id,integration_type,status) VALUES($1,$2,'http','active')", &[&connection,&integration]).await.unwrap();
+                admin.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interfaces,mode) VALUES($1,$2,'package_a',$3,ARRAY['wamn:connection/http@0.1.0'],'write')", &[&env_key,&invocation.component_digest,&name]).await.unwrap();
+                admin.execute("INSERT INTO catalog.release_connection(env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3,1)", &[&env_key,&manifest_digest,&connection]).await.unwrap();
+                admin.execute("INSERT INTO catalog.connection_binding(env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES($1,$2,$3,'package_a',$4,$5)", &[&env_key,&manifest_digest,&invocation.component_digest,&name,&connection]).await.unwrap();
+            }
+            admin.batch_execute("COMMIT").await.unwrap();
+            admin.batch_execute("CREATE SCHEMA wamn_run").await.unwrap();
+            let role = format!("oauth2_{}_{}", database.name(), project.replace('-', "_"));
+            admin
+                .batch_execute(
+                    &wamn_control_provision::sql::prepare_workload_generation_sql(
+                        wamn_control_provision::WorkloadRoleFamily::HttpAdmitter,
+                        database.name(),
+                        &role,
+                        "oauth2-test-password",
+                        "2099-01-01T00:00:00Z",
+                    ),
+                )
+                .await
+                .unwrap();
+            let mut authority = url::Url::parse(database.url()).unwrap();
+            authority.set_username(&role).unwrap();
+            authority
+                .set_password(Some("oauth2-test-password"))
+                .unwrap();
+            projects.insert(
+                project.to_owned(),
+                ProjectConfig {
+                    credentials: ClassCredentials::default()
+                        .with_class(AuthorityClass::CallableHttp, authority),
+                    guest_pool_max_size: 1,
+                    platform_pool_max_size: 1,
+                    wait_timeout_ms: 5_000,
+                    statement_timeout_ms: 10_000,
+                    row_limit: 10_000,
+                },
+            );
+            self.applications.push(database);
+        }
+        let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(
+            StaticCredentialProvider::new(projects, None),
+        )));
+        let facts = Arc::new(ConnectionFacts::new(
+            Arc::new(ConnectionMemory::default()),
+            ConnectionChanges::default(),
+            Arc::new(self.credentials.reader("project-a").await),
+            Arc::clone(&postgres),
+            "acme--project-a--dev",
+            "project-a",
+            "dev",
+        ));
+        postgres
+            .set_env_key("instance", "acme--project-a--dev")
+            .unwrap();
+        let plugin = ConnectionHttp::new(
+            postgres,
+            Arc::new(HttpTransport::new().unwrap()),
+            facts,
+            "acme--project-a--dev",
+            "project-a",
+            vec![self.base.strip_suffix("bound/").unwrap().parse().unwrap()].into(),
+            Some(release),
+        );
+        plugin.bind_invocation("instance", invocation).unwrap();
         plugin
+    }
+
+    async fn use_project(&self, plugin: &mut ConnectionHttp, project: &str) {
+        use wamn_engine::release_manifest::ReleaseScope;
+        let env_key = format!("acme--{project}--dev");
+        plugin.release = Some(Arc::new(
+            LoadedRelease::load_canonical_bytes(
+                &plugin
+                    .release
+                    .as_ref()
+                    .unwrap()
+                    .manifest()
+                    .canonical_bytes(),
+                "oauth2-test",
+                ReleaseScope::new(&env_key, "dev"),
+            )
+            .unwrap(),
+        ));
+        plugin.facts = Arc::new(ConnectionFacts::new(
+            Arc::new(ConnectionMemory::default()),
+            ConnectionChanges::default(),
+            Arc::new(self.credentials.reader(project).await),
+            Arc::clone(&plugin.postgres),
+            &env_key,
+            project,
+            "dev",
+        ));
+        plugin.postgres.set_env_key("instance", &env_key).unwrap();
+        plugin.env_key = env_key.into();
+        plugin.project = project.into();
     }
 
     async fn send(
         &self,
         plugin: &ConnectionHttp,
-        generation: i64,
         handle: &str,
     ) -> Result<Response, ConnectionError> {
-        let authority =
-            parse_http_connection_authority(&self.base, TlsPolicy::Disabled, None).unwrap();
-        let target = normalize_portable_http_target("/api").unwrap();
-        let decision = resolve_http_request(
-            &authority,
-            &target,
-            &plugin.allowed_hosts,
-            &ConnectionNetworkPolicy,
-            &TokioDnsResolver,
-        )
-        .await
-        .unwrap();
-        let scope = ClientScope {
-            connection: ConnectionScope {
-                env_key: plugin.env_key.clone(),
-                project: plugin.project.clone(),
-                environment: "dev".into(),
-                instance: "instance".into(),
-            },
-            package: "package".into(),
-            component_digest: "digest".into(),
-            requirement: "manager".into(),
-            binding_hash: "binding".into(),
-            definition_hash: "definition".into(),
-            generation,
-        };
         let request = Request {
+            requirement: handle.into(),
             path_and_query: "/api".into(),
             body: Some(b"guest-body".to_vec()),
             ..effect_request(vec![Header {
@@ -159,15 +302,7 @@ impl Fixture {
             }])
         };
         let before = format!("{request:?}");
-        let result = plugin
-            .execute_authenticated(
-                scope,
-                &authority,
-                decision,
-                &request,
-                &format!("org:acme:{handle}"),
-            )
-            .await;
+        let result = plugin.send("instance", &request).await;
         assert_eq!(
             format!("{request:?}"),
             before,
@@ -213,10 +348,7 @@ async fn fresh_and_cached_bearer_use_basic_form_authentication_without_guest_sec
     let mut fixture = Fixture::start(vec![token(1, Some(3600))], vec![200, 200]).await;
     let plugin = fixture.plugin(&fixture.parameters()).await;
     for _ in 0..2 {
-        assert_eq!(
-            fixture.send(&plugin, 7, "handle").await.unwrap().status,
-            200
-        );
+        assert_eq!(fixture.send(&plugin, "handle").await.unwrap().status, 200);
     }
     assert_eq!(fixture.counts(), (1, 2));
     let observed = fixture.observed.lock().unwrap();
@@ -258,10 +390,7 @@ async fn token_endpoint_can_equal_the_bound_base_without_adding_a_query() {
     let mut parameters = fixture.parameters();
     parameters["token_url"] = fixture.base.clone().into();
     let plugin = fixture.plugin(&parameters).await;
-    assert_eq!(
-        fixture.send(&plugin, 7, "handle").await.unwrap().status,
-        200
-    );
+    assert_eq!(fixture.send(&plugin, "handle").await.unwrap().status, 200);
     let observed = fixture.observed.lock().unwrap();
     assert_eq!(observed.len(), 2);
     assert_eq!(observed[0].path, "/bound/");
@@ -281,7 +410,7 @@ async fn short_or_absent_expiry_never_caches_across_requests_and_empty_scopes_om
         parameters["scopes"] = serde_json::json!([]);
         let plugin = fixture.plugin(&parameters).await;
         for _ in 0..2 {
-            fixture.send(&plugin, 7, "handle").await.unwrap();
+            fixture.send(&plugin, "handle").await.unwrap();
         }
         assert_eq!(fixture.counts(), (2, 2));
         assert_eq!(
@@ -300,9 +429,9 @@ async fn clock_seam_expires_cached_token_at_the_sixty_second_margin() {
     )
     .await;
     let mut plugin = fixture.plugin(&fixture.parameters()).await;
-    fixture.send(&plugin, 7, "handle").await.unwrap();
+    fixture.send(&plugin, "handle").await.unwrap();
     plugin.oauth2.now = || Instant::now() + Duration::from_mins(59);
-    fixture.send(&plugin, 7, "handle").await.unwrap();
+    fixture.send(&plugin, "handle").await.unwrap();
     assert_eq!(fixture.counts(), (2, 2));
     assert_eq!(
         fixture.observed.lock().unwrap()[3].headers["authorization"],
@@ -311,7 +440,7 @@ async fn clock_seam_expires_cached_token_at_the_sixty_second_margin() {
 }
 
 #[tokio::test]
-async fn cache_separates_project_handle_and_selected_generation() {
+async fn cache_separates_project_connection_and_active_generation() {
     let _lock = wamn_test_postgres::lock();
     let mut fixture = Fixture::start(
         (1..=4).map(|n| token(n, Some(3600))).collect(),
@@ -319,12 +448,22 @@ async fn cache_separates_project_handle_and_selected_generation() {
     )
     .await;
     let mut plugin = fixture.plugin(&fixture.parameters()).await;
-    for (generation, handle) in [(7, "handle"), (8, "handle"), (8, "other-handle")] {
-        fixture.send(&plugin, generation, handle).await.unwrap();
-    }
-    plugin.project = "project-b".into();
-    plugin.vault = Arc::new(fixture.credentials.reader("project-b").await);
-    fixture.send(&plugin, 8, "handle").await.unwrap();
+    fixture.send(&plugin, "handle").await.unwrap();
+    let connection = plugin.facts.env_connections().await.unwrap().connections["handle"];
+    let first = plugin.facts.connection(&connection).await.unwrap().unwrap();
+    fixture
+        .put_http("handle", &fixture.parameters(), &["project-a"])
+        .await;
+    fixture.send(&plugin, "handle").await.unwrap();
+    let second = plugin.facts.connection(&connection).await.unwrap().unwrap();
+    assert!(second.active_generation > first.active_generation);
+    fixture.send(&plugin, "other-handle").await.unwrap();
+    fixture.use_project(&mut plugin, "project-b").await;
+    fixture.send(&plugin, "handle").await.unwrap();
+    let entries = plugin.oauth2.entries.lock().unwrap();
+    assert!(entries.contains_key(&(connection, first.active_generation)));
+    assert!(entries.contains_key(&(connection, second.active_generation)));
+    assert_eq!(entries.len(), 4);
     assert_eq!(fixture.counts(), (4, 4));
 }
 
@@ -339,7 +478,7 @@ async fn refused_token_never_dispatches_api_or_exposes_error_body() {
         .await;
         let plugin = fixture.plugin(&fixture.parameters()).await;
         assert!(matches!(
-            fixture.send(&plugin, 7, "handle").await,
+            fixture.send(&plugin, "handle").await,
             Err(ConnectionError::CredentialUnavailable)
         ));
         assert_eq!(fixture.counts(), (1, 0));
@@ -357,7 +496,7 @@ async fn api_401_fetches_once_more_and_returns_the_second_response() {
         .await;
         let plugin = fixture.plugin(&fixture.parameters()).await;
         assert_eq!(
-            fixture.send(&plugin, 7, "handle").await.unwrap().status,
+            fixture.send(&plugin, "handle").await.unwrap().status,
             second
         );
         assert_eq!(fixture.counts(), (2, 2));
@@ -378,6 +517,18 @@ async fn api_401_fetches_once_more_and_returns_the_second_response() {
 }
 
 #[tokio::test]
+async fn api_403_with_an_unchanged_fact_does_not_retry_oauth2() {
+    let _lock = wamn_test_postgres::lock();
+    let mut fixture = Fixture::start(vec![token(1, Some(3600))], vec![403]).await;
+    let plugin = fixture.plugin(&fixture.parameters()).await;
+    let response = fixture.send(&plugin, "handle").await.unwrap();
+    assert_eq!(response.status, 403);
+    assert_eq!(response.body, b"api-403");
+    assert_eq!(fixture.counts(), (1, 1));
+    assert!(plugin.oauth2.entries.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn failed_refresh_returns_the_first_api_401_without_another_api_request() {
     let _lock = wamn_test_postgres::lock();
     let mut fixture = Fixture::start(
@@ -389,7 +540,7 @@ async fn failed_refresh_returns_the_first_api_401_without_another_api_request() 
     )
     .await;
     let plugin = fixture.plugin(&fixture.parameters()).await;
-    let response = fixture.send(&plugin, 7, "handle").await.unwrap();
+    let response = fixture.send(&plugin, "handle").await.unwrap();
     assert_eq!(response.status, 401);
     assert_eq!(response.body, b"api-401");
     assert_eq!(fixture.counts(), (2, 1));
@@ -414,7 +565,7 @@ async fn token_url_outside_binding_or_ambiguous_path_refuses_before_dispatch() {
         parameters["token_url"] = endpoint.into();
         let plugin = fixture.plugin(&parameters).await;
         assert!(matches!(
-            fixture.send(&plugin, 7, "handle").await,
+            fixture.send(&plugin, "handle").await,
             Err(ConnectionError::CredentialUnavailable)
         ));
         assert_eq!(fixture.counts(), (0, 0));
@@ -469,7 +620,7 @@ async fn malformed_token_response_refuses_without_leaking_its_body() {
         let mut fixture = Fixture::start(vec![(200, body)], vec![]).await;
         let plugin = fixture.plugin(&fixture.parameters()).await;
         assert!(matches!(
-            fixture.send(&plugin, 7, "handle").await,
+            fixture.send(&plugin, "handle").await,
             Err(ConnectionError::CredentialUnavailable)
         ));
         assert_eq!(fixture.counts(), (1, 0));

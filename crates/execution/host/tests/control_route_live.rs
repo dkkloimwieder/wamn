@@ -1549,7 +1549,23 @@ async fn assert_definer_grantees(client: &Client) -> anyhow::Result<()> {
             &["wamn_conn_reader"],
         ),
         (
-            "registry.read_connection_version(text, text, text, uuid, integer)",
+            "registry.read_connection_fact(text, text, text, uuid)",
+            &["wamn_conn_reader"],
+        ),
+        (
+            "registry.read_connection_generation(text, text, text, uuid, bigint)",
+            &["wamn_conn_reader"],
+        ),
+        (
+            "registry.read_connection_secret(text, text, text, uuid)",
+            &["wamn_conn_reader"],
+        ),
+        (
+            "registry.read_env_connections(text, text, text)",
+            &["wamn_conn_reader"],
+        ),
+        (
+            "registry.read_integration_version(text, integer)",
             &["wamn_conn_reader"],
         ),
         (

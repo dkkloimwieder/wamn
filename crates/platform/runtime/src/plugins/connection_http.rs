@@ -37,7 +37,9 @@ use super::wamn_postgres::{
     CandidateBindingWorld, ConnectionEffectLookup, ConnectionEffectSnapshot, ConnectionEntryLookup,
     WamnPostgres, WiringLookup,
 };
-use crate::connection_credentials::ConnectionCredentials;
+use crate::connection_credentials::ConnectionGeneration;
+use crate::connection_facts::{ConnectionFacts, Secret};
+use crate::connection_memory::{ConnectionFact, ConnectionStatus};
 
 mod authentication;
 mod network_policy;
@@ -195,7 +197,7 @@ impl std::fmt::Debug for ConnectionHttp {
 pub struct ConnectionHttp {
     postgres: Arc<WamnPostgres>,
     transport: Arc<HttpTransport>,
-    vault: Arc<ConnectionCredentials>,
+    facts: Arc<ConnectionFacts>,
     oauth2: Oauth2Cache,
     env_key: Box<str>,
     project: Box<str>,
@@ -219,18 +221,18 @@ impl ConnectionHttp {
     pub fn new(
         postgres: Arc<WamnPostgres>,
         transport: Arc<HttpTransport>,
-        vault: Arc<ConnectionCredentials>,
+        facts: Arc<ConnectionFacts>,
         env_key: impl Into<Box<str>>,
         project: impl Into<Box<str>>,
         allowed_hosts: Arc<[AllowedHost]>,
         release: Option<Arc<LoadedRelease>>,
     ) -> Self {
         let project: Box<str> = project.into();
-        postgres.set_connection_credentials(Arc::clone(&vault), &project);
+        postgres.set_connection_credentials(facts.reader(), &project);
         Self {
             postgres,
             transport,
-            vault,
+            facts,
             oauth2: Oauth2Cache {
                 entries: Mutex::new(HashMap::new()),
                 now: Instant::now,
@@ -346,11 +348,82 @@ impl ConnectionHttp {
         .map_err(|error| format!("{error:?}"))
     }
 
+    /// Send once, and at most once more after the external system refuses
+    /// the credential (401 or 403) when the second send can differ: a new
+    /// read of the connection fact names another generation or credential,
+    /// or an OAuth2 401 fetches the token again. A repeated send never
+    /// carries the credential that was just refused. Each send keeps the
+    /// facts it started with.
     async fn send(
         &self,
         component_id: &str,
         request: &Request,
     ) -> Result<Response, ConnectionError> {
+        let first = self.attempt(component_id, request).await?;
+        let (connection, used) = match &first {
+            Attempt::Sent { response, .. } if !matches!(response.status, 401 | 403) => {
+                return Ok(first.into_response().expect("a sent attempt"));
+            }
+            Attempt::Sent {
+                connection, used, ..
+            }
+            | Attempt::Stale { connection, used } => (*connection, used.clone()),
+        };
+        self.oauth2
+            .entries
+            .lock()
+            .expect("OAuth2 cache lock")
+            .remove(&(connection, used.active_generation));
+        let oauth2 = self
+            .facts
+            .generation(&connection, used.active_generation)
+            .await
+            .map_err(|_| ConnectionError::CredentialUnavailable)?
+            .auth_type
+            == "oauth2_client_credentials"
+            && first.status() == Some(401);
+        let fresh = self
+            .facts
+            .read_again(&connection)
+            .await
+            .map_err(|_| ConnectionError::CredentialUnavailable)?;
+        if matches!(first, Attempt::Sent { .. }) && fresh.as_ref() == Some(&used) && !oauth2 {
+            return Ok(first.into_response().expect("a sent attempt"));
+        }
+        let second = match self.attempt(component_id, request).await {
+            Ok(second) => second,
+            // A failed fresh token request answers the first refusal.
+            Err(_) if oauth2 => {
+                return Ok(first.into_response().expect("a sent attempt"));
+            }
+            Err(error) => return Err(error),
+        };
+        match second {
+            Attempt::Sent {
+                response,
+                connection,
+                used,
+            } => {
+                if oauth2 && response.status == 401 {
+                    self.oauth2
+                        .entries
+                        .lock()
+                        .expect("OAuth2 cache lock")
+                        .remove(&(connection, used.active_generation));
+                }
+                Ok(response)
+            }
+            Attempt::Stale { .. } => first
+                .into_response()
+                .ok_or(ConnectionError::CredentialUnavailable),
+        }
+    }
+
+    async fn attempt(
+        &self,
+        component_id: &str,
+        request: &Request,
+    ) -> Result<Attempt, ConnectionError> {
         let invocation = self
             .invocation(component_id)
             .ok_or(ConnectionError::AttestationInvalid)?;
@@ -433,6 +506,7 @@ impl ConnectionHttp {
                     store_alias: &request.requirement,
                     candidate_binding,
                 },
+                &self.facts,
             )
             .await
             .map_err(|error| {
@@ -496,20 +570,33 @@ impl ConnectionHttp {
         .await
         .map_err(|error| authority_denied("request", &error))?;
 
-        let handle = snapshot
-            .credential_handle
+        let connection: uuid::Uuid = snapshot
+            .instance_id
             .as_deref()
+            .and_then(|id| id.parse().ok())
+            .ok_or(ConnectionError::Unbound)?;
+        let generation = snapshot
+            .generation
             .ok_or(ConnectionError::CredentialUnavailable)?;
+        let fact = self
+            .facts
+            .connection(&connection)
+            .await
+            .map_err(|_| ConnectionError::CredentialUnavailable)?
+            .filter(|fact| fact.status == ConnectionStatus::Active)
+            .ok_or(ConnectionError::CredentialUnavailable)?;
+        if fact.active_generation != generation {
+            return Ok(Attempt::Stale {
+                connection,
+                used: fact,
+            });
+        }
         let scope = ClientScope {
             connection: ConnectionScope {
                 env_key: self.env_key.clone(),
                 project: self.project.clone(),
                 environment: environment.into(),
-                instance: snapshot
-                    .instance_id
-                    .as_deref()
-                    .ok_or(ConnectionError::Unbound)?
-                    .into(),
+                instance: connection.to_string().into(),
             },
             package: invocation.package_id.clone().into(),
             component_digest: invocation.component_digest.clone().into(),
@@ -524,29 +611,30 @@ impl ConnectionHttp {
                 .as_deref()
                 .ok_or(ConnectionError::CredentialUnavailable)?
                 .into(),
-            generation: snapshot
-                .generation
-                .ok_or(ConnectionError::CredentialUnavailable)?,
+            generation,
         };
-        if let Some(name) = &snapshot.connection_name
-            && !self
-                .vault
-                .connection_enabled(&self.project, name)
-                .await
-                .map_err(|_| ConnectionError::CredentialUnavailable)?
-        {
-            return Err(ConnectionError::CredentialUnavailable);
-        }
-        let external_system_id = self
-            .vault
-            .external_system_id(&self.project, handle)
+        let configuration = self
+            .facts
+            .generation(&connection, generation)
             .await
             .map_err(|_| ConnectionError::CredentialUnavailable)?;
         let mut response = self
-            .execute_authenticated(scope, &authority, decision, request, handle)
+            .execute_authenticated(
+                scope,
+                &authority,
+                decision,
+                request,
+                (&connection, &fact, &configuration),
+            )
             .await?;
-        response.external_system = external_system_id;
-        Ok(response)
+        response
+            .external_system
+            .clone_from(&configuration.external_system);
+        Ok(Attempt::Sent {
+            response,
+            connection,
+            used: fact,
+        })
     }
 
     async fn execute_authenticated(
@@ -555,66 +643,47 @@ impl ConnectionHttp {
         authority: &HttpConnectionAuthority,
         mut decision: AuthorityDecision,
         request: &Request,
-        handle: &str,
+        (connection, fact, configuration): (&uuid::Uuid, &ConnectionFact, &ConnectionGeneration),
     ) -> Result<Response, ConnectionError> {
-        let (auth_type, parameters, material) = self
-            .vault
-            .http_authentication(&self.project, handle)
-            .await
-            .map_err(|_| ConnectionError::CredentialUnavailable)?;
+        let auth_type = configuration.auth_type.as_str();
+        let parameters = configuration
+            .parameters
+            .get("auth")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+        let secret = match (auth_type, fact.credential_id) {
+            ("none", _) | (_, None) => None,
+            (_, Some(credential)) => Some(
+                self.facts
+                    .secret(&credential)
+                    .await
+                    .map_err(|_| ConnectionError::CredentialUnavailable)?,
+            ),
+        };
+        let material = secret.as_deref().map(Secret::expose);
         if auth_type != "oauth2_client_credentials" {
             let headers = authentication::headers(
-                &auth_type,
+                auth_type,
                 &parameters,
-                material.as_deref(),
+                material,
                 request,
                 &mut decision,
             )?;
             return execute(&self.transport, scope, decision, request, headers).await;
         }
-        let credential = oauth2_credential(&parameters, material.as_deref())?;
-        let key = (self.project.clone(), handle.into(), scope.generation);
+        let credential = oauth2_credential(&parameters, material)?;
+        let key = (*connection, scope.generation);
         let token = self
             .oauth2_token(&scope, authority, &credential, &key)
             .await?;
-        let first = execute(
-            &self.transport,
-            scope.clone(),
-            decision.clone(),
-            request,
-            [("authorization".into(), token)].into(),
-        )
-        .await?;
-        if first.status != 401 {
-            return Ok(first);
-        }
-        self.oauth2
-            .entries
-            .lock()
-            .expect("OAuth2 cache lock")
-            .remove(&key);
-        let Ok(token) = self
-            .oauth2_token(&scope, authority, &credential, &key)
-            .await
-        else {
-            return Ok(first);
-        };
-        let second = execute(
+        execute(
             &self.transport,
             scope,
             decision,
             request,
             [("authorization".into(), token)].into(),
         )
-        .await?;
-        if second.status == 401 {
-            self.oauth2
-                .entries
-                .lock()
-                .expect("OAuth2 cache lock")
-                .remove(&key);
-        }
-        Ok(second)
+        .await
     }
 
     async fn oauth2_token(
@@ -659,13 +728,43 @@ impl ConnectionHttp {
                 .entries
                 .lock()
                 .expect("OAuth2 cache lock")
-                .insert(key.clone(), (header.clone(), expires));
+                .insert(*key, (header.clone(), expires));
         }
         Ok(header)
     }
 }
 
-type Oauth2CacheKey = (Box<str>, Box<str>, i64);
+type Oauth2CacheKey = (uuid::Uuid, i64);
+
+/// One send of [`ConnectionHttp::send`] and the connection fact it used.
+enum Attempt {
+    Sent {
+        response: Response,
+        connection: uuid::Uuid,
+        used: ConnectionFact,
+    },
+    /// The fact named another generation than the authorization read.
+    Stale {
+        connection: uuid::Uuid,
+        used: ConnectionFact,
+    },
+}
+
+impl Attempt {
+    fn status(&self) -> Option<u16> {
+        match self {
+            Self::Sent { response, .. } => Some(response.status),
+            Self::Stale { .. } => None,
+        }
+    }
+
+    fn into_response(self) -> Option<Response> {
+        match self {
+            Self::Sent { response, .. } => Some(response),
+            Self::Stale { .. } => None,
+        }
+    }
+}
 
 struct Oauth2Cache {
     entries: Mutex<HashMap<Oauth2CacheKey, (String, Instant)>>,
@@ -1345,6 +1444,10 @@ mod tests {
 
     use super::*;
 
+    use crate::connection_credentials::ConnectionCredentials;
+    use crate::connection_memory::ConnectionMemory;
+    use wamn_platform_identity::connection_changes::ConnectionChanges;
+
     mod oauth2_tests;
 
     use crate::plugins::effect_span::span_tests::{SpanHarness, expected_attributes};
@@ -1396,15 +1499,7 @@ mod tests {
 
     #[tokio::test]
     async fn revoked_invocation_refuses_send_and_can_be_rebound() {
-        let plugin = ConnectionHttp::new(
-            Arc::new(offline_postgres()),
-            Arc::new(HttpTransport::new().expect("HTTP transport")),
-            Arc::new(ConnectionCredentials::empty()),
-            "tenant-a",
-            "project-a",
-            Vec::<AllowedHost>::new().into(),
-            None,
-        );
+        let plugin = offline_plugin();
         let component_id = "component-store-7";
         let invocation = invocation();
         plugin
@@ -1843,10 +1938,20 @@ mod tests {
     }
 
     fn offline_plugin() -> ConnectionHttp {
-        ConnectionHttp::new(
-            Arc::new(offline_postgres()),
-            Arc::new(HttpTransport::new().expect("HTTP transport")),
+        let postgres = Arc::new(offline_postgres());
+        let facts = Arc::new(ConnectionFacts::new(
+            Arc::new(ConnectionMemory::default()),
+            ConnectionChanges::default(),
             Arc::new(ConnectionCredentials::empty()),
+            Arc::clone(&postgres),
+            "tenant-a",
+            "project-a",
+            "dev",
+        ));
+        ConnectionHttp::new(
+            postgres,
+            Arc::new(HttpTransport::new().expect("HTTP transport")),
+            facts,
             "tenant-a",
             "project-a",
             Vec::<AllowedHost>::new().into(),

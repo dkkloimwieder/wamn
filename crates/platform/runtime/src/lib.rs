@@ -5,6 +5,7 @@
 pub mod auth_cache;
 pub mod component_artifact_source;
 pub mod connection_authority;
+pub mod connection_facts;
 pub mod connection_generation;
 pub mod connection_memory;
 pub mod connectors;

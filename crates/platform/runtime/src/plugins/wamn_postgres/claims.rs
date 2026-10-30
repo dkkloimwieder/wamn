@@ -209,8 +209,8 @@ pub struct WamnPostgres {
     pub(super) operation_workloads:
         std::sync::RwLock<HashMap<String, Arc<super::operation::OperationWorkload>>>,
     pub(super) local_application: Option<Arc<crate::local_application::LocalApplication>>,
-    connection_credentials:
-        std::sync::RwLock<Option<Arc<crate::connection_credentials::ConnectionCredentials>>>,
+    /// The fixed parts of HTTP effect authorizations under their inputs.
+    effect_fixed: moka::sync::Cache<EffectKey, Arc<EffectFixed>>,
     /// Resolves a project id → its database connection + policy.
     provider: Arc<dyn CredentialProvider>,
     /// Guest-visible project pools, built lazily and never shared with host-owned
@@ -606,7 +606,7 @@ pub struct ConnectionEffectSnapshot {
 }
 
 /// Resolve the original route or wiring node and the executing component's
-/// connection.
+/// requirement: the fixed part of the HTTP effect authorization.
 ///
 /// A route passes no wiring (`$5`, `$6` and `$7` are NULL). Its entry is
 /// permitted when the origin component exports the origin operation, and the
@@ -620,6 +620,12 @@ pub struct ConnectionEffectSnapshot {
 /// components of release `$3`, the one owner of component facts (R2). The
 /// workflow graph comes from its pinned `catalog.workflows` row. The reader
 /// derives its hash, and the connection owner compares it with the run.
+///
+/// Every row this reads is immutable under the inputs: a release by its
+/// manifest digest, a workflow version, and a requirement by component
+/// digest, package and name. So the host keeps the answer under its inputs
+/// ([`EffectKey`]). The binding, the status and the generation are mutable and
+/// come from the connection memory.
 static CONNECTION_EFFECT_SNAPSHOT_SQL: &str = "\
 WITH release_manifest AS MATERIALIZED ( \
     SELECT release.env_key, \
@@ -645,45 +651,43 @@ WITH release_manifest AS MATERIALIZED ( \
      CROSS JOIN LATERAL jsonb_array_elements(release_manifest.manifest -> 'components') \
            AS member(value) \
 ), member AS MATERIALIZED ( \
-    SELECT env_key, $12::text AS package_id FROM release_manifest \
-     WHERE $5::text IS NOT NULL OR EXISTS (SELECT 1 FROM release_member WHERE package_id = $12) \
+    SELECT env_key, $10::text AS package_id FROM release_manifest \
+     WHERE $5::text IS NOT NULL OR EXISTS (SELECT 1 FROM release_member WHERE package_id = $10) \
 ), selected_wiring AS MATERIALIZED ( \
     SELECT workflow.graph_json \
       FROM catalog.workflows AS workflow \
      WHERE workflow.env_key = $1 AND workflow.environment = $4 \
-       AND workflow.application = $12 AND workflow.workflow_id = $5 AND workflow.version = $6 \
+       AND workflow.application = $10 AND workflow.workflow_id = $5 AND workflow.version = $6 \
 ) \
 SELECT wiring.graph_json::text, component.component, component.interface_version, \
-       $18::text, \
-       component.operations #>> ARRAY[$18, 'registered-operation'], \
-       connection.integration_type, requirement.mode, \
+       $16::text, \
+       component.operations #>> ARRAY[$16, 'registered-operation'], \
+       requirement.mode, \
        COALESCE( \
            CASE WHEN $5::text IS NULL THEN \
-               origin_component.operations ? $17 \
-               AND component.operations ? $18 \
+               origin_component.operations ? $15 \
+               AND component.operations ? $16 \
            ELSE \
                node.value IS NOT NULL \
                AND node.value ->> 'component' = origin_component.component \
                AND node.value ->> 'interface-version' = origin_component.interface_version \
-               AND node.value ->> 'operation' = $17 \
-               AND origin_component.operations ? $17 \
-               AND component.operations ? $18 \
+               AND node.value ->> 'operation' = $15 \
+               AND origin_component.operations ? $15 \
+               AND component.operations ? $16 \
            END, \
            false \
-       ), \
-       connection.id::text, connection.status='active' AND integration.status='active', \
-       selected.version, integration.name, $11::bigint \
+       ) \
   FROM member \
   LEFT JOIN selected_wiring AS wiring ON true \
   LEFT JOIN release_member AS origin_member \
     ON origin_member.env_key = member.env_key \
-   AND origin_member.package_id = $13 \
+   AND origin_member.package_id = $11 \
   LEFT JOIN release_component AS origin_component \
     ON origin_component.env_key = origin_member.env_key \
    AND origin_component.package_id = origin_member.package_id \
-   AND origin_component.component_digest = $14 \
-   AND origin_component.component = $15 \
-   AND origin_component.interface_version = $16 \
+   AND origin_component.component_digest = $12 \
+   AND origin_component.component = $13 \
+   AND origin_component.interface_version = $14 \
   LEFT JOIN release_member AS executing_member \
     ON executing_member.env_key = member.env_key \
    AND executing_member.package_id = $2 \
@@ -697,17 +701,74 @@ SELECT wiring.graph_json::text, component.component, component.interface_version
   LEFT JOIN catalog.connection_requirement AS requirement \
     ON requirement.env_key = $1 AND requirement.component_digest = $8 \
    AND requirement.package_id=$2 AND requirement.name = $9 \
-  LEFT JOIN catalog.connection_binding AS binding \
-    ON binding.env_key=requirement.env_key AND binding.manifest_digest=$3 \
-   AND binding.component_digest=requirement.component_digest AND binding.package_id=requirement.package_id \
-   AND binding.name=requirement.name \
-   AND ($10::text IS NULL OR binding.connection_id::text=$10) \
-  LEFT JOIN catalog.release_connection AS selected \
-    ON (selected.env_key,selected.manifest_digest,selected.connection_id) \
-      =(binding.env_key,binding.manifest_digest,binding.connection_id) \
-  LEFT JOIN platform.connection AS connection ON connection.id=selected.connection_id \
-  LEFT JOIN platform.integration AS integration ON integration.id=connection.integration_id \
  WHERE $5::text IS NULL OR wiring.graph_json IS NOT NULL";
+
+/// The inputs of the fixed part of an HTTP effect authorization. Every row
+/// the answer depends on is immutable under them, so an answer leaves the
+/// host map only by eviction.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct EffectKey {
+    env_key: String,
+    environment: String,
+    manifest_digest: String,
+    entry_package_id: String,
+    wiring: Option<(String, i32, String)>,
+    origin: [String; 5],
+    package_id: String,
+    component_digest: String,
+    operation: String,
+    name: String,
+}
+
+impl EffectKey {
+    fn new(env_key: &str, lookup: &ConnectionEffectLookup<'_>) -> Self {
+        Self {
+            env_key: env_key.to_owned(),
+            environment: lookup.environment.to_owned(),
+            manifest_digest: lookup.manifest_digest.to_owned(),
+            entry_package_id: lookup.entry.package_id.to_owned(),
+            wiring: lookup.entry.wiring.map(|wiring| {
+                (
+                    wiring.wiring_id.to_owned(),
+                    wiring.wiring_version,
+                    wiring.node_id.to_owned(),
+                )
+            }),
+            origin: [
+                lookup.origin_package_id.to_owned(),
+                lookup.origin_component_digest.to_owned(),
+                lookup.origin_component.to_owned(),
+                lookup.origin_interface_version.to_owned(),
+                lookup.origin_operation.to_owned(),
+            ],
+            package_id: lookup.package_id.to_owned(),
+            component_digest: lookup.component_digest.to_owned(),
+            operation: lookup.operation.to_owned(),
+            name: lookup.store_alias.to_owned(),
+        }
+    }
+}
+
+/// The fixed part of an HTTP effect authorization.
+#[derive(Debug)]
+pub(crate) struct EffectFixed {
+    wiring_hash: Option<String>,
+    component: Option<String>,
+    interface_version: Option<String>,
+    operation: Option<String>,
+    registered_operation: Option<String>,
+    /// `None` when the component declares no such requirement.
+    mode: Option<String>,
+    node_permitted: bool,
+}
+
+/// What the transaction of an HTTP effect authorization read.
+enum EffectRead {
+    /// The whole snapshot of a local application.
+    Local(Box<Option<ConnectionEffectSnapshot>>),
+    /// The fixed part, or `None` when the release has no such member.
+    Fixed(Option<EffectFixed>),
+}
 
 /// Reject guest SQL that would set or reset a session variable or role in-band.
 ///
@@ -1106,7 +1167,7 @@ impl WamnPostgres {
     pub fn with_provider(provider: Arc<dyn CredentialProvider>) -> Self {
         Self {
             local_application: None,
-            connection_credentials: std::sync::RwLock::default(),
+            effect_fixed: crate::connection_facts::bounded(),
             provider,
             guest_pools: std::sync::RwLock::new(HashMap::new()),
             platform_pools: std::sync::RwLock::new(HashMap::new()),
@@ -1930,10 +1991,6 @@ impl WamnPostgres {
         credentials: Arc<crate::connection_credentials::ConnectionCredentials>,
         project: &str,
     ) {
-        *self
-            .connection_credentials
-            .write()
-            .expect("connection reader lock") = Some(Arc::clone(&credentials));
         if let Some(local) = &self.local_application {
             local.set_connection_credentials(credentials, project);
         }
@@ -1972,6 +2029,7 @@ impl WamnPostgres {
         project: &str,
         env_key: &str,
         lookup: &ConnectionEffectLookup<'_>,
+        facts: &crate::connection_facts::ConnectionFacts,
     ) -> anyhow::Result<Option<ConnectionEffectSnapshot>> {
         let registered = self.env_key_for(component_id).ok_or_else(|| {
             anyhow::anyhow!(
@@ -1984,6 +2042,140 @@ impl WamnPostgres {
             "HTTP effect authorization env_key {env_key:?} disagrees with the env_key bound \
              to component {component_id:?}; refusing to resolve under a stale identity"
         );
+        let key = EffectKey::new(env_key, lookup);
+        let fixed = match self.effect_fixed.get(&key) {
+            Some(fixed) => fixed,
+            None => match self
+                .read_effect_snapshot(component_id, project, env_key, lookup)
+                .await?
+            {
+                EffectRead::Local(snapshot) => return Ok(*snapshot),
+                EffectRead::Fixed(None) => return Ok(None),
+                EffectRead::Fixed(Some(fixed)) => {
+                    let fixed = Arc::new(fixed);
+                    // A release serves only after its rows exist, so a part
+                    // without its component or requirement is not kept.
+                    if fixed.component.is_some() && fixed.mode.is_some() {
+                        self.effect_fixed.insert(key, Arc::clone(&fixed));
+                    }
+                    fixed
+                }
+            },
+        };
+        anyhow::ensure!(
+            facts.env_key() == env_key,
+            "HTTP effect authorization env_key {env_key:?} disagrees with the connection facts"
+        );
+        let release = facts.release(lookup.manifest_digest).await?;
+        let binding = release
+            .binding(lookup.component_digest, lookup.package_id, lookup.store_alias)
+            .filter(|binding| {
+                lookup.candidate_binding.is_none_or(|candidate| {
+                    candidate.instance_id == binding.connection_id.to_string()
+                })
+            });
+        let (fact, generation) = match binding {
+            Some(binding) => match facts.connection(&binding.connection_id).await? {
+                Some(fact) => {
+                    let generation = facts
+                        .generation(&binding.connection_id, fact.active_generation)
+                        .await?;
+                    (Some(fact), Some(generation))
+                }
+                None => (None, None),
+            },
+            None => (None, None),
+        };
+        let integration_type = generation
+            .as_ref()
+            .map(|generation| generation.integration_type.as_str());
+        let descriptor = integration_type
+            .and_then(wamn_catalog::RequirementType::for_integration)
+            .map(wamn_catalog::RequirementType::descriptor);
+        let requirement = descriptor.as_ref().map(|descriptor| {
+            wamn_catalog::ComponentConnectionRequirement::new(
+                lookup.component_digest,
+                lookup.store_alias,
+                descriptor.clone(),
+            )
+        });
+        let active_generation = fact.as_ref().map(|fact| fact.active_generation);
+        let definition = generation
+            .as_ref()
+            .map(|generation| generation.parameters.clone());
+        let definition_hash = definition
+            .as_ref()
+            .map(crate::connection_generation::definition_hash);
+        let requirement_hash = requirement
+            .as_ref()
+            .map(wamn_catalog::ComponentConnectionRequirement::requirement_hash);
+        let validation_hash = descriptor
+            .as_ref()
+            .zip(requirement_hash.as_ref())
+            .zip(definition_hash.as_ref())
+            .map(|((descriptor, requirement), definition)| {
+                crate::connection_generation::definition_hash(
+                    &crate::connection_generation::binding_validation_subject(
+                        descriptor,
+                        requirement,
+                        definition,
+                    ),
+                )
+            });
+        let name = generation.as_ref().map(|generation| generation.name.clone());
+        let credential_handle = if integration_type == Some("gcs") {
+            None
+        } else {
+            name.as_deref()
+                .zip(active_generation)
+                .map(|(name, generation)| facts.credential_handle(name, generation))
+                .transpose()?
+        };
+        Ok(Some(ConnectionEffectSnapshot {
+            read_only: fixed.mode.as_deref() != Some("write"),
+            connection_name: name,
+            wiring_hash: fixed.wiring_hash.clone(),
+            component: fixed.component.clone(),
+            interface_version: fixed.interface_version.clone(),
+            operation: fixed.operation.clone(),
+            registered_operation: fixed.registered_operation.clone(),
+            requirement_json: requirement
+                .map(|requirement| serde_json::to_value(requirement).expect("requirement JSON")),
+            requirement_hash,
+            node_permitted: fixed.node_permitted,
+            binding_active: fact.is_some(),
+            binding_valid: descriptor.is_some(),
+            instance_id: fact
+                .as_ref()
+                .and(binding)
+                .map(|binding| binding.connection_id.to_string()),
+            validation_hash,
+            requirement_type: descriptor
+                .as_ref()
+                .map(|descriptor| descriptor.requirement_type.clone()),
+            contract: descriptor.map(|descriptor| descriptor.contract),
+            instance_enabled: fact.as_ref().is_some_and(|fact| {
+                fact.status == crate::connection_memory::ConnectionStatus::Active
+            }),
+            active_generation,
+            pinned_generation: lookup.candidate_binding.map(|binding| binding.generation),
+            instance_revision: active_generation,
+            generation: active_generation,
+            definition,
+            definition_hash,
+            credential_handle,
+        }))
+    }
+
+    /// Read the fixed part of an HTTP effect authorization, or the whole
+    /// snapshot of a local application, in one read-only transaction.
+    async fn read_effect_snapshot(
+        &self,
+        component_id: &str,
+        project: &str,
+        env_key: &str,
+        lookup: &ConnectionEffectLookup<'_>,
+    ) -> anyhow::Result<EffectRead> {
         let schema = self.schema_for(component_id);
         let (conn, policy) = self
             .checkout_platform(project, AuthorityClass::CallableHttp)
@@ -2011,18 +2203,16 @@ impl WamnPostgres {
             self.destroy(conn);
             return Err(anyhow::anyhow!(error.to_string()));
         }
-        let result: anyhow::Result<Option<ConnectionEffectSnapshot>> = async {
+        let result: anyhow::Result<EffectRead> = async {
             if let Some(local) = &self.local_application {
-                return local.effect_snapshot(&conn, env_key, lookup).await;
+                return Ok(EffectRead::Local(Box::new(
+                    local.effect_snapshot(&conn, env_key, lookup).await?,
+                )));
             }
-            let candidate_instance = lookup
-                .candidate_binding
-                .map(|binding| binding.instance_id.as_str());
-            let candidate_generation = lookup.candidate_binding.map(|binding| binding.generation);
             let wiring_id = lookup.entry.wiring.map(|wiring| wiring.wiring_id);
             let wiring_version = lookup.entry.wiring.map(|wiring| wiring.wiring_version);
             let node_id = lookup.entry.wiring.map(|wiring| wiring.node_id);
-            let params: [&(dyn ToSql + Sync); 18] = [
+            let params: [&(dyn ToSql + Sync); 16] = [
                 &env_key,
                 &lookup.package_id,
                 &lookup.manifest_digest,
@@ -2032,8 +2222,6 @@ impl WamnPostgres {
                 &node_id,
                 &lookup.component_digest,
                 &lookup.store_alias,
-                &candidate_instance,
-                &candidate_generation,
                 &lookup.entry.package_id,
                 &lookup.origin_package_id,
                 &lookup.origin_component_digest,
@@ -2051,123 +2239,30 @@ impl WamnPostgres {
                 .await
                 .context("query HTTP effect authorization snapshot")?;
             let Some(row) = row else {
-                return Ok(None);
+                return Ok(EffectRead::Fixed(None));
             };
-            let json = |index| -> anyhow::Result<Option<serde_json::Value>> {
-                let value: Option<String> =
-                    row.try_get(index).context("decode HTTP effect JSON fact")?;
-                value
-                    .map(|value| {
-                        serde_json::from_str(&value).context("parse HTTP effect JSON fact")
-                    })
-                    .transpose()
-            };
-            let integration_type: Option<String> = row.try_get(5)?;
-            let descriptor = integration_type
-                .as_deref()
-                .and_then(wamn_catalog::RequirementType::for_integration)
-                .map(wamn_catalog::RequirementType::descriptor);
-            let requirement = descriptor.as_ref().map(|descriptor| {
-                wamn_catalog::ComponentConnectionRequirement::new(
-                    lookup.component_digest,
-                    lookup.store_alias,
-                    descriptor.clone(),
-                )
-            });
-            let connection: Option<String> = row.try_get(8)?;
-            let active = row.try_get::<_, Option<bool>>(9)?.unwrap_or(false);
-            let version: Option<i32> = row.try_get(10)?;
-            let configuration = if let (Some(id), Some(version)) = (&connection, version) {
-                let reader = self
-                    .connection_credentials
-                    .read()
-                    .expect("connection reader lock")
-                    .clone()
-                    .context("connection reader unavailable")?;
-                Some(
-                    reader
-                        .version(project, lookup.environment, id, version)
-                        .await?,
-                )
-            } else {
-                None
-            };
-            let generation = configuration
-                .as_ref()
-                .map(|configuration| configuration.generation);
-            let definition = configuration.map(|configuration| configuration.parameters);
-            let definition_hash = definition
-                .as_ref()
-                .map(crate::connection_generation::definition_hash);
-            let requirement_hash = requirement
-                .as_ref()
-                .map(wamn_catalog::ComponentConnectionRequirement::requirement_hash);
-            let validation_hash = descriptor
-                .as_ref()
-                .zip(requirement_hash.as_ref())
-                .zip(definition_hash.as_ref())
-                .map(|((descriptor, requirement), definition)| {
-                    crate::connection_generation::definition_hash(
-                        &crate::connection_generation::binding_validation_subject(
-                            descriptor,
-                            requirement,
-                            definition,
-                        ),
+            let graph: Option<String> = row.try_get(0).context("decode HTTP effect wiring")?;
+            let wiring_hash = graph
+                .map(|graph| {
+                    let graph: serde_json::Value =
+                        serde_json::from_str(&graph).context("parse HTTP effect wiring")?;
+                    anyhow::Ok(
+                        wamn_catalog::WiringDocument::parse(&graph)?
+                            .wiring_hash()
+                            .as_str()
+                            .to_owned(),
                     )
-                });
-            let name: Option<String> = row.try_get(11)?;
-            let credential_handle = if integration_type.as_deref() == Some("gcs") {
-                None
-            } else {
-                name.as_deref()
-                    .zip(generation)
-                    .map(|(name, generation)| {
-                        let reader = self
-                            .connection_credentials
-                            .read()
-                            .expect("connection reader lock")
-                            .clone()
-                            .context("connection reader unavailable")?;
-                        reader.connection_handle(name, generation)
-                    })
-                    .transpose()?
-            };
-            let snapshot = ConnectionEffectSnapshot {
-                read_only: row.try_get::<_, Option<String>>(6)?.as_deref() != Some("write"),
-                connection_name: name,
-                wiring_hash: json(0)?
-                    .map(|graph| {
-                        wamn_catalog::WiringDocument::parse(&graph)
-                            .map(|graph| graph.wiring_hash().as_str().to_owned())
-                    })
-                    .transpose()?,
+                })
+                .transpose()?;
+            Ok(EffectRead::Fixed(Some(EffectFixed {
+                wiring_hash,
                 component: row.try_get(1)?,
                 interface_version: row.try_get(2)?,
                 operation: row.try_get(3)?,
                 registered_operation: row.try_get(4)?,
-                requirement_json: requirement.map(|requirement| {
-                    serde_json::to_value(requirement).expect("requirement JSON")
-                }),
-                requirement_hash,
-                node_permitted: row.try_get::<_, Option<bool>>(7)?.unwrap_or(false),
-                binding_active: connection.is_some(),
-                binding_valid: descriptor.is_some(),
-                instance_id: connection,
-                validation_hash,
-                requirement_type: descriptor
-                    .as_ref()
-                    .map(|descriptor| descriptor.requirement_type.clone()),
-                contract: descriptor.map(|descriptor| descriptor.contract),
-                instance_enabled: active,
-                active_generation: generation,
-                pinned_generation: candidate_generation,
-                instance_revision: generation,
-                generation,
-                definition,
-                definition_hash,
-                credential_handle,
-            };
-            Ok(Some(snapshot))
+                mode: row.try_get(5)?,
+                node_permitted: row.try_get::<_, Option<bool>>(6)?.unwrap_or(false),
+            })))
         }
         .await;
         match result {

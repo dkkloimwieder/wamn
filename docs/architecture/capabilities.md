@@ -180,6 +180,9 @@ The host injects `Authorization: Bearer` into the API request.
 An API 401 removes the cached token and causes one fresh token request and one API retry.
 A second 401 returns to the guest and removes that token from the cache.
 If the fresh token request fails, the guest receives the first API 401.
+For every authentication type, an API 401 or 403 drops the secret and the connection fact, and the host reads both again.
+The host sends once more only when the new fact names another generation or credential, so a repeated send never carries the refused credential.
+A call makes at most one extra send, so an OAuth2 retry after a changed fact is that one send.
 A token failure before any API request returns `credential-unavailable` without the token endpoint's response body.
 The guest receives no credential. The workflow queue owns other retries.
 

@@ -54,7 +54,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use wamn_engine::engine::build_engine;
+use wamn_platform_identity::connection_changes::ConnectionChanges;
 use wamn_runtime::connection_credentials::ConnectionCredentials;
+use wamn_runtime::connection_facts::ConnectionFacts;
+use wamn_runtime::connection_memory::ConnectionMemory;
 use wamn_runtime::plugins::connection_http::{self, CONNECTION_HTTP_ID, ConnectionHttp};
 use wamn_runtime::plugins::wamn_logging::{self, WAMN_LOGGING_ID, WamnLogging, WamnLoggingConfig};
 use wamn_runtime::plugins::wamn_postgres::{
@@ -601,12 +604,20 @@ async fn connection_http_maps_an_invalid_context_to_a_wit_error_not_a_trap() {
     // Empty is deny-all, but the refusal lands upstream of the egress check.
     let allowed_hosts: Arc<[AllowedHost]> = Vec::new().into();
     let effect = Arc::new(ConnectionHttp::new(
-        postgres,
+        Arc::clone(&postgres),
         Arc::new(
             wamn_runtime::plugins::connection_http::transport::HttpTransport::new()
                 .expect("HTTP transport"),
         ),
-        Arc::new(ConnectionCredentials::empty()),
+        Arc::new(ConnectionFacts::new(
+            Arc::new(ConnectionMemory::default()),
+            ConnectionChanges::default(),
+            Arc::new(ConnectionCredentials::empty()),
+            postgres,
+            "tenant-a",
+            "fixture",
+            "test",
+        )),
         "tenant-a",
         "fixture",
         allowed_hosts,

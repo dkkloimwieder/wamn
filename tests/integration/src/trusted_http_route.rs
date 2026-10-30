@@ -308,12 +308,21 @@ async fn build_with_credentials(
     )
     .context("build the component puller registry client")?;
 
+    let facts = Arc::new(wamn_runtime::connection_facts::ConnectionFacts::new(
+        Arc::new(wamn_runtime::connection_memory::ConnectionMemory::default()),
+        wamn_platform_identity::connection_changes::ConnectionChanges::default(),
+        Arc::new(credentials),
+        Arc::clone(&postgres),
+        ENV_KEY,
+        PROJECT,
+        ENVIRONMENT,
+    ));
     let driver = Arc::new(RouterDriver::new(Arc::new(
         OperationHost::new(
             engine,
             postgres,
             Arc::new(HttpTransport::new().context("build the process HTTP transport")?),
-            Arc::new(credentials),
+            facts,
             Arc::new(
                 WamnLogging::new(&WamnLoggingConfig::default()).context("build wamn:logging")?,
             ), // The upstream is a loopback origin the test owns; the cluster

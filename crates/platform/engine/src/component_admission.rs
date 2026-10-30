@@ -54,7 +54,6 @@ pub enum ComponentAdmissionErrorType {
 /// Exact bytes admitted for an isolated connector store.
 #[derive(Debug)]
 pub struct AdmittedConnector {
-    pub(crate) component: Component,
     digest: String,
 }
 
@@ -78,6 +77,18 @@ pub fn validate_connector_admission(
             source.into(),
         )
     })?;
+    validate_connection_code(&component, label)?;
+    Ok(AdmittedConnector {
+        digest: component_digest(component_bytes),
+    })
+}
+
+/// Admit a component that the execution engine already compiled.
+pub(crate) fn validate_connection_code(
+    component: &Component,
+    label: &str,
+) -> Result<(), ComponentAdmissionError> {
+    let refuse = |type_, source: anyhow::Error| ComponentAdmissionError::new(type_, label, source);
     let ty = component.component_type();
     let raw = component.engine();
     let imports =
@@ -122,10 +133,7 @@ pub fn validate_connector_admission(
     };
     signature()
         .map_err(|source| refuse(ComponentAdmissionErrorType::ConnectorExportMismatch, source))?;
-    Ok(AdmittedConnector {
-        component,
-        digest: component_digest(component_bytes),
-    })
+    Ok(())
 }
 
 /// Contextual refusal from the byte-to-catalog-fact boundary.

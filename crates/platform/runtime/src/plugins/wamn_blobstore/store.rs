@@ -103,9 +103,8 @@ pub struct BoundContainer {
 
 #[derive(Clone)]
 struct ConnectionAuthority {
-    vault: Arc<crate::connection_credentials::ConnectionCredentials>,
-    project: String,
-    name: String,
+    facts: Arc<crate::connection_facts::ConnectionFacts>,
+    id: uuid::Uuid,
 }
 
 impl core::fmt::Debug for BoundContainer {
@@ -142,25 +141,24 @@ impl BoundContainer {
 
     pub(super) fn with_connection_authority(
         mut self,
-        vault: Arc<crate::connection_credentials::ConnectionCredentials>,
-        project: &str,
-        name: String,
+        facts: Arc<crate::connection_facts::ConnectionFacts>,
+        id: uuid::Uuid,
     ) -> Self {
-        self.authority = Some(ConnectionAuthority {
-            vault,
-            project: project.to_owned(),
-            name,
-        });
+        self.authority = Some(ConnectionAuthority { facts, id });
         self
     }
 
     pub(super) async fn permit_connection(&self, verb: &'static str) -> Result<(), StoreError> {
         if let Some(authority) = &self.authority
             && !authority
-                .vault
-                .connection_enabled(&authority.project, &authority.name)
+                .facts
+                .connection(&authority.id)
                 .await
-                .unwrap_or(false)
+                .ok()
+                .flatten()
+                .is_some_and(|fact| {
+                    fact.status == crate::connection_memory::ConnectionStatus::Active
+                })
         {
             return Err(StoreError::Refused {
                 verb,
@@ -373,13 +371,41 @@ mod tests {
         )
     }
 
+    fn connection_facts(
+        reader: crate::connection_credentials::ConnectionCredentials,
+        project: &str,
+    ) -> Arc<crate::connection_facts::ConnectionFacts> {
+        let postgres = crate::plugins::wamn_postgres::WamnPostgres::new(
+            crate::plugins::wamn_postgres::WamnPostgresConfig {
+                credentials: None,
+                guest_pool_max_size: 1,
+                platform_pool_max_size: 1,
+                wait_timeout_ms: 1,
+                statement_timeout_ms: 1,
+                row_limit: 1,
+            },
+        )
+        .unwrap();
+        Arc::new(crate::connection_facts::ConnectionFacts::new(
+            Arc::new(crate::connection_memory::ConnectionMemory::default()),
+            wamn_platform_identity::connection_changes::ConnectionChanges::default(),
+            Arc::new(reader),
+            Arc::new(postgres),
+            &format!("acme--{project}--dev"),
+            project,
+            "dev",
+        ))
+    }
+
     #[tokio::test]
     async fn unavailable_connection_refuses_every_store_call() {
         let (container, _) = bound("p");
         let container = container.with_connection_authority(
-            Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),
-            "project-a",
-            "erp".into(),
+            connection_facts(
+                crate::connection_credentials::ConnectionCredentials::empty(),
+                "project-a",
+            ),
+            uuid::Uuid::nil(),
         );
         assert!(matches!(
             container.put("item", vec![]).await,
@@ -420,17 +446,13 @@ mod tests {
             .put("store", "secret", &["project-a", "project-b"])
             .await;
         let (container, _) = bound("p");
-        let container = container.with_connection_authority(
-            Arc::new(fixture.reader("project-a").await),
-            "project-a",
-            "store".into(),
-        );
+        let facts = connection_facts(fixture.reader("project-a").await, "project-a");
+        let connection = facts.env_connections().await.unwrap().connections["store"];
+        let container = container.with_connection_authority(facts, connection);
         let (other, _) = bound("p");
-        let other = other.with_connection_authority(
-            Arc::new(fixture.reader("project-b").await),
-            "project-b",
-            "store".into(),
-        );
+        let facts = connection_facts(fixture.reader("project-b").await, "project-b");
+        let connection = facts.env_connections().await.unwrap().connections["store"];
+        let other = other.with_connection_authority(facts, connection);
         container.put("item", vec![1]).await.unwrap();
         fixture.admin.batch_execute("SET ROLE wamn_control; SELECT registry.configure_connection('acme','connection.disable','{\"project\":\"project-a\",\"env\":\"dev\",\"name\":\"store\"}'); RESET ROLE").await.unwrap();
         assert!(matches!(

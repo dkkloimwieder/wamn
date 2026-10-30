@@ -127,6 +127,45 @@ impl WamnPostgres {
         ).await?)
     }
 
+    /// Read the connection map of release `digest` for the connection
+    /// memory, whatever the status of each connection.
+    pub async fn release_fact(
+        &self,
+        project: &str,
+        env_key: &str,
+        digest: &str,
+    ) -> anyhow::Result<crate::connection_memory::ReleaseFact> {
+        let (connection, _) = self
+            .checkout_platform(project, AuthorityClass::CallableHttp)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let rows = connection.query(
+            "SELECT b.component_digest,b.package_id,b.name,b.connection_id,r.version,q.mode FROM catalog.connection_binding b JOIN catalog.release_connection r USING(env_key,manifest_digest,connection_id) JOIN catalog.connection_requirement q USING(env_key,component_digest,package_id,name) WHERE b.env_key=$1 AND b.manifest_digest=$2 ORDER BY 1,2,3",
+            &[&env_key,&digest],
+        ).await.context("read the release connection map")?;
+        let versions = connection.query(
+            "SELECT connection_id,version FROM catalog.release_connection WHERE env_key=$1 AND manifest_digest=$2",
+            &[&env_key,&digest],
+        ).await.context("read the release connection versions")?;
+        Ok(crate::connection_memory::ReleaseFact {
+            versions: versions
+                .into_iter()
+                .map(|row| (row.get(0), row.get(1)))
+                .collect(),
+            bindings: rows
+                .into_iter()
+                .map(|row| crate::connection_memory::ReleaseBinding {
+                    component_digest: row.get(0),
+                    package_id: row.get(1),
+                    name: row.get(2),
+                    connection_id: row.get(3),
+                    version: row.get(4),
+                    mode: row.get(5),
+                })
+                .collect(),
+        })
+    }
+
     pub async fn resolve_release_components(
         &self,
         project: &str,

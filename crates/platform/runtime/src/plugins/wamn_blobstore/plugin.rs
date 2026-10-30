@@ -27,7 +27,8 @@ use super::store::BoundContainer;
 use wamn_catalog::ServingManifest;
 use wamn_engine::release_manifest::ReleaseScope;
 
-use crate::connection_credentials::ConnectionCredentials;
+use crate::connection_facts::ConnectionFacts;
+use crate::connection_memory::{ConnectionFact, ConnectionStatus};
 use crate::plugins::connection_http::{
     ConnectionExecutionClosure, ConnectionInvocation, authorize_candidate_closure,
     authorize_release_closure, entry_lookup,
@@ -43,7 +44,7 @@ pub const WAMN_BLOBSTORE_ID: &str = "wamn-blobstore";
 /// The WAMN blobstore capability.
 pub struct WamnBlobstore {
     postgres: Arc<WamnPostgres>,
-    vault: Arc<ConnectionCredentials>,
+    facts: Arc<ConnectionFacts>,
     pub(super) env_key: Box<str>,
     pub(super) project: Box<str>,
     /// The mounted, digest-verified serving manifest, when this host serves a
@@ -151,19 +152,20 @@ impl std::fmt::Debug for WamnBlobstore {
 }
 
 impl WamnBlobstore {
-    /// Build the plugin over the connection-authority reader and the vault.
+    /// Build the plugin over the connection-authority reader and the
+    /// connection facts.
     pub fn new(
         postgres: Arc<WamnPostgres>,
-        vault: Arc<ConnectionCredentials>,
+        facts: Arc<ConnectionFacts>,
         env_key: impl Into<Box<str>>,
         project: impl Into<Box<str>>,
         release: Option<Arc<LoadedRelease>>,
     ) -> Self {
         let project: Box<str> = project.into();
-        postgres.set_connection_credentials(Arc::clone(&vault), &project);
+        postgres.set_connection_credentials(facts.reader(), &project);
         Self {
             postgres,
-            vault,
+            facts,
             env_key: env_key.into(),
             project,
             release,
@@ -231,29 +233,59 @@ impl WamnBlobstore {
             .as_ref()
             .filter(|release| release.scope().env_key == self.env_key.as_ref())
             .ok_or_else(|| refused("file storage requires this environment's loaded release"))?;
-        let connection_id = self
-            .postgres
-            .file_connection_id(&self.project, &self.env_key, connection_name)
+        let connection_id = *self
+            .facts
+            .env_connections()
             .await
             .map_err(|error| refused(&error.to_string()))?
-            .ok_or_else(|| {
-                refused("file connection is absent or disabled in the environment projection")
-            })?;
-        let (generation, definition) = self
-            .vault
-            .file_configuration(&self.project, &release.scope().environment, &connection_id)
+            .connections
+            .get(connection_name)
+            .ok_or_else(|| refused("the environment has no such file connection"))?;
+        let fact = active_fact(&self.facts, &connection_id)
             .await
             .map_err(|error| refused(&error.to_string()))?
-            .ok_or_else(|| {
-                refused("file connection is absent or disabled in the system database")
-            })?;
+            .ok_or_else(|| refused("file connection is absent or disabled"))?;
+        let generation = fact.active_generation;
+        let configuration = self
+            .facts
+            .generation(&connection_id, generation)
+            .await
+            .map_err(|error| refused(&error.to_string()))?;
+        if configuration.runtime_type != "host"
+            || !matches!(
+                configuration.integration_type.as_str(),
+                "gcs" | "s3" | "disk"
+            )
+        {
+            return Err(refused("the connection is not a file connection"));
+        }
+        // The version of the live release, or else the newest published
+        // version of the host type.
+        let version = self
+            .facts
+            .release(release.release().manifest_digest.as_str())
+            .await
+            .map_err(|error| refused(&error.to_string()))?
+            .version(&connection_id);
+        self.facts
+            .version(&configuration.integration_type, version)
+            .await
+            .map_err(|error| refused(&error.to_string()))?;
+        let mut definition = configuration.parameters.clone();
+        definition
+            .as_object_mut()
+            .ok_or_else(|| refused("the file connection parameters are not an object"))?
+            .insert(
+                "provider".to_owned(),
+                configuration.integration_type.clone().into(),
+            );
         let definition = &definition;
         wamn_catalog::RequirementType::Blobstore
             .check_definition(definition)
             .map_err(|error| refused(&error))?;
         let handle = self
-            .vault
-            .connection_handle(connection_name, generation)
+            .facts
+            .credential_handle(connection_name, generation)
             .map_err(|error| {
                 FileStorageError::new(
                     FileStorageErrorKind::Refused,
@@ -271,24 +303,19 @@ impl WamnBlobstore {
             })?;
         let (store, signer): (Arc<dyn ObjectStore>, Arc<dyn object_store::signer::Signer>) =
             match &bound.provider {
-                binding::BlobstoreProvider::S3 {
-                    endpoint,
-                    credential_handle,
-                } => {
-                    let secret = self
-                        .vault
-                        .read_connection(&self.project, credential_handle)
-                        .await
-                        .map_err(|error| {
-                            FileStorageError::new(
-                                FileStorageErrorKind::Refused,
-                                "open",
-                                error.into_boxed_dyn_error(),
-                            )
-                        })?
+                binding::BlobstoreProvider::S3 { endpoint, .. } => {
+                    let credential = fact
+                        .credential_id
                         .ok_or_else(|| refused("connection generation has no credential"))?;
-                    let client =
-                        build_s3_store(endpoint, &bound.container, &secret).map_err(|error| {
+                    let secret = self.facts.secret(&credential).await.map_err(|error| {
+                        FileStorageError::new(
+                            FileStorageErrorKind::Refused,
+                            "open",
+                            error.into_boxed_dyn_error(),
+                        )
+                    })?;
+                    let client = build_s3_store(endpoint, &bound.container, secret.expose())
+                        .map_err(|error| {
                             FileStorageError::new(
                                 FileStorageErrorKind::Refused,
                                 "open",
@@ -312,11 +339,7 @@ impl WamnBlobstore {
             };
         let container = BoundContainer::new(store, bound.container, bound.prefix)
             .with_read_only(read_only)
-            .with_connection_authority(
-                Arc::clone(&self.vault),
-                &self.project,
-                connection_name.to_owned(),
-            );
+            .with_connection_authority(Arc::clone(&self.facts), connection_id);
         FileStore::new(
             container,
             Some(signer),
@@ -414,6 +437,7 @@ impl WamnBlobstore {
                     store_alias,
                     candidate_binding,
                 },
+                &self.facts,
             )
             .await
             .map_err(|error| {
@@ -438,42 +462,41 @@ impl WamnBlobstore {
             })?;
         authorize_closure(&invocation, released_manifest, candidate_binding, &snapshot)
             .map_err(refused)?;
-        if let Some(name) = &snapshot.connection_name
-            && !self
-                .vault
-                .connection_enabled(&self.project, name)
-                .await
-                .map_err(|_| BindingError::Unauthorized)?
-        {
-            return Err(BindingError::Unauthorized);
-        }
+        let connection: uuid::Uuid = snapshot
+            .instance_id
+            .as_deref()
+            .and_then(|id| id.parse().ok())
+            .ok_or(BindingError::Unauthorized)?;
+        let fact = active_fact(&self.facts, &connection)
+            .await
+            .map_err(|_| BindingError::Unauthorized)?
+            .filter(|fact| snapshot.generation == Some(fact.active_generation))
+            .ok_or(BindingError::Unauthorized)?;
         let bound = binding::resolve(&snapshot).map_err(|error| {
             tracing::warn!(store_alias, component_id, error = %error, "blobstore binding refused: the binding does not resolve");
             error
         })?;
         let store: Arc<dyn ObjectStore> = match &bound.provider {
-            binding::BlobstoreProvider::S3 {
-                endpoint,
-                credential_handle,
-            } => {
+            binding::BlobstoreProvider::S3 { endpoint, .. } => {
+                let credential = fact.credential_id.ok_or_else(|| {
+                    tracing::warn!(
+                        store_alias,
+                        component_id,
+                        "blobstore binding refused: the connection generation has no credential"
+                    );
+                    BindingError::NoCredential
+                })?;
                 let secret = self
-                    .vault
-                    .read_connection(&self.project, credential_handle)
+                    .facts
+                    .secret(&credential)
                     .await
-                    .map_err(|_| BindingError::NoCredential)?
-                    .ok_or_else(|| {
-                        tracing::warn!(
-                            store_alias,
-                            component_id,
-                            credential_handle = %credential_handle,
-                            project = %self.project,
-                            "blobstore binding refused: no credential under this project for the handle"
-                        );
-                        BindingError::NoCredential
-                    })?;
-                build_s3_store(endpoint, &bound.container, &secret).map(|store| store as Arc<dyn ObjectStore>)
+                    .map_err(|_| BindingError::NoCredential)?;
+                build_s3_store(endpoint, &bound.container, secret.expose())
+                    .map(|store| store as Arc<dyn ObjectStore>)
             }
-            binding::BlobstoreProvider::Gcs => build_gcs_store(&bound.container).map(|store| store as Arc<dyn ObjectStore>),
+            binding::BlobstoreProvider::Gcs => {
+                build_gcs_store(&bound.container).map(|store| store as Arc<dyn ObjectStore>)
+            }
         }
         .map_err(|error| {
             tracing::warn!(error = %error, "blobstore client construction failed");
@@ -481,12 +504,20 @@ impl WamnBlobstore {
         })?;
         let mut container = BoundContainer::new(store, bound.container, bound.prefix)
             .with_read_only(snapshot.read_only);
-        if let Some(name) = snapshot.connection_name {
-            container =
-                container.with_connection_authority(Arc::clone(&self.vault), &self.project, name);
-        }
+        container = container.with_connection_authority(Arc::clone(&self.facts), connection);
         Ok(container)
     }
+}
+
+/// The fact of connection `id` while it is active.
+async fn active_fact(
+    facts: &ConnectionFacts,
+    id: &uuid::Uuid,
+) -> anyhow::Result<Option<ConnectionFact>> {
+    Ok(facts
+        .connection(id)
+        .await?
+        .filter(|fact| fact.status == ConnectionStatus::Active))
 }
 
 /// Build the S3 client for one binding.
@@ -1060,13 +1091,17 @@ mod tests {
             row_limit: 1,
         })
         .expect("an offline postgres plugin does not open a connection");
-        WamnBlobstore::new(
-            Arc::new(postgres),
-            Arc::new(ConnectionCredentials::empty()),
+        let postgres = Arc::new(postgres);
+        let facts = Arc::new(ConnectionFacts::new(
+            Arc::new(crate::connection_memory::ConnectionMemory::default()),
+            wamn_platform_identity::connection_changes::ConnectionChanges::default(),
+            Arc::new(crate::connection_credentials::ConnectionCredentials::empty()),
+            Arc::clone(&postgres),
             "tenant-a",
             "project-a",
-            None,
-        )
+            "dev",
+        ));
+        WamnBlobstore::new(postgres, facts, "tenant-a", "project-a", None)
     }
 
     /// The blobstore surface fills the SAME vocabulary the HTTP surface fills,

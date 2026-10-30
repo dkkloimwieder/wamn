@@ -973,7 +973,16 @@ fn verify_connection_reader_grants(
             "EXECUTE",
         ),
         ("routine", "registry", "read_file_connection", "EXECUTE"),
-        ("routine", "registry", "read_connection_version", "EXECUTE"),
+        ("routine", "registry", "read_connection_fact", "EXECUTE"),
+        (
+            "routine",
+            "registry",
+            "read_connection_generation",
+            "EXECUTE",
+        ),
+        ("routine", "registry", "read_connection_secret", "EXECUTE"),
+        ("routine", "registry", "read_env_connections", "EXECUTE"),
+        ("routine", "registry", "read_integration_version", "EXECUTE"),
     ]);
     anyhow::ensure!(
         actual == expected,

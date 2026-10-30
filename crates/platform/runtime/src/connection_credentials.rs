@@ -79,27 +79,6 @@ impl ConnectionCredentials {
         ).await.context("read connection credential authority")
     }
 
-    /// Read one active host store through the login's environment scope.
-    pub(crate) async fn file_configuration(
-        &self,
-        project: &str,
-        environment: &str,
-        id: &str,
-    ) -> anyhow::Result<Option<(i64, serde_json::Value)>> {
-        let client = self
-            .database
-            .as_ref()
-            .context("connection reader unavailable")?;
-        let org = self
-            .org
-            .as_deref()
-            .context("connection reader has no org")?;
-        Ok(client.query_opt(
-            "SELECT generation,parameters FROM registry.read_file_connection($1,$2,$3,$4::text::uuid)",
-            &[&org, &project, &environment, &id],
-        ).await?.map(|row| (row.get(0), row.get(1))))
-    }
-
     /// Read the active generation through the environment credential store.
     pub async fn read_connection(
         &self,
@@ -111,33 +90,6 @@ impl ConnectionCredentials {
             return Ok(None);
         };
         self.material(&row).await
-    }
-
-    pub(crate) async fn http_authentication(
-        &self,
-        project: &str,
-        handle: &str,
-    ) -> anyhow::Result<(String, serde_json::Value, Option<String>)> {
-        let (name, _) = self.handle(handle)?;
-        let row = self
-            .connection(project, name)
-            .await?
-            .context("connection unavailable")?;
-        let auth_type: String = row.get(5);
-        let parameters: serde_json::Value = row.get(6);
-        let material = if auth_type == "none" {
-            None
-        } else {
-            self.material(&row).await?
-        };
-        Ok((
-            auth_type,
-            parameters
-                .get("auth")
-                .cloned()
-                .unwrap_or_else(|| serde_json::json!({})),
-            material,
-        ))
     }
 
     async fn material(&self, row: &tokio_postgres::Row) -> anyhow::Result<Option<String>> {
@@ -154,11 +106,6 @@ impl ConnectionCredentials {
         Ok(Some(
             String::from_utf8(value).context("credential is not UTF-8")?,
         ))
-    }
-
-    /// Refuse disabled connections and integrations outside the reader's environment.
-    pub async fn connection_enabled(&self, project: &str, name: &str) -> anyhow::Result<bool> {
-        Ok(self.connection(project, name).await?.is_some())
     }
 
     /// Resolve a connection principal through the same authority as its credential.
@@ -192,19 +139,6 @@ impl ConnectionCredentials {
             &[&org, &project, &connection.to_string()]).await?.and_then(|row| row.get(0)))
     }
 
-    /// Read the integration's external system identity under the same login scope.
-    pub(crate) async fn external_system_id(
-        &self,
-        project: &str,
-        handle: &str,
-    ) -> anyhow::Result<Option<String>> {
-        let (name, _) = self.handle(handle)?;
-        Ok(self
-            .connection(project, name)
-            .await?
-            .and_then(|row| row.get(4)))
-    }
-
     fn handle<'a>(&self, handle: &'a str) -> anyhow::Result<(&'a str, Option<i64>)> {
         let (org, name) =
             wamn_catalog::parse_org_credential_handle(handle).map_err(anyhow::Error::msg)?;
@@ -219,45 +153,158 @@ impl ConnectionCredentials {
             .transpose()?;
         Ok((name, generation))
     }
+}
 
-    /// Read one selected version through the existing environment system reader.
-    pub async fn version(
-        &self,
-        project: &str,
-        environment: &str,
-        id: &str,
-        version: i32,
-    ) -> anyhow::Result<ConnectionVersion> {
+/// The connection memory reads (docs/architecture/execution.md#connection-memory).
+/// Every read but [`ConnectionCredentials::connection_fact`] and
+/// [`ConnectionCredentials::env_connections`] returns rows that never change
+/// under their keys.
+impl ConnectionCredentials {
+    fn reader(&self) -> anyhow::Result<(&tokio_postgres::Client, &str)> {
         let client = self
             .database
-            .as_ref()
+            .as_deref()
             .context("connection reader unavailable")?;
         let org = self
             .org
             .as_deref()
             .context("connection reader has no org")?;
-        let row = client.query_opt(
-            "SELECT generation,parameters,digest,integration_type,runtime_type FROM registry.read_connection_version($1,$2,$3,$4::text::uuid,$5)",
-            &[&org,&project,&environment,&id,&version],
-        ).await?.context("connection version unavailable")?;
-        Ok(ConnectionVersion {
-            generation: row.get(0),
-            parameters: row.get(1),
-            digest: row.get(2),
-            integration_type: row.get(3),
-            runtime_type: row.get(4),
-        })
+        Ok((client, org))
+    }
+
+    /// The active generation, effective status and credential of one
+    /// connection of the environment.
+    pub(crate) async fn connection_fact(
+        &self,
+        project: &str,
+        environment: &str,
+        id: &uuid::Uuid,
+    ) -> anyhow::Result<Option<crate::connection_memory::ConnectionFact>> {
+        let (client, org) = self.reader()?;
+        let row = client
+            .query_opt(
+                "SELECT active_generation, active, credential_id FROM registry.read_connection_fact($1,$2,$3,$4)",
+                &[&org, &project, &environment, id],
+            )
+            .await
+            .context("read the connection fact")?;
+        Ok(row.map(|row| crate::connection_memory::ConnectionFact {
+            active_generation: row.get(0),
+            status: if row.get(1) {
+                crate::connection_memory::ConnectionStatus::Active
+            } else {
+                crate::connection_memory::ConnectionStatus::Disabled
+            },
+            credential_id: row.get(2),
+        }))
+    }
+
+    /// One generation of one connection of the environment.
+    pub(crate) async fn connection_generation(
+        &self,
+        project: &str,
+        environment: &str,
+        id: &uuid::Uuid,
+        generation: i64,
+    ) -> anyhow::Result<Option<ConnectionGeneration>> {
+        let (client, org) = self.reader()?;
+        let row = client
+            .query_opt(
+                "SELECT name, integration_type, runtime_type, auth_type, external_system, principal_id, parameters FROM registry.read_connection_generation($1,$2,$3,$4,$5)",
+                &[&org, &project, &environment, id, &generation],
+            )
+            .await
+            .context("read the connection generation")?;
+        Ok(row.map(|row| ConnectionGeneration {
+            name: row.get(0),
+            integration_type: row.get(1),
+            runtime_type: row.get(2),
+            auth_type: row.get(3),
+            external_system: row.get(4),
+            principal_id: row.get(5),
+            parameters: row.get(6),
+        }))
+    }
+
+    /// The secret of one credential of a connection of the environment.
+    pub(crate) async fn credential_secret(
+        &self,
+        project: &str,
+        environment: &str,
+        credential: &uuid::Uuid,
+    ) -> anyhow::Result<Option<String>> {
+        let (client, org) = self.reader()?;
+        let row = client
+            .query_opt(
+                "SELECT store, ref, version FROM registry.read_connection_secret($1,$2,$3,$4)",
+                &[&org, &project, &environment, credential],
+            )
+            .await
+            .context("read the credential reference")?;
+        match row {
+            Some(row) => self.material(&row).await,
+            None => Ok(None),
+        }
+    }
+
+    /// The map from integration name to connection id of the environment.
+    pub(crate) async fn env_connections(
+        &self,
+        project: &str,
+        environment: &str,
+    ) -> anyhow::Result<std::collections::BTreeMap<String, uuid::Uuid>> {
+        let (client, org) = self.reader()?;
+        Ok(client
+            .query(
+                "SELECT name, id FROM registry.read_env_connections($1,$2,$3)",
+                &[&org, &project, &environment],
+            )
+            .await
+            .context("read the environment connections")?
+            .into_iter()
+            .map(|row| (row.get(0), row.get(1)))
+            .collect())
+    }
+
+    /// One published version of an integration type, or its newest one.
+    pub(crate) async fn integration_version(
+        &self,
+        integration_type: &str,
+        version: Option<i32>,
+    ) -> anyhow::Result<Option<IntegrationVersion>> {
+        let (client, _) = self.reader()?;
+        let row = client
+            .query_opt(
+                "SELECT version, digest FROM registry.read_integration_version($1,$2)",
+                &[&integration_type, &version],
+            )
+            .await
+            .context("read the integration version")?;
+        Ok(row.map(|row| IntegrationVersion {
+            version: row.get(0),
+            digest: row.get(1),
+        }))
     }
 }
 
-/// The active non-secret configuration of a release's selected version.
+/// One generation of a connection. The secret stays apart, under the
+/// credential id.
 #[derive(Clone, Debug)]
-pub struct ConnectionVersion {
-    pub generation: i64,
-    pub parameters: serde_json::Value,
-    pub digest: Option<String>,
+pub struct ConnectionGeneration {
+    pub name: String,
     pub integration_type: String,
     pub runtime_type: String,
+    pub auth_type: String,
+    pub external_system: Option<String>,
+    pub principal_id: String,
+    pub parameters: serde_json::Value,
+}
+
+/// One published version of an integration type.
+#[derive(Clone, Debug)]
+pub struct IntegrationVersion {
+    pub version: i32,
+    pub digest: Option<String>,
 }
 
 #[cfg(test)]
@@ -341,62 +388,90 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn file_reads_select_the_active_generation_and_refuse_other_types() {
+    async fn memory_reads_follow_the_active_generation_inside_the_login_environment() {
+        use crate::connection_memory::ConnectionStatus;
+
         let _lock = wamn_test_postgres::lock();
         let mut fixture = Fixture::new().await;
         fixture.put_store("files", "first", &["project-a"]).await;
         fixture.put("erp", "http", &["project-a"]).await;
         let reader = fixture.reader("project-a").await;
-        let rows = fixture.admin.query("SELECT c.id::text,i.name FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id WHERE c.project='project-a'", &[]).await.unwrap();
-        let store: String = rows
-            .iter()
-            .find(|row| row.get::<_, String>(1) == "files")
-            .unwrap()
-            .get(0);
-        let http: String = rows
-            .iter()
-            .find(|row| row.get::<_, String>(1) == "erp")
-            .unwrap()
-            .get(0);
+        let map = reader.env_connections("project-a", "dev").await.unwrap();
+        assert_eq!(
+            map.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["erp", "files"]
+        );
+        let store = map["files"];
         let first = reader
-            .file_configuration("project-a", "dev", &store)
+            .connection_fact("project-a", "dev", &store)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(first.1["provider"], "s3");
+        assert_eq!(first.status, ConnectionStatus::Active);
+        let first_credential = first.credential_id.unwrap();
         fixture.put_store("files", "current", &["project-a"]).await;
         let current = reader
-            .file_configuration("project-a", "dev", &store)
+            .connection_fact("project-a", "dev", &store)
             .await
             .unwrap()
             .unwrap();
-        assert!(current.0 > first.0);
+        assert!(current.active_generation > first.active_generation);
+        assert_ne!(current.credential_id, Some(first_credential));
+        // A generation and a credential never change under their ids.
+        let generation = reader
+            .connection_generation("project-a", "dev", &store, first.active_generation)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(generation.name, "files");
+        assert_eq!(generation.integration_type, "s3");
+        assert_eq!(generation.runtime_type, "host");
+        assert_eq!(generation.parameters["container"], "files");
+        assert_eq!(
+            reader
+                .credential_secret("project-a", "dev", &first_credential)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("first")
+        );
+        assert_eq!(
+            reader
+                .credential_secret("project-a", "dev", &current.credential_id.unwrap())
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("current")
+        );
+        // Another project of the login reads nothing.
         assert!(
             reader
-                .file_configuration("project-a", "dev", &http)
+                .connection_fact("project-b", "dev", &store)
                 .await
                 .unwrap()
                 .is_none()
         );
         assert!(
             reader
-                .file_configuration("project-b", "dev", &store)
+                .credential_secret("project-b", "dev", &first_credential)
                 .await
                 .unwrap()
                 .is_none()
         );
         fixture.admin.batch_execute("SET ROLE wamn_system; UPDATE registry.integration SET status='disabled' WHERE project='project-a' AND name='files'; RESET ROLE").await.unwrap();
-        assert!(
+        assert_eq!(
             reader
-                .file_configuration("project-a", "dev", &store)
+                .connection_fact("project-a", "dev", &store)
                 .await
                 .unwrap()
-                .is_none()
+                .unwrap()
+                .status,
+            ConnectionStatus::Disabled
         );
     }
 
     #[tokio::test]
-    async fn http_authentication_reads_generation_references_and_refuses_authorization_code() {
+    async fn a_generation_carries_its_authentication_and_authorization_code_refuses() {
         use serde_json::json;
         use wamn_platform_identity::{auth_changes::AuthDrops, connections::administration};
 
@@ -413,44 +488,28 @@ mod tests {
             )
             .await;
         let reader = fixture.reader("project-a").await;
-        let (auth_type, auth, material) = reader
-            .http_authentication("project-a", "org:acme:erp")
+        let id = reader.env_connections("project-a", "dev").await.unwrap()["erp"];
+        let fact = reader
+            .connection_fact("project-a", "dev", &id)
             .await
+            .unwrap()
             .unwrap();
-        assert_eq!(auth_type, "oauth2_client_credentials");
-        assert_eq!(auth, parameters);
-        assert_eq!(material.as_deref(), Some(r#"{"client_secret":"first"}"#));
-        assert!(auth.get("client_secret").is_none());
-        fixture
-            .put_http(
-                "erp",
-                r#"{"client_secret":"second"}"#,
-                &["project-a"],
-                ("oauth2_client_credentials", parameters),
-            )
-            .await;
-        let (_, _, material) = reader
-            .http_authentication("project-a", "org:acme:erp")
+        let generation = reader
+            .connection_generation("project-a", "dev", &id, fact.active_generation)
             .await
+            .unwrap()
             .unwrap();
-        assert_eq!(material.as_deref(), Some(r#"{"client_secret":"second"}"#));
-
-        let parameters = json!({"algorithm":"sha256","header":"x-signature"});
-        fixture
-            .put_http(
-                "signed",
-                r#"{"secret":"private"}"#,
-                &["project-a"],
-                ("hmac", parameters.clone()),
-            )
-            .await;
-        let (auth_type, auth, material) = reader
-            .http_authentication("project-a", "org:acme:signed")
-            .await
-            .unwrap();
-        assert_eq!(auth_type, "hmac");
-        assert_eq!(auth, parameters);
-        assert_eq!(material.as_deref(), Some(r#"{"secret":"private"}"#));
+        assert_eq!(generation.auth_type, "oauth2_client_credentials");
+        assert_eq!(generation.parameters["auth"], parameters);
+        assert!(generation.parameters["auth"].get("client_secret").is_none());
+        assert_eq!(
+            reader
+                .credential_secret("project-a", "dev", &fact.credential_id.unwrap())
+                .await
+                .unwrap()
+                .as_deref(),
+            Some(r#"{"client_secret":"first"}"#)
+        );
         let http_only: bool = fixture
             .admin
             .query_one(

@@ -198,6 +198,7 @@ syn = "3.0.6"
 tokio = "1"
 toml = "1.1.6"
 tokio-postgres = "0.7"
+moka = { version = "0.12", default-features = false }
 tokio-rustls = "0.26"
 tower-service = "0.3"
 tracing = "0.1"

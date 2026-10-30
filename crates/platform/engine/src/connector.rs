@@ -2,12 +2,13 @@
 
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, PoisonError};
 
 use anyhow::Context as _;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
+use wash_runtime::engine::Engine;
 use wash_runtime::engine::ctx::SharedCtx;
-use wash_runtime::engine::workload::{ResolvedWorkload, WorkloadItem};
+use wash_runtime::engine::workload::{ResolvedWorkload, WorkloadComponent, WorkloadItem};
 use wash_runtime::host::HostRef;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::host::egress_policy::EgressAddressPolicy;
@@ -38,6 +39,7 @@ type Read = TypedFunc<(String, Vec<u8>), (Result<Vec<u8>, ConnectorError>,)>;
 pub struct ConnectorBinding {
     authority: hyper::http::uri::Authority,
     credential: Option<String>,
+    preparation: Option<Arc<std::sync::Mutex<Option<WorkloadComponent>>>>,
 }
 
 impl std::fmt::Debug for ConnectorBinding {
@@ -88,6 +90,7 @@ impl ConnectorBinding {
         Ok(Self {
             authority,
             credential,
+            preparation: None,
         })
     }
 }
@@ -113,6 +116,81 @@ fn connector_address_policy(authority: &hyper::http::uri::Authority) -> EgressAd
     }
 }
 
+struct AddressEngine {
+    engine: Arc<Engine>,
+    admitted: Mutex<HashMap<String, WorkloadComponent>>,
+    #[cfg(any(test, feature = "test-util"))]
+    images: std::sync::Mutex<HashMap<String, HashSet<(usize, usize)>>>,
+}
+
+static ADDRESS_ENGINES: OnceLock<std::sync::Mutex<HashMap<bool, Arc<AddressEngine>>>> =
+    OnceLock::new();
+
+fn address_engine(policy: EgressAddressPolicy) -> anyhow::Result<Arc<AddressEngine>> {
+    let mut engines = ADDRESS_ENGINES
+        .get_or_init(std::sync::Mutex::default)
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if let Some(engine) = engines.get(&policy.allow_private) {
+        return Ok(Arc::clone(engine));
+    }
+    let engine = Arc::new(AddressEngine {
+        engine: Arc::new(crate::engine::build_engine_with_socket_policy(
+            &[],
+            SocketPolicy {
+                egress_mode: EgressMode::Enforce,
+                egress_addrs: policy,
+                ..SocketPolicy::default()
+            },
+        )?),
+        admitted: Mutex::new(HashMap::new()),
+        #[cfg(any(test, feature = "test-util"))]
+        images: std::sync::Mutex::new(HashMap::new()),
+    });
+    engines.insert(policy.allow_private, Arc::clone(&engine));
+    Ok(engine)
+}
+
+/// Distinct compiled code images of this digest across the two address classes.
+#[cfg(any(test, feature = "test-util"))]
+pub fn compile_count(digest: &str) -> usize {
+    let engines = ADDRESS_ENGINES
+        .get_or_init(std::sync::Mutex::default)
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut count = 0;
+    for engine in engines {
+        count += engine
+            .images
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(digest)
+            .map_or(0, HashSet::len);
+    }
+    count
+}
+
+fn code_workload(digest: &str, bytes: Vec<u8>, resources: LocalResources) -> Workload {
+    Workload {
+        namespace: "wamn-connector".to_owned(),
+        name: digest.to_owned(),
+        components: vec![Component {
+            name: "connector".to_owned(),
+            digest: Some(digest.to_owned()),
+            bytes: bytes.into(),
+            local_resources: resources,
+            ..Component::default()
+        }],
+        host_interfaces: vec![WitInterface::from(BOUND)],
+        annotations: HashMap::new(),
+        service: None,
+        volumes: Vec::new(),
+    }
+}
+
 #[async_trait::async_trait]
 impl HostPlugin for ConnectorBinding {
     fn id(&self) -> &'static str {
@@ -129,6 +207,16 @@ impl HostPlugin for ConnectorBinding {
         item: &mut WorkloadItem<'a>,
         _: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
+        if let Some(preparation) = &self.preparation {
+            crate::component_admission::validate_connection_code(item.component(), "connector")?;
+            if let WorkloadItem::Component(component) = item {
+                // Clone before linking the credential. Retain only the compiled
+                // template and wash-runtime's live compile reference.
+                let mut template = (**component).clone();
+                template.with_plugins(HashMap::new());
+                *preparation.lock().unwrap_or_else(PoisonError::into_inner) = Some(template);
+            }
+        }
         let authority = self.authority.to_string();
         let credential = self.credential.clone();
         let mut bound = item.linker().instance(BOUND)?;
@@ -164,55 +252,38 @@ impl Connector {
     /// Compile and link a connector before any running store stops.
     pub async fn prepare(
         bytes: Vec<u8>,
-        binding: ConnectorBinding,
+        mut binding: ConnectorBinding,
     ) -> anyhow::Result<PreparedConnector> {
-        let (unresolved, plugins, egress, digest) = tokio::task::spawn_blocking(move || {
-            // wash-runtime sets socket policy on engines. Application Count mode
-            // cannot replace the policy of this connector engine.
-            let engine = crate::engine::build_engine_with_socket_policy(
-                &[],
-                SocketPolicy {
-                    egress_mode: EgressMode::Enforce,
-                    egress_addrs: connector_address_policy(&binding.authority),
-                    ..SocketPolicy::default()
-                },
-            )?;
-            let admitted = crate::component_admission::validate_connector_admission(
-                &engine,
-                &bytes,
-                "connector",
-            )?;
-            let digest = admitted.digest().to_owned();
-            let _compiled = admitted.component;
-            let resources = LocalResources {
-                allowed_hosts: Arc::from([AllowedHost::Authority(binding.authority.clone())]),
-                ..LocalResources::default()
-            };
-            let binding: Arc<dyn HostPlugin> = Arc::new(binding);
-            let plugins = HashMap::from([(binding.id(), binding)]);
-            let egress: Arc<dyn HostHandler> = Arc::new(NullServer::default());
-            let unresolved = engine.initialize_workload(
-                &digest,
-                Workload {
-                    namespace: "wamn-connector".to_owned(),
-                    name: digest.clone(),
-                    components: vec![Component {
-                        name: "connector".to_owned(),
-                        digest: Some(digest.clone()),
-                        bytes: bytes.into(),
-                        local_resources: resources,
-                        ..Component::default()
-                    }],
-                    host_interfaces: vec![WitInterface::from(BOUND)],
-                    annotations: HashMap::new(),
-                    service: None,
-                    volumes: Vec::new(),
-                },
-            )?;
-            anyhow::Ok((unresolved, plugins, egress, digest))
+        let digest = crate::component_admission::component_digest(&bytes);
+        let policy = connector_address_policy(&binding.authority);
+        let code = tokio::task::spawn_blocking(move || address_engine(policy))
+            .await
+            .context("join connection engine construction")??;
+        let mut admitted = code.admitted.lock().await;
+        let preparation =
+            (!admitted.contains_key(&digest)).then(|| Arc::new(std::sync::Mutex::new(None)));
+        binding.preparation = preparation.clone();
+        let engine = Arc::clone(&code.engine);
+        let identity = digest.clone();
+        let authority = binding.authority.clone();
+        let unresolved = tokio::task::spawn_blocking(move || {
+            engine.initialize_workload(
+                &identity,
+                code_workload(
+                    &identity,
+                    bytes,
+                    LocalResources {
+                        allowed_hosts: Arc::from([AllowedHost::Authority(authority)]),
+                        ..LocalResources::default()
+                    },
+                ),
+            )
         })
         .await
-        .context("join connector compilation")??;
+        .context("join connection linking")??;
+        let binding: Arc<dyn HostPlugin> = Arc::new(binding);
+        let plugins = HashMap::from([(binding.id(), binding)]);
+        let egress: Arc<dyn HostHandler> = Arc::new(NullServer::default());
         let workload = unresolved
             .resolve(
                 Some(&plugins),
@@ -221,6 +292,43 @@ impl Connector {
                 &Meters::new(MeterKind::Off),
             )
             .await?;
+        let components = workload.components();
+        let components = components.read().await;
+        let component = components
+            .values()
+            .next()
+            .context("connection component missing")?;
+        #[cfg(any(test, feature = "test-util"))]
+        {
+            let image = component.component().image_range();
+            code.images
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .entry(digest.clone())
+                .or_default()
+                .insert((image.start as usize, image.end as usize));
+        }
+        if let Some(preparation) = preparation {
+            let captured = preparation
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take();
+            let template = if let Some(template) = captured {
+                template
+            } else {
+                // A reader with no bound import still needs byte admission.
+                crate::component_admission::validate_connection_code(
+                    component.component(),
+                    "connector",
+                )?;
+                let mut template = component.clone();
+                template.with_plugins(HashMap::new());
+                template
+            };
+            admitted.insert(digest.clone(), template);
+        }
+        drop(components);
+        drop(admitted);
         Ok(PreparedConnector {
             workload,
             egress,
@@ -234,7 +342,7 @@ impl Connector {
     }
 
     /// The identity of this store, for lifecycle observations.
-    #[cfg(feature = "test-util")]
+    #[cfg(any(test, feature = "test-util"))]
     pub async fn store_id(&self) -> String {
         self.inner
             .lock()
@@ -328,80 +436,35 @@ impl PreparedConnector {
     }
 }
 
-/// Routes application binding names to their isolated connector stores.
-#[derive(Debug)]
-pub struct ConnectorReader {
-    connections: RwLock<HashMap<String, Arc<ConnectorSlot>>>,
+/// Resolve the current immutable instance from the facts of one call.
+#[async_trait::async_trait]
+pub trait ConnectionDispatch: std::fmt::Debug + Send + Sync {
+    async fn resolve(&self, name: &str) -> anyhow::Result<Option<Arc<Connector>>>;
 }
 
+/// Routes application binding names through the current connection facts.
 #[derive(Debug)]
-struct ConnectorSlot {
-    current: RwLock<Option<Arc<Connector>>>,
+pub struct ConnectorReader {
+    dispatch: Arc<dyn ConnectionDispatch>,
 }
 
 impl ConnectorReader {
-    /// Link the connectors resolved for one application.
-    pub fn new(connections: HashMap<String, Arc<Connector>>) -> Self {
-        Self {
-            connections: RwLock::new(
-                connections
-                    .into_iter()
-                    .map(|(name, connector)| {
-                        (
-                            name,
-                            Arc::new(ConnectorSlot {
-                                current: RwLock::new(Some(connector)),
-                            }),
-                        )
-                    })
-                    .collect(),
-            ),
-        }
+    pub fn from_dispatch(dispatch: Arc<dyn ConnectionDispatch>) -> Self {
+        Self { dispatch }
     }
 
-    /// Drain only this binding, then start its prepared replacement.
-    /// The lifecycle owner serializes updates for this reader.
-    pub async fn replace(
-        &self,
-        connection: &str,
-        prepared: PreparedConnector,
-    ) -> anyhow::Result<()> {
-        let slot = self
-            .connections
-            .write()
-            .await
-            .entry(connection.to_owned())
-            .or_insert_with(|| {
-                Arc::new(ConnectorSlot {
-                    current: RwLock::new(None),
-                })
-            })
-            .clone();
-        // Taking the writer drains admitted calls. Release it during startup.
-        *slot.current.write().await = None;
-        tokio::task::yield_now().await;
-        let connector = prepared.start().await?;
-        *slot.current.write().await = Some(Arc::new(connector));
-        Ok(())
-    }
-
-    /// Observe one store without exposing its handles.
+    /// Observe the current store without exposing its handles.
     #[cfg(feature = "test-util")]
-    pub async fn store_id(&self, connection: &str) -> Option<String> {
-        let slot = self.connections.read().await.get(connection).cloned()?;
-        let current = slot.current.read().await;
-        match current.as_ref() {
-            Some(connector) => Some(connector.store_id().await),
+    pub async fn store_id(&self, connection: &str) -> anyhow::Result<Option<String>> {
+        Ok(match self.dispatch.resolve(connection).await? {
+            Some(instance) => Some(instance.store_id().await),
             None => None,
-        }
+        })
     }
 
-    /// Remove bindings that the authority no longer enables.
-    pub async fn retain(&self, names: &HashSet<String>) {
-        self.connections
-            .write()
-            .await
-            .retain(|name, _| names.contains(name));
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn new(connections: HashMap<String, Arc<Connector>>) -> Self {
+        Self::from_dispatch(Arc::new(FixedReads(connections)))
     }
 
     /// Link this application's reader into its existing workload.
@@ -445,21 +508,33 @@ impl ConnectorReader {
         self.get(connection, request).await
     }
 
-    /// Forward bytes to the named binding, or return unbound.
+    /// Forward bytes to the named binding, or return unbound. A binding that
+    /// does not resolve answers unavailable, so the calling store stays usable.
     pub async fn get(
         &self,
         connection: String,
         request: Vec<u8>,
     ) -> anyhow::Result<Result<Vec<u8>, ConnectorError>> {
-        let slot = self.connections.read().await.get(&connection).cloned();
-        let Some(slot) = slot else {
-            return Ok(Err(ConnectorError::Unbound));
-        };
-        let current = slot.current.read().await;
-        match current.as_ref() {
-            Some(connector) => connector.get(connection, request).await,
-            None => Ok(Err(ConnectorError::Unavailable)),
+        match self.dispatch.resolve(&connection).await {
+            Ok(Some(instance)) => instance.get(connection, request).await,
+            Ok(None) => Ok(Err(ConnectorError::Unbound)),
+            Err(error) => {
+                tracing::warn!(connection, error = %format!("{error:#}"), "connection did not resolve");
+                Ok(Err(ConnectorError::Unavailable))
+            }
         }
+    }
+}
+
+#[cfg(any(test, feature = "test-util"))]
+#[derive(Debug)]
+struct FixedReads(HashMap<String, Arc<Connector>>);
+
+#[cfg(any(test, feature = "test-util"))]
+#[async_trait::async_trait]
+impl ConnectionDispatch for FixedReads {
+    async fn resolve(&self, name: &str) -> anyhow::Result<Option<Arc<Connector>>> {
+        Ok(self.0.get(name).cloned())
     }
 }
 
@@ -505,6 +580,61 @@ mod tests;
 #[cfg(test)]
 mod declaration_tests {
     use super::*;
+    #[tokio::test]
+    async fn a_new_bound_credential_links_without_compiling_again() -> anyhow::Result<()> {
+        let mut resolve = wit_parser::Resolve::new();
+        let package = resolve.push_str(
+            "read.wit",
+            include_str!("../../runtime/wit/deps/wamn-connector/package.wit"),
+        )?;
+        let world = resolve.select_world(&[package], Some("connector"))?;
+        let mut module =
+            wit_component::dummy_module(&resolve, world, wit_parser::ManglingAndAbi::Standard32);
+        wit_component::embed_component_metadata(
+            &mut module,
+            &resolve,
+            world,
+            wit_component::StringEncoding::UTF8,
+        )?;
+        let bytes = wit_component::ComponentEncoder::default()
+            .module(&module)?
+            .validate(true)
+            .encode()?;
+        let digest = crate::component_admission::component_digest(&bytes);
+        let first = Connector::load(
+            &bytes,
+            ConnectorBinding::new("example.com:443", Some("first".into()))?,
+        )
+        .await?;
+        assert_eq!(compile_count(&digest), 1);
+        let second = Connector::load(
+            &bytes,
+            ConnectorBinding::new("example.com:443", Some("second".into()))?,
+        )
+        .await?;
+        assert_eq!(compile_count(&digest), 1);
+        assert_ne!(first.store_id().await, second.store_id().await);
+        let code = address_engine(connector_address_policy(&"example.com:443".parse()?))?;
+        assert!(
+            code.admitted.lock().await[&digest]
+                .pre_instantiate_ref()
+                .is_err()
+        );
+        let mut changed = bytes;
+        // A component custom section changes the digest without changing its WIT.
+        changed.extend([0, 2, 1, b'v']);
+        let changed_digest = crate::component_admission::component_digest(&changed);
+        let third = Connector::load(
+            &changed,
+            ConnectorBinding::new("example.com:443", Some("third".into()))?,
+        )
+        .await?;
+        assert_eq!(compile_count(&changed_digest), 1);
+        assert_eq!(compile_count(&digest), 1);
+        assert_ne!(second.store_id().await, third.store_id().await);
+        Ok(())
+    }
+
     #[tokio::test]
     async fn an_undeclared_name_refuses_before_dispatch() {
         let reader = ConnectorReader::new(HashMap::new());
