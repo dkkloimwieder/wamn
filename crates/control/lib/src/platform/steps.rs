@@ -98,7 +98,6 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
     );
     let environments = "environments/*.k beside cluster.k (read at the step)";
     let env_keys = "<org>--<project>--<env>";
-    let blob_account = format!("wamn-blob@{project}.iam.gserviceaccount.com");
     let otel_account = format!("wamn-otel@{project}.iam.gserviceaccount.com");
     let quota = OwnerInput {
         name: format!("quota preference wamn-ssd-{region} (SSD_TOTAL_GB=200)"),
@@ -106,21 +105,22 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
             "gcloud beta quotas preferences create wamn-ssd-{region} --project {project} \\\n  --service compute.googleapis.com --quota-id SSD-TOTAL-GB-per-project-region \\\n  --dimensions region={region} --preferred-value 200"
         ),
     };
-    let blob_binding = OwnerInput {
-        name: format!("Workload Identity hosts/wamn-host -> {blob_account}"),
+    // Every environment host runs as its own account in `hosts`, so the grants
+    // name the namespace, not one account.
+    let hosts = format!(
+        "principalSet://iam.googleapis.com/projects/$NUMBER/locations/global/workloadIdentityPools/{workload_pool}/namespace/hosts"
+    );
+    let repository = registry.rsplit('/').next().unwrap_or_default();
+    let host_grants = OwnerInput {
+        name: format!("Workload Identity grants to namespace hosts on {registry} and the buckets"),
         instructions: format!(
-            "gcloud iam service-accounts add-iam-policy-binding {blob_account} --project {project} \\\n  --role roles/iam.workloadIdentityUser --member \"serviceAccount:{workload_pool}[hosts/wamn-host]\""
+            "NUMBER=$(gcloud projects describe {project} --format 'value(projectNumber)')\ngcloud artifacts repositories add-iam-policy-binding {repository} --project {project} --location {region} \\\n  --member \"{hosts}\" --role roles/artifactregistry.reader\ngcloud storage buckets add-iam-policy-binding gs://{} --member \"{hosts}\" --role roles/storage.objectCreator\ngcloud storage buckets add-iam-policy-binding gs://<labels bucket> --member \"{hosts}\" --role roles/storage.objectAdmin",
+            document.buckets.web
         ),
     };
     let registry_owner = history(
         format!("Artifact Registry {registry} (immutable tags)"),
         "1",
-    );
-    let blob_iam = history(
-        format!(
-            "IAM {blob_account}: bucket binding and roles/artifactregistry.reader on {registry}"
-        ),
-        "5.1",
     );
     let dns = history(format!("Cloud DNS zone {project}; records {routes}"), "4.3");
     let web_bucket = history(
@@ -193,8 +193,8 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
         InstallStep {
             number: "4.9", title: "Platform install inputs",
             runs: Runner::Verb("Kubernetes API"),
-            inputs: vec![("project_id", project.clone()), ("registry", registry.clone()), ("node placement", "label=role=bench-host, taint=role=bench-host:NoSchedule".into()), ("host service account", format!("hosts/wamn-host -> {blob_account}")), ("registry helper and Role", "hosts/wamn-registry-helper, hosts/wamn-control-status".into()), ("auth NATS certificate", "platform/wamn-ctl-auth-nats".into())],
-            owner_inputs: vec![blob_binding.clone(), blob_iam.clone()],
+            inputs: vec![("project_id", project.clone()), ("registry", registry.clone()), ("node placement", "label=role=bench-host, taint=role=bench-host:NoSchedule".into()), ("host service accounts", "hosts/wamn-host, hosts/wamn-host-<org>-<project>-<env>".into()), ("registry helper and Role", "hosts/wamn-registry-helper, hosts/wamn-control-status".into()), ("auth NATS certificate", "platform/wamn-ctl-auth-nats".into())],
+            owner_inputs: vec![host_grants.clone()],
         },
         InstallStep {
             number: "4.10", title: "Platform file",
@@ -251,7 +251,7 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
             number: "4.17", title: "Apply with the release",
             runs: Runner::Job("platform/platform-apply-<org>--<project>--<env>"),
             inputs: vec![("environments", environments.into()), ("registry", registry.clone()), ("platform_version", platform_version.into()), ("release namespace", "hosts".into()), ("releases and host groups", "r-<env>-<coordinate hash>".into()), ("release digests", "from 4.16".into()), ("identity CA", "hosts/identity-ca".into())],
-            owner_inputs: vec![blob_binding, blob_iam],
+            owner_inputs: vec![host_grants],
         },
         InstallStep {
             number: "4.18", title: "CDC readers",

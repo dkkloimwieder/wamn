@@ -139,10 +139,6 @@ fn provider_edits(value: &mut Value, document: &ClusterDocument) -> anyhow::Resu
                 value["metadata"]["annotations"]["iam.gke.io/gcp-service-account"] =
                     format!("wamn-otel@{}.iam.gserviceaccount.com", document.project_id).into();
             }
-            if value["kind"] == "ServiceAccount" && value["metadata"]["name"] == "wamn-host" {
-                value["metadata"]["annotations"]["iam.gke.io/gcp-service-account"] =
-                    format!("wamn-blob@{}.iam.gserviceaccount.com", document.project_id).into();
-            }
         }
         Provider::Kind => {
             kind_placement(value);
@@ -490,16 +486,12 @@ mod tests {
                     helper,
                     json!({"credHelpers":{"registry.example.com":"wamn"}})
                 );
-                assert_eq!(
-                    account["metadata"]["annotations"]["iam.gke.io/gcp-service-account"],
-                    "wamn-blob@test-project.iam.gserviceaccount.com"
-                );
                 assert_eq!(policies.len(), 2);
             } else {
                 assert_eq!(helper, json!({}));
-                assert!(account["metadata"].get("annotations").is_none());
                 assert!(policies.is_empty());
             }
+            assert!(account["metadata"].get("annotations").is_none());
         }
     }
 

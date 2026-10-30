@@ -35,12 +35,17 @@ The owner supplies these inputs. The install stops at the first step that reads 
      --role roles/secretmanager.secretAccessor
    ```
 
-4. The Workload Identity binding of the host service account. The Kubernetes service account `hosts/wamn-host` acts as the Google service account `wamn-blob`. A teardown keeps this binding, because it is IAM. If the binding is missing, the owner runs:
+4. The Workload Identity grants of the namespace `hosts`. Each environment host runs as its own Kubernetes service account `hosts/wamn-host-<org>-<project>-<env>`, and the platform Jobs run as `hosts/wamn-host`. No account carries an `iam.gke.io` annotation. The grants name the namespace, so every account in `hosts` reads the registry and the labels bucket. A teardown keeps these grants, because they are IAM. If a grant is missing, the owner runs:
 
    ```bash
-   gcloud iam service-accounts add-iam-policy-binding wamn-blob@wamn-dev.iam.gserviceaccount.com --project wamn-dev \
-     --role roles/iam.workloadIdentityUser --member "serviceAccount:wamn-dev.svc.id.goog[hosts/wamn-host]"
+   NUMBER=$(gcloud projects describe wamn-dev --format 'value(projectNumber)')
+   gcloud artifacts repositories add-iam-policy-binding wamn --project wamn-dev --location us-central1 \
+     --member "principalSet://iam.googleapis.com/projects/$NUMBER/locations/global/workloadIdentityPools/wamn-dev.svc.id.goog/namespace/hosts" --role roles/artifactregistry.reader
+   gcloud storage buckets add-iam-policy-binding gs://wamn-dev-labels \
+     --member "principalSet://iam.googleapis.com/projects/$NUMBER/locations/global/workloadIdentityPools/wamn-dev.svc.id.goog/namespace/hosts" --role roles/storage.objectAdmin
    ```
+
+   The project number of `wamn-dev` is 540250462877.
 
 5. The telemetry bucket and its writer. The bucket `wamn-dev-otel` deletes an object 30 days after it lands. The Google service account `wamn-otel` writes to it and reads its metadata, because the collector exporter reads the bucket at start (`storage.buckets.get`). The Kubernetes service account `platform/otel-collector` acts as `wamn-otel`. A teardown keeps all three, because they are a bucket and IAM:
 
@@ -130,11 +135,11 @@ The owner supplies these inputs. The install stops at the first step that reads 
     Before step 4.20 creates the NEG, target only the cluster and node pools in the section 4.2 plan and apply.
     After the NEG exists, apply the full rendered project as described in section 4.20.
 
-15. Write access to `buckets.web` for the web upload of step 4.19. The upload Job runs as `hosts/wamn-host`, which acts as `wamn-blob` (item 4). A teardown keeps this grant, because it is IAM. If the grant is missing, the agent runs:
+15. Write access to `buckets.web` for the web upload of step 4.19. The upload Job runs as `hosts/wamn-host` and takes the grants of the namespace `hosts` (item 4). A teardown keeps this grant, because it is IAM. If the grant is missing, the agent runs:
 
     ```bash
     gcloud storage buckets add-iam-policy-binding gs://wamn-dev-web \
-      --member serviceAccount:wamn-blob@wamn-dev.iam.gserviceaccount.com --role roles/storage.objectCreator
+      --member "principalSet://iam.googleapis.com/projects/$NUMBER/locations/global/workloadIdentityPools/wamn-dev.svc.id.goog/namespace/hosts" --role roles/storage.objectCreator
     ```
 
 `build-platform` and the install use these owner inputs and never create their grants or budget. If an input is missing, the cloud operation fails.
@@ -152,7 +157,7 @@ The teardown keeps these resources, and the install expects them. The owner make
 - The buckets `wamn-dev-web`, `wamn-dev-backups` and `wamn-dev-labels`.
 - The VPC `wamn`, its subnet `wamn-us-central1` and the node service account `wamn-nodes`.
 - The Cloud DNS zone `wamn-dev`, its records, and the `roles/dns.admin` binding of the cert-manager principal on the zone. `project.k` declares the zone, and OpenTofu imports it in section 4.2. OpenTofu does not own the records or the binding.
-- The Google service account `wamn-blob`, its bucket binding and its `roles/artifactregistry.reader` binding on `wamn`.
+- The grants of the namespace `hosts` on `wamn`, `gs://wamn-dev-labels` and `gs://wamn-dev-web` (section 1, items 4 and 15).
 - The firewall rule that permits load balancer traffic to nginx on TCP port 8443. OpenTofu owns the load balancer objects in section 4.20.
 
 Run every command as the project owner, with `--project wamn-dev`. The default project of the gcloud configuration can be another project, so a command without `--project` acts on the wrong one.
@@ -220,15 +225,7 @@ gcloud storage buckets create gs://wamn-dev-labels --project wamn-dev --location
   --uniform-bucket-level-access --public-access-prevention
 ```
 
-Make the Google service account `wamn-blob`. It holds `roles/storage.objectAdmin` on the labels bucket and `roles/artifactregistry.reader` on `wamn`. Owner input 4 binds it to `hosts/wamn-host`, and the host values annotate that Kubernetes account with `iam.gke.io/gcp-service-account: wamn-blob@wamn-dev.iam.gserviceaccount.com`. If a binding answers that the account does not exist, run it again after `gcloud iam service-accounts describe` shows the account:
-
-```bash
-gcloud iam service-accounts create wamn-blob --project wamn-dev --display-name "wamn host blob store"
-gcloud storage buckets add-iam-policy-binding gs://wamn-dev-labels --project wamn-dev \
-  --member serviceAccount:wamn-blob@wamn-dev.iam.gserviceaccount.com --role roles/storage.objectAdmin
-gcloud artifacts repositories add-iam-policy-binding wamn --project wamn-dev --location us-central1 \
-  --member serviceAccount:wamn-blob@wamn-dev.iam.gserviceaccount.com --role roles/artifactregistry.reader
-```
+Grant the namespace `hosts` read access to `wamn` and `roles/storage.objectAdmin` on the labels bucket, with the commands of owner input 4 (section 1).
 
 Point each route host at the global address that OpenTofu creates in section 4.20.
 Use `receiving.wamn.dev.`, `wms.wamn.dev.`, and `control.wamn.dev.`:
@@ -734,19 +731,17 @@ setsid kubectl -n platform port-forward svc/nats 14223:4222 > $W/pf-sched.log 2>
 
 ### 4.9 Platform install inputs
 
-`env apply` makes none of these objects and touches no IAM. The registry helper names the `wamn` credential helper for the host pulls and holds no credential. Every host runs as the service account `wamn-host`, which acts as `wamn-blob` (section 1). The Role `wamn-control-status` gives the control operation `environment.status` its reads. The policy [bench-host-placement.yaml](../../deploy/gcp/bench-host-placement.yaml) gives the Receiving host pod the selector and the toleration of pool `bench`, because the host chart has no field for them. [auth-nats-clients.yaml](../../deploy/gcp/auth-nats-clients.yaml) holds the scheduler NATS client certificates of identity and `wamn-ctl`, which publish auth changes to the hosts. The two platform manifests state no namespace, so apply them into the release namespace:
+`env apply` makes none of these objects and touches no IAM. The registry helper names the `wamn` credential helper for the host pulls and holds no credential. Each host runs as the service account of its environment, and the platform Jobs run as `wamn-host`. Both take the grants of the namespace `hosts` (section 1). The Role `wamn-control-status` gives the control operation `environment.status` its reads. The policy [bench-host-placement.yaml](../../deploy/gcp/bench-host-placement.yaml) gives the Receiving host pod the selector and the toleration of pool `bench`, because the host chart has no field for them. [auth-nats-clients.yaml](../../deploy/gcp/auth-nats-clients.yaml) holds the scheduler NATS client certificates of identity and `wamn-ctl`, which publish auth changes to the hosts. The two platform manifests state no namespace, so apply them into the release namespace:
 
 ```bash
 kubectl apply -f deploy/gcp/registry-helper.yaml
 kubectl apply -f deploy/gcp/bench-host-placement.yaml
 kubectl apply -f deploy/gcp/auth-nats-clients.yaml
 kubectl -n hosts apply -f deploy/platform/wamn-host-serviceaccount.yaml
-kubectl -n hosts annotate serviceaccount wamn-host --overwrite \
-  iam.gke.io/gcp-service-account=wamn-blob@wamn-dev.iam.gserviceaccount.com
 kubectl -n hosts apply -f deploy/platform/control-status-rbac.yaml
 ```
 
-The owner made the `wamn-blob` binding (section 1). IAM is owner-only, so the install identity does not read it. The first apply with a release (4.17) is the proof. If the binding is missing, the host pull fails and names the account.
+The owner made the grants of the namespace `hosts` (section 1). IAM is owner-only, so the install identity does not read them. The first apply with a release (4.17) is the proof. If a grant is missing, the host pull fails with 403.
 
 ### 4.10 Platform file
 
@@ -1132,7 +1127,7 @@ Each log shows `registration loaded`, the three `preflight` lines and `walsender
 ### 4.19 Web clients
 
 `platform apply` runs `wamn web upload` as a Job for each environment and its declared release digest.
-The Job runs in `hosts` as `wamn-host`, which uses the owner-supplied `wamn-blob` Workload Identity binding.
+The Job runs in `hosts` as `wamn-host`, which takes the grants of the namespace `hosts` (section 1, item 15).
 It reads the built clients from package artifacts and writes them below `gs://<buckets.web>/clients/<package>/<digest hex>/`.
 It leaves `WAMN_EVENT_NATS_URL` unset.
 The Job runner saves the log before it deletes the Job and its temporary Secrets.
