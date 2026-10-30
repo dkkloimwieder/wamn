@@ -2966,7 +2966,47 @@ async fn host_report_check(run: &mut Run, context: &CheckContext) -> anyhow::Res
         task.abort();
         Ok(before)
     };
-    let mut document = fixture_document(ENV, "broken.orders.example", &context.digest);
+    let base = environment::analyse::pull_release_manifest(&platform, &context.digest).await?;
+    let package = base
+        .release
+        .packages
+        .iter()
+        .find(|package| package.package_id() == PACKAGE)
+        .context("the fixture release names its device package")?;
+    let device = wamn_package_artifact::read_descriptors(
+        &context.registry,
+        PACKAGE,
+        package.package_version(),
+    )
+    .await?
+    .into_iter()
+    .find(|descriptor| descriptor.component == "device")
+    .context("the fixture package admits its device component")?;
+    let bytes = host_report_release(package.package_version(), &device)?;
+    let published = push_manifest_bytes(
+        &bytes,
+        &platform.release_artifact_base,
+        false,
+        &platform.oci_ca_paths,
+        &platform.registry_auth_file,
+    )
+    .await?;
+    let releases = PackageRegistry {
+        artifact_base: platform.release_artifact_base.clone(),
+        ..context.registry.clone()
+    };
+    qualification_artifact::push(
+        &releases,
+        &QualificationPayload {
+            format: QUALIFICATION_PAYLOAD_FORMAT,
+            release_digest: published.digest.to_string(),
+            image_set: image_set_digests(&context.images)?,
+            cases: Vec::new(),
+        },
+        bytes.len(),
+    )
+    .await?;
+    let mut document = fixture_document(ENV, "broken.orders.example", published.digest.as_str());
     let (system, task) = connect(&platform.system_database_url).await?;
     let bound = system
         .query_opt(
@@ -3006,6 +3046,40 @@ async fn host_report_check(run: &mut Run, context: &CheckContext) -> anyhow::Res
     );
     restored?;
     deleted?;
+    Ok(())
+}
+
+fn host_report_release(
+    version: &str,
+    device: &wamn_catalog::ComponentDescriptor,
+) -> anyhow::Result<Vec<u8>> {
+    let bytes = release(MANIFEST_H, version, Some(device))?;
+    let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
+    ensure!(
+        manifest.composed_entry.is_none()
+            && wamn_execution_host::synchronous_route_count(&manifest) > 0,
+        "the failed-start fixture requires direct component preload"
+    );
+    Ok(bytes)
+}
+
+#[test]
+fn host_report_release_requires_component_preload() -> anyhow::Result<()> {
+    let device = release_documents::fixture_device()?;
+    let bytes = host_report_release("2.1.0", &device)?;
+    let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
+    assert!(manifest.composed_entry.is_none());
+    assert_eq!(wamn_execution_host::synchronous_route_count(&manifest), 1);
+    let component = manifest.components.first().context("the served device")?;
+    assert_eq!(
+        component.descriptor.component_digest,
+        device.component_digest
+    );
+    assert_eq!(component.descriptor.component, "device");
+    assert!(manifest.routes.iter().all(|route| {
+        route.component == component.descriptor.component
+            && component.operations.contains_key(&route.operation)
+    }));
     Ok(())
 }
 
