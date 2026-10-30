@@ -63,6 +63,16 @@ enum Refusal {
 
 async fn reset_and_install_control(admin: &Client) -> anyhow::Result<()> {
     reset_control_store(admin).await?;
+    // The fixture writes the policies, principals and tokens as wamn:provisioning.
+    admin
+        .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string()],
+        )
+        .await
+        .context("bind wamn:provisioning for the fixture session")?;
     admin
         .batch_execute(
             r#"RESET ROLE;
@@ -78,16 +88,6 @@ async fn reset_and_install_control(admin: &Client) -> anyhow::Result<()> {
         )
         .await
         .context("seed the auth-only test's declared environment policies")?;
-    // The fixture writes principals and tokens as wamn:provisioning.
-    admin
-        .execute(
-            "SELECT set_config('app.user_id', $1, false)",
-            &[&wamn_control_provision::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string()],
-        )
-        .await
-        .context("bind wamn:provisioning for the fixture session")?;
     Ok(())
 }
 
