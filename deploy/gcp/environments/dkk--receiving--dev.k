@@ -5,7 +5,7 @@ environment.Environment {
     org = "dkk"
     project = "receiving"
     env = "dev"
-    release = "sha256:2bf64b612d4e69acbe68cac2da55f66e1bbc0f41e994fa8874a97d0f815210e0"
+    release = "sha256:05c000d9ed875a4fcedfd8491d6367a84bc4b9f35f52ba382aba8c995f8f9575"
     route_host = "receiving.wamn.dev"
     policy = "dev"
     integrations = {}
