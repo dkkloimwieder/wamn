@@ -369,6 +369,18 @@ fn permissions() -> Vec<Access> {
                     resources: vec!["pods".into()],
                     verbs: ["get", "list", "watch"].map(str::to_owned).into(),
                 },
+                // The log and warning events of a host that does not become
+                // Ready, read into the failure (wamn-samh5).
+                PolicyRule {
+                    api_groups: vec![String::new()],
+                    resources: vec!["pods/log".into()],
+                    verbs: vec!["get".into()],
+                },
+                PolicyRule {
+                    api_groups: vec![String::new()],
+                    resources: vec!["events".into()],
+                    verbs: vec!["list".into()],
+                },
                 // The host account of the environment and its grant on the
                 // credential Secret (environment::ensure::credential_access).
                 PolicyRule {
@@ -488,6 +500,12 @@ mod tests {
         let access = permissions();
         assert_eq!(access[0].namespace, "platform");
         assert_eq!(access[1].namespace, "hosts");
+        for (resource, verb) in [("pods/log", "get"), ("events", "list")] {
+            assert!(access[1].rules.iter().any(|rule| {
+                rule.resources.iter().any(|name| name == resource)
+                    && rule.verbs.iter().any(|name| name == verb)
+            }));
+        }
         assert!(access.iter().flat_map(|access| &access.rules).all(|rule| {
             !rule
                 .verbs
