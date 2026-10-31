@@ -43,14 +43,14 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | B3-3 | [B](coupling.md) | high | L | Crate migration | Consolidation needs dependency ordering, live graph enforcement, and explicit guest repinning. Step 5 waits for A5. One qualification cycle covers the guest move. |
 | A2-1 | [A](code-quality.md) | high | M | Scalar contracts | Numeric and timestamp implementations accept and normalize different spellings. `canonical_scalar` is the one owner. record-history takes the dependency. |
 | A3-1 | [A](code-quality.md) | high | M | PostgreSQL errors | Operation binding maps infrastructure failures to permission denials. |
-| F2-1 | [F](developer-experience.md) | high | M | Saved edits | Development resolution requires fresh output before the loop can rebuild changed inputs. |
-| F2-2 | [F](developer-experience.md) | high | M | Watch inputs | The package watch filter omits application Rust and web source directories. |
-| F2-3 | [F](developer-experience.md) | high | M | Candidate activation | Preparation stops the active application before generation, compilation, and admission succeed. |
-| F2-4 | [F](developer-experience.md) | high | M | Local identity | Generic development startup fixes a Receiving coordinate and requires one application schema. |
+| F2-1 | [F](developer-experience.md) | high | M | Saved edits | Development resolution requires fresh output before the loop can rebuild changed inputs. Group 2 Do, as written. Fix first. |
+| F2-2 | [F](developer-experience.md) | high | M | Watch inputs | The package watch filter omits application Rust and web source directories. Group 2 Do, as written. Fix first. |
+| F2-3 | [F](developer-experience.md) | high | M | Candidate activation | Preparation stops the active application before generation, compilation, and admission succeed. Group 2 Do, as written. Fix first. |
+| F2-4 | [F](developer-experience.md) | high | M | Local identity | Generic development startup fixes a Receiving coordinate and requires one application schema. Group 2 Do, as written. Fix first. |
 | F1-1 | [F](developer-experience.md) | high | M | Publication contracts | Custom publication repeats manifest contracts and already disagrees about a revision field. After A5. Derivation in the generator fixes the drift. Routes, paths, policy and limits stay authored. |
 | F1-3, F3-1 | [F](developer-experience.md) | high | L | Application assembly | Generated CRUD still requires authored wrappers and repository-relative component build machinery. F1-3 is the template item: `wamn new application` emits no Rust. |
 | F1-8, F3-3 | [F](developer-experience.md) | high | L | Application screens | Authors reconnect generated descriptions to ordinary CRUD behavior and maintain a web project. F1-8 is owned by the ui-split work, owner priority 1. Nothing separate is filed. |
-| F2-5, F2-6, F3-2 | [F](developer-experience.md) | high | L | Local startup | Development requires an external service recipe, many infrastructure inputs, and a separate standup step. |
+| F2-5, F2-6, F3-2 | [F](developer-experience.md) | high | L | Local startup | Development requires an external service recipe, many infrastructure inputs, and a separate standup step. F2-5 and F2-6 are Group 2 Do: one private stack (PostgreSQL 18, one NATS, the collector), inputs from `wamn.k` and `environment.k`, no infrastructure fields in `wamn.k`. F2-9 folds into F2-5. |
 | B2-6, F3-5 | [B](coupling.md), [F](developer-experience.md) | high | L | Qualification policy | Production qualification hard-codes Receiving and WMS package sets and rejects unfamiliar applications. The application declares its own case set beside its tests. No approver. |
 | F3-6 | [F](developer-experience.md) | high | M | Author deployment | Authors coordinate bootstrap, publication, qualification, digest transfer, and browser upload manually. |
 | D3-3, G3-3 | [D](deployment.md), [G](tests.md) | high | L | Merge evidence | A passing merge queue does not establish all affected live behavior or deployment qualification. D3-3 is closed into D2-8: keep successful logs, no CI service, no promotion job. |
@@ -143,10 +143,10 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | F1-2 | [F](developer-experience.md) | medium | M | Handler contracts | Custom Rust types and adapters repeat manifest request, result, and error definitions. Group 4 Do after A5, designed once for more than one guest language. |
 | F1-4 | [F](developer-experience.md) | medium | M | Overlay contracts | Acme reauthors its pinned base operation contract and conversion code. Group 4 Do after A5. |
 | F1-5 | [F](developer-experience.md) | medium | M | Projections | Single-statement projections require handwritten field-copy handlers. Group 4 Do after A5. A statement-only projection declared in `wamn.k` generates its handler. |
-| F2-7 | [F](developer-experience.md) | medium | M | Checkout preparation | Preparation builds unrelated applications, omits required runtime inputs, and can hide failure through `eval`. |
-| F2-8 | [F](developer-experience.md) | medium | S | Prerequisites | Required host tools appear across several late failure points. |
-| F2-9 | [F](developer-experience.md) | medium | S | Local telemetry | Collector startup assumes a cached image and an available fixed port. |
-| F2-10 | [F](developer-experience.md) | medium | M | Test preparation | Local business tests need a separate manual artifact and service recipe. |
+| F2-7 | [F](developer-experience.md) | medium | M | Checkout preparation | Preparation builds unrelated applications, omits required runtime inputs, and can hide failure through `eval`. Group 2 Do. Preparation installs dependencies and selects the target directory, nothing more. The script is renamed when cut down. |
+| F2-8 | [F](developer-experience.md) | medium | S | Prerequisites | Required host tools appear across several late failure points. In passing with F2-7: one host contract in `building.md`. |
+| F2-9 | [F](developer-experience.md) | medium | S | Local telemetry | Collector startup assumes a cached image and an available fixed port. Folded into F2-5. No separate row. |
+| F2-10 | [F](developer-experience.md) | medium | M | Test preparation | Local business tests need a separate manual artifact and service recipe. Group 3 Do with G3-2. |
 | F3-7 | [F](developer-experience.md) | medium | M | Author acceptance | No test establishes the proposed ten-minute path from a new application to authenticated deployment. |
 | G1-4 | [G](tests.md) | medium | S | Database URLs | Credential and database replacement use several parsers and string-splitting implementations. |
 | G1-6 | [G](tests.md) | medium | S | Private files | Nine helpers share a name but disagree about exclusive creation and replacement. |
@@ -185,7 +185,7 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | D3-7 | [D](deployment.md) | low | M | Cluster locking | A local installation lock cannot serialize different deployment machines. Re-scoped to a Kubernetes Lease held by the installer. |
 | D1-9 | [D](deployment.md) | low | S | Orphan examples | Unused deployment examples and stale executor prose remain beside an active NATS diagnostic. |
 | D1-10 | [D](deployment.md) | low | M | Prototype resources | Generic tests and examples preserve obsolete database, registry, credential, and retention deployments. |
-| F2-11 | [F](developer-experience.md) | low | S | Development timing | The supplied evidence contains no complete checkout-to-application or saved-edit timeline. |
+| F2-11 | [F](developer-experience.md) | low | S | Development timing | The supplied evidence contains no complete checkout-to-application or saved-edit timeline. In passing with D2-8. Record cold and warm timings once when F2-5 lands. No limits before that. |
 | G1-10 | [G](tests.md) | low | S | Router fixtures | Three targets repeat graph constructors. |
 | G1-11 | [G](tests.md) | low | S | Role fixtures | Tests repeat generation-state observations and disposable-role cleanup SQL. |
 | G1-12 | [G](tests.md) | low | S | Credential doubles | Three local recording stores implement the same behavior. |
@@ -284,6 +284,11 @@ The owner review of 2026-10-31 rejects the following. The report evidence stays 
 | Question on pure CRUD applications without authored Rust (F1-3, F3-1) | Answered: yes. `wamn new application` emits no Rust. |
 | Question on explicit HTTP exposure per custom operation (F1-1) | Answered: yes. Route selection, path, authentication policy and body limits stay authored. Only the schemas and hashes derive. |
 | Question on Acme consuming its base wire shape (F1-4) | Answered: yes. |
+| F2-9: The collector recipe assumes a cached image and a free fixed port | Folded into F2-5. The stack owner fetches the image and allocates the port. |
+| Question on the developer command owning the private stack (F2-5, F2-6, F3-2) | Answered: yes. External services are explicit overrides. |
+| Question on `environment.k` as the sole coordinate authority (D3-4, F2-4, F3-2) | Answered: yes. |
+| Question on a past saved-edit acceptance run (F2-1 through F2-3) | Answered: none is cited. The next `local_delivery` run after the fixes is the evidence. |
+| Question on developer loop latency limits (F2-11) | Answered: none until measured. Cold and warm timings are recorded once when F2-5 lands. |
 | C1-2's pending-work record and C1-3's schema advancement before analysis | Rejected. One baseline, so nothing advances. Apply compares the installed baseline hash with the candidate's and refuses with "schema changed, reset the environment database" on a mismatch. C1-3 closes into C1-2 with its Deletes widened to every project migration call. |
 
 ### Plans in flight
@@ -432,7 +437,7 @@ For ordinary CRUD, the author writes `wamn.k`, the SQL baseline, acceptance case
 
 The owner's developer-experience priority order is the ui split first, then deployment ergonomics (a client submits for validation and deployment without an operator), then templates: `wamn new` with three names, application, service and overlay `--base`, and no flags. Multi-language guests come later. The platform generates boundary types, SQL access, WIT adapters, component assembly, publication schemas, clients, and standard screens. An overlay consumes its pinned base contract without copying its shape.
 
-Bare `wamn dev` owns a private service stack, credentials, ports, selected builds, and watching. Source changes reach generation before freshness admission. Compatible candidate failures leave the active application available. `wamn deploy` publishes, qualifies, uploads browser assets, and applies exact digests.
+Bare `wamn dev` owns a private service stack (PostgreSQL 18 with logical WAL, one NATS, the collector), credentials, ports, selected builds, and watching. Docker on Linux x86_64 is the supported host for now. Source changes reach generation before freshness admission. Compatible candidate failures leave the active application available. `wamn deploy` publishes, qualifies, uploads browser assets, and applies exact digests.
 
 The proposed 600-second journey begins with the installed SDK, Docker, and a provisioned account. Its duration remains unmeasured. Sources: F1-1 through F1-8, F2-1 through F2-11, F3-1 through F3-7, and H3-1 through H3-8.
 
@@ -514,7 +519,7 @@ In passing (15 findings). Helper dedup, naming, count pins and doc links. Closed
 
 Target: cache identity comes from real inputs, so unchanged images are retagged by input hash (D2-2). The generator dependency is cut from the execution host, provisioning and schema control, so a generator change does not rebuild the host image (B1-1). The iteration-time bugs of the developer loop land here: watch misses application source, a candidate stops the active application, the generic command hard-codes Receiving, and checkout preparation builds unrelated applications (F2-1, F2-2, F2-3, F2-4, F2-7, F3-2). Stage timers go into the existing build and test runner, so the next real build reports cold, cached and commit-to-running durations (D2-8, G3-7). No separate measurement run.
 
-Do (10 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high.
+Do (12 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high.
 
 | Finding | Title | Severity | Deletes |
 | --- | --- | --- | --- |
@@ -526,14 +531,23 @@ Do (10 findings). The rows the review named, then every row that deletes a build
 | F2-2 | Watch mode ignores application Rust and web edits | high | Remove the separate, incomplete package input whitelist. |
 | F2-3 | Candidate preparation stops the previous application too early | high | Remove unconditional shutdown on a changed package digest. |
 | F2-4 | The generic developer command provisions a fixed Receiving environment | high | Remove Receiving constants and `JourneyScope::receiving()` from the product startup path. Remove the single-schema restriction. |
-| F2-7 | Checkout preparation builds unrelated applications and misses runtime inputs | medium | Remove the all-application build loop, its temporary database lifecycle, and the combined build-and-`eval` entry point. |
+| F2-5 | Infrastructure ownership remains outside the developer command | medium | Remove separate service startup instructions and fixture-only orchestration after moving their shared behavior into the local stack owner. One private stack: PostgreSQL 18 with logical WAL, one NATS, the collector. External endpoints are explicit overrides. Absorbs F2-9. |
+| F2-6 | Startup requires 22 input kinds that largely describe local machinery | medium | Remove routine local startup flags and the optional-input path that prints an invalid next command. Do not add infrastructure fields to `wamn.k`. With F2-5. `environment.k` is the sole coordinate authority. |
+| F2-7 | Checkout preparation builds unrelated applications and misses runtime inputs | medium | Remove the all-application build loop, its temporary database lifecycle, and the combined build-and-`eval` entry point. Preparation installs dependencies and selects the target directory, nothing more. Rename the script when it is cut down. |
 | F3-2 | `wamn dev` must own its local services and first-run setup | high | Remove mandatory infrastructure flags, binary paths, handwritten local environment documents, and the separate standup step from the default author path. Remove committed HEAD as a local execution prerequisite. |
+
+In passing (2 findings). Helper dedup, naming, count pins and doc links. Closed when the owning file is already open, never filed alone.
+
+| Finding | Title | Severity | Deletes |
+| --- | --- | --- | --- |
+| F2-8 | Required host tools appear across several late failure points | medium | Remove duplicated prerequisite lists and personal cache configuration from the required checkout path. With F2-7: one host contract in `building.md`, versions tested before preparation. |
+| F2-11 | No measured checkout-to-app timeline exists in the shared evidence | low | Replace scattered startup recipes with the selected application path. Retain detailed provisioning instructions for external-service overrides. With D2-8. The nine-step path and the 22-flag command stay as evidence. Cold and warm timings recorded once when F2-5 lands. |
 
 ### Group 3: Tests and security
 
 Target: one tier per target and one selection owner, mixed targets deleted (G3-1, G3-2, G3-6). Every ignore is fixed or deleted, and no ignore stays without a stated missing prerequisite (G2-8, G3-4). The security highs land here with no dependency on any crate move: E2-2 (an org control credential reaches its own org only), E1-2 (per-environment broker identity, grant answers local), E1-3, E1-4, A3-1, A3-2, A2-1, B2-6 and F3-5. Plaintext in-cluster transport (E1-5, E2-3, E2-4) is medium until a non-dev cluster exists.
 
-Do (27 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high.
+Do (28 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high.
 
 | Finding | Title | Severity | Deletes |
 | --- | --- | --- | --- |
@@ -541,6 +555,7 @@ Do (27 findings). The rows the review named, then every row that deletes a build
 | B1-2 | Six development back-links enlarge lower-layer test builds | medium | The six development dependencies, each fixed by replacing the import with a narrower one. Move a test only when no narrower import exists. |
 | G3-1 | Default and ignored tests do not define useful execution tiers | high | The default-versus-ignored tier model and the `--cluster` alias for every ignored test. |
 | G3-2 | Selection policy is scattered across the runner | high | The old JSON file and suite-specific shell branches. Retain existing build commands and fixture owners, but remove their duplicated selection conditions. |
+| F2-10 | Test execution needs a separate artifact and service recipe | medium | Remove repeated component path exports and manual preparation recipes from individual test instructions. With G3-2: one preparation path, zero executed cases refused. |
 | G3-6 | Tests need target moves and narrower deployment assertions | medium | Mixed render-and-cluster compilation targets, duplicate delivery setup, and repeated business assertions that prove no additional deployed boundary. Measurements.md section 7 reports 201 duplicated lines between Receiving and WMS tests, which supports inspecting this merge. |
 | G2-8 | Empty prerequisite reasons conceal a built-service dependency | low | The empty prerequisite reasons and empty prerequisite calls where direct executable discovery supplies the required failure. |
 | G3-4 | Ignore reasons mix prerequisites, disabled tests, and child helpers | medium | Empty reasons, prose-only prerequisite lists, permanent bead-only ignores, and the ignored SQLite helper test. |
@@ -587,7 +602,7 @@ In passing (13 findings). Helper dedup, naming, count pins and doc links. Closed
 
 Target: dormant surfaces and unused dependencies first (A1-x, A1-6, A1-10), then the contract JSON (A2-3), then the crate map. Authoring rows follow the owner's developer-experience priority: ui split, then deployment ergonomics, then templates such as `wamn new`. Crate consolidation is last because it forces full rebuilds and guest repins and must not precede the build and deploy fixes. Helper and fixture dedup (G1-x, A2-x) lands only when the file is already being changed, never as its own issue. Authoring rows F1-x and F3-x stay here.
 
-Do (45 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high.
+Do (44 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high.
 
 | Finding | Title | Severity | Deletes |
 | --- | --- | --- | --- |
@@ -616,7 +631,6 @@ Do (45 findings). The rows the review named, then every row that deletes a build
 | B3-4 | Guest data crates and single-consumer helpers can become modules | medium | Five application data manifests, the PostgreSQL SQLx library manifest, the label-template manifest, and the separate data-access manifest. Remove emitter references to the retired Rust crate names. |
 | B3-5 | Three first-party workspaces are sufficient, but feature isolation must remain | medium | The Modbus standalone workspace declaration, both checked-in fixture manifests and lockfiles, and their standalone build contexts. Delete duplicated dependency and lint declarations where workspace inheritance replaces them. |
 | B3-6 | Test package boundaries can collapse without exporting test authority | medium | Seven redundant manifests from the eight test and tool packages combined into T18. Delete two redundant support manifests. Remove facade imports between the merged owners. |
-| F2-6 | Startup requires 22 input kinds that largely describe local machinery | medium | Remove routine local startup flags and the optional-input path that prints an invalid next command. Do not add infrastructure fields to `wamn.k`. |
 | F3-1 | The starter must generate an executable application outside the platform checkout | high | Remove mandatory authored Cargo crates, WIT path lists, generated-code includes, and publication boilerplate from the default application shape. Replace repository-relative tool discovery for this path. |
 | F3-3 | Generated descriptions need a default application renderer | high | Remove mandatory per-application web manifests and Vite files. Replace mechanical screen bindings with generated bindings. Delete the repository source alias once the shell package supplies the interface. |
 | F3-4 | Platform tests and operational instructions remain application responsibilities | high | Remove duplicated application setup helpers and generic platform assertions after equivalent platform coverage exists. Delete copied operational procedures and replace issue-note instructions with links to canonical documentation. |
@@ -637,7 +651,7 @@ Do (45 findings). The rows the review named, then every row that deletes a build
 | H3-8 | Bundle parsing tests are copies with different parameters | low | The duplicated build, parse, diagnostic, and cleanup bodies. |
 | H3-9 | Three exports and one root dependency are removable | low | Three unnecessary exports and one dependency declaration initially. Later, delete consumer chart-type dependencies and path mappings after their owner supplies the types. |
 
-In passing (60 findings). Helper dedup, naming, count pins and doc links. Closed when the owning file is already open, never filed alone.
+In passing (55 findings). Helper dedup, naming, count pins and doc links. Closed when the owning file is already open, never filed alone.
 
 | Finding | Title | Severity | Deletes |
 | --- | --- | --- | --- |
@@ -667,11 +681,6 @@ In passing (60 findings). Helper dedup, naming, count pins and doc links. Closed
 | A3-14 | The expect-over-allow policy does not hold across source and generated output | low | Handwritten `allow` that becomes `expect` when its file is touched. Generated output keeps `allow`. No lint rule. |
 | B1-3 | The runtime hub makes artifact consumers depend on cloud execution | medium | Runtime-owned artifact transport implementations after consolidation, duplicate transport helpers, and control’s runtime dependency once its remaining imports move. After A5. |
 | B1-5 | Catalog is a shared model hub with installation and product behavior | medium | The installation SQL constant and the built-in control-route construction, moved when catalog is next changed. |
-| F2-5 | Infrastructure ownership remains outside the developer command | medium | Remove separate service startup instructions and fixture-only orchestration after moving their shared behavior into the local stack owner. |
-| F2-8 | Required host tools appear across several late failure points | medium | Remove duplicated prerequisite lists and personal cache configuration from the required checkout path. |
-| F2-9 | The collector recipe assumes a cached image and a free fixed port | medium | Remove manual collector rendering and endpoint copying from the normal startup procedure. |
-| F2-10 | Test execution needs a separate artifact and service recipe | medium | Remove repeated component path exports and manual preparation recipes from individual test instructions. |
-| F2-11 | No measured checkout-to-app timeline exists in the shared evidence | low | Replace scattered startup recipes with the selected application path. Retain detailed provisioning instructions for external-service overrides. |
 | G1-1 | Shared support needs one owner and a smaller dependency boundary | medium | Two support manifests, duplicate primitive implementations listed below, and cross-suite source imports such as `tests/integration/src/control_client_live.rs:28`. These imports already share source and are not additional helper definitions. |
 | G1-2 | PostgreSQL connection setup repeats across fifty helpers | medium | Repeated `tokio_postgres::connect` and driver-spawn bodies. Retain the distinct session preparation. |
 | G1-3 | PostgreSQL command runners already disagree on execution rules | medium | Fourteen local runners and their repeated pipe setup. Small success and refusal wrappers can disappear where direct assertions remain clear. |
@@ -706,24 +715,21 @@ In passing (60 findings). Helper dedup, naming, count pins and doc links. Closed
 
 1. Which external consumers require current Rust APIs of the test support and fixture packages? This unblocks Groups 1 and 4 (G1-1). Cargo package names, the `wamn-control` API and the A1-7 through A1-9 APIs are answered: none.
 2. Which machine and cache states define timing comparisons for retained results? This unblocks timing acceptance for Group 2 (G3-7).
-3. Can `environment.k` own local and deployed coordinates, with the default developer command generating its private local document? This unblocks Groups 1 and 2 (D3-4, F2-4, F3-2).
-4. Which local/deployed host behaviors must match, and must WMS retain its distinct concurrency limit? This unblocks Groups 1 and 3 (D1-5, G2-4).
-5. Can the identity journey replace its repository `evidence/` requirement with caller-owned temporary result storage? This unblocks Group 4 (H1-5).
-6. Does any external workflow still require `kind-gate-build` or `kind-gate-image-remove`? This unblocks Group 4 (H1-12).
-7. Confirm the reviewer's pick: the provisioning operator certificate is one platform-wide principal by design, and revocation is short certificate lifetimes under cert-manager (alignment R3), not a CRL. This informs privileged credential boundaries in Group 3 (E2-2, E2-3).
-8. Owner pick for the local signing key file: no trust deadline (current) plus a revoked-list file when wanted, or a deadline and its length. E1-8 is deferred and not filed until picked.
-9. Confirm the reviewer's pick: a poisoned authority lock fails the operation and exits the host process, and Kubernetes restarts it. No isolation machinery, no unready-state logic. This settles A3-2 inside the A5 rewrite.
-10. Can WAMN consume only public built wfe exports while source qualification remains inside the submodule? This unblocks Group 4 (H3-3).
-11. Which retained saved-edit acceptance run passed against the current freshness, watcher, and activation rules? This supplies the comparison result for Group 2 (F2-1 through F2-3).
-12. Can the normal developer command own the complete private stack, with external services available through explicit overrides? This unblocks Groups 2 and 4 (F2-5, F2-6, F3-2).
-13. Can the default author experience require Docker on Linux, or must the first release support another host platform? This unblocks Groups 2 and 4 (F2-8, F3-2).
-14. Which cold-start, warm-start, and saved-edit limits must the retained results enforce? This unblocks acceptance for Groups 2 and 4 (F2-11, G3-7).
-15. Does the ten-minute clock start with the installed SDK, Docker, and provisioned account, or include their installation and provisioning? This unblocks Group 4 (F3-7).
-16. Can root supply live statuses for quarantined tests and archive candidates, including which ignored cases represent defects or retired contracts? This unblocks Groups 3 and 4 (G2-1 through G2-4, G3-4, H2-2, H2-3).
-17. Which dashboard or collector owns the frozen PostgreSQL telemetry identifiers whose guard cites deleted documentation? This unblocks retained-contract decisions in Groups 3 and 4 (G2-6, H2-5).
-18. Must benchmark summaries remain readable without their raw result files? This defines the retained result contract in Group 4 (H1-7).
-19. Does an immutable Git source plus a compact history entry satisfy the rule that accepted plans remain untrimmed? This unblocks Group 4 (H2-2, H2-7).
-20. Where are the twelve historical performance artifacts retained, if anywhere? This unblocks evidence disposition in Group 4 (H2-6).
-21. Does any external tool still read `.beads/beads.jsonl`? This unblocks obsolete-export removal in Group 4 (H3-10).
+3. Which local/deployed host behaviors must match, and must WMS retain its distinct concurrency limit? This unblocks Groups 1 and 3 (D1-5, G2-4).
+4. Can the identity journey replace its repository `evidence/` requirement with caller-owned temporary result storage? This unblocks Group 4 (H1-5).
+5. Does any external workflow still require `kind-gate-build` or `kind-gate-image-remove`? This unblocks Group 4 (H1-12).
+6. Confirm the reviewer's pick: the provisioning operator certificate is one platform-wide principal by design, and revocation is short certificate lifetimes under cert-manager (alignment R3), not a CRL. This informs privileged credential boundaries in Group 3 (E2-2, E2-3).
+7. Owner pick for the local signing key file: no trust deadline (current) plus a revoked-list file when wanted, or a deadline and its length. E1-8 is deferred and not filed until picked.
+8. Confirm the reviewer's pick: a poisoned authority lock fails the operation and exits the host process, and Kubernetes restarts it. No isolation machinery, no unready-state logic. This settles A3-2 inside the A5 rewrite.
+9. Can WAMN consume only public built wfe exports while source qualification remains inside the submodule? This unblocks Group 4 (H3-3).
+10. Confirm the reviewer's pick: Docker on Linux x86_64 is the supported developer host for now. This settles the host contract for Groups 2 and 4 (F2-8, F3-2).
+11. Which tier duration budgets must the retained results enforce? This unblocks acceptance for Group 2 (G3-7). Developer loop limits are answered: none until F2-5 lands and timings are recorded.
+12. Does the ten-minute clock start with the installed SDK, Docker, and provisioned account, or include their installation and provisioning? This unblocks Group 4 (F3-7).
+13. Can root supply live statuses for quarantined tests and archive candidates, including which ignored cases represent defects or retired contracts? This unblocks Groups 3 and 4 (G2-1 through G2-4, G3-4, H2-2, H2-3).
+14. Which dashboard or collector owns the frozen PostgreSQL telemetry identifiers whose guard cites deleted documentation? This unblocks retained-contract decisions in Groups 3 and 4 (G2-6, H2-5).
+15. Must benchmark summaries remain readable without their raw result files? This defines the retained result contract in Group 4 (H1-7).
+16. Does an immutable Git source plus a compact history entry satisfy the rule that accepted plans remain untrimmed? This unblocks Group 4 (H2-2, H2-7).
+17. Where are the twelve historical performance artifacts retained, if anywhere? This unblocks evidence disposition in Group 4 (H2-6).
+18. Does any external tool still read `.beads/beads.jsonl`? This unblocks obsolete-export removal in Group 4 (H3-10).
 
 Questions 8 and 10 of the first draft are answered in Rejected findings and proposals. Nothing from this list is filed until the owner answers.

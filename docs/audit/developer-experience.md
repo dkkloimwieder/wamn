@@ -192,6 +192,8 @@ All three questions were answered on 2026-10-31.
 
 ## Part 2: dev loop
 
+Owner review 2026-10-31: Group 2 is iteration time. F2-1 to F2-4 are bugs against the documented loop and its own acceptance test (`local_delivery.rs`). Fix them first, before any stack rework.
+
 ## Finding F2-1: Saved edits fail the freshness rule before the loop can rebuild
 
 Severity: high  
@@ -206,6 +208,8 @@ Proposal: Give source preparation and artifact consumption separate boundaries. 
 Deletes: Remove the receipt freshness prerequisite from development source resolution and its call to `write_compiled_manifest`.
 
 Risk: Accepting stale output at publication remains unacceptable. The saved-edit acceptance test must pass while publication still refuses an outdated receipt.
+
+Owner review 2026-10-31: keep, Group 2 Do, as written. Fix before any stack rework.
 
 ## Finding F2-2: Watch mode ignores application Rust and web edits
 
@@ -222,6 +226,8 @@ Deletes: Remove the separate, incomplete package input whitelist.
 
 Risk: Watching generated output can cause endless rebuilds. The existing Rust edit case and `first_build_outputs_in_overlapping_component_roots_do_not_rerun` must both pass.
 
+Owner review 2026-10-31: keep, Group 2 Do, as written. Fix before any stack rework.
+
 ## Finding F2-3: Candidate preparation stops the previous application too early
 
 Severity: high  
@@ -236,6 +242,8 @@ Proposal: Prepare artifacts before stopping the active host. Keep the stop bound
 Deletes: Remove unconditional shutdown on a changed package digest.
 
 Risk: Running an old component against an incompatible schema can break requests. Extend the existing invalid-SQL case to cover compiler failure, gate refusal, and an incompatible migration.
+
+Owner review 2026-10-31: keep, Group 2 Do, as written. Fix before any stack rework.
 
 ## Finding F2-4: The generic developer command provisions a fixed Receiving environment
 
@@ -252,6 +260,8 @@ Deletes: Remove Receiving constants and `JourneyScope::receiving()` from the pro
 
 Risk: Identity, database markers, and event subjects must retain the same coordinate. Add a startup case with a different coordinate and two schemas, then make authenticated requests through both.
 
+Owner review 2026-10-31: keep, Group 2 Do, as written. Fix before any stack rework.
+
 ## Finding F2-5: Infrastructure ownership remains outside the developer command
 
 Severity: medium  
@@ -261,11 +271,13 @@ Evidence: `crates/control/lib/src/dev/up.rs:108`, `services/ctl/src/dev/up.rs:18
 
 Problem: `dev up` connects to supplied services rather than starting PostgreSQL, either NATS broker, or the collector. It starts identity, control, and web processes, while application activation starts the host and CDC reader. The test fixture already starts both brokers and the collector through Compose. Meanwhile, standup resets shared control schemas and drops matching Acme databases on the supplied PostgreSQL server.
 
-Proposal: Make one private local stack the default developer environment. Start PostgreSQL 18 with logical WAL, both NATS brokers, and the collector under one session owner. Keep external endpoints as explicit overrides. Docker and Compose remain host prerequisites.
+Proposal: Make one private local stack the default developer environment. Start PostgreSQL 18 with logical WAL, one NATS (alignment R1), and the collector under one session owner. The stack owner fetches the collector image when absent and allocates its port (F2-9). Keep external endpoints as explicit overrides. Docker and Compose remain host prerequisites.
 
 Deletes: Remove separate service startup instructions and fixture-only orchestration after moving their shared behavior into the local stack owner.
 
 Risk: Cleanup must never remove another session's services. Prove concurrent startup, failed startup cleanup, and preservation of external services.
+
+Owner review 2026-10-31: keep, Group 2 Do. Bare `wamn dev` owns a private stack, and external endpoints are explicit overrides. F2-9 folds in here. Question 1 is answered: yes. Docker on Linux x86_64 is the supported host for now, the reviewer's pick for the owner to confirm.
 
 ## Finding F2-6: Startup requires 22 input kinds that largely describe local machinery
 
@@ -282,6 +294,8 @@ Deletes: Remove routine local startup flags and the optional-input path that pri
 
 Risk: Defaults must not reach deployed services. Test startup with no infrastructure flags and explicit external overrides.
 
+Owner review 2026-10-31: keep, Group 2 Do, with F2-5. Inputs come from `wamn.k` and `environment.k`, binaries default to siblings of `wamn`, ports and the session root are allocated, and no infrastructure fields enter `wamn.k`. Question 2 is answered: yes, `environment.k` is the sole coordinate authority, the same as deployment D3-4.
+
 ## Finding F2-7: Checkout preparation builds unrelated applications and misses runtime inputs
 
 Severity: medium  
@@ -296,6 +310,8 @@ Proposal: Limit checkout preparation to dependency installation and environment 
 Deletes: Remove the all-application build loop, its temporary database lifecycle, and the combined build-and-`eval` entry point.
 
 Risk: Tests that include generated application files still need preparation. The quality runner must prepare its selected inputs, and a failed preparation command must return a nonzero status.
+
+Owner review 2026-10-31: keep, Group 2 Do. `tools/lane-start` is renamed when it is cut down, because its name uses a banned word. Checkout preparation installs dependencies and selects the target directory, nothing more.
 
 ## Finding F2-8: Required host tools appear across several late failure points
 
@@ -312,6 +328,8 @@ Deletes: Remove duplicated prerequisite lists and personal cache configuration f
 
 Risk: An incomplete prerequisite list still causes late failures. Prove the documented setup in an empty supported host with no personal Cargo configuration.
 
+Owner review 2026-10-31: In passing with F2-7. One host contract in `building.md`, versions tested before preparation.
+
 ## Finding F2-9: The collector recipe assumes a cached image and a free fixed port
 
 Severity: medium  
@@ -321,11 +339,7 @@ Evidence: `tools/dev-collector:25`, `tools/dev-collector:30`, `tools/dev-collect
 
 Problem: The renderer sets `pull_policy` to `never`, and the documented Compose command also forbids pulling. Neither step fetches the pinned collector image for an empty Docker cache. The default host port is fixed at 4319, which conflicts across concurrent sessions. Small telemetry batches also wait up to 60 seconds before file output, as the documentation correctly states.
 
-Proposal: Let the local stack owner fetch the pinned image when absent, allocate a port, and supply the discovered endpoint. Preserve deployed sampling and batching where parity matters.
-
-Deletes: Remove manual collector rendering and endpoint copying from the normal startup procedure.
-
-Risk: Changing batching changes observation behavior. Prove startup with an empty image cache, two concurrent sessions, and eventual receipt of a sampled trace.
+Folded into F2-5 (owner review 2026-10-31): the stack owner fetches the image and allocates the port. No separate row.
 
 ## Finding F2-10: Test execution needs a separate artifact and service recipe
 
@@ -341,6 +355,8 @@ Proposal: Give selected tests one preparation path that resolves artifacts and s
 Deletes: Remove repeated component path exports and manual preparation recipes from individual test instructions.
 
 Risk: A runner can select stale bytes or silently skip coverage. Prove execution of the Receiving and WMS business cases, plus all-target compilation from an empty artifact directory.
+
+Owner review 2026-10-31: Group 3 Do with tests G3-2. One preparation path for selected tests, and zero executed cases are refused.
 
 ## Finding F2-11: No measured checkout-to-app timeline exists in the shared evidence
 
@@ -397,12 +413,16 @@ Deletes: Replace scattered startup recipes with the selected application path. R
 
 Risk: Warm caches can hide first-run costs. Record cache state and require a successful authenticated application request before stopping the startup timer.
 
+Owner review 2026-10-31: In passing with deployment D2-8. The nine-step current path and the 22-flag command above are the evidence and stay. Record cold and warm timings once when F2-5 lands. No limits before that. Question 3 is answered: none until measured.
+
 ## Open questions for the owner
 
-1. Will the normal developer command own the full disposable stack, with external services supported through explicit overrides?
-2. Will `environment.k` become the sole coordinate authority for local and deployed environments?
-3. What cold-start, warm-start, and saved-edit latency limits must the developer loop meet?
-4. Which existing saved-edit acceptance run passed against the current freshness and watcher rules?
+All four questions were answered on 2026-10-31.
+
+1. Yes. Bare `wamn dev` owns the private stack, and external services are explicit overrides (F2-5).
+2. Yes. `environment.k` is the sole coordinate authority, the same as D3-4 (F2-6).
+3. None until measured. Record cold and warm timings once when F2-5 lands (F2-11).
+4. No past run is cited. The next run of the `local_delivery` acceptance test after F2-1 to F2-3 is the evidence.
 
 <!-- lane F3, bead wamn-rk4wz.3 -->
 
