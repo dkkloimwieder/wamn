@@ -102,9 +102,18 @@ pub async fn deploy(run: &mut Run, repository: &Path, system_url: &str) -> anyho
 
 /// Admit the actual debug guest bytes and upload the production artifact layout.
 pub async fn configure(run: &Run, system_url: &str, environment: &str) -> anyhow::Result<()> {
-    let references: serde_json::Map<String, Value> = serde_json::from_slice(&std::fs::read(
+    let mut references: serde_json::Map<String, Value> = serde_json::from_slice(&std::fs::read(
         run.work.join("http-credential-reference.json"),
     )?)?;
+    let values: Value =
+        serde_json::from_slice(&std::fs::read(run.work.join("http-fixture.json"))?)?;
+    let secret = credential_secret(environment, &values, &mut references)?;
+    let file = run
+        .work
+        .join(format!("http-credentials-{environment}.json"));
+    std::fs::write(&file, serde_json::to_vec(&secret)?)?;
+    run.run("kubectl", &["apply", "-f", &file.to_string_lossy()])
+        .await?;
     let (mut system, driver) = tokio_postgres::connect(system_url, tokio_postgres::NoTls).await?;
     let driver = tokio::spawn(driver);
     system.batch_execute("SET ROLE wamn_system; INSERT INTO registry.integration_type_auth VALUES ('http','custom') ON CONFLICT DO NOTHING").await?;
@@ -140,13 +149,8 @@ pub async fn configure(run: &Run, system_url: &str, environment: &str) -> anyhow
         } else {
             ("http_basic", json!({}))
         };
-        let values: Value =
-            serde_json::from_slice(&std::fs::read(run.work.join("http-fixture.json"))?)?;
-        let material = values["items"]
-            .as_array()
-            .context("fixture resources")?
-            .iter()
-            .find_map(|item| item["stringData"].get(&stored.version))
+        let material = secret["stringData"]
+            .get(&stored.version)
             .context("fixture credential reference")?
             .as_str()
             .context("fixture material")?;
@@ -155,6 +159,73 @@ pub async fn configure(run: &Run, system_url: &str, environment: &str) -> anyhow
     tx.commit().await?;
     driver.abort();
     Ok(())
+}
+
+fn credential_secret(
+    environment: &str,
+    values: &Value,
+    references: &mut serde_json::Map<String, Value>,
+) -> anyhow::Result<Value> {
+    let name = wamn_credential_store::kubernetes::secret_name(ORG, PROJECT, environment);
+    let mut data = serde_json::Map::new();
+    for reference in references.values_mut() {
+        let version = reference["version"].as_str().context("fixture version")?;
+        let material = values["items"]
+            .as_array()
+            .context("fixture resources")?
+            .iter()
+            .find_map(|item| item["stringData"].get(version))
+            .context("fixture credential reference")?;
+        data.insert(version.to_owned(), material.clone());
+        // The host's Role permits only its own environment's Secret.
+        reference["reference"] = name.clone().into();
+    }
+    Ok(json!({
+        "apiVersion": "v1", "kind": "Secret",
+        "metadata": {"name": name, "namespace": NAMESPACE},
+        "stringData": data,
+    }))
+}
+
+#[test]
+fn scheduled_credentials_stay_within_the_environment_secret_grant() {
+    let values = json!({"items":[{
+        "metadata":{"name":"wamn-credential-acme-orders-http","namespace":NAMESPACE},
+        "stringData":{
+            "00000000-0000-4000-8000-000000000001":r#"{"username":"fixture","password":"fixture-password"}"#,
+            "00000000-0000-4000-8000-000000000002":r#"{"username":"fixture","password":"fixture-password"}"#,
+        },
+    }]});
+    let mut references = serde_json::Map::new();
+    for (name, version) in [
+        ("rest-fixture", "00000000-0000-4000-8000-000000000001"),
+        ("netsuite", "00000000-0000-4000-8000-000000000002"),
+    ] {
+        references.insert(
+            name.into(),
+            json!({"store":"k8s","reference":"wamn-credential-acme-orders-http","version":version}),
+        );
+    }
+    let secret = credential_secret("integration", &values, &mut references).unwrap();
+    let grants = wamn_control::environment::ensure::credential_access(
+        "wamn-host-acme-orders-integration",
+        "wamn-credential-acme-orders-integration",
+    );
+    assert_eq!(secret["metadata"]["namespace"], NAMESPACE);
+    for reference in references.values() {
+        assert_eq!(
+            reference["reference"],
+            grants[1].1["rules"][0]["resourceNames"][0]
+        );
+        assert_eq!(reference["reference"], secret["metadata"]["name"]);
+        let version = reference["version"].as_str().unwrap();
+        let material: Value =
+            serde_json::from_str(secret["stringData"][version].as_str().unwrap()).unwrap();
+        assert_eq!(
+            material,
+            json!({"username":"fixture","password":"fixture-password"})
+        );
+    }
 }
 
 pub async fn component(
