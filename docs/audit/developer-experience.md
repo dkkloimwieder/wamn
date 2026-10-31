@@ -6,6 +6,8 @@ Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file,
 
 ## Part 1: inventory
 
+Owner review 2026-10-31, standing: the owner's developer-experience priority order is the ui split first, then deployment ergonomics (a client submits for validation and deployment without an operator), then features such as templates (`wamn new` with three names: application, service, overlay `--base`, and no flags). Multi-language guests are wanted later. Part 1 rows are authoring, Group 4, and their order inside Group 4 follows that priority.
+
 The six applications contain 224 tracked files and 39,103 physical lines at `8c831349d3116aac27d9ca6f59a499da1c87efc7`.
 
 Counts include comments and blank lines. Tests include `tests/**` and `web/test/**`. Inline Rust tests remain with their owning source file. SQL includes migrations, commands, and queries. Cargo files belong to their data or component category.
@@ -44,7 +46,7 @@ The shared clone measurement cannot establish an authoring boilerplate ratio. It
 
 The emitter establishes the output families without requiring a build. They include compiled manifests, SQL, contracts, statement accessors, data functions, component handlers, WIT/codecs, publication records, and optional TypeScript clients. Evidence: `crates/schema/generator/src/generate.rs:337`, `crates/schema/generator/src/generate/contracts.rs:209`, and `crates/schema/generator/src/materialize.rs:430`. Logical `generated/` paths map below `apps/target/wamn/<package>/` through `crates/schema/generator/src/output.rs:11`.
 
-The target minimum for a CRUD application, which creates, reads, updates, and deletes records, is two production inputs: `wamn.k` and an initial SQL migration. The author also writes application acceptance cases and seed data. The generator owns ordinary SQL access, boundary contracts, component assembly, and default publication. An optional operator interface requires navigation choices and custom screens only. This target extends existing generation, which already emits complete CRUD data functions and handlers: `crates/schema/generator/src/generate/data.rs:3` and `crates/schema/generator/src/generate/component.rs:3`.
+The target minimum for a CRUD application, which creates, reads, updates, and deletes records, is two production inputs: `wamn.k` and the SQL baseline. The author also writes application acceptance cases and seed data. The generator owns ordinary SQL access, boundary contracts, component assembly, and default publication. An optional operator interface requires navigation choices and custom screens only. This target extends existing generation, which already emits complete CRUD data functions and handlers: `crates/schema/generator/src/generate/data.rs:3` and `crates/schema/generator/src/generate/component.rs:3`.
 
 This lane changed no files and ran no builds or tests. The final working tree was clean.
 
@@ -63,6 +65,8 @@ Deletes: Inline custom input schemas, repeated operation declarations, and autho
 
 Risk: Definition hashes change, and stricter schemas can reject previously accepted inputs. Add a fixture test that admits a numeric revision and refuses a string through the published boundary. Retain publication coverage in `apps/rest_connector/tests/publication.rs:12`.
 
+Owner review 2026-10-31: keep, Group 4 Do, after A5, because publication records change with the composed HTTP workload. The int32/string drift is real, and the fix is derivation in the generator, not an edit to the fixture. Question 2 is answered: yes, route selection, path, authentication policy and body limits stay authored per custom operation. Only the schemas and hashes derive.
+
 ## Finding F1-2: Custom handlers repeat manifest request, result, and error definitions
 
 Severity: medium  
@@ -77,6 +81,8 @@ Proposal: Emit reusable Rust boundary types and their WIT conversions from the m
 Deletes: Duplicate command/result structures, literal switches, and field-copy adapters. Keep parsed business state, database sequencing, and business refusals.
 
 Risk: Generated conversions can alter optional fields, numeric spelling, or error details. Exercise the resulting components through `released_wms_routes` at `apps/wamn_wms/tests/cluster.rs:46` and Receiving command histories at `apps/wamn_receiving/tests/receiving_command_histories_live.rs:1`.
+
+Owner review 2026-10-31: keep, Group 4 Do, after A5. Design it once for more than one guest language, because generated boundary types are what a non-Rust guest needs too.
 
 ## Finding F1-3: CRUD generation stops before component assembly
 
@@ -93,6 +99,8 @@ Deletes: The five statement include files total 178 lines. Include-only WIT worl
 
 Risk: Assembly changes can omit exports or combine Cargo features differently. Extend `typed_crud_contracts_follow_a_second_model_declaration` at `crates/schema/generator/tests/generation.rs:1732` to build without authored scaffolding. Preserve separate guest invocations required by `crates/schema/generator/src/components.rs:5`.
 
+Owner review 2026-10-31: keep, Group 4 Do, as the template item. `wamn new application` emits no Rust, and a pure CRUD package builds from the generated component crate. Question 1 is answered: yes.
+
 ## Finding F1-4: Acme reauthors the contract of its pinned base operation
 
 Severity: medium  
@@ -107,6 +115,8 @@ Proposal: Let an overlay operation explicitly consume the wire shape of an opera
 Deletes: The copied contract portions, the handwritten base WIT import, `base_request`, and matching branches of `base_error`.
 
 Risk: Incorrect inheritance can merge operation identities or change rollback behavior. Prove that a refused inspection rolls back the base receipt and that retries retain separate claim scopes. Retain overlay schema evidence from `apps/client_acme_receiving/tests/overlay_compatibility.rs:24`.
+
+Owner review 2026-10-31: keep, Group 4 Do, after A5, because composition is where the base wire shape is consumed. Question 3 is answered: yes.
 
 ## Finding F1-5: Single-statement projections require handwritten implementations
 
@@ -123,6 +133,8 @@ Deletes: The fixture maker-list data and component files, plus equivalent passth
 
 Risk: Automatic mapping can confuse optional rows, nullable columns, and empty lists. Add generated execution cases for each distinction. Retain Receiving’s column-grant coverage at `apps/wamn_receiving/tests/receiving_data_access.rs:342`.
 
+Owner review 2026-10-31: keep, Group 4 Do, after A5. A statement-only projection declared in `wamn.k` generates its handler. This follows the standing rule that no hand-written server-side code is added when the generated API already covers the read.
+
 ## Finding F1-6: Applications maintain scalar and cursor machinery that a shared crate already owns
 
 Severity: medium  
@@ -137,6 +149,8 @@ Proposal: Use the existing shared cursor and scalar functions. Keep application-
 Deletes: Receiving’s cursor implementation after compatibility proof, plus duplicate generic parsing functions. Preserve business predicates and their tests.
 
 Risk: Cursor bytes and scalar spelling affect continuation and retry behavior. Compare old and shared cursor bytes and rejection cases. Preserve Receiving’s cursor cases at `apps/wamn_receiving/data/src/cursor.rs:219` and WMS scalar cases at `apps/wamn_wms/data/src/scalar.rs:76`.
+
+Owner review 2026-10-31: Group 3 Do with code-quality A2-1. One scalar and cursor owner, and the application copies go in the same change.
 
 ## Finding F1-7: Application tests duplicate platform build and deployment machinery
 
@@ -153,6 +167,8 @@ Deletes: Duplicate process setup, build execution, artifact collection, and depl
 
 Risk: Consolidation can hide application-specific cleanup or lose failure evidence. Preserve WMS route and partial-completion cases at `apps/wamn_wms/tests/cluster.rs:46` and `apps/wamn_wms/tests/cluster.rs:53`. Preserve Receiving’s evidence-retention case at `apps/wamn_receiving/tests/route_authentication_live/cluster.rs:765`.
 
+Owner review 2026-10-31: Group 1 In passing with deployment D3-6.
+
 ## Finding F1-8: Receiving manually reconnects generated CRUD descriptions to their behavior
 
 Severity: medium  
@@ -162,17 +178,15 @@ Evidence: `apps/wamn_receiving/web/src/routes.tsx:70`, `apps/wamn_receiving/wamn
 
 Problem: Receiving repeats filter and sort fields that the manifest already declares. Its supplier and purchase-order forms manually connect generated descriptions to requests, revisions, retry keys, and reference selectors. Generated metadata therefore leaves substantial ordinary CRUD behavior for each author to rebuild.
 
-Proposal: Put standard list, detail, create, and update controllers in the shared operator shell. Drive them from generated descriptions and routes. Keep Receiving’s receipt workflow and navigation choices authored.
-
-Deletes: Repeated filter/sort lists, ordinary form submission adapters, generic detail loading, and equivalent reference-resolution glue.
-
-Risk: Shared controllers can change retry identity, revision handling, or omitted-versus-null behavior. Preserve browser cases for supplier retry keys at `apps/wamn_receiving/web/test/screens.test.tsx:528` and reference selection at `apps/wamn_receiving/web/test/screens.test.tsx:352`.
+Owned by the ui-split work, the owner's developer-experience priority 1 (owner review 2026-10-31). The audit files nothing separate. The evidence above is the pointer.
 
 ## Open questions for the owner
 
-1. Can pure CRUD applications use generated component crates with no authored Rust files?
-2. Must HTTP exposure remain explicit for each custom public operation?
-3. Can Acme consume its pinned base operation’s wire shape while retaining separate identity and inspection behavior?
+All three questions were answered on 2026-10-31.
+
+1. Yes. `wamn new application` emits no Rust (F1-3).
+2. Yes. Route selection, path, authentication policy and body limits stay authored per custom operation. Only the schemas and hashes derive (F1-1).
+3. Yes (F1-4).
 
 <!-- lane F2, bead wamn-rk4wz.2 -->
 
