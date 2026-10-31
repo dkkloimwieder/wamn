@@ -14,11 +14,6 @@ use wamn_control::role_permission::{
 };
 use wamn_test_infrastructure::locked_database::{self, LockedDatabase};
 
-const RECORD_HISTORY: &str = include_str!("../../../../deploy/sql/record-history.sql");
-const RECORD_HISTORY_APP_GRANTS: &str =
-    include_str!("../../../../deploy/sql/record-history-app-grants.sql");
-const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
-
 async fn rows(client: &Client) -> BTreeSet<String> {
     client
         .query(
@@ -35,21 +30,11 @@ async fn rows(client: &Client) -> BTreeSet<String> {
 
 /// Connect to a disposable database with the application schema installed.
 async fn install() -> (LockedDatabase, Client) {
-    let url = locked_database::database(wamn_test_postgres::database);
+    let url = locked_database::database(wamn_project_state::test_database::tenant_platform);
     let (client, connection) = tokio_postgres::connect(&url, NoTls).await.unwrap();
     tokio::spawn(async move {
         let _ = connection.await;
     });
-    client
-        .batch_execute(&format!(
-            "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
-               CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                 NOINHERIT NOREPLICATION NOBYPASSRLS; \
-             END IF; END $$; \
-             {RECORD_HISTORY}\n{RECORD_HISTORY_APP_GRANTS}\n{APP_SCHEMA}"
-        ))
-        .await
-        .expect("install the application schema");
     (url, client)
 }
 

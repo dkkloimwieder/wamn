@@ -8,26 +8,13 @@ use wamn_control::prune_record_history::prune;
 use wamn_schema_generator::{GenerationInput, StatementTransactionality, generate};
 
 async fn fixture() -> (wamn_test_postgres::Database, Client, String) {
-    let database = wamn_test_postgres::database();
+    let database = wamn_project_state::test_database::tenant_platform();
     let (client, connection) = tokio_postgres::connect(database.url(), NoTls)
         .await
         .expect("connect to the fixture database");
     tokio::spawn(async move {
         let _ = connection.await;
     });
-    for role in ["wamn_app", "wamn_scenario_author"] {
-        client
-            .batch_execute(&format!(
-                "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{role}') \
-                 THEN CREATE ROLE {role} NOLOGIN; END IF; END $$"
-            ))
-            .await
-            .expect("create the fixture roles");
-    }
-    client
-        .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
-        .await
-        .expect("install history functions and platform principals");
     client
         .batch_execute(
             "CREATE SCHEMA inventory; \
@@ -141,17 +128,6 @@ async fn age_history(client: &Client) {
 async fn write_log_retention_removes_old_successes_and_keeps_uncertain_claims() {
     let _lock = wamn_test_postgres::lock();
     let (_database, mut client, _) = fixture().await;
-    let schema = include_str!("../../../../deploy/sql/app-schema.sql");
-    let start = schema
-        .find("CREATE TABLE IF NOT EXISTS platform.write_log")
-        .unwrap();
-    let grant = "GRANT DELETE ON platform.write_log TO wamn_app;";
-    let end = start + schema[start..].find(grant).unwrap() + grant.len();
-    client
-        .batch_execute("CREATE SCHEMA IF NOT EXISTS platform")
-        .await
-        .unwrap();
-    client.batch_execute(&schema[start..end]).await.unwrap();
     client
         .batch_execute(
             "INSERT INTO platform.write_log (operation, idempotency_key, request, result, created_at) VALUES \

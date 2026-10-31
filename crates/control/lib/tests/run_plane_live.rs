@@ -444,6 +444,7 @@ async fn reset(su: &Client) {
         "{CURRENT_DATABASE_PUBLIC_CONNECT_SQL} \
          DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; \
          DROP SCHEMA IF EXISTS catalog CASCADE; \
+         DROP SCHEMA IF EXISTS platform CASCADE; \
          DO $$ BEGIN \
            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
              CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB \
