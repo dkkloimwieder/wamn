@@ -94,23 +94,6 @@ The first issue checks every assumption and stops on a false one.
 | A6 | One NATS outage now stops placement, events and the auth memory together. Each already survives its own outage. | A NATS restart during `environment_apply_kind` | Accepted: the owner ruled the scheduler outage window, and hosts read Postgres when the auth memory is gone |
 | A7 | A KV watch can be confined to `$KV.wamn-auth.<env_key>.>`, because the filtered consumer-create subject carries the filter. | A workspace test: environment A watches its prefix and is refused a watch on B's | Stop and report |
 
-## WASI version match
-
-Admission matches WASI imports the way the host linker does: by package and family, not by exact patch. Today `crates/platform/component-policy/src/lib.rs` (`CAPABILITY_REGISTRY`) admits only `0.2.12`, so every Rust toolchain or WASI-Virt bump needs a registry edit.
-
-| # | Ruling | Invariant |
-| --- | --- | --- |
-| W1 | Registry rows stay package-grain (`wasi:io`, `wasi:clocks`, …). A `wasi:*` row names the family `0.2`: any `0.2.N` import of that package is admitted up to W3's ceiling. Rows for `wasi:logging@0.1.0-draft` and every `wamn:*` package keep their exact versions. | Policy test admits `wasi:io@0.2.9`, `@0.2.12`. Refuses an unlisted package, an unlisted family, and `wamn:integration/bound@0.1.1` |
-| W2 | The WASI-Virt source revision and adapter digest stay exact. | `tests/conformance/tests/capability_registry.rs` still fails on a changed adapter digest |
-| W3 | The ceiling is the highest `0.2` patch the host's Wasmtime links, derived at build from the linked `wasmtime-wasi` WIT, never typed by hand. An import above it is refused at admission. | Policy test refuses `0.2.(ceiling + 1)`; a Wasmtime bump moves the ceiling with no source edit |
-
-**Changes**
-
-- `crates/platform/component-policy/src/lib.rs` (`CAPABILITY_REGISTRY`, `connector_import`): family and ceiling matching for `wasi:*` rows; the exact-match test becomes W1's test.
-- The build derives the ceiling for W3.
-- `tests/conformance/tests/capability_registry.rs`: rows carry families; the adapter-digest check stays.
-- The capability pages say "family" where they say an exact version.
-
 ## Kept as is
 
 These review points change nothing. Each has a stated cause.
@@ -131,7 +114,6 @@ Only One NATS forces a platform build, once, at its close. The other epics ride 
 | Epic | Images that change | Forces its own build |
 | --- | --- | --- |
 | One NATS | host, identity, ctl, CDC reader (connection config) | yes, once at close |
-| WASI version match | ctl and host (policy crate) | no |
 
 - Per issue: build, clippy, unit tests. Per merge: the live targets that touch the merged files.
 - One NATS close: `platform_apply_kind` and `environment_apply_kind` once each, then the wamn-dev cutover (`platform apply`, then `env apply` per environment; streams are re-created, no event data carries over).
@@ -140,9 +122,10 @@ Only One NATS forces a platform build, once, at its close. The other epics ride 
 
 One epic is scoped at a time. The next is scoped after the previous closes and is reviewed. Order: Deploy failures, Edge and CDN, WASI version match, One NATS. One NATS closes with the one platform build, which covers all four.
 
-**WASI version match** (scoped, epic `wamn-cqbb0`)
+**One NATS** (scoped, epic `wamn-j1r05`)
 
-1. W3: the ceiling, generated at build from the linked `wasmtime-wasi` WIT (`wamn-cqbb0.1`).
-2. W1, W2: family and ceiling matching for `wasi:*` rows in `CAPABILITY_REGISTRY` and `connector_import`, the conformance rows, and the docs (`wamn-cqbb0.2`).
-
-**One NATS**: scoped later.
+1. A1 to A7: check each assumption with kind and workspace tests, and record the result (`wamn-j1r05.1`).
+2. R1 to R4: one NATS with TLS, the cert-manager CA and the chart Secrets, certificate users, and the operator values (`wamn-j1r05.2`).
+3. R5, R7, R8, R10: environment certificates, the auth memory and the clients on the data URL, the config reloader, and the `evt-nats` deletions (`wamn-j1r05.3`).
+4. R6, R9: the materializer binding from the release chart `plugins` entry (`wamn-j1r05.4`).
+5. The deleted files, the docs, and convergence of an existing install under `platform apply` (`wamn-j1r05.5`).
