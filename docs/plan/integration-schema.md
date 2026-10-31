@@ -286,10 +286,10 @@ Three separate controls; none is a column on the connection or the binding.
 
 ```wit
 package wamn:modbus@1.0.0;
-interface read  { read-registers: func(addr: u16, count: u16) -> result<list<u16>, error>; }
+interface read  { read-registers: func(unit: u8, addr: u16, count: u16) -> result<list<u16>, error>; }
 interface write {
-  read-registers: func(addr: u16, count: u16) -> result<list<u16>, error>;
-  write-register: func(addr: u16, value: u16) -> result<_, error>;
+  read-registers: func(unit: u8, addr: u16, count: u16) -> result<list<u16>, error>;
+  write-register: func(unit: u8, addr: u16, value: u16) -> result<_, error>;
 }
 world client {
   export read;
@@ -346,7 +346,7 @@ On main (fact): `wamn:connector@0.1.0` `bound` exposes only `authority()` and `c
 - Add `parameters: func() -> string` (validated JSON) to `bound`. The host strips `auth` before returning it, because the host applies auth; only the `custom` auth type receives it, beside `bound.credential()`.
 - `wamn:integration/reader` is retired. Each version exports exactly one typed WIT world (`operations`), which may hold read and write interfaces and always exports `wamn:integration/health` (`check: func() -> result<_, string>`). Host types implement health in the host.
 - Types share interfaces where the protocol is shared (`s3`, `gcs` and `disk` export blobstore; HTTP-based types export `wamn:connection/http`); a unique protocol gets its own package (`wamn:modbus`, `wamn:netsuite/rest`).
-- An application imports interfaces, never a type. Each declared name is a component-model named import, `import <name>: <interface>;` (the `implements` form that wash-runtime routes per label), so the host links each label to its bound connection and two names may import the same interface. A declared name is a WIT label: `^[a-z][a-z0-9-]{0,62}$`. `wamn:connection/http` routes by label too and loses its `requirement` field; blobstore keeps the WASI shape, a container by name.
+- An application imports interfaces, never a type. In a typed integration world, each declared name is a component-model named import, `import <name>: <interface>;` (the `implements` form that wash-runtime routes per label), so the host links each label to its bound connection and two names may import the same interface. A declared name is a WIT label: `^[a-z][a-z0-9-]{0,62}$`. `wamn:connection/http` and blobstore are host-type platform interfaces: they select the connection by its declared name at run time, so generic workflow nodes can use any declared connection.
 - Within one release, every component bound to a connection imports from that release's one version, so consumers of a connection upgrade together; they may import different interfaces of its world. Apply refuses a mismatch and names the component; `wamn build` warns first.
 - Compatibility is component-model semver: 1.x within a major, 0.x within a minor. Most wamn contracts are 0.x, so a minor bump forces a rebuild until they reach 1.0. Interface packages keep their versions.
 
