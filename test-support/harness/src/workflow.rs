@@ -20,7 +20,8 @@ pub async fn author_and_enable(
     let project_task = tokio::spawn(connection);
     let result = async {
         project.execute(
-            "WITH actor AS MATERIALIZED (SELECT set_config('app.user_id', $1, true)) \
+            "WITH actor AS MATERIALIZED (SELECT set_config('app.user_id', $1, true), \
+             set_config('app.operation', 'admin:workflow-fixture', true)) \
              INSERT INTO platform.user_role (user_id, role_name) \
              SELECT $1::text::uuid, 'admin' FROM actor WHERE true ON CONFLICT DO NOTHING",
             &[&request.created_by],

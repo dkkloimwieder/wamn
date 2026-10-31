@@ -286,6 +286,8 @@ RUN tar -xzf /tmp/docker.tgz -C /usr/local/bin --strip-components=1 docker/docke
  && tar -xzf /tmp/helm.tgz -C /usr/local/bin --strip-components=1 linux-amd64/helm \
  && tar -xzf /tmp/kcl.tgz -C /usr/local/bin kcl \
  && rm /tmp/docker.tgz /tmp/helm.tgz /tmp/kcl.tgz
+# The cases compile package documents with this kcl, not tools/install-kcl.
+ENV WAMN_KCL=/usr/local/bin/kcl
 ADD --chmod=0755 --checksum=sha256:50030de23cf40a18505f20426f6a8506bedf13c6e509244bd1fa9463721b0f54 https://github.com/kubernetes-sigs/kind/releases/download/v0.32.0/kind-linux-amd64 /usr/local/bin/kind
 # The cases run kubectl v1.36.2; ctl's own pin stays as it is.
 ADD --chmod=0755 --checksum=sha256:1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82 https://dl.k8s.io/release/v1.36.2/bin/linux/amd64/kubectl /usr/local/bin/kubectl
