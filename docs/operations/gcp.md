@@ -767,18 +767,15 @@ WAMN_OAUTH_ENCRYPTION='{"provider":"gcp","project":"wamn-dev","region":"us-centr
 
 The host uses its pod identity token for the Cloud KMS REST API.
 It records the key version from the encrypt response in each row.
-For local deployments, set `WAMN_OAUTH_ENCRYPTION='{"provider":"local"}'` and mount the same envelope key on both host types.
-Set `WAMN_OAUTH_KEY_FILE` to that file path.
-The file must contain exactly 32 random bytes and use mode `0600`.
-Keep the key across restarts because a replacement key cannot decrypt existing rows.
-Use a private directory for the file:
+Platform control rendering and environment apply pass `WAMN_OAUTH_ENCRYPTION` to every host.
+The GCP value names the cluster project and the region from the cluster zone.
+The GCP environment overlays also carry that value for direct `env apply`.
 
-```bash
-umask 077
-head -c 32 /dev/urandom > /private/oauth-key
-chmod 0600 /private/oauth-key
-export WAMN_OAUTH_KEY_FILE=/private/oauth-key
-```
+Local cluster targets share the `hosts/wamn-oauth` Secret across application and control hosts.
+Platform install creates its 32-byte key only when the Secret is absent.
+The hosts mount it with mode `0600` at `/etc/wamn/oauth/key` through `WAMN_OAUTH_KEY_FILE`.
+The local development target uses `<dev-root>/oauth.key` with the same permissions.
+Keep these keys across restarts because a replacement key cannot decrypt existing rows.
 
 ### 4.10 Platform file
 

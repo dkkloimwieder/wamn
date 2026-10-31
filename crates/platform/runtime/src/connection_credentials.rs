@@ -11,6 +11,7 @@ use anyhow::Context as _;
 #[derive(Clone)]
 pub struct ConnectionCredentials {
     org: Option<String>,
+    oauth_pool: Option<deadpool_postgres::Pool>,
     store: Option<Arc<dyn wamn_credential_store::Store>>,
     database: Option<Arc<tokio_postgres::Client>>,
 }
@@ -29,9 +30,34 @@ impl ConnectionCredentials {
     pub fn from_database(client: Arc<tokio_postgres::Client>, org: &str) -> Self {
         Self {
             org: Some(org.to_owned()),
+            oauth_pool: None,
             store: None,
             database: Some(client),
         }
+    }
+
+    /// Give OAuth transactions dedicated connections under the same reader login.
+    pub fn with_oauth_database_url(mut self, url: &str) -> anyhow::Result<Self> {
+        let manager = deadpool_postgres::Manager::new(url.parse()?, tokio_postgres::NoTls);
+        self.oauth_pool = Some(
+            deadpool_postgres::Pool::builder(manager)
+                .max_size(4)
+                .build()?,
+        );
+        Ok(self)
+    }
+
+    pub(crate) async fn oauth_database(&self) -> anyhow::Result<deadpool_postgres::Object> {
+        self.oauth_pool
+            .as_ref()
+            .context("OAuth database unavailable")?
+            .get()
+            .await
+            .context("open OAuth transaction connection")
+    }
+
+    pub(crate) fn org(&self) -> anyhow::Result<&str> {
+        self.org.as_deref().context("connection reader has no org")
     }
 
     /// Supply the environment store, including in tests with private files.
@@ -44,6 +70,7 @@ impl ConnectionCredentials {
     pub fn empty() -> Self {
         Self {
             org: None,
+            oauth_pool: None,
             store: None,
             database: None,
         }

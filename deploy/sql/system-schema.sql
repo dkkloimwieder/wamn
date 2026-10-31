@@ -1272,7 +1272,7 @@ END $$;
 
 -- Read connection metadata without exposing store references to API readers.
 CREATE FUNCTION registry.connection_summary(requested_connection uuid) RETURNS jsonb
-LANGUAGE sql STABLE SET search_path = pg_catalog AS $$
+LANGUAGE sql STABLE SET search_path = pg_catalog SET TimeZone = 'UTC' AS $$
     SELECT to_jsonb(c) || jsonb_build_object('name',i.name,'parameters',g.parameters,'hint',k.hint,
         'credential_created_at',k.created_at,'credential_created_by',k.created_by,
         'integration_status',i.status,'auth_type',i.auth_type,
@@ -1281,9 +1281,12 @@ LANGUAGE sql STABLE SET search_path = pg_catalog AS $$
             WHERE v.integration_type=c.integration_type AND f.value->>'deprecated'='true'),
         'versions',(SELECT jsonb_agg(v.version ORDER BY v.version)
                     FROM registry.integration_type_version v WHERE v.integration_type=c.integration_type))
+    || CASE WHEN i.auth_type IN ('oauth2_client_credentials','oauth2_client_credentials_jwt','oauth2_authorization_code')
+        THEN jsonb_build_object('refresh_status',o.refresh_status,'expires_at',o.expires_at) ELSE '{}'::jsonb END
     FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id
     JOIN registry.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation)
     LEFT JOIN identity.credential k ON k.id=g.credential_id
+    LEFT JOIN identity.oauth_token o ON o.connection_id=c.id
     WHERE c.id=requested_connection
 $$;
 
@@ -1705,6 +1708,24 @@ BEGIN
    AND login.environment=environment AND c.id=requested_connection;
 END $$;
 
+-- Serialize OAuth refresh with credential rotation, under the reader's environment.
+CREATE FUNCTION registry.lock_oauth_connection(org_id text, project_id text, environment text, requested_connection uuid)
+RETURNS bigint
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+#variable_conflict use_variable
+DECLARE generation bigint;
+BEGIN
+ SELECT c.active_generation INTO generation
+ FROM wamn_authority.author_login_tenants login
+ JOIN registry.connection c ON (c.org,c.project,c.env)=(login.org_id,login.project_id,login.environment)
+ WHERE login.login_identity=session_user AND login.org_id=org_id AND login.project_id=project_id
+   AND login.environment=environment AND c.id=requested_connection AND c.status='active'
+ FOR NO KEY UPDATE OF c;
+ RETURN generation;
+END $$;
+ALTER FUNCTION registry.lock_oauth_connection(text,text,text,uuid) OWNER TO wamn_system;
+REVOKE ALL ON FUNCTION registry.lock_oauth_connection(text,text,text,uuid) FROM PUBLIC;
+
 CREATE FUNCTION registry.read_connection_generation(org_id text, project_id text, environment text, requested_connection uuid, requested_generation bigint)
 RETURNS TABLE(name text, integration_type text, runtime_type text, auth_type text, external_system text, principal_id text, parameters jsonb)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
@@ -1771,7 +1792,8 @@ REVOKE ALL ON FUNCTION registry.read_connection_fact(text,text,text,uuid),
  registry.read_integration_version(text,integer) FROM PUBLIC;
 DO $$ BEGIN
  IF to_regrole('wamn_conn_reader') IS NOT NULL THEN
-  GRANT EXECUTE ON FUNCTION registry.read_connection_fact(text,text,text,uuid),
+  GRANT EXECUTE ON FUNCTION registry.lock_oauth_connection(text,text,text,uuid),
+   registry.read_connection_fact(text,text,text,uuid),
    registry.read_connection_generation(text,text,text,uuid,bigint),
    registry.read_connection_secret(text,text,text,uuid),
    registry.read_env_connections(text,text,text),

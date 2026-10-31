@@ -8,11 +8,13 @@
 //! record participates.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+#[cfg(test)]
+use std::sync::Mutex;
+#[cfg(test)]
 use std::time::Duration;
 
 use anyhow::Context as _;
-use tokio::time::Instant;
 
 use tracing::Instrument as _;
 use wamn_catalog::{ArtifactHash, ConnectionTypeDescriptor, ServingComponent, ServingManifest};
@@ -199,7 +201,7 @@ pub struct ConnectionHttp {
     postgres: Arc<WamnPostgres>,
     transport: Arc<HttpTransport>,
     facts: Arc<ConnectionFacts>,
-    oauth2: Oauth2Cache,
+    oauth2: Arc<crate::oauth_token::Cache>,
     env_key: Box<str>,
     project: Box<str>,
     allowed_hosts: Arc<[AllowedHost]>,
@@ -230,14 +232,12 @@ impl ConnectionHttp {
     ) -> Self {
         let project: Box<str> = project.into();
         postgres.set_connection_credentials(facts.reader(), &project);
+        let oauth2 = facts.oauth_tokens();
         Self {
             postgres,
             transport,
             facts,
-            oauth2: Oauth2Cache {
-                entries: Mutex::new(HashMap::new()),
-                now: Instant::now,
-            },
+            oauth2,
             env_key: env_key.into(),
             project,
             allowed_hosts,
@@ -360,7 +360,7 @@ impl ConnectionHttp {
         component_id: &str,
         request: &Request,
     ) -> Result<Response, ConnectionError> {
-        let first = self.attempt(component_id, request).await?;
+        let first = self.attempt(component_id, request, None).await?;
         let (connection, used) = match &first {
             Attempt::Sent { response, .. } if !matches!(response.status, 401 | 403) => {
                 return Ok(first.into_response().expect("a sent attempt"));
@@ -381,8 +381,8 @@ impl ConnectionHttp {
             .await
             .map_err(|_| ConnectionError::CredentialUnavailable)?
             .auth_type
-            == "oauth2_client_credentials"
-            && first.status() == Some(401);
+            .clone();
+        let oauth2 = crate::oauth_token::is_oauth(&oauth2) && first.status() == Some(401);
         let fresh = self
             .facts
             .read_again(&connection)
@@ -391,19 +391,17 @@ impl ConnectionHttp {
         if matches!(first, Attempt::Sent { .. }) && fresh.as_ref() == Some(&used) && !oauth2 {
             return Ok(first.into_response().expect("a sent attempt"));
         }
-        let second = match self.attempt(component_id, request).await {
-            Ok(second) => second,
-            // A failed fresh token request answers the first refusal.
-            Err(_) if oauth2 => {
-                return Ok(first.into_response().expect("a sent attempt"));
-            }
-            Err(error) => return Err(error),
+        let rejected = match &first {
+            Attempt::Sent { oauth_token, .. } if oauth2 => oauth_token.as_deref(),
+            _ => None,
         };
+        let second = self.attempt(component_id, request, rejected).await?;
         match second {
             Attempt::Sent {
                 response,
                 connection,
                 used,
+                ..
             } => {
                 if oauth2 && response.status == 401 {
                     self.oauth2
@@ -424,6 +422,7 @@ impl ConnectionHttp {
         &self,
         component_id: &str,
         request: &Request,
+        rejected: Option<&str>,
     ) -> Result<Attempt, ConnectionError> {
         let invocation = self
             .invocation(component_id)
@@ -619,13 +618,14 @@ impl ConnectionHttp {
             .generation(&connection, generation)
             .await
             .map_err(|_| ConnectionError::CredentialUnavailable)?;
-        let mut response = self
+        let (mut response, oauth_token) = self
             .execute_authenticated(
                 scope,
                 &authority,
                 decision,
                 request,
                 (&connection, &fact, &configuration),
+                rejected,
             )
             .await?;
         response
@@ -635,6 +635,7 @@ impl ConnectionHttp {
             response,
             connection,
             used: fact,
+            oauth_token,
         })
     }
 
@@ -645,7 +646,8 @@ impl ConnectionHttp {
         mut decision: AuthorityDecision,
         request: &Request,
         (connection, fact, configuration): (&uuid::Uuid, &ConnectionFact, &ConnectionGeneration),
-    ) -> Result<Response, ConnectionError> {
+        rejected: Option<&str>,
+    ) -> Result<(Response, Option<String>), ConnectionError> {
         let auth_type = configuration.auth_type.as_str();
         let parameters = configuration
             .parameters
@@ -662,75 +664,129 @@ impl ConnectionHttp {
             ),
         };
         let material = secret.as_deref().map(Secret::expose);
-        if auth_type != "oauth2_client_credentials" {
+        if !crate::oauth_token::is_oauth(auth_type) {
             let headers =
                 authentication::headers(auth_type, &parameters, material, request, &mut decision)?;
-            return execute(&self.transport, scope, decision, request, headers).await;
+            return execute(&self.transport, scope, decision, request, headers)
+                .await
+                .map(|response| (response, None));
         }
-        let credential = oauth2_credential(&parameters, material)?;
         let key = (*connection, scope.generation);
         let token = self
-            .oauth2_token(&scope, authority, &credential, &key)
+            .oauth2_token(
+                &scope,
+                authority,
+                (auth_type, &parameters, material),
+                &key,
+                rejected,
+            )
             .await?;
         execute(
             &self.transport,
             scope,
             decision,
             request,
-            [("authorization".into(), token)].into(),
+            [("authorization".into(), format!("Bearer {token}"))].into(),
         )
         .await
+        .map(|response| (response, Some(token)))
     }
 
     async fn oauth2_token(
         &self,
         scope: &ClientScope,
         authority: &HttpConnectionAuthority,
-        credential: &Oauth2Credential,
-        key: &Oauth2CacheKey,
+        (auth_type, parameters, material): (&str, &serde_json::Value, Option<&str>),
+        key: &crate::oauth_token::CacheKey,
+        rejected: Option<&str>,
     ) -> Result<String, ConnectionError> {
-        let (target, endpoint) = bound_http_target(authority, &credential.token_url)
-            .map_err(|_| ConnectionError::CredentialUnavailable)?;
-        let now = (self.oauth2.now)();
+        let ticket = self.facts.oauth_ticket(&key.0);
         {
             let mut entries = self.oauth2.entries.lock().expect("OAuth2 cache lock");
-            entries.retain(|_, (_, expires)| *expires > now);
-            if let Some((token, _)) = entries.get(key) {
+            entries.retain(|_, (_, expires)| *expires > tokio::time::Instant::now());
+            if rejected.is_none()
+                && let Some((token, _)) = entries.get(key)
+            {
                 return Ok(token.clone());
             }
+            entries.remove(key);
         }
-        let mut decision = resolve_http_request(
-            authority,
-            &target,
-            &self.allowed_hosts,
-            &ConnectionNetworkPolicy,
-            &TokioDnsResolver,
+        let envelope = self
+            .facts
+            .oauth_encryption()
+            .ok_or(ConnectionError::CredentialUnavailable)?;
+        let available = crate::oauth_token::get(
+            crate::oauth_token::Request {
+                reader: &self.facts.reader(),
+                project: &self.project,
+                environment: self.facts.environment(),
+                connection: key.0,
+                generation: key.1,
+                authorization_code: auth_type == "oauth2_authorization_code",
+                rejected,
+            },
+            &envelope,
+            |old| async move {
+                // Issue .4 supplies the signed client assertion at this provider seam.
+                anyhow::ensure!(
+                    auth_type != "oauth2_client_credentials_jwt",
+                    "OAuth client assertion unavailable"
+                );
+                let credential = oauth2_credential_for(auth_type, parameters, material)
+                    .map_err(|_| anyhow::anyhow!("OAuth credential unavailable"))?;
+                let refresh = if auth_type == "oauth2_authorization_code" {
+                    Some(
+                        old.and_then(|token| token.refresh_token)
+                            .ok_or_else(|| anyhow::anyhow!("OAuth refresh token missing"))?,
+                    )
+                } else {
+                    None
+                };
+                let (target, endpoint) = bound_http_target(authority, &credential.token_url)?;
+                let mut decision = resolve_http_request(
+                    authority,
+                    &target,
+                    &self.allowed_hosts,
+                    &ConnectionNetworkPolicy,
+                    &TokioDnsResolver,
+                )
+                .await?;
+                decision.logical_url = endpoint;
+                let token = fetch_oauth2_token(
+                    &self.transport,
+                    scope.clone(),
+                    &decision,
+                    &credential,
+                    refresh.as_deref(),
+                )
+                .await
+                .map_err(|_| anyhow::anyhow!("OAuth provider unavailable"))?;
+                Ok(crate::oauth_token::Fetched {
+                    token: crate::oauth_token::Token {
+                        access_token: Some(token.access_token),
+                        refresh_token: token.refresh_token,
+                    },
+                    expires_in: token.expires_in,
+                })
+            },
         )
         .await
-        .map_err(|_| ConnectionError::CredentialUnavailable)?;
-        decision.logical_url = endpoint;
-        let token =
-            fetch_oauth2_token(&self.transport, scope.clone(), &decision, credential).await?;
-        let header = format!("Bearer {}", token.access_token);
-        // Missing or short expiry permits this send only. Start at fetch time,
-        // so time spent obtaining the token never extends its cached lifetime.
-        if let Some(expires) = token
-            .expires_in
-            .and_then(|seconds| seconds.checked_sub(60))
-            .and_then(|seconds| now.checked_add(Duration::from_secs(seconds)))
-            .filter(|expires| *expires > (self.oauth2.now)())
-        {
-            self.oauth2
-                .entries
-                .lock()
-                .expect("OAuth2 cache lock")
-                .insert(*key, (header.clone(), expires));
+        .map_err(|error| {
+            if error.unauthorized {
+                ConnectionError::Unauthorized
+            } else {
+                ConnectionError::CredentialUnavailable
+            }
+        })?;
+        if let Some(expires) = available.retain_until {
+            let mut entries = self.oauth2.entries.lock().expect("OAuth2 cache lock");
+            if self.facts.oauth_ticket(&key.0) == ticket {
+                entries.insert(*key, (available.token.clone(), expires));
+            }
         }
-        Ok(header)
+        Ok(available.token)
     }
 }
-
-type Oauth2CacheKey = (uuid::Uuid, i64);
 
 /// One send of [`ConnectionHttp::send`] and the connection fact it used.
 enum Attempt {
@@ -738,6 +794,7 @@ enum Attempt {
         response: Response,
         connection: uuid::Uuid,
         used: ConnectionFact,
+        oauth_token: Option<String>,
     },
     /// The fact named another generation than the authorization read.
     Stale {
@@ -762,11 +819,6 @@ impl Attempt {
     }
 }
 
-struct Oauth2Cache {
-    entries: Mutex<HashMap<Oauth2CacheKey, (String, Instant)>>,
-    now: fn() -> Instant,
-}
-
 struct Oauth2Credential {
     token_url: String,
     client_id: String,
@@ -778,12 +830,21 @@ fn oauth2_credential(
     parameters: &serde_json::Value,
     material: Option<&str>,
 ) -> Result<Oauth2Credential, ConnectionError> {
+    oauth2_credential_for("oauth2_client_credentials", parameters, material)
+}
+
+fn oauth2_credential_for(
+    auth_type: &str,
+    parameters: &serde_json::Value,
+    material: Option<&str>,
+) -> Result<Oauth2Credential, ConnectionError> {
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Parameters {
         token_url: String,
         client_id: String,
         scopes: Vec<String>,
+        authorize_url: Option<String>,
     }
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -795,7 +856,10 @@ fn oauth2_credential(
     let credential: Credential =
         serde_json::from_str(material.ok_or(ConnectionError::CredentialUnavailable)?)
             .map_err(|_| ConnectionError::CredentialUnavailable)?;
-    if parameters.client_id.is_empty() || credential.client_secret.is_empty() {
+    if parameters.client_id.is_empty()
+        || credential.client_secret.is_empty()
+        || (auth_type == "oauth2_client_credentials" && parameters.authorize_url.is_some())
+    {
         return Err(ConnectionError::CredentialUnavailable);
     }
     Ok(Oauth2Credential {
@@ -811,6 +875,7 @@ struct Oauth2Token {
     access_token: String,
     token_type: String,
     expires_in: Option<u64>,
+    refresh_token: Option<String>,
 }
 
 async fn fetch_oauth2_token(
@@ -818,6 +883,7 @@ async fn fetch_oauth2_token(
     scope: ClientScope,
     decision: &AuthorityDecision,
     credential: &Oauth2Credential,
+    refresh_token: Option<&str>,
 ) -> Result<Oauth2Token, ConnectionError> {
     use base64::Engine as _;
 
@@ -831,9 +897,14 @@ async fn fetch_oauth2_token(
     ));
     let body = {
         let mut form = url::form_urlencoded::Serializer::new(String::new());
-        form.append_pair("grant_type", "client_credentials");
-        if let Some(scope) = &credential.scope {
-            form.append_pair("scope", scope);
+        if let Some(refresh) = refresh_token {
+            form.append_pair("grant_type", "refresh_token");
+            form.append_pair("refresh_token", refresh);
+        } else {
+            form.append_pair("grant_type", "client_credentials");
+            if let Some(scope) = &credential.scope {
+                form.append_pair("scope", scope);
+            }
         }
         form.finish()
     };
@@ -1512,7 +1583,8 @@ fn http_outcome(result: &Result<Response, ConnectionError>) -> EffectOutcome {
             | ConnectionError::Incompatible
             | ConnectionError::AuthorityDenied
             | ConnectionError::AttestationInvalid
-            | ConnectionError::CredentialUnavailable,
+            | ConnectionError::CredentialUnavailable
+            | ConnectionError::Unauthorized,
         ) => EffectOutcome::RefusedBeforeDispatch,
     }
 }
@@ -2290,6 +2362,7 @@ mod tests {
             ConnectionError::AttestationInvalid,
             ConnectionError::AuthorityDenied,
             ConnectionError::CredentialUnavailable,
+            ConnectionError::Unauthorized,
             ConnectionError::Incompatible,
         ] {
             let outcome = http_outcome(&Err(error));

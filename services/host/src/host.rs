@@ -1238,7 +1238,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             let client = Arc::new(client);
             file_connection_reader = Some(Arc::clone(&client));
             (
-                ConnectionCredentials::from_database(client, org),
+                ConnectionCredentials::from_database(client, org).with_oauth_database_url(url)?,
                 Some(SupervisedIdentityConnection::new(tokio::spawn(connection))),
             )
         }

@@ -13,6 +13,8 @@ replicas: 1
 schedulerNatsUrl: nats://nats.platform.svc.cluster.local:4222
 dataNatsUrl: nats://nats.platform.svc.cluster.local:4222
 env:
+- name: WAMN_OAUTH_ENCRYPTION
+  value: '{"provider":"gcp","project":"wamn-dev","region":"us-central1"}'
 - name: WAMN_PG_GUEST_POOL_MAX
   value: '16'
 - name: WAMN_PG_PLATFORM_POOL_MAX

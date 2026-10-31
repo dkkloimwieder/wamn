@@ -1549,6 +1549,10 @@ async fn assert_definer_grantees(client: &Client) -> anyhow::Result<()> {
             &["wamn_conn_reader"],
         ),
         (
+            "registry.lock_oauth_connection(text, text, text, uuid)",
+            &["wamn_conn_reader"],
+        ),
+        (
             "registry.read_connection_fact(text, text, text, uuid)",
             &["wamn_conn_reader"],
         ),
@@ -1644,6 +1648,9 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
     let control_url = install(&admin, database.url()).await?;
     let (logins, billing, shop) = environments(&admin, database.url(), "connections").await?;
     let writer = connect(&control_url).await?;
+    writer
+        .batch_execute("SET TIME ZONE 'America/New_York'")
+        .await?;
     assert!(
         writer.batch_execute("SET ROLE wamn_control").await.is_err(),
         "the control generation inherits its grants without permission to assume the ACL role"
@@ -1755,6 +1762,51 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         .query_one("SELECT id::text FROM platform.connection", &[])
         .await?
         .get(0);
+    admin.execute("UPDATE registry.integration SET auth_type='oauth2_client_credentials' WHERE name='erp' AND project='billing'", &[]).await?;
+    let selection = json!({"project":"billing","env":"dev","name":"erp"});
+    let empty = call(
+        &delivery,
+        "connection/get",
+        boss.as_str(),
+        selection.clone(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(empty["refresh_status"], Value::Null);
+    assert_eq!(empty["expires_at"], Value::Null);
+    admin.execute("INSERT INTO identity.oauth_token(connection_id,ciphertext,nonce,wrapped_key,key_id,expires_at,refresh_status,updated_at) VALUES($1::text::uuid,$2,$3,$4,'file:fixture','2099-01-01T00:00:00Z','failing',clock_timestamp())",
+        &[&identity, &b"private-token-bytes".as_slice(), &b"private-nonce".as_slice(), &b"private-wrapped-key".as_slice()]).await?;
+    for status in ["failing", "ok"] {
+        admin.execute("UPDATE identity.oauth_token SET refresh_status=$1 WHERE connection_id=$2::text::uuid", &[&status,&identity]).await?;
+        let answer = call(
+            &delivery,
+            "connection/get",
+            boss.as_str(),
+            selection.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(answer["refresh_status"], status);
+        assert_eq!(answer["expires_at"], "2099-01-01T00:00:00+00:00");
+        for private in [
+            "ciphertext",
+            "nonce",
+            "wrapped_key",
+            "key_id",
+            "access_token",
+            "refresh_token",
+            "private-token",
+        ] {
+            assert!(!answer.to_string().contains(private), "{answer}");
+        }
+    }
+    admin
+        .execute(
+            "DELETE FROM identity.oauth_token WHERE connection_id=$1::text::uuid",
+            &[&identity],
+        )
+        .await?;
+    admin.execute("UPDATE registry.integration SET auth_type='none' WHERE name='erp' AND project='billing'", &[]).await?;
     billing.execute("CREATE TABLE public.connection_reference(connection_id uuid REFERENCES platform.connection(id))",&[]).await?;
     billing
         .execute(

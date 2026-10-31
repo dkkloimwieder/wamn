@@ -175,7 +175,7 @@ pub(super) async fn credentials(
 /// Render the org host values shared by the cluster and local control host.
 pub(crate) fn host_values(org: &str) -> Value {
     let name = format!("c-{org}");
-    json!({"runtime-operator": {"runtime": {
+    let mut values = json!({"runtime-operator": {"runtime": {
         "terminationGracePeriodSeconds": 70,
         "hostGroups": [{
             "name": name, "namespace": "hosts", "replicas": 1,
@@ -213,7 +213,13 @@ pub(crate) fn host_values(org: &str) -> Value {
             "resources": {"requests": {"memory": "256Mi", "cpu": "250m"},
                 "limits": {"memory": "4Gi", "cpu": "2"}}
         }]
-    }}})
+    }}});
+    super::oauth::host_group(
+        &mut values["runtime-operator"]["runtime"]["hostGroups"][0],
+        &json!({"provider":"local"}),
+    )
+    .expect("control host group");
+    values
 }
 
 fn service_objects(
@@ -254,9 +260,15 @@ pub(super) async fn release(
     let chart = directory.join("release-chart");
     let values = directory.join("values-control.yaml");
     let mut desired = host_values(&document.org);
+    super::oauth::host_group(
+        &mut desired["runtime-operator"]["runtime"]["hostGroups"][0],
+        &super::oauth::configuration(document),
+    )?;
+    let key_created = super::oauth::ensure_key(target, document).await?;
     desired["routeHost"] = document.route_hosts.control.clone().into();
     desired["platformUi"] = true.into();
-    let mut changed = registry_ca(target, &document.org, registry, &mut desired).await?;
+    let mut changed =
+        key_created | registry_ca(target, &document.org, registry, &mut desired).await?;
     std::fs::write(&values, serde_yaml::to_string(&desired)?)?;
     let name = format!("c-{}", document.org);
     let rendered = super::install::helm(
@@ -388,6 +400,58 @@ mod tests {
         let group = &values["runtime-operator"]["runtime"]["hostGroups"][0];
         assert_eq!(group["name"], "c-acme");
         assert_eq!(group["extraArgs"], json!(["--control", "--org=acme"]));
+        let variables = group["env"].as_array().unwrap();
+        assert!(
+            variables
+                .iter()
+                .any(|value| value["name"] == "WAMN_OAUTH_ENCRYPTION"
+                    && value["value"] == r#"{"provider":"local"}"#)
+        );
+        assert!(
+            variables
+                .iter()
+                .any(|value| value["name"] == "WAMN_OAUTH_KEY_FILE"
+                    && value["value"] == "/etc/wamn/oauth/key")
+        );
+        assert!(
+            group["volumes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value["secret"]["secretName"] == "wamn-oauth"
+                    && value["secret"]["defaultMode"] == 384)
+        );
+        let mut cloud = document.clone();
+        cloud.provider = super::super::document::Provider::Gcp;
+        cloud.project_id = "project-one".into();
+        cloud.zone = "us-east1-b".into();
+        let configuration = super::super::oauth::configuration(&cloud);
+        assert_eq!(
+            configuration,
+            json!({"provider":"gcp","project":"project-one","region":"us-east1"})
+        );
+        let mut cloud_group = group.clone();
+        super::super::oauth::host_group(&mut cloud_group, &configuration).unwrap();
+        let variables = cloud_group["env"].as_array().unwrap();
+        assert!(
+            variables
+                .iter()
+                .any(|value| value["name"] == "WAMN_OAUTH_ENCRYPTION"
+                    && serde_json::from_str::<Value>(value["value"].as_str().unwrap()).unwrap()
+                        == configuration)
+        );
+        assert!(
+            !variables
+                .iter()
+                .any(|value| value["name"] == "WAMN_OAUTH_KEY_FILE")
+        );
+        assert!(
+            !cloud_group["volumes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value["name"] == "oauth-key")
+        );
         let chart = json!({"platform": {"roles": {"http": {"image": "registry/http@sha256:abc"}}}});
         let objects = service_objects(
             Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../..")),

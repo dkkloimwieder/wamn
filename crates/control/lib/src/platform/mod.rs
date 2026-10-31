@@ -16,6 +16,7 @@ mod invite;
 pub mod job;
 pub mod lock;
 pub mod manifests;
+pub(crate) mod oauth;
 mod packages;
 pub mod pools;
 pub mod project;

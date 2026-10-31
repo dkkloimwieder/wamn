@@ -92,6 +92,11 @@ The materializer does not enter the local admission facts, the release manifest,
 The host starts it after the flow-http workload runs, and the loop waits until it runs.
 The materializer restarts with the host on each loop change. Its JetStream consumers are durable, so a restart resumes them.
 
+Local application and control hosts use `WAMN_OAUTH_ENCRYPTION='{"provider":"local"}'`.
+They share `<dev-root>/oauth.key` through `WAMN_OAUTH_KEY_FILE`.
+Startup creates the 32-byte key with mode `0600` only when the file is absent.
+Keep that file across host restarts so that stored OAuth tokens stay readable.
+
 The command starts identity, the org control host, and a local web server, then writes private `dev.json` and exits.
 The control host uses `wamn-host host --control` and the same org credential operation as `provision-org --prepare-control-generation`.
 It loads the local flow-http bytes with the interfaces from `deploy/gcp/control-service.yaml`.

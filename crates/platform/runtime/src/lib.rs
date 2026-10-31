@@ -21,4 +21,5 @@ pub mod session_keys;
 pub mod connection_credentials;
 
 pub mod oauth_encryption;
+pub mod oauth_token;
 mod pod_identity;

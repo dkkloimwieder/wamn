@@ -32,6 +32,7 @@ interface http {
     credential-unavailable,
     timeout,
     transport(string),
+    unauthorized,
   }
 
   send: async func(request: request) -> result<response, connection-error>;

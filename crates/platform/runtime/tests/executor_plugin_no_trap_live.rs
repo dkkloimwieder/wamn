@@ -531,7 +531,8 @@ fn connection_http_guest() -> String {
       (case "attestation-invalid")
       (case "credential-unavailable")
       (case "timeout")
-      (case "transport" string)))
+      (case "transport" string)
+      (case "unauthorized")))
     (export "connection-error" (type $connection-error (eq $connection-error')))
     (export "send" (func async
       (param "request" $request)

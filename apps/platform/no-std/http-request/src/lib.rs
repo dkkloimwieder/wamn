@@ -238,7 +238,8 @@ fn classify_connection_error(error: ConnectionError) -> NodeError {
         ConnectionError::Unbound
         | ConnectionError::Incompatible
         | ConnectionError::AuthorityDenied
-        | ConnectionError::AttestationInvalid => terminal(
+        | ConnectionError::AttestationInvalid
+        | ConnectionError::Unauthorized => terminal(
             "connection-denied",
             format!("connection refused: {error:?}"),
         ),

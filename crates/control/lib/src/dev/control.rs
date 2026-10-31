@@ -39,6 +39,8 @@ pub(super) async fn start(
     environment: &super::environment::DevEnvironment,
 ) -> anyhow::Result<String> {
     let root = &args.root;
+    let oauth_key = root.join("oauth.key");
+    crate::platform::oauth::local_key(&oauth_key)?;
     let org = &environment.identity.org;
     let database = url::Url::parse(&args.system_database_url)?;
     let secret = root.join("control.json");
@@ -145,6 +147,8 @@ pub(super) async fn start(
     env.extend(
         json!({
             "HOME": "/tmp", "RUST_LOG": "info", "WASMCLOUD_HOST_ENVIRONMENT": "hosts",
+            "WAMN_OAUTH_ENCRYPTION": r#"{"provider":"local"}"#,
+            "WAMN_OAUTH_KEY_FILE": oauth_key,
             "WAMN_CONTROL_URL": secret_value(&secret, "url")?,
             "WASH_HOST_MAX_GUEST_MEMORY": group["resources"]["limits"]["memory"],
             "WAMN_SESSION_ISSUER": issuer.endpoint,

@@ -418,13 +418,14 @@ async fn release_inputs(
         .rsplit_once("--")
         .context("environment database has no instance suffix")?
         .1;
-    let group = render_host_group(
+    let mut group = render_host_group(
         &std::fs::read_to_string(&path)
             .with_context(|| format!("read host group {}", path.display()))?,
         environment,
         &document.registry,
         suffix,
     )?;
+    super::oauth::host_group(&mut group, &super::oauth::configuration(document))?;
     request
         .files
         .insert("host-group.yaml".into(), serde_yaml::to_string(&group)?);

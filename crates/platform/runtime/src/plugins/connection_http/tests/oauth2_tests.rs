@@ -33,6 +33,8 @@ pub(super) struct Fixture {
     credentials: crate::connection_credentials::test_util::Fixture,
     applications: Vec<wamn_test_postgres::Database>,
     pause: Arc<Mutex<Option<ResponsePause>>>,
+    key: tempfile::NamedTempFile,
+    token_pause: Arc<Mutex<Option<ResponsePause>>>,
 }
 
 impl Fixture {
@@ -45,6 +47,8 @@ impl Fixture {
         let api = Arc::new(Mutex::new(VecDeque::from(api)));
         let pause = Arc::new(Mutex::new(None::<ResponsePause>));
         let response_pause = Arc::clone(&pause);
+        let token_pause = Arc::new(Mutex::new(None::<ResponsePause>));
+        let endpoint_pause = Arc::clone(&token_pause);
         let task = tokio::spawn(async move {
             loop {
                 let (tcp, _) = listener.accept().await.unwrap();
@@ -52,6 +56,7 @@ impl Fixture {
                 let tokens = tokens.clone();
                 let api = api.clone();
                 let pause = Arc::clone(&response_pause);
+                let token_pause = Arc::clone(&endpoint_pause);
                 hyper::server::conn::http1::Builder::new()
                     .serve_connection(
                         TokioIo::new(tcp),
@@ -60,6 +65,7 @@ impl Fixture {
                             let tokens = tokens.clone();
                             let api = api.clone();
                             let pause = Arc::clone(&pause);
+                            let token_pause = Arc::clone(&token_pause);
                             async move {
                                 let (parts, body) = request.into_parts();
                                 let body = body.collect().await.unwrap().to_bytes().to_vec();
@@ -81,7 +87,7 @@ impl Fixture {
                                     (status, format!("api-{status}"))
                                 };
                                 let paused = if token {
-                                    None
+                                    token_pause.lock().unwrap().take()
                                 } else {
                                     pause.lock().unwrap().take()
                                 };
@@ -103,7 +109,11 @@ impl Fixture {
                     .unwrap();
             }
         });
+        let key = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(key.path(), [7_u8; 32]).unwrap();
         Self {
+            key,
+            token_pause,
             credentials: crate::connection_credentials::test_util::Fixture::new().await,
             base,
             observed,
@@ -290,15 +300,20 @@ impl Fixture {
         let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(
             StaticCredentialProvider::new(projects, None),
         )));
-        let facts = Arc::new(ConnectionFacts::new(
-            Arc::new(ConnectionMemory::default()),
-            ConnectionChanges::default(),
-            Arc::new(self.credentials.reader("project-a").await),
-            Arc::clone(&postgres),
-            "acme--project-a--dev",
-            "project-a",
-            "dev",
-        ));
+        let facts = Arc::new(
+            ConnectionFacts::new(
+                Arc::new(ConnectionMemory::default()),
+                ConnectionChanges::default(),
+                Arc::new(self.credentials.reader("project-a").await),
+                Arc::clone(&postgres),
+                "acme--project-a--dev",
+                "project-a",
+                "dev",
+            )
+            .with_oauth_encryption(Some(Arc::new(
+                crate::oauth_encryption::Envelope::from_file(self.key.path()).unwrap(),
+            ))),
+        );
         postgres
             .set_env_key("instance", "acme--project-a--dev")
             .unwrap();
@@ -313,6 +328,70 @@ impl Fixture {
         );
         plugin.bind_invocation("instance", invocation).unwrap();
         plugin
+    }
+
+    async fn other_host(&self, first: &ConnectionHttp) -> ConnectionHttp {
+        let facts = Arc::new(
+            ConnectionFacts::new(
+                Arc::new(ConnectionMemory::default()),
+                ConnectionChanges::default(),
+                Arc::new(self.credentials.reader("project-a").await),
+                Arc::clone(&first.postgres),
+                "acme--project-a--dev",
+                "project-a",
+                "dev",
+            )
+            .with_oauth_encryption(Some(Arc::new(
+                crate::oauth_encryption::Envelope::from_file(self.key.path()).unwrap(),
+            ))),
+        );
+        let plugin = ConnectionHttp::new(
+            Arc::clone(&first.postgres),
+            Arc::new(HttpTransport::new().unwrap()),
+            facts,
+            "acme--project-a--dev",
+            "project-a",
+            Arc::clone(&first.allowed_hosts),
+            first.release.clone(),
+        );
+        plugin
+            .bind_invocation("instance", first.invocation("instance").unwrap())
+            .unwrap();
+        plugin
+    }
+
+    fn pause_token(&self) -> ResponsePause {
+        let (arrived, arrival) = tokio::sync::oneshot::channel();
+        let (resume, resumed) = tokio::sync::oneshot::channel();
+        *self.token_pause.lock().unwrap() = Some((arrived, resumed));
+        (resume, arrival)
+    }
+
+    async fn due(&self, plugin: &ConnectionHttp) {
+        self.credentials
+            .admin
+            .execute(
+                "UPDATE identity.oauth_token SET expires_at='-infinity'",
+                &[],
+            )
+            .await
+            .unwrap();
+        plugin.oauth2.entries.lock().unwrap().clear();
+    }
+
+    async fn stored(&self, connection: uuid::Uuid) -> crate::oauth_token::Token {
+        let row = self.credentials.admin.query_one("SELECT ciphertext,nonce,wrapped_key,key_id FROM identity.oauth_token WHERE connection_id=$1", &[&connection]).await.unwrap();
+        let envelope = crate::oauth_encryption::Envelope::from_file(self.key.path()).unwrap();
+        let plaintext = envelope
+            .decrypt(&crate::oauth_encryption::Encrypted {
+                ciphertext: row.get(0),
+                nonce: row.get(1),
+                wrapped_key: row.get(2),
+                key_id: row.get(3),
+            })
+            .await
+            .unwrap();
+        serde_json::from_slice(plaintext.expose()).unwrap()
     }
 
     async fn use_project(&self, plugin: &mut ConnectionHttp, project: &str) {
@@ -331,15 +410,21 @@ impl Fixture {
             )
             .unwrap(),
         ));
-        plugin.facts = Arc::new(ConnectionFacts::new(
-            Arc::new(ConnectionMemory::default()),
-            ConnectionChanges::default(),
-            Arc::new(self.credentials.reader(project).await),
-            Arc::clone(&plugin.postgres),
-            &env_key,
-            project,
-            "dev",
-        ));
+        plugin.facts = Arc::new(
+            ConnectionFacts::new(
+                Arc::new(ConnectionMemory::default()),
+                ConnectionChanges::default(),
+                Arc::new(self.credentials.reader(project).await),
+                Arc::clone(&plugin.postgres),
+                &env_key,
+                project,
+                "dev",
+            )
+            .with_oauth_encryption(Some(Arc::new(
+                crate::oauth_encryption::Envelope::from_file(self.key.path()).unwrap(),
+            ))),
+        );
+        plugin.oauth2 = plugin.facts.oauth_tokens();
         plugin.postgres.set_env_key("instance", &env_key).unwrap();
         plugin.env_key = env_key.into();
         plugin.project = project.into();
@@ -544,9 +629,20 @@ async fn clock_seam_expires_cached_token_at_the_sixty_second_margin() {
         vec![200, 200],
     )
     .await;
-    let mut plugin = fixture.plugin(&fixture.parameters()).await;
+    let plugin = fixture.plugin(&fixture.parameters()).await;
     fixture.send(&plugin, "handle").await.unwrap();
-    plugin.oauth2.now = || Instant::now() + Duration::from_mins(59);
+    fixture
+        .credentials
+        .admin
+        .execute(
+            "UPDATE identity.oauth_token SET expires_at=clock_timestamp()+interval '60 seconds'",
+            &[],
+        )
+        .await
+        .unwrap();
+    for (_, expires) in plugin.oauth2.entries.lock().unwrap().values_mut() {
+        *expires = tokio::time::Instant::now();
+    }
     fixture.send(&plugin, "handle").await.unwrap();
     assert_eq!(fixture.counts(), (2, 2));
     assert_eq!(
@@ -574,12 +670,18 @@ async fn cache_separates_project_connection_and_active_generation() {
     let second = plugin.facts.connection(&connection).await.unwrap().unwrap();
     assert!(second.active_generation > first.active_generation);
     fixture.send(&plugin, "other-handle").await.unwrap();
+    {
+        let entries = plugin.oauth2.entries.lock().unwrap();
+        assert!(!entries.contains_key(&(connection, first.active_generation)));
+        assert!(entries.contains_key(&(connection, second.active_generation)));
+        assert_eq!(entries.len(), 2);
+    }
     fixture.use_project(&mut plugin, "project-b").await;
     fixture.send(&plugin, "handle").await.unwrap();
     let entries = plugin.oauth2.entries.lock().unwrap();
-    assert!(entries.contains_key(&(connection, first.active_generation)));
-    assert!(entries.contains_key(&(connection, second.active_generation)));
-    assert_eq!(entries.len(), 4);
+    assert!(!entries.contains_key(&(connection, first.active_generation)));
+    assert!(!entries.contains_key(&(connection, second.active_generation)));
+    assert_eq!(entries.len(), 1);
     assert_eq!(fixture.counts(), (4, 4));
 }
 
@@ -645,7 +747,7 @@ async fn api_403_with_an_unchanged_fact_does_not_retry_oauth2() {
 }
 
 #[tokio::test]
-async fn failed_refresh_returns_the_first_api_401_without_another_api_request() {
+async fn failed_refresh_returns_credential_unavailable_without_another_api_request() {
     let _lock = wamn_test_postgres::lock();
     let mut fixture = Fixture::start(
         vec![
@@ -656,9 +758,10 @@ async fn failed_refresh_returns_the_first_api_401_without_another_api_request() 
     )
     .await;
     let plugin = fixture.plugin(&fixture.parameters()).await;
-    let response = fixture.send(&plugin, "handle").await.unwrap();
-    assert_eq!(response.status, 401);
-    assert_eq!(response.body, b"api-401");
+    assert!(matches!(
+        fixture.send(&plugin, "handle").await,
+        Err(ConnectionError::CredentialUnavailable)
+    ));
     assert_eq!(fixture.counts(), (2, 1));
     assert!(plugin.oauth2.entries.lock().unwrap().is_empty());
 }
@@ -740,5 +843,320 @@ async fn malformed_token_response_refuses_without_leaking_its_body() {
             Err(ConnectionError::CredentialUnavailable)
         ));
         assert_eq!(fixture.counts(), (1, 0));
+    }
+}
+
+#[tokio::test]
+async fn two_hosts_refresh_one_due_row_once() {
+    let _lock = wamn_test_postgres::lock();
+    let mut fixture = Fixture::start(
+        vec![token(1, Some(3600)), token(2, Some(3600))],
+        vec![200; 3],
+    )
+    .await;
+    let first = fixture.plugin(&fixture.parameters()).await;
+    fixture.send(&first, "handle").await.unwrap();
+    fixture.due(&first).await;
+    let second = fixture.other_host(&first).await;
+    assert!(!Arc::ptr_eq(
+        &first.facts.oauth_encryption().unwrap(),
+        &second.facts.oauth_encryption().unwrap()
+    ));
+    let before = fixture.counts().0;
+    let (resume, arrived) = fixture.pause_token();
+    let (a, b, ()) = tokio::join!(
+        fixture.send(&first, "handle"),
+        fixture.send(&second, "handle"),
+        async {
+            arrived.await.unwrap();
+            tokio::time::timeout(Duration::from_secs(10), async {
+                loop {
+                    let blocked: bool = fixture.credentials.admin.query_one(
+                        "SELECT EXISTS(SELECT FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT registry.lock_oauth_connection%')", &[]
+                    ).await.unwrap().get(0);
+                    if blocked { break; }
+                    tokio::task::yield_now().await;
+                }
+            }).await.unwrap();
+            resume.send(()).unwrap();
+        }
+    );
+    assert_eq!(a.unwrap().status, 200);
+    assert_eq!(b.unwrap().status, 200);
+    assert_eq!(fixture.counts().0 - before, 1);
+    let observed = fixture.observed.lock().unwrap();
+    for request in observed
+        .iter()
+        .filter(|request| request.path == "/bound/api")
+        .skip(1)
+    {
+        assert_eq!(request.headers["authorization"], "Bearer fixture-token-2");
+    }
+}
+
+#[tokio::test]
+async fn provider_failure_is_shared_for_thirty_seconds_with_or_without_a_row() {
+    let _lock = wamn_test_postgres::lock();
+    for existing in [false, true] {
+        let mut replies = vec![
+            (500, "private failure".into()),
+            (500, "private failure".into()),
+            token(3, Some(3600)),
+        ];
+        if existing {
+            replies.insert(0, token(1, Some(3600)));
+        }
+        let mut fixture = Fixture::start(replies, vec![200; 2]).await;
+        let first = fixture.plugin(&fixture.parameters()).await;
+        if existing {
+            fixture.send(&first, "handle").await.unwrap();
+            fixture.due(&first).await;
+        }
+        let second = fixture.other_host(&first).await;
+        let before = fixture.counts().0;
+        let (a, b) = tokio::join!(
+            fixture.send(&first, "handle"),
+            fixture.send(&second, "handle")
+        );
+        assert!(matches!(a, Err(ConnectionError::CredentialUnavailable)));
+        assert!(matches!(b, Err(ConnectionError::CredentialUnavailable)));
+        assert_eq!(fixture.counts().0 - before, 1);
+        let row = fixture
+            .credentials
+            .admin
+            .query_one("SELECT refresh_status FROM identity.oauth_token", &[])
+            .await
+            .unwrap();
+        assert_eq!(row.get::<_, String>(0), "failing");
+        fixture.credentials.admin.execute("UPDATE identity.oauth_token SET updated_at=clock_timestamp()-interval '31 seconds'",&[]).await.unwrap();
+        assert!(matches!(
+            fixture.send(&second, "handle").await,
+            Err(ConnectionError::CredentialUnavailable)
+        ));
+        assert_eq!(fixture.counts().0 - before, 2);
+        fixture.credentials.admin.execute("UPDATE identity.oauth_token SET updated_at=clock_timestamp()-interval '31 seconds'",&[]).await.unwrap();
+        assert_eq!(fixture.send(&first, "handle").await.unwrap().status, 200);
+        assert_eq!(fixture.counts().0 - before, 3);
+        assert_eq!(
+            fixture
+                .credentials
+                .admin
+                .query_one("SELECT refresh_status FROM identity.oauth_token", &[])
+                .await
+                .unwrap()
+                .get::<_, String>(0),
+            "ok"
+        );
+    }
+}
+
+#[tokio::test]
+async fn credential_rotation_waits_for_refresh_and_removes_the_old_token() {
+    use base64::Engine as _;
+
+    let _lock = wamn_test_postgres::lock();
+    let mut fixture = Fixture::start(
+        vec![
+            token(1, Some(3600)),
+            token(2, Some(3600)),
+            token(3, Some(3600)),
+        ],
+        vec![200; 3],
+    )
+    .await;
+    let plugin = Arc::new(fixture.plugin(&fixture.parameters()).await);
+    fixture.send(&plugin, "handle").await.unwrap();
+    fixture.due(&plugin).await;
+    let connection = plugin.facts.env_connections().await.unwrap().connections["handle"];
+    let (resume, arrived) = fixture.pause_token();
+    let refreshing = Arc::clone(&plugin);
+    let refresh = tokio::spawn(async move {
+        refreshing
+            .send(
+                "instance",
+                &Request {
+                    requirement: "handle".into(),
+                    path_and_query: "/api".into(),
+                    ..effect_request(Vec::new())
+                },
+            )
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(10), arrived)
+        .await
+        .unwrap()
+        .unwrap();
+    let (mut rotating, driver) =
+        tokio_postgres::connect(fixture.credentials.database.url(), tokio_postgres::NoTls)
+            .await
+            .unwrap();
+    tokio::spawn(driver);
+    let pid: i32 = rotating
+        .query_one("SELECT pg_backend_pid()", &[])
+        .await
+        .unwrap()
+        .get(0);
+    let store = Arc::clone(&fixture.credentials.store);
+    let rotation = tokio::spawn(async move {
+        let tx = rotating.transaction().await.unwrap();
+        tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+        .await
+        .unwrap();
+        tx.batch_execute("SET LOCAL ROLE wamn_control")
+            .await
+            .unwrap();
+        let result = wamn_platform_identity::connections::administration::execute_with_store(&tx,"acme","connection.set_credential",
+            &serde_json::json!({"project":"project-a","env":"dev","name":"handle","credential":r#"{"client_secret":"rotated-secret"}"#}).to_string(),
+            &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+            &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),Some(store.as_ref())).await.unwrap();
+        assert!(result.get("error").is_none(), "{result}");
+        tx.commit().await.unwrap();
+    });
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let blocked: bool = fixture
+                .credentials
+                .admin
+                .query_one("SELECT cardinality(pg_blocking_pids($1))>0", &[&pid])
+                .await
+                .unwrap()
+                .get(0);
+            if blocked {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    resume.send(()).unwrap();
+    refresh.await.unwrap().unwrap();
+    rotation.await.unwrap();
+    assert_eq!(
+        fixture
+            .credentials
+            .admin
+            .query_one(
+                "SELECT count(*) FROM identity.oauth_token WHERE connection_id=$1",
+                &[&connection]
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        0
+    );
+    plugin.facts.read_again(&connection).await.unwrap();
+    fixture.send(&plugin, "handle").await.unwrap();
+    let stored = fixture.stored(connection).await;
+    assert_eq!(stored.access_token.as_deref(), Some("fixture-token-3"));
+    let observed = fixture.observed.lock().unwrap();
+    let fetches: Vec<_> = observed
+        .iter()
+        .filter(|request| request.path.starts_with("/bound/token"))
+        .collect();
+    let basic = fetches[2].headers["authorization"]
+        .to_str()
+        .unwrap()
+        .strip_prefix("Basic ")
+        .unwrap();
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(basic)
+        .unwrap();
+    assert!(
+        String::from_utf8(decoded)
+            .unwrap()
+            .ends_with(":rotated-secret")
+    );
+}
+
+#[tokio::test]
+async fn authorization_code_requires_a_row_and_keeps_or_replaces_the_refresh_token() {
+    let _lock = wamn_test_postgres::lock();
+    let mut renewed = serde_json::from_str::<serde_json::Value>(&token(3, Some(3600)).1).unwrap();
+    renewed["refresh_token"] = "renewed-refresh".into();
+    let mut fixture = Fixture::start(
+        vec![
+            token(1, Some(3600)),
+            token(2, Some(3600)),
+            (200, renewed.to_string()),
+        ],
+        vec![200; 3],
+    )
+    .await;
+    let plugin = fixture.plugin(&fixture.parameters()).await;
+    let connection = plugin.facts.env_connections().await.unwrap().connections["handle"];
+    // Administration's authorization-code write is delivered by issue .5.
+    fixture
+        .credentials
+        .admin
+        .execute(
+            "UPDATE registry.integration SET auth_type='oauth2_authorization_code'",
+            &[],
+        )
+        .await
+        .unwrap();
+    let code_host = fixture.other_host(&plugin).await;
+    assert!(matches!(
+        fixture.send(&code_host, "handle").await,
+        Err(ConnectionError::Unauthorized)
+    ));
+    assert_eq!(fixture.counts(), (0, 0));
+    fixture
+        .credentials
+        .admin
+        .execute(
+            "UPDATE registry.integration SET auth_type='oauth2_client_credentials'",
+            &[],
+        )
+        .await
+        .unwrap();
+    fixture.send(&plugin, "handle").await.unwrap();
+    fixture
+        .credentials
+        .admin
+        .execute(
+            "UPDATE registry.integration SET auth_type='oauth2_authorization_code'",
+            &[],
+        )
+        .await
+        .unwrap();
+    let encrypted = code_host
+        .facts
+        .oauth_encryption()
+        .unwrap()
+        .encrypt(
+            &serde_json::to_vec(&crate::oauth_token::Token {
+                access_token: Some("old-access".into()),
+                refresh_token: Some("old-refresh".into()),
+            })
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    fixture.credentials.admin.execute("UPDATE identity.oauth_token SET ciphertext=$2,nonce=$3,wrapped_key=$4,key_id=$5,expires_at='-infinity' WHERE connection_id=$1",
+        &[&connection,&encrypted.ciphertext,&encrypted.nonce,&encrypted.wrapped_key,&encrypted.key_id]).await.unwrap();
+    fixture.send(&code_host, "handle").await.unwrap();
+    assert_eq!(
+        fixture.stored(connection).await.refresh_token.as_deref(),
+        Some("old-refresh")
+    );
+    fixture.due(&code_host).await;
+    fixture.send(&code_host, "handle").await.unwrap();
+    assert_eq!(
+        fixture.stored(connection).await.refresh_token.as_deref(),
+        Some("renewed-refresh")
+    );
+    let observed = fixture.observed.lock().unwrap();
+    let grants: Vec<_> = observed
+        .iter()
+        .filter(|request| request.path.starts_with("/bound/token"))
+        .collect();
+    for grant in &grants[1..] {
+        assert_eq!(
+            grant.body,
+            b"grant_type=refresh_token&refresh_token=old-refresh"
+        );
     }
 }

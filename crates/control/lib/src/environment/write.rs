@@ -179,7 +179,19 @@ pub(crate) fn host_group(
             "{{name: {variable}, valueFrom: {{secretKeyRef: {{name: {secret}, key: url, optional: false}}}}}}"
         ))?);
     }
-    Ok(group)
+    let mut group = serde_json::to_value(group)?;
+    let encryption = group["env"]
+        .as_array()
+        .and_then(|env| {
+            env.iter()
+                .find(|entry| entry["name"] == "WAMN_OAUTH_ENCRYPTION")
+        })
+        .and_then(|entry| entry["value"].as_str())
+        .map(serde_json::from_str)
+        .transpose()?
+        .unwrap_or_else(|| serde_json::json!({"provider":"local"}));
+    crate::platform::oauth::host_group(&mut group, &encryption)?;
+    Ok(serde_yaml::from_value(serde_yaml::to_value(group)?)?)
 }
 
 /// The values with `audit` removed: who applied is no reason to write.

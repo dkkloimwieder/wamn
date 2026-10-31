@@ -746,6 +746,32 @@ Each host retains at most 1024 unwrapped keys and evicts the least recently used
 The cache identity includes both `key_id` and `wrapped_key`.
 Debug output omits keys and plaintext.
 
+The host refreshes tokens under a system database transaction.
+It locks `registry.connection` with `FOR NO KEY UPDATE`, then reads the shared token row again.
+A token is due when its expiry is within 60 seconds, including negative infinity.
+A waiting host uses the row that the first host writes.
+The lock also serializes refresh with credential rotation.
+A stale generation cannot write a token.
+
+The host keeps decrypted access tokens under the connection id and generation until the refresh margin.
+A connection key deletion drops those entries.
+An OAuth 401 follows the same lock path and permits one fresh token and one retry.
+Concurrent refusals reuse a token that another host already refreshed.
+A failed refresh returns `credential-unavailable` without another API request.
+
+The ciphertext encodes a JSON object with `access_token` and `refresh_token` members.
+A missing member value is JSON null.
+
+Authorization code needs an existing row and uses the refresh-token grant for a due token.
+A response without a replacement refresh token keeps the prior value.
+
+A failed first fetch stores an encrypted object with both members null.
+Failures set `refresh_status` to `failing` and record the database clock time.
+All hosts refuse further attempts for 30 seconds.
+After that window, the next call attempts refresh again.
+A successful refresh sets the status to `ok`.
+`connection.get` and the CLI show `refresh_status` and UTC `expires_at` without token bytes.
+
 The generation transaction deletes tokens for either client credentials type when credentials or `parameters.auth` change.
 For authorization code, a change to `parameters.auth` deletes the token.
 A secret change alone sets its expiry to negative infinity and preserves its encrypted token bytes.

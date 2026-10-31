@@ -121,6 +121,18 @@ impl ConnectionFacts {
         self.oauth_encryption.clone()
     }
 
+    pub(crate) fn oauth_tokens(&self) -> Arc<crate::oauth_token::Cache> {
+        Arc::clone(&self.memory.oauth_tokens)
+    }
+
+    pub(crate) fn oauth_ticket(&self, id: &uuid::Uuid) -> crate::connection_memory::Ticket {
+        self.memory.connection_ticket(&self.env_key, id)
+    }
+
+    pub(crate) fn environment(&self) -> &str {
+        &self.environment
+    }
+
     pub fn env_key(&self) -> &str {
         &self.env_key
     }
@@ -182,6 +194,14 @@ impl ConnectionFacts {
 
     /// Drop the secret that the new fact of `id` no longer names.
     fn observe(&self, id: &uuid::Uuid, fact: Option<&ConnectionFact>) {
+        self.memory
+            .oauth_tokens
+            .entries
+            .lock()
+            .expect("OAuth token cache lock")
+            .retain(|(connection, generation), _| {
+                connection != id || fact.is_some_and(|fact| fact.active_generation == *generation)
+            });
         let mut seen = self.seen.lock().unwrap_or_else(PoisonError::into_inner);
         let old = match fact {
             Some(fact) => seen.insert(*id, fact.clone()),

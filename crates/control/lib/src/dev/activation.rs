@@ -212,6 +212,13 @@ impl fmt::Debug for HostProcessSpec {
 }
 
 fn spawn_host_process(spec: &HostProcessSpec) -> anyhow::Result<Child> {
+    if let Some((_, path)) = spec
+        .env
+        .iter()
+        .find(|(name, _)| name == "WAMN_OAUTH_KEY_FILE")
+    {
+        crate::platform::oauth::local_key(Path::new(path))?;
+    }
     let mut command = Command::new(&spec.program);
     command
         .args(spec.args.iter())
@@ -1038,6 +1045,16 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
         }),
     );
     env.push(("HOME".to_owned(), HOST_HOME.to_owned()));
+    env.push((
+        "WAMN_OAUTH_ENCRYPTION".to_owned(),
+        r#"{"provider":"local"}"#.to_owned(),
+    ));
+    env.push((
+        "WAMN_OAUTH_KEY_FILE".to_owned(),
+        crate::platform::oauth::dev_key(&local.directory)
+            .display()
+            .to_string(),
+    ));
     for variable in runtime["env"]
         .as_sequence()
         .expect("platform host environment")
@@ -2269,6 +2286,8 @@ mod tests {
             "WAMN_EVT_NATS_PASSWORD_FILE", // Local event credentials use a private file.
             "WAMN_MAT_NATS_BINDING_FILE", // Local materializer credentials use a private file.
             "WAMN_CONNECTION_STORE_URL",  // Local credentials use the database reader.
+            "WAMN_OAUTH_ENCRYPTION",      // Local hosts share a file key.
+            "WAMN_OAUTH_KEY_FILE",        // Local hosts share the target directory.
             "WAMN_SESSION_ISSUER",        // Local identity uses a disposable issuer.
             "WAMN_SESSION_JWKS_CA",       // Local identity uses its private TLS CA.
             "WAMN_SESSION_INSTANCE_SUFFIX", // Local identity uses its provisioned instance.
@@ -2756,6 +2775,14 @@ mod tests {
                 ),
                 ("OTEL_TRACES_SAMPLER_ARG".to_owned(), "0.1".to_owned()),
                 ("HOME".to_owned(), "/tmp".to_owned()),
+                (
+                    "WAMN_OAUTH_ENCRYPTION".to_owned(),
+                    r#"{"provider":"local"}"#.to_owned(),
+                ),
+                (
+                    "WAMN_OAUTH_KEY_FILE".to_owned(),
+                    "/tmp/oauth.key".to_owned()
+                ),
                 (
                     "WASMTIME_POOLING_LINEAR_MEMORY_KEEP_RESIDENT".to_owned(),
                     "65536".to_owned(),

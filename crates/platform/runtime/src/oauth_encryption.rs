@@ -115,7 +115,7 @@ impl Envelope {
             Configuration::Local => {
                 let path = std::env::var_os("WAMN_OAUTH_KEY_FILE")
                     .ok_or_else(|| failure("open", "WAMN_OAUTH_KEY_FILE is absent"))?;
-                Backend::File(file_key(Path::new(&path))?)
+                return Self::from_file(Path::new(&path));
             }
             Configuration::Gcp { project, region } => {
                 if ![project, region].iter().all(|value| {
@@ -144,6 +144,14 @@ impl Envelope {
         };
         Ok(Self {
             backend,
+            cache: Mutex::new(VecDeque::new()),
+        })
+    }
+
+    /// Open a local key shared by all hosts of one target.
+    pub fn from_file(path: &Path) -> Result<Self, Error> {
+        Ok(Self {
+            backend: Backend::File(file_key(path)?),
             cache: Mutex::new(VecDeque::new()),
         })
     }

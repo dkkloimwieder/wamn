@@ -110,6 +110,7 @@ enum Answer {
 /// The connection facts one host keeps.
 pub struct ConnectionMemory {
     memory: KvMemory<Answer>,
+    pub(crate) oauth_tokens: Arc<crate::oauth_token::Cache>,
 }
 
 impl Default for ConnectionMemory {
@@ -132,7 +133,12 @@ impl ConnectionMemory {
     pub fn with_ttl(ttl: Duration) -> Self {
         Self {
             memory: KvMemory::new(BUCKET, ttl),
+            oauth_tokens: Arc::default(),
         }
+    }
+
+    pub(crate) fn connection_ticket(&self, env_key: &str, id: &uuid::Uuid) -> Ticket {
+        self.memory.ticket(&connection_key(env_key, id))
     }
 
     /// Whether the host watches the bucket, and so keeps facts.
@@ -218,10 +224,30 @@ impl Watched for ConnectionMemory {
     }
 
     fn clear(&self) {
+        let mut tokens = self
+            .oauth_tokens
+            .entries
+            .lock()
+            .expect("OAuth token cache lock");
         self.memory.clear();
+        tokens.clear();
     }
 
     fn apply(&self, entry: async_nats::jetstream::kv::Entry) {
+        let mut tokens = self
+            .oauth_tokens
+            .entries
+            .lock()
+            .expect("OAuth token cache lock");
+        if matches!(
+            entry.operation,
+            async_nats::jetstream::kv::Operation::Delete
+                | async_nats::jetstream::kv::Operation::Purge
+        ) && let Some((_, id)) = entry.key.rsplit_once(".connection.")
+            && let Ok(id) = uuid::Uuid::parse_str(id)
+        {
+            tokens.retain(|(connection, _), _| *connection != id);
+        }
         self.memory.apply(entry);
     }
 }
@@ -371,12 +397,24 @@ mod tests {
             Some(&release.bindings[0])
         );
 
+        for host in [&a, &b] {
+            host.oauth_tokens.entries.lock().unwrap().insert(
+                (id, 1),
+                (
+                    "private-access".into(),
+                    tokio::time::Instant::now() + Duration::from_hours(1),
+                ),
+            );
+        }
         // A connection delete leaves the release map.
         let mut drops = ConnectionDrops::default();
         drops.connection("t", id);
         writer.publish(drops).await;
         until("hosts a and b drop the connection", || {
-            a.connection("t", &id).is_err() && b.connection("t", &id).is_err()
+            a.connection("t", &id).is_err()
+                && b.connection("t", &id).is_err()
+                && a.oauth_tokens.entries.lock().unwrap().is_empty()
+                && b.oauth_tokens.entries.lock().unwrap().is_empty()
         })
         .await;
         assert!(b.release("t", &digest).is_ok());
