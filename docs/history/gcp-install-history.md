@@ -2309,3 +2309,49 @@ gcloud compute backend-services add-backend wamn-edge-platform --project wamn-de
 - The renewal job of section 4.3.1 is a cluster object, so apply it again. Its first run moved the proxy to `wamn-edge-058397760d86`.
 
 After the apply, `https://receiving.wamn.dev/api/purchase_order/query` and `POST https://wms.wamn.dev/api/inventory/move` answered `401 unauthorized`, and `/` and `/config.json` answered `200` on both hosts.
+
+## 12. Platform 0.1.135 to 0.1.140 and the HTTPS load balancer (2026-10-30 and 2026-10-31)
+
+This run of `wamn-wio2s.3` took wamn-dev from the hand-built load balancer to the OpenTofu HTTPS load balancer of [Google Cloud](../operations/gcp.md) section 4.20. All times are UTC. Every command ran as `wamn-agent@wamn-dev`. Each platform version came from one `build-platform` run on main.
+
+| Version | Main | Build |
+| --- | --- | --- |
+| 0.1.135 | `dd04eeddf` | 2026-10-30 19:44 to 20:16 |
+| 0.1.136 | `9ee56b888` | 2026-10-31 00:40 to 01:14 |
+| 0.1.137 | `788cdadb4` | 02:15, 43 s from the cache |
+| 0.1.138 | `a28c81011` | 03:50:41 to 04:07:01 |
+| 0.1.139 | `294d2e4df` | 05:46:54 to 06:01:59 |
+| 0.1.140 | `fb8d8a549` | 06:44:15 to 06:59:15 |
+
+A change to `system-schema.sql` needs a teardown and a fresh install, because the 4.7 Jobs run once (`wamn-bj2kn`). Two teardowns ran, at 20:24 to 20:31 and 00:38 to 00:44. A fresh install of 4.3 to 4.14 took 10 minutes both times (20:39 to 20:49 and 01:14 to 01:24). The first cluster create failed at 00:46 with `Google Compute Engine does not have enough resources available to fulfill request: us-central1-a`. It left a cluster in state ERROR, which `prevent_destroy` keeps out of OpenTofu. The agent deleted it with gcloud, planned again, and the create passed at 00:48 to 00:59.
+
+The first qualification of a release on a new image set pushes, and a rerun prints `Reused`. On 0.1.138, the first Receiving run took 3 minutes (04:11:56 to 04:14:57), and the WMS run took 10.5 minutes (04:15:01 to 04:25:38). Each run on 0.1.139 and 0.1.140 took 1 to 2 seconds, because the qualification tag does not include the runner image.
+
+Each failure of a step became one issue, fixed on main, and the next apply passed that step:
+
+| Step | Failure | Fix |
+| --- | --- | --- |
+| 4.17 | `connection_unavailable: rest-fixture` | `wamn-wio2s.4`, step 4.16.1 Connections, `de8450202`. The owner removed the kind-only `rest` app from WMS dev. |
+| 4.19 | `the build wrote sw.js, which has no declared cache rule`, then `an existing object is never replaced` on the rerun | `wamn-wio2s.5`, `5f5969553` |
+| 4.19.1 | `read platform chart /inputs/deploy/platform/release/Chart.yaml` | `wamn-wio2s.6`, `e8726c13c` |
+| 4.20 | `deployment "wamn-edge-web" exceeded its progress deadline`, CPU requests 1915m of 1930m on the one `main` node | The owner approved a second `main` node, `65d0cfe23` |
+| 4.20 | `web check wms.wamn.dev/: 404 Not Found`, WMS has no web client | `wamn-wio2s.7`, `cfc4dc570` |
+| 4.20 | The DNS authorization CNAME `_acme-challenge.wamn.dev` collides with the cert-manager DNS-01 TXT | `wamn-wio2s.8`, `PER_PROJECT_RECORD`, `328599ca2` |
+
+An apply of 4.3 to 4.21 with nothing to change took 2 to 6 minutes (apply 19: 11:02:16 to 11:04:20). After a main change, `wamn build` must run again before the apply, or the apply refuses `the build of ./apps/wamn_receiving is stale`. `tools/lane-start` took 2 minutes (12:11:43 to 12:13:44). Apply 21 then passed every step through `4.21 Check: done 9.4s` at 12:17:32.
+
+The cutover steps of section 4.20:
+
+| Step | Time | Result |
+| --- | --- | --- |
+| 2. Platform apply | 11:02 to 11:04 | NEG `wamn-edge` in `us-central1-a`. 4.21 failed with 503 through the old load balancer. |
+| 3. Import | to 11:05 | Five objects imported |
+| 4. Targeted apply | to 11:26:56 | The replace of the authorization needed the map entry destroyed first, because the certificate keeps its name |
+| 5. CNAME | 11:27:41, resolved 11:27:50 | `_acme-challenge_3lz727ouock3gzj3.wamn.dev` |
+| 6. Certificate | ACTIVE at 12:01:38 | 34 minutes in `AUTHORIZING` |
+| 7. Full apply | to 12:09:52 | See below |
+| 8. Deletes | 12:34:30 to 12:34:41 | `wamn-edge-platform`, `wamn-edge-files`, `wamn-edge-064bdf901fb8` |
+
+In step 7, the URL map update passed, but the proxy update refused `Error 412: Certificate Map or at least 1 SSL certificate must be specified`, because the provider clears the SSL certificates before it sets the map. `gcloud compute target-https-proxies update wamn-edge --global --certificate-map=wamn-edge` set the map, and the next `tofu apply` removed the SSL certificate. A plan then showed no changes.
+
+The C3 check at 12:18 passed on `receiving.wamn.dev`. The digest path `/clients/wamn_receiving/05c000d9…/assets/main-UPqnFaya.js` returned `public, max-age=31536000, immutable` with `age` 3, 6 and 10 on repeat fetches. `/api/wamn_control/control/mine` returned 401 `no-store` with no `age` header. Every route host presented the Google Trust Services certificate for `wamn.dev` and `*.wamn.dev`.
