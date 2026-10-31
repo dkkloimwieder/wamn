@@ -33,7 +33,7 @@ Set `WAMN_TOKEN` to a session token with project administrator authority.
 Create an integration request in `/private/integration.json`:
 
 ```json
-{"project":"wms","name":"rest-fixture","integration_type":"http","auth_type":"api_key"}
+{"project":"wms","name":"orders-api","integration_type":"http","auth_type":"api_key"}
 ```
 
 Write the integration:
@@ -48,7 +48,7 @@ Create its environment request in `/private/connection.json`:
 {
   "project":"wms",
   "env":"dev",
-  "name":"rest-fixture",
+  "name":"orders-api",
   "parameters":{
     "primary-authority":"https://upstream.example",
     "tls-verification":"verify-authority",
@@ -78,7 +78,7 @@ wamn-ctl connection write --file /private/connection.json --credential-file /pri
 For later credential changes, create `/private/target.json` with the project, `env`, and integration name:
 
 ```json
-{"project":"wms","env":"dev","name":"rest-fixture"}
+{"project":"wms","env":"dev","name":"orders-api"}
 ```
 
 Set the replacement credential:
