@@ -1,5 +1,6 @@
 //! Check the public edge, or the cluster Service on kind, after installation.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::time::Duration;
 
@@ -123,6 +124,11 @@ pub(super) async fn apply(
                 .with_context(|| format!("4.21 API check for {}", environment.route_host))?,
         );
     }
+    let web = if document.buckets.web.is_empty() {
+        BTreeSet::new()
+    } else {
+        web_hosts(target, &routes.iter().cloned().collect(), registry).await?
+    };
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .redirect(reqwest::redirect::Policy::none())
@@ -131,8 +137,12 @@ pub(super) async fn apply(
     let mut results = Vec::new();
     for ((host, _), (method, api)) in routes.iter().zip(apis) {
         let mut checks = vec![(method.as_str(), api.as_str(), 401)];
-        if !document.buckets.web.is_empty() {
+        if web.contains(host) {
             checks.extend([("GET", "/", 200), ("GET", "/config.json", 200)]);
+        } else if !document.buckets.web.is_empty() {
+            progress(&format!(
+                "4.21 Web / and /config.json on {host}: skipped: no web client"
+            ))?;
         }
         for (method, path, expected) in checks {
             let hint = if document.provider == Provider::Gcp {
@@ -210,6 +220,68 @@ fn api_route(manifest: &wamn_catalog::ServingManifest) -> anyhow::Result<(String
         return Ok((method.to_owned(), format!("/api{path}")));
     }
     anyhow::bail!("release has no protected HTTP route without path parameters")
+}
+
+/// The route hosts whose release serves a web client: the platform UI, or the
+/// selected client package when its artifact holds a web build. These are the
+/// clients that the web upload writes (wamn-wio2s.7).
+pub(super) async fn web_hosts(
+    target: &Target,
+    routes: &BTreeMap<String, String>,
+    registry: &PackageRegistry,
+) -> anyhow::Result<BTreeSet<String>> {
+    let source = wamn_runtime::release_manifest_source::ReleaseManifestSource::new(
+        &super::packages::artifact_base(registry, "releases")?,
+        registry.insecure_registry,
+        &registry.registry_auth_file,
+    )?
+    .with_ca_paths(&registry.oci_ca_paths)?;
+    let mut hosts = BTreeSet::new();
+    for (host, name) in routes {
+        let release: Value = kubectl::get(
+            &target.kubeconfig,
+            &target.context,
+            "hosts",
+            "configmap",
+            name,
+        )
+        .await?
+        .with_context(|| format!("missing release ConfigMap hosts/{name}"))?;
+        let live: Value = serde_json::from_str(
+            release["data"]["release.json"]
+                .as_str()
+                .with_context(|| format!("hosts/{name} has no release.json"))?,
+        )
+        .with_context(|| format!("decode hosts/{name} release.json"))?;
+        if live["platformVersion"]
+            .as_str()
+            .is_some_and(|version| !version.is_empty())
+        {
+            hosts.insert(host.clone());
+            continue;
+        }
+        let Some(package) = live["clients"][host.as_str()].as_str() else {
+            continue;
+        };
+        let digest = live["digest"]
+            .as_str()
+            .with_context(|| format!("hosts/{name} release.json has no digest"))?;
+        let bytes = source.pull_verified(digest).await?;
+        let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
+        let version = manifest
+            .release
+            .packages
+            .iter()
+            .find(|coordinate| coordinate.package_id() == package)
+            .with_context(|| format!("release {digest} has no client package {package}"))?
+            .package_version()
+            .to_owned();
+        let opened = crate::package_artifact::open_package(registry, package, &version).await?;
+        if crate::package_artifact::web_build(opened.root()).is_dir() {
+            hosts.insert(host.clone());
+        }
+    }
+    Ok(hosts)
 }
 
 async fn kind_check(

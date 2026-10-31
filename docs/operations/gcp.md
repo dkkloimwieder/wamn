@@ -1226,7 +1226,11 @@ Other `/api/` requests and `/password/` requests use their existing services.
 It reads no bucket and needs no static digest or `bucketPath`.
 Platform apply also installs the nginx chart below.
 
-The verb runs a Job that requires HTTP 200 for `/` and `/config.json` on every declared host through the Rust Service.
+The verb runs a Job that requires HTTP 200 for `/` and `/config.json` through the Rust Service.
+The Job checks only the hosts whose release serves a web client.
+A release serves a web client when it serves the platform UI, or when its client package artifact holds a web build.
+The web upload writes the same clients.
+For each other host, the step prints `4.20 Edge bucket check <host>: skipped: no web client`.
 With an empty `buckets.web`, this step prints `4.20 Edge bucket check: skipped: no bucket` and starts no Job.
 The Rust edge still installs and rolls out.
 
@@ -1313,7 +1317,8 @@ There is no certificate-copy CronJob.
 ### 4.21 Check
 
 Platform apply runs this step last.
-For every route host, `/` and `/config.json` must answer 200 when `buckets.web` is set.
+If `buckets.web` is set, `/` and `/config.json` must answer 200 on each route host whose release serves a web client.
+For each other host, the step prints `4.21 Web / and /config.json on <host>: skipped: no web client`.
 A protected API route must answer 401 without credentials.
 On GCP, each response must present a certificate that is valid for the host name against public roots, with no serial match.
 On kind, each response must present the certificate serial in `edge/wamn-edge-tls`.

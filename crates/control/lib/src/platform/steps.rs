@@ -289,7 +289,7 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
         InstallStep {
             number: "4.21", title: "Check",
             runs: Runner::Verb("Kubernetes API"),
-            inputs: vec![("route hosts", routes), ("HTTP checks", "/ and /config.json: 200; unauthenticated application API calls: 401".into()), ("certificate Secret", "edge/wamn-edge-tls".into())],
+            inputs: vec![("route hosts", routes), ("HTTP checks", "/ and /config.json on hosts with a web client: 200; unauthenticated application API calls: 401".into()), ("certificate Secret", "edge/wamn-edge-tls".into())],
             owner_inputs: vec![dns],
         },
     ];
