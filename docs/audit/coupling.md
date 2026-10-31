@@ -498,7 +498,7 @@ Risk: Module paths, generated imports, transaction ownership, and guest imports 
 Severity: medium  
 Effort: M  
 Area: apps/platform/no-std, integrations/modbus, standalone test fixtures  
-Evidence: `apps/platform/no-std/Cargo.toml:5`, `apps/platform/no-std/Cargo.toml:15`, `integrations/modbus/Cargo.toml:20`, `integrations/modbus/src/lib.rs:8`, `crates/control/lib/tests/integration_artifact.rs:14`, `tests/conformance/tests/guest_workspace_closure.rs:42`.  
+Evidence: `apps/platform/no-std/Cargo.toml:5`, `apps/platform/no-std/Cargo.toml:15`, `integrations/modbus/Cargo.toml:18`, `integrations/modbus/src/lib.rs:8`, `crates/control/lib/tests/integration_artifact.rs:14`, `tests/conformance/tests/guest_workspace_closure.rs:42`.  
 Problem: The checkout has six first-party workspace roots. Two exist for small test fixtures, and Modbus has its own root despite using the shared `no_std` runtime. However, combining standard and `no_std` guests reintroduces a recorded panic-handler conflict and forbidden WASI imports.  
 Proposal: Retain the native, standard guest, and `no_std` workspaces. Relocate Modbus under the `no_std` root so its dependencies remain inside that workspace. Move `http-fixture` into T18 as a named binary. Replace the tiny checked-in connector fixture package with fixture source literals in its existing scratch-repository builder. The test still builds a real independent connector in scratch space. Keep the vendor package excluded.
 
