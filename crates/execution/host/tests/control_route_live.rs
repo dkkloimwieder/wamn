@@ -1635,7 +1635,9 @@ async fn assert_definer_grantees(client: &Client) -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
 async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&["WAMN_NATIVE_C_NATS_BIN"]);
     let mut postgres = wamn_test_postgres::start(&[])?;
     let database = postgres.create_database("connection_routes")?;
     let admin = connect(database.url()).await?;
