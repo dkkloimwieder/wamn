@@ -1246,7 +1246,7 @@ Kind prints `4.20 Edge NEG: skipped: kind`.
 The project document declares a global HTTPS load balancer with Cloud CDN that sends all traffic to this NEG.
 OpenTofu renders these objects, each named `wamn-edge`:
 
-- A Certificate Manager DNS authorization for `wamn.dev`, the DNS name of the zone without its trailing dot.
+- A Certificate Manager DNS authorization for `wamn.dev`, the DNS name of the zone without its trailing dot. Its type is `PER_PROJECT_RECORD`.
 - A Google-managed certificate for `wamn.dev` and `*.wamn.dev` through that authorization.
 - A certificate map with one `PRIMARY` entry for that certificate.
 - A backend service on the NEG with protocol HTTPS, Cloud CDN on, and cache mode `USE_ORIGIN_HEADERS`.
@@ -1265,6 +1265,8 @@ Every `/api` response keeps the route's `cache-control` and `Vary: Authorization
 
 The DNS authorization needs one CNAME record in the zone `wamn-dev`, made once.
 OpenTofu outputs its name as `edge_dns_authorization_name` and its value as `edge_dns_authorization_data`.
+The name has the form `_acme-challenge_<id>.wamn.dev.`, where Google sets `<id>` for the project.
+The name is not `_acme-challenge.wamn.dev`, because cert-manager writes the Let's Encrypt DNS-01 TXT record of `deploy/gcp/letsencrypt.yaml` there.
 The agent posts this command with those values and runs it only after the owner approves it:
 
 ```bash

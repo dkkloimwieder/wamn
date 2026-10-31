@@ -143,9 +143,11 @@ pub fn render_project_tofu(
                 "name": "wamn-edge", "project": project.project_id,
                 "tcp_health_check": {"port_specification": "USE_SERVING_PORT"},
             }},
+            // A per-project record leaves `_acme-challenge.<domain>` to the
+            // cert-manager DNS-01 TXT record of deploy/gcp/letsencrypt.yaml.
             "google_certificate_manager_dns_authorization": {"edge": {
                 "name": "wamn-edge", "project": project.project_id,
-                "domain": domain,
+                "domain": domain, "type": "PER_PROJECT_RECORD",
             }},
             "google_certificate_manager_certificate": {"edge": {
                 "name": "wamn-edge", "project": project.project_id,
@@ -438,7 +440,10 @@ mod tests {
         let resources = &rendered["resource"];
         assert_eq!(
             resources["google_certificate_manager_dns_authorization"]["edge"],
-            json!({"name": "wamn-edge", "project": "wamn-dev", "domain": "wamn.dev"})
+            json!({
+                "name": "wamn-edge", "project": "wamn-dev", "domain": "wamn.dev",
+                "type": "PER_PROJECT_RECORD",
+            })
         );
         assert_eq!(
             resources["google_certificate_manager_certificate"]["edge"],
