@@ -353,7 +353,7 @@ Answered 2026-10-31: nothing is applied outside repository automation, so protot
 
 ## Part 2: pipeline
 
-The target is one artifact build graph and one deployment reconciler. The root Dockerfile survives. The older upgrade image builder, separate RC Dockerfile, and deployment-time compilation disappear.
+The target is one artifact build graph and one deployment owner, Helm plus KCL per D3-5. The root Dockerfile survives. The older upgrade image builder, separate RC Dockerfile, and deployment-time compilation disappear.
 
 This was a static, read-only audit. No builds or tests ran. No files changed, and the final Git status was clean.
 
@@ -404,16 +404,6 @@ upgrade-environment                          [upgrade_environment.rs]
 
 The train ends at `tools/train-run:80`. The older upgrade stages appear at `crates/control/lib/src/delivery/run_record.rs:35`. The environment sequence appears at `crates/control/lib/src/environment/mod.rs:276`.
 
-The shell-out inventory has these replacement boundaries:
-
-Docker manifest inspection, tag copying, and registry publication belong in the existing OCI client, the library for container registry operations. Docker or BuildKit remains appropriate for image construction. Container execution remains appropriate for isolated qualification fixtures. Evidence: `crates/control/lib/src/platform_build.rs:326`, `crates/control/lib/src/platform_build.rs:739`, `crates/control/lib/src/platform_build.rs:834`, and `crates/control/lib/src/platform_build.rs:544`.
-
-Kubectl object reads, writes, waits, and context inspection become Kubernetes client calls. First-party chart rendering becomes typed Rust resource construction. Third-party charts remain build inputs, rendered and pinned before deployment. An operator, a service that continually applies declared state, owns rollout and recovery. Evidence: `crates/control/lib/src/kubectl.rs:63`, `crates/control/lib/src/environment/analyse.rs:687`, `crates/control/lib/src/environment/mod.rs:193`, and `crates/control/lib/src/release_chart.rs:667`.
-
-Gcloud token, secret, Cloud Build, and pool operations become provider API calls with one credential source. Interactive cluster bootstrap can retain gcloud. Kind remains a test-only process boundary. Evidence: `crates/control/lib/src/platform_build.rs:1018`, `crates/control/lib/src/platform_build.rs:1275`, `crates/control/lib/src/platform/provider.rs:26`, `crates/control/lib/src/platform/provider.rs:86`, and `crates/control/lib/src/platform/pools.rs:50`.
-
-Git worktree operations, Cargo compilation, pnpm builds, and PostgreSQL dump/restore remain external tools. Replace recursive calls to WAMN binaries with their library operations. Keep local host, identity, scenario-worker, and CDC processes under explicit supervision. Evidence: `crates/control/lib/src/upgrade_environment.rs:282`, `crates/control/lib/src/integration.rs:104`, `crates/control/lib/src/platform/build.rs:57`, `crates/control/lib/src/qualify_upgrade/scratch.rs:101`, and `crates/control/lib/src/dev/cdc_reader.rs:73`.
-
 The shared count is 71 `Command::new` occurrences in control and one in ctl, including embedded tests. These are constructor counts, not release execution counts. The ctl occurrence is a signal-test subprocess at `services/ctl/src/dev/command.rs:302`. Source: measurements.md section 2.
 
 A cold platform publication produces five container images: host, runner, gates, identity, and edge-web. It also produces two WebAssembly role artifacts, for seven platform registry artifacts. Local execution makes five image-build calls and one role-export call. Cached execution builds zero to five container images but still requests the role export. Stamp-only builds none. Evidence: `crates/control/lib/src/platform_build.rs:31`, `crates/control/lib/src/platform_build.rs:782`, and `crates/control/lib/src/platform_build.rs:799`.
@@ -429,9 +419,7 @@ Effort: M
 Area: crates/control/lib/src/upgrade_environment.rs  
 Evidence: `crates/control/lib/src/upgrade_environment.rs:282`, `crates/control/lib/src/upgrade_environment.rs:320`, `crates/control/lib/src/upgrade_environment.rs:348`, `crates/control/lib/src/upgrade_environment.rs:769`, `crates/schema/generator/src/receipt.rs:178`, `docs/architecture/overview.md:13`.  
 Problem: The upgrade creates a detached worktree, then builds native programs and two platform guests. It never builds the declared application packages before requiring their current receipts. Generated application output is absent from Git, so the upgrade cannot complete from a fresh worktree.  
-Proposal: Build and publish the complete package closure once before deployment. Make an upgrade consume package and platform artifact digests without compiling source.  
-Deletes: Application build assumptions in the upgrade stages and deployment-time native/guest preparation.  
-Risk: Existing upgrades can depend on manually prepared output. A new clean-worktree upgrade test must reach qualification without preexisting `apps/target` contents.
+Closed by C3-3 (owner review 2026-10-31): `upgrade_environment.rs` is deleted in Group 1. No clean-worktree upgrade test is written for a deleted path.
 
 ## Finding D2-2: The older image pipeline builds artifacts that deployment does not select
 
@@ -441,29 +429,31 @@ Area: crates/control/lib/src/upgrade_environment.rs; tools/journey-image-cache
 Evidence: `crates/control/lib/src/upgrade_environment.rs:385`, `crates/control/lib/src/upgrade_environment.rs:434`, `crates/control/lib/src/upgrade_environment.rs:927`, `crates/control/lib/src/upgrade_environment.rs:984`, `crates/control/lib/src/upgrade_environment.rs:1415`, `tools/journey-image-cache:19`, `Dockerfile:124`, `Dockerfile:171`.  
 Problem: The older path builds host, identity, ctl, and two workload guests, but qualification and deployment select the platform chart. Only ctl has an explicit downstream image-record consumer, for the PAT Job. Its separate cache also omits `tools/guest-rustflags`, although the ctl image embeds a guest built with that script. A script-only change therefore leaves this cache identity unchanged.  
 Proposal: Keep `platform_build.rs` and the root Dockerfile as the sole platform artifact producer. Supply the administrative Job image through that same published artifact set.  
-Deletes: `tools/journey-image-cache`, the upgrade image and guest stages, their leases, relabeling, and duplicate registry authentication.  
+Deletes: `tools/journey-image-cache`, the upgrade image and guest stages, their leases, relabeling, and duplicate registry authentication. The deletion is Group 1 work and the cache-identity fix is Group 2 work.  
 Risk: PAT provisioning still needs a runnable control binary. A pipeline test must prove that qualification, deployment, and administrative Jobs consume the declared artifact set.
 
 ## Finding D2-3: Cloud failures leave published version tags without a complete platform set
 
-Severity: high  
+Severity: medium  
 Effort: M  
 Area: crates/control/lib/src/platform_build.rs  
 Evidence: `crates/control/lib/src/platform_build.rs:785`, `crates/control/lib/src/platform_build.rs:811`, `crates/control/lib/src/platform_build.rs:1370`, `crates/control/lib/src/platform_build.rs:1378`, `crates/control/lib/src/platform_build.rs:1392`, `crates/control/lib/src/platform/steps.rs:121`.  
 Problem: Local execution finishes every build before publication starts. Cloud execution pushes each image directly under the platform version while later targets remain unfinished. A later failure leaves partial version tags, and immutable registries prevent replacing those tags after a source fix. Local publication can also stop after publishing only part of the set.  
-Proposal: Publish content-addressed outputs first. Publish one platform-set manifest only after every required artifact succeeds. Make stamping consume that manifest digest.  
+Proposal: Push every image by digest. Write the version tags for the whole set only after the last push succeeds.  
 Deletes: Independent resolution of seven version tags as the platform publication boundary.  
-Risk: Stamp-only and version-based reinstall behavior change. Fault-injection tests must fail each build and push stage, then prove that no incomplete set becomes deployable.
+Risk: Stamp-only and version-based reinstall behavior change. One test proves that a failed push leaves no version tag. No fault injection per stage.
+
+Owner review 2026-10-31: severity lowered from high to medium. Builds are local by rule, and Cloud Build is overflow only.
 
 ## Finding D2-4: Several command owners bypass bounded process supervision
 
-Severity: high  
+Severity: medium  
 Effort: M  
 Area: crates/control/lib/src/owned_command.rs; kubectl.rs; platform/provider.rs; platform_build.rs  
 Evidence: `crates/control/lib/src/owned_command.rs:35`, `crates/control/lib/src/owned_command.rs:58`, `crates/control/lib/src/kubectl.rs:78`, `crates/control/lib/src/platform/provider.rs:195`, `crates/control/lib/src/platform_build.rs:1423`, `crates/control/lib/src/upgrade_environment.rs:249`, `crates/control/lib/src/environment/lock.rs:87`.  
 Problem: The shared executor owns process groups, deadlines, signals, and cleanup. Kubernetes, provider, Helm, and platform-build helpers instead await subprocess completion directly. An outer readiness deadline cannot bound a subprocess that never returns, and an environment verb retains its lifecycle lock. The older upgrade timeout also kills only its direct child through `kill_on_drop`.  
-Proposal: Remove subprocesses where client calls suffice. Route every remaining finite command through the existing owned executor with an operation deadline.  
-Deletes: Duplicate `output`, `run`, and command-timeout implementations.  
+Proposal: Route every command that survives Group 1 through `owned_command.rs` with an operation deadline. Do not build a second executor.  
+Deletes: Duplicate `output`, `run`, and command-timeout implementations. Most listed owners (`upgrade_environment.rs`, the kubectl wrappers, the duplicate Helm runners) are already deleted by Group 1, so the scope is what survives.
 Risk: Some commands need cleanup time after cancellation. Extend `stuck_children_cancel_and_reap_descendants_with_diagnostics` to exercise each retained command adapter and prove lock release.
 
 ## Finding D2-5: Deployment ownership is spread across CLI tools and Helm history
@@ -473,9 +463,7 @@ Effort: L
 Area: crates/control/lib/src/environment; crates/control/lib/src/release_chart.rs; crates/control/lib/src/platform  
 Evidence: `crates/control/lib/src/environment/analyse.rs:576`, `crates/control/lib/src/environment/analyse.rs:600`, `crates/control/lib/src/environment/write.rs:97`, `crates/control/lib/src/environment/mod.rs:276`, `crates/control/lib/src/kubectl.rs:26`, `crates/control/lib/src/platform/install.rs:1026`.  
 Problem: Rust already owns deployment decisions, but it reads deployment history through Helm and writes resources through kubectl. Transport classification depends on an English stderr prefix. Recovery requires another verb invocation because the lifecycle sequence runs inside the caller.  
-Proposal: Store desired release and observed progress under one environment reconciler. Use the Kubernetes client for resources and watches. Construct first-party resources in Rust, and render third-party charts during artifact production. Preserve database expansion, readiness, drain, and contract ordering.  
-Deletes: Kubectl wrappers, Helm history parsing, first-party chart templates, and CLI-owned reconciliation loops.  
-Risk: Rollback, credentials, and database transitions retain strict ordering requirements. Existing environment lifecycle tests must prove retry, rollback, concurrent-apply refusal, drain, and deletion behavior against the reconciler.
+Closed, superseded by D3-5 (owner review 2026-10-31): no Rust reconciler, no Kubernetes client port, no desired/observed store. The one defect that survives is transport classification by an English stderr prefix at `crates/control/lib/src/kubectl.rs:26`. Fix it inline when that file is next open.
 
 ## Finding D2-6: Installation couples package freshness to an unrelated platform stamp
 
@@ -485,7 +473,7 @@ Area: crates/control/lib/src/platform/build.rs
 Evidence: `crates/control/lib/src/platform/build.rs:30`, `crates/control/lib/src/platform/build.rs:39`, `crates/control/lib/src/platform/build.rs:57`, `crates/control/lib/src/platform/build.rs:165`, `crates/control/lib/src/platform/packages.rs:35`, `crates/control/lib/src/platform/install.rs:80`.  
 Problem: An existing platform stamp skips package builds and the UI build before their freshness is considered. Later package publication still requires current package receipts. A changed application under an unchanged platform version therefore reaches a stale-output refusal. The library also invokes a debug `wamn-ctl` executable to perform its own stamp operation.  
 Proposal: Make installation consume published package, UI, and platform artifacts. Give each artifact its own identity. Call the stamp library directly during artifact production.  
-Deletes: Installer PostgreSQL container management, package compilation, pnpm invocation, debug executable lookup, and recursive ctl execution.  
+Deletes: Merged with D3-1. The installer deletions are stated once under D3-1.  
 Risk: Installation loses its implicit local preparation behavior. A test with an unchanged platform and changed application must select the new package without rebuilding platform images.
 
 ## Finding D2-7: Cluster gates retain separate artifact recipes and duplicated lifecycle code
@@ -496,8 +484,8 @@ Area: tools/*gate-run; tools/*journey-run; tests/integration/src/rc/Dockerfile
 Evidence: `tests/integration/src/rc/Dockerfile:17`, `Dockerfile:68`, `tools/rc-gate-run:12`, `tools/receiving-cluster-journey-run:17`, `tools/wms-cluster-journey-run:19`, `tools/identity-jwks-journey-run:183`, `tools/kind-gate-build:93`; measurements.md section 7 records 78 duplicated lines between the application runners.  
 Problem: RC builds debug host and gate images through a separate Dockerfile, while platform publication builds release images. The identity journey rebuilds another pair of images directly. Receiving and WMS correctly consume candidate images, but duplicate cluster, image-loading, broker, and cleanup mechanics. These paths maintain different recipes for proving the deployed system.  
 Proposal: Make release qualification consume only the canonical published artifacts. Keep debug builds for development. Put disposable infrastructure ownership in one shared test fixture, while applications retain their assertions.  
-Deletes: The RC Dockerfile, redundant journey image builds, and duplicated lifecycle branches. Retire per-node gate-image cleanup when disposable clusters replace retained gate clusters.  
-Risk: Preserve exact test counts, negative-effect proofs, resource ownership, and teardown evidence. RC, Receiving, WMS, JWKS/session, and `tools/kind-cluster-delete-test` must retain their existing assertions.
+Deletes: The RC Dockerfile, redundant journey image builds, and duplicated lifecycle branches. Retire per-node check-image cleanup when disposable clusters replace retained check clusters. Merged with D3-6.  
+Risk: Preserve negative-effect proofs, resource ownership, and teardown evidence. RC, Receiving, WMS, JWKS/session, and `tools/kind-cluster-delete-test` must retain their existing assertions.
 
 ## Finding D2-8: The train cannot establish release build cost or commit-to-running time
 
@@ -506,15 +494,13 @@ Effort: S
 Area: tools/train-run; tools/test-changes; crates/control/lib/src/platform_build.rs  
 Evidence: `tools/train-run:60`, `tools/train-run:74`, `tools/train-run:80`, `tools/test-changes-suites.json:2`, `tools/test-changes:293`, `crates/control/lib/src/platform_build.rs:60`, `crates/control/lib/src/platform_build.rs:71`; measurements.md section 3 records missing generated inputs during direct workspace linting.  
 Problem: The train records broad step timestamps but deletes successful logs and ends after source tests. Platform builds print stage durations, while their receipt stores only the UI digest. No retained record joins source testing, artifact production, qualification, and readiness. The always-selected quality suite also generates application inputs, so “selected tests” alone does not describe the work performed.  
-Proposal: Retain one release receipt with stage durations, cache outcomes, artifact digests, built/copied counts, qualification result, and readiness time. Measure cold and cached runs separately.  
+Proposal: Keep successful logs. Retain one build record with stage durations and artifact digests. No budgets yet, because the next real build is the measurement.  
 Deletes: Success-path evidence deletion and duplicate textual timing summaries.  
-Risk: Receipts must exclude credentials and distinguish reused work from executed work. Train-tool tests must assert retained successful evidence, and a timed release run must reconcile its receipt with actual registry artifacts.
+Risk: The build record must exclude credentials and distinguish reused work from executed work. Train-tool tests must assert retained successful evidence, and a timed release run must reconcile its record with actual registry artifacts.
 
 ## Open questions for the owner
 
-1. Is `upgrade-environment` still a supported entry point, or can the artifact-driven pipeline replace its build stages entirely?
-2. Must kind and GCP both execute builds, or can local execution remain a developer adapter to one release build graph?
-3. Which cold-build, cached-build, qualification, and commit-to-running budgets must the retained release receipt enforce?
+All three questions were answered on 2026-10-31. `upgrade-environment` is not supported and is deleted. One build graph exists, local by default, with Cloud Build as overflow under the daily cap, and kind and GCP consume the same published artifacts. No budgets exist until the build record has produced numbers.
 
 <!-- lane D3, bead wamn-xm69b.3 -->
 
@@ -540,7 +526,7 @@ Proposal: Keep `platform apply` as the single deployment entry point. Its input 
 
 Keep `env apply` as the shared environment implementation beneath that entry point. Fresh installation and later deployment use the same stages.
 
-Deletes: Package and UI compilation from `platform/build.rs`, publication from `platform/releases.rs`, and the installer’s request to commit newly discovered release digests.
+Deletes: Package and UI compilation from `platform/build.rs`, publication from `platform/releases.rs`, and the installer’s request to commit newly discovered release digests. From D2-6: installer PostgreSQL container management, pnpm invocation, debug executable lookup, and recursive ctl execution.
 
 Risk: Publication currently uses target credentials and database state. A proposed disconnected-install test must deploy a completed bundle without Cargo, pnpm, source files, or registry write access.
 
