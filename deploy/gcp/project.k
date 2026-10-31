@@ -26,7 +26,7 @@ project.Project {
             spot = True
             disk_type = "pd-standard"
             disk_size = 30
-            size = 1
+            size = 2
             label = ""
             taint = ""
         }
