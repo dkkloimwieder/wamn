@@ -1130,6 +1130,17 @@ pub fn install_job_requests(
             vec![],
         ),
     ]);
+    requests.push((
+        "env connections",
+        environments::connections_request(
+            &document,
+            &environment,
+            image,
+            &auth,
+            [("upstream.json".into(), "{}".into())].into(),
+        )?,
+        vec!["WAMN_CONTROL_DATABASE_URL"],
+    ));
     for initial in [true, false] {
         requests.push((
             "env apply",

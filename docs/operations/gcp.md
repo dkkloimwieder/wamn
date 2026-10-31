@@ -480,7 +480,7 @@ Step 4.14 publishes each release through a Job.
 For a wired release, one pod runs the gate, authorship, and publication with an in-memory PAT.
 The verb prints release lines for the owner to commit, then resumes at 4.17 on a rerun.
 It prints 4.15 and 4.16 as skipped. Qualification stays on the build machine in section 4.15.
-The verb then runs sections 4.17 through 4.21.
+The verb then runs sections 4.16.1 through 4.21.
 The manual commands of each section follow the verb's description.
 
 After you delete the Secret, wait for cert-manager to create it again.
@@ -1078,6 +1078,21 @@ The verb never edits a committed file.
 The Rust edge reads each live release row. No edge values or URL map contains a copied release digest.
 
 Commit the release lines. If you ran the manual commands of sections 4.6 and 4.11, commit their changes to `deploy/gcp` in the same commit. Push the commit.
+
+### 4.16.1 Connections
+
+Step 4.16.1 writes the integrations that each environment file declares, before 4.17 binds them.
+The documents are in [deploy/gcp/connections](../../deploy/gcp/connections) beside the cluster document.
+Each integration `<name>` has `<name>.integration.json` and the connection `<name>.json`.
+An integration that names an external system also has `<system>.external-system.json`.
+The documents hold no credential.
+`platform apply` runs `wamn-ctl env connections` as a Job `platform-connections-<org>--<project>--<env>` in `hosts`.
+The Job writes each document through the same operations as the control routes, which start only at 4.19.1.
+It skips a document when the stored value is equal.
+A first connection write of an authenticated integration stores the credential `{}`.
+For an integration that needs a real credential, set it with `wamn-ctl connection set-credential` after 4.19.1, as [deployment](deployment.md#project-integrations-and-environment-connections) describes.
+The credential store writes to the Secret `hosts/wamn-credential-<org>-<project>-<env>`.
+An environment without integrations has no Job.
 
 ### 4.17 Apply with the release
 

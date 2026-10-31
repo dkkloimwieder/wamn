@@ -1,9 +1,0 @@
-{
-  "project": "wms",
-  "env": "dev",
-  "name": "rest-fixture",
-  "parameters": {
-    "primary-authority": "http://http-fixture:8080",
-    "tls-verification": "disabled"
-  }
-}

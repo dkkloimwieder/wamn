@@ -248,6 +248,12 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
             owner_inputs: vec![],
         },
         InstallStep {
+            number: "4.16.1", title: "Connections",
+            runs: Runner::Job("hosts/platform-connections-<org>--<project>--<env>"),
+            inputs: vec![("environments", environments.into()), ("integration documents", "connections/<name>.json, <name>.integration.json and <system>.external-system.json beside cluster.k".into()), ("credentials", "hosts/wamn-credential-<org>--<project>--<env>".into())],
+            owner_inputs: vec![],
+        },
+        InstallStep {
             number: "4.17", title: "Apply with the release",
             runs: Runner::Job("platform/platform-apply-<org>--<project>--<env>"),
             inputs: vec![("environments", environments.into()), ("registry", registry.clone()), ("platform_version", platform_version.into()), ("release namespace", "hosts".into()), ("releases and host groups", "r-<env>-<coordinate hash>".into()), ("release digests", "from 4.16".into()), ("identity CA", "hosts/identity-ca".into())],

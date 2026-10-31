@@ -17,6 +17,8 @@ use wamn_control_registry::Triple;
 pub enum EnvCommand {
     /// Move one environment toward its environment.k document.
     Apply(ApplyArgs),
+    /// Write the committed integration documents of one environment.
+    Connections(ConnectionsArgs),
     /// Apply the previous intended release of one environment again.
     Rollback(RollbackArgs),
     /// Delete one environment. Its database stays on the cluster unless --data.
@@ -74,6 +76,16 @@ pub(crate) const ENV_APPLY_INSTALL_ENV: crate::install_job_tests::Environment =
     };
 
 #[derive(Debug, Args)]
+pub struct ConnectionsArgs {
+    /// The environment.k document.
+    pub file: PathBuf,
+    /// The directory of the integration, external system and connection
+    /// documents (platform install step 4.16.1).
+    #[arg(long)]
+    pub documents: PathBuf,
+}
+
+#[derive(Debug, Args)]
 pub struct RollbackArgs {
     /// The coordinate, `org/project/env`.
     pub coordinate: String,
@@ -112,6 +124,14 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
             }
             if args.dry_run {
                 println!("this plan describes this moment only");
+            }
+        }
+        EnvCommand::Connections(args) => {
+            let document = environment::document::EnvironmentDocument::compile(&args.file)?;
+            for line in
+                environment::connections::write(&platform, &document, &args.documents).await?
+            {
+                println!("{line}");
             }
         }
         EnvCommand::Rollback(args) => {

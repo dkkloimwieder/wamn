@@ -122,6 +122,15 @@ pub async fn apply(
     progress("4.15 Qualification: skipped: qualify-release on the build machine")?;
     progress("4.16 Record the releases: skipped: owner input")?;
     let started = Instant::now();
+    progress("4.16.1 Connections: starting")?;
+    let changed =
+        super::environments::connections(&target, document, environments, work_directory).await?;
+    progress(&format!(
+        "4.16.1 Connections: {} {:.1}s",
+        if changed { "done" } else { "skipped" },
+        started.elapsed().as_secs_f64()
+    ))?;
+    let started = Instant::now();
     progress("4.17 Apply with the release: starting")?;
     let changed = super::environments::apply(
         &target,

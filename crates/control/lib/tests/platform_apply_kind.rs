@@ -11,6 +11,7 @@
 //! kubeconfig and progress under /var/tmp and removes its cluster and registries.
 //! A TLS artifact registry serves Receiving, WMS, and their unqualified releases.
 //! WMS publishes through the same release Job as Receiving.
+//! 4.16.1 writes the WMS integration from deploy/gcp/connections first.
 //! WMS stays unqualified and must refuse. The host qualifies Receiving, then
 //! the test applies only Receiving through HTTPS checks in 4.21 and requires an unchanged rerun.
 //! Before the rerun, the test deletes the first apply completion, as a new
@@ -186,6 +187,12 @@ cluster.Cluster {{
     )?;
 
     let (wms_source, mut wms_environment) = fixture_environment(&repository, "wms")?;
+    let connections = directory.join("connections");
+    std::fs::create_dir(&connections)?;
+    for entry in std::fs::read_dir(repository.join("deploy/gcp/connections"))? {
+        let entry = entry?;
+        std::fs::copy(entry.path(), connections.join(entry.file_name()))?;
+    }
     std::fs::copy(
         repository.join("deploy/gcp/host-group-wms.yaml"),
         directory.join("host-group-wms.yaml"),
@@ -452,6 +459,7 @@ cluster.Cluster {{
     std::fs::write(&wms_input, wms_environment.to_kcl())?;
     environment.release = DeclaredRelease::Digest(digest.clone());
     std::fs::write(&input, environment.to_kcl())?;
+    let mut refused_lines = Vec::new();
     let result = async {
         let refused = install::apply(
             &document,
@@ -463,6 +471,7 @@ cluster.Cluster {{
             |line| {
                 println!("{line}");
                 writeln!(progress, "{line}")?;
+                refused_lines.push(line.to_owned());
                 Ok(())
             },
         )
@@ -532,6 +541,35 @@ cluster.Cluster {{
     }
     .await;
     failures.record("4.15 repeated unqualified release refusal", result);
+    // WMS declares wms-labels, so 4.16.1 writes it once, with the empty
+    // credential of its custom auth in the environment's credential Secret.
+    for (lines, result) in [(&refused_lines, "done"), (&second, "skipped")] {
+        failures.record(
+            "4.16.1",
+            async {
+                ensure!(
+                    lines
+                        .iter()
+                        .any(|line| line.starts_with(&format!("4.16.1 Connections: {result} "))),
+                    "4.16.1 Connections was not {result}"
+                );
+                Ok(())
+            }
+            .await,
+        );
+    }
+    let result = async {
+        let name = format!("wamn-credential-{}-wms-dev", document.org);
+        ensure!(
+            kubectl::get::<Value>(&kubeconfig, &context, "hosts", "secret", &name)
+                .await?
+                .is_some(),
+            "4.16.1 wrote no credential Secret hosts/{name}"
+        );
+        Ok(())
+    }
+    .await;
+    failures.record("4.16.1 credential Secret", result);
     failures.record(
         "4.3 through 4.14 progress (skipped)",
         require_steps(&second, "skipped"),

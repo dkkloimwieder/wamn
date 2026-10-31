@@ -130,6 +130,131 @@ async fn released(
     Ok(completion.is_some())
 }
 
+/// Step 4.16.1: write each environment's committed integration documents
+/// from `connections/` beside the cluster document, in `hosts`, where the
+/// credential store keeps their credentials.
+pub(super) async fn connections(
+    target: &Target,
+    document: &ClusterDocument,
+    environments: &Path,
+    directory: &Path,
+) -> anyhow::Result<bool> {
+    let image = runner_image(directory)?;
+    let secret: SecretData = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "platform",
+        "secret",
+        "wamn-pg-superuser",
+    )
+    .await?
+    .context("missing Secret platform/wamn-pg-superuser")?;
+    let mut admin = administrator(&secret)?;
+    admin.environment = "WAMN_CONTROL_DATABASE_URL".into();
+    let auth: SecretData = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "platform",
+        "secret",
+        "wamn-ctl-auth-nats",
+    )
+    .await?
+    .context("missing Secret platform/wamn-ctl-auth-nats")?;
+    let source = environments
+        .parent()
+        .context("environments has no cluster directory")?
+        .join("connections");
+    let mut target = target.clone();
+    target.namespace = "hosts".into();
+    let mut changed = false;
+    for (_, environment) in super::broker::documents(environments)? {
+        if environment.integrations.is_empty() {
+            continue;
+        }
+        let request = connections_request(
+            document,
+            &environment,
+            &image,
+            &auth,
+            connection_documents(&source, &environment)?,
+        )?;
+        changed |= job::run(
+            &target,
+            directory,
+            &request,
+            &json!({"environment": environment}),
+            std::slice::from_ref(&admin),
+        )
+        .await?;
+    }
+    Ok(changed)
+}
+
+/// The documents of each integration `environment` declares, by file name.
+fn connection_documents(
+    source: &Path,
+    environment: &crate::environment::document::EnvironmentDocument,
+) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
+    let mut files = std::collections::BTreeMap::new();
+    let mut read = |name: String| -> anyhow::Result<String> {
+        let path = source.join(&name);
+        let text =
+            std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+        files.insert(name, text.clone());
+        Ok(text)
+    };
+    for name in environment.integrations.keys() {
+        read(format!("{name}.json"))?;
+        let integration: serde_json::Value =
+            serde_json::from_str(&read(format!("{name}.integration.json"))?)?;
+        if let Some(system) = integration["external_system"].as_str() {
+            read(format!("{system}.external-system.json"))?;
+        }
+    }
+    Ok(files)
+}
+
+pub(super) fn connections_request(
+    document: &ClusterDocument,
+    environment: &crate::environment::document::EnvironmentDocument,
+    image: &str,
+    auth: &SecretData,
+    documents: std::collections::BTreeMap<String, String>,
+) -> anyhow::Result<JobRequest> {
+    let env_key = wamn_control_registry::project_env_key(
+        &environment.org,
+        &environment.project,
+        &environment.env,
+    );
+    let mut request = request(document, environment, image, false, auth)?;
+    request.name = format!("platform-connections-{env_key}");
+    request.arguments = [
+        "env",
+        "connections",
+        "/inputs/environment.k",
+        "--documents",
+        "/inputs",
+    ]
+    .map(str::to_owned)
+    .into();
+    request.permissions = vec![Access {
+        namespace: "hosts".into(),
+        rules: vec![PolicyRule {
+            api_groups: vec![String::new()],
+            resources: vec!["secrets".into()],
+            verbs: ["get", "create", "update"].map(str::to_owned).into(),
+        }],
+    }];
+    for (name, text) in documents {
+        anyhow::ensure!(
+            !request.files.contains_key(&name),
+            "the integration document {name} has the name of a Job input"
+        );
+        request.files.insert(name, text);
+    }
+    Ok(request)
+}
+
 fn qualification_refusal<'a>(log: &'a str, digest: &str) -> Option<&'a str> {
     let prefix = format!("release {digest} has no qualification on the chart's image set:");
     log.lines()

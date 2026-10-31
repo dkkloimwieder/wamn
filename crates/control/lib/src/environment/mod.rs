@@ -14,6 +14,7 @@
 pub mod analyse;
 pub mod bindings;
 mod clients;
+pub mod connections;
 pub mod contract;
 pub mod delete;
 pub mod document;

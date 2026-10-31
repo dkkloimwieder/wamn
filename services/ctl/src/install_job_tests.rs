@@ -22,7 +22,7 @@ fn contract(verb: &str) -> Environment {
         "reconcile-package-data-access" => package_verbs::RECONCILE_PACKAGE_DATA_ACCESS_INSTALL_ENV,
         "reconcile-replica-identity" => package_verbs::RECONCILE_REPLICA_IDENTITY_INSTALL_ENV,
         "publish-release" => release_verbs::PUBLISH_RELEASE_INSTALL_ENV,
-        "env apply" => env_verbs::ENV_APPLY_INSTALL_ENV,
+        "env apply" | "env connections" => env_verbs::ENV_APPLY_INSTALL_ENV,
         "web upload" => web::WEB_UPLOAD_INSTALL_ENV,
         "web upload --platform-ui" => web::PLATFORM_UI_INSTALL_ENV,
         _ => panic!("install verb {verb} has no environment contract"),
