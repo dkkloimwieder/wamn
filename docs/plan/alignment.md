@@ -94,26 +94,6 @@ The first issue checks every assumption and stops on a false one.
 | A6 | One NATS outage now stops placement, events and the auth memory together. Each already survives its own outage. | A NATS restart during `environment_apply_kind` | Accepted: the owner ruled the scheduler outage window, and hosts read Postgres when the auth memory is gone |
 | A7 | A KV watch can be confined to `$KV.wamn-auth.<env_key>.>`, because the filtered consumer-create subject carries the filter. | A workspace test: environment A watches its prefix and is refused a watch on B's | Stop and report |
 
-## Edge and CDN
-
-On GCP an HTTPS load balancer with Cloud CDN sits in front of the same edge; `wamn dev`, the local bench and kind do not change. Today `crates/schema/generator/src/tofu.rs` renders a `google_compute_target_tcp_proxy`, and `deploy/platform/edge/templates/configmap.yaml` opens a new upstream connection per request.
-
-| # | Ruling | Invariant |
-| --- | --- | --- |
-| C1 | GCP ingress is a global HTTPS load balancer on the existing global address: a Certificate Manager certificate map holding one Google-managed certificate for wamn.dev and \*.wamn.dev, issued by DNS authorization, a URL map whose default service is the backend, no host or path rules; one backend service on the edge NEG. | `tofu.rs` render test: a target HTTPS proxy, a URL map whose default service is the backend service and that has no host or path rules, a certificate map whose certificate covers wamn.dev and \*.wamn.dev through a DNS authorization; no compute SSL certificate; no target TCP proxy |
-| C2 | The backend service has Cloud CDN on, cache mode `USE_ORIGIN_HEADERS`, backend protocol HTTPS. | Render test reads `enable_cdn`, the cache mode and the protocol |
-| C3 | The origin decides what caches. Digest paths stay `public, max-age=31536000, immutable`; `config.json` and pages stay `no-cache`; `/api` keeps the route's `cache-control`, so authenticated reads stay `private`. Anonymous `/api` reads are not cached at the CDN either, because every read sends `Vary: Authorization, Cookie` (`apps/platform/ingress/http-route/src/lib.rs`). No change: public API caching is not a goal of this epic. | On wamn-dev, a second fetch of a digest path carries an `age` header; no `/api` GET does |
-| C4 | nginx keeps its own TLS in kind and on GCP; the load balancer re-encrypts to it. The edge chart has one shape. | The edge chart renders the same server blocks with `neg: true` and `neg: false`, apart from the NEG annotation |
-| C5 | nginx reuses upstream connections: `worker_processes auto;`, `keepalive 32;` in each `upstream api_N`, `proxy_set_header Connection "";` in `location /api/`. | `tests/system/tests/deployment_declarations.rs` pins all three lines with these exact values |
-
-**Changes**
-
-- `tofu.rs`: replace the TCP proxy with a target HTTPS proxy, a URL map, a DNS authorization, a Google-managed certificate and its certificate map, and a CDN-enabled HTTPS backend service. Keep the global address, forwarding rule and NEG data source.
-- `deploy/platform/edge/templates/configmap.yaml`: C5.
-- `docs/operations/gcp.md` 4.20 and the `deployment.md` "Google Cloud edge" section describe the new path. The stale "backend bucket" text and `bucket.endpoint` go.
-- The DNS authorization needs one CNAME record in the wamn.dev zone, made once. It is an owner input: the agent posts the command and runs it after approval. New orgs and environments under wamn.dev need no certificate change; only their A record.
-- wamn-dev cutover: `tofu apply` under manual approval. The certificate goes active before the forwarding rule moves to the HTTPS proxy, so the route hosts see no gap.
-
 ## WASI version match
 
 Admission matches WASI imports the way the host linker does: by package and family, not by exact patch. Today `crates/platform/component-policy/src/lib.rs` (`CAPABILITY_REGISTRY`) admits only `0.2.12`, so every Rust toolchain or WASI-Virt bump needs a registry edit.
@@ -151,21 +131,18 @@ Only One NATS forces a platform build, once, at its close. The other epics ride 
 | Epic | Images that change | Forces its own build |
 | --- | --- | --- |
 | One NATS | host, identity, ctl, CDC reader (connection config) | yes, once at close |
-| Edge and CDN | none (chart, OpenTofu renderer in ctl) | no |
 | WASI version match | ctl and host (policy crate) | no |
 
 - Per issue: build, clippy, unit tests. Per merge: the live targets that touch the merged files.
 - One NATS close: `platform_apply_kind` and `environment_apply_kind` once each, then the wamn-dev cutover (`platform apply`, then `env apply` per environment; streams are re-created, no event data carries over).
-- Edge and CDN close: the wamn-dev `tofu apply` under manual approval, then C3's two fetches.
 
 ## Issues
 
 One epic is scoped at a time. The next is scoped after the previous closes and is reviewed. Order: Deploy failures, Edge and CDN, WASI version match, One NATS. One NATS closes with the one platform build, which covers all four.
 
-**Edge and CDN** (scoped, epic `wamn-wio2s`)
+**WASI version match** (scoped, epic `wamn-cqbb0`)
 
-1. C5: nginx upstream keepalive in `deploy/platform/edge/templates/configmap.yaml`, pinned by `deployment_declarations`.
-2. C1 to C4: the HTTPS load balancer, managed certificate and CDN in `tofu.rs`, the edge chart test for `neg`, and the docs.
-3. The wamn-dev cutover from the hand-built load balancer, and C3's two fetches.
+1. W3: the ceiling, generated at build from the linked `wasmtime-wasi` WIT (`wamn-cqbb0.1`).
+2. W1, W2: family and ceiling matching for `wasi:*` rows in `CAPABILITY_REGISTRY` and `connector_import`, the conformance rows, and the docs (`wamn-cqbb0.2`).
 
-**WASI version match**, **One NATS**: scoped later.
+**One NATS**: scoped later.
