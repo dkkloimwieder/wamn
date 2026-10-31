@@ -32,12 +32,13 @@ oci-client = { workspace = true }
 wamn-package-artifact = { workspace = true }
 # The OCI archives of the cluster cases' node images (case_release.rs).
 tar = { workspace = true }
+# The full row images of the captured schemas (environment.rs).
+wamn-schema-control = { workspace = true }
 
 [dev-dependencies]
 async-nats = { workspace = true, features = ["jetstream"] }
 tokio = { workspace = true, features = ["macros", "rt"] }
 wamn-event-wire = { workspace = true }
-wamn-schema-control = { workspace = true }
 wamn-test-postgres = { workspace = true }
 
 [lints]

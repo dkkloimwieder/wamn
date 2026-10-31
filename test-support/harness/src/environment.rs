@@ -178,6 +178,27 @@ pub async fn configure_cdc(
         .batch_execute(&outcome.cdc_sql)
         .await
         .context("apply the declared CDC SQL")?;
+    // Env apply captures with full row images before the publication, so a
+    // condition that reads the old row sees it. Capture the same way here.
+    for row in project
+        .query(
+            wamn_schema_control::select_replica_identity_sql(),
+            &[&schemas],
+        )
+        .await
+        .context("read captured replica identities")?
+        .iter()
+        .filter(|row| row.get::<_, String>(2) != "f")
+    {
+        project
+            .batch_execute(&wamn_schema_control::alter_replica_identity_sql(
+                row.get(0),
+                row.get(1),
+                wamn_schema_control::ReplicaIdentity::Full,
+            ))
+            .await
+            .context("capture the declared schemas with full row images")?;
+    }
     project
         .batch_execute(&sql::create_publication_schemas_sql(role, &schemas))
         .await
