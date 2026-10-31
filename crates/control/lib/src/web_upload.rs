@@ -146,7 +146,10 @@ pub async fn upload_platform_ui(
     Ok(format!("{}{}/{root}/", sink.scheme.prefix(), sink.bucket))
 }
 
-fn platform_ui_source(repository: &Path, chart: &Path) -> anyhow::Result<(PathBuf, String)> {
+pub(crate) fn platform_ui_source(
+    repository: &Path,
+    chart: &Path,
+) -> anyhow::Result<(PathBuf, String)> {
     use crate::platform_build::{
         PlatformBuildReceipt, RECEIPT_FILE, platform_ui_digest, platform_ui_dist,
     };

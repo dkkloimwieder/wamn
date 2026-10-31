@@ -142,26 +142,12 @@ pub(super) async fn platform_ui(
     }
     let started = Instant::now();
     progress("4.19.1 Platform UI upload: starting")?;
-    let mut request = platform_ui_request(document, &super::install::runner_image(directory)?);
-    for name in ["Chart.yaml", crate::platform_build::RECEIPT_FILE] {
-        request.binary_files.insert(
-            format!("chart/{name}"),
-            std::fs::read(directory.join("release-chart").join(name))?,
-        );
-    }
-    let dist = crate::platform_build::platform_ui_dist(repository);
-    let mut files = Vec::new();
-    crate::web_upload::collect(&dist, &mut files)?;
-    for path in files {
-        let relative = path
-            .strip_prefix(&dist)?
-            .to_str()
-            .context("platform UI path is not UTF-8")?;
-        request.binary_files.insert(
-            format!("apps/platform_ui/dist/{relative}"),
-            std::fs::read(path)?,
-        );
-    }
+    let request = platform_ui_inputs(
+        document,
+        &super::install::runner_image(directory)?,
+        repository,
+        directory,
+    )?;
     let hosts = Target {
         namespace: "hosts".into(),
         ..target.clone()
@@ -180,6 +166,42 @@ pub(super) async fn platform_ui(
         started.elapsed().as_secs_f64()
     ))?;
     Ok(())
+}
+
+/// The platform UI Job with every file `wamn web upload --platform-ui` reads
+/// under its working directory `/inputs`: the stamped chart and its build
+/// receipt, the platform chart of the repository, and the built UI.
+fn platform_ui_inputs(
+    document: &ClusterDocument,
+    image: &str,
+    repository: &Path,
+    directory: &Path,
+) -> anyhow::Result<JobRequest> {
+    let mut request = platform_ui_request(document, image);
+    for name in ["Chart.yaml", crate::platform_build::RECEIPT_FILE] {
+        request.binary_files.insert(
+            format!("chart/{name}"),
+            std::fs::read(directory.join("release-chart").join(name))?,
+        );
+    }
+    request.binary_files.insert(
+        "deploy/platform/release/Chart.yaml".into(),
+        std::fs::read(repository.join("deploy/platform/release/Chart.yaml"))?,
+    );
+    let dist = crate::platform_build::platform_ui_dist(repository);
+    let mut files = Vec::new();
+    crate::web_upload::collect(&dist, &mut files)?;
+    for path in files {
+        let relative = path
+            .strip_prefix(&dist)?
+            .to_str()
+            .context("platform UI path is not UTF-8")?;
+        request.binary_files.insert(
+            format!("apps/platform_ui/dist/{relative}"),
+            std::fs::read(path)?,
+        );
+    }
+    Ok(request)
 }
 
 pub(super) fn platform_ui_request(document: &ClusterDocument, image: &str) -> JobRequest {
@@ -203,6 +225,68 @@ pub(super) fn platform_ui_request(document: &ClusterDocument, image: &str) -> Jo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_platform_ui_job_carries_every_file_the_upload_reads() {
+        use crate::platform_build::{
+            PlatformBuildReceipt, RECEIPT_FILE, platform_ui_digest, platform_ui_dist,
+        };
+        let work =
+            std::env::temp_dir().join(format!("wamn-platform-ui-job-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&work);
+        let repository = work.join("repository");
+        let directory = work.join("work");
+        let dist = platform_ui_dist(&repository);
+        std::fs::create_dir_all(dist.join("assets")).unwrap();
+        std::fs::write(dist.join("index.html"), b"index").unwrap();
+        std::fs::write(dist.join("assets/ui.js"), b"script").unwrap();
+        let platform = repository.join("deploy/platform/release");
+        std::fs::create_dir_all(&platform).unwrap();
+        std::fs::write(platform.join("Chart.yaml"), "version: 0.1.7").unwrap();
+        let chart = directory.join("release-chart");
+        std::fs::create_dir_all(&chart).unwrap();
+        std::fs::write(chart.join("Chart.yaml"), "version: 0.1.7").unwrap();
+        std::fs::write(
+            chart.join(RECEIPT_FILE),
+            serde_json::to_vec(&PlatformBuildReceipt {
+                platform_ui: platform_ui_digest(&dist).unwrap(),
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let document = serde_json::from_value(json!({
+            "provider": "gcp", "project_id": "p", "zone": "z", "cluster_name": "test",
+            "org": "test", "owner_email": "owner@example.com", "registry": "registry",
+            "buckets": {"web": "test-web", "otel": "", "state": ""},
+            "route_hosts": {"control": "control.example.com"}, "resend_from": "sender@example.com"
+        }))
+        .unwrap();
+        let request = platform_ui_inputs(&document, "image", &repository, &directory).unwrap();
+        // The Job's input volume, with the request's files only.
+        let inputs = work.join("inputs");
+        for (name, bytes) in request
+            .files
+            .iter()
+            .map(|(name, text)| (name, text.as_bytes()))
+            .chain(
+                request
+                    .binary_files
+                    .iter()
+                    .map(|(name, bytes)| (name, bytes.as_slice())),
+            )
+        {
+            let path = inputs.join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, bytes).unwrap();
+        }
+        assert_eq!(request.environment["WAMN_RELEASE_CHART"], "/inputs/chart");
+        assert!(request.arguments[0].starts_with("cd /inputs;"));
+        let (source, root) =
+            crate::web_upload::platform_ui_source(&inputs, &inputs.join("chart")).unwrap();
+        assert_eq!(source, platform_ui_dist(&inputs));
+        assert_eq!(root, "platform-ui/0.1.7");
+        std::fs::remove_dir_all(work).unwrap();
+    }
 
     #[tokio::test]
     async fn empty_platform_bucket_reports_both_skips_without_reading_inputs() {
