@@ -38,9 +38,9 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | D2-1 | [D](deployment.md) | high | M | Clean upgrades | Closed by C3-3. The upgrade path is deleted, so no clean-worktree upgrade test is written. |
 | B2-3 | [B](coupling.md) | high | L | Package execution | Package application calls back into the qualification runner that also calls package application. Closed by the package-baseline deletion. |
 | B2-2 | [B](coupling.md) | high | L | Grant declarations | Provisioning, comparison, and schema repair independently assemble parts of grant policy. Re-scoped to the role to operation ACL. Small, Group 3: provisioning declares, control/lib compares against that declaration, no copy. |
-| B1-1, B3-1 | [B](coupling.md) | high | L | Serving dependencies | Shared package types and release-profile logic pull the compiler into deployed services. B1-1: move the consumed types down to `catalog/model` and drop the three generator edges. No new crate. |
-| B3-2 | [B](coupling.md) | high | L | Crate map | The proposed consolidation removes manifests while preserving engine, local runtime, and workflow restrictions. |
-| B3-3 | [B](coupling.md) | high | L | Crate migration | Consolidation needs dependency ordering, live graph enforcement, and explicit guest repinning. |
+| B1-1, B3-1 | [B](coupling.md) | high | L | Serving dependencies | Shared package types and release-profile logic pull the compiler into deployed services. B1-1: move the consumed types down to `catalog/model` and drop the three generator edges. No new crate. B3-1 merges into B1-1. The `wamn-contract` extraction is the Group 4 step. |
+| B3-2 | [B](coupling.md) | high | L | Crate map | The proposed consolidation removes manifests while preserving engine, local runtime, and workflow restrictions. Package count is not a goal. The map is adopted with the README names, T11 deferred and T13 rejected. |
+| B3-3 | [B](coupling.md) | high | L | Crate migration | Consolidation needs dependency ordering, live graph enforcement, and explicit guest repinning. Step 5 waits for A5. One qualification cycle covers the guest move. |
 | A2-1 | [A](code-quality.md) | high | M | Scalar contracts | Numeric and timestamp implementations accept and normalize different spellings. |
 | A3-1 | [A](code-quality.md) | high | M | PostgreSQL errors | Operation binding maps infrastructure failures to permission denials. |
 | F2-1 | [F](developer-experience.md) | high | M | Saved edits | Development resolution requires fresh output before the loop can rebuild changed inputs. |
@@ -246,6 +246,11 @@ The owner review of 2026-10-31 rejects the following. The report evidence stays 
 | B2-5: Developer orchestration is reusable, but belongs to the developer application | Deferred with B1-4. Owner question: may `wamn dev` own the development engine? |
 | Question on who approves qualification cases (B2-6, F3-5) | Answered: no approver. The application declares its own cases in its package. |
 | Question on external consumers of the `wamn-control` API (B2-5) | Answered: none. The umbrella may go without a facade, in Group 4. |
+| B3-2 T13: one package for `wamn-host` and `wamn-scenario-worker` | Rejected. They stay separate packages. One manifest saves nothing and widens feature selection. |
+| B3-2 T11: `wamn-control` absorbs `wamn-ctl` | Deferred with B1-4. The README split (package, release and environment control plus `wamn-ctl` and `wamn-dev`) and this merge both wait for the re-read after the Group 1 deletions. |
+| "Halve the package count" and the 88 to 44 arithmetic | Dropped. Package count is not a goal. Delete a package when it has one consumer or no enforced boundary. Keep one when `tools/repo-lint-dependencies` enforces something through it. |
+| Question on Cargo package names (B3-2) | Answered: no external automation depends on them. |
+| Question on one qualification cycle for guest moves (B3-3 through B3-5) | Answered: yes. A guest repin is a new release digest, and one `qualify-release` run covers it. |
 | C1-2's pending-work record and C1-3's schema advancement before analysis | Rejected. One baseline, so nothing advances. Apply compares the installed baseline hash with the candidate's and refuses with "schema changed, reset the environment database" on a mismatch. C1-3 closes into C1-2 with its Deletes widened to every project migration call. |
 
 ### Plans in flight
@@ -345,7 +350,7 @@ Delete repeated fixture mechanics, incidental snapshots, dead command surfaces, 
 
 ### Crate map
 
-This map combines B3’s complete inventory with B1-3’s artifact boundary and B2’s package, release, environment, developer, and delivery ownership. It does not adopt B3’s exact 44-package total. These are proposed ownership changes, not claims that the current arrangement violates its documented design.
+This map combines B3’s complete inventory with B1-3’s artifact boundary and B2’s package, release, environment, developer, and delivery ownership. Package count is not a goal: a package goes when it has one consumer or no enforced boundary, and stays when `tools/repo-lint-dependencies` enforces something through it. These are proposed ownership changes, not claims that the current arrangement violates its documented design.
 
 | Target crates | Source consolidation |
 | --- | --- |
@@ -355,11 +360,11 @@ This map combines B3’s complete inventory with B1-3’s artifact boundary and 
 | `wamn-provision` | Combine control provisioning and schema-control declarations and plans. |
 | `wamn-identity` | Combine identity persistence, credential storage, identity client, and identity service targets. |
 | `wamn-package-artifact` | Retain verified artifact transport, registry credentials, and trust roots. Move duplicate runtime transfer code here. |
-| `wamn-runtime`, `wamn-workflow` | Merge execution-host into runtime. Merge router algorithms into workflow as private pure modules. |
+| `wamn-runtime`, `wamn-workflow` | Merge execution-host into runtime. Merge router algorithms into workflow as private pure modules. The runtime merge waits for the A5 inversion, whose import boundary decides the merged crate. |
 | `wamn-build` | Combine generation, introspection, composition, and virtualization tools. |
-| `wamn-package-control`, `wamn-release-control`, `wamn-environment-control` | Replace the control umbrella with the sole package executor, release construction, and locked lifecycle owner. |
+| `wamn-package-control`, `wamn-release-control`, `wamn-environment-control` | Replace the control umbrella with the sole package executor, release construction, and locked lifecycle owner. Deferred with B1-4 until the Group 1 deletions land. |
 | `wamn-ctl`, `wamn-dev` | Keep administrative and delivery commands in the CLI application. Move the developer engine and `wamn` binary to `services/dev`. |
-| `wamn-local`, `wamn-host` | Fold SQLite storage into the local runtime crate (today `wamn-edge`; the name follows the repository rule against `edge` and `cloud` in names). Group host and scenario-worker packages while retaining separate binaries and credentials. |
+| `wamn-local`, `wamn-host`, `wamn-scenario-worker` | Fold SQLite storage into the local runtime crate (today `wamn-edge`; the name follows the repository rule against `edge` and `cloud` in names). `wamn-host` and `wamn-scenario-worker` stay separate packages (T13 rejected). |
 | `wamn-cdc-reader`, `wamn-client`, `wamn-test-postgres` | Retain separate replication, native client, and private PostgreSQL lifetime owners. |
 | `wamn-test-support`, `wamn-test` | Combine test support, infrastructure, and fixture-package. Combine test/tool packages into explicit targets, with application sources kept beside their apps. |
 | `receiving`, `wms`, `client-acme-receiving`, `device`, `samples`, `modbus-reader`, `netsuite`, `rest-connector`, `rest-consumer-fixture`, `wamn-integration`, `fixture`, `fixture-overlay` | Retain application component identities. Fold the five application data crates into their owning components. |
@@ -548,7 +553,7 @@ In passing (16 findings). Helper dedup, naming, count pins and doc links. Closed
 
 Target: dormant surfaces and unused dependencies first (A1-x, A1-6, A1-10), then the contract JSON (A2-3), then the crate map. Crate consolidation is last because it forces full rebuilds and guest repins and must not precede the build and deploy fixes. Helper and fixture dedup (G1-x, A2-x) lands only when the file is already being changed, never as its own issue. Authoring rows F1-x and F3-x stay here.
 
-Do (34 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high.
+Do (33 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high.
 
 | Finding | Title | Severity | Deletes |
 | --- | --- | --- | --- |
@@ -556,9 +561,8 @@ Do (34 findings). The rows the review named, then every row that deletes a build
 | A1-10 | Nine guest dependency declarations are unused | low | Nine dependency lines, plus obsolete comments. |
 | A2-3 | Host contracts repeat thousands of authored JSON lines | medium | Measured gross deletion of 71 files and 3,020 repeated lines. Estimated net saving: approximately 2,800 lines after shape assignments. |
 | B1-6 | Guest interfaces depend on native implementation directories | medium | Guest paths into native runtime and router directories, replaced by one canonical WIT directory read by path. WIT package versions stay. Guest digests change once, repin once. |
-| B3-1 | Shared manifest contracts pull the compiler into deployed services | high | Generator dependencies from provisioning and schema control. Remove the execution-host normal generator dependency after moving its test uses. Delete duplicate public re-exports after callers move to their owning modules. |
-| B3-2 | Forty-four packages can retain the enforced execution boundaries | high | Net 44 package manifests, their redundant dependency declarations, and obsolete compatibility re-exports. Retain domain modules, deployment binaries, component declarations, and wire contracts. |
-| B3-3 | Migration must follow dependency order and distinguish artifact changes | high | Obsolete package-name assertions, retired dependency links, and duplicated runner selections. Do not retain empty compatibility packages. |
+| B3-2 | Forty-four packages can retain the enforced execution boundaries | high | Every package manifest with one consumer or no enforced boundary, its redundant dependency declarations, and obsolete compatibility re-exports. The map uses the README names. T01 is the `wamn-contract` extraction (from B3-1). T11 is deferred and T13 is rejected. Runtime merges wait for A5. |
+| B3-3 | Migration must follow dependency order and distinguish artifact changes | high | Obsolete package-name assertions, retired dependency links, and duplicated runner selections. Do not retain empty compatibility packages. Step 5 waits for A5. One qualification cycle covers the guest move. |
 | B3-4 | Guest data crates and single-consumer helpers can become modules | medium | Five application data manifests, the PostgreSQL SQLx library manifest, the label-template manifest, and the separate data-access manifest. Remove emitter references to the retired Rust crate names. |
 | B3-5 | Three first-party workspaces are sufficient, but feature isolation must remain | medium | The Modbus standalone workspace declaration, both checked-in fixture manifests and lockfiles, and their standalone build contexts. Delete duplicated dependency and lint declarations where workspace inheritance replaces them. |
 | B3-6 | Test package boundaries can collapse without exporting test authority | medium | Seven redundant manifests from the eight test and tool packages combined into T18. Delete two redundant support manifests. Remove facade imports between the merged owners. |
@@ -670,47 +674,45 @@ In passing (75 findings). Helper dedup, naming, count pins and doc links. Closed
 ## Open questions for the owner
 
 1. Can record-history take a shared scalar dependency? This unblocks Group 4 (A2-1). The shared contract layer itself is answered: `catalog/model`.
-2. Which external consumers require current Rust APIs or Cargo package names, including the control, test support, and fixture packages? This unblocks Groups 1 and 4 (B3-2, G1-1, A1-7 through A1-9). The `wamn-control` API part is answered: none..
+2. Which external consumers require current Rust APIs of the test support and fixture packages? This unblocks Groups 1 and 4 (G1-1, A1-7 through A1-9). Cargo package names and the `wamn-control` API are answered: none.
 3. Can root supply retained feature results and generated packages before dependency removal? This unblocks Group 4 (A1-6, A1-10).
 4. Must wiring caching remain a supported requirement despite its absent production caller? This unblocks Group 4 (A1-2).
-5. Can grouped host and scenario binaries share broader Cargo feature selection while retaining separate processes and credentials? This unblocks Group 4 (B3-2).
-6. Can guest moves, component repinning, and resulting qualification occur in one release cycle? This unblocks Group 4 (B3-3 through B3-5).
-7. Which machine and cache states define timing comparisons for retained results? This unblocks timing acceptance for Group 2 (G3-7).
-8. Must authored SQL remain directly executable, or can composed installation recipes produce standalone SQL as build output? This unblocks Group 4 (A2-5, C3-2).
-9. Can `environment.k` own local and deployed coordinates, with the default developer command generating its private local document? This unblocks Groups 1 and 2 (D3-4, F2-4, F3-2).
-10. Which local/deployed host behaviors must match, and must WMS retain its distinct concurrency limit? This unblocks Groups 1 and 3 (D1-5, G2-4).
-11. Can the identity journey replace its repository `evidence/` requirement with caller-owned temporary result storage? This unblocks Group 4 (H1-5).
-12. Does any external workflow still require `kind-gate-build` or `kind-gate-image-remove`? This unblocks Group 4 (H1-12).
-13. Which deployed coordinates currently produce colliding credential names? This unblocks safe replacement in Group 3 (E1-1, E2-1).
-14. Must an organization control credential remain trusted with authority across every organization? This decides the database boundary in Group 3 (E2-2).
-15. Is every operator certificate intentionally platform-wide, and how must one certificate be revoked without replacing its CA? This informs privileged credential boundaries in Group 3 (E2-2, E2-3).
-16. Are cache delays permitted only after lost invalidation, or also after natural credential expiry? This unblocks Group 3 (E1-6, E1-7).
-17. What maximum disconnected period permits continued trust in an local signing key set? This unblocks Group 3 (E1-8).
-18. Which independently enforced network controls protect deployed identity databases, plaintext services, and standing development fixtures? This establishes the live boundary for Group 3 (E1-5, E2-3, E2-5).
-19. Who owns refreshes for WASI-Virt, its adapter, and the pg-walstream patch, and what refresh interval applies? This unblocks Group 3 (E3-8).
-20. Does another check scan the web dependency graph, including the pinned wfe dependency resolution? This determines the remaining scan scope in Group 3 (E3-8).
-21. Must WASI-Virt provenance report a measured adapter digest instead of its current constant? This unblocks provenance acceptance in Group 3 (E3-8).
-22. Is registry write access intentionally sufficient to bypass component admission? This decides the trusted publication boundary in Group 3 (E3-1).
-23. What measured condition permits serving hosts to leave aggregate memory count mode? This unblocks Group 3 (E3-4).
-24. Must poisoned authority state terminate the process, or must the host isolate the affected owner and become unready? This unblocks Group 3 (A3-2).
-25. Which blobstore `Other` messages are frozen consumer contracts? This unblocks replacement of backend prose in Group 4 (A3-3).
-26. Can host operations explicitly share authored shapes while resolved contract bytes and generated clients remain unchanged? This unblocks Group 4 (A2-3).
-27. Must SQL literal quoting support nondefault PostgreSQL string parsing, or can callers require the default server behavior? This defines quoting acceptance in Group 4 (A2-11).
-28. Must HTTP exposure remain explicit for every custom public operation? This unblocks generated publication policy in Group 4 (F1-1).
-29. Can Acme consume its pinned base operation’s wire shape while retaining separate identity and inspection behavior? This unblocks Group 4 (F1-4).
-30. Can pure CRUD applications use generated component crates without authored Rust files? This unblocks Group 4 (F1-3, F3-1).
-31. Can WAMN consume only public built wfe exports while source qualification remains inside the submodule? This unblocks Group 4 (H3-3).
-32. Which retained saved-edit acceptance run passed against the current freshness, watcher, and activation rules? This supplies the comparison result for Group 2 (F2-1 through F2-3).
-33. Can the normal developer command own the complete private stack, with external services available through explicit overrides? This unblocks Groups 2 and 4 (F2-5, F2-6, F3-2).
-34. Can the default author experience require Docker on Linux, or must the first release support another host platform? This unblocks Groups 2 and 4 (F2-8, F3-2).
-35. Which cold-start, warm-start, and saved-edit limits must the retained results enforce? This unblocks acceptance for Groups 2 and 4 (F2-11, G3-7).
-36. Does the ten-minute clock start with the installed SDK, Docker, and provisioned account, or include their installation and provisioning? This unblocks Group 4 (F3-7).
-37. Can root supply live statuses for quarantined tests and archive candidates, including which ignored cases represent defects or retired contracts? This unblocks Groups 3 and 4 (G2-1 through G2-4, G3-4, H2-2, H2-3).
-38. Which dashboard or collector owns the frozen PostgreSQL telemetry identifiers whose guard cites deleted documentation? This unblocks retained-contract decisions in Groups 3 and 4 (G2-6, H2-5).
-39. Must startup-burst measurement remain supported despite its absent repository execution path? This unblocks Group 4 (A1-1).
-40. Must benchmark summaries remain readable without their raw result files? This defines the retained result contract in Group 4 (H1-7).
-41. Does an immutable Git source plus a compact history entry satisfy the rule that accepted plans remain untrimmed? This unblocks Group 4 (H2-2, H2-7).
-42. Where are the twelve historical performance artifacts retained, if anywhere? This unblocks evidence disposition in Group 4 (H2-6).
-43. Does any external tool still read `.beads/beads.jsonl`? This unblocks obsolete-export removal in Group 4 (H3-10).
+5. Which machine and cache states define timing comparisons for retained results? This unblocks timing acceptance for Group 2 (G3-7).
+6. Must authored SQL remain directly executable, or can composed installation recipes produce standalone SQL as build output? This unblocks Group 4 (A2-5, C3-2).
+7. Can `environment.k` own local and deployed coordinates, with the default developer command generating its private local document? This unblocks Groups 1 and 2 (D3-4, F2-4, F3-2).
+8. Which local/deployed host behaviors must match, and must WMS retain its distinct concurrency limit? This unblocks Groups 1 and 3 (D1-5, G2-4).
+9. Can the identity journey replace its repository `evidence/` requirement with caller-owned temporary result storage? This unblocks Group 4 (H1-5).
+10. Does any external workflow still require `kind-gate-build` or `kind-gate-image-remove`? This unblocks Group 4 (H1-12).
+11. Which deployed coordinates currently produce colliding credential names? This unblocks safe replacement in Group 3 (E1-1, E2-1).
+12. Must an organization control credential remain trusted with authority across every organization? This decides the database boundary in Group 3 (E2-2).
+13. Is every operator certificate intentionally platform-wide, and how must one certificate be revoked without replacing its CA? This informs privileged credential boundaries in Group 3 (E2-2, E2-3).
+14. Are cache delays permitted only after lost invalidation, or also after natural credential expiry? This unblocks Group 3 (E1-6, E1-7).
+15. What maximum disconnected period permits continued trust in an local signing key set? This unblocks Group 3 (E1-8).
+16. Which independently enforced network controls protect deployed identity databases, plaintext services, and standing development fixtures? This establishes the live boundary for Group 3 (E1-5, E2-3, E2-5).
+17. Who owns refreshes for WASI-Virt, its adapter, and the pg-walstream patch, and what refresh interval applies? This unblocks Group 3 (E3-8).
+18. Does another check scan the web dependency graph, including the pinned wfe dependency resolution? This determines the remaining scan scope in Group 3 (E3-8).
+19. Must WASI-Virt provenance report a measured adapter digest instead of its current constant? This unblocks provenance acceptance in Group 3 (E3-8).
+20. Is registry write access intentionally sufficient to bypass component admission? This decides the trusted publication boundary in Group 3 (E3-1).
+21. What measured condition permits serving hosts to leave aggregate memory count mode? This unblocks Group 3 (E3-4).
+22. Must poisoned authority state terminate the process, or must the host isolate the affected owner and become unready? This unblocks Group 3 (A3-2).
+23. Which blobstore `Other` messages are frozen consumer contracts? This unblocks replacement of backend prose in Group 4 (A3-3).
+24. Can host operations explicitly share authored shapes while resolved contract bytes and generated clients remain unchanged? This unblocks Group 4 (A2-3).
+25. Must SQL literal quoting support nondefault PostgreSQL string parsing, or can callers require the default server behavior? This defines quoting acceptance in Group 4 (A2-11).
+26. Must HTTP exposure remain explicit for every custom public operation? This unblocks generated publication policy in Group 4 (F1-1).
+27. Can Acme consume its pinned base operation’s wire shape while retaining separate identity and inspection behavior? This unblocks Group 4 (F1-4).
+28. Can pure CRUD applications use generated component crates without authored Rust files? This unblocks Group 4 (F1-3, F3-1).
+29. Can WAMN consume only public built wfe exports while source qualification remains inside the submodule? This unblocks Group 4 (H3-3).
+30. Which retained saved-edit acceptance run passed against the current freshness, watcher, and activation rules? This supplies the comparison result for Group 2 (F2-1 through F2-3).
+31. Can the normal developer command own the complete private stack, with external services available through explicit overrides? This unblocks Groups 2 and 4 (F2-5, F2-6, F3-2).
+32. Can the default author experience require Docker on Linux, or must the first release support another host platform? This unblocks Groups 2 and 4 (F2-8, F3-2).
+33. Which cold-start, warm-start, and saved-edit limits must the retained results enforce? This unblocks acceptance for Groups 2 and 4 (F2-11, G3-7).
+34. Does the ten-minute clock start with the installed SDK, Docker, and provisioned account, or include their installation and provisioning? This unblocks Group 4 (F3-7).
+35. Can root supply live statuses for quarantined tests and archive candidates, including which ignored cases represent defects or retired contracts? This unblocks Groups 3 and 4 (G2-1 through G2-4, G3-4, H2-2, H2-3).
+36. Which dashboard or collector owns the frozen PostgreSQL telemetry identifiers whose guard cites deleted documentation? This unblocks retained-contract decisions in Groups 3 and 4 (G2-6, H2-5).
+37. Must startup-burst measurement remain supported despite its absent repository execution path? This unblocks Group 4 (A1-1).
+38. Must benchmark summaries remain readable without their raw result files? This defines the retained result contract in Group 4 (H1-7).
+39. Does an immutable Git source plus a compact history entry satisfy the rule that accepted plans remain untrimmed? This unblocks Group 4 (H2-2, H2-7).
+40. Where are the twelve historical performance artifacts retained, if anywhere? This unblocks evidence disposition in Group 4 (H2-6).
+41. Does any external tool still read `.beads/beads.jsonl`? This unblocks obsolete-export removal in Group 4 (H3-10).
 
 Questions 8 and 10 of the first draft are answered in Rejected findings and proposals. Nothing from this list is filed until the owner answers.

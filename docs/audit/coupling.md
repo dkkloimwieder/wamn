@@ -292,7 +292,7 @@ All three questions were answered on 2026-10-31. `upgrade-environment` is delete
 
 ## Part 3: target map
 
-The target contains 44 Cargo packages, including the vendor package, across three first-party workspaces. This uses the same counting unit as the 88-package scope. Deployment binaries and component exports retain their separate identities.
+Package count is not a goal (owner review 2026-10-31). Delete a package when it has one consumer or no enforced boundary. Keep one when `tools/repo-lint-dependencies` enforces something through it. Everything in this part is Group 4, after Groups 1 to 3, and anything inside runtime waits for the A5 inversion. Deployment binaries and component exports retain their separate identities.
 
 The current inventory is 45 native packages, 34 guest packages, five `no_std` packages, Modbus, two standalone test fixtures, and one vendor package. Evidence: `Cargo.toml:3`, `apps/Cargo.toml:10`, `apps/platform/no-std/Cargo.toml:24`, `integrations/modbus/Cargo.toml:1`, `crates/control/lib/tests/fixtures/connector/Cargo.toml:1`, `crates/control/lib/tests/support/http-fixture/Cargo.toml:1`, and `vendor/pg-walstream/Cargo.toml:15`.
 
@@ -305,9 +305,7 @@ Effort: L
 Area: crates/schema, crates/control/provision  
 Evidence: `crates/control/provision/Cargo.toml:43`, `crates/control/provision/src/operation_grants.rs:14`, `crates/schema/control/src/package_migrations.rs:15`, `crates/schema/generator/src/lib.rs:76`, `services/scenario-worker/Cargo.toml:18`; measurements.md section 10, `wamn-control-provision` and `wamn-runtime` rows.  
 Problem: Provisioning and migration planning depend on the generator to read package declarations and validate operation names. That dependency also reaches deployed runtime users. It prevents the compiler from becoming a separate tooling owner without dependency cycles.  
-Proposal: First extract `PackageManifest`, its parser, operation vocabulary, and pure schema representation into `wamn-contracts`. Move the current refusal vocabulary with the parser and preserve boundary translations. Then combine generation, database introspection, composition, and virtualization under `wamn-build`. Deployed services depend on contracts and provisioning, with no dependency on `wamn-build` or `wamn-control`.  
-Deletes: Generator dependencies from provisioning and schema control. Remove the execution-host normal generator dependency after moving its test uses. Delete duplicate public re-exports after callers move to their owning modules.  
-Risk: Parser refusals, operation grants, and migration decisions can drift during extraction. Existing evidence includes `business_error_details_are_closed` at `crates/schema/generator/tests/platform_generation.rs:40` and `authored_sql_access_must_match_declared_reads_and_row_locks` at line 63. Keep the live authority coverage in `crates/control/provision/tests/family_denial_matrix.rs:1016` and `crates/identity/project-state/tests/authority.rs:174`. Those tests establish behavior, while the dependency guard must also establish the new service graph.
+Merged into B1-1 (owner review 2026-10-31), the same edges and the same cut. The generator edge cut is Group 2 and lands first by moving the consumed types to `catalog/model`. The `wamn-contract` extraction (T01 below) is the Group 4 step.
 
 ## Finding B3-2: Forty-four packages can retain the enforced execution boundaries
 
@@ -315,10 +313,10 @@ Severity: high
 Effort: L  
 Area: Cargo.toml, apps/Cargo.toml, crates, services  
 Evidence: `tools/repo-lint-dependencies:7`, `tools/repo-lint-dependencies:32`, `tools/repo-lint-dependencies:118`, `services/cdc-reader/Cargo.toml:3`, `services/host/Cargo.toml:14`; measurements.md section 2, control, runtime, engine, and generator rows.  
-Problem: The current package count mixes useful isolation with small implementation packages. A blanket merge loses enforced boundaries around the engine, edge, and workflow. Conversely, keeping every current owner as a package leaves little room to halve the count.  
+Problem: The current package count mixes useful isolation with small implementation packages. A blanket merge loses enforced boundaries around the engine, edge, and workflow. Conversely, a package with one consumer or no enforced boundary is a manifest with no purpose.  
 Proposal: Adopt the following complete map. Dependencies below are allowed direct repository dependencies in production. External libraries remain subject to the existing capability restrictions. Tests use the separate permissions stated for T17 and T18.
 
-T01. `wamn-contracts`: Pure catalog, authoring, registry, component-policy, event, execution, history, naming, and SQL vocabulary. It absorbs `wamn-catalog`, `wamn-authoring-model`, `wamn-control-registry`, `wamn-component-policy`, `wamn-number-pattern`, pure `wamn-project-state`, `wamn-pg-core`, `wamn-execution-contract`, `wamn-event-wire`, `wamn-event-reg`, `wamn-materializer`, and `wamn-record-history`. It also receives the manifest and schema types from B3-1. Allowed repository dependencies: none. Place it under `apps/platform/` so guests remain within their workspace. Move database floors into test support and bootstrap SQL into provisioning.
+T01. `wamn-contract`: Pure catalog, authoring, registry, component-policy, event, execution, history, naming, and SQL vocabulary. It absorbs `wamn-catalog`, `wamn-authoring-model`, `wamn-control-registry`, `wamn-component-policy`, `wamn-number-pattern`, pure `wamn-project-state`, `wamn-pg-core`, `wamn-execution-contract`, `wamn-event-wire`, `wamn-event-reg`, `wamn-materializer`, and `wamn-record-history`. It also receives the manifest and schema types from B3-1. Allowed repository dependencies: none. Place it under `apps/platform/` so guests remain within their workspace. Move schema baselines into test support and bootstrap SQL into provisioning.
 
 T02. `wamn-guest-sdk`: Generated data helpers and typed PostgreSQL statement access. It absorbs `wamn-data-access` and `wamn-postgres-statements`. Allowed repository dependencies: T01.
 
@@ -332,17 +330,17 @@ T06. `wamn-provision`: Pure provisioning, grants, package migration plans, and r
 
 T07. `wamn-identity`: Identity persistence, credentials, identity HTTP client, and identity service binary. It combines `wamn-platform-identity`, `wamn-credential-store`, `wamn-identity-client`, and the existing identity service. Allowed repository dependencies: T01, T03, T06.
 
-T08. `wamn-runtime`: Cloud capability adapters, route execution authority, delivery bridge, and artifact transport. It combines `wamn-runtime`, `wamn-execution-host`, and `wamn-package-artifact`. Allowed repository dependencies: T01, T03, T04, T05, T06, T07.
+T08. `wamn-runtime`: Capability adapters, route execution authority, and delivery bridge. It combines `wamn-runtime` and `wamn-execution-host`. `wamn-package-artifact` stays its own package (B1-3 ruling, README). The merge waits for A5, and the A5 import boundary decides what the merged crate is. Allowed repository dependencies: T01, T03, T04, T05, T06, T07, package-artifact.
 
 T09. `wamn-workflow`: Wiring walk, lowering, durable queue, and workflow operations. It absorbs `wamn-router` as a private algorithm module. Allowed repository dependencies: T01, T04, T05, T08.
 
 T10. `wamn-build`: Package generation, introspection, component composition, and virtualization. It combines `wamn-schema-generator`, `wamn-schema-introspection`, `wamn-component-composer`, and `wamn-component-virtualizer`. Allowed repository dependencies: T01.
 
-T11. `wamn-control`: Delivery, environment lifecycle, developer orchestration, and command binaries. It absorbs `wamn-ctl`, while retaining `wamn`, `wamn-ctl`, and `wamn-ctl-ops` executable names. Allowed repository dependencies: T01, T03–T10.
+T11. Control: deferred (owner review 2026-10-31). `wamn-control` does not absorb `wamn-ctl`. The README splits control into `wamn-package-control`, `wamn-release-control` and `wamn-environment-control` plus `wamn-ctl` and `wamn-dev`. Both shapes wait for the B1-4 re-read after the Group 1 deletions. Allowed repository dependencies: T01, T03–T10.
 
-T12. `wamn-edge`: Edge service and local SQLite intent storage. It absorbs `wamn-run-state-sqlite`. Allowed repository dependencies: T01, T03, T04, T05. Preserve the separate `web` feature and the default edge restrictions.
+T12. `wamn-local`: Local runtime service and SQLite intent storage. It absorbs `wamn-run-state-sqlite`. Allowed repository dependencies: T01, T03, T04, T05. Preserve the separate `web` feature and the default edge restrictions.
 
-T13. `wamn-host-services`: Separate `wamn-host` and `wamn-scenario-worker` binaries in one package. It owns composition and process startup, without combining their processes or credentials. Allowed repository dependencies: T01, T03–T09.
+T13. `wamn-host`: rejected as a grouping (owner review 2026-10-31). `wamn-host` and `wamn-scenario-worker` stay separate packages. One manifest saves nothing and widens feature selection. Allowed repository dependencies for each: T01, T03–T09.
 
 T14. `wamn-cdc-reader`: Replication reader and acknowledged event publication. Retain its separate package and deployment. Allowed repository dependencies: T01, T06, T44. It retains no runtime dependency.
 
@@ -350,9 +348,9 @@ T15. `wamn-client`: Native generated-client transport. Retain its separate packa
 
 T16. `wamn-test-postgres`: Private PostgreSQL processes and prerequisite handling. Retain this small test foundation. Allowed repository dependencies: none.
 
-T17. `wamn-test-support`: Fixture packages, environment setup, database floors, and gate helpers. It combines `wamn-fixture-package`, `wamn-test-infrastructure`, and `wamn-gate-harness`. Allowed repository dependencies: T01, T03–T11, T16. Production packages use it only through development dependencies.
+T17. `wamn-test-support`: Fixture packages, environment setup, schema baselines, and check helpers. It combines `wamn-fixture-package`, `wamn-test-infrastructure`, and `wamn-gate-harness`. Allowed repository dependencies: T01, T03–T11, T16. Production packages use it only through development dependencies.
 
-T18. `wamn-tests`: Conformance, integration, system, Receiving, and WMS test targets, plus their existing command binaries. It absorbs the four `tests/` packages, two application test packages, `wamn-bench`, `wamn-submodule-check`, and `http-fixture`. Allowed repository dependencies: T01–T17 and guest libraries or artifacts needed by a named test. No production package depends on T18.
+T18. `wamn-test`: Conformance, integration, system, Receiving, and WMS test targets, plus their existing command binaries. It absorbs the four `tests/` packages, two application test packages, `wamn-bench`, `wamn-submodule-check`, and `http-fixture`. Allowed repository dependencies: T01–T17 and guest libraries or artifacts needed by a named test. No production package depends on T18.
 
 T19. `receiving`: Receiving component, including its former data crate as private modules. Allowed repository dependencies: T01, T02.
 
@@ -386,7 +384,7 @@ T33. `blob-put`: Blob-writing component. Allowed repository dependencies: none.
 
 T34. `jsonata-expression`: Sandboxed expression component. Allowed repository dependencies: none.
 
-T35. `wamn-command-fixtures`: Separate `busyloop` and `sockprobe` binary targets. Allowed repository dependencies: none. Preserve their artifact names and separate command worlds.
+T35. `wamn-command-fixture`: Separate `busyloop` and `sockprobe` binary targets. Allowed repository dependencies: none. Preserve their artifact names and separate command worlds.
 
 T36. `connection-http-standard`: Minimal HTTP capability fixture. Allowed repository dependencies: none.
 
@@ -406,9 +404,7 @@ T43. `wamn-modbus`: Modbus capability implementation, moved inside the `no_std` 
 
 T44. `pg_walstream`: Existing patched vendor dependency. Retain its source and independent dependency identity. Allowed repository dependencies: none.
 
-The total is 16 native packages, 22 standard guest packages, five `no_std` packages, and one vendor package.
-
-Deletes: Net 44 package manifests, their redundant dependency declarations, and obsolete compatibility re-exports. Retain domain modules, deployment binaries, component declarations, and wire contracts.  
+Deletes: Every package manifest with one consumer or no enforced boundary, its redundant dependency declarations, and obsolete compatibility re-exports. Retain domain modules, deployment binaries, component declarations, and wire contracts.  
 Risk: Package consolidation changes Cargo feature selection and compilation scope. It does not establish faster builds. Preserve the engine and edge exclusions in `tools/repo-lint-dependencies:99` and the workflow separation at line 118. Retain session behavior through `crates/platform/runtime/tests/session_verifier.rs:18`, SQLite recovery through `crates/execution/run-state-sqlite/tests/intent_store.rs:160`, and manifest identity through `crates/catalog/model/tests/serving_manifest_digest.rs:128`.
 
 ## Finding B3-3: Migration must follow dependency order and distinguish artifact changes
@@ -428,11 +424,11 @@ Proposal: Use the following dependency order. “Mechanical” means source owne
 
 4. Merge identity persistence, credential storage, client, and service into T07. Keep T03 separate because the engine and edge must verify sessions without identity transport. Mechanical ownership change. Prove acceptance boundaries with `crates/platform/runtime/tests/session_verifier.rs:87` and signed caller handling with `crates/platform/runtime/tests/session_route_authentication.rs:289`.
 
-5. Merge artifact transport and execution host into T08. Then merge the router into T09, while keeping T09 above T08. Mechanical native ownership change. Prove artifact verification with `crates/platform/runtime/tests/release_manifest_source.rs:128`, claim behavior with `crates/platform/runtime/tests/production_claim_live.rs:601`, and wiring behavior with `crates/execution/workflow/tests/wiring_lowering.rs:279`.
+5. Merge execution host into T08, after A5 (package-artifact stays separate). Then merge the router into T09, while keeping T09 above T08. Mechanical native ownership change. Prove artifact verification with `crates/platform/runtime/tests/release_manifest_source.rs:128`, claim behavior with `crates/platform/runtime/tests/production_claim_live.rs:601`, and wiring behavior with `crates/execution/workflow/tests/wiring_lowering.rs:279`.
 
-6. Move SQLite storage into T12. Group host and scenario binaries in T13, while retaining CDC as T14. Mechanical source change with Cargo feature changes. Prove SQLite recovery at `crates/execution/run-state-sqlite/tests/intent_store.rs:160`. Keep the native and aarch64 edge graph checks at `tools/repo-lint-dependencies:110`. Existing edge route, device, forward, and release suites remain required.
+6. Move SQLite storage into T12. Keep `wamn-host`, `wamn-scenario-worker` and CDC as separate packages (T13 rejected). Mechanical source change with Cargo feature changes. Prove SQLite recovery at `crates/execution/run-state-sqlite/tests/intent_store.rs:160`. Keep the native and aarch64 edge graph checks at `tools/repo-lint-dependencies:110`. Existing edge route, device, forward, and release suites remain required.
 
-7. Fold CLI parsing into T11. Retain its executable names and keep T11 outside deployed service dependencies. Mechanical ownership change. Existing environment coverage starts at `crates/control/lib/tests/environment_apply_kind.rs:642`. Publication identity coverage starts at `crates/control/lib/tests/release_one_digest.rs:100`.
+7. Control (T11) is deferred to the B1-4 re-read. Whatever shape lands keeps the executable names and stays outside deployed service dependencies. Mechanical ownership change. Existing environment coverage starts at `crates/control/lib/tests/environment_apply_kind.rs:642`. Publication identity coverage starts at `crates/control/lib/tests/release_one_digest.rs:100`.
 
 8. Consolidate T02, application data modules, SQLx fixture modules, command fixtures, and label templates. These are source moves with guest artifact identity changes. Use the behavior tests named in B3-4. Rebuild and repin affected components, then qualify the resulting release. Do not describe this step as byte-preserving.
 
@@ -445,6 +441,8 @@ Update dependency guards with each owning move, rather than disabling them until
 Deletes: Obsolete package-name assertions, retired dependency edges, and duplicated runner selections. Do not retain empty compatibility packages.  
 Risk: The existing lint runner tests use fake Cargo output at `tests/conformance/tests/repo_lint.rs:48`. They prove command construction, not the real dependency graph. The real guard and behavior suites remain separate evidence. No migration or passing test result is claimed by this read-only audit.
 
+Owner review 2026-10-31: the order stays. One qualification cycle covers the whole guest move: a guest repin is a new release digest, and the qualification key is release plus host image, so one `qualify-release` run proves it.
+
 ## Finding B3-4: Guest data crates and single-consumer helpers can become modules
 
 Severity: medium  
@@ -455,6 +453,8 @@ Problem: Five applications place their typed data implementation in a separate p
 Proposal: Move the five data crates into private modules of Receiving, WMS, Acme, Samples, and the platform fixture. Merge shared data helpers with typed statements in T02. Move the SQLx driver into `sqlx-command`, and template rendering into `label-render`. Keep the HTTP, JSONata, blob, and other component artifacts separate because they represent different admitted capabilities.  
 Deletes: Five application data manifests, the PostgreSQL SQLx library manifest, the label-template manifest, and the separate data-access manifest. Remove emitter references to the retired Rust crate names.  
 Risk: Module paths, generated imports, transaction ownership, and guest imports can drift. Existing behavior evidence includes `sqlx_command_commits_rolls_back_and_obeys_current_user_rls` at `crates/platform/runtime/tests/sqlx_transaction_live.rs:264`. Preserve the label vectors at `apps/platform/no-std/label-template/tests/golden.rs:56`. Receiving and WMS retain their local business suites, whose shared runtime owner is documented at `docs/operations/running-tests.md:172`. The Receiving build test at `tests/conformance/tests/package_build.rs:63` also establishes component recording and virtualization.
+
+Owner review 2026-10-31: keep, Group 4 Do.
 
 ## Finding B3-5: Three first-party workspaces are sufficient, but feature isolation must remain
 
@@ -468,20 +468,22 @@ Proposal: Retain the native, standard guest, and `no_std` workspaces. Relocate M
 Deletes: The Modbus standalone workspace declaration, both checked-in fixture manifests and lockfiles, and their standalone build contexts. Delete duplicated dependency and lint declarations where workspace inheritance replaces them.  
 Risk: Keep the standalone integration-build property, rather than replacing it with a prebuilt component. Its existing proof is `build_digest_tracks_source_bytes_and_survives_another_checkout` at `crates/control/lib/tests/integration_artifact.rs:57`. Guest closure at `tests/conformance/tests/guest_workspace_closure.rs:256` prevents path escapes. The identity guard at `tests/conformance/src/manifest_dependencies.rs:292` currently scans only native and standard guest workspaces. Extend its existing scan to the retained `no_std` workspace.
 
+Owner review 2026-10-31: keep, Group 4 Do.
+
 ## Finding B3-6: Test package boundaries can collapse without exporting test authority
 
 Severity: medium  
 Effort: M  
 Area: tests, test-support, application tests, Rust tools  
 Evidence: `tests/orchestrator/src/main.rs:10`, `tests/integration/src/lib.rs:16`, `test-support/harness/Cargo.toml:14`, `test-support/infrastructure/Cargo.toml:34`, `test-support/postgres/Cargo.toml:11`, `crates/catalog/model/Cargo.toml:8`.  
-Problem: The gate binary already routes commands into separate test packages. Application tests consume shared integration helpers, while harness and infrastructure both assemble substantial platform environments. Merging their package ownership is possible, but moving test construction authority into production dependencies breaks an existing compile-time restriction.  
-Proposal: Use T17 for reusable fixtures and T18 for test execution, tool binaries, and named suites. Preserve test tiers as modules and test targets. Keep T16 independent so lower-level tests can start PostgreSQL without importing the full environment harness. Move database floors out of T01 while retaining feature-gated constructors for synthetic contract values. Keep application test sources in their application homes through explicit target paths.  
+Problem: The check binary already routes commands into separate test packages. Application tests consume shared integration helpers, while harness and infrastructure both assemble substantial platform environments. Merging their package ownership is possible, but moving test construction authority into production dependencies breaks an existing compile-time restriction.  
+Proposal: Use T17 for reusable fixtures and T18 for test execution, tool binaries, and named suites. Preserve test tiers as modules and test targets. Keep T16 independent so lower-level tests can start PostgreSQL without importing the full environment harness. Move schema baselines out of T01 while retaining feature-gated constructors for synthetic contract values. Keep application test sources in their application homes through explicit target paths.  
 Deletes: Seven redundant manifests from the eight test and tool packages combined into T18. Delete two redundant support manifests. Remove facade imports between the merged owners.  
 Risk: Test discovery, executable paths, and feature propagation can change. Preserve manifest inheritance and the constructor restriction through `tests/conformance/src/manifest_dependencies.rs:292` and line 320. Retain suite-selection evidence at `tests/conformance/tests/test_changes.rs:460` and zero-executed-case refusal at line 707. Update the current catalog-specific constructor test at `tests/conformance/src/manifest_dependencies.rs:300` to the new contract owner. A renamed test must retain the production restriction.
 
+Owner review 2026-10-31: keep, Group 4 Do.
+
 ## Open questions for the owner
 
-1. Does any external automation require the current Cargo package names, rather than the retained executable and component names?
-2. Does the owner accept broader Cargo feature selection for the grouped host and scenario binaries? Their processes and credentials remain separate.
-3. Can the guest migration and required component repinning occur in one release qualification cycle?
+All three questions were answered on 2026-10-31. No external automation depends on Cargo package names. The grouped host and scenario package is rejected (T13). The guest migration and repinning occur in one release qualification cycle.
 
