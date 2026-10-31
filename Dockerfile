@@ -266,6 +266,12 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
 FROM root-source AS runner-deploy
 RUN rm -r /build/deploy/platform/release
 
+# The build inputs of a package name the crates WIT that its guests bind, so
+# a case that checks a build against its tree needs those WIT trees (wamn-snwxh).
+FROM root-source AS runner-wit
+RUN mkdir /wit-output \
+ && find crates -type d -name wit -prune -exec cp -r --parents {} /wit-output \;
+
 # ---- runner image: the qualification runner FROM ctl -----------------------
 # ctl is unchanged; the runner adds what `qualify-release` runs the cases with
 # (docs/plan/platform-deploy.md §8.2, R15): the case executables, the
@@ -285,6 +291,7 @@ ADD --chmod=0755 --checksum=sha256:50030de23cf40a18505f20426f6a8506bedf13c6e5092
 ADD --chmod=0755 --checksum=sha256:1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82 https://dl.k8s.io/release/v1.36.2/bin/linux/amd64/kubectl /usr/local/bin/kubectl
 COPY --from=build-cases /cases /cases
 COPY --from=root-source /build/apps /build/apps
+COPY --from=runner-wit /wit-output/crates /build/crates
 COPY --from=apps-target . /build/apps/target/wamn
 COPY --from=runner-deploy /build/deploy /build/deploy
 COPY tools /build/tools
