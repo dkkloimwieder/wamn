@@ -6,6 +6,8 @@ Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file,
 
 ## Part 1: unused code
 
+Owner review 2026-10-31: deletions, nothing here needs a design. A1-1 to A1-10 are Group 4 Do, batched as one commit per crate, not one per finding.
+
 The first ten findings rank deletion candidates by estimated lines removed. Counts exclude dependency source trees and distinguish deletion from relocation.
 
 This lane changed no files and ran no builds or tests. Shared measurements describe commit `788cdadb4`; source inspection used `8c831349d`. Fresh feature queries failed with `error: protecting target directories while Cargo runs: Read-only file system (os error 30)`. Dependency conclusions therefore use manifest features, source references, included files, and measurements.md sections 4 and 10. Full feature output remains unverified.
@@ -26,6 +28,10 @@ Deletes: Approximately 827 lines, including the module declaration.
 
 Risk: Removes an unavailable measurement capability. Compile every integration target and retain the existing gate command tests. No current live test exercises `assert_startup`.
 
+Owner review 2026-10-31: delete, Group 4 Do, in the per-crate commit.
+
+Question 1 is answered: no, startup-burst measurement is not required.
+
 ## Finding A1-2: The router wiring cache is unused
 
 Severity: medium  
@@ -41,6 +47,10 @@ Proposal: Delete the cache implementation and its tests. Retain the small `Activ
 Deletes: Approximately 574 source and test lines, plus cache dependency comments and declarations.
 
 Risk: `ActiveWiring` remains a production dependency. The router walk tests and workflow lowering tests must pass after the carrier moves.
+
+Owner review 2026-10-31: delete, Group 4 Do, in the per-crate commit.
+
+Question 2 is answered: no, wiring caching is not a requirement.
 
 ## Finding A1-3: Most operator-recovery helpers outlive their callers
 
@@ -58,6 +68,8 @@ Deletes: Approximately 180 net lines from the 211-line module, after retaining t
 
 Risk: Removes dormant recovery assertions. Preserve `only_refused_connections_are_retryable` and the Receiving materializer scenario that uses the helper.
 
+Owner review 2026-10-31: delete, Group 4 Do, in the per-crate commit. `connection_refused` and its test stay in test support.
+
 ## Finding A1-4: Pool observability exposes functions that nothing calls
 
 Severity: low  
@@ -74,6 +86,8 @@ Deletes: Approximately 91 lines.
 
 Risk: Removes an unused metric registration API. Preserve `guest_and_platform_pool_caches_remain_distinct_under_interleaving` at `crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs:215`.
 
+Owner review 2026-10-31: delete, Group 4 Do, in the per-crate commit.
+
 ## Finding A1-5: The engine carries an unused reverse context decoder
 
 Severity: low  
@@ -89,6 +103,8 @@ Proposal: Delete `typed_context`. Retain the forward conversion and current invo
 Deletes: 49 lines.
 
 Risk: No current caller breaks. Preserve the native operation tests, including `native_readiness_initializes_without_running_the_handler`.
+
+Owner review 2026-10-31: delete, Group 4 Do, in the per-crate commit.
 
 ## Finding A1-6: Forty-eight native dependency declarations are unused
 
@@ -126,6 +142,8 @@ Deletes: 48 dependency lines, plus stale comments. Lockfile reductions require a
 
 Risk: Dependency removal can expose reliance on combined Cargo features. Compile each affected package independently with all targets and repeat feature analysis. A workspace-only build can hide that reliance.
 
+Owner review 2026-10-31: delete all 48, Group 4 Do, in the same per-crate commits. The check is `cargo check --all-targets` per affected package. No feature-tree output exists and none is supplied (question 4).
+
 ## Finding A1-7: Generator convenience methods have no callers
 
 Severity: low  
@@ -141,6 +159,8 @@ Proposal: Delete these five methods. Retain the data structures and active reade
 Deletes: Approximately 43 lines, excluding surrounding blank lines.
 
 Risk: No current call site changes. Preserve the generator manifest, data-access, and platform-generation tests.
+
+Owner review 2026-10-31: delete, Group 4 Do, in the per-crate commit.
 
 ## Finding A1-8: Runtime convenience APIs have no callers
 
@@ -158,6 +178,8 @@ Deletes: Approximately 39 lines.
 
 Risk: No current caller changes. Preserve HTTP authority tests and workflow resolution tests, especially connection-binding refusal cases.
 
+Owner review 2026-10-31: delete, Group 4 Do, in the per-crate commit.
+
 ## Finding A1-9: The Kubernetes credential provider is an unimplemented placeholder
 
 Severity: low  
@@ -173,6 +195,8 @@ Proposal: Delete the provider and its re-export. Add a Kubernetes-backed impleme
 Deletes: Approximately 24 lines, plus the re-export entry.
 
 Risk: No current execution path changes. Preserve credential-provider and composed-project credential tests.
+
+Owner review 2026-10-31: delete, Group 4 Do, in the per-crate commit.
 
 ## Finding A1-10: Nine guest dependency declarations are unused
 
@@ -202,6 +226,8 @@ Deletes: Nine dependency lines, plus obsolete comments.
 
 Risk: Compile regenerated guests independently for their real Wasm targets. Native tests omit the allocator path and cannot prove its dependency is unnecessary.
 
+Owner review 2026-10-31: delete the nine, Group 4 Do. Rebuild and repin the touched guests once, with coupling B3-3 step 8.
+
 ## Finding A1-11: Generated templates emit support that particular operations never use
 
 Severity: medium  
@@ -220,6 +246,8 @@ Deletes: Unused emitted helpers and constants. Generated outputs were unavailabl
 
 Risk: Preserve codec tests for UUID normalization, string-encoded integers, absent/null/value mutations, and keyed versus read envelopes. Preserve the timestamp-history test consumer at `apps/wamn_receiving/data/src/read.rs:60`.
 
+Owner review 2026-10-31: In passing, after A5. The A5 inversion rewrites the generated adapters, and emitting per declared fields is done in that rewrite, not before. Read the generator before any change.
+
 ## Finding A1-12: Portable test infrastructure remains inside production libraries
 
 Severity: low  
@@ -236,7 +264,9 @@ Test and benchmark binaries already have explicit consumers or entry points. `wa
 
 Deletes: At least 1,331 lines leave production source directories through relocation: 538 invariant lines, 639 case/drift lines, and 154 database-fixture lines. Net repository deletion is approximately zero.
 
-Risk: Preserve router property tests, queue tests, SQLite and PostgreSQL intent cases, schema-drift tests, and database-fixture installation tests. Keep production features `tenant-key`, `ops`, and `wasm_component_model_implements`; their consumers are explicit.
+Risk: Preserve router property tests, queue tests, SQLite and PostgreSQL intent cases, schema-drift tests, and database-fixture installation tests. Keep production features `ops` and `wasm_component_model_implements`; their consumers are explicit. `tenant-key` is the retired tenant feature and is not kept. It goes with the removal of that feature, which is still in progress.
+
+Owner review 2026-10-31: In passing. Relocation, zero net deletion.
 
 ## Finding A1-13: Internal implementation items are exposed as public APIs
 
@@ -246,7 +276,7 @@ Area: `wamn-router`, `wamn-run-state-sqlite`, and `wamn-materializer`
 
 Evidence: `crates/execution/workflow/router/src/lib.rs:62`; `crates/execution/workflow/router/src/retry.rs:17`; `crates/execution/run-state-sqlite/src/lib.rs:302`; `apps/platform/events/materializer/src/lib.rs:10`; `apps/platform/events/materializer/src/decide.rs:147`.
 
-Problem: The router has 87 public item declarations and re-exports, excluding fields, but that inventory is not 87 unused implementations. Retry policy, throttle keys, hop-limit helpers, and error details remain internally necessary. Materializer context, tenant, input, and condition helpers also remain active behind its decision functions.
+Problem: The router has 87 public item declarations and re-exports, excluding fields, but that inventory is not 87 unused implementations. Retry policy, throttle keys, hop-limit helpers, and error details remain internally necessary. Materializer context, org, input, and condition helpers also remain active behind its decision functions.
 
 Proposal: Keep the separate pure router boundary, but expose only the workflow driver’s types and operations. Make internal retry helpers private after moving their test consumers.
 
@@ -258,12 +288,16 @@ Deletes: Unused public re-export entries. Most implementations remain, so no sub
 
 Risk: Preserve workflow lowering, materializer decisions, event admission, SQLite text replay, and close-notification tests. Avoid changing persisted or WIT error vocabularies.
 
+Owner review 2026-10-31: In passing.
+
 ## Open questions for the owner
 
-1. Is startup-burst measurement still required? It currently has no repository execution path.
-2. Is wiring caching still a requirement? The driver currently resolves each workflow claim directly.
-3. Does an external consumer use these unpublished Rust APIs? This audit establishes repository callers only.
-4. Can root supply the retained feature-tree output and generated packages before dependency deletions are accepted?
+All four questions were answered on 2026-10-31.
+
+1. No. Startup-burst measurement is not required. Delete it.
+2. No. Wiring caching is not a requirement. Delete it.
+3. No external consumer uses these APIs. Delete them.
+4. No. No feature-tree output exists and none is supplied. `cargo check --all-targets` per affected package is the check.
 
 <!-- lane A2, bead wamn-v3cpv.2 -->
 
