@@ -603,15 +603,20 @@ async fn identity_relations_carry_stamps(client: &tokio_postgres::Client) {
         .iter()
         .map(|row| row.get::<_, String>(0))
         .collect::<Vec<_>>();
-    let expected_triggers = RELATIONS
-        .map(|relation| {
-            format!(
-                "CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON identity.{relation} \
-                 FOR EACH ROW EXECUTE FUNCTION \
-                 wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by')"
-            )
-        })
-        .to_vec();
+    let expected_triggers = [
+        "CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT ON identity.credential \
+         FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by')"
+            .to_owned(),
+    ]
+    .into_iter()
+    .chain(RELATIONS.map(|relation| {
+        format!(
+            "CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON identity.{relation} \
+             FOR EACH ROW EXECUTE FUNCTION \
+             wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by')"
+        )
+    }))
+    .collect::<Vec<_>>();
     assert_eq!(triggers, expected_triggers);
 }
 
