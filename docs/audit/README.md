@@ -90,12 +90,13 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | H1-4 | [H](hygiene.md) | medium | S | Runner arguments | A missing value can leave the Kubernetes shell runner in an endless parser loop. |
 | H1-8 | [H](hygiene.md) | medium | M | Benchmark cleanup | Failed cloud version minimum runs can leave sampling active or triggers altered. |
 | H1-9 | [H](hygiene.md) | medium | S | Submodule governance | The merge queue omits its documented submodule guard. |
-| G2-1 | [G](tests.md) | medium | M | History coverage | Quarantine disables owned-database history reconstruction and retention assertions. |
-| G2-2 | [G](tests.md) | medium | M | Grant coverage | Shared fixture counts suppress the assertion that private operations receive no public grant. |
-| G2-3 | [G](tests.md) | medium | S | Introspection coverage | A stale four-table assertion disables the full introspection refusal scenario. |
-| G2-4 | [G](tests.md) | medium | M | Host parity | Incidental argument counts and quarantine suppress registry rendering and local host parity. |
-| G2-5 | [G](tests.md) | medium | S | Credential tests | PostgreSQL-only ignores exclude ordinary credential retry tests. |
-| G2-8, G3-4 | [G](tests.md) | medium | M | Ignored tests | Ignore reasons mix missing prerequisites, disabled assertions, and a subprocess helper. |
+| G2-1 | [G](tests.md) | medium | M | History coverage | Quarantine disables owned-database history reconstruction and retention assertions. Group 3 Do. History triggers are kept platform behavior. The exact CLI prose assertions go. |
+| G2-2 | [G](tests.md) | medium | M | Grant coverage | Shared fixture counts suppress the assertion that private operations receive no public grant. Group 3 Do. A small owned manifest with an explicit public/private set. |
+| G2-3 | [G](tests.md) | medium | S | Introspection coverage | A stale four-table assertion disables the full introspection refusal scenario. Group 3 Do, small. |
+| G2-4 | [G](tests.md) | medium | M | Host parity | Incidental argument counts and quarantine suppress registry rendering and local host parity. Group 3 Do. The parity test compares against the release `values.yaml` and lists the deliberate differences. |
+| G2-8 | Empty prerequisite reasons conceal a built-service dependency | low | The empty prerequisite reasons and empty prerequisite calls where direct executable discovery supplies the required failure. With G3-4: every ignore names its prerequisite and how to satisfy it. |
+| G2-5 | [G](tests.md) | medium | S | Credential tests | PostgreSQL-only ignores exclude ordinary credential retry tests. Both tests run by default. |
+| G2-8, G3-4 | [G](tests.md) | medium | M | Ignored tests | Ignore reasons mix missing prerequisites, disabled assertions, and a subprocess helper. G2-8 is In passing with G3-4: every ignore names its prerequisite. |
 | G3-5 | [G](tests.md) | medium | M | Contract compilation | Compile-time generated-file reads prevent isolated client and generator test compilation. |
 | G3-6 | [G](tests.md) | medium | L | Test placement | Mixed targets carry cheap assertions into expensive fixtures and repeat business histories at deployment boundaries. |
 | A2-3 | [A](code-quality.md) | medium | M | Host contracts | Seventy-one redundant JSON files contain 3,020 repeated contract lines. Group 4 Do, after integration-schema C1 to C3, against the new routes. Per-operation files become build output. |
@@ -192,8 +193,8 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | G1-13 | [G](tests.md) | low | S | Offline fixtures | Plugin tests repeat offline PostgreSQL and empty connection configuration. |
 | G1-14 | [G](tests.md) | low | S | Package copies | Three test helpers independently implement recursive package copying. |
 | G1-15 | [G](tests.md) | low | S | Small test helpers | Ready-only polling and Unix-second conversion repeat across tests. |
-| G2-6 | [G](tests.md) | low | S | Incidental counts | Table totals and a publication count freeze implementation choices without a named contract. |
-| G2-7 | [G](tests.md) | low | S | SQL snapshots | A complete formatted DDL snapshot repeats behavior already covered by semantic tests. |
+| G2-6 | [G](tests.md) | low | S | Incidental counts | Table totals and a publication count freeze implementation choices without a named contract. In passing when those files are open. |
+| G2-7 | [G](tests.md) | low | S | SQL snapshots | A complete formatted DDL snapshot repeats behavior already covered by semantic tests. Closed by the tenant feature removal: the three files go whole. |
 | H2-8 | [H](hygiene.md) | low | S | Documentation navigation | The plan index omits alignment work, and history lacks a successor map. |
 | H3-9 | [H](hygiene.md) | low | S | Web exports | Three unnecessary exports and one root dependency can leave without deleting their active implementations. |
 
@@ -294,6 +295,9 @@ The owner review of 2026-10-31 rejects the following. The report evidence stays 
 | F3-7: completion within 600 seconds on a named runner | Dropped. The first run of the journey is the measurement, and a limit follows measurement. |
 | Question on the ten-minute clock (F3-7) | Answered: it starts after SDK installation and account provisioning. |
 | Question on required application business tests at deployment (F3-5) | Answered: exactly the cases the application declares beside its tests. The platform imposes none. |
+| Question on live statuses for quarantined tests (G2-1 through G2-4) | Answered: no live bead list is supplied. The agent that restores each quarantined test reads its bead then. The passive export is not a status source. |
+| Question on shared host behaviors for the parity test (G2-4) | Answered: everything derived from the release `values.yaml` is shared, and the differences are the ones D1-5 names as chart values. |
+| Question on the owner of the frozen PostgreSQL telemetry identifiers (G2-6, H2-5) | Answered: the identifiers stay. The guard cites the collector template in `deploy/platform/otel-collector.yaml`, the only current consumer, instead of the deleted archive documents. No dashboard owns them. |
 | C1-2's pending-work record and C1-3's schema advancement before analysis | Rejected. One baseline, so nothing advances. Apply compares the installed baseline hash with the candidate's and refuses with "schema changed, reset the environment database" on a mismatch. C1-3 closes into C1-2 with its Deletes widened to every project migration call. |
 
 ### Plans in flight
@@ -320,6 +324,7 @@ Two plans change the platform the audit describes: [alignment](../plan/alignment
 | A3-2, A3-10 (`host.rs`), A3-12, A3-13 (`flow_http_routing.rs`), A1-11 | [perf-arch](../plan/perf-arch.md) A5 | A5 rewrites the claim maps, host startup, the generated adapters and the routing file. Each fix is written inside that rewrite, not before. A3-2 stays Group 3 Do under A5's ownership. |
 | F1-1, F1-2, F1-4, F1-5 | [perf-arch](../plan/perf-arch.md) A5 | After A5. Publication records, boundary types, overlay composition and generated projections change with the composed HTTP workload. |
 | F1-8, F3-3 | ui split, owner developer-experience priority 1 | Owned there, including the shell as an SDK dependency and the generated default screens. The audit files nothing separate. |
+| G2-7 | tenant feature removal in progress | Closed. `tenant_key.rs`, `tenant_key_live.rs` and `tenant_scope.rs` are the retired tenant feature and go whole. No snapshot to trim. |
 | B1-3 and every crate move inside runtime or execution-host | [perf-arch](../plan/perf-arch.md) A5 | The application as the HTTP workload is the ruled direction and lands before any re-measurement. Moves inside runtime and execution-host before A5 are churn and wait. |
 
 ## The six largest areas for improvement
@@ -554,7 +559,7 @@ In passing (2 findings). Helper dedup, naming, count pins and doc links. Closed 
 
 Target: one tier per target and one selection owner, mixed targets deleted (G3-1, G3-2, G3-6). Every ignore is fixed or deleted, and no ignore stays without a stated missing prerequisite (G2-8, G3-4). The security highs land here with no dependency on any crate move: E2-2 (an org control credential reaches its own org only), E1-2 (per-environment broker identity, grant answers local), E1-3, E1-4, A3-1, A3-2, A2-1, B2-6 and F3-5. Plaintext in-cluster transport (E1-5, E2-3, E2-4) is medium until a non-dev cluster exists.
 
-Do (28 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high.
+Do (30 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high.
 
 | Finding | Title | Severity | Deletes |
 | --- | --- | --- | --- |
@@ -564,7 +569,6 @@ Do (28 findings). The rows the review named, then every row that deletes a build
 | G3-2 | Selection policy is scattered across the runner | high | The old JSON file and suite-specific shell branches. Retain existing build commands and fixture owners, but remove their duplicated selection conditions. |
 | F2-10 | Test execution needs a separate artifact and service recipe | medium | Remove repeated component path exports and manual preparation recipes from individual test instructions. With G3-2: one preparation path, zero executed cases refused. |
 | G3-6 | Tests need target moves and narrower deployment assertions | medium | Mixed render-and-cluster compilation targets, duplicate delivery setup, and repeated business assertions that prove no additional deployed boundary. Measurements.md section 7 reports 201 duplicated lines between Receiving and WMS tests, which supports inspecting this merge. |
-| G2-8 | Empty prerequisite reasons conceal a built-service dependency | low | The empty prerequisite reasons and empty prerequisite calls where direct executable discovery supplies the required failure. |
 | G3-4 | Ignore reasons mix prerequisites, disabled tests, and child helpers | medium | Empty reasons, prose-only prerequisite lists, permanent bead-only ignores, and the ignored SQLite helper test. |
 | E2-2 | Org-scoped control credentials retain authority across organizations | high | Broad control table grants and every org argument to a privileged function. One database role per org, row security on the org key, the org derived from `current_user`. |
 | E1-3 | A delayed grant can restore revoked administration | high | The grant-before-revoke ordering difference and the process-local mutex as the only coordination. Ordering plus the system row lock, no new owner process. |
@@ -583,11 +587,14 @@ Do (28 findings). The rows the review named, then every row that deletes a build
 | E1-1 | Credential resource names collide across environments | high | The two independent single-hyphen naming formulas. One encoding, the double-hyphen convention, no fallback. |
 | E3-2 | The native lockfile contains reported security vulnerabilities | high | Vulnerable dependency resolutions and obsolete version assertions. Updated in the One NATS build, not a build of its own. Record which advisories remain reachable after the update. |
 | E3-1 | Registry descriptors can bypass byte admission | medium | The unconditional `wasi:sockets` implementation for application components. The runtime refuses it regardless of the descriptor. Small, independent of W1 to W3. |
-| G2-1 | Quarantine removes history reconstruction and retention proofs | medium | The two quarantine attributes, obsolete fixture setup, and exact CLI prose assertions at `services/ctl/tests/prune_record_history_live.rs:621`. |
+| G2-1 | Quarantine removes history reconstruction and retention proofs | medium | The two quarantine attributes, obsolete fixture setup, and exact CLI prose assertions at `services/ctl/tests/prune_record_history_live.rs:621`. History triggers are kept platform behavior. |
+| G2-2 | Fixture grant inventories suppress the private-operation test | medium | The nineteen-entry shared-fixture snapshot, the absolute eighteen-grant assertion, and the `wamn-e1zd9` and `wamn-slf04` ignores. |
+| G2-3 | Four-table pin disables the introspection refusal suite | medium | The four-table assertion and quarantine attribute. |
+| G2-4 | Chart argument counts freeze incidental structure | medium | The five-argument assertion and both bead quarantine reasons after their causes are resolved. The parity test compares against the release `values.yaml` and lists the deliberate differences. |
 | G3-3 | The merge queue omits required live behavior | high | Manual live-stage instructions as the only execution path for required cases. Remove the rule that cluster coverage depends only on edits to cluster tests. |
 | G3-5 | Generated output prevents isolated contract compilation | medium | Compile-time reads of generated application output from ordinary test targets. Remove application generation from documentation-only quality execution. |
 
-In passing (13 findings). Helper dedup, naming, count pins and doc links. Closed when the owning file is already open, never filed alone.
+In passing (10 findings). Helper dedup, naming, count pins and doc links. Closed when the owning file is already open, never filed alone.
 
 | Finding | Title | Severity | Deletes |
 | --- | --- | --- | --- |
@@ -598,12 +605,8 @@ In passing (13 findings). Helper dedup, naming, count pins and doc links. Closed
 | E3-3 | Package pulls and extraction have no resource budget | low | A byte cap on blob reads and an entry cap on extraction when `package-artifact` is next touched. No streaming rewrite. |
 | E3-5 | Execution deadlines do not contain compilation | low | Full compilation solely for import discovery (`wasmparser` lists imports instead) and compilation that outlives a cancelled caller, fixed when `component_admission.rs` is next changed. |
 | E3-7 | Engine construction mutates the environment after threads start | medium | Environment mutation from the shared engine constructor and its incomplete safety argument. Set the grace before the runtime starts. Rides the One NATS host build. |
-| G2-2 | Fixture grant inventories suppress the private-operation test | medium | The nineteen-entry shared-fixture snapshot, the absolute eighteen-grant assertion, and the `wamn-e1zd9` and `wamn-slf04` ignores. |
-| G2-3 | Four-table pin disables the introspection refusal suite | medium | The four-table assertion and quarantine attribute. |
-| G2-4 | Chart argument counts freeze incidental structure | medium | The five-argument assertion and both bead quarantine reasons after their causes are resolved. |
-| G2-5 | PostgreSQL-only ignores exclude ordinary credential tests | medium | Both PostgreSQL-only ignore attributes. |
-| G2-6 | Several count pins have no named contract | low | Redundant absolute inventory counts and `in_flight_bound_is_pinned_under_the_client_semaphore`. |
-| G2-7 | SQL formatting receives the same freeze treatment as persisted identity | low | The complete DDL string snapshot. |
+| G2-5 | PostgreSQL-only ignores exclude ordinary credential tests | medium | Both PostgreSQL-only ignore attributes. Both tests run by default. |
+| G2-6 | Several count pins have no named contract | low | Redundant absolute inventory counts and `in_flight_bound_is_pinned_under_the_client_semaphore`. When those files are open. |
 
 ### Group 4: Code cleanup and consolidation
 
@@ -719,7 +722,7 @@ In passing (55 findings). Helper dedup, naming, count pins and doc links. Closed
 
 1. Which external consumers require current Rust APIs of the test support and fixture packages? This unblocks Groups 1 and 4 (G1-1). Cargo package names, the `wamn-control` API and the A1-7 through A1-9 APIs are answered: none.
 2. Which machine and cache states define timing comparisons for retained results? This unblocks timing acceptance for Group 2 (G3-7).
-3. Which local/deployed host behaviors must match, and must WMS retain its distinct concurrency limit? This unblocks Groups 1 and 3 (D1-5, G2-4).
+3. Must WMS retain its distinct concurrency limit? This unblocks Group 1 (D1-5). The shared host behaviors are answered: everything derived from the release `values.yaml`, with the differences listed as chart values (G2-4).
 4. Can the identity journey replace its repository `evidence/` requirement with caller-owned temporary result storage? This unblocks Group 4 (H1-5).
 5. Does any external workflow still require `kind-gate-build` or `kind-gate-image-remove`? This unblocks Group 4 (H1-12).
 6. Confirm the reviewer's pick: the provisioning operator certificate is one platform-wide principal by design, and revocation is short certificate lifetimes under cert-manager (alignment R3), not a CRL. This informs privileged credential boundaries in Group 3 (E2-2, E2-3).
@@ -728,11 +731,10 @@ In passing (55 findings). Helper dedup, naming, count pins and doc links. Closed
 9. Can WAMN consume only public built wfe exports while source qualification remains inside the submodule? This unblocks Group 4 (H3-3).
 10. Confirm the reviewer's pick: Docker on Linux x86_64 is the supported developer host for now. This settles the host contract for Groups 2 and 4 (F2-8, F3-2).
 11. Which tier duration budgets must the retained results enforce? This unblocks acceptance for Group 2 (G3-7). Developer loop limits are answered: none until F2-5 lands and timings are recorded.
-12. Can root supply live statuses for quarantined tests and archive candidates, including which ignored cases represent defects or retired contracts? This unblocks Groups 3 and 4 (G2-1 through G2-4, G3-4, H2-2, H2-3).
-13. Which dashboard or collector owns the frozen PostgreSQL telemetry identifiers whose guard cites deleted documentation? This unblocks retained-contract decisions in Groups 3 and 4 (G2-6, H2-5).
-14. Must benchmark summaries remain readable without their raw result files? This defines the retained result contract in Group 4 (H1-7).
-15. Does an immutable Git source plus a compact history entry satisfy the rule that accepted plans remain untrimmed? This unblocks Group 4 (H2-2, H2-7).
-16. Where are the twelve historical performance artifacts retained, if anywhere? This unblocks evidence disposition in Group 4 (H2-6).
-17. Does any external tool still read `.beads/beads.jsonl`? This unblocks obsolete-export removal in Group 4 (H3-10).
+12. Can root supply live statuses for the archive candidates, including which retired contracts they cite? This unblocks Group 4 (H2-2, H2-3). Quarantined tests are answered: the restoring agent reads each bead then (G2-1 through G2-4, G3-4).
+13. Must benchmark summaries remain readable without their raw result files? This defines the retained result contract in Group 4 (H1-7).
+14. Does an immutable Git source plus a compact history entry satisfy the rule that accepted plans remain untrimmed? This unblocks Group 4 (H2-2, H2-7).
+15. Where are the twelve historical performance artifacts retained, if anywhere? This unblocks evidence disposition in Group 4 (H2-6).
+16. Does any external tool still read `.beads/beads.jsonl`? This unblocks obsolete-export removal in Group 4 (H3-10).
 
 Questions 8 and 10 of the first draft are answered in Rejected findings and proposals. Nothing from this list is filed until the owner answers.

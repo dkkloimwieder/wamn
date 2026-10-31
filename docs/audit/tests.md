@@ -284,6 +284,8 @@ Proposal: Restore default tests against the current history owner. Keep assertio
 Deletes: The two quarantine attributes, obsolete fixture setup, and exact CLI prose assertions at `services/ctl/tests/prune_record_history_live.rs:621`.  
 Risk: Incorrect pruning can remove retained history or preserve expired entries. `prune_removes_only_the_expired_prefix_of_each_row` and `the_history_read_reconstructs_a_row_at_retained_positions_on_postgres` must pass without ignores.
 
+Owner review 2026-10-31: keep, Group 3 Do. Record history is kept platform behavior (generated history triggers). The two quarantines come off and the tests run against the current owner. The exact CLI prose assertions go.
+
 ## Finding G2-2: Fixture grant inventories suppress the private-operation test
 
 Severity: medium  
@@ -294,6 +296,8 @@ Problem: The tests freeze a growing fixture into nineteen public grants and eigh
 Proposal: Use a small, owned manifest with an explicit public/private operation set. Assert exact membership and the effect of changing visibility independently of the shared application fixture.  
 Deletes: The nineteen-entry shared-fixture snapshot, the absolute eighteen-grant assertion, and the `wamn-e1zd9` and `wamn-slf04` ignores.  
 Risk: A private operation can acquire a public permission without default coverage. `private_custom_operations_never_become_role_grants` must reject a mutant that grants its private operation.
+
+Owner review 2026-10-31: keep, Group 3 Do. A small owned manifest with an explicit public/private set. The shared fixture snapshot and both quarantines go. The private-operation assertion is the one that matters.
 
 ## Finding G2-3: Four-table pin disables the introspection refusal suite
 
@@ -306,6 +310,8 @@ Proposal: Keep server-to-model equality, schema exclusion, and refusal behavior.
 Deletes: The four-table assertion and quarantine attribute.  
 Risk: Removing the count must preserve detection of omitted relations. `the_fixture_migration_round_trips_and_refuses_unsupported_server_objects` must execute its complete refusal matrix.
 
+Owner review 2026-10-31: keep, Group 3 Do, small. The count goes and the refusal matrix runs.
+
 ## Finding G2-4: Chart argument counts freeze incidental structure
 
 Severity: medium  
@@ -313,9 +319,11 @@ Effort: M
 Area: `test-support/harness/src/case_release.rs`, `crates/control/lib/src/dev/activation.rs`  
 Evidence: `test-support/harness/src/case_release.rs:1092`; `test-support/harness/src/case_release.rs:1115`; `crates/control/lib/src/release_chart.rs:418`; `test-support/harness/src/case_release.rs:878`; `crates/control/lib/src/dev/activation.rs:2051`.  
 Problem: The case renderer appends its insecure-registry flag to five release arguments, producing six. Its quarantined test still requires five. Separately, `wamn-bjs11` suppresses local/deployed host parity, which needs Helm but also carries a recorded failure quarantine.  
-Proposal: Test the registry flag and preservation of release arguments without freezing their total count. Keep a rendered parity test for explicitly shared host behavior, with Helm named as its prerequisite.  
+Proposal: Test the registry flag and preservation of release arguments without freezing their total count. After deployment D1-5 the local host reads only the release `values.yaml`, so the parity test compares against that one source and lists the deliberate differences explicitly, with Helm named as its prerequisite.  
 Deletes: The five-argument assertion and both bead quarantine reasons after their causes are resolved.  
 Risk: Case hosts can lose access to their HTTP registry, or local execution can diverge from deployment. `the_case_hosts_read_a_plain_http_registry` and `local_host_matches_the_deployed_host_contract` provide the required proofs.
+
+Owner review 2026-10-31: keep, Group 3 Do. Question 2 is answered: everything derived from `values.yaml` is shared, and the differences are the ones D1-5 names as chart values.
 
 ## Finding G2-5: PostgreSQL-only ignores exclude ordinary credential tests
 
@@ -328,6 +336,8 @@ Proposal: Run both tests by default alongside the OAuth2 tests.
 Deletes: Both PostgreSQL-only ignore attributes.  
 Risk: Credential rotation can stop retrying correctly or send an unnecessary second request. The two tests must prove their existing authorization sequences and request counts.
 
+Owner review 2026-10-31: keep, small. Both tests run by default.
+
 ## Finding G2-6: Several count pins have no named contract
 
 Severity: low  
@@ -339,6 +349,8 @@ Proposal: Retain complete relation comparisons, uniqueness checks, reconciliatio
 Deletes: Redundant absolute inventory counts and `in_flight_bound_is_pinned_under_the_client_semaphore`.  
 Risk: An incomplete inventory can escape a count-only replacement. Preserve `observation_at_record_plans_a_noop`, table uniqueness coverage, and pipeline settlement tests.
 
+Owner review 2026-10-31: In passing. Delete the three count pins and `in_flight_bound_is_pinned_under_the_client_semaphore` when those files are open.
+
 ## Finding G2-7: SQL formatting receives the same freeze treatment as persisted identity
 
 Severity: low  
@@ -346,9 +358,7 @@ Effort: S
 Area: `crates/control/provision/src/tenant_key.rs`  
 Evidence: `crates/control/provision/src/tenant_key.rs:338`; `crates/control/provision/tests/tenant_key_live.rs:156`; `crates/control/provision/tests/tenant_key_live.rs:186`; `crates/control/provision/tests/tenant_key_live.rs:249`.  
 Problem: `the_emitted_ddl_is_frozen` duplicates the complete generated SQL, including whitespace. Its security contract concerns derivation, ownership, privileges, and function properties. The source names no consumer that requires the entire statement text byte for byte.  
-Proposal: Keep independent digest vectors and live SQL behavior. Preserve named freezes for persisted failure literals, durability values, release digests, hashed requirements, and event wire shapes. Their owners are explicit at `crates/execution/run-state/tests/store.rs:41`, `crates/execution/run-state/src/durability.rs:18`, `crates/catalog/model/tests/serving_manifest_digest.rs:128`, `crates/control/lib/src/component_admission.rs:1578`, and `apps/platform/events/registration/tests/event_reg.rs:147`.  
-Deletes: The complete DDL string snapshot.  
-Risk: A derivation or privilege change can break tenant access. Keep the frozen digest at `crates/execution/run-state/src/tenant_scope.rs:72` and the live derivation, function-property, and replacement-denial tests.
+Closed by the tenant feature removal in progress (owner review 2026-10-31). `crates/control/provision/src/tenant_key.rs`, `crates/control/provision/tests/tenant_key_live.rs` and `crates/execution/run-state/src/tenant_scope.rs` are the retired tenant feature and go whole. There is no snapshot to trim.
 
 ## Finding G2-8: Empty prerequisite reasons conceal a built-service dependency
 
@@ -361,11 +371,15 @@ Proposal: Name the built identity service and its supported discovery paths in e
 Deletes: The empty prerequisite reasons and empty prerequisite calls where direct executable discovery supplies the required failure.  
 Risk: Selection can fail before authentication coverage executes. The bootstrap and two route-authentication tests must run with the documented executable input.
 
+Owner review 2026-10-31: In passing with G3-4. Every ignore names its prerequisite and how to satisfy it.
+
 ## Open questions for the owner
 
-1. Can root supply the current open “fails on main” beads? `bd list --readonly --status open --limit 0` failed with `Error: failed to open database: embeddeddolt: init schema: embeddeddolt: open db: failed to load database "wamn": openat LOCK: read-only file system`. Neither passive export contains the seven quarantine IDs. Automatic export is disabled at `.beads/config.yaml:69`, so their current statuses remain unverified.
-2. Which shared host behaviors must the restored parity test enforce? Its broad comparison removes many deliberate differences at `crates/control/lib/src/dev/activation.rs:2234`.
-3. Which current dashboard or collector owns the frozen PostgreSQL telemetry identifiers? The guard cites deleted archive documents at `tests/conformance/tests/effect_spans.rs:645`. Preserve the identifiers until that ownership is resolved.
+All three questions were answered on 2026-10-31.
+
+1. No live bead list is supplied here. The agent that restores each quarantined test reads its bead then. The passive export is not a status source.
+2. Everything derived from the release `values.yaml` is shared, and the differences are the ones D1-5 names as chart values (G2-4).
+3. The telemetry identifiers stay. The guard's citation of deleted archive documents is replaced by a pointer to the collector template in `deploy/platform/otel-collector.yaml`, the only current consumer. No dashboard owns them.
 
 <!-- lane G3, bead wamn-lybom.3 -->
 
