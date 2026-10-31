@@ -8,6 +8,8 @@ Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file,
 
 This is a static audit. No files changed, and no builds or tests ran. Locations below identify independent definitions, not repeated imports of one definition.
 
+Owner review 2026-10-31: G1-1 merges into coupling B3-6. G1-2 to G1-15 are In passing as placed, and each lands when its file is open during the T17 move or the tier split.
+
 ## Finding G1-1: Shared support needs one owner and a smaller dependency boundary
 
 Severity: medium  
@@ -15,13 +17,15 @@ Effort: L
 Area: test-support/*  
 Evidence: `test-support/harness/Cargo.toml:14`, `test-support/harness/Cargo.toml:28`, `test-support/infrastructure/Cargo.toml:15`, `test-support/infrastructure/lib.rs:13`, `test-support/fixture-package/src/lib.rs:9`, `crates/control/lib/Cargo.toml:98`.
 
-Problem: Harness and infrastructure overlap in command execution, private files, cluster access, and environment preparation. Fixture-package owns separate package paths and contents. PostgreSQL owns the server lifecycle and also serves production upgrade qualification, so merging all four crates creates a dependency problem.
+Problem: Harness and infrastructure overlap in command execution, private files, cluster access, and environment preparation. Fixture-package owns separate package paths and contents. PostgreSQL owns the server lifecycle. With `qualify_upgrade` deleted it has no production consumer and is test-only.
 
-Proposal: Make infrastructure the shared test library and absorb harness and fixture-package. Give it a lightweight default for files, paths, commands, PostgreSQL connections, clocks, and fixture data. Keep deployment helpers optional, keep assertions with their suites, and retain the PostgreSQL lifecycle crate as a separate production dependency. Type-specific builders belong behind the owning crate’s existing `test-util` boundary.
+Proposal: Make infrastructure the shared test library and absorb harness and fixture-package. Give it a lightweight default for files, paths, commands, PostgreSQL connections, clocks, and fixture data. Keep deployment helpers optional, keep assertions with their suites, and keep the PostgreSQL lifecycle crate (T16 `wamn-test-postgres`) a separate test-only package. Type-specific builders belong behind the owning crate’s existing `test-util` boundary.
 
 Deletes: Two support manifests, duplicate primitive implementations listed below, and cross-suite source imports such as `tests/integration/src/control_client_live.rs:28`. These imports already share source and are not additional helper definitions.
 
 Risk: A merged library can force runtime dependencies into small tests. Dependency inspection must preserve the engine boundary, while existing `guest_workspace_closure` tests retain guest isolation. Measurements.md section 2 reports zero source lines for infrastructure because its sources sit outside `src/`; that row does not establish that the crate is empty.
+
+Owner review 2026-10-31: merged into coupling B3-6. T17 `wamn-test-support` absorbs harness, infrastructure and fixture-package, and T16 `wamn-test-postgres` stays separate. Group 4 Do with the T17 and T18 move. The rename retires the banned `harness` name. Question 1 is answered: no external consumers.
 
 ## Finding G1-2: PostgreSQL connection setup repeats across fifty helpers
 
@@ -263,7 +267,7 @@ Risk: Ready-only polling must still fail on `Pending`. Retain `callback_error_do
 
 ## Open questions for the owner
 
-1. Do external consumers require the `wamn-gate-harness` or `wamn-fixture-package` crate names? Internal callers can migrate together.
+1. Do external consumers require the `wamn-gate-harness` or `wamn-fixture-package` crate names? Answered 2026-10-31: no. Internal callers migrate together.
 
 <!-- lane G2, bead wamn-lybom.2 -->
 
@@ -385,6 +389,8 @@ All three questions were answered on 2026-10-31.
 
 ## Part 3: tiers
 
+Owner review 2026-10-31, standing rule (the testing budget): per issue build, clippy and unit; per merge the live targets touching the merged files; per epic one kind run; a branch touching install, chart or env apply files merges only after `platform_apply_kind` passes on it; cluster journeys only when asked; any stage silent past 30 minutes is killed; no full runs before the work is complete.
+
 ## Finding G3-1: Default and ignored tests do not define useful execution tiers
 
 Severity: high  
@@ -407,11 +413,11 @@ Live NATS: Tests that require an actual NATS broker, including JetStream persist
 
 Kind cluster: Tests that require Kubernetes scheduling, operators, deployed images, Secrets, readiness, rollout, or process termination. Embedded PostgreSQL and NATS remain prerequisites of this tier.
 
-GKE: Tests that require a real GKE installation or Google provider behavior, including Workload Identity, Artifact Registry access, and Cloud Storage. Local metadata-server fixtures remain contract tests.
-
 Deletes: The default-versus-ignored tier model and the `--cluster` alias for every ignored test.
 
 Risk: Moving tests can silently remove coverage. Compare discovered test identities before and after migration, and require exactly one tier assignment for every executable target.
+
+Owner review 2026-10-31: keep, Group 3 Do, with five tiers, not six: unit, contract, live-postgres, live-nats, kind. No GKE tier, because Google-provider behavior is proved on wamn-dev under manual approval, not by a test tier. Tier to cadence: unit and contract per issue, live per merge, kind per epic.
 
 ## Finding G3-2: Selection policy is scattered across the runner
 
@@ -425,13 +431,15 @@ Problem: The JSON file supplies only part of the selection policy. Contributors 
 
 Proposal: Replace `tools/test-changes-suites.json` with `tests/selection.toml`, the sole selection policy file. Each suite records its stable identifier, tier, Cargo workspace, package, target, optional exact test names, features, prerequisites, extra input paths, execution policy, resource lock, and timeout.
 
-Keep Cargo dependency discovery in the runner. Keep exceptional dependencies outside Cargo in the selection file, including WIT readers, generated files, SQL, charts, Dockerfile inputs, and browser assets. Both local selection and the merge train consume the same resolved plan.
+Keep Cargo dependency discovery in the runner. Keep exceptional dependencies outside Cargo in the selection file, including WIT readers, generated files, SQL, charts, Dockerfile inputs, and browser assets. Local selection consumes the resolved plan. Documentation-only changes select nothing.
 
 Require complete target coverage, valid exact selectors, and explanations for additional path dependencies. An unknown code path selects all applicable suites rather than no tests. Documentation-only changes select source policy and documentation tools without generating every application.
 
 Deletes: The old JSON file and suite-specific shell branches. Retain existing build commands and fixture owners, but remove their duplicated selection conditions.
 
 Risk: An incomplete replacement can miss dependencies. Extend `tests/conformance/tests/test_changes.rs:3` with cases for runtime-to-host selection, WIT readers, deleted paths, unknown paths, and documentation-only changes.
+
+Owner review 2026-10-31: keep, Group 3 Do. `tests/selection.toml` is the one policy file, and the runner keeps Cargo discovery.
 
 ## Finding G3-3: The merge train omits required live behavior
 
@@ -443,17 +451,11 @@ Evidence: `tools/train-run:80` invokes the default selection command. `tools/tes
 
 Problem: A train can pass without executing affected application histories or broker-backed behavior. Changes to runtime, SQL, images, or charts can invalidate deployment behavior without changing a cluster test file. The existing positive-result guard establishes that some cases ran, not that every selected case ran.
 
-Proposal: Run one resolved plan against the combined merge head. Prepare required artifacts once, then run affected unit, contract, live Postgres, and live NATS suites. Include generated-client and application histories when their inputs change.
+Proposal: Every selected suite must execute its cases, and zero executed cases fails. A branch touching install, chart or env apply files merges only after `platform_apply_kind` passes on it.
+Deletes: The rule that cluster coverage depends only on edits to cluster tests.
+Risk: Selection can pass with nothing run. Demonstrate the failure from a missing required case.
 
-Require kind suites for changes to deployment owners, image composition, Kubernetes lifecycle behavior, and their declared dependencies. Run Receiving followed by WMS on their existing shared delivery cluster when both are selected.
-
-Require GKE evidence before merging Google provider or GKE infrastructure changes. Run the broader GKE smoke suite before release promotion. Ordinary unit changes do not require cloud execution.
-
-Formatting, Clippy, repository policy, and guest compilation remain gates beside the six test tiers. Every selected suite must execute its expected cases. Missing prerequisites, absent cases, and excluded required stages fail the train.
-
-Deletes: Manual live-stage instructions as the only execution path for required cases. Remove the rule that cluster coverage depends only on edits to cluster tests.
-
-Risk: The train can become expensive or unavailable without owned fixtures. Prove selection through `tools/train-tools-test` and selector fixtures, then demonstrate failures from a missing prerequisite and a missing required case.
+Owner review 2026-10-31: narrowed to the two sentences above. The rest closes into deployment D2-8, as D3-3 did. Rejected: GKE evidence before merge, kind required by a path rule, the promotion suite, and the `train-tools-test` cases.
 
 ## Finding G3-4: Ignore reasons mix prerequisites, disabled tests, and child helpers
 
@@ -473,6 +475,8 @@ Deletes: Empty reasons, prose-only prerequisite lists, permanent bead-only ignor
 
 Risk: Deleting disabled tests can remove unique assertions. Preserve the parent `reopen_after_kill_finds_the_uncertain_intent` case and require selector tests to reject malformed reasons and unintended helpers.
 
+Owner review 2026-10-31: keep, Group 3 Do. The fixed form carries requires reasons, the tier lives in the selection file, the SQLite child helper becomes a support executable, and a bead-only ignore is repaired or deleted. A temporary exclusion names its bead only, with no owner and no expiry.
+
 ## Finding G3-5: Generated output prevents isolated contract compilation
 
 Severity: medium  
@@ -491,6 +495,8 @@ Deletes: Compile-time reads of generated application output from ordinary test t
 
 Risk: Handwritten schemas alone can drift from generated contracts. Preserve a generated-schema compatibility case that proves omission and explicit-null behavior against current generator output.
 
+Owner review 2026-10-31: keep, Group 3 Do, as written. Unit and contract targets compile without `apps/target/wamn`.
+
 ## Finding G3-6: Tests need target moves and narrower deployment assertions
 
 Severity: medium  
@@ -499,7 +505,7 @@ Area: `tests/system/`, `crates/control/lib/tests/`, application tests
 
 Evidence: `tests/system/src/deadline_test.rs:25` constructs a local engine. `crates/control/lib/tests/platform_apply_kind.rs:2169` renders deployment objects without a cluster. `crates/control/lib/tests/support/prekind_render.rs:68` does the same for environments. `apps/wamn_receiving/tests/route_authentication_live/local_business.rs:24` uses the shared local runtime. `docs/architecture/overview.md:245` states that kind omits Google provider implementations.
 
-Problem: Mixed targets make cheap assertions travel with expensive fixtures. Repeating complete business histories at deployment boundaries increases cost without identifying which deployment property needs the repetition. Conversely, kind evidence cannot establish Google provider access.
+Problem: Mixed targets make cheap assertions travel with expensive fixtures. Repeating complete business histories at deployment boundaries increases cost without identifying which deployment property needs the repetition.
 
 Proposal: Move the epoch-interruption case into an engine-owned contract target. Move both prekind render groups and Helm-only render cases into contract targets. Move `prekind_host` into live NATS because it requires a broker, PostgreSQL, and built guests.
 
@@ -507,11 +513,13 @@ Move admission authority and schedule storage cases into live Postgres targets. 
 
 Keep complete business histories in application owners. At kind boundaries, retain deployed authentication, artifact loading, isolation, rollout, restart, and recovery assertions. Reuse existing history functions where a deployed history remains necessary.
 
-Merge repeated delivery setup into the existing shared harness and kept-cluster lifecycle. Preserve application assertions and the Receiving-then-WMS ordering. Keep actual Google authorization and storage assertions in GKE.
+Merge repeated delivery setup into the shared test support and the kept-cluster lifecycle. Preserve application assertions and the Receiving-then-WMS ordering, which follow the cluster-stage rule that one agent holds the cluster.
 
 Deletes: Mixed render-and-cluster compilation targets, duplicate delivery setup, and repeated business assertions that prove no additional deployed boundary. Measurements.md section 7 reports 201 duplicated lines between Receiving and WMS tests, which supports inspecting this merge.
 
-Risk: Removing deployment assertions can hide packaging failures. Retain `owned_release_delivery`, `environment_apply_kind`, and deployed restart cases as named kind requirements. Require separate GKE evidence for provider access.
+Risk: Removing deployment assertions can hide packaging failures. Retain `owned_release_delivery`, `environment_apply_kind`, and deployed restart cases as named kind requirements.
+
+Owner review 2026-10-31: keep, Group 3 Do, the target moves as listed. The GKE sentences are struck.
 
 ## Finding G3-7: Tier durations lack a retained baseline
 
@@ -523,29 +531,19 @@ Evidence: `tools/train-run:34` records step timestamps, while line 60 deletes su
 
 Problem: The shared measurements contain no tier execution baseline. Existing durations establish that some cases are expensive, but they do not establish an expected train duration. Combined build and test timing also conceals whether selection or compilation causes delay.
 
-Proposal: Use these initial planning ranges for one selected suite with cached builds and prepared artifacts. These are proposed budgets, not measured results.
+Proposal: Store a compact result outside the checkout with the revision, selection-file digest, selected and executed cases, and stage durations. No budget numbers before measurement. The owner's machine and the wamn-dev builder are the measuring machines, with cache state recorded in the build record.
 
-Unit: 10–60 seconds.
+Deletes: Successful-result deletion as the only retention policy.
 
-Contract: 1–3 minutes.
+Risk: A result without cache state misleads. Record cache state with every result.
 
-Live Postgres: 3–8 minutes, including private database setup and cleanup.
-
-Live NATS: 3–10 minutes, including required private PostgreSQL and broker setup.
-
-Kind cluster: 30–60 minutes for one complete scenario, including cluster setup and cleanup.
-
-GKE: 10–30 minutes against an already prepared disposable environment. Record cloud provisioning separately.
-
-Store a compact result outside the checkout with the revision, selection-file digest, selected and executed cases, and preparation, execution, and cleanup durations. After collecting a baseline on the agreed machine, replace estimates with measured ranges.
-
-Deletes: Successful-result deletion as the only retention policy. Replace scattered timing expectations with the selection file’s budgets.
-
-Risk: Tight budgets can reject correct behavior on slower machines. Retain the real schedule-lock cases and full kind scenarios when calibrating budgets.
+Owner review 2026-10-31: the budget ranges are rejected. Result retention stays with deployment D2-8 in Group 2. Question 3 is answered: the owner's machine and the wamn-dev builder, with cache state recorded in the build record.
 
 ## Open questions for the owner
 
-1. Which disposable GKE project and existing fixtures can support required provider tests before merge?
-2. Which bead-only ignored tests represent current defects, and which represent retired contracts?
-3. Which machine and cache state define the timing baseline?
+All three questions were answered on 2026-10-31.
+
+1. None. There is no second GKE project. Kind is the qualification provider, and GKE-only behavior is proved on wamn-dev under manual approval.
+2. Per bead, read when each test is restored.
+3. The owner's machine and the wamn-dev builder, with cache state recorded in the build record (G3-7).
 
