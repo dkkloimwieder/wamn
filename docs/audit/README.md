@@ -38,7 +38,7 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | D2-1 | [D](deployment.md) | high | M | Clean upgrades | Closed by C3-3. The upgrade path is deleted, so no clean-worktree upgrade test is written. |
 | B2-3 | [B](coupling.md) | high | L | Package execution | Package application calls back into the qualification runner that also calls package application. |
 | B2-2 | [B](coupling.md) | high | L | Grant declarations | Provisioning, comparison, and schema repair independently assemble parts of grant policy. Re-scoped to the role to operation ACL. |
-| B1-1, B3-1 | [B](coupling.md) | high | L | Serving dependencies | Shared package types and release-profile logic pull the compiler into deployed services. |
+| B1-1, B3-1 | [B](coupling.md) | high | L | Serving dependencies | Shared package types and release-profile logic pull the compiler into deployed services. B1-1: move the consumed types down to `catalog/model` and drop the three generator edges. No new crate. |
 | B3-2 | [B](coupling.md) | high | L | Crate map | The proposed consolidation removes manifests while preserving engine, local runtime, and workflow restrictions. |
 | B3-3 | [B](coupling.md) | high | L | Crate migration | Consolidation needs dependency ordering, live graph enforcement, and explicit guest repinning. |
 | A2-1 | [A](code-quality.md) | high | M | Scalar contracts | Numeric and timestamp implementations accept and normalize different spellings. |
@@ -100,11 +100,11 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | G3-6 | [G](tests.md) | medium | L | Test placement | Mixed targets carry cheap assertions into expensive fixtures and repeat business histories at deployment boundaries. |
 | A2-3 | [A](code-quality.md) | medium | M | Host contracts | Seventy-one redundant JSON files contain 3,020 repeated contract lines. |
 | H2-2 | [H](hygiene.md) | medium | M | Active plans | Completed programs remain in the active plan collection. |
-| B1-4, B2-5 | [B](coupling.md) | medium | L | Control coupling | The control compilation unit includes the developer application and unrelated tool orchestration. |
-| B1-2 | [B](coupling.md) | medium | M | Test dependencies | Six development dependency links pull higher-level owners into lower-level test builds. |
-| B1-3 | [B](coupling.md) | medium | L | Artifact ownership | Narrow artifact consumers depend on the runtime hub and its cloud execution dependencies. |
-| B1-5 | [B](coupling.md) | medium | M | Catalog ownership | Catalog combines canonical records with installation SQL and built-in application construction. |
-| B1-6 | [B](coupling.md) | medium | M | WIT ownership | Guest builds read canonical interfaces from native implementation directories. |
+| B1-4, B2-5 | [B](coupling.md) | medium | L | Control coupling | The control compilation unit includes the developer application and unrelated tool orchestration. B1-4 is deferred until Group 1 has deleted about a fifth of control. |
+| B1-2 | [B](coupling.md) | medium | M | Test dependencies | Six development dependency links pull higher-level owners into lower-level test builds. Fix each edge by replacing the import, not by relocating tests. Group 3. |
+| B1-3 | [B](coupling.md) | medium | L | Artifact ownership | Narrow artifact consumers depend on the runtime hub and its cloud execution dependencies. Group 4, after the A5 inversion lands. |
+| B1-5 | [B](coupling.md) | medium | M | Catalog ownership | Catalog combines canonical records with installation SQL and built-in application construction. In passing. |
+| B1-6 | [B](coupling.md) | medium | M | WIT ownership | Guest builds read canonical interfaces from native implementation directories. One canonical WIT directory, versions unchanged, one repin. |
 | B2-8 | [B](coupling.md) | medium | L | Release construction | Publication mixes immutable release assembly with local runtime representation and unused database inputs. |
 | B2-9 | [B](coupling.md) | medium | M | Provisioning results | Internal callers exchange credentials through CLI output paths, temporary files, and sentinels. |
 | B3-4 | [B](coupling.md) | medium | M | Guest packages | Application data crates and single-consumer SQLx and label helpers can become private modules. |
@@ -180,7 +180,7 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | A2-15 | [A](code-quality.md) | low | S | Empty declarations | Four empty attachment documents remain because readers disagree about absence. |
 | A1-13 | [A](code-quality.md) | low | M | Public surface | Router, SQLite, and materializer implementation details remain public without external consumers. |
 | A3-14 | [A](code-quality.md) | low | S | Lint overrides | Handwritten and generated code do not consistently follow the stated `expect` policy. |
-| B1-7 | [B](coupling.md) | low | M | Architecture check | Dependency enforcement omits workspaces, development dependency links, and relevant feature distinctions. |
+| B1-7 | [B](coupling.md) | low | M | Architecture check | Dependency enforcement omits workspaces, development dependency links, and relevant feature distinctions. Rejected as written. One check rule per Group 4 crate move, nothing before. |
 | C2-10 | [C](upgrade.md) | low | M | Schema prerequisites | Several lifecycle phases repeat project migration and platform-extension responsibilities. In passing: move platform-extension installation into substrate setup. |
 | D3-7 | [D](deployment.md) | low | M | Cluster locking | A local installation lock cannot serialize different deployment machines. Re-scoped to a Kubernetes Lease held by the installer. |
 | D1-9 | [D](deployment.md) | low | S | Orphan examples | Unused deployment examples and stale executor prose remain beside an active NATS diagnostic. |
@@ -237,6 +237,10 @@ The owner review of 2026-10-31 rejects the following. The report evidence stays 
 | Question on `apply-package` as an internal phase (C2-2) | Answered: yes, internal phase of `env apply`, no public command. |
 | Question on contract version minimums (C2-8) | Answered: unsupported. The contract-phase code is deleted. |
 | Question on maintenance windows (C3-5) | Answered: no. Old and new images serve concurrently. |
+| B1-7: The graph check does not enforce the complete architecture | Rejected as written. No extension to three workspaces, dependency kinds and feature selections, no deliberate-violation fixtures. `tools/repo-lint-dependencies` gains one rule per crate move that lands in Group 4, nothing before. |
+| B1-4: The control hub combines independent tools in one compilation unit | Deferred. Group 1 deletes about a fifth of control (`upgrade_environment.rs`, `package_upgrade`, `qualify_upgrade`, the platform build stages). Re-read the crate after that. The split may not be needed. |
+| Question on timings for the six development edges (B1-2) | Answered: none are supplied. The next test build is the measurement. |
+| Question on a shared contract layer below generation, provisioning and execution-host (B1-1) | Answered: yes, and it is `crates/catalog/model` today. |
 | C1-2's pending-work record and C1-3's schema advancement before analysis | Rejected. One baseline, so nothing advances. Apply compares the installed baseline hash with the candidate's and refuses with "schema changed, reset the environment database" on a mismatch. C1-3 closes into C1-2 with its Deletes widened to every project migration call. |
 
 ### Plans in flight
@@ -260,6 +264,7 @@ Two plans change the platform the audit describes: [alignment](../plan/alignment
 | A3-11 and any row naming `connection_instances`, `connection_bindings`, `org_connections`, `integration_allow` or `wamn:connector` | integration-schema, Dropped or merged from main | Rename per that table before filing. |
 | Question on certificate renewal and the 365-day CA (E2-3, E2-4) | alignment R3 | Answered: cert-manager owns the CA and renews it. |
 | Question on org isolation under host compromise (E1-2) | alignment R5 | Answered: per-environment certificates, refused across environments. |
+| B1-3 and every crate move inside runtime or execution-host | [perf-arch](../plan/perf-arch.md) A5 | The application as the HTTP workload is the ruled direction and lands before any re-measurement. Moves inside runtime and execution-host before A5 are churn and wait. |
 
 ## The six largest areas for improvement
 
@@ -471,7 +476,7 @@ Do (10 findings). The rows the review named, then every row that deletes a build
 | Finding | Title | Severity | Deletes |
 | --- | --- | --- | --- |
 | D2-2 | The older image pipeline builds artifacts that deployment does not select | high | `tools/journey-image-cache`, the upgrade image and guest stages, their leases, relabeling, and duplicate registry authentication. Listed in Group 1 for the deletion and in Group 2 for the cache identity. |
-| B1-1 | Shared contracts pull the schema generator into serving code | high | The generator dependencies from provisioning, schema control, and execution host. Remove generator-specific error sources from provisioning errors. |
+| B1-1 | Shared contracts pull the schema generator into serving code | high | The generator dependencies from provisioning, schema control, and execution host, after the consumed manifest and operation types move down to `catalog/model`. No new crate. Remove generator-specific error sources from provisioning errors. |
 | D2-8 | The merge queue cannot establish release build cost or commit-to-running time | medium | Success-path evidence deletion and duplicate textual timing summaries. Keep successful logs and one build record with stage durations and artifact digests. No budgets yet. D3-3 closes into this row. |
 | G3-7 | Tier durations lack a retained baseline | low | Successful-result deletion as the only retention policy. Replace scattered timing expectations with the selection file’s budgets. |
 | F2-1 | Saved edits fail the freshness rule before the loop can rebuild | high | Remove the receipt freshness prerequisite from development source resolution and its call to `write_compiled_manifest`. |
@@ -485,10 +490,11 @@ Do (10 findings). The rows the review named, then every row that deletes a build
 
 Target: one tier per target and one selection owner, mixed targets deleted (G3-1, G3-2, G3-6). Every ignore is fixed or deleted, and no ignore stays without a stated missing prerequisite (G2-8, G3-4). The security highs land here with no dependency on any crate move: E2-2 (an org control credential reaches its own org only), E1-2 (per-environment broker identity, grant answers local), E1-3, E1-4, A3-1, A3-2, A2-1, B2-6 and F3-5. Plaintext in-cluster transport (E1-5, E2-3, E2-4) is medium until a non-dev cluster exists.
 
-Do (26 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high.
+Do (27 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high.
 
 | Finding | Title | Severity | Deletes |
 | --- | --- | --- | --- |
+| B1-2 | Six development back-links enlarge lower-layer test builds | medium | The six development dependencies, each fixed by replacing the import with a narrower one. Move a test only when no narrower import exists. |
 | G3-1 | Default and ignored tests do not define useful execution tiers | high | The default-versus-ignored tier model and the `--cluster` alias for every ignored test. |
 | G3-2 | Selection policy is scattered across the runner | high | The old JSON file and suite-specific shell branches. Retain existing build commands and fixture owners, but remove their duplicated selection conditions. |
 | G3-6 | Tests need target moves and narrower deployment assertions | medium | Mixed render-and-cluster compilation targets, duplicate delivery setup, and repeated business assertions that prove no additional deployed boundary. Measurements.md section 7 reports 201 duplicated lines between Receiving and WMS tests, which supports inspecting this merge. |
@@ -541,17 +547,14 @@ In passing (16 findings). Helper dedup, naming, count pins and doc links. Closed
 
 Target: dormant surfaces and unused dependencies first (A1-x, A1-6, A1-10), then the contract JSON (A2-3), then the crate map. Crate consolidation is last because it forces full rebuilds and guest repins and must not precede the build and deploy fixes. Helper and fixture dedup (G1-x, A2-x) lands only when the file is already being changed, never as its own issue. Authoring rows F1-x and F3-x stay here.
 
-Do (37 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high.
+Do (34 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high.
 
 | Finding | Title | Severity | Deletes |
 | --- | --- | --- | --- |
 | A1-6 | Forty-eight native dependency declarations are unused | medium | 48 dependency lines, plus stale comments. Lockfile reductions require a new resolution and are not counted. |
 | A1-10 | Nine guest dependency declarations are unused | low | Nine dependency lines, plus obsolete comments. |
 | A2-3 | Host contracts repeat thousands of authored JSON lines | medium | Measured gross deletion of 71 files and 3,020 repeated lines. Estimated net saving: approximately 2,800 lines after shape assignments. |
-| B1-2 | Six development back-links enlarge lower-layer test builds | medium | The six development dependencies after their cross-owner tests move. Remove redundant support imports without adding another support crate. |
-| B1-4 | The control hub combines independent tools in one compilation unit | medium | Control’s development-session and tool-orchestration modules after relocation. Remove dependencies used only by those modules instead of replacing them with facade crates. |
-| B1-5 | Catalog is a shared model hub with installation and product behavior | medium | Catalog’s schema bootstrap constant and embedded installation SQL references. Remove built-in application construction from the foundational model package after relocation. |
-| B1-6 | Guest interfaces depend on native implementation directories | medium | Guest paths into native runtime and router directories, followed by obsolete interface copies after canonicalization. |
+| B1-6 | Guest interfaces depend on native implementation directories | medium | Guest paths into native runtime and router directories, replaced by one canonical WIT directory read by path. WIT package versions stay. Guest digests change once, repin once. |
 | B3-1 | Shared manifest contracts pull the compiler into deployed services | high | Generator dependencies from provisioning and schema control. Remove the execution-host normal generator dependency after moving its test uses. Delete duplicate public re-exports after callers move to their owning modules. |
 | B3-2 | Forty-four packages can retain the enforced execution boundaries | high | Net 44 package manifests, their redundant dependency declarations, and obsolete compatibility re-exports. Retain domain modules, deployment binaries, component declarations, and wire contracts. |
 | B3-3 | Migration must follow dependency order and distinguish artifact changes | high | Obsolete package-name assertions, retired dependency links, and duplicated runner selections. Do not retain empty compatibility packages. |
@@ -622,8 +625,8 @@ In passing (75 findings). Helper dedup, naming, count pins and doc links. Closed
 | A3-12 | Generator files need semantic splits, not blanket panic removal | medium | Generation-order JSON lookups, repeated codec fragments, and the large parent implementations. Keep justified formatting assertions. |
 | A3-13 | Routing and serving manifests combine policy, representation, and mechanics | medium | Large root bodies and repeated projection or validation code exposed by the split. |
 | A3-14 | The expect-over-allow policy does not hold across source and generated output | low | Unnecessary suppressions and blanket module exemptions. |
-| B1-3 | The runtime hub makes artifact consumers depend on cloud execution | medium | Runtime-owned artifact transport implementations after consolidation, duplicate transport helpers, and control’s runtime dependency once its remaining imports move. |
-| B1-7 | The graph check does not enforce the complete architecture | low | Duplicated boundary descriptions and incomplete graph reductions once one generated view replaces them. |
+| B1-3 | The runtime hub makes artifact consumers depend on cloud execution | medium | Runtime-owned artifact transport implementations after consolidation, duplicate transport helpers, and control’s runtime dependency once its remaining imports move. After A5. |
+| B1-5 | Catalog is a shared model hub with installation and product behavior | medium | The installation SQL constant and the built-in control-route construction, moved when catalog is next changed. |
 | F1-2 | Custom handlers repeat manifest request, result, and error definitions | medium | Duplicate command/result structures, literal switches, and field-copy adapters. Keep parsed business state, database sequencing, and business refusals. |
 | F1-4 | Acme reauthors the contract of its pinned base operation | medium | The copied contract portions, the handwritten base WIT import, `base_request`, and matching branches of `base_error`. |
 | F1-6 | Applications maintain scalar and cursor machinery that a shared crate already owns | medium | Receiving’s cursor implementation after compatibility proof, plus duplicate generic parsing functions. Preserve business predicates and their tests. |
@@ -665,13 +668,13 @@ In passing (75 findings). Helper dedup, naming, count pins and doc links. Closed
 
 ## Open questions for the owner
 
-1. Can shared contracts sit below generation, provisioning, and serving, including a shared scalar dependency for record-history? This unblocks Groups 2, 3 and 4 (B1-1, B3-1, A2-1).
+1. Can record-history take a shared scalar dependency? This unblocks Group 4 (A2-1). The shared contract layer itself is answered: `catalog/model`.
 2. Which external consumers require current Rust APIs or Cargo package names, including the control, test support, and fixture packages? This unblocks Groups 1 and 4 (B3-2, B2-5, G1-1, A1-7 through A1-9).
 3. Can root supply retained feature results and generated packages before dependency removal? This unblocks Group 4 (A1-6, A1-10).
 4. Must wiring caching remain a supported requirement despite its absent production caller? This unblocks Group 4 (A1-2).
 5. Can grouped host and scenario binaries share broader Cargo feature selection while retaining separate processes and credentials? This unblocks Group 4 (B3-2).
 6. Can guest moves, component repinning, and resulting qualification occur in one release cycle? This unblocks Group 4 (B3-3 through B3-5).
-7. Which machine and cache states define timing comparisons, and can the build owner supply isolated cold and incremental results for the six development back-links? This unblocks timing acceptance for Groups 2 and 4 (B1-2, G3-7).
+7. Which machine and cache states define timing comparisons for retained results? This unblocks timing acceptance for Group 2 (G3-7).
 8. Must authored SQL remain directly executable, or can composed installation recipes produce standalone SQL as build output? This unblocks Group 4 (A2-5, C3-2).
 9. Can `environment.k` own local and deployed coordinates, with the default developer command generating its private local document? This unblocks Groups 1 and 2 (D3-4, F2-4, F3-2).
 10. Which local/deployed host behaviors must match, and must WMS retain its distinct concurrency limit? This unblocks Groups 1 and 3 (D1-5, G2-4).

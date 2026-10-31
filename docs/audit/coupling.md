@@ -34,6 +34,8 @@ The manifests declare 45 native members, 34 application members, and five `no_st
 
 No files changed, and no builds or tests ran. Full Cargo metadata failed with `protecting target directories while Cargo runs: Read-only file system (os error 30)`. The findings use source inspection, manifest parsing, and measurements.md section 10.
 
+Standing constraint (owner review 2026-10-31): the A5 guest/host inversion of [perf-arch](../plan/perf-arch.md) (the application as the HTTP workload) is the ruled direction and lands before any re-measurement. Crate moves inside runtime and execution-host before A5 are churn. They wait.
+
 ## Finding B1-1: Shared contracts pull the schema generator into serving code
 
 Severity: high  
@@ -43,7 +45,7 @@ Evidence: `crates/control/provision/Cargo.toml:43`, `crates/control/provision/sr
 
 Problem: Provisioning consumes generator-owned manifest types and operation rules. The execution host consumes its release-profile implementation during requests, and schema control also depends on the generator. These three edges point from shared platform behavior toward build tooling, although the overview does not explicitly rank those owners. Through provisioning, the runtime inherits SQLx macros, PostgreSQL introspection, SQL parsing, and generation dependencies.
 
-Proposal: Keep package declarations and their semantic rules below both generation and provisioning. Place declaration ownership in the existing catalog package model, and keep release-profile derivation beside admitted component facts. The generator must consume those contracts and own only compilation, emission, and build orchestration. Broker builders must accept package/entity pairs rather than the complete generator manifest.
+Proposal (owner review 2026-10-31, Group 2 Do): `services/host` links `wamn-control-provision` directly and through runtime, so a generator edit rebuilds the host image. Smallest cut: move the manifest and operation types that `operation_grants.rs`, `events.rs` and `control_route.rs:1126` consume down to the existing lowest owner, `crates/catalog/model`, then drop the three generator edges. No new contract crate for this. The `wamn-contract` crate of the README map is Group 4 work.
 
 Deletes: The generator dependencies from provisioning, schema control, and execution host. Remove generator-specific error sources from provisioning errors.
 
@@ -71,7 +73,7 @@ The following counts describe additional non-optional local packages reachable f
 
 The runtime dependency in project-state tests serves timestamp comparisons at `crates/identity/project-state/tests/schema.rs:902`. The identity infrastructure dependency supplies a stamp assertion at `crates/identity/platform/tests/session_keys_live.rs:37`. These are concrete examples of small test needs selecting large libraries.
 
-Proposal: Move cross-owner database and deployment tests into the existing integration suite. Keep pure tests with their implementation owners. Put timestamp equivalence tests beside the runtime formatter and its SQL counterpart. Keep small assertions local when sharing them requires the entire infrastructure library.
+Proposal (owner review 2026-10-31, small, Group 3 Do, because it is per-issue test build time): fix each edge by replacing the import, not by relocating tests. The project-state to runtime edge exists for one timestamp comparison, and the identity to test-infrastructure edge for one stamp assertion. Move a test only when no narrower import exists. No timings are supplied. The next test build is the measurement.
 
 Deletes: The six development dependencies after their cross-owner tests move. Remove redundant support imports without adding another support crate.
 
@@ -94,6 +96,8 @@ Deletes: Runtime-owned artifact transport implementations after consolidation, d
 
 Risk: Registry trust, digest refusal, and local-target authority can change. Preserve `release_manifest_source`, component admission, and local-target tests, together with the engine dependency boundary gate.
 
+Owner review 2026-10-31: Group 4, after A5. Runtime's shape changes under A5. Do not consolidate transport before that.
+
 ## Finding B1-4: The control hub combines independent tools in one compilation unit
 
 Severity: medium  
@@ -108,6 +112,8 @@ Proposal: Move executable orchestration for development sessions, platform build
 Deletes: Control’s development-session and tool-orchestration modules after relocation. Remove dependencies used only by those modules instead of replacing them with facade crates.
 
 Risk: Command behavior, stage order, and shutdown can change. Preserve the development stage-order tests, deployment cases, and `tests/conformance/tests/delivery_native_build.rs:9`.
+
+Owner review 2026-10-31: deferred. Group 1 deletes `upgrade_environment.rs`, `package_upgrade`, `qualify_upgrade` and the platform build stages from control, roughly a fifth of its 80k lines. Re-read the crate after that. The split may not be needed. Question 3 goes to the owner unchanged.
 
 ## Finding B1-5: Catalog is a shared model hub with installation and product behavior
 
@@ -124,6 +130,8 @@ Deletes: Catalog’s schema bootstrap constant and embedded installation SQL ref
 
 Risk: Release bytes, route identities, and admission decisions must remain stable. Preserve catalog identity and serving-manifest digest vectors, plus workflow admission tests.
 
+Owner review 2026-10-31: In passing. Move the installation SQL constant and the built-in control-route construction when catalog is next changed.
+
 ## Finding B1-6: Guest interfaces depend on native implementation directories
 
 Severity: medium  
@@ -133,7 +141,7 @@ Evidence: `apps/platform/no-std/http-page/src/lib.rs:29`, `apps/platform/no-std/
 
 Problem: Both HTTP guests read connection interfaces from the native runtime directory. All four component guests read node interfaces from the workflow router directory. These source dependencies cross upward into implementation owners without appearing as Cargo edges. Test selection already compensates by selecting all three workspaces for canonical WIT changes.
 
-Proposal: Put canonical WIT, the component interface definitions, under a shared contract owner independent of native implementations. Hosts and guests must consume that same source. Preserve the separate `no_std` workspace and its allocation/panic implementation.
+Proposal (owner review 2026-10-31, small, Group 4 Do): one canonical WIT directory. Guests and hosts read it by path. WIT package versions stay as they are (WASI alignment ruling). Guest digests change once, so repin once. Preserve the separate `no_std` workspace and its allocation/panic implementation.
 
 Deletes: Guest paths into native runtime and router directories, followed by obsolete interface copies after canonicalization.
 
@@ -148,21 +156,17 @@ Evidence: `tools/repo-lint-dependencies:87`, `tools/repo-lint-dependencies:110`,
 
 Problem: The existing gate enforces selected edge, engine, and workflow boundaries through normal dependency trees. It does not encode the complete control/build separation or the six development back-edges. Measurements.md section 10 omits dependencies outside native workspace membership and includes optional declarations, so its rows cannot establish production reachability. For example, project-state’s catalog dependency belongs to `test-util`, while native dependencies on application-owned contract libraries disappear from the reduced graph.
 
-Proposal: Extend the existing gate to describe all three workspaces, dependency kinds, and relevant feature selections. Document the permitted graph through the architecture index. Test forbidden edges by adding deliberate violations to gate fixtures.
-
-Deletes: Duplicated boundary descriptions and incomplete graph reductions once one generated view replaces them.
-
-Risk: An overly broad rule can reject valid test features or guest sharing. Preserve the existing boundary cases and add cases for optional dependencies, self-development dependencies, and shared application libraries.
+Rejected as written (owner review 2026-10-31): no extension of the check to three workspaces, dependency kinds and feature selections, and no deliberate-violation fixtures. `tools/repo-lint-dependencies` gains one rule per crate move that lands in Group 4, nothing before.
 
 The small crates do not justify deletion by size alone. `wamn-pg-core` explicitly began as a cycle-free home for `Sql`, but now also owns identifier and qualified-name contracts. Evidence: `crates/platform/pg-core/src/lib.rs:17`, `crates/platform/pg-core/src/lib.rs:59`, `crates/platform/pg-core/src/lib.rs:171`, `crates/platform/pg-core/src/lib.rs:226`.
 
-`label-template` exists to test rendering without the guest panic handler. The virtualizer is a separate executable invoked by the generator. Neither is merely a one-type holder. Evidence: `apps/platform/no-std/label-template/src/lib.rs:4`, `crates/platform/component-virtualizer/src/main.rs:29`, `crates/schema/generator/src/components.rs:47`. Retain these boundaries unless a replacement preserves their concrete purpose.
+The virtualizer is a separate executable invoked by the generator, not a one-type holder. Keep `pg-core` and the virtualizer. `label-template` folds into `label-render` per B3-4 and the README (owner review 2026-10-31). Evidence: `crates/platform/component-virtualizer/src/main.rs:29`, `crates/schema/generator/src/components.rs:47`.
 
 ## Open questions for the owner
 
-1. Can the build owner supply isolated cold and incremental timings for the six development edges? The supplied measurements cannot support costs in seconds.
-2. Does the owner accept a shared contract layer below generation, provisioning, and execution-host? The numbered runtime architecture leaves these relationships unspecified.
-3. Must control remain a reusable development-session host outside the CLI? That requirement determines how much orchestration can move into `services/ctl`.
+1. Must control remain a reusable development-session host outside the CLI? That requirement determines how much orchestration can move into `services/ctl`.
+
+Answered 2026-10-31: no timings are supplied for the six development edges, and the next test build is the measurement. A shared layer below generation, provisioning and execution-host is accepted, and it is `crates/catalog/model` today.
 
 <!-- lane B2, bead wamn-m0c2w.2 -->
 
