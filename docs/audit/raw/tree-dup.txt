@@ -1,0 +1,2827 @@
+base64 v0.22.1
+├── sqlx-core v0.9.0
+│   ├── sqlx-macros v0.9.0 (proc-macro)
+│   │   └── sqlx v0.9.0
+│   │       └── wamn-schema-generator v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/generator)
+│   │           ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib)
+│   │           │   ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+│   │           │   ├── wamn-gate-harness v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/harness)
+│   │           │   │   ├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance)
+│   │           │   │   │   └── wamn-gates v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/orchestrator)
+│   │           │   │   └── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration)
+│   │           │   │       └── wamn-gates v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/orchestrator)
+│   │           │   │       [dev-dependencies]
+│   │           │   │       ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   │           │   │       └── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+│   │           │   │   [dev-dependencies]
+│   │           │   │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │           │   │   ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   │           │   │   └── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+│   │           │   └── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   │           │   [dev-dependencies]
+│   │           │   ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+│   │           │   ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+│   │           │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host)
+│   │           │   │   ├── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+│   │           │   │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   │           │   │   └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow)
+│   │           │   │       ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+│   │           │   │       ├── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+│   │           │   │       └── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   │           │   │       [dev-dependencies]
+│   │           │   │       ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │           │   │       └── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   │           │   │   [dev-dependencies]
+│   │           │   │   ├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+│   │           │   │   └── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │           │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   │           │   ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   │           │   ├── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+│   │           │   ├── wamn-test-infrastructure v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/infrastructure)
+│   │           │   │   ├── wamn-gate-harness v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/harness) (*)
+│   │           │   │   └── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   │           │   │   [dev-dependencies]
+│   │           │   │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │           │   │   ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+│   │           │   │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   │           │   │   ├── wamn-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/identity)
+│   │           │   │   ├── wamn-platform-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/platform)
+│   │           │   │   │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │           │   │   │   ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+│   │           │   │   │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   │           │   │   │   ├── wamn-gate-harness v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/harness) (*)
+│   │           │   │   │   ├── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+│   │           │   │   │   ├── wamn-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/identity)
+│   │           │   │   │   ├── wamn-identity-client v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/client)
+│   │           │   │   │   │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │           │   │   │   │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   │           │   │   │   │   └── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+│   │           │   │   │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   │           │   │   │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime)
+│   │           │   │   │   │   ├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+│   │           │   │   │   │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │           │   │   │   │   ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+│   │           │   │   │   │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   │           │   │   │   │   ├── wamn-gates v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/orchestrator)
+│   │           │   │   │   │   ├── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+│   │           │   │   │   │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   │           │   │   │   │   ├── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+│   │           │   │   │   │   ├── wamn-system-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/system)
+│   │           │   │   │   │   │   └── wamn-gates v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/orchestrator)
+│   │           │   │   │   │   └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+│   │           │   │   │   │   [dev-dependencies]
+│   │           │   │   │   │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │           │   │   │   │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   │           │   │   │   │   ├── wamn-project-state v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/project-state)
+│   │           │   │   │   │   │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │           │   │   │   │   │   ├── wamn-control-provision v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/provision)
+│   │           │   │   │   │   │   │   ├── wamn-cdc-reader v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/cdc-reader)
+│   │           │   │   │   │   │   │   │   [dev-dependencies]
+│   │           │   │   │   │   │   │   │   ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   │           │   │   │   │   │   │   │   └── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+│   │           │   │   │   │   │   │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │           │   │   │   │   │   │   ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+│   │           │   │   │   │   │   │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   │           │   │   │   │   │   │   ├── wamn-gate-harness v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/harness) (*)
+│   │           │   │   │   │   │   │   ├── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+│   │           │   │   │   │   │   │   ├── wamn-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/identity)
+│   │           │   │   │   │   │   │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   │           │   │   │   │   │   │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │           │   │   │   │   │   │   ├── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+│   │           │   │   │   │   │   │   └── wamn-test-infrastructure v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/infrastructure) (*)
+│   │           │   │   │   │   │   │   [dev-dependencies]
+│   │           │   │   │   │   │   │   ├── wamn-catalog v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/catalog/model)
+│   │           │   │   │   │   │   │   │   ├── wamn-authoring-model v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/authoring/model)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+│   │           │   │   │   │   │   │   │   │   └── wamn-test-infrastructure v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/infrastructure) (*)
+│   │           │   │   │   │   │   │   │   │   [dev-dependencies]
+│   │           │   │   │   │   │   │   │   │   ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   │           │   │   │   │   │   │   │   │   └── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+│   │           │   │   │   │   │   │   │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │           │   │   │   │   │   │   │   ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+│   │           │   │   │   │   │   │   │   ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+│   │           │   │   │   │   │   │   │   ├── wamn-engine v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/engine)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-gate-harness v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/harness) (*)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │           │   │   │   │   │   │   │   │   └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+│   │           │   │   │   │   │   │   │   │   [dev-dependencies]
+│   │           │   │   │   │   │   │   │   │   ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   │           │   │   │   │   │   │   │   │   └── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │           │   │   │   │   │   │   │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   │           │   │   │   │   │   │   │   ├── wamn-gate-harness v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/harness) (*)
+│   │           │   │   │   │   │   │   │   ├── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+│   │           │   │   │   │   │   │   │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   │           │   │   │   │   │   │   │   ├── wamn-package-artifact v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/catalog/package-artifact)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-gate-harness v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/harness) (*)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │           │   │   │   │   │   │   │   │   └── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+│   │           │   │   │   │   │   │   │   │   [dev-dependencies]
+│   │           │   │   │   │   │   │   │   │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │           │   │   │   │   │   │   │   │   └── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │           │   │   │   │   │   │   │   ├── wamn-platform-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/platform) (*)
+│   │           │   │   │   │   │   │   │   ├── wamn-project-state v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/project-state) (*)
+│   │           │   │   │   │   │   │   │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │           │   │   │   │   │   │   │   ├── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+│   │           │   │   │   │   │   │   │   ├── wamn-schema-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/control)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   │           │   │   │   │   │   │   │   │   └── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+│   │           │   │   │   │   │   │   │   │   [dev-dependencies]
+│   │           │   │   │   │   │   │   │   │   ├── wamn-control-provision v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/provision) (*)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-gate-harness v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/harness) (*)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │           │   │   │   │   │   │   │   │   └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+│   │           │   │   │   │   │   │   │   ├── wamn-schema-generator v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/generator) (*)
+│   │           │   │   │   │   │   │   │   ├── wamn-test-infrastructure v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/infrastructure) (*)
+│   │           │   │   │   │   │   │   │   └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+│   │           │   │   │   │   │   │   │   [dev-dependencies]
+│   │           │   │   │   │   │   │   │   ├── wamn-catalog v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/catalog/model) (*)
+│   │           │   │   │   │   │   │   │   ├── wamn-cdc-reader v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/cdc-reader) (*)
+│   │           │   │   │   │   │   │   │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │           │   │   │   │   │   │   │   ├── wamn-control-provision v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/provision) (*)
+│   │           │   │   │   │   │   │   │   ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+│   │           │   │   │   │   │   │   │   ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+│   │           │   │   │   │   │   │   │   ├── wamn-engine v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/engine) (*)
+│   │           │   │   │   │   │   │   │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   │           │   │   │   │   │   │   │   ├── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+│   │           │   │   │   │   │   │   │   ├── wamn-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/identity)
+│   │           │   │   │   │   │   │   │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   │           │   │   │   │   │   │   │   ├── wamn-project-state v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/project-state) (*)
+│   │           │   │   │   │   │   │   │   ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   │           │   │   │   │   │   │   │   ├── wamn-run-state v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/run-state)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-control-provision v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/provision) (*)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-engine v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/engine) (*)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-run-state-sqlite v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/run-state-sqlite)
+│   │           │   │   │   │   │   │   │   │   │   └── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-system-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/system) (*)
+│   │           │   │   │   │   │   │   │   │   └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+│   │           │   │   │   │   │   │   │   │   [dev-dependencies]
+│   │           │   │   │   │   │   │   │   │   ├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-run-state-sqlite v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/run-state-sqlite) (*)
+│   │           │   │   │   │   │   │   │   │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │           │   │   │   │   │   │   │   │   └── wamn-system-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/system) (*)
+│   │           │   │   │   │   │   │   │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │           │   │   │   │   │   │   │   ├── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+│   │           │   │   │   │   │   │   │   ├── wamn-schema-generator v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/generator) (*)
+│   │           │   │   │   │   │   │   │   ├── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+│   │           │   │   │   │   │   │   │   └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+│   │           │   │   │   │   │   │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │           │   │   │   │   │   │   ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+│   │           │   │   │   │   │   │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   │           │   │   │   │   │   │   ├── wamn-platform-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/platform) (*)
+│   │           │   │   │   │   │   │   ├── wamn-project-state v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/project-state) (*)
+│   │           │   │   │   │   │   │   ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   │           │   │   │   │   │   │   ├── wamn-run-state v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/run-state) (*)
+│   │           │   │   │   │   │   │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │           │   │   │   │   │   │   ├── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+│   │           │   │   │   │   │   │   ├── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+│   │           │   │   │   │   │   │   └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+│   │           │   │   │   │   │   ├── wamn-engine v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/engine) (*)
+│   │           │   │   │   │   │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   │           │   │   │   │   │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   │           │   │   │   │   │   ├── wamn-platform-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/platform) (*)
+│   │           │   │   │   │   │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │           │   │   │   │   │   └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+│   │           │   │   │   │   │   [dev-dependencies]
+│   │           │   │   │   │   │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │           │   │   │   │   │   ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+│   │           │   │   │   │   │   ├── wamn-platform-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/platform) (*)
+│   │           │   │   │   │   │   ├── wamn-project-state v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/project-state) (*)
+│   │           │   │   │   │   │   ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   │           │   │   │   │   │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │           │   │   │   │   │   └── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+│   │           │   │   │   │   ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   │           │   │   │   │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │           │   │   │   │   ├── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+│   │           │   │   │   │   └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+│   │           │   │   │   ├── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+│   │           │   │   │   └── wamn-test-infrastructure v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/infrastructure) (*)
+│   │           │   │   │   [dev-dependencies]
+│   │           │   │   │   ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   │           │   │   │   ├── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+│   │           │   │   │   └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+│   │           │   │   ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   │           │   │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │           │   │   ├── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+│   │           │   │   ├── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+│   │           │   │   └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+│   │           │   ├── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+│   │           │   └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+│   │           ├── wamn-control-provision v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/provision) (*)
+│   │           ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+│   │           ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   │           ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   │           ├── wamn-schema-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/control) (*)
+│   │           └── wamn-test-infrastructure v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/infrastructure) (*)
+│   │           [dev-dependencies]
+│   │           ├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+│   │           ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+│   │           ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   │           ├── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+│   │           └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+│   │       [dev-dependencies]
+│   │       └── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+│   ├── sqlx-macros-core v0.9.0
+│   │   └── sqlx-macros v0.9.0 (proc-macro) (*)
+│   └── sqlx-postgres v0.9.0
+│       └── sqlx-macros-core v0.9.0 (*)
+└── sqlx-postgres v0.9.0 (*)
+
+base64 v0.22.1
+├── async-nats v0.49.1
+│   ├── wamn-cdc-reader v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/cdc-reader) (*)
+│   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   ├── wamn-control-provision v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/provision) (*)
+│   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   ├── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+│   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   ├── wamn-platform-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/platform) (*)
+│   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   ├── wamn-test-infrastructure v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/infrastructure) (*)
+│   └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8)
+│       ├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+│       ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│       ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+│       ├── wamn-engine v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/engine) (*)
+│       ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│       ├── wamn-gates v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/orchestrator)
+│       ├── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+│       ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│       ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│       ├── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+│       ├── wamn-system-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/system) (*)
+│       └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+│       [dev-dependencies]
+│       └── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   [dev-dependencies]
+│   ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+│   ├── wamn-gate-harness v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/harness) (*)
+│   ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   └── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+├── boon v0.6.1
+│   ├── wamn-catalog v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/catalog/model) (*)
+│   ├── wamn-client v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/client/core)
+│   │   [dev-dependencies]
+│   │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   │   └── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   ├── wamn-engine v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/engine) (*)
+│   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+├── docker_credential v1.4.0
+│   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   [dev-dependencies]
+│   └── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+├── jsonwebtoken v10.4.0
+│   └── oci-client v0.17.0
+│       ├── oci-wasm v0.6.0
+│       │   └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│       ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│       ├── wamn-gate-harness v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/harness) (*)
+│       ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│       ├── wamn-package-artifact v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/catalog/package-artifact) (*)
+│       ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│       └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+├── pbjson v0.8.0
+│   ├── pbjson-types v0.8.0
+│   │   └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+├── postgres-protocol v0.6.12
+│   ├── pg_walstream v0.9.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/vendor/pg-walstream)
+│   │   └── wamn-cdc-reader v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/cdc-reader) (*)
+│   │   [dev-dependencies]
+│   │   ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   │   └── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+│   ├── postgres-types v0.2.14
+│   │   └── tokio-postgres v0.7.18
+│   │       ├── deadpool-postgres v0.14.2
+│   │       │   └── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │       ├── wamn-bench v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tools/bench)
+│   │       ├── wamn-cdc-reader v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/cdc-reader) (*)
+│   │       ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │       ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+│   │       ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   │       ├── wamn-fixture-package v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/fixture-package)
+│   │       │   [dev-dependencies]
+│   │       │   ├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+│   │       │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │       │   ├── wamn-control-provision v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/provision) (*)
+│   │       │   ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+│   │       │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   │       │   ├── wamn-schema-generator v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/generator) (*)
+│   │       │   └── wamn-schema-introspection v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/introspection)
+│   │       │       ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │       │       └── wamn-schema-generator v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/generator) (*)
+│   │       │       [dev-dependencies]
+│   │       │       ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   │       │       └── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   │       ├── wamn-gate-harness v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/harness) (*)
+│   │       ├── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+│   │       ├── wamn-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/identity)
+│   │       ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   │       ├── wamn-platform-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/platform) (*)
+│   │       ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │       ├── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+│   │       ├── wamn-schema-generator v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/generator) (*)
+│   │       ├── wamn-schema-introspection v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/introspection) (*)
+│   │       ├── wamn-test-infrastructure v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/infrastructure) (*)
+│   │       └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+│   │       [dev-dependencies]
+│   │       ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │       ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+│   │       ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   │       └── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+│   └── tokio-postgres v0.7.18 (*)
+├── sqlx-core v0.9.0
+│   ├── sqlx v0.9.0 (*)
+│   └── sqlx-postgres v0.9.0
+│       └── sqlx v0.9.0 (*)
+├── sqlx-postgres v0.9.0 (*)
+├── tonic v0.14.6
+│   ├── opentelemetry-otlp v0.31.1
+│   │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │   └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   ├── opentelemetry-proto v0.31.0
+│   │   └── opentelemetry-otlp v0.31.1 (*)
+│   ├── tonic-prost v0.14.6
+│   │   ├── opentelemetry-proto v0.31.0 (*)
+│   │   └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+├── wamn-credential-store v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/credential-store)
+│   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   ├── wamn-gate-harness v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/harness) (*)
+│   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   ├── wamn-platform-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/platform) (*)
+│   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   └── wamn-test-infrastructure v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/infrastructure) (*)
+│   [dev-dependencies]
+│   └── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+├── wamn-platform-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/platform) (*)
+├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+├── wamn-schema-generator v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/generator) (*)
+├── wamn-session v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/session)
+│   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+│   ├── wamn-engine v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/engine) (*)
+│   ├── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+│   ├── wamn-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/identity)
+│   ├── wamn-identity-client v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/client) (*)
+│   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   ├── wamn-platform-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/platform) (*)
+│   └── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   [dev-dependencies]
+│   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   └── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+├── wamn-test-infrastructure v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/infrastructure) (*)
+└── wasmtime-internal-cache v48.0.7
+    └── wasmtime v48.0.7
+        ├── wamn-engine v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/engine) (*)
+        ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+        ├── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+        ├── wasmtime-wasi v48.0.7
+        │   ├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+        │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+        │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+        │   ├── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+        │   └── wasmtime-wasi-http v48.0.7
+        │       ├── wamn-engine v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/engine) (*)
+        │       ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+        │       ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+        │       └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+        │   [dev-dependencies]
+        │   └── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+        ├── wasmtime-wasi-http v48.0.7 (*)
+        ├── wasmtime-wasi-io v48.0.7
+        │   ├── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+        │   ├── wasmtime-wasi v48.0.7 (*)
+        │   └── wasmtime-wasi-http v48.0.7 (*)
+        └── wiggle v48.0.7
+            └── wasmtime-wasi v48.0.7 (*)
+[dev-dependencies]
+├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+└── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+
+base64 v0.23.1
+├── hyper-util v0.1.21
+│   ├── hyper-rustls v0.27.10
+│   │   ├── reqwest v0.13.5
+│   │   │   ├── object_store v0.14.2
+│   │   │   │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │   │   │   └── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │   │   │   [dev-dependencies]
+│   │   │   │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   │   │   │   └── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+│   │   │   ├── oci-client v0.17.0 (*)
+│   │   │   ├── wamn-bench v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tools/bench)
+│   │   │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │   │   ├── wamn-credential-store v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/credential-store) (*)
+│   │   │   ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+│   │   │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   │   │   ├── wamn-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/identity)
+│   │   │   ├── wamn-identity-client v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/client) (*)
+│   │   │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   │   │   ├── wamn-package-artifact v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/catalog/package-artifact) (*)
+│   │   │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │   │   ├── wamn-system-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/system) (*)
+│   │   │   └── wamn-test-infrastructure v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/infrastructure) (*)
+│   │   │   [dev-dependencies]
+│   │   │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   │   │   ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   │   │   ├── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+│   │   │   └── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+│   │   ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+│   │   └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   ├── hyper-timeout v0.5.2
+│   │   └── tonic v0.14.6 (*)
+│   ├── reqwest v0.13.5 (*)
+│   ├── tonic v0.14.6 (*)
+│   ├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+│   ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+│   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   ├── wamn-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/identity)
+│   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   ├── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+│   └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+├── object_store v0.14.2 (*)
+├── pem v4.0.0
+│   └── rcgen v0.14.10
+│       ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│       └── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│       [dev-dependencies]
+│       ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+│       ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│       ├── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+│       ├── wamn-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/identity)
+│       ├── wamn-identity-client v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/client) (*)
+│       └── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+└── reqwest v0.13.5 (*)
+
+block-buffer v0.10.4
+├── digest v0.10.7
+│   ├── crc-fast v1.10.0
+│   │   └── object_store v0.14.2 (*)
+│   ├── curve25519-dalek v4.1.3
+│   │   └── ed25519-dalek v2.2.0
+│   │       └── nkeys v0.4.5
+│   │           ├── async-nats v0.49.1 (*)
+│   │           └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   ├── hmac v0.12.1
+│   │   └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   ├── sha2 v0.10.9
+│   │   ├── cranelift-codegen v0.135.7
+│   │   │   ├── cranelift-frontend v0.135.7
+│   │   │   │   └── wasmtime-internal-cranelift v48.0.7
+│   │   │   │       └── wasmtime v48.0.7 (*)
+│   │   │   ├── cranelift-native v0.135.7
+│   │   │   │   └── wasmtime-internal-cranelift v48.0.7 (*)
+│   │   │   ├── wasmtime-internal-cranelift v48.0.7 (*)
+│   │   │   └── wasmtime-internal-unwinder v48.0.7
+│   │   │       ├── wasmtime v48.0.7 (*)
+│   │   │       └── wasmtime-internal-cranelift v48.0.7 (*)
+│   │   ├── ed25519-dalek v2.2.0 (*)
+│   │   ├── sqlx-core v0.9.0 (*)
+│   │   ├── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   │   ├── wasmtime-environ v48.0.7
+│   │   │   ├── wasmtime v48.0.7 (*)
+│   │   │   ├── wasmtime-internal-cache v48.0.7 (*)
+│   │   │   ├── wasmtime-internal-cranelift v48.0.7 (*)
+│   │   │   ├── wasmtime-internal-fiber v48.0.7
+│   │   │   │   └── wasmtime v48.0.7 (*)
+│   │   │   ├── wasmtime-internal-unwinder v48.0.7 (*)
+│   │   │   └── wiggle v48.0.7 (*)
+│   │   └── wasmtime-internal-cache v48.0.7 (*)
+│   └── signature v2.2.0
+│       ├── ed25519 v2.2.3
+│       │   ├── ed25519-dalek v2.2.0 (*)
+│       │   └── nkeys v0.4.5 (*)
+│       ├── ed25519-dalek v2.2.0 (*)
+│       ├── jsonwebtoken v10.4.0 (*)
+│       └── signatory v0.27.1
+│           └── nkeys v0.4.5 (*)
+└── digest v0.10.7
+    └── sha2 v0.10.9
+        ├── sqlx-core v0.9.0 (*)
+        ├── sqlx-macros-core v0.9.0 (*)
+        └── wasmtime-environ v48.0.7
+            └── wiggle-generate v48.0.7
+                └── wiggle-macro v48.0.7 (proc-macro)
+                    └── wiggle v48.0.7 (*)
+
+block-buffer v0.12.1
+└── digest v0.11.3
+    ├── blake2 v0.11.0
+    │   └── argon2 v0.6.0
+    │       └── wamn-platform-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/platform) (*)
+    ├── hmac v0.13.0
+    │   ├── hkdf v0.13.0
+    │   │   ├── sqlx-postgres v0.9.0 (*)
+    │   │   └── sqlx-postgres v0.9.0 (*)
+    │   ├── postgres-protocol v0.6.12 (*)
+    │   ├── sqlx-postgres v0.9.0 (*)
+    │   ├── sqlx-postgres v0.9.0 (*)
+    │   └── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+    ├── md-5 v0.11.0
+    │   └── sqlx-postgres v0.9.0 (*)
+    ├── md-5 v0.11.0
+    │   ├── object_store v0.14.2 (*)
+    │   ├── postgres-protocol v0.6.12 (*)
+    │   └── sqlx-postgres v0.9.0 (*)
+    └── sha2 v0.11.0
+        ├── oci-client v0.17.0 (*)
+        ├── oci-wasm v0.6.0 (*)
+        ├── postgres-protocol v0.6.12 (*)
+        ├── sqlx-postgres v0.9.0 (*)
+        ├── sqlx-postgres v0.9.0 (*)
+        ├── wamn-catalog v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/catalog/model) (*)
+        ├── wamn-component-composer v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/component-composer)
+        │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+        │   └── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+        │   [dev-dependencies]
+        │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+        │   └── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+        ├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+        ├── wamn-control-provision v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/provision) (*)
+        ├── wamn-engine v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/engine) (*)
+        ├── wamn-event-wire v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/platform/events/wire)
+        │   ├── wamn-catalog v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/catalog/model) (*)
+        │   ├── wamn-cdc-reader v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/cdc-reader) (*)
+        │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+        │   ├── wamn-control-provision v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/provision) (*)
+        │   ├── wamn-engine v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/engine) (*)
+        │   ├── wamn-event-reg v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/platform/events/registration)
+        │   │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+        │   │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+        │   │   └── wamn-materializer v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/platform/events/materializer)
+        │   │       └── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+        │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+        │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+        │   ├── wamn-materializer v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/platform/events/materializer) (*)
+        │   ├── wamn-router v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow/router)
+        │   │   └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+        │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+        │   ├── wamn-schema-generator v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/generator) (*)
+        │   └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+        │   [dev-dependencies]
+        │   ├── wamn-gate-harness v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/harness) (*)
+        │   ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+        │   ├── wamn-test-infrastructure v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/infrastructure) (*)
+        │   └── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+        ├── wamn-execution-contract v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/platform/execution/contract)
+        │   ├── http-route v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/platform/ingress/http-route)
+        │   │   [dev-dependencies]
+        │   │   └── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+        │   ├── wamn-authoring-model v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/authoring/model) (*)
+        │   ├── wamn-bench v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tools/bench)
+        │   ├── wamn-catalog v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/catalog/model) (*)
+        │   ├── wamn-client v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/client/core) (*)
+        │   ├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+        │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+        │   ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+        │   ├── wamn-engine v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/engine) (*)
+        │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+        │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+        │   ├── wamn-package-artifact v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/catalog/package-artifact) (*)
+        │   ├── wamn-platform-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/platform) (*)
+        │   ├── wamn-run-state v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/run-state) (*)
+        │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+        │   ├── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+        │   ├── wamn-schema-generator v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/generator) (*)
+        │   └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+        │   [dev-dependencies]
+        │   ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+        │   └── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+        ├── wamn-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/identity)
+        ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+        ├── wamn-platform-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/platform) (*)
+        ├── wamn-run-state v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/run-state) (*)
+        ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+        ├── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+        ├── wamn-schema-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/control) (*)
+        └── wamn-schema-generator v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/generator) (*)
+        [build-dependencies]
+        └── wamn-schema-generator v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/generator) (*)
+        [dev-dependencies]
+        ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+        ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+        └── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+
+byteorder v1.5.0
+├── postgres-protocol v0.6.12 (*)
+├── sqlx-postgres v0.9.0 (*)
+└── tokio-postgres v0.7.18 (*)
+
+byteorder v1.5.0
+└── sqlx-postgres v0.9.0 (*)
+
+bytes v1.12.1
+├── async-nats v0.49.1 (*)
+├── axum v0.8.9
+│   └── tonic v0.14.6 (*)
+├── axum-core v0.5.6
+│   └── axum v0.8.9 (*)
+├── combine v4.6.8
+│   └── redis v0.27.6
+│       └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+├── h2 v0.4.20
+│   ├── hyper v1.12.0
+│   │   ├── hyper-rustls v0.27.10 (*)
+│   │   ├── hyper-timeout v0.5.2 (*)
+│   │   ├── hyper-util v0.1.21 (*)
+│   │   ├── object_store v0.14.2 (*)
+│   │   ├── reqwest v0.13.5 (*)
+│   │   ├── tonic v0.14.6 (*)
+│   │   ├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+│   │   ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+│   │   ├── wamn-engine v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/engine) (*)
+│   │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   │   ├── wamn-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/identity)
+│   │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │   ├── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+│   │   ├── wamn-system-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/system) (*)
+│   │   ├── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   │   └── wasmtime-wasi-http v48.0.7 (*)
+│   │   [dev-dependencies]
+│   │   └── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   ├── reqwest v0.13.5 (*)
+│   └── tonic v0.14.6 (*)
+├── http v1.5.0
+│   ├── axum v0.8.9 (*)
+│   ├── axum-core v0.5.6 (*)
+│   ├── h2 v0.4.20 (*)
+│   ├── http-body v1.1.0
+│   │   ├── axum v0.8.9 (*)
+│   │   ├── axum-core v0.5.6 (*)
+│   │   ├── http-body-util v0.1.5
+│   │   │   ├── axum v0.8.9 (*)
+│   │   │   ├── axum-core v0.5.6 (*)
+│   │   │   ├── object_store v0.14.2 (*)
+│   │   │   ├── reqwest v0.13.5 (*)
+│   │   │   ├── tonic v0.14.6 (*)
+│   │   │   ├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+│   │   │   ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+│   │   │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   │   │   ├── wamn-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/identity)
+│   │   │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   │   │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │   │   ├── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+│   │   │   ├── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   │   │   └── wasmtime-wasi-http v48.0.7 (*)
+│   │   ├── hyper v1.12.0 (*)
+│   │   ├── hyper-util v0.1.21 (*)
+│   │   ├── reqwest v0.13.5 (*)
+│   │   ├── tonic v0.14.6 (*)
+│   │   ├── tower-http v0.6.11
+│   │   │   └── reqwest v0.13.5 (*)
+│   │   └── wasmtime-wasi-http v48.0.7 (*)
+│   ├── http-body-util v0.1.5 (*)
+│   ├── hyper v1.12.0 (*)
+│   ├── hyper-rustls v0.27.10 (*)
+│   ├── hyper-util v0.1.21 (*)
+│   ├── object_store v0.14.2 (*)
+│   ├── oci-client v0.17.0 (*)
+│   ├── opentelemetry-http v0.31.0
+│   │   ├── opentelemetry-otlp v0.31.1 (*)
+│   │   └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   ├── opentelemetry-otlp v0.31.1 (*)
+│   ├── reqwest v0.13.5 (*)
+│   ├── tonic v0.14.6 (*)
+│   ├── tower-http v0.6.11 (*)
+│   ├── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   └── wasmtime-wasi-http v48.0.7 (*)
+│   [dev-dependencies]
+│   └── wamn-credential-store v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/credential-store) (*)
+├── http-body v1.1.0 (*)
+├── http-body-util v0.1.5 (*)
+├── hyper v1.12.0 (*)
+├── hyper-util v0.1.21 (*)
+├── object_store v0.14.2 (*)
+├── oci-client v0.17.0 (*)
+├── opentelemetry-http v0.31.0 (*)
+├── pbjson-types v0.8.0 (*)
+├── pg_walstream v0.9.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/vendor/pg-walstream) (*)
+├── postgres-protocol v0.6.12 (*)
+├── postgres-types v0.2.14 (*)
+├── prost v0.13.5
+│   └── pg_query v6.2.1
+│       ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│       └── wamn-schema-generator v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/generator) (*)
+├── prost v0.14.4
+│   ├── opentelemetry-otlp v0.31.1 (*)
+│   ├── opentelemetry-proto v0.31.0 (*)
+│   ├── pbjson-build v0.8.0
+│   │   [build-dependencies]
+│   │   └── pbjson-types v0.8.0 (*)
+│   ├── pbjson-types v0.8.0 (*)
+│   ├── prost-build v0.14.4
+│   │   [build-dependencies]
+│   │   └── pbjson-types v0.8.0 (*)
+│   ├── prost-types v0.14.4
+│   │   ├── pbjson-build v0.8.0 (*)
+│   │   └── prost-build v0.14.4 (*)
+│   ├── tonic-prost v0.14.6 (*)
+│   └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+├── redis v0.27.6 (*)
+├── reqwest v0.13.5 (*)
+├── sqlx-core v0.9.0 (*)
+├── tokio v1.53.2
+│   ├── async-nats v0.49.1 (*)
+│   ├── combine v4.6.8 (*)
+│   ├── deadpool v0.13.1
+│   │   └── deadpool-postgres v0.14.2 (*)
+│   ├── deadpool-postgres v0.14.2 (*)
+│   ├── deadpool-runtime v0.3.1
+│   │   └── deadpool v0.13.1 (*)
+│   ├── h2 v0.4.20 (*)
+│   ├── hyper v1.12.0 (*)
+│   ├── hyper-rustls v0.27.10 (*)
+│   ├── hyper-timeout v0.5.2 (*)
+│   ├── hyper-util v0.1.21 (*)
+│   ├── object_store v0.14.2 (*)
+│   ├── oci-client v0.17.0 (*)
+│   ├── oci-wasm v0.6.0 (*)
+│   ├── opentelemetry-otlp v0.31.1 (*)
+│   ├── opentelemetry_sdk v0.31.0
+│   │   ├── opentelemetry-otlp v0.31.1 (*)
+│   │   ├── opentelemetry-proto v0.31.0 (*)
+│   │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │   └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   │   [dev-dependencies]
+│   │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   │   ├── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+│   │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │   ├── wamn-system-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/system) (*)
+│   │   └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+│   ├── pg_walstream v0.9.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/vendor/pg-walstream) (*)
+│   ├── redis v0.27.6 (*)
+│   ├── reqwest v0.13.5 (*)
+│   ├── sqlx-core v0.9.0 (*)
+│   ├── tokio-postgres v0.7.18 (*)
+│   ├── tokio-rustls v0.26.6
+│   │   ├── async-nats v0.49.1 (*)
+│   │   ├── hyper-rustls v0.27.10 (*)
+│   │   ├── pg_walstream v0.9.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/vendor/pg-walstream) (*)
+│   │   ├── reqwest v0.13.5 (*)
+│   │   ├── tonic v0.14.6 (*)
+│   │   ├── wamn-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/identity)
+│   │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │   ├── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   │   └── wasmtime-wasi-http v48.0.7 (*)
+│   │   [dev-dependencies]
+│   │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │   ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+│   │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   │   ├── wamn-identity-client v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/client) (*)
+│   │   └── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   ├── tokio-stream v0.1.19
+│   │   ├── async-nats v0.49.1 (*)
+│   │   ├── opentelemetry_sdk v0.31.0 (*)
+│   │   ├── sqlx-core v0.9.0 (*)
+│   │   └── tonic v0.14.6 (*)
+│   ├── tokio-util v0.7.19
+│   │   ├── async-nats v0.49.1 (*)
+│   │   ├── combine v4.6.8 (*)
+│   │   ├── h2 v0.4.20 (*)
+│   │   ├── pg_walstream v0.9.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/vendor/pg-walstream) (*)
+│   │   ├── redis v0.27.6 (*)
+│   │   ├── reqwest v0.13.5 (*)
+│   │   ├── tokio-postgres v0.7.18 (*)
+│   │   ├── tower v0.5.3
+│   │   │   ├── axum v0.8.9 (*)
+│   │   │   ├── reqwest v0.13.5 (*)
+│   │   │   ├── tonic v0.14.6 (*)
+│   │   │   └── tower-http v0.6.11 (*)
+│   │   ├── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   │   └── wasmtime-wasi-http v48.0.7 (*)
+│   ├── tonic v0.14.6 (*)
+│   ├── tower v0.5.3 (*)
+│   ├── tryhard v0.5.2
+│   │   └── async-nats v0.49.1 (*)
+│   ├── wamn-bench v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tools/bench)
+│   ├── wamn-cdc-reader v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/cdc-reader) (*)
+│   ├── wamn-client v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/client/core) (*)
+│   ├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+│   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   ├── wamn-credential-store v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/credential-store) (*)
+│   ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+│   ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+│   ├── wamn-engine v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/engine) (*)
+│   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   ├── wamn-gate-harness v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/harness) (*)
+│   ├── wamn-gates v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/orchestrator)
+│   ├── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+│   ├── wamn-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/identity)
+│   ├── wamn-identity-client v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/client) (*)
+│   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   ├── wamn-package-artifact v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/catalog/package-artifact) (*)
+│   ├── wamn-platform-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/platform) (*)
+│   ├── wamn-run-state-sqlite v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/run-state-sqlite) (*)
+│   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   ├── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+│   ├── wamn-schema-generator v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/generator) (*)
+│   ├── wamn-system-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/system) (*)
+│   ├── wamn-test-infrastructure v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/infrastructure) (*)
+│   ├── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+│   ├── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   ├── wasmtime-wasi v48.0.7 (*)
+│   └── wasmtime-wasi-http v48.0.7 (*)
+│   [dev-dependencies]
+│   ├── wamn-client v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/client/core) (*)
+│   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   ├── wamn-credential-store v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/credential-store) (*)
+│   ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+│   ├── wamn-engine v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/engine) (*)
+│   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   ├── wamn-gate-harness v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/harness) (*)
+│   ├── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+│   ├── wamn-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/identity)
+│   ├── wamn-identity-client v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/client) (*)
+│   ├── wamn-package-artifact v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/catalog/package-artifact) (*)
+│   ├── wamn-platform-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/platform) (*)
+│   ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   ├── wamn-run-state-sqlite v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/run-state-sqlite) (*)
+│   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   ├── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+│   ├── wamn-schema-introspection v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/introspection) (*)
+│   ├── wamn-session v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/session) (*)
+│   ├── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+│   └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+├── tokio-postgres v0.7.18 (*)
+├── tokio-util v0.7.19 (*)
+├── tonic v0.14.6 (*)
+├── tonic-prost v0.14.6 (*)
+├── tower-http v0.6.11 (*)
+├── wamn-cdc-reader v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/cdc-reader) (*)
+├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+├── wamn-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/identity)
+├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+├── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+├── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+├── wasmtime v48.0.7 (*)
+├── wasmtime-wasi v48.0.7 (*)
+├── wasmtime-wasi-http v48.0.7 (*)
+└── wasmtime-wasi-io v48.0.7 (*)
+[dev-dependencies]
+└── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+
+bytes v1.12.1
+├── prost v0.13.5
+│   ├── prost-build v0.13.5
+│   │   [build-dependencies]
+│   │   └── pg_query v6.2.1 (*)
+│   └── prost-types v0.13.5
+│       └── prost-build v0.13.5 (*)
+├── sqlx-core v0.9.0 (*)
+└── tokio v1.53.2
+    ├── sqlx-core v0.9.0 (*)
+    ├── sqlx-macros-core v0.9.0 (*)
+    └── tokio-stream v0.1.19
+        └── sqlx-core v0.9.0 (*)
+
+chrono v0.4.45
+├── croner v4.0.1
+│   ├── wamn-catalog v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/catalog/model) (*)
+│   └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+├── object_store v0.14.2 (*)
+├── oci-client v0.17.0 (*)
+├── oci-wasm v0.6.0 (*)
+├── pbjson-types v0.8.0 (*)
+├── pg_walstream v0.9.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/vendor/pg-walstream) (*)
+├── postgres-types v0.2.14 (*)
+├── sqlx-core v0.9.0 (*)
+├── sqlx-postgres v0.9.0 (*)
+├── wamn-cdc-reader v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/cdc-reader) (*)
+├── wamn-client v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/client/core) (*)
+├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+├── wamn-event-wire v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/platform/events/wire) (*)
+├── wamn-execution-contract v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/platform/execution/contract) (*)
+├── wamn-identity-client v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/client) (*)
+├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+├── wamn-schema-generator v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/generator) (*)
+├── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+└── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+[dev-dependencies]
+├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+├── wamn-project-state v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/project-state) (*)
+└── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+
+chrono v0.4.45
+├── sqlx-core v0.9.0 (*)
+└── sqlx-postgres v0.9.0 (*)
+
+const-oid v0.9.6
+└── der v0.7.10
+    ├── pkcs8 v0.10.2
+    │   └── signatory v0.27.1 (*)
+    └── spki v0.7.3
+        └── pkcs8 v0.10.2 (*)
+
+const-oid v0.10.2
+└── digest v0.11.3 (*)
+
+cpufeatures v0.2.17
+├── curve25519-dalek v4.1.3 (*)
+├── sha2 v0.10.9 (*)
+└── sha2 v0.10.9 (*)
+
+cpufeatures v0.3.1
+├── argon2 v0.6.0 (*)
+├── chacha20 v0.10.2
+│   ├── rand v0.10.3
+│   │   ├── async-nats v0.49.1 (*)
+│   │   ├── object_store v0.14.2 (*)
+│   │   ├── postgres-protocol v0.6.12 (*)
+│   │   ├── sqlx-postgres v0.9.0 (*)
+│   │   ├── tokio-postgres v0.7.18 (*)
+│   │   └── wasmtime-wasi v48.0.7 (*)
+│   └── rand v0.10.3
+│       └── sqlx-postgres v0.9.0 (*)
+└── sha2 v0.11.0 (*)
+
+crypto-common v0.1.7
+└── digest v0.10.7 (*)
+
+crypto-common v0.1.7
+└── digest v0.10.7 (*)
+
+crypto-common v0.2.2
+└── digest v0.11.3 (*)
+
+darling v0.20.11
+└── derive_builder_core v0.20.2
+    └── derive_builder_macro v0.20.2 (proc-macro)
+        └── derive_builder v0.20.2
+            ├── croner v4.0.1 (*)
+            └── oci-spec v0.9.0
+                └── oci-client v0.17.0 (*)
+
+darling v0.24.1
+└── bon-macros v3.10.2 (proc-macro)
+    └── bon v3.10.2
+        └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+
+darling_core v0.20.11
+├── darling v0.20.11 (*)
+└── darling_macro v0.20.11 (proc-macro)
+    └── darling v0.20.11 (*)
+
+darling_core v0.24.1
+├── darling v0.24.1 (*)
+└── darling_macro v0.24.1 (proc-macro)
+    └── darling v0.24.1 (*)
+
+darling_macro v0.20.11 (proc-macro) (*)
+
+darling_macro v0.24.1 (proc-macro) (*)
+
+digest v0.10.7 (*)
+
+digest v0.10.7 (*)
+
+digest v0.11.3 (*)
+
+fallible-iterator v0.2.0
+├── postgres-protocol v0.6.12 (*)
+├── postgres-types v0.2.14 (*)
+└── tokio-postgres v0.7.18 (*)
+
+fallible-iterator v0.3.0
+├── gimli v0.32.3
+│   └── walrus v0.26.5
+│       └── wasi-virt v0.2.0 (https://github.com/bytecodealliance/WASI-Virt.git?rev=448f6df8f688cee5d6995e96b1ffc31f9bf00742#448f6df8)
+│           └── wamn-component-virtualizer v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/component-virtualizer)
+│           [dev-dependencies]
+│           └── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+└── rusqlite v0.39.0
+    ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+    └── wamn-run-state-sqlite v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/run-state-sqlite) (*)
+
+fixedbitset v0.4.2
+├── petgraph v0.6.5
+│   └── prost-build v0.13.5 (*)
+└── petgraph v0.6.5
+    ├── wac-graph v0.10.1
+    │   └── wasi-virt v0.2.0 (https://github.com/bytecodealliance/WASI-Virt.git?rev=448f6df8f688cee5d6995e96b1ffc31f9bf00742#448f6df8) (*)
+    └── wac-graph v0.12.0
+        └── wamn-component-composer v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/component-composer) (*)
+
+fixedbitset v0.5.7
+└── petgraph v0.8.3
+    └── prost-build v0.14.4 (*)
+
+foldhash v0.1.5
+└── hashbrown v0.15.5
+    └── petgraph v0.8.3 (*)
+
+foldhash v0.2.0
+├── hashbrown v0.16.1
+│   └── sqlx-core v0.9.0 (*)
+├── hashbrown v0.16.1
+│   ├── gimli v0.33.0
+│   │   ├── addr2line v0.26.1
+│   │   │   └── wasmtime v48.0.7 (*)
+│   │   ├── cranelift-codegen v0.135.7 (*)
+│   │   ├── wasmtime v48.0.7 (*)
+│   │   ├── wasmtime-environ v48.0.7 (*)
+│   │   └── wasmtime-internal-cranelift v48.0.7 (*)
+│   ├── hashlink v0.11.1
+│   │   ├── rusqlite v0.39.0 (*)
+│   │   ├── sqlx-core v0.9.0 (*)
+│   │   └── sqlx-core v0.9.0 (*)
+│   ├── sqlx-core v0.9.0 (*)
+│   └── wasmparser v0.245.1
+│       └── walrus v0.26.5 (*)
+└── hashbrown v0.17.1
+    ├── cranelift-codegen v0.135.7 (*)
+    ├── cranelift-frontend v0.135.7 (*)
+    ├── indexmap v2.14.2
+    │   ├── gimli v0.32.3 (*)
+    │   ├── gimli v0.33.0 (*)
+    │   ├── h2 v0.4.20 (*)
+    │   ├── object v0.39.1
+    │   │   ├── wasmtime v48.0.7 (*)
+    │   │   ├── wasmtime-environ v48.0.7 (*)
+    │   │   ├── wasmtime-internal-cranelift v48.0.7 (*)
+    │   │   └── wasmtime-internal-unwinder v48.0.7 (*)
+    │   ├── petgraph v0.6.5 (*)
+    │   ├── petgraph v0.6.5 (*)
+    │   ├── petgraph v0.8.3 (*)
+    │   ├── serde_yaml v0.9.34+deprecated
+    │   │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+    │   │   ├── wamn-control-provision v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/provision) (*)
+    │   │   ├── wamn-gate-harness v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/harness) (*)
+    │   │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+    │   │   ├── wamn-schema-generator v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/generator) (*)
+    │   │   └── wamn-test-infrastructure v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/infrastructure) (*)
+    │   │   [dev-dependencies]
+    │   │   ├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+    │   │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+    │   │   ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+    │   │   ├── wamn-system-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/system) (*)
+    │   │   └── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+    │   ├── sqlx-core v0.9.0 (*)
+    │   ├── sqlx-core v0.9.0 (*)
+    │   ├── toml_edit v0.22.27
+    │   │   └── toml v0.8.23
+    │   │       └── wasi-virt v0.2.0 (https://github.com/bytecodealliance/WASI-Virt.git?rev=448f6df8f688cee5d6995e96b1ffc31f9bf00742#448f6df8) (*)
+    │   ├── tower v0.5.3 (*)
+    │   ├── wac-graph v0.10.1 (*)
+    │   ├── wac-graph v0.12.0 (*)
+    │   ├── wac-types v0.10.1
+    │   │   └── wac-graph v0.10.1 (*)
+    │   ├── wac-types v0.12.0
+    │   │   └── wac-graph v0.12.0 (*)
+    │   ├── wasm-metadata v0.247.0
+    │   │   └── wac-graph v0.10.1 (*)
+    │   ├── wasm-metadata v0.252.0
+    │   │   ├── wasi-virt v0.2.0 (https://github.com/bytecodealliance/WASI-Virt.git?rev=448f6df8f688cee5d6995e96b1ffc31f9bf00742#448f6df8) (*)
+    │   │   └── wit-component v0.252.0
+    │   │       └── wasi-virt v0.2.0 (https://github.com/bytecodealliance/WASI-Virt.git?rev=448f6df8f688cee5d6995e96b1ffc31f9bf00742#448f6df8) (*)
+    │   ├── wasm-metadata v0.253.0
+    │   │   └── wit-component v0.253.0
+    │   │       └── oci-wasm v0.6.0 (*)
+    │   ├── wasm-metadata v0.254.2
+    │   │   ├── wit-component v0.254.2
+    │   │   │   └── wasmtime-internal-wit-bindgen v48.0.7
+    │   │   │       └── wasmtime-internal-component-macro v48.0.7 (proc-macro)
+    │   │   │           └── wasmtime v48.0.7 (*)
+    │   │   └── wit-component v0.254.2
+    │   │       └── wamn-component-composer v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/component-composer) (*)
+    │   │       [dev-dependencies]
+    │   │       ├── wamn-component-composer v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/component-composer) (*)
+    │   │       ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+    │   │       ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+    │   │       ├── wamn-engine v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/engine) (*)
+    │   │       └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+    │   ├── wasm-metadata v0.258.3
+    │   │   └── wac-graph v0.12.0 (*)
+    │   ├── wasm-metadata v0.259.0
+    │   │   ├── wit-bindgen-rust v0.62.0
+    │   │   │   └── wit-bindgen-rust-macro v0.62.0 (proc-macro)
+    │   │   │       └── wit-bindgen v0.62.0
+    │   │   │           └── http-route v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/platform/ingress/http-route) (*)
+    │   │   └── wit-component v0.259.0
+    │   │       ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+    │   │       ├── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+    │   │       └── wit-bindgen-rust v0.62.0 (*)
+    │   ├── wasmparser v0.245.1 (*)
+    │   ├── wasmparser v0.247.0
+    │   │   ├── wac-graph v0.10.1 (*)
+    │   │   ├── wac-types v0.10.1 (*)
+    │   │   └── wasm-metadata v0.247.0 (*)
+    │   ├── wasmparser v0.252.0
+    │   │   ├── wasm-encoder v0.252.0
+    │   │   │   ├── wasm-metadata v0.252.0 (*)
+    │   │   │   └── wit-component v0.252.0 (*)
+    │   │   ├── wasm-metadata v0.252.0 (*)
+    │   │   ├── wit-component v0.252.0 (*)
+    │   │   └── wit-parser v0.252.0
+    │   │       ├── wasi-virt v0.2.0 (https://github.com/bytecodealliance/WASI-Virt.git?rev=448f6df8f688cee5d6995e96b1ffc31f9bf00742#448f6df8) (*)
+    │   │       └── wit-component v0.252.0 (*)
+    │   ├── wasmparser v0.253.0
+    │   │   ├── wasm-encoder v0.253.0
+    │   │   │   ├── wasm-metadata v0.253.0 (*)
+    │   │   │   └── wit-component v0.253.0 (*)
+    │   │   ├── wasm-metadata v0.253.0 (*)
+    │   │   ├── wit-component v0.253.0 (*)
+    │   │   └── wit-parser v0.253.0
+    │   │       ├── oci-wasm v0.6.0 (*)
+    │   │       └── wit-component v0.253.0 (*)
+    │   ├── wasmparser v0.254.2
+    │   │   ├── wasm-encoder v0.254.2
+    │   │   │   ├── wasmtime-environ v48.0.7 (*)
+    │   │   │   ├── wast v254.0.2
+    │   │   │   │   └── wat v1.254.2
+    │   │   │   │       ├── wamn-component-composer v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/component-composer) (*)
+    │   │   │   │       └── wit-component v0.254.2 (*)
+    │   │   │   │       [dev-dependencies]
+    │   │   │   │       ├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+    │   │   │   │       ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+    │   │   │   │       ├── wamn-engine v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/engine) (*)
+    │   │   │   │       ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+    │   │   │   │       ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+    │   │   │   │       ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+    │   │   │   │       ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+    │   │   │   │       └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+    │   │   │   └── wit-component v0.254.2 (*)
+    │   │   ├── wasm-encoder v0.254.2
+    │   │   │   ├── wasm-metadata v0.254.2 (*)
+    │   │   │   └── wit-component v0.254.2 (*)
+    │   │   ├── wasm-metadata v0.254.2 (*)
+    │   │   ├── wasmprinter v0.254.2
+    │   │   │   └── wasmtime-environ v48.0.7 (*)
+    │   │   ├── wasmtime v48.0.7 (*)
+    │   │   ├── wasmtime-environ v48.0.7 (*)
+    │   │   ├── wasmtime-environ v48.0.7 (*)
+    │   │   ├── wasmtime-internal-cranelift v48.0.7 (*)
+    │   │   ├── wit-component v0.254.2 (*)
+    │   │   ├── wit-component v0.254.2 (*)
+    │   │   └── wit-parser v0.254.2
+    │   │       ├── wamn-component-composer v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/component-composer) (*)
+    │   │       ├── wasmtime-internal-component-macro v48.0.7 (proc-macro) (*)
+    │   │       ├── wasmtime-internal-wit-bindgen v48.0.7 (*)
+    │   │       ├── wit-component v0.254.2 (*)
+    │   │       └── wit-component v0.254.2 (*)
+    │   │       [dev-dependencies]
+    │   │       ├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+    │   │       ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+    │   │       ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+    │   │       ├── wamn-engine v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/engine) (*)
+    │   │       └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+    │   ├── wasmparser v0.258.3
+    │   │   ├── wac-graph v0.12.0 (*)
+    │   │   ├── wac-types v0.12.0 (*)
+    │   │   └── wasm-metadata v0.258.3 (*)
+    │   ├── wasmparser v0.259.0
+    │   │   ├── wasm-encoder v0.259.0
+    │   │   │   ├── wasm-metadata v0.259.0 (*)
+    │   │   │   └── wit-component v0.259.0 (*)
+    │   │   ├── wasm-metadata v0.259.0 (*)
+    │   │   ├── wit-component v0.259.0 (*)
+    │   │   └── wit-parser v0.259.0
+    │   │       ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+    │   │       ├── wamn-schema-generator v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/generator) (*)
+    │   │       ├── wit-bindgen-core v0.62.0
+    │   │       │   ├── wit-bindgen-rust v0.62.0 (*)
+    │   │       │   └── wit-bindgen-rust-macro v0.62.0 (proc-macro) (*)
+    │   │       └── wit-component v0.259.0 (*)
+    │   ├── wasmparser v0.261.0
+    │   │   ├── wamn-component-composer v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/component-composer) (*)
+    │   │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+    │   │   ├── wamn-engine v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/engine) (*)
+    │   │   └── wasm-encoder v0.261.0
+    │   │       ├── wamn-component-composer v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/component-composer) (*)
+    │   │       └── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+    │   │       [dev-dependencies]
+    │   │       └── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+    │   │   [dev-dependencies]
+    │   │   ├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+    │   │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+    │   │   └── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+    │   ├── wasmtime-environ v48.0.7 (*)
+    │   ├── wasmtime-environ v48.0.7 (*)
+    │   ├── wasmtime-internal-wit-bindgen v48.0.7 (*)
+    │   ├── wit-bindgen-rust v0.62.0 (*)
+    │   ├── wit-component v0.252.0 (*)
+    │   ├── wit-component v0.253.0 (*)
+    │   ├── wit-component v0.254.2 (*)
+    │   ├── wit-component v0.254.2 (*)
+    │   ├── wit-component v0.259.0 (*)
+    │   ├── wit-parser v0.252.0 (*)
+    │   ├── wit-parser v0.253.0 (*)
+    │   ├── wit-parser v0.254.2 (*)
+    │   └── wit-parser v0.259.0 (*)
+    ├── object v0.39.1 (*)
+    ├── regalloc2 v0.15.2
+    │   └── cranelift-codegen v0.135.7 (*)
+    ├── wasmparser v0.247.0 (*)
+    ├── wasmparser v0.252.0 (*)
+    ├── wasmparser v0.253.0 (*)
+    ├── wasmparser v0.254.2 (*)
+    ├── wasmparser v0.258.3 (*)
+    ├── wasmparser v0.259.0 (*)
+    ├── wasmparser v0.261.0 (*)
+    ├── wasmtime-environ v48.0.7 (*)
+    ├── wasmtime-environ v48.0.7 (*)
+    ├── wasmtime-internal-core v48.0.7
+    │   ├── cranelift-bforest v0.135.7
+    │   │   ├── cranelift-codegen v0.135.7 (*)
+    │   │   ├── wasmtime-environ v48.0.7 (*)
+    │   │   └── wasmtime-environ v48.0.7 (*)
+    │   ├── cranelift-bitset v0.135.7
+    │   │   ├── cranelift-codegen v0.135.7 (*)
+    │   │   ├── cranelift-entity v0.135.7
+    │   │   │   ├── cranelift-bforest v0.135.7 (*)
+    │   │   │   ├── cranelift-codegen v0.135.7 (*)
+    │   │   │   ├── wasmtime-environ v48.0.7 (*)
+    │   │   │   ├── wasmtime-environ v48.0.7 (*)
+    │   │   │   └── wasmtime-internal-cranelift v48.0.7 (*)
+    │   │   ├── pulley-interpreter v48.0.7
+    │   │   │   └── cranelift-codegen-meta v0.135.7
+    │   │   │       [build-dependencies]
+    │   │   │       └── cranelift-codegen v0.135.7 (*)
+    │   │   ├── pulley-interpreter v48.0.7
+    │   │   │   ├── cranelift-codegen v0.135.7 (*)
+    │   │   │   ├── wasmtime v48.0.7 (*)
+    │   │   │   └── wasmtime-internal-cranelift v48.0.7 (*)
+    │   │   ├── wasmtime-environ v48.0.7 (*)
+    │   │   └── wasmtime-environ v48.0.7 (*)
+    │   ├── cranelift-codegen v0.135.7 (*)
+    │   ├── cranelift-entity v0.135.7 (*)
+    │   ├── pulley-interpreter v48.0.7 (*)
+    │   ├── wasmtime v48.0.7 (*)
+    │   ├── wasmtime-environ v48.0.7 (*)
+    │   ├── wasmtime-internal-cranelift v48.0.7 (*)
+    │   └── wasmtime-internal-jit-icache-coherence v48.0.7
+    │       └── wasmtime v48.0.7 (*)
+    ├── wasmtime-internal-core v48.0.7
+    │   └── wasmtime-environ v48.0.7 (*)
+    ├── wit-parser v0.252.0 (*)
+    ├── wit-parser v0.253.0 (*)
+    ├── wit-parser v0.254.2 (*)
+    └── wit-parser v0.259.0 (*)
+
+form_urlencoded v1.2.2
+├── object_store v0.14.2 (*)
+├── serde_urlencoded v0.7.1
+│   ├── object_store v0.14.2 (*)
+│   └── reqwest v0.13.5 (*)
+└── url v2.5.8
+    ├── async-nats v0.49.1 (*)
+    ├── boon v0.6.1 (*)
+    ├── object_store v0.14.2 (*)
+    ├── redis v0.27.6 (*)
+    ├── reqwest v0.13.5 (*)
+    ├── sqlx-core v0.9.0 (*)
+    ├── tower-http v0.6.11 (*)
+    ├── wamn-catalog v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/catalog/model) (*)
+    ├── wamn-client v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/client/core) (*)
+    ├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+    ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+    ├── wamn-control-provision v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/provision) (*)
+    ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+    ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+    ├── wamn-gate-harness v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/harness) (*)
+    ├── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+    ├── wamn-identity-client v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/client) (*)
+    ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+    ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+    ├── wamn-schema-generator v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/generator) (*)
+    ├── wamn-test-infrastructure v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/infrastructure) (*)
+    ├── wamn-test-postgres v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/postgres)
+    │   ├── wamn-catalog v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/catalog/model) (*)
+    │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+    │   ├── wamn-control-provision v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/provision) (*)
+    │   ├── wamn-project-state v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/project-state) (*)
+    │   └── wamn-test-infrastructure v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/infrastructure) (*)
+    │   [dev-dependencies]
+    │   ├── wamn-catalog v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/catalog/model) (*)
+    │   ├── wamn-cdc-reader v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/cdc-reader) (*)
+    │   ├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+    │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+    │   ├── wamn-control-provision v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/provision) (*)
+    │   ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+    │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+    │   ├── wamn-gate-harness v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/harness) (*)
+    │   ├── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+    │   ├── wamn-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/identity)
+    │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+    │   ├── wamn-platform-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/platform) (*)
+    │   ├── wamn-project-state v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/project-state) (*)
+    │   ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+    │   ├── wamn-run-state v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/run-state) (*)
+    │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+    │   ├── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+    │   ├── wamn-schema-generator v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/generator) (*)
+    │   ├── wamn-schema-introspection v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/introspection) (*)
+    │   ├── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+    │   └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+    ├── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+    ├── wasm-metadata v0.247.0 (*)
+    ├── wasm-metadata v0.258.3 (*)
+    └── wasmtime-wasi v48.0.7 (*)
+    [dev-dependencies]
+    ├── wamn-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/identity)
+    ├── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+    └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+
+form_urlencoded v1.2.2
+└── url v2.5.8
+    ├── sqlx-core v0.9.0 (*)
+    └── sqlx-macros-core v0.9.0 (*)
+
+futures-channel v0.3.34
+├── futures v0.3.34
+│   ├── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   ├── wasmtime v48.0.7 (*)
+│   ├── wasmtime-wasi v48.0.7 (*)
+│   ├── wasmtime-wasi-http v48.0.7 (*)
+│   ├── wasmtime-wasi-io v48.0.7 (*)
+│   └── wit-bindgen v0.62.0 (*)
+├── futures-util v0.3.34
+│   ├── async-nats v0.49.1 (*)
+│   ├── axum v0.8.9 (*)
+│   ├── futures v0.3.34 (*)
+│   ├── futures-executor v0.3.34
+│   │   └── opentelemetry_sdk v0.31.0 (*)
+│   ├── hyper-util v0.1.21 (*)
+│   ├── object_store v0.14.2 (*)
+│   ├── oci-client v0.17.0 (*)
+│   ├── opentelemetry_sdk v0.31.0 (*)
+│   ├── redis v0.27.6 (*)
+│   ├── reqwest v0.13.5 (*)
+│   ├── sqlx-core v0.9.0 (*)
+│   ├── sqlx-postgres v0.9.0 (*)
+│   ├── tokio-postgres v0.7.18 (*)
+│   ├── tokio-util v0.7.19 (*)
+│   ├── tower v0.5.3 (*)
+│   ├── tower-http v0.6.11 (*)
+│   ├── wamn-cdc-reader v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/cdc-reader) (*)
+│   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   ├── wamn-platform-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/platform) (*)
+│   └── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   [dev-dependencies]
+│   ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   └── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+├── hyper v1.12.0 (*)
+├── hyper-util v0.1.21 (*)
+├── opentelemetry_sdk v0.31.0 (*)
+├── sqlx-postgres v0.9.0 (*)
+└── tokio-postgres v0.7.18 (*)
+
+futures-channel v0.3.34
+└── sqlx-postgres v0.9.0 (*)
+
+futures-sink v0.3.34
+├── futures-channel v0.3.34 (*)
+└── futures-util v0.3.34
+    ├── sqlx-core v0.9.0 (*)
+    └── sqlx-postgres v0.9.0 (*)
+
+futures-sink v0.3.34
+├── futures v0.3.34 (*)
+├── futures-channel v0.3.34 (*)
+├── futures-util v0.3.34 (*)
+├── h2 v0.4.20 (*)
+├── opentelemetry v0.31.0
+│   ├── opentelemetry-appender-tracing v0.31.1
+│   │   └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   ├── opentelemetry-http v0.31.0 (*)
+│   ├── opentelemetry-otlp v0.31.1 (*)
+│   ├── opentelemetry-proto v0.31.0 (*)
+│   ├── opentelemetry_sdk v0.31.0 (*)
+│   ├── tracing-opentelemetry v0.32.1
+│   │   ├── wamn-engine v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/engine) (*)
+│   │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │   ├── wamn-system-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/system) (*)
+│   │   ├── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+│   │   └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   │   [dev-dependencies]
+│   │   └── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+│   ├── wamn-engine v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/engine) (*)
+│   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   ├── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+│   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   ├── wamn-router v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow/router) (*)
+│   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   ├── wamn-system-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/system) (*)
+│   ├── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+│   └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+└── tokio-util v0.7.19 (*)
+
+futures-util v0.3.34 (*)
+
+futures-util v0.3.34 (*)
+
+getrandom v0.2.17
+├── rand_core v0.6.4
+│   ├── rand v0.8.8
+│   │   ├── names v0.14.0
+│   │   │   └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   │   └── nkeys v0.4.5 (*)
+│   ├── rand_chacha v0.3.1
+│   │   └── rand v0.8.8 (*)
+│   └── signatory v0.27.1 (*)
+└── ring v0.17.14
+    ├── rcgen v0.14.10 (*)
+    ├── rustls v0.23.45
+    │   ├── hyper-rustls v0.27.10 (*)
+    │   ├── pg_walstream v0.9.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/vendor/pg-walstream) (*)
+    │   ├── reqwest v0.13.5 (*)
+    │   ├── rustls-platform-verifier v0.7.1
+    │   │   ├── reqwest v0.13.5 (*)
+    │   │   └── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+    │   ├── tokio-rustls v0.26.6 (*)
+    │   ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+    │   ├── wamn-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/identity)
+    │   ├── wamn-identity-client v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/client) (*)
+    │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+    │   ├── wamn-platform-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/platform) (*)
+    │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+    │   ├── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+    │   └── wasmtime-wasi-http v48.0.7 (*)
+    │   [dev-dependencies]
+    │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+    │   └── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+    ├── rustls-webpki v0.103.15
+    │   ├── async-nats v0.49.1 (*)
+    │   ├── rustls v0.23.45 (*)
+    │   └── rustls-platform-verifier v0.7.1 (*)
+    ├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+    ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+    ├── wamn-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/identity)
+    ├── wamn-package-artifact v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/catalog/package-artifact) (*)
+    ├── wamn-platform-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/platform) (*)
+    ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+    ├── wamn-session v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/session) (*)
+    └── wamn-test-infrastructure v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/infrastructure) (*)
+    [dev-dependencies]
+    ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+    ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+    ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+    ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+    ├── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+    └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+
+getrandom v0.3.4
+├── ahash v0.8.12
+│   └── boon v0.6.1 (*)
+└── rand_core v0.9.5
+    ├── imbl v7.0.2
+    │   └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+    ├── rand v0.9.5
+    │   ├── opentelemetry_sdk v0.31.0 (*)
+    │   └── proptest v1.11.0
+    │       [dev-dependencies]
+    │       ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+    │       ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+    │       ├── wamn-router v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow/router) (*)
+    │       └── wamn-schema-generator v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/generator) (*)
+    ├── rand_chacha v0.9.0
+    │   ├── proptest v1.11.0 (*)
+    │   └── rand v0.9.5 (*)
+    ├── rand_xorshift v0.4.0
+    │   └── proptest v1.11.0 (*)
+    └── rand_xoshiro v0.7.0
+        └── imbl v7.0.2 (*)
+
+getrandom v0.4.3
+├── password-hash v0.6.1
+│   └── argon2 v0.6.0 (*)
+├── phc v0.6.1
+│   └── password-hash v0.6.1 (*)
+├── rand v0.10.3 (*)
+├── rand v0.10.3 (*)
+├── tempfile v3.27.0
+│   ├── prost-build v0.13.5 (*)
+│   ├── prost-build v0.14.4 (*)
+│   └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   [dev-dependencies]
+│   ├── wamn-credential-store v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/credential-store) (*)
+│   └── wamn-submodule-check v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tools/submodule-check)
+└── uuid v1.27.0
+    ├── moka v0.12.16
+    │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+    │   └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+    ├── postgres-types v0.2.14 (*)
+    ├── sqlx-core v0.9.0 (*)
+    ├── sqlx-postgres v0.9.0 (*)
+    ├── wamn-bench v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tools/bench)
+    ├── wamn-client v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/client/core) (*)
+    ├── wamn-credential-store v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/credential-store) (*)
+    ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+    ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+    ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+    ├── wamn-platform-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/platform) (*)
+    ├── wamn-project-state v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/project-state) (*)
+    ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+    ├── wamn-test-infrastructure v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/infrastructure) (*)
+    └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+    [dev-dependencies]
+    ├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+    ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+    ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+    └── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+
+gimli v0.32.3 (*)
+
+gimli v0.33.0
+└── wasmtime-environ v48.0.7 (*)
+
+gimli v0.33.0 (*)
+
+hashbrown v0.15.5 (*)
+
+hashbrown v0.16.1 (*)
+
+hashbrown v0.16.1 (*)
+
+hashbrown v0.17.1 (*)
+
+hmac v0.12.1 (*)
+
+hmac v0.13.0 (*)
+
+id-arena v2.3.0
+├── wit-parser v0.254.2 (*)
+└── wit-parser v0.259.0 (*)
+
+id-arena v2.3.0
+├── wac-graph v0.10.1 (*)
+├── wac-graph v0.12.0 (*)
+├── wac-types v0.10.1 (*)
+├── wac-types v0.12.0 (*)
+├── walrus v0.26.5 (*)
+├── wit-parser v0.252.0 (*)
+└── wit-parser v0.253.0 (*)
+
+idna v1.1.0
+├── boon v0.6.1 (*)
+└── url v2.5.8 (*)
+
+idna v1.1.0
+└── url v2.5.8 (*)
+
+io-lifetimes v2.0.4
+├── fs-set-times v0.20.3
+│   └── cap-primitives v4.0.3
+│       ├── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│       └── wasmtime-wasi v48.0.7 (*)
+└── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+
+io-lifetimes v3.0.1
+├── cap-primitives v4.0.3 (*)
+└── io-extras v0.19.0
+    └── cap-primitives v4.0.3 (*)
+
+itertools v0.10.5
+└── pg_query v6.2.1 (*)
+
+itertools v0.13.0
+└── redis v0.27.6 (*)
+
+itertools v0.14.0
+├── pbjson-build v0.8.0 (*)
+├── prost-build v0.13.5 (*)
+├── prost-build v0.14.4 (*)
+├── prost-derive v0.13.5 (proc-macro)
+│   ├── prost v0.13.5 (*)
+│   └── prost v0.13.5 (*)
+├── prost-derive v0.14.4 (proc-macro)
+│   └── prost v0.14.4 (*)
+└── wasmtime-internal-cranelift v48.0.7 (*)
+
+itertools v0.15.0
+└── object_store v0.14.2 (*)
+
+linux-raw-sys v0.4.15
+└── rustix v0.38.44
+    └── which v4.4.2
+        └── bindgen v0.66.1
+            [build-dependencies]
+            └── pg_query v6.2.1 (*)
+
+linux-raw-sys v0.12.1
+└── rustix v1.1.5
+    ├── cap-primitives v4.0.3 (*)
+    ├── fs-set-times v0.20.3 (*)
+    ├── memfd v0.6.6
+    │   └── wasmtime v48.0.7 (*)
+    ├── rustix-linux-procfs v0.1.1
+    │   ├── cap-primitives v4.0.3 (*)
+    │   └── wasmtime-wasi v48.0.7 (*)
+    ├── tempfile v3.27.0 (*)
+    ├── terminal_size v0.4.4
+    │   └── clap_builder v4.6.7
+    │       └── clap v4.6.7
+    │           ├── wamn-bench v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tools/bench)
+    │           ├── wamn-cdc-reader v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/cdc-reader) (*)
+    │           ├── wamn-component-composer v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/component-composer) (*)
+    │           ├── wamn-component-virtualizer v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/component-virtualizer)
+    │           ├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+    │           ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+    │           ├── wamn-gates v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/orchestrator)
+    │           ├── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+    │           ├── wamn-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/identity)
+    │           ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+    │           ├── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+    │           ├── wamn-system-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/system) (*)
+    │           └── wasi-virt v0.2.0 (https://github.com/bytecodealliance/WASI-Virt.git?rev=448f6df8f688cee5d6995e96b1ffc31f9bf00742#448f6df8) (*)
+    ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+    ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+    ├── wamn-test-infrastructure v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/infrastructure) (*)
+    ├── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+    ├── wasmtime v48.0.7 (*)
+    ├── wasmtime-internal-cache v48.0.7 (*)
+    ├── wasmtime-internal-fiber v48.0.7 (*)
+    └── wasmtime-wasi v48.0.7 (*)
+    [dev-dependencies]
+    ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+    ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+    └── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+
+log v0.4.34
+├── bindgen v0.66.1 (*)
+├── prost-build v0.13.5 (*)
+├── prost-build v0.14.4 (*)
+├── pulley-interpreter v48.0.7 (*)
+├── sqlx-core v0.9.0 (*)
+├── sqlx-postgres v0.9.0 (*)
+├── wasmtime-environ v48.0.7 (*)
+├── wit-component v0.254.2 (*)
+├── wit-component v0.259.0 (*)
+├── wit-parser v0.254.2 (*)
+├── wit-parser v0.259.0 (*)
+└── witx v0.9.1
+    └── wiggle-generate v48.0.7 (*)
+
+log v0.4.34
+├── cranelift-codegen v0.135.7 (*)
+├── cranelift-frontend v0.135.7 (*)
+├── nkeys v0.4.5 (*)
+├── pulley-interpreter v48.0.7 (*)
+├── regalloc2 v0.15.2 (*)
+├── reqwest v0.13.5 (*)
+├── rustls v0.23.45 (*)
+├── rustls-platform-verifier v0.7.1 (*)
+├── sqlx-core v0.9.0 (*)
+├── sqlx-postgres v0.9.0 (*)
+├── tokio-postgres v0.7.18 (*)
+├── tracing v0.1.44
+│   ├── async-nats v0.49.1 (*)
+│   ├── deadpool-postgres v0.14.2 (*)
+│   ├── h2 v0.4.20 (*)
+│   ├── hyper-util v0.1.21 (*)
+│   ├── object_store v0.14.2 (*)
+│   ├── oci-client v0.17.0 (*)
+│   ├── opentelemetry-appender-tracing v0.31.1 (*)
+│   ├── pg_walstream v0.9.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/vendor/pg-walstream) (*)
+│   ├── sqlx-core v0.9.0 (*)
+│   ├── sqlx-core v0.9.0 (*)
+│   ├── sqlx-postgres v0.9.0 (*)
+│   ├── sqlx-postgres v0.9.0 (*)
+│   ├── tonic v0.14.6 (*)
+│   ├── tower v0.5.3 (*)
+│   ├── tracing-opentelemetry v0.32.1 (*)
+│   ├── tracing-subscriber v0.3.23
+│   │   ├── opentelemetry-appender-tracing v0.31.1 (*)
+│   │   ├── tracing-opentelemetry v0.32.1 (*)
+│   │   ├── wamn-cdc-reader v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/cdc-reader) (*)
+│   │   ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+│   │   ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+│   │   ├── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+│   │   ├── wamn-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/identity)
+│   │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   │   └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   │   [dev-dependencies]
+│   │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   │   ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │   ├── wamn-system-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/system) (*)
+│   │   └── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+│   ├── wamn-cdc-reader v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/cdc-reader) (*)
+│   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+│   ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+│   ├── wamn-engine v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/engine) (*)
+│   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   ├── wamn-gates v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/orchestrator)
+│   ├── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+│   ├── wamn-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/identity)
+│   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   ├── wamn-package-artifact v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/catalog/package-artifact) (*)
+│   ├── wamn-platform-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/platform) (*)
+│   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   ├── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+│   ├── wamn-system-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/system) (*)
+│   ├── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+│   ├── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   ├── wasmtime-wasi v48.0.7 (*)
+│   ├── wasmtime-wasi-http v48.0.7 (*)
+│   ├── wasmtime-wasi-io v48.0.7 (*)
+│   └── wiggle v48.0.7 (*)
+│   [dev-dependencies]
+│   └── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+├── tracing-log v0.2.0
+│   └── tracing-subscriber v0.3.23 (*)
+├── wac-graph v0.10.1 (*)
+├── wac-graph v0.12.0 (*)
+├── walrus v0.26.5 (*)
+├── wasmtime v48.0.7 (*)
+├── wasmtime-environ v48.0.7 (*)
+├── wasmtime-internal-cache v48.0.7 (*)
+├── wasmtime-internal-cranelift v48.0.7 (*)
+├── wasmtime-internal-unwinder v48.0.7 (*)
+├── wit-component v0.252.0 (*)
+├── wit-component v0.253.0 (*)
+├── wit-component v0.254.2 (*)
+├── wit-parser v0.252.0 (*)
+└── wit-parser v0.253.0 (*)
+
+md-5 v0.11.0 (*)
+
+md-5 v0.11.0 (*)
+
+nom v7.1.3
+├── asn1-rs v0.7.2
+│   ├── der-parser v10.0.0
+│   │   └── x509-parser v0.18.1
+│   │       └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   ├── oid-registry v0.8.1
+│   │   └── x509-parser v0.18.1 (*)
+│   └── x509-parser v0.18.1 (*)
+├── der-parser v10.0.0 (*)
+├── rusticata-macros v4.1.0
+│   ├── asn1-rs v0.7.2 (*)
+│   ├── der-parser v10.0.0 (*)
+│   └── x509-parser v0.18.1 (*)
+└── x509-parser v0.18.1 (*)
+
+nom v7.1.3
+└── cexpr v0.6.0
+    └── bindgen v0.66.1 (*)
+
+num-traits v0.2.19
+├── asn1-rs v0.7.2 (*)
+├── chrono v0.4.45 (*)
+├── der-parser v10.0.0 (*)
+├── num-bigint v0.4.8
+│   ├── der-parser v10.0.0 (*)
+│   └── redis v0.27.6 (*)
+├── num-integer v0.1.47
+│   └── num-bigint v0.4.8 (*)
+├── proptest v1.11.0 (*)
+└── rust_decimal v1.43.0
+    ├── sqlx-core v0.9.0 (*)
+    ├── sqlx-core v0.9.0 (*)
+    ├── sqlx-postgres v0.9.0 (*)
+    └── sqlx-postgres v0.9.0 (*)
+    [dev-dependencies]
+    ├── wamn-client v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/client/core) (*)
+    └── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+
+num-traits v0.2.19
+├── atoi v2.0.0
+│   ├── sqlx-postgres v0.9.0 (*)
+│   └── sqlx-postgres v0.9.0 (*)
+└── chrono v0.4.45 (*)
+
+object v0.39.1 (*)
+
+object v0.39.1
+└── wasmtime-environ v48.0.7 (*)
+
+petgraph v0.6.5 (*)
+
+petgraph v0.6.5 (*)
+
+petgraph v0.8.3 (*)
+
+postcard v1.1.3
+└── wasmtime-environ v48.0.7 (*)
+
+postcard v1.1.3
+├── cranelift-codegen v0.135.7 (*)
+├── wasmtime v48.0.7 (*)
+├── wasmtime-environ v48.0.7 (*)
+└── wasmtime-internal-cache v48.0.7 (*)
+
+prettyplease v0.2.37
+├── bindgen v0.66.1 (*)
+├── prost-build v0.13.5 (*)
+└── prost-build v0.14.4 (*)
+
+prettyplease v0.3.0
+├── bon-macros v3.10.2 (proc-macro) (*)
+├── wit-bindgen-rust v0.62.0 (*)
+└── wit-bindgen-rust-macro v0.62.0 (proc-macro) (*)
+
+proc-macro2 v1.0.107
+├── asn1-rs-derive v0.6.0 (proc-macro)
+│   └── asn1-rs v0.7.2 (*)
+├── asn1-rs-impl v0.2.0 (proc-macro)
+│   └── asn1-rs v0.7.2 (*)
+├── async-trait v0.1.92 (proc-macro)
+│   ├── deadpool-postgres v0.14.2 (*)
+│   ├── object_store v0.14.2 (*)
+│   ├── opentelemetry-http v0.31.0 (*)
+│   ├── redis v0.27.6 (*)
+│   ├── tokio-postgres v0.7.18 (*)
+│   ├── tonic v0.14.6 (*)
+│   ├── wamn-client v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/client/core) (*)
+│   ├── wamn-credential-store v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/credential-store) (*)
+│   ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+│   ├── wamn-engine v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/engine) (*)
+│   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   ├── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+│   ├── wamn-run-state v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/run-state) (*)
+│   ├── wamn-run-state-sqlite v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/run-state-sqlite) (*)
+│   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   ├── wamn-session v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/session) (*)
+│   ├── wamn-test-infrastructure v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/infrastructure) (*)
+│   ├── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+│   ├── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   ├── wasmtime v48.0.7 (*)
+│   ├── wasmtime-wasi v48.0.7 (*)
+│   ├── wasmtime-wasi-http v48.0.7 (*)
+│   └── wasmtime-wasi-io v48.0.7 (*)
+│   [dev-dependencies]
+│   ├── wamn-client v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/client/core) (*)
+│   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   ├── wamn-platform-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/platform) (*)
+│   └── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+├── bindgen v0.66.1 (*)
+├── bon-macros v3.10.2 (proc-macro) (*)
+├── clap_derive v4.6.7 (proc-macro)
+│   └── clap v4.6.7 (*)
+├── const_format_proc_macros v0.2.34 (proc-macro)
+│   └── const_format v0.2.36
+│       └── oci-spec v0.9.0 (*)
+├── curve25519-dalek-derive v0.1.1 (proc-macro)
+│   └── curve25519-dalek v4.1.3 (*)
+├── darling_core v0.20.11 (*)
+├── darling_core v0.24.1 (*)
+├── derive_builder_core v0.20.2 (*)
+├── displaydoc v0.2.7 (proc-macro)
+│   ├── asn1-rs v0.7.2 (*)
+│   ├── der-parser v10.0.0 (*)
+│   ├── icu_collections v2.3.0
+│   │   ├── icu_normalizer v2.3.0
+│   │   │   └── idna_adapter v1.2.2
+│   │   │       ├── idna v1.1.0 (*)
+│   │   │       └── idna v1.1.0 (*)
+│   │   └── icu_properties v2.3.0
+│   │       └── idna_adapter v1.2.2 (*)
+│   ├── icu_locale_core v2.3.0
+│   │   ├── icu_properties v2.3.0 (*)
+│   │   └── icu_provider v2.3.1
+│   │       ├── icu_normalizer v2.3.0 (*)
+│   │       └── icu_properties v2.3.0 (*)
+│   ├── icu_properties v2.3.0 (*)
+│   ├── icu_provider v2.3.1 (*)
+│   ├── tinystr v0.8.4
+│   │   └── icu_locale_core v2.3.0 (*)
+│   └── zerotrie v0.2.5
+│       ├── icu_properties v2.3.0 (*)
+│       └── icu_provider v2.3.1 (*)
+├── futures-macro v0.3.34 (proc-macro)
+│   └── futures-util v0.3.34 (*)
+├── getset v0.1.7 (proc-macro)
+│   └── oci-spec v0.9.0 (*)
+├── pin-project-internal v1.1.13 (proc-macro)
+│   └── pin-project v1.1.13
+│       ├── async-nats v0.49.1 (*)
+│       └── tonic v0.14.6 (*)
+├── prettyplease v0.2.37 (*)
+├── prettyplease v0.3.0 (*)
+├── prost-derive v0.13.5 (proc-macro) (*)
+├── prost-derive v0.14.4 (proc-macro) (*)
+├── pulley-macros v48.0.7 (proc-macro)
+│   ├── pulley-interpreter v48.0.7 (*)
+│   └── pulley-interpreter v48.0.7 (*)
+├── quote v1.0.47
+│   ├── asn1-rs-derive v0.6.0 (proc-macro) (*)
+│   ├── asn1-rs-impl v0.2.0 (proc-macro) (*)
+│   ├── async-trait v0.1.92 (proc-macro) (*)
+│   ├── bindgen v0.66.1 (*)
+│   ├── bon-macros v3.10.2 (proc-macro) (*)
+│   ├── clap_derive v4.6.7 (proc-macro) (*)
+│   ├── const_format_proc_macros v0.2.34 (proc-macro) (*)
+│   ├── curve25519-dalek-derive v0.1.1 (proc-macro) (*)
+│   ├── darling_core v0.20.11 (*)
+│   ├── darling_core v0.24.1 (*)
+│   ├── darling_macro v0.20.11 (proc-macro) (*)
+│   ├── darling_macro v0.24.1 (proc-macro) (*)
+│   ├── derive_builder_core v0.20.2 (*)
+│   ├── displaydoc v0.2.7 (proc-macro) (*)
+│   ├── futures-macro v0.3.34 (proc-macro) (*)
+│   ├── getset v0.1.7 (proc-macro) (*)
+│   ├── pin-project-internal v1.1.13 (proc-macro) (*)
+│   ├── prost-derive v0.13.5 (proc-macro) (*)
+│   ├── prost-derive v0.14.4 (proc-macro) (*)
+│   ├── pulley-macros v48.0.7 (proc-macro) (*)
+│   ├── ref-cast-impl v1.0.27 (proc-macro)
+│   │   └── ref-cast v1.0.27
+│   │       └── fluent-uri v0.3.2
+│   │           └── boon v0.6.1 (*)
+│   ├── schemars_derive v0.8.22 (proc-macro)
+│   │   └── schemars v0.8.22
+│   │       ├── wamn-authoring-model v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/authoring/model) (*)
+│   │       ├── wamn-catalog v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/catalog/model) (*)
+│   │       ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │       ├── wamn-execution-contract v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/platform/execution/contract) (*)
+│   │       ├── wamn-gate-harness v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/harness) (*)
+│   │       └── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   ├── serde_derive v1.0.229 (proc-macro)
+│   │   ├── cranelift-bitset v0.135.7 (*)
+│   │   ├── cranelift-codegen v0.135.7 (*)
+│   │   ├── cranelift-entity v0.135.7 (*)
+│   │   ├── serde v1.0.229
+│   │   │   ├── async-nats v0.49.1 (*)
+│   │   │   ├── auditable-serde v0.9.0
+│   │   │   │   ├── wasm-metadata v0.247.0 (*)
+│   │   │   │   └── wasm-metadata v0.258.3 (*)
+│   │   │   ├── boon v0.6.1 (*)
+│   │   │   ├── bytes v1.12.1 (*)
+│   │   │   ├── chrono v0.4.45 (*)
+│   │   │   ├── cranelift-bitset v0.135.7 (*)
+│   │   │   ├── cranelift-codegen v0.135.7 (*)
+│   │   │   ├── cranelift-entity v0.135.7 (*)
+│   │   │   ├── docker_credential v1.4.0 (*)
+│   │   │   ├── either v1.19.0
+│   │   │   │   ├── itertools v0.10.5 (*)
+│   │   │   │   ├── itertools v0.13.0 (*)
+│   │   │   │   ├── itertools v0.14.0 (*)
+│   │   │   │   ├── itertools v0.15.0 (*)
+│   │   │   │   ├── rayon v1.12.0
+│   │   │   │   │   └── wasmtime v48.0.7 (*)
+│   │   │   │   ├── sqlx-core v0.9.0 (*)
+│   │   │   │   ├── sqlx-core v0.9.0 (*)
+│   │   │   │   ├── sqlx-macros-core v0.9.0 (*)
+│   │   │   │   └── which v4.4.2 (*)
+│   │   │   ├── http-route v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/platform/ingress/http-route) (*)
+│   │   │   ├── jmespath v0.5.0
+│   │   │   │   ├── wamn-event-reg v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/platform/events/registration) (*)
+│   │   │   │   └── wamn-materializer v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/platform/events/materializer) (*)
+│   │   │   ├── jsonwebtoken v10.4.0 (*)
+│   │   │   ├── object_store v0.14.2 (*)
+│   │   │   ├── oci-client v0.17.0 (*)
+│   │   │   ├── oci-spec v0.9.0 (*)
+│   │   │   ├── oci-wasm v0.6.0 (*)
+│   │   │   ├── olpc-cjson v0.1.4
+│   │   │   │   └── oci-client v0.17.0 (*)
+│   │   │   ├── pbjson v0.8.0 (*)
+│   │   │   ├── pbjson-types v0.8.0 (*)
+│   │   │   ├── pg_query v6.2.1 (*)
+│   │   │   ├── pg_walstream v0.9.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/vendor/pg-walstream) (*)
+│   │   │   ├── postcard v1.1.3 (*)
+│   │   │   ├── postcard v1.1.3 (*)
+│   │   │   ├── quick-xml v0.41.0
+│   │   │   │   └── object_store v0.14.2 (*)
+│   │   │   ├── regalloc2 v0.15.2 (*)
+│   │   │   ├── reqwest v0.13.5 (*)
+│   │   │   ├── schemars v0.8.22 (*)
+│   │   │   ├── serde_nanos v0.1.4
+│   │   │   │   └── async-nats v0.49.1 (*)
+│   │   │   ├── serde_spanned v0.6.9
+│   │   │   │   ├── toml v0.8.23 (*)
+│   │   │   │   └── toml_edit v0.22.27 (*)
+│   │   │   ├── serde_urlencoded v0.7.1 (*)
+│   │   │   ├── serde_yaml v0.9.34+deprecated (*)
+│   │   │   ├── smallvec v1.16.2
+│   │   │   │   ├── cranelift-codegen v0.135.7 (*)
+│   │   │   │   ├── cranelift-frontend v0.135.7 (*)
+│   │   │   │   ├── hyper v1.12.0 (*)
+│   │   │   │   ├── icu_normalizer v2.3.0 (*)
+│   │   │   │   ├── idna v1.1.0 (*)
+│   │   │   │   ├── moka v0.12.16 (*)
+│   │   │   │   ├── parking_lot_core v0.9.12
+│   │   │   │   │   └── parking_lot v0.12.5
+│   │   │   │   │       ├── futures-intrusive v0.5.0
+│   │   │   │   │       │   ├── sqlx-core v0.9.0 (*)
+│   │   │   │   │       │   └── sqlx-core v0.9.0 (*)
+│   │   │   │   │       ├── moka v0.12.16 (*)
+│   │   │   │   │       ├── object_store v0.14.2 (*)
+│   │   │   │   │       ├── tokio v1.53.2 (*)
+│   │   │   │   │       └── tokio-postgres v0.7.18 (*)
+│   │   │   │   ├── pg_walstream v0.9.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/vendor/pg-walstream) (*)
+│   │   │   │   ├── regalloc2 v0.15.2 (*)
+│   │   │   │   ├── rusqlite v0.39.0 (*)
+│   │   │   │   ├── spdx v0.13.6
+│   │   │   │   │   ├── wasm-metadata v0.247.0 (*)
+│   │   │   │   │   └── wasm-metadata v0.258.3 (*)
+│   │   │   │   ├── sqlx-core v0.9.0 (*)
+│   │   │   │   ├── sqlx-postgres v0.9.0 (*)
+│   │   │   │   ├── tracing-subscriber v0.3.23 (*)
+│   │   │   │   ├── wasmtime v48.0.7 (*)
+│   │   │   │   ├── wasmtime-environ v48.0.7 (*)
+│   │   │   │   └── wasmtime-internal-cranelift v48.0.7 (*)
+│   │   │   ├── smallvec v1.16.2
+│   │   │   │   ├── idna v1.1.0 (*)
+│   │   │   │   ├── sqlx-core v0.9.0 (*)
+│   │   │   │   ├── sqlx-postgres v0.9.0 (*)
+│   │   │   │   └── wasmtime-environ v48.0.7 (*)
+│   │   │   ├── sqlx-core v0.9.0 (*)
+│   │   │   ├── sqlx-core v0.9.0 (*)
+│   │   │   ├── sqlx-macros-core v0.9.0 (*)
+│   │   │   ├── sqlx-postgres v0.9.0 (*)
+│   │   │   ├── sqlx-postgres v0.9.0 (*)
+│   │   │   ├── toml v0.8.23 (*)
+│   │   │   ├── toml_datetime v0.6.11
+│   │   │   │   ├── toml v0.8.23 (*)
+│   │   │   │   └── toml_edit v0.22.27 (*)
+│   │   │   ├── toml_edit v0.22.27 (*)
+│   │   │   ├── tracing-serde v0.2.0
+│   │   │   │   └── tracing-subscriber v0.3.23 (*)
+│   │   │   ├── tracing-subscriber v0.3.23 (*)
+│   │   │   ├── url v2.5.8 (*)
+│   │   │   ├── wamn-authoring-model v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/authoring/model) (*)
+│   │   │   ├── wamn-bench v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tools/bench)
+│   │   │   ├── wamn-catalog v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/catalog/model) (*)
+│   │   │   ├── wamn-client v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/client/core) (*)
+│   │   │   ├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+│   │   │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │   │   ├── wamn-control-provision v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/provision) (*)
+│   │   │   ├── wamn-control-registry v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/registry)
+│   │   │   │   ├── wamn-cdc-reader v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/cdc-reader) (*)
+│   │   │   │   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   │   │   │   ├── wamn-control-provision v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/provision) (*)
+│   │   │   │   ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+│   │   │   │   ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+│   │   │   │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   │   │   │   ├── wamn-gate-harness v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/harness) (*)
+│   │   │   │   ├── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+│   │   │   │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   │   │   │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │   │   │   ├── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+│   │   │   │   └── wamn-test-infrastructure v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/infrastructure) (*)
+│   │   │   │   [dev-dependencies]
+│   │   │   │   ├── wamn-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/identity)
+│   │   │   │   ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   │   │   │   └── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+│   │   │   ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+│   │   │   ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+│   │   │   ├── wamn-engine v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/engine) (*)
+│   │   │   ├── wamn-event-reg v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/platform/events/registration) (*)
+│   │   │   ├── wamn-event-wire v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/platform/events/wire) (*)
+│   │   │   ├── wamn-execution-contract v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/platform/execution/contract) (*)
+│   │   │   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   │   │   ├── wamn-gate-harness v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/harness) (*)
+│   │   │   ├── wamn-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/identity)
+│   │   │   ├── wamn-identity-client v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/client) (*)
+│   │   │   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   │   │   ├── wamn-materializer v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/platform/events/materializer) (*)
+│   │   │   ├── wamn-package-artifact v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/catalog/package-artifact) (*)
+│   │   │   ├── wamn-platform-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/platform) (*)
+│   │   │   ├── wamn-run-state v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/run-state) (*)
+│   │   │   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   │   │   ├── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+│   │   │   ├── wamn-schema-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/control) (*)
+│   │   │   ├── wamn-schema-generator v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/generator) (*)
+│   │   │   ├── wamn-schema-introspection v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/introspection) (*)
+│   │   │   ├── wamn-session v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/session) (*)
+│   │   │   ├── wamn-test-infrastructure v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/infrastructure) (*)
+│   │   │   ├── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+│   │   │   ├── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   │   │   ├── wasi-virt v0.2.0 (https://github.com/bytecodealliance/WASI-Virt.git?rev=448f6df8f688cee5d6995e96b1ffc31f9bf00742#448f6df8) (*)
+│   │   │   ├── wasm-metadata v0.247.0 (*)
+│   │   │   ├── wasm-metadata v0.258.3 (*)
+│   │   │   ├── wasmparser v0.245.1 (*)
+│   │   │   ├── wasmparser v0.247.0 (*)
+│   │   │   ├── wasmparser v0.254.2 (*)
+│   │   │   ├── wasmparser v0.258.3 (*)
+│   │   │   ├── wasmparser v0.261.0 (*)
+│   │   │   ├── wasmtime v48.0.7 (*)
+│   │   │   ├── wasmtime-environ v48.0.7 (*)
+│   │   │   ├── wasmtime-environ v48.0.7 (*)
+│   │   │   ├── wasmtime-internal-cache v48.0.7 (*)
+│   │   │   ├── wasmtime-internal-core v48.0.7 (*)
+│   │   │   ├── wasmtime-internal-core v48.0.7 (*)
+│   │   │   ├── wit-component v0.252.0 (*)
+│   │   │   ├── wit-component v0.253.0 (*)
+│   │   │   ├── wit-component v0.254.2 (*)
+│   │   │   ├── wit-component v0.254.2 (*)
+│   │   │   ├── wit-component v0.259.0 (*)
+│   │   │   ├── wit-parser v0.252.0 (*)
+│   │   │   ├── wit-parser v0.253.0 (*)
+│   │   │   ├── wit-parser v0.254.2 (*)
+│   │   │   └── wit-parser v0.259.0 (*)
+│   │   │   [dev-dependencies]
+│   │   │   └── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   │   ├── url v2.5.8 (*)
+│   │   ├── wasm-metadata v0.247.0 (*)
+│   │   ├── wasm-metadata v0.258.3 (*)
+│   │   ├── wasmtime v48.0.7 (*)
+│   │   ├── wasmtime-environ v48.0.7 (*)
+│   │   ├── wasmtime-environ v48.0.7 (*)
+│   │   ├── wasmtime-internal-cache v48.0.7 (*)
+│   │   ├── wit-component v0.252.0 (*)
+│   │   ├── wit-component v0.253.0 (*)
+│   │   ├── wit-component v0.254.2 (*)
+│   │   ├── wit-component v0.254.2 (*)
+│   │   ├── wit-component v0.259.0 (*)
+│   │   ├── wit-parser v0.252.0 (*)
+│   │   ├── wit-parser v0.253.0 (*)
+│   │   ├── wit-parser v0.254.2 (*)
+│   │   └── wit-parser v0.259.0 (*)
+│   ├── serde_derive_internals v0.29.1
+│   │   └── schemars_derive v0.8.22 (proc-macro) (*)
+│   ├── serde_repr v0.1.21 (proc-macro)
+│   │   └── async-nats v0.49.1 (*)
+│   ├── sqlx-macros v0.9.0 (proc-macro) (*)
+│   ├── sqlx-macros-core v0.9.0 (*)
+│   ├── strum_macros v0.27.2 (proc-macro)
+│   │   ├── oci-spec v0.9.0 (*)
+│   │   └── strum v0.27.2
+│   │       ├── croner v4.0.1 (*)
+│   │       └── oci-spec v0.9.0 (*)
+│   ├── syn v2.0.119
+│   │   ├── asn1-rs-derive v0.6.0 (proc-macro) (*)
+│   │   ├── asn1-rs-impl v0.2.0 (proc-macro) (*)
+│   │   ├── bindgen v0.66.1 (*)
+│   │   ├── curve25519-dalek-derive v0.1.1 (proc-macro) (*)
+│   │   ├── darling_core v0.20.11 (*)
+│   │   ├── darling_macro v0.20.11 (proc-macro) (*)
+│   │   ├── derive_builder_core v0.20.2 (*)
+│   │   ├── derive_builder_macro v0.20.2 (proc-macro) (*)
+│   │   ├── getset v0.1.7 (proc-macro) (*)
+│   │   ├── pin-project-internal v1.1.13 (proc-macro) (*)
+│   │   ├── prettyplease v0.2.37 (*)
+│   │   ├── prost-build v0.13.5 (*)
+│   │   ├── prost-build v0.14.4 (*)
+│   │   ├── prost-derive v0.13.5 (proc-macro) (*)
+│   │   ├── prost-derive v0.14.4 (proc-macro) (*)
+│   │   ├── pulley-macros v48.0.7 (proc-macro) (*)
+│   │   ├── schemars_derive v0.8.22 (proc-macro) (*)
+│   │   ├── serde_derive_internals v0.29.1 (*)
+│   │   ├── sqlx-macros v0.9.0 (proc-macro) (*)
+│   │   ├── sqlx-macros-core v0.9.0 (*)
+│   │   ├── strum_macros v0.27.2 (proc-macro) (*)
+│   │   ├── synstructure v0.13.2
+│   │   │   └── asn1-rs-derive v0.6.0 (proc-macro) (*)
+│   │   ├── thiserror-impl v1.0.69 (proc-macro)
+│   │   │   └── thiserror v1.0.69
+│   │   │       ├── pg_query v6.2.1 (*)
+│   │   │       ├── wac-graph v0.10.1 (*)
+│   │   │       ├── wac-graph v0.12.0 (*)
+│   │   │       └── witx v0.9.1 (*)
+│   │   ├── tracing-attributes v0.1.31 (proc-macro)
+│   │   │   └── tracing v0.1.44 (*)
+│   │   ├── walrus-macro v0.26.0 (proc-macro)
+│   │   │   └── walrus v0.26.5 (*)
+│   │   ├── wasmtime-internal-component-macro v48.0.7 (proc-macro) (*)
+│   │   ├── wasmtime-internal-versioned-export-macros v48.0.7 (proc-macro)
+│   │   │   ├── wasmtime v48.0.7 (*)
+│   │   │   ├── wasmtime-internal-cranelift v48.0.7 (*)
+│   │   │   └── wasmtime-internal-fiber v48.0.7 (*)
+│   │   │   [build-dependencies]
+│   │   │   ├── wasmtime v48.0.7 (*)
+│   │   │   └── wasmtime-internal-fiber v48.0.7 (*)
+│   │   ├── wiggle-generate v48.0.7 (*)
+│   │   ├── wiggle-macro v48.0.7 (proc-macro) (*)
+│   │   └── zeroize_derive v1.5.0 (proc-macro)
+│   │       └── zeroize v1.9.1
+│   │           ├── argon2 v0.6.0 (*)
+│   │           ├── aws-lc-rs v1.18.1
+│   │           │   ├── async-nats v0.49.1 (*)
+│   │           │   ├── jsonwebtoken v10.4.0 (*)
+│   │           │   ├── object_store v0.14.2 (*)
+│   │           │   ├── pg_walstream v0.9.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/vendor/pg-walstream) (*)
+│   │           │   ├── rustls v0.23.45 (*)
+│   │           │   └── rustls-webpki v0.103.15 (*)
+│   │           ├── der v0.7.10 (*)
+│   │           ├── jsonwebtoken v10.4.0 (*)
+│   │           ├── rustls v0.23.45 (*)
+│   │           ├── rustls-pki-types v1.15.1
+│   │           │   ├── async-nats v0.49.1 (*)
+│   │           │   ├── object_store v0.14.2 (*)
+│   │           │   ├── rcgen v0.14.10 (*)
+│   │           │   ├── reqwest v0.13.5 (*)
+│   │           │   ├── rustls v0.23.45 (*)
+│   │           │   ├── rustls-native-certs v0.8.4
+│   │           │   │   ├── async-nats v0.49.1 (*)
+│   │           │   │   ├── rustls-platform-verifier v0.7.1 (*)
+│   │           │   │   ├── tonic v0.14.6 (*)
+│   │           │   │   ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+│   │           │   │   └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   │           │   ├── rustls-webpki v0.103.15 (*)
+│   │           │   └── webpki-roots v1.0.9
+│   │           │       ├── pg_walstream v0.9.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/vendor/pg-walstream) (*)
+│   │           │       ├── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   │           │       └── wasmtime-wasi-http v48.0.7 (*)
+│   │           ├── signatory v0.27.1 (*)
+│   │           ├── wamn-client v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/client/core) (*)
+│   │           ├── wamn-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/identity)
+│   │           ├── wamn-platform-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/platform) (*)
+│   │           └── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   ├── syn v3.0.6
+│   │   ├── async-trait v0.1.92 (proc-macro) (*)
+│   │   ├── bon-macros v3.10.2 (proc-macro) (*)
+│   │   ├── clap_derive v4.6.7 (proc-macro) (*)
+│   │   ├── darling_core v0.24.1 (*)
+│   │   ├── darling_macro v0.24.1 (proc-macro) (*)
+│   │   ├── displaydoc v0.2.7 (proc-macro) (*)
+│   │   ├── futures-macro v0.3.34 (proc-macro) (*)
+│   │   ├── prettyplease v0.3.0 (*)
+│   │   ├── ref-cast-impl v1.0.27 (proc-macro) (*)
+│   │   ├── serde_derive v1.0.229 (proc-macro) (*)
+│   │   ├── serde_repr v0.1.21 (proc-macro) (*)
+│   │   ├── synstructure v0.14.0
+│   │   │   ├── yoke-derive v0.8.4 (proc-macro)
+│   │   │   │   └── yoke v0.8.3
+│   │   │   │       ├── icu_collections v2.3.0 (*)
+│   │   │   │       ├── icu_provider v2.3.1 (*)
+│   │   │   │       ├── zerotrie v0.2.5 (*)
+│   │   │   │       └── zerovec v0.11.8
+│   │   │   │           ├── icu_collections v2.3.0 (*)
+│   │   │   │           ├── icu_locale_core v2.3.0 (*)
+│   │   │   │           ├── icu_normalizer v2.3.0 (*)
+│   │   │   │           ├── icu_properties v2.3.0 (*)
+│   │   │   │           ├── icu_provider v2.3.1 (*)
+│   │   │   │           ├── potential_utf v0.1.6
+│   │   │   │           │   └── icu_collections v2.3.0 (*)
+│   │   │   │           └── tinystr v0.8.4 (*)
+│   │   │   └── zerofrom-derive v0.1.8 (proc-macro)
+│   │   │       └── zerofrom v0.1.8
+│   │   │           ├── icu_collections v2.3.0 (*)
+│   │   │           ├── icu_provider v2.3.1 (*)
+│   │   │           ├── yoke v0.8.3 (*)
+│   │   │           ├── zerotrie v0.2.5 (*)
+│   │   │           └── zerovec v0.11.8 (*)
+│   │   ├── thiserror-impl v2.0.21 (proc-macro)
+│   │   │   ├── thiserror v2.0.21
+│   │   │   │   ├── asn1-rs v0.7.2 (*)
+│   │   │   │   ├── async-nats v0.49.1 (*)
+│   │   │   │   ├── cobs v0.3.0
+│   │   │   │   │   ├── postcard v1.1.3 (*)
+│   │   │   │   │   └── postcard v1.1.3 (*)
+│   │   │   │   ├── object_store v0.14.2 (*)
+│   │   │   │   ├── oci-client v0.17.0 (*)
+│   │   │   │   ├── oci-spec v0.9.0 (*)
+│   │   │   │   ├── opentelemetry v0.31.0 (*)
+│   │   │   │   ├── opentelemetry-otlp v0.31.1 (*)
+│   │   │   │   ├── opentelemetry_sdk v0.31.0 (*)
+│   │   │   │   ├── sqlx-core v0.9.0 (*)
+│   │   │   │   ├── sqlx-postgres v0.9.0 (*)
+│   │   │   │   ├── wasmtime-internal-cranelift v48.0.7 (*)
+│   │   │   │   ├── wasmtime-wasi v48.0.7 (*)
+│   │   │   │   ├── wiggle v48.0.7 (*)
+│   │   │   │   └── x509-parser v0.18.1 (*)
+│   │   │   └── thiserror v2.0.21
+│   │   │       ├── sqlx-core v0.9.0 (*)
+│   │   │       ├── sqlx-macros-core v0.9.0 (*)
+│   │   │       └── sqlx-postgres v0.9.0 (*)
+│   │   ├── tokio-macros v2.7.2 (proc-macro)
+│   │   │   └── tokio v1.53.2 (*)
+│   │   ├── wit-bindgen-rust v0.62.0 (*)
+│   │   ├── wit-bindgen-rust-macro v0.62.0 (proc-macro) (*)
+│   │   ├── yoke-derive v0.8.4 (proc-macro) (*)
+│   │   ├── zerofrom-derive v0.1.8 (proc-macro) (*)
+│   │   └── zerovec-derive v0.11.6 (proc-macro)
+│   │       └── zerovec v0.11.8 (*)
+│   ├── synstructure v0.13.2 (*)
+│   ├── synstructure v0.14.0 (*)
+│   ├── thiserror-impl v1.0.69 (proc-macro) (*)
+│   ├── thiserror-impl v2.0.21 (proc-macro) (*)
+│   ├── tokio-macros v2.7.2 (proc-macro) (*)
+│   ├── tracing-attributes v0.1.31 (proc-macro) (*)
+│   ├── walrus-macro v0.26.0 (proc-macro) (*)
+│   ├── wasmtime-internal-component-macro v48.0.7 (proc-macro) (*)
+│   ├── wasmtime-internal-versioned-export-macros v48.0.7 (proc-macro) (*)
+│   ├── wiggle-generate v48.0.7 (*)
+│   ├── wiggle-macro v48.0.7 (proc-macro) (*)
+│   ├── wit-bindgen-rust-macro v0.62.0 (proc-macro) (*)
+│   ├── yoke-derive v0.8.4 (proc-macro) (*)
+│   ├── zerofrom-derive v0.1.8 (proc-macro) (*)
+│   ├── zeroize_derive v1.5.0 (proc-macro) (*)
+│   └── zerovec-derive v0.11.6 (proc-macro) (*)
+├── ref-cast-impl v1.0.27 (proc-macro) (*)
+├── schemars_derive v0.8.22 (proc-macro) (*)
+├── serde_derive v1.0.229 (proc-macro) (*)
+├── serde_derive_internals v0.29.1 (*)
+├── serde_repr v0.1.21 (proc-macro) (*)
+├── sqlx-macros v0.9.0 (proc-macro) (*)
+├── sqlx-macros-core v0.9.0 (*)
+├── strum_macros v0.27.2 (proc-macro) (*)
+├── syn v2.0.119 (*)
+├── syn v3.0.6 (*)
+├── synstructure v0.13.2 (*)
+├── synstructure v0.14.0 (*)
+├── thiserror-impl v1.0.69 (proc-macro) (*)
+├── thiserror-impl v2.0.21 (proc-macro) (*)
+├── tokio-macros v2.7.2 (proc-macro) (*)
+├── tracing-attributes v0.1.31 (proc-macro) (*)
+├── walrus-macro v0.26.0 (proc-macro) (*)
+├── wasmtime-internal-component-macro v48.0.7 (proc-macro) (*)
+├── wasmtime-internal-versioned-export-macros v48.0.7 (proc-macro) (*)
+├── wiggle-generate v48.0.7 (*)
+├── wiggle-macro v48.0.7 (proc-macro) (*)
+├── wit-bindgen-rust-macro v0.62.0 (proc-macro) (*)
+├── yoke-derive v0.8.4 (proc-macro) (*)
+├── zerofrom-derive v0.1.8 (proc-macro) (*)
+├── zeroize_derive v1.5.0 (proc-macro) (*)
+└── zerovec-derive v0.11.6 (proc-macro) (*)
+
+proc-macro2 v1.0.107
+├── quote v1.0.47
+│   └── syn v3.0.6
+│       ├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+│       └── wamn-schema-generator v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/generator) (*)
+│       [dev-dependencies]
+│       └── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+└── syn v3.0.6 (*)
+
+prost v0.13.5 (*)
+
+prost v0.13.5 (*)
+
+prost v0.14.4 (*)
+
+prost-build v0.13.5 (*)
+
+prost-build v0.14.4 (*)
+
+prost-derive v0.13.5 (proc-macro) (*)
+
+prost-derive v0.14.4 (proc-macro) (*)
+
+prost-types v0.13.5 (*)
+
+prost-types v0.14.4 (*)
+
+pulley-interpreter v48.0.7 (*)
+
+pulley-interpreter v48.0.7 (*)
+
+quote v1.0.47 (*)
+
+quote v1.0.47 (*)
+
+rand v0.8.8 (*)
+
+rand v0.9.5 (*)
+
+rand v0.10.3 (*)
+
+rand v0.10.3 (*)
+
+rand_chacha v0.3.1 (*)
+
+rand_chacha v0.9.0 (*)
+
+rand_core v0.6.4 (*)
+
+rand_core v0.9.5 (*)
+
+rand_core v0.10.1
+├── chacha20 v0.10.2 (*)
+├── getrandom v0.4.3 (*)
+├── rand v0.10.3 (*)
+├── rand v0.10.3 (*)
+└── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+
+regex v1.13.1
+├── async-nats v0.49.1 (*)
+├── boon v0.6.1 (*)
+├── oci-client v0.17.0 (*)
+└── oci-spec v0.9.0 (*)
+
+regex v1.13.1
+├── bindgen v0.66.1 (*)
+├── prost-build v0.13.5 (*)
+└── prost-build v0.14.4 (*)
+
+regex-automata v0.4.18
+├── matchers v0.2.0
+│   └── tracing-subscriber v0.3.23 (*)
+├── regex v1.13.1 (*)
+└── tracing-subscriber v0.3.23 (*)
+
+regex-automata v0.4.18
+└── regex v1.13.1 (*)
+
+regex-syntax v0.8.11
+├── boon v0.6.1 (*)
+├── proptest v1.11.0 (*)
+├── regex v1.13.1 (*)
+└── regex-automata v0.4.18 (*)
+
+regex-syntax v0.8.11
+├── regex v1.13.1 (*)
+└── regex-automata v0.4.18 (*)
+
+rustc-hash v1.1.0
+└── bindgen v0.66.1 (*)
+
+rustc-hash v2.1.3
+├── cranelift-codegen v0.135.7 (*)
+└── regalloc2 v0.15.2 (*)
+
+rustix v0.38.44 (*)
+
+rustix v1.1.5 (*)
+
+semver v1.0.28
+├── auditable-serde v0.9.0 (*)
+├── wac-graph v0.10.1 (*)
+├── wac-graph v0.12.0 (*)
+├── wac-types v0.10.1 (*)
+├── wac-types v0.12.0 (*)
+├── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+├── wasi-virt v0.2.0 (https://github.com/bytecodealliance/WASI-Virt.git?rev=448f6df8f688cee5d6995e96b1ffc31f9bf00742#448f6df8) (*)
+├── wasmparser v0.245.1 (*)
+├── wasmparser v0.247.0 (*)
+├── wasmparser v0.252.0 (*)
+├── wasmparser v0.253.0 (*)
+├── wasmparser v0.254.2 (*)
+├── wasmparser v0.258.3 (*)
+├── wasmparser v0.261.0 (*)
+├── wasmtime v48.0.7 (*)
+├── wasmtime-environ v48.0.7 (*)
+├── wit-parser v0.252.0 (*)
+└── wit-parser v0.253.0 (*)
+
+semver v1.0.28
+├── rustc_version v0.4.1
+│   [build-dependencies]
+│   └── curve25519-dalek v4.1.3 (*)
+├── wasmparser v0.259.0 (*)
+├── wit-parser v0.254.2 (*)
+└── wit-parser v0.259.0 (*)
+
+serde_core v1.0.229
+├── axum v0.8.9 (*)
+├── deranged v0.5.8
+│   └── time v0.3.55
+│       ├── asn1-rs v0.7.2 (*)
+│       ├── async-nats v0.49.1 (*)
+│       ├── rcgen v0.14.10 (*)
+│       ├── tracing-subscriber v0.3.23 (*)
+│       ├── x509-parser v0.18.1 (*)
+│       └── yasna v0.6.0
+│           └── rcgen v0.14.10 (*)
+├── hashbrown v0.16.1 (*)
+├── hashbrown v0.17.1 (*)
+├── indexmap v2.14.2 (*)
+├── postgres-types v0.2.14 (*)
+├── semver v1.0.28 (*)
+├── serde v1.0.229 (*)
+├── serde_json v1.0.151
+│   ├── async-nats v0.49.1 (*)
+│   ├── auditable-serde v0.9.0 (*)
+│   ├── boon v0.6.1 (*)
+│   ├── docker_credential v1.4.0 (*)
+│   ├── http-route v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/platform/ingress/http-route) (*)
+│   ├── jmespath v0.5.0 (*)
+│   ├── jsonwebtoken v10.4.0 (*)
+│   ├── object_store v0.14.2 (*)
+│   ├── oci-client v0.17.0 (*)
+│   ├── oci-spec v0.9.0 (*)
+│   ├── oci-wasm v0.6.0 (*)
+│   ├── olpc-cjson v0.1.4 (*)
+│   ├── pg_query v6.2.1 (*)
+│   ├── postgres-types v0.2.14 (*)
+│   ├── reqwest v0.13.5 (*)
+│   ├── schemars v0.8.22 (*)
+│   ├── sqlx-core v0.9.0 (*)
+│   ├── sqlx-postgres v0.9.0 (*)
+│   ├── tracing-subscriber v0.3.23 (*)
+│   ├── wamn-authoring-model v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/authoring/model) (*)
+│   ├── wamn-bench v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tools/bench)
+│   ├── wamn-catalog v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/catalog/model) (*)
+│   ├── wamn-cdc-reader v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/cdc-reader) (*)
+│   ├── wamn-client v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/client/core) (*)
+│   ├── wamn-component-composer v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/component-composer) (*)
+│   ├── wamn-conformance-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/conformance) (*)
+│   ├── wamn-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/lib) (*)
+│   ├── wamn-control-provision v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/provision) (*)
+│   ├── wamn-control-registry v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/control/registry) (*)
+│   ├── wamn-credential-store v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/credential-store) (*)
+│   ├── wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/ctl)
+│   ├── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+│   ├── wamn-engine v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/engine) (*)
+│   ├── wamn-event-reg v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/platform/events/registration) (*)
+│   ├── wamn-event-wire v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/platform/events/wire) (*)
+│   ├── wamn-execution-contract v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/platform/execution/contract) (*)
+│   ├── wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/host) (*)
+│   ├── wamn-gate-harness v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/harness) (*)
+│   ├── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+│   ├── wamn-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/identity)
+│   ├── wamn-identity-client v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/client) (*)
+│   ├── wamn-integration-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/integration) (*)
+│   ├── wamn-materializer v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/platform/events/materializer) (*)
+│   ├── wamn-package-artifact v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/catalog/package-artifact) (*)
+│   ├── wamn-platform-identity v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/platform) (*)
+│   ├── wamn-router v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow/router) (*)
+│   ├── wamn-run-state v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/run-state) (*)
+│   ├── wamn-run-state-sqlite v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/run-state-sqlite) (*)
+│   ├── wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/platform/runtime) (*)
+│   ├── wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/scenario-worker)
+│   ├── wamn-schema-control v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/control) (*)
+│   ├── wamn-schema-generator v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/generator) (*)
+│   ├── wamn-schema-introspection v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/schema/introspection) (*)
+│   ├── wamn-session v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/identity/session) (*)
+│   ├── wamn-system-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/tests/system) (*)
+│   ├── wamn-test-infrastructure v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/test-support/infrastructure) (*)
+│   ├── wamn-workflow v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/crates/execution/workflow) (*)
+│   ├── wash-runtime v2.11.0 (https://github.com/wasmCloud/wasmCloud?tag=v2.11.0#bc5acfb8) (*)
+│   ├── wasm-metadata v0.247.0 (*)
+│   ├── wasm-metadata v0.258.3 (*)
+│   ├── wit-component v0.252.0 (*)
+│   ├── wit-component v0.253.0 (*)
+│   ├── wit-component v0.254.2 (*)
+│   ├── wit-parser v0.252.0 (*)
+│   └── wit-parser v0.253.0 (*)
+│   [dev-dependencies]
+│   ├── wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_receiving/tests)
+│   └── wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/apps/wamn_wms/tests)
+├── serde_spanned v1.1.1
+│   ├── toml v0.9.12+spec-1.1.0
+│   │   └── wasmtime-internal-cache v48.0.7 (*)
+│   └── toml v1.1.6+spec-1.1.0
+│       └── wamn-edge v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/edge)
+├── time v0.3.55 (*)
+├── toml v0.9.12+spec-1.1.0 (*)
+├── toml v1.1.6+spec-1.1.0 (*)
+├── toml_datetime v0.7.5+spec-1.1.0
+│   └── toml v0.9.12+spec-1.1.0 (*)
+├── toml_datetime v1.1.1+spec-1.1.0
+│   └── toml v1.1.6+spec-1.1.0 (*)
+└── uuid v1.27.0 (*)
+
+serde_core v1.0.229
+└── serde_json v1.0.151
+    ├── sqlx-core v0.9.0 (*)
+    ├── sqlx-macros-core v0.9.0 (*)
+    ├── sqlx-postgres v0.9.0 (*)
+    ├── wit-component v0.254.2 (*)
+    ├── wit-component v0.259.0 (*)
+    ├── wit-parser v0.254.2 (*)
+    └── wit-parser v0.259.0 (*)
+    [build-dependencies]
+    └── jmespath v0.5.0 (*)
+
+serde_json v1.0.151 (*)
+
+serde_json v1.0.151 (*)
+
+serde_spanned v0.6.9 (*)
+
+serde_spanned v1.1.1 (*)
+
+sha2 v0.10.9 (*)
+
+sha2 v0.10.9 (*)
+
+sha2 v0.11.0 (*)
+
+shlex v1.3.0
+└── bindgen v0.66.1 (*)
+
+shlex v2.0.1
+└── cc v1.6.0
+    └── cmake v0.1.58
+        [build-dependencies]
+        └── aws-lc-sys v0.45.0
+            └── aws-lc-rs v1.18.1 (*)
+    [build-dependencies]
+    ├── aws-lc-sys v0.45.0 (*)
+    ├── libmimalloc-sys v0.1.49
+    │   └── mimalloc v0.1.52
+    │       └── wamn-host v0.1.0 (/home/kaalin/dev/wamn/.claude/worktrees/audit/services/host)
+    ├── libsqlite3-sys v0.37.0
+    │   └── rusqlite v0.39.0 (*)
+    ├── pg_query v6.2.1 (*)
+    ├── ring v0.17.14 (*)
+    ├── wasmtime v48.0.7 (*)
+    ├── wasmtime-internal-fiber v48.0.7 (*)
+    └── zstd-sys v2.1.0+zstd.1.5.7
+        └── zstd-safe v7.3.0
+            └── zstd v0.13.3
+                └── wasmtime-internal-cache v48.0.7 (*)
+
+slab v0.4.12
+├── futures-util v0.3.34 (*)
+├── h2 v0.4.20 (*)
+└── tower v0.5.3 (*)
+
+slab v0.4.12
+└── futures-util v0.3.34 (*)
+
+smallvec v1.16.2 (*)
+
+smallvec v1.16.2 (*)
+
+sqlx-core v0.9.0 (*)
+
+sqlx-core v0.9.0 (*)
+
+sqlx-postgres v0.9.0 (*)
+
+sqlx-postgres v0.9.0 (*)
+
+syn v2.0.119 (*)
+
+syn v3.0.6 (*)
+
+syn v3.0.6 (*)
+
+synstructure v0.13.2 (*)
+
+synstructure v0.14.0 (*)
+
+thiserror v1.0.69 (*)
+
+thiserror v2.0.21 (*)
+
+thiserror v2.0.21 (*)
+
+thiserror-impl v1.0.69 (proc-macro) (*)
+
+thiserror-impl v2.0.21 (proc-macro) (*)
+
+tokio v1.53.2 (*)
+
+tokio v1.53.2 (*)
+
+tokio-stream v0.1.19 (*)
+
+tokio-stream v0.1.19 (*)
+
+toml v0.8.23 (*)
+
+toml v0.9.12+spec-1.1.0 (*)
+
+toml v1.1.6+spec-1.1.0 (*)
+
+toml_datetime v0.6.11 (*)
+
+toml_datetime v0.7.5+spec-1.1.0 (*)
+
+toml_datetime v1.1.1+spec-1.1.0 (*)
+
+untrusted v0.7.1
+└── aws-lc-rs v1.18.1 (*)
+
+untrusted v0.9.0
+├── ring v0.17.14 (*)
+└── rustls-webpki v0.103.15 (*)
+
+url v2.5.8 (*)
+
+url v2.5.8 (*)
+
+uuid v1.27.0 (*)
+
+uuid v1.27.0
+├── sqlx-core v0.9.0 (*)
+└── sqlx-postgres v0.9.0 (*)
+
+wac-graph v0.10.1 (*)
+
+wac-graph v0.12.0 (*)
+
+wac-types v0.10.1 (*)
+
+wac-types v0.12.0 (*)
+
+wasm-encoder v0.245.1
+└── walrus v0.26.5 (*)
+
+wasm-encoder v0.247.0
+├── wac-graph v0.10.1 (*)
+├── wac-types v0.10.1 (*)
+└── wasm-metadata v0.247.0 (*)
+
+wasm-encoder v0.252.0 (*)
+
+wasm-encoder v0.253.0 (*)
+
+wasm-encoder v0.254.2 (*)
+
+wasm-encoder v0.254.2 (*)
+
+wasm-encoder v0.258.3
+├── wac-graph v0.12.0 (*)
+├── wac-types v0.12.0 (*)
+└── wasm-metadata v0.258.3 (*)
+
+wasm-encoder v0.259.0 (*)
+
+wasm-encoder v0.261.0 (*)
+
+wasm-metadata v0.247.0 (*)
+
+wasm-metadata v0.252.0 (*)
+
+wasm-metadata v0.253.0 (*)
+
+wasm-metadata v0.254.2 (*)
+
+wasm-metadata v0.258.3 (*)
+
+wasm-metadata v0.259.0 (*)
+
+wasmparser v0.245.1 (*)
+
+wasmparser v0.247.0 (*)
+
+wasmparser v0.252.0 (*)
+
+wasmparser v0.253.0 (*)
+
+wasmparser v0.254.2 (*)
+
+wasmparser v0.258.3 (*)
+
+wasmparser v0.259.0 (*)
+
+wasmparser v0.261.0 (*)
+
+wasmtime-environ v48.0.7 (*)
+
+wasmtime-environ v48.0.7 (*)
+
+wasmtime-internal-core v48.0.7 (*)
+
+wasmtime-internal-core v48.0.7 (*)
+
+wast v35.0.2
+└── witx v0.9.1 (*)
+
+wast v254.0.2 (*)
+
+whoami v2.1.3
+└── sqlx-postgres v0.9.0 (*)
+
+whoami v2.1.3
+├── sqlx-postgres v0.9.0 (*)
+└── tokio-postgres v0.7.18 (*)
+
+winnow v0.7.15
+├── toml v0.9.12+spec-1.1.0 (*)
+└── toml_edit v0.22.27 (*)
+
+winnow v1.0.4
+├── toml v1.1.6+spec-1.1.0 (*)
+└── toml_parser v1.1.3+spec-1.1.0
+    ├── toml v0.9.12+spec-1.1.0 (*)
+    └── toml v1.1.6+spec-1.1.0 (*)
+
+wit-component v0.252.0 (*)
+
+wit-component v0.253.0 (*)
+
+wit-component v0.254.2 (*)
+
+wit-component v0.254.2 (*)
+
+wit-component v0.259.0 (*)
+
+wit-parser v0.252.0 (*)
+
+wit-parser v0.253.0 (*)
+
+wit-parser v0.254.2 (*)
+
+wit-parser v0.259.0 (*)

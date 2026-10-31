@@ -1,0 +1,155 @@
+Analyzing dependencies of crates in this directory...
+error when handling ./apps/wamn_wms/tests/Cargo.toml: can't load root workspace at /home/kaalin/dev/wamn/.claude/worktrees/audit/apps/Cargo.toml: workspace dependencies are missing `anyhow`: workspace dependencies are missing `anyhow`
+error when handling ./apps/wamn_receiving/tests/Cargo.toml: can't load root workspace at /home/kaalin/dev/wamn/.claude/worktrees/audit/apps/Cargo.toml: workspace dependencies are missing `anyhow`: workspace dependencies are missing `anyhow`
+cargo-machete found the following unused dependencies in this directory:
+wamn-ctl -- ./services/ctl/Cargo.toml:
+	chrono
+	serde
+	wamn-authoring-model
+	wit-component
+	wit-parser
+wamn-gate-harness -- ./test-support/harness/Cargo.toml:
+	async-nats
+	wamn-event-wire
+	wamn-schema-control
+	wamn-test-postgres
+wamn-test-infrastructure -- ./test-support/infrastructure/Cargo.toml:
+	reqwest
+	wamn-event-wire
+wamn-system-tests -- ./tests/system/Cargo.toml:
+	wamn-run-state
+wamn-integration-tests -- ./tests/integration/Cargo.toml:
+	async-trait
+	proptest
+	ring
+	tokio-rustls
+	wamn-client
+	wamn-event-reg
+	wamn-schema-introspection
+	wasm-encoder
+	wasmparser
+	wat
+wamn-gates -- ./tests/orchestrator/Cargo.toml:
+	wamn-runtime
+wamn-conformance-tests -- ./tests/conformance/Cargo.toml:
+	bytes
+	chrono
+	http-body-util
+	hyper
+	hyper-util
+	ring
+	rust_decimal
+	sqlx
+	uuid
+	wamn-execution-contract
+	wamn-execution-host
+	wamn-runtime
+	wasmtime-wasi
+wamn-modbus -- ./integrations/modbus/Cargo.toml:
+	dlmalloc
+wamn-schema-generator -- ./crates/schema/generator/Cargo.toml:
+	wamn-event-wire
+wamn-control -- ./crates/control/lib/Cargo.toml:
+	tokio-rustls
+wamn-platform-identity -- ./crates/identity/platform/Cargo.toml:
+	wamn-catalog
+wamn-runtime -- ./crates/platform/runtime/Cargo.toml:
+	percent-encoding
+	rand_core
+wamn-run-state -- ./crates/execution/run-state/Cargo.toml:
+	wamn-pg-core
+wamn-workflow -- ./crates/execution/workflow/Cargo.toml:
+	boon
+	croner
+	ring
+wamn-execution-host -- ./crates/execution/host/Cargo.toml:
+	base64
+	boon
+	ring
+	wamn-run-state
+	wamn-schema-control
+wamn-client -- ./crates/client/core/Cargo.toml:
+	rust_decimal
+client-acme-receiving -- ./apps/client_acme_receiving/component/Cargo.toml:
+	serde
+	serde_json
+	uuid
+wamn-client-acme-receiving-data-access -- ./apps/client_acme_receiving/data/Cargo.toml:
+	futures-executor
+	serde
+	serde_json
+	wamn-data-access
+rest-connector -- ./apps/rest_connector/component/Cargo.toml:
+	serde
+	uuid
+rest-consumer-fixture -- ./apps/rest_consumer_fixture/component/Cargo.toml:
+	uuid
+netsuite -- ./apps/netsuite/component/Cargo.toml:
+	jsonata-expression
+	serde
+	uuid
+wms -- ./apps/wamn_wms/component/Cargo.toml:
+	serde
+	serde_json
+	uuid
+	wamn-execution-contract
+wamn-wms-data-access -- ./apps/wamn_wms/data/Cargo.toml:
+	wamn-data-access
+modbus-reader -- ./apps/modbus_reader/component/Cargo.toml:
+	serde
+	serde_json
+	uuid
+fixture-overlay -- ./apps/platform_fixture_overlay/component/Cargo.toml:
+	serde
+	serde_json
+	uuid
+	wamn-data-access
+	wamn-postgres-statements
+receiving -- ./apps/wamn_receiving/component/Cargo.toml:
+	serde
+	uuid
+	wamn-execution-contract
+wamn-receiving-data-access -- ./apps/wamn_receiving/data/Cargo.toml:
+	wamn-data-access
+label-render -- ./apps/platform/no-std/label-render/Cargo.toml:
+	dlmalloc
+http-request -- ./apps/platform/no-std/http-request/Cargo.toml:
+	dlmalloc
+http-page -- ./apps/platform/no-std/http-page/Cargo.toml:
+	dlmalloc
+transform -- ./apps/platform/no-std/transform/Cargo.toml:
+	dlmalloc
+wamn-integration -- ./apps/platform/wamn_integration/component/Cargo.toml:
+	serde
+	uuid
+wamn-data-access -- ./apps/platform/data/access/Cargo.toml:
+	chrono
+samples -- ./apps/edge_samples/component/Cargo.toml:
+	serde
+	serde_json
+	uuid
+	wamn-execution-contract
+wamn-edge-samples-data-access -- ./apps/edge_samples/data/Cargo.toml:
+	wamn-data-access
+	wamn-execution-contract
+device -- ./apps/edge_device/component/Cargo.toml:
+	serde
+	serde_json
+	uuid
+fixture -- ./apps/platform_fixture/component/Cargo.toml:
+	serde
+	serde_json
+	uuid
+	wamn-execution-contract
+wamn-platform-fixture-data-access -- ./apps/platform_fixture/data/Cargo.toml:
+	wamn-data-access
+
+If you believe cargo-machete has detected an unused dependency incorrectly,
+you can add the dependency to the list of dependencies to ignore in the
+`[package.metadata.cargo-machete]` section of the appropriate Cargo.toml.
+For example:
+
+[package.metadata.cargo-machete]
+ignored = ["prost"]
+
+Done!
