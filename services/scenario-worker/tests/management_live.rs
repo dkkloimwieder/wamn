@@ -770,13 +770,13 @@ async fn seed_effectful_unreleased_candidate(project: &Client) -> anyhow::Result
         .context("seed the unreleased package root")?;
     project
         .execute(
-            "INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interfaces,mode) VALUES($1,$2,$3,$4,$5,'write')",
+            "INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,$5,'write')",
             &[
                 &ENV_KEY,
                 &requirement.component_digest(),
                 &EFFECTFUL_PACKAGE,
                 &requirement.store_alias(),
-                &vec![requirement.requirement().contract.clone()],
+                &requirement.requirement().contract,
             ],
         )
         .await

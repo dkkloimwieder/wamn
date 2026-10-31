@@ -161,7 +161,7 @@ async fn integration_and_target_seeds_live_only_in_the_system_database() {
     let expected = vec![
         "gcs:host:false".to_owned(),
         "http:host:false".to_owned(),
-        "modbus:wasm:false".to_owned(),
+        "modbus:wasm:true".to_owned(),
         "s3:host:false".to_owned(),
     ];
     let seeds = async || -> Vec<String> {

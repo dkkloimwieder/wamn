@@ -70,8 +70,8 @@ fn release() -> anyhow::Result<Arc<LoadedRelease>> {
         .push(json!({"package-id":"other_fixture","package-version":"1.0.0"}));
     manifest["components"][0]["descriptor"]["connections"] = json!([
         {"store-alias":"files","requirement-type":"blobstore"},
-        {"store-alias":"files_read","requirement-type":"blobstore"},
-        {"store-alias":"files_no_cdn","requirement-type":"blobstore"}
+        {"store-alias":"files-read","requirement-type":"blobstore"},
+        {"store-alias":"files-no-cdn","requirement-type":"blobstore"}
     ]);
     let manifest: wamn_catalog::ServingManifest = serde_json::from_value(manifest)?;
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
@@ -144,8 +144,8 @@ impl FileHost {
             .context("file fixture component")?;
         for (alias, name, mode) in [
             ("files", files::STORE_NAME, "write"),
-            ("files_read", files::STORE_NAME, "read"),
-            ("files_no_cdn", "files-no-cdn", "write"),
+            ("files-read", files::STORE_NAME, "read"),
+            ("files-no-cdn", "files-no-cdn", "write"),
         ] {
             let id: String=host.admin.query_one("SELECT c.id::text FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id WHERE i.name=$1",&[&name]).await?.get(0);
             host.admin.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,'wasmcloud:blobstore/blobstore@0.1.0',$5)",&[&ENV_KEY,&component.descriptor.component_digest,&component.package_id,&alias,&mode]).await?;
@@ -1108,17 +1108,17 @@ async fn public_exposure_without_cdn_and_every_read_binding_mutation_refuse() ->
 {
     let fixture = FileHost::start("file_binding_denial").await?;
     let id = fixture.upload("files", b"retained").await?;
-    let no_cdn = fixture.upload("files_no_cdn", b"no CDN").await?;
+    let no_cdn = fixture.upload("files-no-cdn", b"no CDN").await?;
     assert_eq!(
         fixture
-            .mutate("expose", no_cdn, "files_no_cdn", Some("public"))
+            .mutate("expose", no_cdn, "files-no-cdn", Some("public"))
             .await?["error"]["code"],
         "cdn_host_required"
     );
     let upload = fixture
         .http(
             "POST",
-            "/api/files/files?binding=files_read&name=denied",
+            "/api/files/files?binding=files-read&name=denied",
             Some(&fixture.token(false)),
             body(b"denied"),
         )
@@ -1127,13 +1127,13 @@ async fn public_exposure_without_cdn_and_every_read_binding_mutation_refuse() ->
     for exposure in ["private", "application", "public"] {
         assert_eq!(
             fixture
-                .mutate("expose", id, "files_read", Some(exposure))
+                .mutate("expose", id, "files-read", Some(exposure))
                 .await?["error"]["code"],
             "binding_refused"
         );
     }
     assert_eq!(
-        fixture.mutate("delete", id, "files_read", None).await?["error"]["code"],
+        fixture.mutate("delete", id, "files-read", None).await?["error"]["code"],
         "binding_refused"
     );
     assert_eq!(
