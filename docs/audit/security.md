@@ -278,22 +278,24 @@ All five questions were answered on 2026-10-31.
 
 This review used source inspection and the shared measurements. No files changed, and no builds or tests ran. Tests named below are proposed validation.
 
-Normal tenant admission refuses direct sockets, filesystem, and WASI HTTP imports. Granted platform capabilities still permit network effects through host bindings (`crates/platform/component-policy/src/lib.rs:181`, `crates/platform/component-policy/src/lib.rs:382`). Connector stores enforce an exact network authority independently of the application engine (`crates/platform/engine/src/connector.rs:138`, `crates/platform/engine/src/connector.rs:275`). Application workloads declare no filesystem volumes (`crates/platform/engine/src/operation/native_workload.rs:390`).
+Application component admission refuses direct sockets, filesystem, and WASI HTTP imports. Granted platform capabilities still permit network effects through host bindings (`crates/platform/component-policy/src/lib.rs:181`, `crates/platform/component-policy/src/lib.rs:382`). Connector stores enforce an exact network authority independently of the application engine (`crates/platform/engine/src/connector.rs:138`, `crates/platform/engine/src/connector.rs:275`). Application workloads declare no filesystem volumes (`crates/platform/engine/src/operation/native_workload.rs:390`).
 
 Execution uses deadlines bounded to 1–30,000 ms and native epoch interruption. WAMN grants no instruction fuel. Each linear memory has a 256 MiB ceiling, but aggregate guest memory uses count mode. A separate sampled process guard remains active (`crates/platform/engine/src/router_delivery.rs:475`, `docs/architecture/execution.md:371`).
 
 ## Finding E3-1: Registry descriptors can bypass byte admission
 
 Severity: high  
-Effort: M  
+Effort: S  
 Area: `crates/catalog/package-artifact`, `crates/platform/engine`  
 Evidence: `crates/catalog/package-artifact/src/lib.rs:5`, `crates/control/lib/src/publish_release.rs:1621`, `crates/catalog/model/src/component_facts.rs:460`, `crates/platform/engine/src/operation/native_workload.rs:254`, `crates/platform/engine/src/engine.rs:654`  
 Problem: Package existence is treated as proof that publication admission ran. Publication accepts descriptor claims, while runtime loading checks the component digest without rederiving its imports. A registry writer can therefore supply matching hashes and false admission facts. If that component reaches execution, the default socket policy permits undeclared connections.  
-Proposal: Derive admission facts from exact component bytes at the trusted publication boundary. Compare carried descriptors with those results. Enforce socket refusals at runtime.  
-Deletes: The assumption that registry existence proves admission and the conversion of unchecked descriptors into admitted facts.  
+Proposal: The runtime refuses `wasi:sockets` for application components regardless of what the descriptor says. The fork implements `wasi:sockets` unconditionally, which is the recorded egress bypass.  
+Deletes: The unconditional `wasi:sockets` implementation for application components.  
 Risk: Packages with stale or invented descriptors refuse. A crafted package test must hide a socket import in its descriptor and prove refusal before execution.
 
-Owner addendum 2026-10-31: [alignment](../plan/alignment.md) W1 to W3 change what admission matches (package family `0.2` and a build-derived ceiling). Any E3-1 work waits for W1 to W3 and must not re-pin exact versions.
+Owner addendum 2026-10-31: [alignment](../plan/alignment.md) W1 to W3 change what admission matches (package family `0.2` and a build-derived ceiling). Admission work must not re-pin exact versions.
+
+Owner review 2026-10-31: split. The rejected half is deriving admission facts from bytes at publication and comparing descriptors. Registry write access is the trusted boundary, and publication relies on OCI and WIT. Question 1 is answered: yes. The kept half is the runtime socket refusal above, Group 3 Do, small. It is independent of W1 to W3 and does not wait.
 
 ## Finding E3-2: The native lockfile contains reported security vulnerabilities
 
@@ -306,16 +308,20 @@ Proposal: Upgrade the affected native dependency families together. Record featu
 Deletes: Vulnerable dependency resolutions and obsolete version assertions.  
 Risk: Runtime APIs and component behavior can change. Run the source-identity, admission, connector, deadline, and cancellation suites against the replacement graph.
 
+Owner review 2026-10-31: keep, high. A dependency bump is the most expensive action, so the affected families (Wasmtime to 48.0.8 and the rest named in measurements section 5) are updated in the One NATS build, not in a build of their own. Record which advisories remain reachable after that update. No separate run.
+
 ## Finding E3-3: Package pulls and extraction have no resource budget
 
-Severity: high  
-Effort: M  
+Severity: low  
+Effort: S  
 Area: `crates/catalog/package-artifact`, `crates/control/lib/src/package_artifact.rs`  
 Evidence: `crates/catalog/package-artifact/src/registry_pull.rs:23`, `crates/catalog/package-artifact/src/lib.rs:391`, `crates/control/lib/src/package_artifact.rs:1223`, `crates/control/lib/src/package_artifact.rs:1267`  
 Problem: Registry reads buffer complete layers, and extraction reads each complete entry into another buffer. The code imposes no aggregate byte, layer-count, or file-count limit before extraction and repacking. A malicious artifact can exhaust application memory or temporary storage before its final refusal. Regular-file and relative-path restrictions prevent archive links and ordinary traversal, but do not bound resource use.  
-Proposal: Stream artifacts through fixed byte and entry budgets. Admit only the paths assigned to each layer before writing them.  
-Deletes: Unbounded blob buffers and archive `read_to_end` calls.  
+Proposal: A byte cap on blob reads and an entry cap on extraction, added when `package-artifact` is next touched. No streaming rewrite.  
+Deletes: Uncapped blob reads and uncapped archive entry counts.  
 Risk: Large legitimate packages can refuse. Boundary tests must cover oversized blobs, excessive entries, duplicate paths, traversal, and cleanup after failure.
+
+Owner review 2026-10-31: low, In passing in package-artifact. Artifacts come from the project's own registry, which is the trusted boundary.
 
 ## Finding E3-4: Aggregate guest memory remains observational
 
@@ -328,16 +334,20 @@ Proposal: Use aggregate memory enforcement for serving hosts and connector engin
 Deletes: Serving defaults that select `GuestMemoryMode::Count`.  
 Risk: Workloads that currently exceed the budget refuse. Extend `enforce_mode_refuses_aggregate_growth_until_another_store_releases_memory` to cover deployed host, edge, and connector construction.
 
+Owner review 2026-10-31: deferred. Count mode is an existing owner ruling. The condition that ends it is the post-A5 re-measurement with the build record's numbers, nothing before (question 2).
+
 ## Finding E3-5: Execution deadlines do not contain compilation
 
-Severity: medium  
-Effort: L  
+Severity: low  
+Effort: S  
 Area: `crates/platform/engine/src/component_admission.rs`, `operation/native_workload.rs`  
 Evidence: `crates/platform/engine/src/component_admission.rs:195`, `crates/platform/engine/src/component_admission.rs:369`, `crates/platform/engine/src/lib.rs:85`, `crates/platform/engine/src/operation/native_workload.rs:400`  
 Problem: Admission compiles the component before applying its import policy. Import discovery also invokes full compilation. Runtime loading moves compilation into `spawn_blocking`, whose work continues after its awaiting caller is cancelled. Guest memory ceilings and epoch deadlines do not bound compiler allocations or CPU use.  
-Proposal: Reject forbidden imports through bounded structural analysis before code generation. Run required compilation under explicit concurrency, memory, and execution budgets in a process that the caller can terminate.  
-Deletes: Full compilation solely for import discovery and unrestricted detached compilation work.  
+Proposal: Import listing uses `wasmparser` instead of a full compile. That is cheaper, not a security mechanism, and nothing enforces on it. Fix detached compilation after caller cancellation when `component_admission.rs` is next changed.  
+Deletes: Full compilation solely for import discovery and compilation that outlives a cancelled caller.  
 Risk: Structural analysis must preserve named-interface and nested-component semantics. Adversarial compilation tests must prove bounded resource use and termination after caller cancellation.
+
+Owner review 2026-10-31: low, In passing.
 
 ## Finding E3-6: Connector code remains retained after bindings retire
 
@@ -355,26 +365,32 @@ Effort: S
 Area: `crates/platform/engine/src/engine.rs`  
 Evidence: `crates/platform/engine/src/engine.rs:242`, `services/host/src/main.rs:59`, `services/host/src/host.rs:1089`, `services/host/src/host.rs:1108`  
 Problem: Engine construction calls unsafe `std::env::set_var` for the abandoned-call grace. Its safety argument covers Rust environment locking but assumes away concurrent native environment readers. The host creates its multithreaded runtime and starts connection work before this call. `Once` serializes the setter without establishing the required safety condition.  
-Proposal: Set the grace before runtime or library initialization. Prefer an upstream constructor parameter when that API becomes available.  
+Proposal: Set the grace before the runtime starts. No upstream issue.  
 Deletes: Environment mutation from the shared engine constructor and its incomplete safety argument.  
 Risk: Every executable that constructs an engine must retain zero-grace cancellation. Startup subprocess tests and the existing cancellation suites must prove that behavior.
 
+Owner review 2026-10-31: keep, small, Group 3 In passing. It rides the One NATS host build.
+
 ## Finding E3-8: Dependency identity gates do not provide a refresh policy
 
-Severity: medium  
-Effort: M  
+Severity: low  
+Effort: S  
 Area: `tools/repo-lint`, dependency locks, vendored dependencies  
 Evidence: measurements.md sections 4 and 5, `tools/repo-lint:304`, `tests/conformance/tests/wasmtime_source_identity.rs:167`, `vendor/pg-walstream/WAMN-PATCH.md:1`, `vendor/pg-walstream/Cargo.lock:1142`  
 Problem: The prior advisory database reported zero findings because it remained dated April 7. Repository lint runs no advisory refresh or scan. Shared measurements cover two lockfiles, while this checkout contains six first-party lockfiles plus the vendored lockfile. Source-identity gates preserve selected versions but provide no security refresh cadence.  
-Proposal: Gate fresh advisory results for every maintained dependency domain. Assign an owner to coordinated pin updates and the pg-walstream patch. Remove confirmed unused runtime declarations for `percent-encoding` and `rand_core` (`crates/platform/runtime/Cargo.toml:17`, `crates/platform/runtime/Cargo.toml:70`).  
-Deletes: Unused dependency declarations and stale advisory results as release evidence. Retire `vendor/pg-walstream` when upstream supplies the required typed keepalive API.  
-Risk: Fresh scans can block releases and expose fixture-only findings. A gate test must reject stale advisory data and enumerate every maintained lockfile.
+Proposal: Remove the confirmed unused runtime declarations for `percent-encoding` and `rand_core` (`crates/platform/runtime/Cargo.toml:17`, `crates/platform/runtime/Cargo.toml:70`), with A1-6. `cargo audit` runs by hand whenever a bump is planned.  
+Deletes: The two unused dependency declarations.  
+Risk: None beyond a rebuild of the runtime crate.
+
+Owner review 2026-10-31: the advisory-refresh check and the release block are rejected. No owner and no refresh interval exist. Whoever plans the next bump runs `cargo audit` then. `vendor/pg-walstream` stays until upstream has the typed keepalive API. Low, In passing with A1-6.
 
 ## Open questions for the owner
 
-1. Is registry write access intentionally equivalent to authority to bypass component admission? E3-1 depends on an attacker controlling a package that publication selects.
-2. What measured condition ends count mode? The current removal condition requires another owner ruling (`docs/architecture/native-alignment.md:32`).
-3. Who owns security refreshes for the immutable WASI-Virt revision, its adapter, and the pg-walstream patch? Their identities are recorded, but no refresh interval appears (`Cargo.toml:215`, `vendor/pg-walstream/WAMN-PATCH.md:1`).
-4. Does another gate scan the web dependency graph? `web/wfe` is pinned at `f158f65c0f737ba92c3df0fc74003d28906a9c08`, and ancestry checks govern updates, but the supplied web measurement is unused-code analysis (`tools/submodule-check/src/main.rs:62`, measurements.md section 8).
-5. Must WASI-Virt provenance output measure its adapter digest? The executable currently prints a constant (`crates/platform/component-virtualizer/src/main.rs:46`).
+All five questions were answered on 2026-10-31.
+
+1. Yes. Registry write access is the trusted boundary (E3-1).
+2. After the A5 re-measurement, with the build record's numbers (E3-4).
+3. No owner and no interval. Whoever plans the next bump runs `cargo audit` then. WASI-Virt and the adapter follow the Wasmtime bump.
+4. No web advisory scan. The pnpm cooldown policy and the pinned wfe revision are the web supply-chain controls.
+5. Alignment W2 keeps the adapter digest exact and its test fails on change, so the constant in component-virtualizer is redundant. Derive it at build in the W1 to W3 change.
 
