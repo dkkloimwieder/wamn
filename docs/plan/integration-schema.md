@@ -39,6 +39,7 @@ CREATE TABLE registry.integration_type_version (    -- every build, every parame
     parameter_schema jsonb NOT NULL,                 -- flat object; per field: optional immutable, optional deprecated
     operations       text NOT NULL,                  -- the one exported WIT world, e.g. wamn:modbus/client@1.0.0
     exports          text[] NOT NULL,                -- every interface that world exports; decoded at publish (host types: seeded)
+    write_interfaces text[] NOT NULL DEFAULT '{}',   -- the exports that write; declared at publish, a subset of exports
     published_at     timestamptz NOT NULL,
     PRIMARY KEY (integration_type, version)
 );
@@ -195,9 +196,9 @@ CREATE TABLE platform.connection (
 CREATE TABLE catalog.connection_requirement (
     env_key          text NOT NULL,
     component_digest text NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
-    package_id       text NOT NULL,          -- name, interfaces and mode come from the package's wamn.k
-    name             text NOT NULL,          -- declared in wamn.k
-    interfaces       text[] NOT NULL CHECK (cardinality(interfaces) > 0),  -- declared in wamn.k; install checks the component imports each
+    package_id       text NOT NULL,          -- name, interface and mode come from the package's wamn.k
+    name             text NOT NULL CHECK (name ~ '^[a-z][a-z0-9-]{0,62}$'),  -- declared in wamn.k; a WIT label
+    interface        text NOT NULL,          -- install checks the component imports it under the label name
     mode             text NOT NULL CHECK (mode IN ('read', 'write')),
     PRIMARY KEY (env_key, component_digest, package_id, name)
 );
@@ -226,7 +227,7 @@ CREATE TABLE catalog.connection_binding (
     FOREIGN KEY (env_key, component_digest, package_id, name)
         REFERENCES catalog.connection_requirement (env_key, component_digest, package_id, name)
 );
--- apply refuses a binding whose connection's version does not export every interface the requirement declares
+-- apply refuses a binding whose connection's version does not export the interface the requirement declares
 ```
 
 - Admission is per component: the host refuses a call on a name the calling component did not declare.
@@ -279,21 +280,25 @@ Three separate controls; none is a column on the connection or the binding.
 
 - **Which users may write:** the ACL on application operations. A user without the operation is refused before any connection is touched.
 - **What the code may do:** `connection_requirement.mode`, declared in `wamn.k`. Two values; `write` includes `read`.
-  - wasm and native types: WIT enforces it. The version's one world exports a read interface and a write interface; apply checks that a `read` requirement lists only read interfaces in `interfaces`. A `write` requirement may import both, or write alone.
+  - wasm and native types: WIT enforces it. A declared name imports exactly one interface. The version records the exports that write (`write_interfaces`, declared at publish); apply refuses a `read` requirement whose interface is one of them. A write interface carries the read functions too, so a `write` requirement still imports one interface.
   - host types: one interface serves every mode (HTTP: `wamn:connection/http`), so the host enforces mode at run time, as main does today (fact: `connection_http.rs::authorize_method` allows only GET and HEAD on a read binding; `wamn_blobstore/store.rs::with_read_only`). The interface check does not apply.
 - **What the connection can do at all:** the credential, such as a read-only IAM or ERP role, enforced by the external system.
 
 ```wit
 package wamn:modbus@1.0.0;
 interface read  { read-registers: func(addr: u16, count: u16) -> result<list<u16>, error>; }
-interface write { write-register: func(addr: u16, value: u16) -> result<_, error>; }
+interface write {
+  read-registers: func(addr: u16, count: u16) -> result<list<u16>, error>;
+  write-register: func(addr: u16, value: u16) -> result<_, error>;
+}
 world client {
   export read;
   export write;
   export wamn:integration/health@0.1.0;
 }
-// mode = "read": imports wamn:modbus/read only, so write-register does not exist for it
-// mode = "write": imports both
+// write_interfaces = ["wamn:modbus/write@1.0.0"]
+// mode = "read":  import registers: wamn:modbus/read@1.0.0;   write-register does not exist for it
+// mode = "write": import registers: wamn:modbus/write@1.0.0;
 ```
 
 ## Parameters
@@ -341,7 +346,7 @@ On main (fact): `wamn:connector@0.1.0` `bound` exposes only `authority()` and `c
 - Add `parameters: func() -> string` (validated JSON) to `bound`. The host strips `auth` before returning it, because the host applies auth; only the `custom` auth type receives it, beside `bound.credential()`.
 - `wamn:integration/reader` is retired. Each version exports exactly one typed WIT world (`operations`), which may hold read and write interfaces and always exports `wamn:integration/health` (`check: func() -> result<_, string>`). Host types implement health in the host.
 - Types share interfaces where the protocol is shared (`s3`, `gcs` and `disk` export blobstore; HTTP-based types export `wamn:connection/http`); a unique protocol gets its own package (`wamn:modbus`, `wamn:netsuite/rest`).
-- An application imports interfaces, never a type. The generator emits one typed handle per name declared in `wamn.k`.
+- An application imports interfaces, never a type. Each declared name is a component-model named import, `import <name>: <interface>;` (the `implements` form that wash-runtime routes per label), so the host links each label to its bound connection and two names may import the same interface. A declared name is a WIT label: `^[a-z][a-z0-9-]{0,62}$`. `wamn:connection/http` routes by label too and loses its `requirement` field; blobstore keeps the WASI shape, a container by name.
 - Within one release, every component bound to a connection imports from that release's one version, so consumers of a connection upgrade together; they may import different interfaces of its world. Apply refuses a mismatch and names the component; `wamn build` warns first.
 - Compatibility is component-model semver: 1.x within a major, 0.x within a minor. Most wamn contracts are 0.x, so a minor bump forces a rebuild until they reach 1.0. Interface packages keep their versions.
 
@@ -350,8 +355,8 @@ On main (fact): `wamn:connector@0.1.0` `bound` exposes only `authority()` and `c
 The developer declares a need in `wamn.k`, the admin configures integrations and connections in the UI or API, and `environment.k` joins the two. Main has both `.k` halves (fact: `apps/netsuite/wamn.k`, `deploy/gcp/environments/dkk--wms--dev.k`).
 
 ```
-# wamn.k: the name the code uses, the interfaces it imports for it, and the mode
-connections = {erp = {interfaces = ["wamn:netsuite/rest@0.1.0"], mode = "write"}}
+# wamn.k: the name the code uses (a WIT label), the interface it imports under it, and the mode
+connections = {erp = {interface = "wamn:netsuite/rest@0.1.0", mode = "write"}}
 
 # environment.k: the version each integration runs in this env, and which integration fills each name
 integrations = {"acme-netsuite" = {version = 4}}
@@ -367,8 +372,8 @@ applications = {
 | per env parameters, credential, disable | admin | a new `connection_generation` and the secret in the store | `connection.*` routes |
 | `environment.k` apply | deployment | `release_connection` and `connection_binding` | `wamn-ctl env apply` |
 
-- Apply refuses when the env has no active connection for the named integration, or when the version it uses does not export every interface the requirement declares (component-model semver). The type never has to match: any type whose version exports the interfaces fits, so a blobstore requirement binds gcs, s3 or disk.
-- Changes from main: `wamn.k` replaces `integration` with `interfaces` (checked at install against the component's imports); `environment.k` names a project integration instead of an org connection, gains `integrations = {name = {version}}`, and loses `connectors = {…}`.
+- Apply refuses when the env has no active connection for the named integration, or when the version it uses does not export the interface the requirement declares (component-model semver). The type never has to match: any type whose version exports the interface fits, so a blobstore requirement binds gcs, s3 or disk.
+- Changes from main: `wamn.k` replaces `integration` with `interface`, imported under the declared name (checked at install against the component's imports); `environment.k` names a project integration instead of an org connection, gains `integrations = {name = {version}}`, and loses `connectors = {…}`.
 
 ## Headless interface
 
@@ -461,7 +466,7 @@ Plaintext secrets never sit in Postgres. A credential row holds a reference (`st
 | `registry.connection` (org-level) | `integration` (identity and type) + `connection` (env instance, all configuration) |
 | `registry.connection_generation`, `catalog.connection_generations` | `connection_generation` (parameters and credential reference; no version) |
 | `catalog.connection_instances` | `connection` |
-| `catalog.connection_requirements` | `connection_requirement`, plus `package_id` and `interfaces` |
+| `catalog.connection_requirements` | `connection_requirement`, plus `package_id` and `interface` |
 | `catalog.connection_bindings`, `registry.environment_connection_binding` (incl. `connector`) | `connection_binding` (no mode) + `release_connection` (the version) |
 | `registry.project_connection`, `platform.project_connection` | dropped: the integration belongs to the project |
 | `registry.integration_allow`, `platform.integration_allow` | dropped: the binding is the permission |
@@ -477,7 +482,7 @@ Each is checked by the named test type: SQL (a statement against a fresh schema)
 
 | # | Invariant | Check |
 | --- | --- | --- |
-| 1 | A binding whose connection's version does not export every interface the requirement declares is refused. | apply: bind a requirement to a connection missing one interface → refused; install: a declared interface the component does not import → refused |
+| 1 | A binding whose connection's version does not export the interface the requirement declares is refused. | apply: bind a requirement to a connection whose version lacks its interface → refused; install: a declared name the component does not import under that label → refused |
 | 2 | One connection per integration per env. | SQL: second `connection` for (integration, env) → unique violation |
 | 3 | A connection's active generation exists and its credential belongs to the same connection. | SQL: point `active_generation` or `credential_id` elsewhere → FK violation at commit |
 | 4 | Generations and credential rows never change; they are removed only with their connection. | SQL: UPDATE or DELETE of a generation or credential → 55000; `connection.delete` removes them |
@@ -489,7 +494,7 @@ Each is checked by the named test type: SQL (a statement against a fresh schema)
 | 10 | At most one active connection per (target, resource\_key). | SQL: second active row → unique violation |
 | 11 | An env with an exclusive binding runs one host replica. | apply: a host group body without `replicas: 1` → refused |
 | 12 | A pod's readiness never waits on a lease. | live: hold the lease from another session; the new pod reports ready |
-| 13 | A `read` requirement never lists a write interface; a read binding on a host type allows only reads. | apply: refused; unit: `authorize_method` and `with_read_only` |
+| 13 | A `read` requirement never imports an interface in its version's `write_interfaces`; a read binding on a host type allows only reads. | apply: refused; unit: `authorize_method` and `with_read_only` |
 | 14 | The host refuses a call on a name the calling component did not declare. | unit |
 | 15 | A version publish keeps the field lifecycle: removal only after deprecation, required only after optional, JSON type never changes, no top-level `auth`, `http_only` auth only with HTTP-interface types, a digest on every wasm and native version. | unit: one refusal per rule |
 | 16 | Stored values validate against every version a live release uses of the connection. | apply and unit: a write or a version change that breaks one → refused |
@@ -509,7 +514,7 @@ Each is checked by the named test type: SQL (a statement against a fresh schema)
 | A Postgres session advisory lock stays held for the life of its dedicated session and is released when the session drops (pod killed, network cut). | live: take the lock from a host, kill the pod, take it from a second session | the lease becomes a row with a heartbeat and expiry |
 | Each env's host pods can run under their own ServiceAccount with a mounted token, so a Role can grant get on that env's Secret name alone (the host pods of all envs share one namespace). | the release chart sets a per-host-group serviceAccountName and token mount | the control host reads the Secret and hands the value to the env host over a host route |
 | GKE application-layer secrets encryption can be enabled on wamn-dev. | `gcloud container clusters describe` shows `databaseEncryption.state: ENCRYPTED` | Kubernetes Secrets are plaintext in etcd: GCP Secret Manager becomes the first cloud backend |
-| A component's imports can be read from its binary at install, so `interfaces` needs no declaration. | unit: decode a built component with `wit-component` and list its imports | `wamn.k` declares the interfaces per name |
+| A component's imports can be read from its binary at install, so `interface` needs no declaration. | unit: decode a built component with `wit-component` and list its imports | `wamn.k` declares the interface per name |
 | An OAuth refresh token is bound to the client id, not to the client secret, for the providers in use. | test against each provider (NetSuite first): rotate the secret, refresh with the old token | a secret-only rotation deletes the token row and forces `connection.authorize` |
 | Integration code holds no state between calls (a fresh `Store` per call). | unit: two calls on one connection share no guest memory | a live version change must wait for runs to finish |
 | The host can build a second version's `InstancePre` while serving the first. | live: change the version under load; no failed call | a version change needs a rollout |
