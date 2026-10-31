@@ -322,7 +322,7 @@ pub fn replicate<H: AsRef<AuthCache> + Send + Sync + 'static>(
     holder: Arc<H>,
 ) -> AuthChanges {
     let filters = match env_key {
-        Some(env_key) => vec![format!("{env_key}.*"), format!("{IDENTITY_TOKEN}.*")],
+        Some(env_key) => vec![format!("{env_key}.>"), format!("{IDENTITY_TOKEN}.>")],
         None => vec![">".to_owned()],
     };
     crate::kv_memory::spawn_watch(client, BUCKET, filters, holder, |holder| {

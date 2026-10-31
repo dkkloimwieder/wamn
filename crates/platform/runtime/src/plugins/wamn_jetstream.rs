@@ -6,7 +6,6 @@
 //! the payload DLQ.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -149,14 +148,10 @@ pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::
 
 #[derive(Clone, Debug, Default)]
 pub struct WamnJetstreamConfig {
-    /// Data-plane NATS URL (deploy/infra/nats-jetstream.yaml Service `evt-nats`).
-    /// `None` ⇒ the plugin registers but every call returns
-    /// `connection-unavailable`.
-    pub nats_url: Option<String>,
-    /// Event-broker username paired with its private password file.
-    pub nats_username: Option<String>,
-    /// Private event-broker password file. Password bytes stay outside configuration.
-    pub nats_password_file: Option<PathBuf>,
+    /// The host's data connection, with the environment certificate
+    /// (docs/plan/alignment.md R5). `None` ⇒ the plugin registers but every
+    /// call returns `connection-unavailable`.
+    pub nats: Option<async_nats::Client>,
     /// Trusted event coordinates, separate from tenant and database authority.
     pub event_scope: Option<Triple>,
     /// Declared NATS stream copies, separate from workload instances.
@@ -166,13 +161,11 @@ pub struct WamnJetstreamConfig {
 }
 
 impl WamnJetstreamConfig {
-    /// The event-plane NATS URL, gated on `WAMN_EVT_NATS_URL` (the same
-    /// skip-when-absent posture the live tests use).
+    /// The event coordinates and stream declarations. The host adds its data
+    /// connection with [`Self::with_nats`].
     pub fn from_env() -> Self {
         Self {
-            nats_url: std::env::var("WAMN_EVT_NATS_URL").ok(),
-            nats_username: std::env::var("WAMN_EVT_NATS_USERNAME").ok(),
-            nats_password_file: std::env::var_os("WAMN_EVT_NATS_PASSWORD_FILE").map(PathBuf::from),
+            nats: None,
             event_scope: match (
                 std::env::var("WAMN_EVT_ORG"),
                 std::env::var("WAMN_EVT_PROJECT"),
@@ -191,6 +184,13 @@ impl WamnJetstreamConfig {
                 .and_then(|value| value.parse().ok()),
         }
     }
+
+    /// Use `client` for every event call.
+    #[must_use]
+    pub fn with_nats(mut self, client: async_nats::Client) -> Self {
+        self.nats = Some(client);
+        self
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -199,11 +199,9 @@ impl WamnJetstreamConfig {
 
 #[derive(Debug)]
 pub struct WamnJetstream {
-    nats_url: Option<String>,
+    nats: Option<async_nats::Client>,
     stream_replicas: Option<usize>,
     dup_window_secs: Option<u64>,
-    nats_username: Option<String>,
-    nats_password_file: Option<PathBuf>,
     /// Event coordinates come from the platform bootstrap, separately from DB authority.
     event_coordinates: EventCoordinates,
     /// Lazily-connected, memoized JetStream context. A `Mutex<Option<_>>` (not a
@@ -424,11 +422,9 @@ fn js_span(
 impl WamnJetstream {
     pub fn new(cfg: WamnJetstreamConfig) -> Self {
         Self {
-            nats_url: cfg.nats_url,
+            nats: cfg.nats,
             stream_replicas: cfg.stream_replicas,
             dup_window_secs: cfg.dup_window_secs,
-            nats_username: cfg.nats_username,
-            nats_password_file: cfg.nats_password_file,
             event_coordinates: cfg
                 .event_scope
                 .map_or_else(EventCoordinates::default, |scope| EventCoordinates {
@@ -449,7 +445,7 @@ impl WamnJetstream {
 
     /// Refuse a configured event connection until its streams match their declarations.
     pub async fn activate_events(&self) -> Result<(), JsError> {
-        if self.nats_url.is_some() {
+        if self.nats.is_some() {
             self.ensure_ctx().await?;
         }
         Ok(())
@@ -615,45 +611,8 @@ impl WamnJetstream {
         if let Some(ctx) = guard.as_ref() {
             return Ok(ctx.clone());
         }
-        let url = self
-            .nats_url
-            .as_deref()
-            .ok_or(JsError::ConnectionUnavailable)?;
+        let client = self.nats.clone().ok_or(JsError::ConnectionUnavailable)?;
         let expected_streams = self.expected_event_streams()?;
-        let options = match (&self.nats_username, &self.nats_password_file) {
-            (Some(username), Some(path))
-                if !username.is_empty()
-                    && username.bytes().all(|byte| {
-                        byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')
-                    }) =>
-            {
-                let password = tokio::fs::read_to_string(path).await.map_err(|error| {
-                    tracing::warn!(target: "wamn::jetstream", error = %error,
-                        "event broker password file is unreadable");
-                    JsError::ConnectionUnavailable
-                })?;
-                if password.is_empty() {
-                    return Err(JsError::ConnectionUnavailable);
-                }
-                async_nats::ConnectOptions::new()
-                    .custom_inbox_prefix(format!("_INBOX_{username}"))
-                    .user_and_password(username.clone(), password)
-            }
-            (None, None) => async_nats::ConnectOptions::new(),
-            _ => {
-                tracing::warn!(target: "wamn::jetstream",
-                    "event broker requires a subject-safe username and its password file");
-                return Err(JsError::ConnectionUnavailable);
-            }
-        };
-        let client = options.connect(url).await.map_err(|e| {
-            tracing::warn!(
-                target: "wamn::jetstream",
-                error = %e,
-                "data-plane NATS connect failed"
-            );
-            JsError::ConnectionUnavailable
-        })?;
         let ctx = async_nats::jetstream::new(client);
         for expected in expected_streams {
             let stream = ctx
@@ -1425,11 +1384,9 @@ mod tests {
     }
 
     #[test]
-    fn config_from_env_reads_evt_nats_url() {
-        // Only assert the None (absent) branch — reading the var back would race
-        // other tests in-process; the skip-when-absent posture is the contract.
-        let cfg = WamnJetstreamConfig::default();
-        assert!(cfg.nats_url.is_none());
+    fn config_from_env_has_no_connection() {
+        // The host adds its data connection; the environment names none.
+        assert!(WamnJetstreamConfig::from_env().nats.is_none());
     }
 
     /// Trigger rows work with a release that declares no registrations.
@@ -1628,7 +1585,7 @@ mod tests {
             .expect("set WAMN_EVT_NATS_URL to this test's disposable event broker");
 
         let client = async_nats::connect(&url).await.expect("connect");
-        let ctx = async_nats::jetstream::new(client);
+        let ctx = async_nats::jetstream::new(client.clone());
         let stream = "EVT_13_wamnjsderived_3_app_3_dev";
         let event_subject = "evt.wamnjsderived.app.dev.orders.update";
         let _ = ctx.delete_stream(stream).await;
@@ -1644,11 +1601,10 @@ mod tests {
             .expect("provision advisory stream");
 
         let plugin = WamnJetstream::new(WamnJetstreamConfig {
-            nats_url: Some(url),
+            nats: Some(client),
             event_scope: Some(scope),
             stream_replicas: Some(1),
             dup_window_secs: Some(120),
-            ..Default::default()
         });
         plugin
             .bind_derived_scope("component-1", "wamnjsderived", "app", "dev")

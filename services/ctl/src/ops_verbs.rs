@@ -94,7 +94,7 @@ pub async fn create_user(args: CreateUserArgs) -> anyhow::Result<()> {
             system_database_url: args.system_database_url,
         },
         &wamn_platform_identity::auth_changes::AuthChanges::connect(
-            &wamn_platform_identity::auth_changes::AuthNats::from_env()?,
+            &wamn_platform_identity::nats::PlatformNats::from_env()?,
         )
         .await?,
     )

@@ -81,9 +81,9 @@ It requires these inputs even when the upload does not use their database or bro
 | `WAMN_PACKAGE_ARTIFACT_BASE` | Required registry repository for package artifacts |
 | `WAMN_REGISTRY_AUTH_FILE` | Required registry authentication file |
 | `WAMN_OCI_CA_PATHS` | Optional colon-separated paths to registry CA certificates |
-| `WAMN_AUTH_NATS_URL` | Required URL for the authorization broker |
-| `WAMN_AUTH_NATS_TLS_CA`, `WAMN_AUTH_NATS_TLS_CERT`, `WAMN_AUTH_NATS_TLS_KEY` | Required paths for the broker CA, client certificate, and key |
-| `WAMN_AUTH_NATS_TLS_SERVER_NAME` | Optional broker TLS server name |
+| `WAMN_NATS_URL` | Required URL for the authorization broker |
+| `WAMN_NATS_TLS_CA`, `WAMN_NATS_TLS_CERT`, `WAMN_NATS_TLS_KEY` | Required paths for the broker CA, client certificate, and key |
+| `WAMN_NATS_TLS_SERVER_NAME` | Optional broker TLS server name |
 
 [AuthNats::from_env](../../crates/identity/platform/src/auth_changes.rs) defines the broker inputs.
 `Platform::from_env` also parses the optional database, identity, and event configuration used by environment commands.

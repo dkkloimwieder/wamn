@@ -19,7 +19,8 @@ use serde_json::{Value, json};
 use tokio_postgres::Client;
 use uuid::Uuid;
 use wamn_control::user_role::{grant_role_on, revoke_role_on};
-use wamn_platform_identity::auth_changes::{AuthChanges, AuthNats};
+use wamn_platform_identity::auth_changes::AuthChanges;
+use wamn_platform_identity::nats::PlatformNats;
 
 use database::{
     Fixture, assert_state, bind_fixture_principal, connect, seed, snapshot, wait_for_blocked,
@@ -948,7 +949,7 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
     // replay for AUTH_PROPAGATION, so a delivery failure still fails the case.
     // A caller without a role holds no operation, and the denial names the
     // route's own operation.
-    let auth = AuthChanges::connect(&AuthNats {
+    let auth = AuthChanges::connect(&PlatformNats {
         nats_url: inputs.auth_nats.url.clone(),
         nats_tls_ca: inputs.auth_nats.ca.clone(),
         nats_tls_cert: inputs.auth_nats.cert.clone(),

@@ -652,8 +652,8 @@ A change of a user row or a user role deletes the key of the principal.
 A change of a role, a permission or the environment status deletes every key of the tenant.
 A PAT revoke, a logout, a reset, a replayed renewal, a membership revoke and a disabled principal delete the identity key of the principal.
 The writers are the application host, the control host, the identity service and `wamn-ctl`.
-The identity service and `wamn-ctl` read the connection from `WAMN_AUTH_NATS_URL`, `WAMN_AUTH_NATS_TLS_CA`, `WAMN_AUTH_NATS_TLS_CERT` and `WAMN_AUTH_NATS_TLS_KEY`, with a client certificate of the wasmCloud CA.
-`WAMN_AUTH_NATS_TLS_SERVER_NAME` names the server certificate when a port-forward reaches the server.
+The identity service and `wamn-ctl` read the connection from `WAMN_NATS_URL`, `WAMN_NATS_TLS_CA`, `WAMN_NATS_TLS_CERT` and `WAMN_NATS_TLS_KEY`, with a client certificate of the wasmCloud CA.
+`WAMN_NATS_TLS_SERVER_NAME` names the server certificate when a port-forward reaches the server.
 A lost delete waits for the 60 seconds.
 
 The exact audience is `urn:wamn:project-env:{org}:{project}:{env}:{instance_suffix}`.

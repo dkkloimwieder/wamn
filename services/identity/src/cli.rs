@@ -190,20 +190,25 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
             None => tls_config(&certificate, &private_key)?,
         };
         drop(private_key);
-        // Logouts, resets and replay revocations go to the scheduler NATS. A
-        // deployment with hosts sets WAMN_AUTH_NATS_URL.
-        let changes = if std::env::var_os("WAMN_AUTH_NATS_URL").is_some() {
+        // Logouts, resets and replay revocations go to the NATS. A
+        // deployment with hosts sets WAMN_NATS_URL.
+        let changes = if std::env::var_os("WAMN_NATS_URL").is_some() {
             let connected = async {
-                let connection = wamn_platform_identity::auth_changes::AuthNats::from_env()?;
+                let connection = wamn_platform_identity::nats::PlatformNats::from_env()?;
                 wamn_platform_identity::auth_changes::AuthChanges::connect(&connection).await
             };
             connected.await.map_err(|error| {
-                tracing::error!(%error, "the scheduler NATS refused the identity service");
-                IdentityServiceError::new("connect to the scheduler NATS failed")
+                tracing::error!(%error, "the NATS refused the identity service");
+                IdentityServiceError::new("connect to the NATS failed")
             })?
         } else {
             wamn_platform_identity::auth_changes::AuthChanges::default()
         };
+        // Identity owns the memory buckets (docs/plan/alignment.md R7).
+        let _buckets = changes
+            .client()
+            .cloned()
+            .map(wamn_platform_identity::kv_memory::keep_buckets);
         let service = IdentityService::connect(config.with_auth_changes(changes)).await?;
         let listener = TcpListener::bind(bind)
             .await
@@ -212,9 +217,9 @@ pub async fn run(cli: Cli) -> Result<(), IdentityServiceError> {
             .local_addr()
             .map_err(|_| IdentityServiceError::new("read identity HTTPS address failed"))?;
         tracing::info!("identity listening on {address}");
-        if std::env::var_os("WAMN_AUTH_NATS_URL").is_none() {
+        if std::env::var_os("WAMN_NATS_URL").is_none() {
             tracing::warn!(
-                "WAMN_AUTH_NATS_URL is unset: a host keeps a revoked login for its auth memory TTL"
+                "WAMN_NATS_URL is unset: a host keeps a revoked login for its auth memory TTL"
             );
         }
         return tokio::select! {

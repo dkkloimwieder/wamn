@@ -234,6 +234,64 @@ pub(crate) fn spawn_watch<H: Send + Sync + 'static>(
     });
 }
 
+/// The entries under `filter`, latest first, then each change.
+///
+/// A named consumer with one filter puts the filter in its create subject, so
+/// the NATS permissions confine the watch to the keys of the host's
+/// environment (docs/plan/alignment.md A7, R5). An unnamed watch of the client
+/// library carries its filter only in the request body.
+async fn filtered_watch(
+    client: &async_nats::Client,
+    store: &Store,
+    filter: &str,
+) -> anyhow::Result<impl futures_util::Stream<Item = anyhow::Result<KvEntry>> + Unpin + use<>> {
+    use async_nats::jetstream::consumer::{AckPolicy, DeliverPolicy, push};
+    let prefix = store.prefix.clone();
+    let bucket = store.name.clone();
+    let consumer = store
+        .stream
+        .create_consumer(push::Config {
+            name: Some(format!("watch-{}", uuid::Uuid::new_v4().simple())),
+            deliver_subject: client.new_inbox(),
+            filter_subject: format!("{prefix}{filter}"),
+            deliver_policy: DeliverPolicy::LastPerSubject,
+            ack_policy: AckPolicy::None,
+            memory_storage: true,
+            inactive_threshold: Duration::from_secs(30),
+            ..Default::default()
+        })
+        .await?;
+    Ok(consumer.messages().await?.map(move |message| {
+        let message = message?;
+        let info = message.info().map_err(|error| anyhow::anyhow!("{error}"))?;
+        let operation = match message
+            .headers
+            .as_ref()
+            .and_then(|headers| headers.get("KV-Operation"))
+        {
+            Some(operation) => operation
+                .as_str()
+                .parse()
+                .map_err(|error| anyhow::anyhow!("{error}"))?,
+            None => Operation::Put,
+        };
+        Ok(KvEntry {
+            bucket: bucket.clone(),
+            key: message
+                .subject
+                .strip_prefix(prefix.as_str())
+                .unwrap_or_default()
+                .to_owned(),
+            revision: info.stream_sequence,
+            delta: info.pending,
+            created: info.published,
+            seen_current: info.pending == 0,
+            value: message.message.payload.clone(),
+            operation,
+        })
+    }))
+}
+
 async fn watch(
     client: &async_nats::Client,
     bucket: &str,
@@ -241,7 +299,11 @@ async fn watch(
     memory: &dyn Watched,
 ) -> anyhow::Result<()> {
     let store = wamn_platform_identity::kv_memory::open_bucket(client, bucket).await?;
-    let mut entries = store.watch_many_with_history(filters).await?;
+    let mut watches = Vec::with_capacity(filters.len());
+    for filter in filters {
+        watches.push(filtered_watch(client, &store, filter).await?);
+    }
+    let mut entries = futures_util::stream::select_all(watches);
     // Facts kept before the watch ran can miss a delete.
     memory.clear();
     memory.set_bucket(Some(store));

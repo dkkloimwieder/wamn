@@ -91,16 +91,16 @@ fn install_jobs_supply_required_environment() {
             "{}",
             request.name
         );
-        if request.environment.contains_key("WAMN_AUTH_NATS_URL") {
+        if request.environment.contains_key("WAMN_NATS_URL") {
             assert_eq!(
-                request.environment["WAMN_AUTH_NATS_URL"],
+                request.environment["WAMN_NATS_URL"],
                 "nats://nats.platform.svc.cluster.local:4222"
             );
             let mounted = verb == "web upload";
             for (variable, key) in [
-                ("WAMN_AUTH_NATS_TLS_CA", "ca.crt"),
-                ("WAMN_AUTH_NATS_TLS_CERT", "tls.crt"),
-                ("WAMN_AUTH_NATS_TLS_KEY", "tls.key"),
+                ("WAMN_NATS_TLS_CA", "ca.crt"),
+                ("WAMN_NATS_TLS_CERT", "tls.crt"),
+                ("WAMN_NATS_TLS_KEY", "tls.key"),
             ] {
                 let directory = if mounted {
                     "/etc/wamn/auth-nats"
@@ -115,7 +115,7 @@ fn install_jobs_supply_required_environment() {
             assert_eq!(
                 request
                     .environment
-                    .get("WAMN_AUTH_NATS_TLS_SERVER_NAME")
+                    .get("WAMN_NATS_TLS_SERVER_NAME")
                     .map(String::as_str),
                 if mounted {
                     None
@@ -129,7 +129,7 @@ fn install_jobs_supply_required_environment() {
                 !request
                     .environment
                     .keys()
-                    .any(|name| name.starts_with("WAMN_AUTH_NATS_"))
+                    .any(|name| name.starts_with("WAMN_NATS_"))
             );
         }
         if verb == "invite" {
@@ -154,14 +154,14 @@ fn contract_refuses_package_0_1_115_and_original_invite_without_auth_nats() {
         assert!(missing(verb, &request, &secrets).is_empty());
         request
             .environment
-            .retain(|name, _| !name.starts_with("WAMN_AUTH_NATS_"));
+            .retain(|name, _| !name.starts_with("WAMN_NATS_"));
         assert_eq!(
             missing(verb, &request, &secrets),
             [
-                "WAMN_AUTH_NATS_URL",
-                "WAMN_AUTH_NATS_TLS_CA",
-                "WAMN_AUTH_NATS_TLS_CERT",
-                "WAMN_AUTH_NATS_TLS_KEY",
+                "WAMN_NATS_URL",
+                "WAMN_NATS_TLS_CA",
+                "WAMN_NATS_TLS_CERT",
+                "WAMN_NATS_TLS_KEY",
             ],
             "{}",
             request.name

@@ -82,7 +82,7 @@ pub struct Platform {
     pub events: Option<EventBroker>,
     /// The scheduler NATS the verbs publish their auth changes on.
     /// [`Platform::from_env`] requires it. A test without hosts sets `None`.
-    pub auth_nats: Option<wamn_platform_identity::auth_changes::AuthNats>,
+    pub auth_nats: Option<wamn_platform_identity::nats::PlatformNats>,
 }
 
 /// The event broker inputs of CDC (`enable-cdc-project-env`).
@@ -147,7 +147,7 @@ impl Platform {
                 server_ca: std::env::var_os("WAMN_IDENTITY_SERVER_CA").map(PathBuf::from),
             },
             events: event_broker_from_env()?,
-            auth_nats: Some(wamn_platform_identity::auth_changes::AuthNats::from_env()?),
+            auth_nats: Some(wamn_platform_identity::nats::PlatformNats::from_env()?),
             target: release_chart::Target {
                 kubeconfig,
                 context,

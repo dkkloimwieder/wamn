@@ -20,9 +20,54 @@ pub enum Deletion {
     Under(String),
 }
 
-/// Open `bucket`, and make it when it is absent: the scheduler NATS keeps
-/// JetStream in memory of its pod, so a restart loses the bucket.
+/// Open `bucket`. Only identity creates a bucket ([`create_buckets`]), so a
+/// bucket is absent until identity runs and after a NATS restart.
 pub async fn open_bucket(
+    client: &async_nats::Client,
+    bucket: &str,
+) -> anyhow::Result<async_nats::jetstream::kv::Store> {
+    use anyhow::Context as _;
+    async_nats::jetstream::new(client.clone())
+        .get_key_value(bucket)
+        .await
+        .with_context(|| format!("open the NATS KV bucket {bucket}"))
+}
+
+/// How often identity makes sure that the buckets exist. The NATS keeps the
+/// buckets in memory, so a restart loses them.
+pub const BUCKET_CHECK: Duration = Duration::from_secs(5);
+
+/// Make each memory bucket, or bring its configuration up to date
+/// (docs/plan/alignment.md R7). Identity calls this on start and every
+/// [`BUCKET_CHECK`].
+pub async fn create_buckets(client: &async_nats::Client) -> anyhow::Result<()> {
+    for bucket in [
+        crate::auth_changes::BUCKET,
+        crate::connection_changes::BUCKET,
+    ] {
+        create_bucket(client, bucket).await?;
+    }
+    Ok(())
+}
+
+/// Make each memory bucket on start, and again every [`BUCKET_CHECK`], for as
+/// long as the task runs.
+pub fn keep_buckets(client: async_nats::Client) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut check = tokio::time::interval(BUCKET_CHECK);
+        loop {
+            check.tick().await;
+            if let Err(error) = create_buckets(&client).await {
+                tracing::warn!(
+                    error = format!("{error:#}"),
+                    "the memory buckets were not made; hosts cache nothing until they are"
+                );
+            }
+        }
+    })
+}
+
+async fn create_bucket(
     client: &async_nats::Client,
     bucket: &str,
 ) -> anyhow::Result<async_nats::jetstream::kv::Store> {
@@ -36,7 +81,7 @@ pub async fn open_bucket(
             ..Default::default()
         })
         .await
-        .with_context(|| format!("open the NATS KV bucket {bucket}"))
+        .with_context(|| format!("make the NATS KV bucket {bucket}"))
 }
 
 /// Delete `deletions` from `bucket` after the commit that made them. A failed

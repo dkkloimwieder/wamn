@@ -29,7 +29,7 @@ struct Values {
     resend_secret: &'static str,
     resend_from: String,
     invite_url: String,
-    auth_nats: AuthNats,
+    auth_nats: PlatformNats,
     session_target_secrets: Vec<String>,
 }
 
@@ -43,7 +43,7 @@ struct Image {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct AuthNats {
+struct PlatformNats {
     url: &'static str,
     tls_secret: &'static str,
 }
@@ -250,7 +250,7 @@ fn values(document: &ClusterDocument, image: &str, targets: Vec<String>) -> anyh
         resend_secret: "identity-resend",
         resend_from: document.resend_from.clone(),
         invite_url: format!("https://{}", document.route_hosts.control),
-        auth_nats: AuthNats {
+        auth_nats: PlatformNats {
             url: "nats://nats.platform.svc.cluster.local:4222",
             tls_secret: "wasmcloud-runtime-tls",
         },

@@ -72,13 +72,13 @@ spec:
               value: /var/run/wamn-identity/operator/ca.crt
             {{- end }}
             {{- if .Values.authNats.url }}
-            - name: WAMN_AUTH_NATS_URL
+            - name: WAMN_NATS_URL
               value: {{ .Values.authNats.url | quote }}
-            - name: WAMN_AUTH_NATS_TLS_CA
+            - name: WAMN_NATS_TLS_CA
               value: /var/run/wamn-identity/nats/ca.crt
-            - name: WAMN_AUTH_NATS_TLS_CERT
+            - name: WAMN_NATS_TLS_CERT
               value: /var/run/wamn-identity/nats/tls.crt
-            - name: WAMN_AUTH_NATS_TLS_KEY
+            - name: WAMN_NATS_TLS_KEY
               value: /var/run/wamn-identity/nats/tls.key
             {{- end }}
           ports:

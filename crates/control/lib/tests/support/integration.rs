@@ -25,7 +25,8 @@ use wamn_control::user_role::grant_role_on;
 use wamn_control::workflow_lifecycle::{WorkflowVersion, disable_workflow, enable_workflow};
 use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
 use wamn_control_provision::workload_role::WorkloadRoleFamily;
-use wamn_platform_identity::auth_changes::{AuthChanges, AuthNats};
+use wamn_platform_identity::auth_changes::AuthChanges;
+use wamn_platform_identity::nats::PlatformNats;
 use wamn_test_infrastructure::event_broker;
 
 use super::{
@@ -127,7 +128,7 @@ pub async fn auth_changes(run: &Run) -> anyhow::Result<(AuthChanges, Child)> {
         .kill_on_drop(true)
         .spawn()
         .context("forward the scheduler NATS for fixture role changes")?;
-    let connection = AuthNats {
+    let connection = PlatformNats {
         nats_url: format!("nats://127.0.0.1:{port}"),
         nats_tls_ca: files[0].clone(),
         nats_tls_cert: files[1].clone(),

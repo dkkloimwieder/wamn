@@ -191,11 +191,11 @@ async fn membership_job(
                 "--project",super::super::identity().project.as_str(),"--env",super::super::identity().environment.as_str()],
             "env":[{"name":"WAMN_SYSTEM_ADMIN_URL","valueFrom":{"secretKeyRef":{"name":"membership-test-fixture","key":"system-url"}}},
                 {"name":"WAMN_PROJECT_ADMIN_URL","valueFrom":{"secretKeyRef":{"name":"membership-test-fixture","key":"project-url"}}},
-                {"name":"WAMN_AUTH_NATS_URL","value":format!("nats://{AUTH_NATS_SERVER_NAME}:4222")},
-                {"name":"WAMN_AUTH_NATS_TLS_CA","value":"/auth-nats/ca.crt"},
-                {"name":"WAMN_AUTH_NATS_TLS_CERT","value":"/auth-nats/tls.crt"},
-                {"name":"WAMN_AUTH_NATS_TLS_KEY","value":"/auth-nats/tls.key"},
-                {"name":"WAMN_AUTH_NATS_TLS_SERVER_NAME","value":AUTH_NATS_SERVER_NAME}],
+                {"name":"WAMN_NATS_URL","value":format!("nats://{AUTH_NATS_SERVER_NAME}:4222")},
+                {"name":"WAMN_NATS_TLS_CA","value":"/auth-nats/ca.crt"},
+                {"name":"WAMN_NATS_TLS_CERT","value":"/auth-nats/tls.crt"},
+                {"name":"WAMN_NATS_TLS_KEY","value":"/auth-nats/tls.key"},
+                {"name":"WAMN_NATS_TLS_SERVER_NAME","value":AUTH_NATS_SERVER_NAME}],
             "volumeMounts":[{"name":"auth-nats","mountPath":"/auth-nats","readOnly":true}],
         }]
     }}}});

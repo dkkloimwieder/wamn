@@ -57,13 +57,18 @@ pub async fn nats() -> (Server, async_nats::Client) {
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
     };
-    loop {
+    let client = loop {
         match async_nats::connect(&url).await {
-            Ok(client) => break (server, client),
+            Ok(client) => break client,
             Err(error) => assert!(Instant::now() < deadline, "{error}"),
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    };
+    // Identity makes the buckets in a deployment.
+    wamn_platform_identity::kv_memory::create_buckets(&client)
+        .await
+        .unwrap();
+    (server, client)
 }
 
 /// Replicate the memory of `holder` from the bucket on `client`, and

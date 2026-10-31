@@ -76,12 +76,12 @@ pub(crate) const APPLY_PACKAGE_INSTALL_ENV: crate::install_job_tests::Environmen
         required: &[
             "WAMN_PG_ADMIN_URL",
             "WAMN_COMPONENT_ARTIFACT_BASE",
-            "WAMN_AUTH_NATS_URL",
-            "WAMN_AUTH_NATS_TLS_CA",
-            "WAMN_AUTH_NATS_TLS_CERT",
-            "WAMN_AUTH_NATS_TLS_KEY",
+            "WAMN_NATS_URL",
+            "WAMN_NATS_TLS_CA",
+            "WAMN_NATS_TLS_CERT",
+            "WAMN_NATS_TLS_KEY",
         ],
-        optional: &["WAMN_AUTH_NATS_TLS_SERVER_NAME", "WASH_OCI_CA_PATHS"],
+        optional: &["WAMN_NATS_TLS_SERVER_NAME", "WASH_OCI_CA_PATHS"],
     };
 
 /// Prove one package successor against the installed predecessor snapshot.
@@ -346,7 +346,7 @@ pub async fn apply(args: ApplyPackageArgs) -> anyhow::Result<()> {
     let request = ApplyPackageRequest {
         component_source,
         changes: wamn_platform_identity::auth_changes::AuthChanges::connect(
-            &wamn_platform_identity::auth_changes::AuthNats::from_env()?,
+            &wamn_platform_identity::nats::PlatformNats::from_env()?,
         )
         .await?,
         package: opened.package_root(),

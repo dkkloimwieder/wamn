@@ -387,11 +387,7 @@ pub(super) async fn assemble(
         "local application release is not ready: {readiness:?}"
     );
     let jetstream = Arc::new(
-        WamnJetstream::new(WamnJetstreamConfig {
-            nats_url: None,
-            ..WamnJetstreamConfig::default()
-        })
-        .with_release(Some(Arc::clone(&release))),
+        WamnJetstream::new(WamnJetstreamConfig::default()).with_release(Some(Arc::clone(&release))),
     );
     let queue = LocalQueue {
         driver: Arc::clone(&driver),

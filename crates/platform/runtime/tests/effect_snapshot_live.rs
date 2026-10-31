@@ -42,9 +42,9 @@ async fn reads(admin: &Client) -> anyhow::Result<i64> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires: PostgreSQL 18, WAMN_AUTH_NATS_URL (private JetStream)"]
+#[ignore = "requires: PostgreSQL 18, WAMN_NATS_URL (private JetStream)"]
 async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&["WAMN_AUTH_NATS_URL"]);
+    wamn_test_postgres::require_prerequisites(&["WAMN_NATS_URL"]);
     let _lock = wamn_test_postgres::lock();
     let mut server =
         wamn_test_postgres::start(&[("shared_preload_libraries", "pg_stat_statements")])?;
@@ -195,7 +195,7 @@ async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
         candidate_binding: None,
     };
     let memory = std::sync::Arc::new(wamn_runtime::connection_memory::ConnectionMemory::default());
-    let broker = async_nats::connect(std::env::var("WAMN_AUTH_NATS_URL")?).await?;
+    let broker = async_nats::connect(std::env::var("WAMN_NATS_URL")?).await?;
     let changes = wamn_runtime::connection_memory::replicate(
         &broker,
         Some(ENV_KEY),

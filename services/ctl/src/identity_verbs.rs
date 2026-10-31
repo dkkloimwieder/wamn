@@ -146,12 +146,12 @@ pub(crate) const INVITE_INSTALL_ENV: crate::install_job_tests::Environment =
             "WAMN_PAT_ISSUER",
             "WAMN_PAT_CLIENT_CERT",
             "WAMN_PAT_CLIENT_KEY",
-            "WAMN_AUTH_NATS_URL",
-            "WAMN_AUTH_NATS_TLS_CA",
-            "WAMN_AUTH_NATS_TLS_CERT",
-            "WAMN_AUTH_NATS_TLS_KEY",
+            "WAMN_NATS_URL",
+            "WAMN_NATS_TLS_CA",
+            "WAMN_NATS_TLS_CERT",
+            "WAMN_NATS_TLS_KEY",
         ],
-        optional: &["WAMN_PAT_SERVER_CA", "WAMN_AUTH_NATS_TLS_SERVER_NAME"],
+        optional: &["WAMN_PAT_SERVER_CA", "WAMN_NATS_TLS_SERVER_NAME"],
     };
 
 /// Split `<project>/<env>`.
@@ -229,7 +229,7 @@ pub async fn invite(args: InviteArgs) -> anyhow::Result<()> {
             identity: args.pat_issuer.into(),
         },
         &wamn_platform_identity::auth_changes::AuthChanges::connect(
-            &wamn_platform_identity::auth_changes::AuthNats::from_env()?,
+            &wamn_platform_identity::nats::PlatformNats::from_env()?,
         )
         .await?,
     )
@@ -260,7 +260,7 @@ pub async fn grant(args: ProjectEnvMembershipArgs) -> anyhow::Result<()> {
 /// Revoke one user's project environment membership and print the new state.
 pub async fn revoke(args: ProjectEnvMembershipArgs) -> anyhow::Result<()> {
     let changes = wamn_platform_identity::auth_changes::AuthChanges::connect(
-        &wamn_platform_identity::auth_changes::AuthNats::from_env()?,
+        &wamn_platform_identity::nats::PlatformNats::from_env()?,
     )
     .await?;
     let principal_id = project_env_membership::revoke(membership_request(&args), &changes).await?;

@@ -5,7 +5,8 @@
 use clap::Args;
 use wamn_control::role_permission;
 use wamn_control::user_role::{self, EnvironmentTarget, UserRoleOutcome, UserRoleRequest};
-use wamn_platform_identity::auth_changes::{AuthChanges, AuthNats};
+use wamn_platform_identity::auth_changes::AuthChanges;
+use wamn_platform_identity::nats::PlatformNats;
 
 /// One user role of one environment, for one user named by email.
 #[derive(Debug, Args)]
@@ -52,9 +53,9 @@ fn request(args: UserRoleArgs) -> UserRoleRequest {
     }
 }
 
-/// The publisher of the auth changes of a verb, from `WAMN_AUTH_NATS_*`.
+/// The publisher of the auth changes of a verb, from `WAMN_NATS_*`.
 async fn changes() -> anyhow::Result<AuthChanges> {
-    AuthChanges::connect(&AuthNats::from_env()?).await
+    AuthChanges::connect(&PlatformNats::from_env()?).await
 }
 
 fn print(verb: &str, role: &str, outcome: &UserRoleOutcome) {

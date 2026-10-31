@@ -797,11 +797,11 @@ export WAMN_PACKAGE_ARTIFACT_BASE=us-central1-docker.pkg.dev/wamn-dev/wamn/packa
 export WAMN_REGISTRY_AUTH_FILE=$W/registry/config.json
 export WAMN_EVENT_NATS_URL=nats://127.0.0.1:14222
 # The scheduler NATS of the auth changes, through the port-forward of section 4.8.
-export WAMN_AUTH_NATS_URL=nats://127.0.0.1:14223
-export WAMN_AUTH_NATS_TLS_SERVER_NAME=nats.platform.svc.cluster.local
-export WAMN_AUTH_NATS_TLS_CA=$W/auth-nats/ca.crt
-export WAMN_AUTH_NATS_TLS_CERT=$W/auth-nats/tls.crt
-export WAMN_AUTH_NATS_TLS_KEY=$W/auth-nats/tls.key
+export WAMN_NATS_URL=nats://127.0.0.1:14223
+export WAMN_NATS_TLS_SERVER_NAME=nats.platform.svc.cluster.local
+export WAMN_NATS_TLS_CA=$W/auth-nats/ca.crt
+export WAMN_NATS_TLS_CERT=$W/auth-nats/tls.crt
+export WAMN_NATS_TLS_KEY=$W/auth-nats/tls.key
 if [ ! -d $W/auth-nats ]; then
   (umask 077; mkdir $W/auth-nats
    for k in ca.crt tls.crt tls.key; do

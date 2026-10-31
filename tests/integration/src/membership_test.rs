@@ -1,7 +1,7 @@
 //! Show user membership and permission revocation through the deployed Receiving HTTP route.
 //!
 //! The caller supplies an already provisioned disposable Receiving fixture.
-//! The HTTP test uses the AuthNats environment inputs to invalidate cached authorization.
+//! The HTTP test uses the PlatformNats environment inputs to invalidate cached authorization.
 //! Only this run's new identity, PAT, tenant user, and role are created and removed.
 
 use std::fmt;
@@ -11,7 +11,8 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
 use wamn_platform_identity::application;
-use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops, AuthNats};
+use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
+use wamn_platform_identity::nats::PlatformNats;
 
 use anyhow::{Context as _, anyhow, ensure};
 use clap::Args;
@@ -77,7 +78,7 @@ pub async fn run(args: MembershipTestArgs) -> anyhow::Result<()> {
     let auth = if args.throughput_pat_file.is_some() {
         AuthChanges::default()
     } else {
-        AuthChanges::connect(&AuthNats::from_env()?).await?
+        AuthChanges::connect(&PlatformNats::from_env()?).await?
     };
     let http = reqwest::Client::builder()
         .timeout(OPERATION_TIMEOUT)

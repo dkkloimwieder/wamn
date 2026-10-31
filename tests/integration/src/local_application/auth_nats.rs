@@ -10,12 +10,12 @@ use std::time::Duration;
 use anyhow::Context as _;
 use rcgen::{BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair};
 use rustls::pki_types::PrivatePkcs8KeyDer;
-use wamn_platform_identity::auth_changes::AuthNats;
+use wamn_platform_identity::nats::PlatformNats;
 
 /// The scheduler connection and its owned local process.
 #[derive(Debug)]
 pub struct LocalAuthNats {
-    pub connection: AuthNats,
+    pub connection: PlatformNats,
     pub(super) client: async_nats::Client,
     server: tokio::process::Child,
 }
@@ -71,7 +71,7 @@ impl LocalAuthNats {
         let port = std::net::TcpListener::bind("127.0.0.1:0")?
             .local_addr()?
             .port();
-        let connection = AuthNats {
+        let connection = PlatformNats {
             nats_url: format!("nats://localhost:{port}"),
             nats_tls_ca: directory.join("ca.pem"),
             nats_tls_cert: directory.join("tls.pem"),

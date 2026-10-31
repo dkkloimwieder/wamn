@@ -360,11 +360,11 @@ async fn every_application_writer_records_a_drop_of_its_env_key_or_principal() {
 
 /// The broker must be private to this test run.
 #[tokio::test]
-#[ignore = "requires: WAMN_AUTH_NATS_URL (private JetStream)"]
+#[ignore = "requires: WAMN_NATS_URL (private JetStream)"]
 async fn every_application_grant_write_deletes_exactly_its_auth_keys() {
     use wamn_platform_identity::auth_changes::{AuthChanges, auth_bucket};
-    wamn_test_postgres::require_prerequisites(&["WAMN_AUTH_NATS_URL"]);
-    let broker = async_nats::connect(std::env::var("WAMN_AUTH_NATS_URL").unwrap())
+    wamn_test_postgres::require_prerequisites(&["WAMN_NATS_URL"]);
+    let broker = async_nats::connect(std::env::var("WAMN_NATS_URL").unwrap())
         .await
         .unwrap();
     let bucket = auth_bucket(&broker).await.unwrap();

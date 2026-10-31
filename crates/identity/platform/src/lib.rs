@@ -30,6 +30,7 @@ pub mod connection_projection;
 pub mod connections;
 pub mod control;
 pub mod kv_memory;
+pub mod nats;
 pub mod org;
 pub mod paging;
 pub mod password;

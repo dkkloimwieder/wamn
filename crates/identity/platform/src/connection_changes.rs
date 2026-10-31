@@ -9,8 +9,9 @@
 
 use std::collections::BTreeSet;
 
-use crate::auth_changes::{AuthChanges, AuthNats};
+use crate::auth_changes::AuthChanges;
 use crate::kv_memory::Deletion;
+use crate::nats::PlatformNats;
 
 /// The NATS KV bucket of the connection memory, on the NATS of the auth
 /// memory.
@@ -108,7 +109,7 @@ impl ConnectionChanges {
     }
 
     /// Connect to the NATS that `connection` names.
-    pub async fn connect(connection: &AuthNats) -> anyhow::Result<Self> {
+    pub async fn connect(connection: &PlatformNats) -> anyhow::Result<Self> {
         Ok(Self(
             AuthChanges::connect(connection).await?.client().cloned(),
         ))

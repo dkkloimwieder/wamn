@@ -734,7 +734,7 @@ pub async fn provision(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
             .as_deref()
             .context("--revoke-pat-prefix requires --system-database-url")?;
         let changes = wamn_platform_identity::auth_changes::AuthChanges::connect(
-            &wamn_platform_identity::auth_changes::AuthNats::from_env()?,
+            &wamn_platform_identity::nats::PlatformNats::from_env()?,
         )
         .await?;
         provision_project_env::revoke_provisioning_pat(system_url, prefix, &changes).await?;
@@ -771,7 +771,7 @@ pub async fn provision(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
         // Preserve transport validation before opening any external connection.
         wamn_control::pat_client::PatClient::new(&request.pat_issuer)?;
         request.changes = wamn_platform_identity::auth_changes::AuthChanges::connect(
-            &wamn_platform_identity::auth_changes::AuthNats::from_env()?,
+            &wamn_platform_identity::nats::PlatformNats::from_env()?,
         )
         .await?;
     }
@@ -1242,11 +1242,11 @@ pub(crate) const PROVISION_ORG_INSTALL_ENV: crate::install_job_tests::Environmen
         optional: &[
             "WAMN_CLUSTER_NAMESPACE",
             "WAMN_NAMESPACE",
-            "WAMN_AUTH_NATS_URL",
-            "WAMN_AUTH_NATS_TLS_CA",
-            "WAMN_AUTH_NATS_TLS_CERT",
-            "WAMN_AUTH_NATS_TLS_KEY",
-            "WAMN_AUTH_NATS_TLS_SERVER_NAME",
+            "WAMN_NATS_URL",
+            "WAMN_NATS_TLS_CA",
+            "WAMN_NATS_TLS_CERT",
+            "WAMN_NATS_TLS_KEY",
+            "WAMN_NATS_TLS_SERVER_NAME",
         ],
     };
 
@@ -1267,16 +1267,16 @@ pub async fn provision_org(args: ProvisionOrgArgs) -> anyhow::Result<()> {
         (Some(_), None) => anyhow::bail!("--system-database-url needs --admin"),
     };
     // The platform install provisions the org before auth NATS and any host
-    // exist, so it sets no WAMN_AUTH_NATS_URL and there is no cache to drop.
-    let changes = if record.is_some() && std::env::var_os("WAMN_AUTH_NATS_URL").is_some() {
+    // exist, so it sets no WAMN_NATS_URL and there is no cache to drop.
+    let changes = if record.is_some() && std::env::var_os("WAMN_NATS_URL").is_some() {
         wamn_platform_identity::auth_changes::AuthChanges::connect(
-            &wamn_platform_identity::auth_changes::AuthNats::from_env()?,
+            &wamn_platform_identity::nats::PlatformNats::from_env()?,
         )
         .await?
     } else {
         if record.is_some() {
             eprintln!(
-                "WAMN_AUTH_NATS_URL is unset: a host keeps a revoked login for its auth memory TTL"
+                "WAMN_NATS_URL is unset: a host keeps a revoked login for its auth memory TTL"
             );
         }
         wamn_platform_identity::auth_changes::AuthChanges::default()

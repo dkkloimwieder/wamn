@@ -957,7 +957,7 @@ mod tests {
             let (observer_client, _) = monitored_broker_client(&broker.observer, server).await?;
             let mut observer = async_nats::jetstream::new(observer_client);
             observer.set_timeout(Duration::from_millis(500));
-            fixture.runtime().activate_events().await.map_err(|error| anyhow::anyhow!("declared runtime activation failed: {error:?}"))?;
+            fixture.runtime().await?.activate_events().await.map_err(|error| anyhow::anyhow!("declared runtime activation failed: {error:?}"))?;
             let runtime = async_nats::jetstream::new(wamn_test_infrastructure::event_broker::connect(&broker.runtime, server).await?);
             let attached = materializer.get_stream(&source.name).await?.get_consumer::<PullConfig>("registered").await.map_err(anyhow::Error::from_boxed)?;
             let sequence = runtime.publish(consumer.filter_subject.clone(), "runtime payload".into()).await?.await?.sequence;
@@ -1174,7 +1174,7 @@ mod tests {
                 })
                 .await?;
             ensure!(
-                fixture.runtime().activate_events().await.is_err(),
+                fixture.runtime().await?.activate_events().await.is_err(),
                 "runtime accepted changed stream configuration"
             );
             ensure!(
@@ -1226,6 +1226,7 @@ mod tests {
             stream.update_consumer(consumer.clone()).await?;
             fixture
                 .runtime()
+                .await?
                 .activate_events()
                 .await
                 .map_err(|error| anyhow::anyhow!("restored activation failed: {error:?}"))?;
@@ -1333,17 +1334,18 @@ mod tests {
     }
 
     impl ScopedBroker {
-        fn runtime(&self) -> wamn_runtime::plugins::wamn_jetstream::WamnJetstream {
+        async fn runtime(
+            &self,
+        ) -> anyhow::Result<wamn_runtime::plugins::wamn_jetstream::WamnJetstream> {
             use wamn_runtime::plugins::wamn_jetstream::{WamnJetstream, WamnJetstreamConfig};
             let broker = &self.brokers[0];
-            WamnJetstream::new(WamnJetstreamConfig {
-                nats_url: Some(self.server.clone()),
-                nats_username: Some(broker.runtime.username.clone()),
-                nats_password_file: Some(broker.runtime.password_file.clone()),
+            let (client, _) = monitored_broker_client(&broker.runtime, &self.server).await?;
+            Ok(WamnJetstream::new(WamnJetstreamConfig {
+                nats: Some(client),
                 event_scope: Some(self.scopes[0].clone()),
                 stream_replicas: Some(1),
                 dup_window_secs: Some(120),
-            })
+            }))
         }
     }
 

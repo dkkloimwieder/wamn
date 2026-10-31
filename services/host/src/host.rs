@@ -29,7 +29,7 @@ mod commands;
 use wamn_catalog::ServingManifest;
 use wamn_control_provision::session_target::session_audience;
 use wamn_control_provision::{SystemReader, parse_system_reader_url, project_env_database_name};
-use wamn_control_registry::{Triple, project_env_key};
+use wamn_control_registry::{Triple, control_nats_user, environment_nats_user, project_env_key};
 use wamn_engine::artifact_source::{ArtifactSource, LocalComponentSource};
 use wamn_engine::engine::{
     DEFAULT_CORE_INSTANCES, build_engine_with_host_memory,
@@ -57,6 +57,7 @@ use wamn_runtime::plugins::route_authentication::{
     ControlRouteAuthenticator, EnvironmentStatusReader, PlatformRouteAuthenticator,
     RouteAuthentication, SessionRouteAuthentication,
 };
+use wamn_runtime::plugins::wamn_jetstream::WamnJetstreamConfig;
 use wamn_runtime::plugins::wamn_postgres::AuthorityClass;
 use wamn_runtime::plugins::{ClassCredentials, WamnJetstream, WamnLogging, WamnPostgres};
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
@@ -117,11 +118,9 @@ pub struct HostArgs {
     #[arg(long = "scheduler-nats-tls-key")]
     pub scheduler_nats_tls_key: Option<PathBuf>,
 
-    /// NATS URL for data-plane communications. Accepted for chart
-    /// compatibility; the DATA-plane plugin (`wamn:jetstream`, l5i9.17) is
-    /// instead configured by `WAMN_EVT_NATS_URL` (the event plane's own env
-    /// contract, deploy/infra Service `evt-nats`) — this flag's chart default
-    /// points at the control plane, which is the wrong NATS for JetStream.
+    /// NATS URL of the event plane: `wamn:jetstream`, the auth memory and the
+    /// connection memory connect here with the environment certificate
+    /// (docs/plan/alignment.md R5, R8).
     #[arg(long = "data-nats-url", default_value = "nats://localhost:4222")]
     pub data_nats_url: String,
 
@@ -852,6 +851,52 @@ const SCHEDULER_NATS_BUFFER: usize = 2048;
 /// event carries only the error kind, so each line also counts the failed
 /// passes since the last connect; async-nats logs the cause of each attempt on
 /// `async_nats::connector` at debug.
+/// The data client and its `name`: the connection of the host's own code by the
+/// data URL with the environment certificate (docs/plan/alignment.md R5, R8).
+/// Its replies use the inbox of `user`, the one inbox prefix that user may
+/// read. It reconnects and starts like the scheduler client.
+async fn connect_data_nats(
+    args: &HostArgs,
+    name: &str,
+    user: Option<&str>,
+) -> anyhow::Result<async_nats::Client> {
+    let mut opts = async_nats::ConnectOptions::new()
+        .name(name)
+        .max_reconnects(None)
+        .client_capacity(SCHEDULER_NATS_BUFFER);
+    if let Some(user) = user {
+        opts = opts.custom_inbox_prefix(format!("_INBOX_{user}"));
+    }
+    if let Some(ca_path) = &args.data_nats_tls_ca {
+        opts = opts.add_root_certificates(ca_path.clone());
+    }
+    if args.data_nats_tls_first {
+        opts = opts.tls_first();
+    }
+    if let (Some(cert_path), Some(key_path)) = (&args.data_nats_tls_cert, &args.data_nats_tls_key) {
+        opts = opts.add_client_certificate(cert_path.clone(), key_path.clone());
+    }
+    let url = args.data_nats_url.as_str();
+    match opts.clone().connect(url).await {
+        Ok(client) => Ok(client),
+        Err(err)
+            if matches!(
+                err.kind(),
+                async_nats::ConnectErrorKind::Io
+                    | async_nats::ConnectErrorKind::TimedOut
+                    | async_nats::ConnectErrorKind::Dns
+            ) =>
+        {
+            tracing::warn!(client = name, %err, "data NATS is not reachable yet; the client keeps retrying");
+            opts.retry_on_initial_connect()
+                .connect(url)
+                .await
+                .context("configure the data NATS client")
+        }
+        Err(err) => Err(err).context("connect to the data NATS"),
+    }
+}
+
 async fn connect_scheduler_nats(args: &HostArgs, name: &str) -> anyhow::Result<async_nats::Client> {
     let mut opts = async_nats::ConnectOptions::new()
         .name(name)
@@ -1114,6 +1159,19 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
 
     let scheduler_nats_client =
         connect_scheduler_nats(&args, args.host_name.as_deref().unwrap_or(&router_owner)).await?;
+    // The host's own code acts for its environment by the data connection, and
+    // the control host for its org (docs/plan/alignment.md R5, R7).
+    let data_nats_user = if args.control {
+        args.org.as_deref().map(control_nats_user)
+    } else {
+        application.map(|release| environment_nats_user(&release.scope().env_key))
+    };
+    let data_nats_client = connect_data_nats(
+        &args,
+        args.host_name.as_deref().unwrap_or(&router_owner),
+        data_nats_user.as_deref(),
+    )
+    .await?;
     let host_memory = host_memory(&args)?;
     let engine = Arc::new(
         if let Some(compilation_cache_dir) = args.wasmtime_cache_dir.as_deref() {
@@ -1258,7 +1316,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     let memory =
         Arc::new(ConnectionMemory::default().with_resource_leases(Arc::clone(&resource_leases)));
     let changes = connection_memory::replicate(
-        &scheduler_nats_client,
+        &data_nats_client,
         application.map(|release| release.scope().env_key.as_str()),
         Arc::clone(&memory),
     );
@@ -1408,7 +1466,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         oci_cache_dir: args.oci_cache_dir.clone(),
         oci_ca_paths: args.oci_ca_paths.clone(),
     };
-    let jetstream = Arc::new(WamnJetstream::from_env().with_release(application.cloned()));
+    let jetstream = Arc::new(
+        WamnJetstream::new(WamnJetstreamConfig::from_env().with_nats(data_nats_client.clone()))
+            .with_release(application.cloned()),
+    );
     jetstream
         .activate_events()
         .await
@@ -1422,11 +1483,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .as_ref()
         .filter(|_| !args.control)
         .map(|release| release.scope().env_key.clone());
-    let auth_changes = replicate(
-        &scheduler_nats_client,
-        env_key.as_deref(),
-        Arc::clone(&postgres),
-    );
+    let auth_changes = replicate(&data_nats_client, env_key.as_deref(), Arc::clone(&postgres));
     // The host always installs its authenticator, even an empty one, so a
     // protected route refuses the same way on every host.
     let authenticator = PlatformRouteAuthenticator::default()
@@ -1532,9 +1589,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         // the plugin still links and returns connection-unavailable on use.
         postgres.clone(),
         // l5i9.17: the wamn:jetstream plugin (E10), first bound by the
-        // Service-first materializer. Data-plane URL from WAMN_EVT_NATS_URL
-        // (absent ⇒ links but returns connection-unavailable, the WAMN_PG_*
-        // posture).
+        // Service-first materializer. It uses the host's data connection.
         // wamn-0h0g.15.95: READER 4 of the loaded release. Delivery is gated on the serving
         // release's registration projection, so an event whose registration
         // identity is not in this release never reaches a component. The plugin

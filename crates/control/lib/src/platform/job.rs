@@ -108,7 +108,7 @@ pub(super) fn auth_nats_inputs(
                 .insert(key.into(), super::install::secret_text(secret, key)?);
         }
         request.environment.insert(
-            "WAMN_AUTH_NATS_TLS_SERVER_NAME".into(),
+            "WAMN_NATS_TLS_SERVER_NAME".into(),
             "nats.platform.svc.cluster.local".into(),
         );
         "/inputs"
@@ -121,13 +121,13 @@ pub(super) fn auth_nats_inputs(
         "/etc/wamn/auth-nats"
     };
     request.environment.insert(
-        "WAMN_AUTH_NATS_URL".into(),
+        "WAMN_NATS_URL".into(),
         "nats://nats.platform.svc.cluster.local:4222".into(),
     );
     for (variable, key) in [
-        ("WAMN_AUTH_NATS_TLS_CA", "ca.crt"),
-        ("WAMN_AUTH_NATS_TLS_CERT", "tls.crt"),
-        ("WAMN_AUTH_NATS_TLS_KEY", "tls.key"),
+        ("WAMN_NATS_TLS_CA", "ca.crt"),
+        ("WAMN_NATS_TLS_CERT", "tls.crt"),
+        ("WAMN_NATS_TLS_KEY", "tls.key"),
     ] {
         request
             .environment
@@ -1378,7 +1378,7 @@ mod tests {
         );
         assert_eq!(
             job["spec"]["template"]["spec"]["containers"][0]["env"][2],
-            json!({"name":"WAMN_AUTH_NATS_TLS_KEY","value":"/inputs/tls.key"})
+            json!({"name":"WAMN_NATS_TLS_KEY","value":"/inputs/tls.key"})
         );
     }
 
