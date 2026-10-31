@@ -60,7 +60,6 @@ pub(super) fn platform_inputs(
     let mut inputs = Vec::new();
     for path in [
         "deploy/gcp/registry-helper.yaml",
-        "deploy/gcp/auth-nats-clients.yaml",
         "deploy/platform/wamn-host-serviceaccount.yaml",
         "deploy/platform/control-status-rbac.yaml",
     ] {
@@ -334,15 +333,26 @@ mod tests {
                 object(&rbac, "RoleBinding", "wamn-runtime-operator-events")["subjects"][0]["namespace"],
                 "platform"
             );
-            let ca = render("deploy/infra/wasmcloud-ca-issuer.yaml");
+            // R3: cert-manager owns the CA and issues the chart's four Secrets.
+            let ca = render("deploy/infra/nats-certificates.yaml");
             assert_eq!(
                 object(&ca, "ClusterIssuer", "wasmcloud-ca")["spec"]["ca"]["secretName"],
                 "wasmcloud-ca"
             );
-            let certs = render("deploy/platform/host-environment-certs.example.yaml");
-            assert_eq!(certs.len(), 2);
-            assert!(certs.iter().all(|o| o["metadata"]["namespace"] == "hosts"
-                && o["spec"]["issuerRef"]["name"] == "wasmcloud-ca"));
+            let root = object(&ca, "Certificate", "wasmcloud-ca");
+            assert_eq!(root["spec"]["isCA"], true);
+            assert_eq!(root["spec"]["issuerRef"]["name"], "wamn-selfsigned");
+            for (name, namespace) in [
+                ("wasmcloud-nats-tls", "platform"),
+                ("wasmcloud-operator-tls", "platform"),
+                ("wasmcloud-runtime-tls", "hosts"),
+                ("wasmcloud-data-tls", "hosts"),
+            ] {
+                let certificate = object(&ca, "Certificate", name);
+                assert_eq!(certificate["metadata"]["namespace"], namespace);
+                assert_eq!(certificate["spec"]["secretName"], name);
+                assert_eq!(certificate["spec"]["issuerRef"]["name"], "wasmcloud-ca");
+            }
             let collector = render("deploy/platform/otel-collector.yaml");
             let account = object(&collector, "ServiceAccount", "otel-collector");
             let config: Value = serde_yaml::from_str(
@@ -354,8 +364,12 @@ mod tests {
             let pg = render("deploy/gcp/cnpg-cluster.yaml");
             let pg = object(&pg, "Cluster", "wamn-pg");
             let broker = render("deploy/gcp/nats-jetstream.yaml");
-            let server = object(&broker, "StatefulSet", "evt-nats");
+            let server = object(&broker, "StatefulSet", "wamn-nats");
             assert_eq!(server["spec"]["replicas"], 1);
+            let nats = object(&broker, "ConfigMap", "wamn-nats-config")["data"]["nats.conf"]
+                .as_str()
+                .unwrap();
+            assert!(nats.contains("verify_and_map: true"));
             assert_eq!(
                 server["spec"]["volumeClaimTemplates"][0]["spec"]["storageClassName"],
                 "standard"
@@ -458,14 +472,22 @@ mod tests {
                 object(&inputs, "RoleBinding", "wamn-control-status")["subjects"][0]["name"],
                 "wamn-host"
             );
-            assert_eq!(
-                object(&inputs, "Certificate", "wamn-ctl-auth-nats")["metadata"]["namespace"],
-                "platform"
-            );
-            assert_eq!(
-                object(&inputs, "Certificate", "wasmcloud-runtime-tls")["metadata"]["namespace"],
-                "identity"
-            );
+            assert!(!inputs.iter().any(|object| object["kind"] == "Certificate"));
+            let certificates = objects(
+                repository(),
+                "deploy/infra/nats-certificates.yaml",
+                &document,
+            )
+            .unwrap();
+            for (name, namespace) in [
+                ("wamn-ctl-nats", "platform"),
+                ("wamn-identity-nats", "identity"),
+                ("wamn-cdc-reader-nats", "hosts"),
+            ] {
+                let certificate = object(&certificates, "Certificate", name);
+                assert_eq!(certificate["metadata"]["namespace"], namespace);
+                assert_eq!(certificate["spec"]["issuerRef"]["name"], "wasmcloud-ca");
+            }
             let helper: Value = serde_json::from_str(
                 object(&inputs, "ConfigMap", "wamn-registry-helper")["data"]["config.json"]
                     .as_str()

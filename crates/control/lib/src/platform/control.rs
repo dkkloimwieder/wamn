@@ -179,8 +179,8 @@ pub(crate) fn host_values(org: &str) -> Value {
         "terminationGracePeriodSeconds": 70,
         "hostGroups": [{
             "name": name, "namespace": "hosts", "replicas": 1,
-            "schedulerNatsUrl": "nats://nats.platform.svc.cluster.local:4222",
-            "dataNatsUrl": "nats://nats.platform.svc.cluster.local:4222",
+            "schedulerNatsUrl": "nats://wamn-nats.platform.svc.cluster.local:4222",
+            "dataNatsUrl": "nats://wamn-nats.platform.svc.cluster.local:4222",
             "extraArgs": ["--control", format!("--org={org}")],
             "env": [
                 {"name": "WAMN_DRAIN_BOUND_SECONDS", "value": "70"},

@@ -160,9 +160,9 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
             owner_inputs: vec![dns.clone(), history(format!("roles/dns.admin for cert-manager/cert-manager on zone {project}"), "2.5, 4.3")],
         },
         InstallStep {
-            number: "4.4", title: "Namespaces, runtime operator and internal CA",
+            number: "4.4", title: "Namespaces, internal CA, NATS and runtime operator",
             runs: Runner::Verb("Helm SDK, Kubernetes API"),
-            inputs: vec![("namespaces", "platform, identity, hosts, edge".into()), ("operator release", "platform/wamn (runtime-operator 2.11.0); watches hosts".into()), ("CA Secret and issuer", "platform/wasmcloud-ca, cert-manager/wasmcloud-ca; ClusterIssuer wasmcloud-ca".into()), ("runtime certificates", "hosts/wasmcloud-runtime-tls, hosts/wasmcloud-data-tls".into()), ("scheduler NATS", "nats://nats.platform.svc.cluster.local:4222".into())],
+            inputs: vec![("namespaces", "platform, identity, hosts, edge".into()), ("CA Secret and issuer", "cert-manager/wasmcloud-ca; ClusterIssuer wasmcloud-ca".into()), ("chart certificates", "platform/wasmcloud-nats-tls, platform/wasmcloud-operator-tls, hosts/wasmcloud-runtime-tls, hosts/wasmcloud-data-tls".into()), ("NATS", "nats://wamn-nats.platform.svc.cluster.local:4222".into()), ("NATS authorization", "platform/wamn-nats-authorization".into()), ("operator release", "platform/wamn (runtime-operator 2.11.0); watches hosts".into())],
             owner_inputs: vec![],
         },
         InstallStep {
@@ -193,15 +193,15 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
             owner_inputs: vec![],
         },
         InstallStep {
-            number: "4.8", title: "Event NATS",
+            number: "4.8", title: "Environment NATS users",
             runs: Runner::Verb("Kubernetes API"),
-            inputs: vec![("environments", environments.into()), ("environment keys", env_keys.into()), ("event NATS", "nats://evt-nats.platform.svc.cluster.local:4222".into()), ("broker Secret", "platform/evt-nats-authorization".into()), ("users per tenant", "provisioning, publisher, observer, runtime, materializer".into())],
+            inputs: vec![("environments", environments.into()), ("environment keys", env_keys.into()), ("NATS", "nats://wamn-nats.platform.svc.cluster.local:4222".into()), ("NATS authorization", "platform/wamn-nats-authorization".into()), ("users per tenant", "provisioning, publisher, observer, runtime, materializer".into())],
             owner_inputs: vec![],
         },
         InstallStep {
             number: "4.9", title: "Platform install inputs",
             runs: Runner::Verb("Kubernetes API"),
-            inputs: vec![("project_id", project.clone()), ("registry", registry.clone()), ("node placement", "label=role=bench-host, taint=role=bench-host:NoSchedule".into()), ("host service accounts", "hosts/wamn-host, hosts/wamn-host-<org>-<project>-<env>".into()), ("registry helper and Role", "hosts/wamn-registry-helper, hosts/wamn-control-status".into()), ("auth NATS certificate", "platform/wamn-ctl-auth-nats".into())],
+            inputs: vec![("project_id", project.clone()), ("registry", registry.clone()), ("node placement", "label=role=bench-host, taint=role=bench-host:NoSchedule".into()), ("host service accounts", "hosts/wamn-host, hosts/wamn-host-<org>-<project>-<env>".into()), ("registry helper and Role", "hosts/wamn-registry-helper, hosts/wamn-control-status".into()), ("ctl NATS certificate", "platform/wamn-ctl-nats".into())],
             owner_inputs: if document.provider == Provider::Gcp { vec![host_grants.clone(), oauth_key] } else { vec![host_grants.clone()] },
         },
         InstallStep {

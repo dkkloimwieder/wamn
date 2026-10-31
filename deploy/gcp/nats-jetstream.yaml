@@ -1,34 +1,42 @@
-# The event NATS of docs/history/gcp-deployment.md step 3: the Google Cloud copy
-# of deploy/infra/nats-jetstream.yaml. It runs one server in namespace
-# platform, so it has no cluster block, no cluster port and no anti-affinity
-# spread. The event streams use one replica. The volume is pd-standard.
-# The comments of deploy/infra/nats-jetstream.yaml explain the users. docs/history/gcp-install-history.md section 3 makes the Secret
-# evt-nats-authorization and applies this file.
+# The one NATS of the platform (docs/plan/alignment.md R1, R2, R4). The
+# runtime operator, the host scheduler and data connections, the event
+# streams and the auth memory all use it. It runs one server in namespace
+# platform, so it has no cluster block. The event streams use one replica.
+#
+# TLS is required. Every client presents a certificate from the ClusterIssuer
+# wasmcloud-ca (deploy/infra/nats-certificates.yaml), and the server maps its
+# DNS name to a user (`verify_and_map`). Platform apply writes the users to the
+# Secret wamn-nats-authorization (crates/control/lib/src/platform/broker.rs).
+#
+# The volume is pd-standard.
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: evt-nats-config
+  name: wamn-nats-config
   namespace: platform
   labels:
-    app.kubernetes.io/name: evt-nats
-    app.kubernetes.io/component: event-plane-nats
+    app.kubernetes.io/name: wamn-nats
+    app.kubernetes.io/component: nats
 data:
   nats.conf: |
-    # server_name is expanded from $POD_NAME by nats-server at load time so
-    # each replica advertises a stable, unique identity in the RAFT groups.
     server_name: $POD_NAME
     listen: 0.0.0.0:4222
     http: 127.0.0.1:8222
     # Preserve the default 1 MiB event ceiling explicitly for bounded native pulls.
     max_payload: 1048576
-    # nats-server resolves an include relative to this file, and both copies of
-    # this manifest use the relative path (finding wamn-lrf1).
+    tls {
+      cert_file: /etc/nats-tls/tls.crt
+      key_file: /etc/nats-tls/tls.key
+      ca_file: /etc/nats-tls/ca.crt
+      verify_and_map: true
+    }
+    # nats-server resolves an include relative to this file (finding wamn-lrf1).
     include ../nats-authorization/authorization.conf
 
     jetstream {
       store_dir: /data/jetstream
-      # Memory store is a spill lane only; the EVT_ streams are FILE storage
-      # (one replica here), the durable second domain (§11 on-call: raft, disk, lag).
+      # The event streams use file storage. The auth memory bucket wamn-auth
+      # uses memory storage and starts empty after a restart.
       max_memory_store: 256MB
       max_file_store: 3GB
     }
@@ -37,34 +45,33 @@ data:
 apiVersion: v1
 kind: Service
 metadata:
-  name: evt-nats-headless
+  name: wamn-nats-headless
   namespace: platform
   labels:
-    app.kubernetes.io/name: evt-nats
-    app.kubernetes.io/component: event-plane-nats
+    app.kubernetes.io/name: wamn-nats
+    app.kubernetes.io/component: nats
 spec:
   clusterIP: None
   publishNotReadyAddresses: true
   selector:
-    app.kubernetes.io/name: evt-nats
+    app.kubernetes.io/name: wamn-nats
   ports:
     - name: client
       port: 4222
       targetPort: 4222
 ---
-# Client service: what publishers/consumers/the reader connect to.
-# nats://evt-nats.platform.svc.cluster.local:4222
+# Client service: nats://wamn-nats.platform.svc.cluster.local:4222
 apiVersion: v1
 kind: Service
 metadata:
-  name: evt-nats
+  name: wamn-nats
   namespace: platform
   labels:
-    app.kubernetes.io/name: evt-nats
-    app.kubernetes.io/component: event-plane-nats
+    app.kubernetes.io/name: wamn-nats
+    app.kubernetes.io/component: nats
 spec:
   selector:
-    app.kubernetes.io/name: evt-nats
+    app.kubernetes.io/name: wamn-nats
   ports:
     - name: client
       port: 4222
@@ -73,22 +80,22 @@ spec:
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: evt-nats
+  name: wamn-nats
   namespace: platform
   labels:
-    app.kubernetes.io/name: evt-nats
-    app.kubernetes.io/component: event-plane-nats
+    app.kubernetes.io/name: wamn-nats
+    app.kubernetes.io/component: nats
 spec:
-  serviceName: evt-nats-headless
+  serviceName: wamn-nats-headless
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: evt-nats
+      app.kubernetes.io/name: wamn-nats
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: evt-nats
-        app.kubernetes.io/component: event-plane-nats
+        app.kubernetes.io/name: wamn-nats
+        app.kubernetes.io/component: nats
     spec:
       terminationGracePeriodSeconds: 45
       containers:
@@ -112,6 +119,9 @@ spec:
               mountPath: /etc/nats-config
             - name: authorization
               mountPath: /etc/nats-authorization
+              readOnly: true
+            - name: tls
+              mountPath: /etc/nats-tls
               readOnly: true
             - name: data
               mountPath: /data
@@ -138,14 +148,18 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: evt-nats-config
+            name: wamn-nats-config
         - name: authorization
           secret:
-            secretName: evt-nats-authorization
+            secretName: wamn-nats-authorization
             optional: false
             items:
               - key: authorization.conf
                 path: authorization.conf
+        - name: tls
+          secret:
+            secretName: wasmcloud-nats-tls
+            optional: false
   volumeClaimTemplates:
     - metadata:
         name: data

@@ -19,15 +19,21 @@ use super::install::apply_object;
 
 const SERVER: &str = "nats://evt-nats.platform.svc.cluster.local:4222";
 
+/// The Secret that holds the authorization file of the one NATS.
+pub(super) const AUTHORIZATION: &str = "wamn-nats-authorization";
+
 #[derive(Serialize, Deserialize)]
-struct Authorization {
+pub(super) struct Authorization {
     users: Vec<Account>,
 }
 
+/// A NATS user. A user with no password is a certificate user: the server
+/// maps a client certificate to it by the certificate's DNS name.
 #[derive(Serialize, Deserialize)]
 struct Account {
     user: String,
-    password: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    password: Option<String>,
     permissions: Permissions,
 }
 
@@ -93,6 +99,92 @@ pub(super) fn documents(
         .collect()
 }
 
+/// The certificate users of the platform clients (docs/plan/alignment.md R4).
+///
+/// The operator and the host scheduler connection reach only the wasmCloud
+/// control subjects. The data user of the chart grants nothing, because each
+/// environment's host connects with its own certificate.
+fn platform_users() -> Vec<Account> {
+    let subjects = |allow: &[&str]| Subjects {
+        allow: allow.iter().map(|subject| (*subject).into()).collect(),
+        deny: if allow.is_empty() {
+            vec![">".into()]
+        } else {
+            Vec::new()
+        },
+    };
+    let user = |name: &str, publish: &[&str], subscribe: &[&str]| Account {
+        user: name.into(),
+        password: None,
+        permissions: Permissions {
+            publish: subjects(publish),
+            subscribe: subjects(subscribe),
+        },
+    };
+    let control = ["runtime.host.>", "runtime.operator.>", "_INBOX.>"];
+    let bucket = [
+        "$KV.wamn-auth.>",
+        "$JS.API.STREAM.INFO.KV_wamn-auth",
+        "$JS.API.STREAM.CREATE.KV_wamn-auth",
+        "$JS.API.STREAM.UPDATE.KV_wamn-auth",
+    ];
+    let mut ctl = bucket.to_vec();
+    ctl.extend([
+        "$JS.API.STREAM.INFO.>",
+        "$JS.API.STREAM.MSG.GET.>",
+        "$JS.API.CONSUMER.INFO.>",
+    ]);
+    vec![
+        user("wasmcloud-operator", &control, &control),
+        user("wasmcloud-runtime", &control, &control),
+        user("wasmcloud-data", &[], &[]),
+        user("wamn-identity", &bucket, &["_INBOX.>"]),
+        user("wamn-ctl", &ctl, &["_INBOX.>"]),
+        user(
+            "wamn-cdc-reader",
+            &["evt.>", "$JS.API.STREAM.INFO.>"],
+            &["_INBOX.>"],
+        ),
+        user(
+            "wamn-provisioning",
+            &[
+                "$JS.API.STREAM.INFO.>",
+                "$JS.API.STREAM.CREATE.>",
+                "$JS.API.STREAM.UPDATE.>",
+                "$JS.API.STREAM.DELETE.>",
+                "$JS.API.CONSUMER.INFO.>",
+                "$JS.API.CONSUMER.CREATE.>",
+                "$JS.API.CONSUMER.DURABLE.CREATE.>",
+                "$JS.API.CONSUMER.DELETE.>",
+            ],
+            &["_INBOX.>"],
+        ),
+    ]
+}
+
+/// The first authorization file: the platform users and no environment.
+pub(super) fn initial_authorization() -> String {
+    let authorization = Authorization {
+        users: platform_users(),
+    };
+    format!("authorization: {}\n", json!(authorization))
+}
+
+/// Put each platform user in `authorization`, in place of its old entry.
+fn keep_platform_users(authorization: &mut Authorization) {
+    for user in platform_users() {
+        if let Some(existing) = authorization
+            .users
+            .iter_mut()
+            .find(|old| old.user == user.user)
+        {
+            *existing = user;
+        } else {
+            authorization.users.push(user);
+        }
+    }
+}
+
 pub(super) async fn apply(
     target: &Target,
     repository: &Path,
@@ -104,10 +196,10 @@ pub(super) async fn apply(
         &target.context,
         "platform",
         "secret",
-        "evt-nats-authorization",
+        AUTHORIZATION,
     )
     .await?
-    .context("missing Secret platform/evt-nats-authorization")?;
+    .context("missing Secret platform/wamn-nats-authorization")?;
     let encoded = live["data"]["authorization.conf"]
         .as_str()
         .context("the broker Secret has no authorization.conf")?;
@@ -121,6 +213,7 @@ pub(super) async fn apply(
             .context("the broker authorization has no prefix")?,
     )
     .map_err(|_| anyhow::anyhow!("decode the broker authorization"))?;
+    keep_platform_users(&mut authorization);
     let mut changed = false;
     for (path, document) in documents(environments)? {
         ensure!(
@@ -158,7 +251,7 @@ pub(super) async fn apply(
     if desired != original {
         let object = secret(
             "platform",
-            "evt-nats-authorization",
+            AUTHORIZATION,
             [(
                 "authorization.conf".into(),
                 format!("authorization: {desired}\n"),
@@ -249,12 +342,13 @@ fn render(
         ("materializer", materializer),
     ] {
         let username = format!("{role}_{}", source.name);
-        let password = if let Some(user) = authorization
+        let password = if let Some(password) = authorization
             .users
             .iter()
             .find(|user| user.user == username)
+            .and_then(|user| user.password.clone())
         {
-            user.password.clone()
+            password
         } else {
             let mut bytes = [0; 32];
             ring::rand::SystemRandom::new()
@@ -265,7 +359,7 @@ fn render(
         let subscribe = vec![format!("_INBOX_{username}.>")];
         let user = Account {
             user: username.clone(),
-            password: password.clone(),
+            password: Some(password.clone()),
             permissions: Permissions {
                 publish: Subjects {
                     allow: publish,

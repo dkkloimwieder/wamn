@@ -1,6 +1,10 @@
 # The runtime operator on GKE (docs/history/gcp-deployment.md step 3), over
-# deploy/infra/values-wamn.yaml. The operator, its NATS and its CA live in
+# deploy/infra/values-wamn.yaml. The operator and the one NATS live in
 # namespace platform. The hosts run in namespace hosts.
+global:
+  nats:
+    schedulerUrl: nats://wamn-nats.platform.svc.cluster.local:4222
+    dataUrl: nats://wamn-nats.platform.svc.cluster.local:4222
 operator:
   watchNamespaces:
     - hosts

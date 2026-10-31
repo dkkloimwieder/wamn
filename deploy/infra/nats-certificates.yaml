@@ -1,0 +1,202 @@
+# The platform CA and the NATS certificates (docs/plan/alignment.md R3, R4).
+#
+# cert-manager owns the CA and renews it. The self-signed root signs the CA
+# certificate. The ClusterIssuer `wasmcloud-ca` signs every NATS certificate.
+# A ClusterIssuer reads `ca.secretName` in the cert-manager namespace, so the
+# CA private key has one copy.
+#
+# The runtime operator chart runs with `global.certificates.generate: false`.
+# It mounts the four Secrets that its values name: wasmcloud-nats-tls,
+# wasmcloud-operator-tls, wasmcloud-runtime-tls and wasmcloud-data-tls.
+# The other certificates are the platform clients of R4.
+#
+# The NATS server maps each client certificate to a user by its DNS name
+# (`verify_and_map`). Each certificate names exactly one user.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: wamn-selfsigned
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wasmcloud-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  secretName: wasmcloud-ca
+  commonName: wasmcloud-ca
+  duration: 43800h
+  renewBefore: 8760h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    kind: ClusterIssuer
+    name: wamn-selfsigned
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: wasmcloud-ca
+spec:
+  ca:
+    secretName: wasmcloud-ca
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wasmcloud-nats-tls
+  namespace: platform
+spec:
+  secretName: wasmcloud-nats-tls
+  commonName: wamn-nats.platform.svc.cluster.local
+  dnsNames:
+    - wamn-nats.platform.svc.cluster.local
+    - wamn-nats.platform.svc
+    - wamn-nats.platform
+    - wamn-nats
+  usages:
+    - server auth
+    - digital signature
+    - key encipherment
+  issuerRef:
+    kind: ClusterIssuer
+    name: wasmcloud-ca
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wasmcloud-operator-tls
+  namespace: platform
+spec:
+  secretName: wasmcloud-operator-tls
+  commonName: wasmcloud-operator
+  dnsNames:
+    - wasmcloud-operator
+  usages:
+    - client auth
+    - digital signature
+    - key encipherment
+  issuerRef:
+    kind: ClusterIssuer
+    name: wasmcloud-ca
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wasmcloud-runtime-tls
+  namespace: hosts
+spec:
+  secretName: wasmcloud-runtime-tls
+  commonName: wasmcloud-runtime
+  dnsNames:
+    - wasmcloud-runtime
+  usages:
+    - client auth
+    - digital signature
+    - key encipherment
+  issuerRef:
+    kind: ClusterIssuer
+    name: wasmcloud-ca
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wasmcloud-data-tls
+  namespace: hosts
+spec:
+  secretName: wasmcloud-data-tls
+  commonName: wasmcloud-data
+  dnsNames:
+    - wasmcloud-data
+  usages:
+    - client auth
+    - digital signature
+    - key encipherment
+  issuerRef:
+    kind: ClusterIssuer
+    name: wasmcloud-ca
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wamn-identity-nats
+  namespace: identity
+spec:
+  secretName: wamn-identity-nats
+  commonName: wamn-identity
+  dnsNames:
+    - wamn-identity
+  usages:
+    - client auth
+    - digital signature
+    - key encipherment
+  issuerRef:
+    kind: ClusterIssuer
+    name: wasmcloud-ca
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wamn-ctl-nats
+  namespace: platform
+spec:
+  secretName: wamn-ctl-nats
+  commonName: wamn-ctl
+  dnsNames:
+    - wamn-ctl
+  usages:
+    - client auth
+    - digital signature
+    - key encipherment
+  issuerRef:
+    kind: ClusterIssuer
+    name: wasmcloud-ca
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wamn-provisioning-nats
+  namespace: platform
+spec:
+  secretName: wamn-provisioning-nats
+  commonName: wamn-provisioning
+  dnsNames:
+    - wamn-provisioning
+  usages:
+    - client auth
+    - digital signature
+    - key encipherment
+  issuerRef:
+    kind: ClusterIssuer
+    name: wasmcloud-ca
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: wamn-cdc-reader-nats
+  namespace: hosts
+spec:
+  secretName: wamn-cdc-reader-nats
+  commonName: wamn-cdc-reader
+  dnsNames:
+    - wamn-cdc-reader
+  usages:
+    - client auth
+    - digital signature
+    - key encipherment
+  issuerRef:
+    kind: ClusterIssuer
+    name: wasmcloud-ca
+    group: cert-manager.io

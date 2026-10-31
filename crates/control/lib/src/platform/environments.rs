@@ -37,10 +37,10 @@ pub(super) async fn apply(
         &target.context,
         "platform",
         "secret",
-        "wamn-ctl-auth-nats",
+        "wamn-ctl-nats",
     )
     .await?
-    .context("missing Secret platform/wamn-ctl-auth-nats")?;
+    .context("missing Secret platform/wamn-ctl-nats")?;
     let mut changed = false;
     for (_, mut environment) in super::broker::documents(environments)? {
         if initial {
@@ -156,10 +156,10 @@ pub(super) async fn connections(
         &target.context,
         "platform",
         "secret",
-        "wamn-ctl-auth-nats",
+        "wamn-ctl-nats",
     )
     .await?
-    .context("missing Secret platform/wamn-ctl-auth-nats")?;
+    .context("missing Secret platform/wamn-ctl-nats")?;
     let source = environments
         .parent()
         .context("environments has no cluster directory")?

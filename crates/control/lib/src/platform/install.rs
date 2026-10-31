@@ -6,7 +6,6 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, ensure};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use ring::rand::SecureRandom as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::process::Command;
@@ -381,6 +380,12 @@ struct CaConfigMap {
     data: std::collections::BTreeMap<&'static str, String>,
 }
 
+#[derive(Serialize)]
+struct SecretMetadata {
+    name: &'static str,
+    namespace: &'static str,
+}
+
 fn identity_ca(secret: &SecretData) -> anyhow::Result<[CaConfigMap; 2]> {
     let ca = secret_text(secret, "ca.crt")?;
     Ok(["hosts", "edge"].map(|namespace| CaConfigMap {
@@ -546,6 +551,31 @@ async fn runtime(
         )
         .await?;
     }
+    changed |= apply_file(
+        target,
+        document,
+        repository,
+        "deploy/infra/nats-certificates.yaml",
+    )
+    .await?;
+    ready(
+        target,
+        step,
+        "cert-manager",
+        "clusterissuer",
+        "wasmcloud-ca",
+        "120s",
+    )
+    .await?;
+    for (namespace, name) in [
+        ("platform", "wasmcloud-nats-tls"),
+        ("platform", "wasmcloud-operator-tls"),
+        ("hosts", "wasmcloud-runtime-tls"),
+        ("hosts", "wasmcloud-data-tls"),
+    ] {
+        ready(target, step, namespace, "certificate", name, "120s").await?;
+    }
+    changed |= nats(target, document, repository, step).await?;
     let values = operator_values(repository, document)?;
     let values_path = work_directory.join("values-operator.yaml");
     write_operator_values(&values_path, &values)?;
@@ -557,60 +587,6 @@ async fn runtime(
         "deploy/platform/runtime-operator-events-rbac.example.yaml",
     )
     .await?;
-    let ca: Value = kubectl::get(
-        &target.kubeconfig,
-        &target.context,
-        "platform",
-        "secret",
-        "wasmcloud-ca",
-    )
-    .await?
-    .context("missing Secret platform/wasmcloud-ca after operator install")?;
-    let desired = ca_copy(&ca)?;
-    let live: Option<Value> = kubectl::get(
-        &target.kubeconfig,
-        &target.context,
-        "cert-manager",
-        "secret",
-        "wasmcloud-ca",
-    )
-    .await?;
-    if !live.as_ref().is_some_and(|live| ca_matches(&desired, live)) {
-        kubectl::apply(
-            &target.kubeconfig,
-            &target.context,
-            "cert-manager",
-            &desired,
-        )
-        .await?;
-        changed = true;
-    }
-    changed |= apply_file(
-        target,
-        document,
-        repository,
-        "deploy/infra/wasmcloud-ca-issuer.yaml",
-    )
-    .await?;
-    ready(
-        target,
-        step,
-        "cert-manager",
-        "clusterissuer",
-        "wasmcloud-ca",
-        "60s",
-    )
-    .await?;
-    changed |= apply_file(
-        target,
-        document,
-        repository,
-        "deploy/platform/host-environment-certs.example.yaml",
-    )
-    .await?;
-    for name in ["wasmcloud-runtime-tls", "wasmcloud-data-tls"] {
-        ready(target, step, "hosts", "certificate", name, "120s").await?;
-    }
     Ok(changed)
 }
 
@@ -671,98 +647,49 @@ async fn broker(
     environments: &Path,
     step: &InstallStep,
 ) -> anyhow::Result<bool> {
-    let authorization: Option<Value> = kubectl::get(
+    let mut changed = super::broker::apply(target, repository, environments, &document.org).await?;
+    changed |= nats(target, document, repository, step).await?;
+    Ok(changed)
+}
+
+/// Apply the one NATS with its authorization file. The first apply writes the
+/// platform users, and step 4.8 adds the environments.
+async fn nats(
+    target: &Target,
+    document: &ClusterDocument,
+    repository: &Path,
+    step: &InstallStep,
+) -> anyhow::Result<bool> {
+    let mut changed = false;
+    let mut authorization: Option<Value> = kubectl::get(
         &target.kubeconfig,
         &target.context,
         "platform",
         "secret",
-        "evt-nats-authorization",
+        super::broker::AUTHORIZATION,
     )
     .await?;
-    let mut changed = false;
-    if let Some(secret) = broker_secret(authorization.as_ref())? {
+    if authorization.is_none() {
+        let secret = json!({
+            "apiVersion": "v1", "kind": "Secret", "type": "Opaque",
+            "metadata": {"name": super::broker::AUTHORIZATION, "namespace": "platform"},
+            "data": {"authorization.conf": STANDARD.encode(super::broker::initial_authorization())}
+        });
         kubectl::apply(&target.kubeconfig, &target.context, "platform", &secret).await?;
+        authorization = Some(secret);
         changed = true;
     }
-    changed |= super::broker::apply(target, repository, environments, &document.org).await?;
-    let authorization: Value = kubectl::get(
-        &target.kubeconfig,
-        &target.context,
-        "platform",
-        "secret",
-        "evt-nats-authorization",
-    )
-    .await?
-    .context("missing Secret platform/evt-nats-authorization")?;
+    let authorization = authorization.context("missing Secret platform/wamn-nats-authorization")?;
     for mut object in objects(repository, "deploy/gcp/nats-jetstream.yaml", document)? {
         if object["kind"] == "StatefulSet" {
             object["spec"]["template"]["metadata"]["annotations"] = json!({
-                "wamn.dev/event-authorization": job::input_digest(&authorization["data"])
+                "wamn.dev/nats-authorization": job::input_digest(&authorization["data"])
             });
         }
         changed |= apply_object(target, &object).await?;
     }
-    rollout(target, step, "platform", "statefulset/evt-nats", "300s").await?;
+    rollout(target, step, "platform", "statefulset/wamn-nats", "300s").await?;
     Ok(changed)
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct BrokerSecret {
-    api_version: &'static str,
-    kind: &'static str,
-    metadata: SecretMetadata,
-    #[serde(rename = "type")]
-    secret_type: &'static str,
-    string_data: std::collections::BTreeMap<&'static str, String>,
-}
-
-#[derive(Serialize)]
-struct SecretMetadata {
-    name: &'static str,
-    namespace: &'static str,
-}
-
-fn broker_secret(authorization: Option<&Value>) -> anyhow::Result<Option<BrokerSecret>> {
-    if authorization.is_some() {
-        return Ok(None);
-    }
-    let mut random = [0u8; 32];
-    ring::rand::SystemRandom::new()
-        .fill(&mut random)
-        .map_err(|_| anyhow::anyhow!("generate broker password"))?;
-    Ok(Some(render_broker_secret(&hex::encode(random))))
-}
-
-fn render_broker_secret(password: &str) -> BrokerSecret {
-    // An empty users list lets nats-server accept anonymous clients, so the
-    // authorization holds one user that may do nothing until the environment
-    // step rewrites it. Nothing keeps the password.
-    // It stays plain text: it grants nothing, so a hash would protect nothing.
-    let authorization = json!({
-        "users": [{
-            "user": "platform-seal",
-            "password": password,
-            "permissions": {
-                "publish": {"deny": [">"]},
-                "subscribe": {"deny": [">"]}
-            }
-        }]
-    });
-    BrokerSecret {
-        api_version: "v1",
-        kind: "Secret",
-        metadata: SecretMetadata {
-            name: "evt-nats-authorization",
-            namespace: "platform",
-        },
-        secret_type: "Opaque",
-        string_data: [(
-            "authorization.conf",
-            format!("authorization: {authorization}\n"),
-        )]
-        .into(),
-    }
 }
 
 async fn apply_file(
@@ -922,19 +849,6 @@ fn wait_error(step: &InstallStep, error: anyhow::Error) -> anyhow::Error {
         message.push_str(&input.instructions);
     }
     error.context(message)
-}
-
-fn ca_copy(source: &Value) -> anyhow::Result<Value> {
-    Ok(json!({
-        "apiVersion": "v1", "kind": "Secret",
-        "metadata": {"name": "wasmcloud-ca", "namespace": "cert-manager"},
-        "data": source.get("data").context("Secret platform/wasmcloud-ca has no data")?,
-        "type": source.get("type").context("Secret platform/wasmcloud-ca has no type")?
-    }))
-}
-
-fn ca_matches(desired: &Value, live: &Value) -> bool {
-    desired.get("data") == live.get("data") && desired.get("type") == live.get("type")
 }
 
 fn write_operator_values(path: &Path, values: &Value) -> anyhow::Result<()> {
@@ -1193,45 +1107,37 @@ mod tests {
     use crate::platform::document::Provider;
 
     #[test]
-    fn broker_secret_renders_one_user_without_allows() {
-        let secret = serde_json::to_value(broker_secret(None).unwrap().unwrap()).unwrap();
-        assert_eq!(secret["apiVersion"], "v1");
-        assert_eq!(secret["kind"], "Secret");
-        assert_eq!(secret["type"], "Opaque");
-        assert_eq!(
-            secret["metadata"],
-            json!({"name": "evt-nats-authorization", "namespace": "platform"})
-        );
-        let data = secret["stringData"].as_object().unwrap();
-        assert_eq!(data.len(), 1);
-        let text = data["authorization.conf"].as_str().unwrap();
+    fn first_authorization_holds_only_certificate_users() {
+        let text = super::super::broker::initial_authorization();
         let authorization: Value =
             serde_json::from_str(text.strip_prefix("authorization: ").unwrap()).unwrap();
         let users = authorization["users"].as_array().unwrap();
-        assert_eq!(users.len(), 1);
-        let password = users[0]["password"].as_str().unwrap();
-        assert_eq!(hex::decode(password).unwrap().len(), 32);
+        let names: Vec<_> = users
+            .iter()
+            .map(|user| user["user"].as_str().unwrap())
+            .collect();
         assert_eq!(
-            users[0],
-            json!({
-                "user": "platform-seal", "password": password,
-                "permissions": {
-                    "publish": {"deny": [">"]},
-                    "subscribe": {"deny": [">"]}
-                }
-            })
+            names,
+            [
+                "wasmcloud-operator",
+                "wasmcloud-runtime",
+                "wasmcloud-data",
+                "wamn-identity",
+                "wamn-ctl",
+                "wamn-cdc-reader",
+                "wamn-provisioning"
+            ]
         );
-        // The password appears only inside the authorization file itself.
-        assert_eq!(secret.to_string().matches(password).count(), 1);
-    }
-
-    #[test]
-    fn existing_authorization_skips_the_secret_without_reading_its_users() {
-        for existing in [
-            json!({}),
-            json!({"data": {"authorization.conf": "e3-users"}}),
-        ] {
-            assert!(broker_secret(Some(&existing)).unwrap().is_none());
+        // R4: no client uses a password.
+        assert!(!text.contains("password"));
+        // A4: the scheduler users reach only the wasmCloud control subjects.
+        for user in &users[..2] {
+            for direction in ["publish", "subscribe"] {
+                assert_eq!(
+                    user["permissions"][direction]["allow"],
+                    json!(["runtime.host.>", "runtime.operator.>", "_INBOX.>"])
+                );
+            }
         }
     }
 
@@ -1387,26 +1293,6 @@ mod tests {
                 assert!(!error.contains("owner input:"));
             }
         }
-    }
-
-    #[test]
-    fn ca_copy_compares_only_data_and_type() {
-        let source = json!({
-            "metadata": {"namespace": "platform", "uid": "source", "ownerReferences": [{}]},
-            "data": {"tls.crt": "cert", "tls.key": "key"}, "type": "kubernetes.io/tls"
-        });
-        let desired = ca_copy(&source).unwrap();
-        assert_eq!(
-            desired["metadata"],
-            json!({"name": "wasmcloud-ca", "namespace": "cert-manager"})
-        );
-        assert!(ca_matches(&desired, &source));
-        let mut changed = source.clone();
-        changed["data"]["tls.crt"] = "rotated".into();
-        assert!(!ca_matches(&desired, &changed));
-        changed = source;
-        changed["type"] = "Opaque".into();
-        assert!(!ca_matches(&desired, &changed));
     }
 
     #[test]

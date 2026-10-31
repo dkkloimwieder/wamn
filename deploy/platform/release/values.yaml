@@ -13,6 +13,10 @@ global:
     # namespace. The host still mounts them, because `global.tls.enabled` stays
     # at its default true.
     generate: false
+  # The one NATS of the platform (docs/plan/alignment.md R2).
+  nats:
+    schedulerUrl: nats://wamn-nats.platform.svc.cluster.local:4222
+    dataUrl: nats://wamn-nats.platform.svc.cluster.local:4222
 
 runtime-operator:
   # The cluster-singular halves of the subchart. The operator release owns them.
@@ -22,9 +26,6 @@ runtime-operator:
     enabled: false
   gateway:
     enabled: false
-  # `global.nats.*` is left out on purpose. The subchart's default is
-  # `nats.<.Release.Namespace>`, and this release lives in the operator
-  # release's namespace (R6).
   runtime:
     # The host image of the platform image set: `tag` is `<tag>@sha256:<hex>`,
     # because the subchart renders only `repository:tag`.

@@ -349,9 +349,12 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
         .collect();
     assert!(arguments.contains(&format!("--host-group={name}").as_str()));
     assert!(arguments.contains(&format!("--release-manifest-digest={DIGEST}").as_str()));
-    assert!(arguments.contains(
-        &format!("--scheduler-nats-url=nats://nats.{NAMESPACE}.svc.cluster.local:4222").as_str()
-    ));
+    // R2: the scheduler and data connections name the one NATS.
+    for flag in ["--scheduler-nats-url", "--data-nats-url"] {
+        assert!(arguments.contains(
+            &format!("{flag}=nats://wamn-nats.platform.svc.cluster.local:4222").as_str()
+        ));
+    }
 
     // A2, render half: the host mounts the operator release's TLS Secrets.
     let secrets: BTreeSet<&str> = pod["spec"]["volumes"]
