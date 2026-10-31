@@ -59,7 +59,7 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | H1-2 | [H](hygiene.md) | high | S | Selection failures | Failed Git reads can become an empty successful test selection. Group 3 Do, small. The revision runner is renamed `tools/test-revision`. |
 | H3-1 | [H](hygiene.md) | high | S | Web dependencies | The parent pnpm installation omits dependency patches declared by the pinned wfe submodule. |
 | D1-3 | [D](deployment.md) | high | S | RC telemetry | Closed by D3-6. The RC path and its Dockerfile are deleted, so no separate collector fix exists. |
-| H2-1 | [H](hygiene.md) | high | M | Contract documentation | Active plans contradict current integration and write-log contracts. |
+| H2-1 | [H](hygiene.md) | high | M | Contract documentation | Active plans contradict current integration and write-log contracts. Group 4 Do. `plan/integrations.md` and `plan/write-log.md` are deleted now. `integration-schema.md` is the integration authority until C1 to C3 land. |
 | D2-7, D3-6, F1-7, F3-4, H1-6 | [D](deployment.md), [F](developer-experience.md), [H](hygiene.md) | high | L | Deployment fixtures | Application and check routes repeat builds, installation, credentials, collection, and cleanup. F1-7 is Group 1 In passing with D3-6. F3-4 is Group 1 In passing with D3-6. |
 | E3-5 | [E](security.md) | low | S | Compiler containment | Import discovery compiles components, and cancelled callers cannot terminate detached compilation. wasmparser import listing, detached compilation fixed when the file is next changed. |
 | C2-8 | [C](upgrade.md) | medium | L | Contract version minimums | The declared contract phase has no admitted executor and separates contraction from version minimum recording. |
@@ -100,7 +100,7 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | G3-5 | [G](tests.md) | medium | M | Contract compilation | Compile-time generated-file reads prevent isolated client and generator test compilation. As written. |
 | G3-6 | [G](tests.md) | medium | L | Test placement | Mixed targets carry cheap assertions into expensive fixtures and repeat business histories at deployment boundaries. The target moves as listed. GKE sentences struck. |
 | A2-3 | [A](code-quality.md) | medium | M | Host contracts | Seventy-one redundant JSON files contain 3,020 repeated contract lines. Group 4 Do, after integration-schema C1 to C3, against the new routes. Per-operation files become build output. |
-| H2-2 | [H](hygiene.md) | medium | M | Active plans | Completed programs remain in the active plan collection. |
+| H2-2 | [H](hygiene.md) | medium | M | Active plans | Completed programs remain in the active plan collection. Delete the eleven. The history index gets one line each (bead, commit). The agent runs `bd show` live first. |
 | B1-4, B2-5 | [B](coupling.md) | medium | L | Control coupling | The control compilation unit includes the developer application and unrelated tool orchestration. B1-4 is deferred until Group 1 has deleted about a fifth of control. B2-5 is deferred with it. |
 | B1-2 | [B](coupling.md) | medium | M | Test dependencies | Six development dependency links pull higher-level owners into lower-level test builds. Fix each edge by replacing the import, not by relocating tests. Group 3. |
 | B1-3 | [B](coupling.md) | medium | L | Artifact ownership | Narrow artifact consumers depend on the runtime hub and its cloud execution dependencies. Group 4, after the A5 inversion lands. |
@@ -155,16 +155,16 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | H1-3 | [H](hygiene.md) | medium | S | Descriptor diagnostic | A two-case diagnostic requires four passes and therefore cannot succeed. Group 4 Do, small: delete the diagnostic, keep its two assertions in the host tests. |
 | H1-5 | [H](hygiene.md) | medium | M | Identity tests | Separate shell runners duplicate identity test orchestration and retain the old evidence-directory rule. Group 1 In passing with D3-6. The `evidence/` requirement goes. |
 | H1-7 | [H](hygiene.md) | medium | M | Benchmark results | Compact summaries discard source identity, workload details, conflicts, and errors. In passing: one result writer, summaries derived, raw results retained. |
-| H2-3 | [H](hygiene.md) | medium | S | Plan retirement | The previous audit recommends blanket archival of plans that retain unresolved work. |
-| H2-4 | [H](hygiene.md) | medium | S | Agent instructions | Standing repository rules remain inside a completed deployment plan. |
-| H2-5 | [H](hygiene.md) | medium | S | Documentation links | Active pages contain missing source paths and retired anchors. |
-| H2-6 | [H](hygiene.md) | medium | M | Historical evidence | Twelve historical links present unavailable artifacts as inspectable evidence. |
+| H2-3 | [H](hygiene.md) | medium | S | Plan retirement | The previous audit recommends blanket archival of plans that retain unresolved work. Delete `docs-audit.md`. Mixed plans keep only unresolved design. `perf-arch.md` keeps every A5 ruling. |
+| H2-4 | [H](hygiene.md) | medium | S | Agent instructions | Standing repository rules remain inside a completed deployment plan. Small: rules to `CLAUDE.md`, the version procedure to `building.md`, cloud prerequisites to `gcp.md`. |
+| H2-5 | [H](hygiene.md) | medium | S | Documentation links | Active pages contain missing source paths and retired anchors. The five `wamn-sync.md` links now. The rest die with H2-2 and H2-7 or are repaired In passing. |
+| H2-6 | [H](hygiene.md) | medium | M | Historical evidence | Twelve historical links present unavailable artifacts as inspectable evidence. Delete the twelve links and the proof wording. Each claim keeps its bead reference and the note "evidence not retained". |
 | H3-3 | [H](hygiene.md) | medium | M | Web boundaries | Source aliases conceal undeclared dependencies and private package imports. |
 | H3-5 | [H](hygiene.md) | medium | M | Shared presentation | The tooling package owns application sync UI despite its documented role. |
 | H3-6 | [H](hygiene.md) | medium | S | Web lint | Equivalent Solid application code receives different rules, and generated exclusions are incomplete. |
 | H3-7 | [H](hygiene.md) | medium | M | Browser fixtures | Scenario drivers repeat authentication, interaction, forwarding, and capture support. |
 | H3-10 | [H](hygiene.md) | low | S | Tracker files | An obsolete export and an empty temporary file retain about 7.6 MB beside the canonical export. |
-| H2-7 | [H](hygiene.md) | low | M | Historical snapshots | Three overlapping history snapshots contain 3,891 lines beside current reference owners. |
+| H2-7 | [H](hygiene.md) | low | M | Historical snapshots | Three overlapping history snapshots contain 3,891 lines beside current reference owners. Delete the three snapshot pages. Git holds them. Fix the source comments that cite old sections first. |
 | H1-12 | [H](hygiene.md) | low | S | Retired tools | An applied rename tool and unused check build/removal pair retain 653 lines. Group 1 Do: delete all three now. |
 | A1-3 | [A](code-quality.md) | low | S | Recovery helpers | Most operator-recovery helpers have no caller beyond their own tests. Delete, Group 4 Do, one commit per crate. `connection_refused` and its test stay in test support. |
 | A2-13, G1-8 | [A](code-quality.md), [G](tests.md) | low | M | Test filesystem | Tests repeat repository discovery, temporary-directory ownership, and executable creation. |
@@ -195,7 +195,7 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | G1-15 | [G](tests.md) | low | S | Small test helpers | Ready-only polling and Unix-second conversion repeat across tests. |
 | G2-6 | [G](tests.md) | low | S | Incidental counts | Table totals and a publication count freeze implementation choices without a named contract. In passing when those files are open. |
 | G2-7 | [G](tests.md) | low | S | SQL snapshots | A complete formatted DDL snapshot repeats behavior already covered by semantic tests. Closed by the tenant feature removal: the three files go whole. |
-| H2-8 | [H](hygiene.md) | low | S | Documentation navigation | The plan index omits alignment work, and history lacks a successor map. |
+| H2-8 | [H](hygiene.md) | low | S | Documentation navigation | The plan index omits alignment work, and history lacks a successor map. Keep the structure and `docs/testing/`. Add `alignment.md`, `integration-schema.md` and `audit/` to the indexes. The untrimmed-plan rule is deleted. |
 | H3-9 | [H](hygiene.md) | low | S | Web exports | Three unnecessary exports and one root dependency can leave without deleting their active implementations. |
 
 ### Rejected findings and proposals
@@ -312,6 +312,12 @@ The owner review of 2026-10-31 rejects the following. The report evidence stays 
 | Question on off-repository use of `kind-gate-build` and `kind-gate-image-remove` (H1-12) | Answered: none. Delete now. |
 | Question on benchmark summaries without raw results (H1-7) | Answered: no. Raw results are retained beside the summary. |
 | Question on the identity journey `evidence/` requirement (H1-5) | Answered: yes, it goes. |
+| H2-1: reconcile `plan/integrations.md` and `plan/write-log.md` with their owners | Corrected. Both are deleted now. `integrations.md` is the older, contradicting plan, and the write-log plan closed (`wamn-z7uv`). |
+| H2-6: link retained artifacts or mark each unavailable | Narrowed. The twelve links and the proof wording go. Each claim keeps its bead reference and the note "evidence not retained". |
+| The rule that an accepted plan is not trimmed (`docs/plan/manifest-authoring.md:94`, item 9) | Superseded by the standing rules (completed work belongs to commits and beads, no parallel artifacts, a plan holds unresolved design only) and deleted. |
+| Question on live statuses for the archive candidates (H2-2, H2-3) | Answered: the agent runs `bd show` live for each before deleting. The passive export is not a status source. |
+| Question on an immutable Git source plus a history entry (H2-2, H2-7) | Answered: yes. |
+| Question on the twelve historical performance artifacts (H2-6) | Answered: retained nowhere. |
 | Question on the owner of the frozen PostgreSQL telemetry identifiers (G2-6, H2-5) | Answered: the identifiers stay. The guard cites the collector template in `deploy/platform/otel-collector.yaml`, the only current consumer, instead of the deleted archive documents. No dashboard owns them. |
 | C1-2's pending-work record and C1-3's schema advancement before analysis | Rejected. One baseline, so nothing advances. Apply compares the installed baseline hash with the candidate's and refuses with "schema changed, reset the environment database" on a mismatch. C1-3 closes into C1-2 with its Deletes widened to every project migration call. |
 
@@ -664,10 +670,10 @@ Do (38 findings). The rows the review named, then every row that deletes a build
 | B3-5 | Three first-party workspaces are sufficient, but feature isolation must remain | medium | The Modbus standalone workspace declaration, both checked-in fixture manifests and lockfiles, and their standalone build contexts. Delete duplicated dependency and lint declarations where workspace inheritance replaces them. |
 | B3-6 | Test package boundaries can collapse without exporting test authority | medium | Seven redundant manifests from the eight test and tool packages combined into T18. Delete two redundant support manifests. Remove facade imports between the merged owners. Absorbs G1-1: T17 `wamn-test-support` takes harness, infrastructure and fixture-package, and T16 `wamn-test-postgres` stays separate and test-only. |
 | F3-7 | The ten-minute target lacks a matching acceptance test | medium | Replace the hello-app procedure with this executable quickstart. Remove author-maintained smoke-test setup for generated behavior. After F3-1 and F3-6. The first run is the measurement. No 600-second requirement, no named runner. |
-| H2-1 | Plans compete with reference pages for current contracts | high | Repeated implemented contracts from active plans, including the SQL schema copies in `docs/plan/integration-schema.md:24`. |
-| H2-2 | Closed work remains in the active plan collection | medium | Completed plan files and their active index entries after their unique contracts and standing rules reach current owners. |
-| H2-5 | Local links contain five live missing paths and three missing anchors | medium | Obsolete source claims and links to retired deployment files. Do not recreate removed implementation files to satisfy documentation links. |
-| H2-6 | Historical proof claims point to absent evidence | medium | Unsupported proof wording and dead artifact links when no retained source exists. Do not add placeholder evidence files. |
+| H2-1 | Plans compete with reference pages for current contracts | high | Repeated implemented contracts from active plans, plus `plan/integrations.md` and `plan/write-log.md` whole. The SQL schema copies in `integration-schema.md` go only when the schema is implemented. |
+| H2-2 | Closed work remains in the active plan collection | medium | The eleven completed plan files and their index entries. One history line each: bead and commit. `bd show` live before each deletion. |
+| H2-5 | Local links contain five live missing paths and three missing anchors | medium | Obsolete source claims and links to retired deployment files. Do not recreate removed implementation files to satisfy documentation links. The five `wamn-sync.md` links now. The rest die with H2-2 and H2-7 or are repaired In passing. |
+| H2-6 | Historical proof claims point to absent evidence | medium | The twelve dead links and the proof wording. Each claim keeps its bead reference and the note "evidence not retained". |
 | H3-1 | The parent install omits wfe dependency repairs | high | No source deletion initially. Remove the separate, inconsistent installation assumptions. |
 | H3-3 | Source aliases hide dependencies between workspace packages | medium | Cross-package source aliases, matching TypeScript path overrides, and Receiving’s direct import of the private wfe transformation script. |
 | H3-4 | Shared Vite configuration owns too little | medium | Repeated Solid-version plugins, resolution blocks, test defaults, and worker filename callbacks. Replace manually restated Vite interface shapes with Vite’s own types. |
@@ -721,10 +727,10 @@ In passing (49 findings). Helper dedup, naming, count pins and doc links. Closed
 | G1-15 | Small clock and ready-future helpers also repeat three times | low | Two polling bodies and two clock-conversion bodies. |
 | H1-7 | Compact benchmark results lose their identity and failure detail | medium | The unused `metadata.json` handoff and independently maintained compact field selection. One result writer, summaries derived from it, raw results retained. |
 | H1-8 | The cloud version minimum runner leaves work active after failure | medium | The Job-only cleanup handler and unbounded discovery loop. When `gcp.sh` is next touched. The `COMMIT_DELAY` switch stays. |
-| H2-3 | The previous audit gives an unsafe blanket archive list | medium | `docs/plan/docs-audit.md` from the active plan collection, its obsolete status inventory, and completed sections of mixed plans. Preserve the dated audit through Git or the history index. |
-| H2-4 | Standing repository rules live inside a completed deployment plan | medium | The standing-rule block from the deployment plan and repeated “How this plan is worked” imports from other plans. |
-| H2-7 | Change histories occupy pages that readers use as references | low | Redundant historical snapshots after preserving their source revisions. The three snapshot pages `gcp-install-history.md`, `platform-ui-history.md`, and `deployment-pre-apply.md` contain 3,891 lines. |
-| H2-8 | Navigation omits active alignment work and lacks a history map | low | Completed plan entries, copied status lists, and snapshot pages covered by the preceding findings. Add only the compact history index. |
+| H2-3 | The previous audit gives an unsafe blanket archive list | medium | `docs/plan/docs-audit.md` from the active plan collection, its obsolete status inventory, and completed sections of mixed plans. Preserve the dated audit through Git or the history index. `perf-arch.md` keeps every A5 ruling. |
+| H2-4 | Standing repository rules live inside a completed deployment plan | medium | The standing-rule block from the deployment plan and repeated “How this plan is worked” imports from other plans. Rules to `CLAUDE.md`. |
+| H2-7 | Change histories occupy pages that readers use as references | low | Redundant historical snapshots after preserving their source revisions. The three snapshot pages `gcp-install-history.md`, `platform-ui-history.md`, and `deployment-pre-apply.md` contain 3,891 lines. Fix the source comments that cite old sections first. |
+| H2-8 | Navigation omits active alignment work and lacks a history map | low | Completed plan entries, copied status lists, and snapshot pages covered by the preceding findings. Add only the compact history index. Add `alignment.md`, `integration-schema.md` and `audit/` to the indexes. The untrimmed-plan rule is deleted. |
 | H3-6 | ESLint applies different rules to equivalent application code | medium | The separate platform-only rule block and stale `web/demo` exclusion. |
 | H3-7 | Browser drivers duplicate fixture and transport support | medium | Repeated fixture parsing, sign-in functions, receipt actions, and HTTP forwarding implementations. Retain every scenario entry point. |
 | H3-10 | Obsolete Beads files remain tracked beside the canonical export | low | `.beads/beads.jsonl` and `.beads/.~issues.jsonl.3646117766`, about 7.6 MB combined. |
@@ -737,9 +743,6 @@ In passing (49 findings). Helper dedup, naming, count pins and doc links. Closed
 4. Confirm the reviewer's pick: a poisoned authority lock fails the operation and exits the host process, and Kubernetes restarts it. No isolation machinery, no unready-state logic. This settles A3-2 inside the A5 rewrite.
 5. Can WAMN consume only public built wfe exports while source qualification remains inside the submodule? This unblocks Group 4 (H3-3).
 6. Confirm the reviewer's pick: Docker on Linux x86_64 is the supported developer host for now. This settles the host contract for Groups 2 and 4 (F2-8, F3-2).
-7. Can root supply live statuses for the archive candidates, including which retired contracts they cite? This unblocks Group 4 (H2-2, H2-3). Quarantined tests are answered: the restoring agent reads each bead then (G2-1 through G2-4, G3-4).
-8. Does an immutable Git source plus a compact history entry satisfy the rule that accepted plans remain untrimmed? This unblocks Group 4 (H2-2, H2-7).
-9. Where are the twelve historical performance artifacts retained, if anywhere? This unblocks evidence disposition in Group 4 (H2-6).
-10. Does any external tool still read `.beads/beads.jsonl`? This unblocks obsolete-export removal in Group 4 (H3-10).
+7. Does any external tool still read `.beads/beads.jsonl`? This unblocks obsolete-export removal in Group 4 (H3-10).
 
 Questions 8 and 10 of the first draft are answered in Rejected findings and proposals. Nothing from this list is filed until the owner answers.

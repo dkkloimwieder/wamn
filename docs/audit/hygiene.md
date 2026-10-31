@@ -281,6 +281,8 @@ All three questions were answered on 2026-10-31.
 
 ## Part 2: docs
 
+Owner review 2026-10-31, standing rules: completed work belongs to the repository record (commits, beads), not to working documents. No parallel artifacts. A plan holds unresolved design only.
+
 ## Finding H2-1: Plans compete with reference pages for current contracts
 
 Severity: high  
@@ -294,8 +296,8 @@ Proposal: Assign each implemented topic one reference owner. Plans contain only 
 
 | Duplicated topic | Pages that repeat it | One reference owner |
 | --- | --- | --- |
-| Integration identity, generations, credentials and bindings | `integrations.md`, `integration-schema.md`, `platform-config.md`, `data-access.md` | `architecture/data-access.md#project-integrations-and-credentials` |
-| Transactions, composition and write-log retries | `write-log.md`, `trx-pkg-plan.md`, `routes-router.md`, `data-access.md` | `architecture/data-access.md#inputs-queries-and-transactions` |
+| Integration identity, generations, credentials and bindings | `integrations.md`, `integration-schema.md`, `platform-config.md`, `data-access.md` | `plan/integration-schema.md` until C1 to C3 land, then `architecture/data-access.md#project-integrations-and-credentials`. `plan/integrations.md` is the older, contradicting plan (org-scoped connections) and is deleted now. |
+| Transactions, composition and write-log retries | `write-log.md`, `trx-pkg-plan.md`, `routes-router.md`, `data-access.md` | `architecture/data-access.md#inputs-queries-and-transactions`. The write-log plan closed (`wamn-z7uv`), so `plan/write-log.md` is deleted, not reconciled. |
 | Request authentication and revocation | `request-round-trips.md`, `platform-ui.md`, `platform-config.md`, `execution.md` | `architecture/execution.md#caller-authentication` |
 | Workflow identity and execution | `routes-router.md`, `workflow-feature.md`, `workflows.md`, `execution.md` | `architecture/execution.md#environment-workflows` |
 | Environment lifecycle behavior | `platform-deploy.md`, `environment-teardown.md`, `overview.md` | `architecture/overview.md#environment-lifecycle` |
@@ -304,9 +306,11 @@ Proposal: Assign each implemented topic one reference owner. Plans contain only 
 
 Commands retain their operations owners. A short overview can link to the detailed contract without repeating its rules.
 
-Deletes: Repeated implemented contracts from active plans, including the SQL schema copies in `docs/plan/integration-schema.md:24`.
+Deletes: Repeated implemented contracts from active plans. The SQL schema copies in `docs/plan/integration-schema.md:24` go only when the schema is implemented.
 
 Risk: A proposed rule can disappear during consolidation. Compare each removed section with its reference owner and retain unresolved changes under their owning Beads issue. No runtime test is required for prose relocation.
+
+Owner review 2026-10-31: keep, Group 4 Do, with the two owner-table corrections above.
 
 ## Finding H2-2: Closed work remains in the active plan collection
 
@@ -317,7 +321,7 @@ Evidence: `docs/README.md:8`, `docs/plan/README.md:4`, `docs/plan/request-round-
 
 Problem: The documentation index defines plans as work that is not built, but the plan index includes completed programs. The retained Beads export records the scoped work below as closed. Live status remains unconfirmed because read-only `bd show` cannot open embedded Dolt without creating its lock file.
 
-Proposal: Remove completed programs from `docs/plan`. Use compact entries in `docs/history/README.md` as history targets. Each entry records the Bead, completion evidence, an immutable Git source link, and its current reference owner.
+Proposal: Delete the eleven completed plans from `docs/plan`. The history index gets one line each: bead and commit.
 
 | Plan | Closed work recorded in the export | History target |
 | --- | --- | --- |
@@ -339,6 +343,8 @@ Deletes: Completed plan files and their active index entries after their unique 
 
 Risk: Deferred work can be mistaken for completed work. Reconcile live Beads before deletion and preserve the distinctions in H2-3. Test all replacement links and history anchors.
 
+Owner review 2026-10-31: delete the eleven. Question 1 is answered: the agent runs `bd show` live for each before deleting. The passive export is not a status source.
+
 ## Finding H2-3: The previous audit gives an unsafe blanket archive list
 
 Severity: medium  
@@ -355,7 +361,7 @@ Proposal: Treat the October 24 audit as dated evidence. Keep only unresolved des
 | `platform-ui-app.md` | Server paging, `wamn-n8q9m.20` |
 | `manifest-authoring.md` | Epic 2 cross-field refusals |
 | `trx-pkg-plan.md` | Grantable administration and other explicitly deferred consumers |
-| `perf-arch.md` | Remaining performance decisions and deferred allocator work |
+| `perf-arch.md` | Every A5 ruling, remaining performance decisions and deferred allocator work. It is the A5 plan, not history. |
 | `platform-config.md` | Remaining connection, file, settings and local-environment work |
 | `workflows.md` | Remaining schedule, effect-writer and node-publication work |
 | `package-upgrade.md` | Later upgrade policies and acceptance |
@@ -364,6 +370,8 @@ Proposal: Treat the October 24 audit as dated evidence. Keep only unresolved des
 Deletes: `docs/plan/docs-audit.md` from the active plan collection, its obsolete status inventory, and completed sections of mixed plans. Preserve the dated audit through Git or the history index.
 
 Risk: A historical recommendation can override newer decisions. Reconcile each retained requirement with live Beads and its current reference page before removing it.
+
+Owner review 2026-10-31: delete `docs/plan/docs-audit.md`. Mixed plans are cut to their unresolved design as listed.
 
 ## Finding H2-4: Standing repository rules live inside a completed deployment plan
 
@@ -374,11 +382,13 @@ Evidence: `docs/plan/platform-deploy.md:16`, `docs/plan/platform-deploy.md:17`, 
 
 Problem: The completed deployment plan holds the main-checkout restriction, platform version rule, and cloud credential restrictions. Other plans import those instructions by section name. Archiving the deployment plan without extracting them can silently remove active instructions.
 
-Proposal: Put repository-wide rules in the canonical agent instructions. Put the platform version procedure in `operations/building.md` and cloud prerequisites in `operations/gcp.md`. Plans link to these owners.
+Proposal: Put repository-wide rules in `CLAUDE.md`. Put the platform version procedure in `operations/building.md` and cloud prerequisites in `operations/gcp.md`. Plans link to these owners.
 
 Deletes: The standing-rule block from the deployment plan and repeated “How this plan is worked” imports from other plans.
 
 Risk: Instruction changes affect agent behavior. Compare the extracted rules word for word and scan all tracked files for references to the retired block. No build is required.
+
+Owner review 2026-10-31: keep, small.
 
 ## Finding H2-5: Local links contain five live missing paths and three missing anchors
 
@@ -407,6 +417,8 @@ Deletes: Obsolete source claims and links to retired deployment files. Do not re
 
 Risk: A replacement link can point to a related but different contract. Repeat the path scan, resolve headings, and inspect each replacement’s meaning. External links were not tested.
 
+Owner review 2026-10-31: the five `wamn-sync.md` links are fixed now, because it is an active plan. The rest die with the H2-2 and H2-7 deletions or are repaired In passing.
+
 ## Finding H2-6: Historical proof claims point to absent evidence
 
 Severity: medium  
@@ -416,11 +428,13 @@ Evidence: `docs/history/consolidation-findings.md:139`, `docs/history/consolidat
 
 Problem: Twelve historical links target absent files under `evidence/perf/2026.09`. Their surrounding text presents those files as proof of baselines, authenticated behavior, deployed results, and source decisions. Readers cannot inspect that proof from this checkout.
 
-Proposal: Link to a retained artifact or immutable Git object when one exists. Otherwise, mark the artifact unavailable and retain only the independently supported claim and its Bead reference.
+Proposal: Delete the twelve links and the proof wording. Keep each claim with its bead reference and the note "evidence not retained".
 
 Deletes: Unsupported proof wording and dead artifact links when no retained source exists. Do not add placeholder evidence files.
 
-Risk: Removing a dead link does not establish the original acceptance result. For each claim, record whether its evidence is retrievable, externally retained, or unavailable. This audit did not rerun those historical tests.
+Risk: Removing a dead link does not establish the original acceptance result. This audit did not rerun those historical tests.
+
+Owner review 2026-10-31: question 3 is answered: the twelve artifacts are retained nowhere.
 
 ## Finding H2-7: Change histories occupy pages that readers use as references
 
@@ -440,7 +454,7 @@ Proposal: Use the following replacements and retain chronology through immutable
 | `history/platform-ui-history.md` | `architecture/execution.md#operator-clients` and `architecture/overview.md#organization-membership-and-administration` |
 | `history/kind-to-type.md` | `architecture/naming.md` plus the actual WIT and schema definitions |
 | Completed measurements and issue sequence in `plan/request-round-trips.md` | `operations/benchmark.md` and `architecture/execution.md#native-dispatch` |
-| Completed experiments and decision chronology in `plan/perf-arch.md` | `operations/benchmark.md`, current execution contracts, and remaining decisions in the reduced plan |
+| Completed experiments and decision chronology in `plan/perf-arch.md` | Cut per H2-3. The plan keeps every A5 ruling and the remaining decisions. |
 | `plan/docs-audit.md` | Beads for unresolved findings and Git for the dated audit |
 
 `operations/benchmark.md` is already a procedure and baseline reference. Keep that role rather than treating every measurements page as a change log.
@@ -448,6 +462,8 @@ Proposal: Use the following replacements and retain chronology through immutable
 Deletes: Redundant historical snapshots after preserving their source revisions. The three snapshot pages `gcp-install-history.md`, `platform-ui-history.md`, and `deployment-pre-apply.md` contain 3,891 lines.
 
 Risk: Source comments depend on old numbered sections, as `gcp-install-history.md:5` explicitly states. Rewrite those references before deletion and test them across the repository.
+
+Owner review 2026-10-31: delete the three snapshot pages (3,891 lines). Git holds them. Fix the source comments that cite old numbered sections of `gcp-install-history.md` first. `request-round-trips.md` goes with H2-2.
 
 ## Finding H2-8: Navigation omits active alignment work and lacks a history map
 
@@ -485,7 +501,7 @@ docs/
     authored-views.md
     delivery.md
     identity.md
-    integrations.md
+    integration-schema.md
     manifest-authoring.md
     nats-outage.md
     package-upgrade.md
@@ -510,11 +526,15 @@ Deletes: Completed plan entries, copied status lists, and snapshot pages covered
 
 Risk: Navigation can hide a retained requirement. Test that every retained plan appears in the index and that every retired page has a successor or historical source. This lane changed no files, ran no builds or tests, and left Git status clean.
 
+Owner review 2026-10-31: keep the structure. The existing `docs/testing/` stays. Add `alignment.md` and `integration-schema.md` to the plan index and `audit/` to `docs/README.md`. Question 2 is answered: yes. The rule that an accepted plan is not trimmed (`docs/plan/manifest-authoring.md:94`, item 9) is superseded by the standing rules above and is deleted.
+
 ## Open questions for the owner
 
-1. Can the root audit reconcile the archive candidates against live Beads? The passive export ends on October 22, and embedded Dolt cannot open in this read-only sandbox.
-2. Does an immutable Git source plus a compact history entry satisfy the rule at `docs/plan/manifest-authoring.md:94` that accepted plans remain untrimmed?
-3. Where are the twelve historical performance artifacts retained, if anywhere?
+All three questions were answered on 2026-10-31.
+
+1. The agent runs `bd show` live for each candidate before deleting it. The passive export is not a status source (H2-2).
+2. Yes. The untrimmed-plan rule is superseded by the standing rules and is deleted (H2-8).
+3. Nowhere. The twelve links and the proof wording go, and each claim keeps its bead reference with the note "evidence not retained" (H2-6).
 
 <!-- lane H3, bead wamn-lt36n.3 -->
 
