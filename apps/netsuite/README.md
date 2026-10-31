@@ -68,35 +68,121 @@ The generic HTTP delivery key is not the basis for this guarantee.
 The pull and push use the existing consumer schema, which is also the schema that `rest_connector` registers.
 
 The only setting key is `last_synced_at`, a JSON string that contains an RFC 3339 timestamp.
-There are no account ID, realm, mapping, or enable settings.
+The account host and authentication belong to the connection.
 
 ## Connection
 
-The environment connection parameters carry the account host.
-The `upstream` requirement declares the `wamn:connection/http@0.1.0` interface and `mode = "write"`.
-NetSuite authentication comes with the OAuth work in `wamn-7vh7t`.
-The host applies authentication. Guests receive neither endpoint authority nor credentials.
+The `upstream` requirement declares `wamn:connection/http@0.1.0` with `mode = "write"`.
+The connection uses `oauth2_client_credentials_jwt`, inherited from its `http` integration.
+The host signs a JWT client assertion, a signed request for a token.
+Guests receive neither the private key nor the token.
 
-Use the project-scoped requests from [integration administration](../../docs/operations/deployment.md#project-integrations-and-environment-connections).
-Set `WAMN_CONTROL_URL` and `WAMN_TOKEN` before calling the control routes.
-The connection request names the project, `env`, and integration name.
-Put the account authority and TLS policy in its `parameters` object.
-Keep credential values in a separate private file.
+NetSuite refuses RS256.
+Oracle permits PS256, PS384, PS512, ES256, ES384, and ES512.
+The generic auth type supports PS256, ES256, and RS256, so select PS256 or ES256 for NetSuite.
+NetSuite wants comma-separated scopes, so set `scope_separator` to `","`.
+Oracle defines the algorithms, scopes, and claims in [The Request Token Structure](https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/section_162790605110.html).
+The assertion uses the token endpoint as `aud` and the M2M certificate ID as `kid`.
+The host sets `exp` to 300 seconds after `iat`, below Oracle's limit of 60 minutes.
+It also sends a random `jti`, an identifier for each assertion.
 
-Keep the credential JSON in a private file.
-Use `wamn-ctl connection write --credential-file <private-file>` for the first credential.
-Use `wamn-ctl connection set-credential --file <target-request> --credential-file <private-file>` for a replacement.
-The target request names the project, `env`, and integration name.
-See [integration administration](../../docs/operations/deployment.md#project-integrations-and-environment-connections) for the supported request format.
+Use these steps from the repository root.
+The control host must already serve the organization, project, and environment.
+See [integration administration](../../docs/operations/deployment.md#project-integrations-and-environment-connections) for its authority requirements.
+
+1. Store the owner-supplied account details in `/private/netsuite/credentials.json`:
+
+   ```json
+   {
+     "account_id": "1234567-sb1",
+     "client_id": "<NetSuite integration client ID>",
+     "certificate_id": "<NetSuite M2M certificate ID>",
+     "algorithm": "PS256",
+     "private_key_file": "/private/netsuite/key.pem"
+   }
+   ```
+
+   `account_id` is the account hostname label, without a scheme or domain.
+   `private_key_file` names the PEM private key for the registered certificate.
+   Relative paths resolve from the current directory.
+   Restrict access to both files:
+
+   ```sh
+   chmod 600 /private/netsuite/credentials.json /private/netsuite/key.pem
+   ```
+
+2. Set the control URL, session token, and target project and environment:
+
+   ```sh
+   export WAMN_CONTROL_URL='https://<organization-control-host>'
+   export WAMN_TOKEN='<project-administrator-session-token>'
+   NETSUITE_PROJECT=wms
+   NETSUITE_ENV=dev
+   NETSUITE_CREDENTIALS=/private/netsuite/credentials.json
+   umask 077
+   work=$(mktemp -d /var/tmp/wamn-netsuite-setup.XXXXXX)
+   ```
+
+3. Create or update the NetSuite integration with the `http` type:
+
+   ```sh
+   jq -n --arg project "$NETSUITE_PROJECT" \
+     '{project:$project,name:"netsuite",integration_type:"http",auth_type:"oauth2_client_credentials_jwt"}' \
+     > "$work/integration.json"
+   wamn-ctl integration write --file "$work/integration.json"
+   ```
+
+4. Create the connection request with the account host and token endpoint:
+
+   ```sh
+   jq --arg project "$NETSUITE_PROJECT" --arg env "$NETSUITE_ENV" '
+     ("https://" + .account_id + ".suitetalk.api.netsuite.com") as $origin |
+     {project:$project,env:$env,name:"netsuite",parameters:{
+       "primary-authority":$origin,"tls-verification":"verify-authority",
+       auth:{client_id:.client_id,token_url:($origin + "/services/rest/auth/oauth2/v1/token"),
+         scopes:["rest_webservices"],key_id:.certificate_id,algorithm:.algorithm,scope_separator:","}}}
+   ' "$NETSUITE_CREDENTIALS" > "$work/connection.json"
+   ```
+
+   `token_url` is `https://<accountID>.suitetalk.api.netsuite.com/services/rest/auth/oauth2/v1/token`.
+   `key_id` is the certificate ID from the NetSuite M2M setup.
+   If the deployment uses RESTlets, add `"restlets"` to `scopes`, for example `["rest_webservices","restlets"]`.
+   Oracle also permits `suite_analytics`.
+
+5. Read the private key into a separate credential file:
+
+   ```sh
+   key_file=$(jq -er '.private_key_file' "$NETSUITE_CREDENTIALS")
+   jq -n --rawfile private_key "$key_file" '{private_key:$private_key}' > "$work/credential.json"
+   wamn-ctl connection write --file "$work/connection.json" --credential-file "$work/credential.json"
+   ```
+
+   The credential shape is `{private_key: PEM}`.
+   Do not print the private key or put it in the connection request.
+
+6. For a later key replacement, recreate the credential file from step 5 and call:
+
+   ```sh
+   jq -n --arg project "$NETSUITE_PROJECT" --arg env "$NETSUITE_ENV" \
+     '{project:$project,env:$env,name:"netsuite"}' > "$work/target.json"
+   wamn-ctl connection set-credential --file "$work/target.json" --credential-file "$work/credential.json"
+   ```
+
+7. Remove the temporary requests and credential after setup:
+
+   ```sh
+   rm -rf -- "$work"
+   ```
 
 Bind each HTTP component's `upstream` requirement with `connections = { upstream = "netsuite" }` in the environment document.
 Select the published version with `integrations = { netsuite = { version = 1 } }`.
 The pull runs as the `workflow` user with its execution role, so grant that role the consumer command.
 
 Oracle publishes separate [SuiteTalk and RESTlet authorities](https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/chapter_157011836591.html).
-For a live RESTlet deployment, bind `http-request` to `<account>.restlets.api.netsuite.com` through its environment connection parameters.
-That binding also affects record operations in the same deployment.
-Use separate deployment bindings when both authorities are needed.
+RESTlets use `<account>.restlets.api.netsuite.com`.
+The current host confines the token endpoint to the connection origin.
+A RESTlet connection therefore cannot fetch its token from the separate SuiteTalk authority.
+Live RESTlet calls need a change to that host boundary before they can use this authentication.
 The local fixture serves all paths under one authority.
 The guest cannot choose another host through a path.
 
@@ -127,10 +213,24 @@ TMPDIR=/var/tmp RUSTC_WRAPPER='' cargo test --locked --offline \
 
 ## Owner-run live calls
 
-Live calls against a real NetSuite account depend on the OAuth work in `wamn-7vh7t`.
-That work supplies the supported authentication flow and private inputs.
-Use the project integration and environment connection requests described above when that work is available.
+Run `tools/netsuite/live.sh` with the credentials JSON from step 1.
+The script creates or updates the integration and connection through the same commands as the setup above.
+It calls `record.get` and `suiteql.query` once each, then waits for their results.
+It never prints the private key and is never a test target.
+It uses only `rest_webservices` because these calls use SuiteTalk.
+
 Publish all seven wirings with the package.
+Enable the manual workflows `record_get` and `suiteql_query` in the target application.
+Set `WAMN_CONTROL_URL` and `WAMN_TOKEN` as above.
+Set `WAMN_PG_ADMIN_URL` to the deployed project admin database URL.
+The script needs `jq`, `psql`, and `wamn-ctl` on `PATH`.
+If the CLI is elsewhere, set `WAMN_CTL` to its path.
+Put a query with a final `ORDER BY id` clause in `/private/netsuite/query.sql`.
+
+```sh
+tools/netsuite/live.sh /private/netsuite/credentials.json wms dev netsuite \
+  'https://<application-host>' 42 /private/netsuite/query.sql
+```
 
 `wamn-ctl workflow start` starts a workflow through the host and prints its run id.
 It takes `--host-url`, `--token` (or `WAMN_TOKEN`), `--workflow-id`, `--idempotency-key` and `--input`.
@@ -142,6 +242,8 @@ Read the result of a run from `wamn_run.runs` in the project database.
 The ignored `environment_apply_kind` target first applies a release with `wamn_integration`, `rest_connector` and `rest_consumer_fixture`.
 It then applies a second release that replaces `rest_connector` with `netsuite`.
 The NetSuite release binds one environment connection to the HTTP fixture, which acts as the SuiteTalk authority.
+The fixture verifies an ES256 client assertion before it returns a bearer token.
+The assertion carries the certificate ID, token audience, comma-separated scopes, and a five-minute lifetime.
 The case does not call a RESTlet. The fixture unit tests cover the RESTlet echo route.
 
 The test needs the platform images and stamped chart described in `environment_apply_kind.rs`.

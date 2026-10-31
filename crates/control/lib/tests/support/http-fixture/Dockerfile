@@ -1,6 +1,7 @@
 FROM rust:1.99-trixie AS build
 WORKDIR /fixture
-COPY Cargo.toml Cargo.lock server.rs netsuite.rs ./
+COPY Cargo.toml Cargo.lock server.rs netsuite.rs oauth.rs ./
+COPY fixtures ./fixtures
 RUN cargo build --locked
 
 FROM debian:trixie-slim

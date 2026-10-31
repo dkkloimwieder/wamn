@@ -118,7 +118,7 @@
 //! schemas. Authored event workflows observe one update in each schema. Each
 //! delivery creates exactly one run of its own trigger and none of the other.
 //! A second release replaces
-//! `rest_connector` with `netsuite`, using HTTP Basic authentication.
+//! `rest_connector` with `netsuite`, using an ES256 JWT client assertion.
 //! Epic 4 waits at most 150 seconds. NetSuite waits at most 360 seconds for
 //! its one scheduled pull. HTTP evidence comes from GET /recorded.
 //!

@@ -29,12 +29,20 @@ pub async fn seed(project: &tokio_postgres::Client) -> anyhow::Result<()> {
 async fn requests(run: &Run) -> anyhow::Result<Vec<Value>> {
     let records = http_connection::request_records(&http_connection::request_log(run).await?)?;
     ensure!(
-        records
-            .iter()
-            .all(|r| r["netsuite"] == true && r["basic_verified"] == true),
+        records.iter().any(|r| r["assertion_verified"] == true),
+        "NetSuite token endpoint received no verified client assertion"
+    );
+    ensure!(
+        records.iter().all(|r| {
+            (r["token_request"] == true && r["assertion_verified"] == true)
+                || (r["netsuite"] == true && r["bearer_verified"] == true)
+        }),
         "unauthenticated NetSuite request: {records:?}"
     );
-    Ok(records)
+    Ok(records
+        .into_iter()
+        .filter(|r| r["netsuite"] == true)
+        .collect())
 }
 
 async fn completed(

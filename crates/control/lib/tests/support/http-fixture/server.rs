@@ -8,11 +8,13 @@ use std::io::{Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 mod netsuite;
+mod oauth;
 #[derive(Default)]
 struct Counts {
     pages: HashMap<usize, usize>,
     recorded: Vec<serde_json::Value>,
     customers: HashMap<String, serde_json::Value>,
+    token_issued: bool,
 }
 struct Fixture {
     limit: usize,
@@ -162,19 +164,41 @@ fn serve_socket(
                 .any(|(key, value)| key == "key" && value == "fixture-api-key");
         let aws_verified = verify_aws(method, &url, &headers, &body);
         let mut counts = counts.lock().unwrap();
+        let token_request = url.path() == oauth::TOKEN_PATH;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+        let assertion_verified = token_request
+            && method == "POST"
+            && !headers.contains_key("authorization")
+            && headers.get("content-type") == Some(&"application/x-www-form-urlencoded")
+            && oauth::verify_assertion(&body, url.as_str(), now);
+        let bearer_verified =
+            counts.token_issued && headers.get("authorization").copied() == Some(oauth::BEARER);
         let mut status = "200 OK";
         let mut extra = String::new();
         let mut response_body = body.clone();
         let mut page = None;
         let mut page_request_count = None;
         let mut items = serde_json::Value::Null;
-        let netsuite = url.path().starts_with("/services/rest/")
+        let netsuite = !token_request && url.path().starts_with("/services/rest/")
             || url.path() == "/app/site/hosting/restlet.nl";
         let mut netsuite_response = serde_json::Value::Null;
         let mut location = None;
         match url.path() {
+            _ if token_request => {
+                if assertion_verified {
+                    counts.token_issued = true;
+                    response_body =
+                        serde_json::to_vec(&json!({"access_token":"fixture-netsuite-token",
+                        "token_type":"Bearer","expires_in":3600}))?;
+                } else {
+                    status = "401 Unauthorized";
+                    response_body = serde_json::to_vec(&json!({"error":"invalid_client"}))?;
+                }
+            }
             _ if netsuite => {
-                let response = if basic_verified {
+                let response = if bearer_verified {
                     netsuite::respond(
                         method,
                         &url,
@@ -242,7 +266,7 @@ fn serve_socket(
             _ => {}
         }
         if !(url.path() == "/recorded" && method == "GET") {
-            counts.recorded.push(json!({"method":method,"target":target,"headers":headers,"json":serde_json::from_slice::<serde_json::Value>(&body).ok(),"response":netsuite_response,"location":location,"netsuite":netsuite,"head":head,"body":body,"basic_verified":basic_verified,"key_verified":key_verified,"aws_verified":aws_verified,"page":page,"page_request_count":page_request_count,"items":items,"status":status}));
+            counts.recorded.push(json!({"method":method,"target":target,"headers":headers,"json":serde_json::from_slice::<serde_json::Value>(&body).ok(),"response":netsuite_response,"location":location,"netsuite":netsuite,"token_request":token_request,"assertion_verified":assertion_verified,"bearer_verified":bearer_verified,"head":head,"body":body,"basic_verified":basic_verified,"key_verified":key_verified,"aws_verified":aws_verified,"page":page,"page_request_count":page_request_count,"items":items,"status":status}));
         }
         drop(counts);
         write!(
@@ -324,16 +348,23 @@ mod netsuite_tests {
 
     #[test]
     fn missing_or_foreign_authentication_refuses() {
-        assert!(verify_basic(&HashMap::from([(
-            "authorization".into(),
-            basic_header().as_str()
-        )])));
-        for value in ["", "Basic wrong", "Bearer private"] {
-            assert!(!verify_basic(&HashMap::from([(
-                "authorization".into(),
-                value
-            )])));
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let worker = std::thread::spawn(move || {
+            for _ in 0..4 {
+                let (socket, _) = listener.accept().unwrap();
+                serve_socket(socket, &fixture(), &Mutex::new(Counts::default())).unwrap();
+            }
+        });
+        for auth in ["", "Basic wrong", "Bearer private", oauth::BEARER] {
+            let mut socket = TcpStream::connect(address).unwrap();
+            write!(socket, "GET /services/rest/record/v1/customer/100 HTTP/1.1\r\nHost: {address}\r\nAuthorization: {auth}\r\n\r\n").unwrap();
+            socket.shutdown(std::net::Shutdown::Write).unwrap();
+            let mut response = String::new();
+            socket.read_to_string(&mut response).unwrap();
+            assert!(response.starts_with("HTTP/1.1 401"));
         }
+        worker.join().unwrap();
     }
 
     #[test]
@@ -343,7 +374,7 @@ mod netsuite_tests {
         let counts = Arc::new(Mutex::new(Counts::default()));
         let observed = Arc::clone(&counts);
         let worker = std::thread::spawn(move || {
-            for _ in 0..11 {
+            for _ in 0..12 {
                 let (socket, _) = listener.accept().unwrap();
                 serve_socket(socket, &fixture(), &counts).unwrap();
             }
@@ -354,16 +385,24 @@ mod netsuite_tests {
                 .set_read_timeout(Some(std::time::Duration::from_secs(5)))
                 .unwrap();
             let auth = if signed {
-                basic_header()
+                format!("Authorization: {}\r\n", oauth::BEARER)
             } else {
                 String::new()
             };
-            write!(socket, "{method} {path} HTTP/1.1\r\nHost: {address}\r\nAuthorization: {auth}\r\nPrefer: transient\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+            let content_type = if path == oauth::TOKEN_PATH {
+                "application/x-www-form-urlencoded"
+            } else {
+                "application/json"
+            };
+            write!(socket, "{method} {path} HTTP/1.1\r\nHost: {address}\r\n{auth}Prefer: transient\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
             socket.shutdown(std::net::Shutdown::Write).unwrap();
             let mut result = String::new();
             socket.read_to_string(&mut result).unwrap();
             result
         };
+        let form =
+            oauth::tests::token_form(&format!("http://{address}{}", oauth::TOKEN_PATH), |_, _| {});
+        assert!(request("POST", oauth::TOKEN_PATH, &form, false).starts_with("HTTP/1.1 200"));
         for (offset, more) in [(0, true), (2, false)] {
             let result = request(
                 "POST",
@@ -423,10 +462,11 @@ mod netsuite_tests {
             let log = request("GET", "/recorded", "", false);
             let records: Vec<serde_json::Value> =
                 serde_json::from_str(log.split_once("\r\n\r\n").unwrap().1).unwrap();
-            assert_eq!(records.len(), 9);
-            assert!(records[..8].iter().all(|r| r["basic_verified"] == true));
-            assert_eq!(records[8]["status"], "401 Unauthorized");
-            assert_eq!(records[8]["basic_verified"], false);
+            assert_eq!(records.len(), 10);
+            assert_eq!(records[0]["assertion_verified"], true);
+            assert!(records[1..9].iter().all(|r| r["bearer_verified"] == true));
+            assert_eq!(records[9]["status"], "401 Unauthorized");
+            assert_eq!(records[9]["bearer_verified"], false);
         }
         worker.join().unwrap();
         assert_eq!(observed.lock().unwrap().customers.len(), 2);

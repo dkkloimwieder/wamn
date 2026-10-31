@@ -63,7 +63,13 @@ pub async fn bind(
         if let Some(origin) = parameters["primary-authority"].as_str() {
             parameters["primary-authority"] = origin.trim_end_matches('/').into();
         }
-        if name == super::http_connection::API_KEY_HANDLE {
+        if name == "netsuite" {
+            parameters["auth"] = super::http_connection::netsuite_auth();
+            (
+                "oauth2_client_credentials_jwt",
+                serde_json::json!({"private_key":super::http_connection::NETSUITE_PRIVATE_KEY}),
+            )
+        } else if name == super::http_connection::API_KEY_HANDLE {
             parameters["auth"] = serde_json::json!({"in":"query","name":"key"});
             ("api_key", serde_json::json!({"key":"fixture-api-key"}))
         } else if name == super::http_connection::AWS_HANDLE {

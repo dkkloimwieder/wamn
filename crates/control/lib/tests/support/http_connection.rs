@@ -13,6 +13,8 @@ use wamn_catalog::{
     ComponentDescriptor, ComponentPackageScope, ServingComponent, ServingManifest, WiringDocument,
 };
 
+pub(super) const NETSUITE_PRIVATE_KEY: &str = include_str!("http-fixture/fixtures/p256.pem");
+
 pub const SERVICE: &str = "http-fixture";
 pub const ORIGIN: &str = "http://http-fixture:8080";
 pub const INBOUND_HANDLE: &str = "inbound-signature";
@@ -22,6 +24,15 @@ pub const OUTBOUND_SECRET: &str = "fixture-outbound-key";
 pub const SCHEDULE: &str = "http-minute";
 pub const API_KEY_HANDLE: &str = "api-key-upstream";
 pub const AWS_HANDLE: &str = "aws-upstream";
+
+pub(super) fn netsuite_auth() -> Value {
+    json!({
+        "client_id":"fixture-client",
+        "token_url":format!("{ORIGIN}/services/rest/auth/oauth2/v1/token"),
+        "scopes":["rest_webservices","restlets"],
+        "key_id":"certificate-id", "algorithm":"ES256", "scope_separator":",",
+    })
+}
 
 pub async fn deploy(run: &mut Run, repository: &Path, system_url: &str) -> anyhow::Result<()> {
     let image = format!("{}-http-fixture:debug", run.cluster);
@@ -34,7 +45,7 @@ pub async fn deploy(run: &mut Run, repository: &Path, system_url: &str) -> anyho
                 {
                     "apiVersion": "v1", "kind": "Secret",
                     "metadata": {"name": "import-source", "namespace": NAMESPACE},
-                    "stringData": {"upstream":json!({"username":"fixture","password":"fixture-password"}).to_string(),"rest-fixture":json!({"username":"fixture","password":"fixture-password"}).to_string(),"netsuite":json!({"username":"fixture","password":"fixture-password"}).to_string(),OUTBOUND_HANDLE:json!({"key":OUTBOUND_SECRET}).to_string(),API_KEY_HANDLE:json!({"key":"fixture-api-key"}).to_string(),AWS_HANDLE:json!({"access_key_id":"fixture-access","secret_access_key":"fixture-private"}).to_string(),INBOUND_HANDLE:json!({"hmac":{"algorithm":"sha256","secret":INBOUND_SECRET}}).to_string()}
+                    "stringData": {"upstream":json!({"username":"fixture","password":"fixture-password"}).to_string(),"rest-fixture":json!({"username":"fixture","password":"fixture-password"}).to_string(),"netsuite":json!({"private_key":NETSUITE_PRIVATE_KEY}).to_string(),OUTBOUND_HANDLE:json!({"key":OUTBOUND_SECRET}).to_string(),API_KEY_HANDLE:json!({"key":"fixture-api-key"}).to_string(),AWS_HANDLE:json!({"access_key_id":"fixture-access","secret_access_key":"fixture-private"}).to_string(),INBOUND_HANDLE:json!({"hmac":{"algorithm":"sha256","secret":INBOUND_SECRET}}).to_string()}
 
                 },
                 {
@@ -135,7 +146,9 @@ pub async fn configure(run: &Run, system_url: &str, environment: &str) -> anyhow
                 .context("fixture version")?
                 .into(),
         };
-        let (auth_type, auth) = if name == API_KEY_HANDLE {
+        let (auth_type, auth) = if name == "netsuite" {
+            ("oauth2_client_credentials_jwt", netsuite_auth())
+        } else if name == API_KEY_HANDLE {
             ("api_key", json!({"in":"query","name":"key"}))
         } else if name == AWS_HANDLE {
             (
@@ -193,7 +206,7 @@ fn scheduled_credentials_stay_within_the_environment_secret_grant() {
         "metadata":{"name":"wamn-credential-acme-orders-http","namespace":NAMESPACE},
         "stringData":{
             "00000000-0000-4000-8000-000000000001":r#"{"username":"fixture","password":"fixture-password"}"#,
-            "00000000-0000-4000-8000-000000000002":r#"{"username":"fixture","password":"fixture-password"}"#,
+            "00000000-0000-4000-8000-000000000002":json!({"private_key":NETSUITE_PRIVATE_KEY}).to_string(),
         },
     }]});
     let mut references = serde_json::Map::new();
@@ -212,7 +225,7 @@ fn scheduled_credentials_stay_within_the_environment_secret_grant() {
         "wamn-credential-acme-orders-integration",
     );
     assert_eq!(secret["metadata"]["namespace"], NAMESPACE);
-    for reference in references.values() {
+    for (name, reference) in &references {
         assert_eq!(
             reference["reference"],
             grants[1].1["rules"][0]["resourceNames"][0]
@@ -223,7 +236,11 @@ fn scheduled_credentials_stay_within_the_environment_secret_grant() {
             serde_json::from_str(secret["stringData"][version].as_str().unwrap()).unwrap();
         assert_eq!(
             material,
-            json!({"username":"fixture","password":"fixture-password"})
+            if name == "netsuite" {
+                json!({"private_key":NETSUITE_PRIVATE_KEY})
+            } else {
+                json!({"username":"fixture","password":"fixture-password"})
+            }
         );
     }
 }
@@ -930,6 +947,9 @@ pub async fn prepare_image(run: &mut Run, repository: &Path) -> anyhow::Result<(
         "Cargo.lock",
         "server.rs",
         "netsuite.rs",
+        "oauth.rs",
+        "fixtures/p256.pem",
+        "fixtures/p256-public.sec1",
     ] {
         hash.update(&std::fs::read(source.join(file))?);
     }
