@@ -23,7 +23,7 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | E3-2 | [E](security.md) | high | M | Dependencies | The recorded native dependency scan reports 17 vulnerabilities and 12 warnings. Updated in the One NATS build, not a build of its own. Record which advisories remain reachable. |
 | E3-3 | [E](security.md) | low | S | Artifact limits | Package download and extraction lack aggregate byte, layer, and file budgets. Byte cap and entry cap when package-artifact is next touched. The project registry is the trusted boundary. |
 | E3-4 | [E](security.md) | high | S | Guest memory | Serving defaults observe aggregate guest allocations instead of refusing excess allocation. Deferred until the post-A5 re-measurement. |
-| A3-2 | [A](code-quality.md) | high | L | Authority lifetime | Claim cleanup can panic during unwinding before it finishes revoking authority. |
+| A3-2 | [A](code-quality.md) | high | L | Authority lifetime | Claim cleanup can panic during unwinding before it finishes revoking authority. A5 owns: the one-scope-record fix is written inside the begin-operation and commit rewrite. |
 | B2-1, C2-2, C3-3 | [B](coupling.md), [C](upgrade.md) | high | L | Lifecycle ownership | Parallel upgrade drivers mutate production packages outside one encompassing environment lock. C2-2: package application is an internal phase of `env apply`, the public `apply-package` verb is deleted. B2-1 closes under C3-3. |
 | C1-2, C2-1 | [C](upgrade.md) | high | M | Installed environments | Installer completion rules can skip schema preparation or replay an application with `release = none`. C1-2 fix: the baseline SQL carries a content hash, install records it, apply refuses on a mismatch. C1-3 closes into C1-2. |
 | C2-3 | [C](upgrade.md) | high | L | Package upgrades | Environment apply requires successor facts that its own upgrade phase cannot establish. Closed by the package-baseline deletion. |
@@ -80,13 +80,13 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | E3-6 | [E](security.md) | medium | M | Connector retention | Retired bindings leave compiled connector templates and component bytes retained without bounds. Reshaped by integration-schema Runtime refresh. Nothing separate is filed. |
 | E3-7 | [E](security.md) | medium | S | Process initialization | Engine construction mutates the process environment after threads and connection work start. Set the grace before the runtime starts. Rides the One NATS host build. |
 | E3-8 | [E](security.md) | low | S | Dependency refresh | Identity checks provide no fresh advisory requirement across maintained dependency domains. Narrowed to removing `percent-encoding` and `rand_core` with A1-6. The advisory-refresh check is rejected. |
-| A3-3 | [A](code-quality.md) | medium | M | Blobstore errors | Wire errors expose backend prose and classify timeouts through text matching. |
-| A3-4 | [A](code-quality.md) | medium | M | Workflow settlement | Durable retry and terminal decisions depend on hidden types in error chains. |
-| A3-5 | [A](code-quality.md) | medium | L | Library errors | Public APIs expose `anyhow`, forcing callers to inspect chains or display text. |
-| A3-6 | [A](code-quality.md) | medium | S | PostgreSQL contract | SQLx duplicates the generated PostgreSQL wire error taxonomy. |
-| A3-7 | [A](code-quality.md) | medium | M | Diagnostics | Internal wrappers discard causes before the public redaction boundary. |
-| A3-8 | [A](code-quality.md) | medium | M | Credential parsing | Five provisioning validators repeat parser scaffolding and error vocabularies. Re-scoped to the five database-credential validators. |
-| A3-9 | [A](code-quality.md) | medium | S | Client decoding | Malformed error envelopes acquire fabricated codes, operation names, and revisions. |
+| A3-3 | [A](code-quality.md) | medium | M | Blobstore errors | Wire errors expose backend prose and classify timeouts through text matching. In passing. No blobstore message is a frozen contract. |
+| A3-4 | [A](code-quality.md) | medium | M | Workflow settlement | Durable retry and terminal decisions depend on hidden types in error chains. In passing when `queue.rs` is next changed. |
+| A3-5 | [A](code-quality.md) | medium | L | Library errors | Public APIs expose `anyhow`, forcing callers to inspect chains or display text. In passing per owner, no mechanical retrofit. Contract tests struck. |
+| A3-6 | [A](code-quality.md) | medium | S | PostgreSQL contract | SQLx duplicates the generated PostgreSQL wire error taxonomy. Group 4 Do, small, with the B3-4 SQLx fold. |
+| A3-7 | [A](code-quality.md) | medium | M | Diagnostics | Internal wrappers discard causes before the public redaction boundary. In passing, small. |
+| A3-8 | [A](code-quality.md) | medium | M | Credential parsing | Five provisioning validators repeat parser scaffolding and error vocabularies. Re-scoped to the five database-credential validators. In passing when C1 to C3 or E2-2 touch provisioning. |
+| A3-9 | [A](code-quality.md) | medium | S | Client decoding | Malformed error envelopes acquire fabricated codes, operation names, and revisions. Group 3 Do, small. |
 | H1-4 | [H](hygiene.md) | medium | S | Runner arguments | A missing value can leave the Kubernetes shell runner in an endless parser loop. |
 | H1-8 | [H](hygiene.md) | medium | M | Benchmark cleanup | Failed cloud version minimum runs can leave sampling active or triggers altered. |
 | H1-9 | [H](hygiene.md) | medium | S | Submodule governance | The merge queue omits its documented submodule guard. |
@@ -126,10 +126,10 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | A2-10, H1-10 | [A](code-quality.md), [H](hygiene.md) | medium | S | Tool installation | Four pinned installers repeat one download and installation lifecycle. In passing. No installer test suite. |
 | A1-6 | [A](code-quality.md) | medium | S | Native dependencies | Forty-eight native dependency declarations have no confirmed use. Delete all 48 in the per-crate commits. `cargo check --all-targets` per package is the check. |
 | A1-11 | [A](code-quality.md) | medium | M | Generated support | Codec templates emit helpers and constants that particular operations never use. In passing, after A5: the inversion rewrites the generated adapters. |
-| A3-10 | [A](code-quality.md) | medium | M | Native services | Host and CDC root files combine several lifecycle owners. |
-| A3-11 | [A](code-quality.md) | medium | L | Release control | Large publication, upgrade, and activation files mix sequencing with infrastructure implementation. |
-| A3-12 | [A](code-quality.md) | medium | M | Generator structure | Manifest and codec files mix semantic stages and recover prior results through generated JSON. |
-| A3-13 | [A](code-quality.md) | medium | M | Runtime contracts | Routing and serving-manifest files mix policy, representation, and transport mechanics. |
+| A3-10 | [A](code-quality.md) | medium | M | Native services | Host and CDC root files combine several lifecycle owners. `host.rs` after A5. The `cdc-reader` split is In passing. |
+| A3-11 | [A](code-quality.md) | medium | L | Release control | Large publication, upgrade, and activation files mix sequencing with infrastructure implementation. In passing with the Group 4 release-control work. |
+| A3-12 | [A](code-quality.md) | medium | M | Generator structure | Manifest and codec files mix semantic stages and recover prior results through generated JSON. After A5, with A1-11. |
+| A3-13 | [A](code-quality.md) | medium | M | Runtime contracts | Routing and serving-manifest files mix policy, representation, and transport mechanics. `flow_http_routing.rs` after A5. The `serving_manifest.rs` split is In passing. |
 | C3-5 | [C](upgrade.md) | medium | L | Upgrade model | Maintenance upgrades can remove online stages, version minimums, progress storage, and inferred rollback. |
 | D1-2 | [D](deployment.md) | medium | M | Cloud destinations | Telemetry and certificate rendering retain installation-specific values instead of declared destinations. Lowered from high by the owner review. |
 | D1-4 | [D](deployment.md) | medium | M | Workload variants | Historical HTTP and materializer workloads preserve a second deployment model. |
@@ -179,7 +179,7 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | A2-11 | [A](code-quality.md) | low | S | SQL quoting | Callers duplicate identifier quoting despite an existing owner. Group 4 Do, small. |
 | A2-15 | [A](code-quality.md) | low | S | Empty declarations | Four empty attachment documents remain because readers disagree about absence. In passing: a missing `attachments.json` means none, and the four files go in the same change. |
 | A1-13 | [A](code-quality.md) | low | M | Public surface | Router, SQLite, and materializer implementation details remain public without external consumers. In passing. |
-| A3-14 | [A](code-quality.md) | low | S | Lint overrides | Handwritten and generated code do not consistently follow the stated `expect` policy. |
+| A3-14 | [A](code-quality.md) | low | S | Lint overrides | Handwritten and generated code do not consistently follow the stated `expect` policy. In passing: handwritten `allow` becomes `expect` when the file is touched. Enforcement rejected. |
 | B1-7 | [B](coupling.md) | low | M | Architecture check | Dependency enforcement omits workspaces, development dependency links, and relevant feature distinctions. Rejected as written. One check rule per Group 4 crate move, nothing before. |
 | C2-10 | [C](upgrade.md) | low | M | Schema prerequisites | Several lifecycle phases repeat project migration and platform-extension responsibilities. In passing: move platform-extension installation into substrate setup. |
 | D3-7 | [D](deployment.md) | low | M | Cluster locking | A local installation lock cannot serialize different deployment machines. Re-scoped to a Kubernetes Lease held by the installer. |
@@ -278,6 +278,9 @@ The owner review of 2026-10-31 rejects the following. The report evidence stays 
 | Question on authored SQL staying directly executable (A2-5, C3-2) | Answered: yes. The installer composes, nothing generates. |
 | Question on record-history taking the scalar dependency (A2-1) | Answered: yes. Both land in `wamn-contract`. |
 | Question on explicit shared shape assignments (A2-3) | Answered: yes. Resolved contract bytes and generated clients stay unchanged, and per-operation files become build output. |
+| A3-5: contract tests that distinguish refusal, absence, malformed artifacts and unavailable infrastructure | Struck. Retrofit per owner when that owner is already being changed. No mechanical retrofit. |
+| A3-14: enforce the expect-over-allow policy | Rejected. No lint rule and no stale-expectation proof. A handwritten `allow` becomes `expect` when its file is touched, and generated output keeps `allow`. |
+| Question on frozen blobstore `Other` messages (A3-3) | Answered: none. Replace freely. |
 | C1-2's pending-work record and C1-3's schema advancement before analysis | Rejected. One baseline, so nothing advances. Apply compares the installed baseline hash with the candidate's and refuses with "schema changed, reset the environment database" on a mismatch. C1-3 closes into C1-2 with its Deletes widened to every project migration call. |
 
 ### Plans in flight
@@ -301,6 +304,7 @@ Two plans change the platform the audit describes: [alignment](../plan/alignment
 | A3-11 and any row naming `connection_instances`, `connection_bindings`, `org_connections`, `integration_allow` or `wamn:connector` | integration-schema, Dropped or merged from main | Rename per that table before filing. |
 | Question on certificate renewal and the 365-day CA (E2-3, E2-4) | alignment R3 | Answered: cert-manager owns the CA and renews it. |
 | Question on org isolation under host compromise (E1-2) | alignment R5 | Answered: per-environment certificates, refused across environments. |
+| A3-2, A3-10 (`host.rs`), A3-12, A3-13 (`flow_http_routing.rs`), A1-11 | [perf-arch](../plan/perf-arch.md) A5 | A5 rewrites the claim maps, host startup, the generated adapters and the routing file. Each fix is written inside that rewrite, not before. A3-2 stays Group 3 Do under A5's ownership. |
 | B1-3 and every crate move inside runtime or execution-host | [perf-arch](../plan/perf-arch.md) A5 | The application as the HTTP workload is the ruled direction and lands before any re-measurement. Moves inside runtime and execution-host before A5 are churn and wait. |
 
 ## The six largest areas for improvement
@@ -450,7 +454,7 @@ The owner reviews of 2026-10-31 replace the epic chain with four ordered groups.
 
 Target: `platform apply` consumes an immutable bundle by digest. No Cargo, pnpm or registry write runs inside apply. Delete `upgrade_environment.rs` and its images, the older image builder and the RC Dockerfile, the environment JSON sidecars, the Rust object builders in favor of one Helm package, and eight of the nine deployment routes in favor of one deployment fixture.
 
-Do (27 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high. The Image column names the images a row rebuilds: ctl/runner for the control library and Dockerfile, host as well for provisioning and schema-control (the host links both), none for YAML, tools and docs. Group 1 rides the One NATS platform build and no row forces its own.
+Do (26 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high. The Image column names the images a row rebuilds: ctl/runner for the control library and Dockerfile, host as well for provisioning and schema-control (the host links both), none for YAML, tools and docs. Group 1 rides the One NATS platform build and no row forces its own.
 
 | Finding | Title | Severity | Image | Deletes |
 | --- | --- | --- | --- | --- |
@@ -458,7 +462,6 @@ Do (27 findings). The rows the review named, then every row that deletes a build
 | B2-7 | Platform installation also acts as a repository build application | medium | ctl/runner | Same Deletes as D3-1. `build-platform` stays a `wamn-ctl` verb and `platform apply` consumes its outputs. |
 | D2-6 | Installation couples package freshness to an unrelated platform stamp | medium | ctl/runner | Merged with D3-1. The installer deletions are stated once under D3-1. |
 | C2-2 | Production package changes escape the lifecycle lock | high | ctl/runner | Independent production package coordination in `platform/packages.rs`, the public `apply-package` verb, and every mutation path that bypasses the environment owner. Package application is an internal phase of `env apply` under the environment lock. `wamn dev` calls the library. |
-| A3-11 | Release control files mix orchestration with implementation owners | medium | ctl/runner | Monolithic parent bodies, the activation error wrapper, and duplicate infrastructure helpers where ownership already exists. `upgrade_environment.rs` is deleted under C3-3, so the scope is `publish_release.rs` and `dev/activation.rs`. |
 | D2-2 | The older image pipeline builds artifacts that deployment does not select | high | ctl/runner | `tools/journey-image-cache`, the upgrade image and guest stages, their leases, relabeling, and duplicate registry authentication. Listed in Group 1 for the deletion and in Group 2 for the cache identity. |
 | H1-1 | The image cache omits actual build inputs | high | none | The parallel `COPIED` inventory, custom source-tag selection, and the production dependency on `tools/journey-image-cache`. |
 | D1-1 | KCL and JSON declare different application sets | high | ctl/runner | Both environment JSON files, their required-sibling convention, and their package lists. Remove the old delivery configuration reader after its remaining consumers migrate. The JSON also carries `context` and `gates_image`. Both are cluster facts and belong in `deploy/gcp/cluster.k`, not in any environment file. The empty `floors = {}` block in both environment `.k` files is deleted. |
@@ -524,7 +527,7 @@ Do (10 findings). The rows the review named, then every row that deletes a build
 
 Target: one tier per target and one selection owner, mixed targets deleted (G3-1, G3-2, G3-6). Every ignore is fixed or deleted, and no ignore stays without a stated missing prerequisite (G2-8, G3-4). The security highs land here with no dependency on any crate move: E2-2 (an org control credential reaches its own org only), E1-2 (per-environment broker identity, grant answers local), E1-3, E1-4, A3-1, A3-2, A2-1, B2-6 and F3-5. Plaintext in-cluster transport (E1-5, E2-3, E2-4) is medium until a non-dev cluster exists.
 
-Do (25 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high.
+Do (26 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high.
 
 | Finding | Title | Severity | Deletes |
 | --- | --- | --- | --- |
@@ -540,7 +543,8 @@ Do (25 findings). The rows the review named, then every row that deletes a build
 | E1-4 | Inactive organization membership is not an admission boundary | high | Role-only and environment-membership-only admission predicates for user principals. Lock the membership row on grant. Session admission requires active org membership. |
 | E1-9 | CLI and HTTP routes enforce different grant rules | medium | Transport-specific semantic guards and direct bypass paths. One authorized mutation owner. The covering and no-escalation rules live there only. |
 | A3-1 | Operation binding turns infrastructure failures into permission denials | high | The unconditional permission-denied mapping and conversion through `error.to_string()`. |
-| A3-2 | Authority cleanup can panic during unwinding | high | Parallel claim maps, repeated setters and removals, and lock-poison `expect` calls in cleanup. |
+| A3-2 | Authority cleanup can panic during unwinding | high | Parallel claim maps, repeated setters and removals, and lock-poison `expect` calls in cleanup. A5 owns the rewrite. |
+| A3-9 | Client error decoding invents missing contract data | medium | Defaults that fabricate error codes, operation names, and revisions. Small. Client correctness. |
 | A2-1 | Scalar spelling rules already diverge | high | Approximately 140–180 net lines, including the history date arithmetic and duplicate numeric parsing. `canonical_scalar` is the one owner, and record-history takes the dependency. |
 | B2-6 | Release qualification embeds application test policy in the control library | medium | Application case lists (the closed Receiving/WMS match), Docker runner construction, and temporary test-result management from control/lib. The application declares its case set in its package beside its tests. |
 | F3-5 | Release qualification rejects every new application identity | high | Remove the production `application_for` package allowlist and mandatory selection of Receiving/WMS test executables. Retain their business cases under their application owners. |
@@ -576,7 +580,7 @@ In passing (13 findings). Helper dedup, naming, count pins and doc links. Closed
 
 Target: dormant surfaces and unused dependencies first (A1-x, A1-6, A1-10), then the contract JSON (A2-3), then the crate map. Crate consolidation is last because it forces full rebuilds and guest repins and must not precede the build and deploy fixes. Helper and fixture dedup (G1-x, A2-x) lands only when the file is already being changed, never as its own issue. Authoring rows F1-x and F3-x stay here.
 
-Do (43 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high.
+Do (44 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high.
 
 | Finding | Title | Severity | Deletes |
 | --- | --- | --- | --- |
@@ -593,6 +597,7 @@ Do (43 findings). The rows the review named, then every row that deletes a build
 | A2-3 | Host contracts repeat thousands of authored JSON lines | medium | Measured gross deletion of 71 files and 3,020 repeated lines. Estimated net saving: approximately 2,800 lines after shape assignments. After integration-schema C1 to C3, against the new routes. |
 | A2-8 | HTTP guests duplicate transport policy helpers | medium | Approximately 75–95 net lines from one copy of the helpers. With the B3-4 and B3-5 guest moves, one repin. |
 | A2-11 | Identifier quoting has an existing owner that two callers bypass | low | Six implementation lines, or nine including the forwarding wrapper, before import changes. |
+| A3-6 | SQLx maintains a second copy of the PostgreSQL wire taxonomy | medium | `WamnPgError` and its conversion match. With the B3-4 SQLx fold. The generated wire error is the type. |
 | B1-6 | Guest interfaces depend on native implementation directories | medium | Guest paths into native runtime and router directories, replaced by one canonical WIT directory read by path. WIT package versions stay. Guest digests change once, repin once. |
 | B3-2 | Forty-four packages can retain the enforced execution boundaries | high | Every package manifest with one consumer or no enforced boundary, its redundant dependency declarations, and obsolete compatibility re-exports. The map uses the README names. T01 is the `wamn-contract` extraction (from B3-1). T11 is deferred and T13 is rejected. Runtime merges wait for A5. |
 | B3-3 | Migration must follow dependency order and distinguish artifact changes | high | Obsolete package-name assertions, retired dependency links, and duplicated runner selections. Do not retain empty compatibility packages. Step 5 waits for A5. One qualification cycle covers the guest move. |
@@ -624,7 +629,7 @@ Do (43 findings). The rows the review named, then every row that deletes a build
 | H3-8 | Bundle parsing tests are copies with different parameters | low | The duplicated build, parse, diagnostic, and cleanup bodies. |
 | H3-9 | Three exports and one root dependency are removable | low | Three unnecessary exports and one dependency declaration initially. Later, delete consumer chart-type dependencies and path mappings after their owner supplies the types. |
 
-In passing (65 findings). Helper dedup, naming, count pins and doc links. Closed when the owning file is already open, never filed alone.
+In passing (64 findings). Helper dedup, naming, count pins and doc links. Closed when the owning file is already open, never filed alone.
 
 | Finding | Title | Severity | Deletes |
 | --- | --- | --- | --- |
@@ -643,16 +648,15 @@ In passing (65 findings). Helper dedup, naming, count pins and doc links. Closed
 | A2-14 | Four shell tools repeat failure and usage handling | low | Approximately 20–35 net lines from the four tools. One sourced file under `tools/`, no tests of its own. |
 | A2-15 | Four empty attachment documents represent the same absence | low | Four files and four authored lines. The reader treats a missing `attachments.json` as none. |
 | A3-3 | Blobstore exposes backend prose and classifies timeouts by text | medium | Display-text timeout matching and backend `to_string()` calls in wire payloads. |
-| A3-4 | Durable workflow decisions depend on hidden error-chain types | medium | `DeadlineAdjustments` as an error-context carrier and settlement downcasts. |
-| A3-5 | Anyhow crosses public library boundaries across ten owners | medium | Unnecessary public helpers, public `anyhow` signatures, and caller-side error inspection. |
-| A3-6 | SQLx maintains a second copy of the PostgreSQL wire taxonomy | medium | `WamnPgError` and its conversion match. |
+| A3-4 | Durable workflow decisions depend on hidden error-chain types | medium | `DeadlineAdjustments` as an error-context carrier and settlement downcasts. When `queue.rs` is next changed. |
+| A3-5 | Anyhow crosses public library boundaries across ten owners | medium | Unnecessary public helpers, public `anyhow` signatures, and caller-side error inspection. Per owner, when already being changed. |
 | A3-7 | Diagnostic wrappers discard their original causes | medium | Cause-discarding conversions and the opaque activation wrapper. |
-| A3-8 | Credential validators duplicate error vocabularies and parser scaffolding | medium | Repeated error enums, formatting implementations, and common parser branches. Re-scoped to the five database-credential validators. |
-| A3-9 | Client error decoding invents missing contract data | medium | Defaults that fabricate error codes, operation names, and revisions. |
-| A3-10 | Native service files combine several independent lifecycles | medium | The large root implementations and duplicated setup exposed during extraction. Moving code alone does not reduce total code. |
-| A3-12 | Generator files need semantic splits, not blanket panic removal | medium | Generation-order JSON lookups, repeated codec fragments, and the large parent implementations. Keep justified formatting assertions. |
-| A3-13 | Routing and serving manifests combine policy, representation, and mechanics | medium | Large root bodies and repeated projection or validation code exposed by the split. |
-| A3-14 | The expect-over-allow policy does not hold across source and generated output | low | Unnecessary suppressions and blanket module exemptions. |
+| A3-8 | Credential validators duplicate error vocabularies and parser scaffolding | medium | Repeated error enums, formatting implementations, and common parser branches. Re-scoped to the five database-credential validators. When C1 to C3 or E2-2 touch provisioning. |
+| A3-10 | Native service files combine several independent lifecycles | medium | The large root implementations and duplicated setup exposed during extraction. Moving code alone does not reduce total code. `host.rs` after A5. The `cdc-reader` split is In passing. |
+| A3-11 | Release control files mix orchestration with implementation owners | medium | Monolithic parent bodies, the activation error wrapper, and duplicate infrastructure helpers where ownership already exists. `upgrade_environment.rs` is deleted under C3-3, so the scope is `publish_release.rs` and `dev/activation.rs`. With the Group 4 release-control work. |
+| A3-12 | Generator files need semantic splits, not blanket panic removal | medium | Generation-order JSON lookups, repeated codec fragments, and the large parent implementations. Keep justified formatting assertions. After A5, with A1-11. |
+| A3-13 | Routing and serving manifests combine policy, representation, and mechanics | medium | Large root bodies and repeated projection or validation code exposed by the split. `flow_http_routing.rs` after A5. The `serving_manifest.rs` split is In passing. |
+| A3-14 | The expect-over-allow policy does not hold across source and generated output | low | Handwritten `allow` that becomes `expect` when its file is touched. Generated output keeps `allow`. No lint rule. |
 | B1-3 | The runtime hub makes artifact consumers depend on cloud execution | medium | Runtime-owned artifact transport implementations after consolidation, duplicate transport helpers, and control’s runtime dependency once its remaining imports move. After A5. |
 | B1-5 | Catalog is a shared model hub with installation and product behavior | medium | The installation SQL constant and the built-in control-route construction, moved when catalog is next changed. |
 | F1-2 | Custom handlers repeat manifest request, result, and error definitions | medium | Duplicate command/result structures, literal switches, and field-copy adapters. Keep parsed business state, database sequencing, and business refusals. |
@@ -704,22 +708,21 @@ In passing (65 findings). Helper dedup, naming, count pins and doc links. Closed
 6. Does any external workflow still require `kind-gate-build` or `kind-gate-image-remove`? This unblocks Group 4 (H1-12).
 7. Confirm the reviewer's pick: the provisioning operator certificate is one platform-wide principal by design, and revocation is short certificate lifetimes under cert-manager (alignment R3), not a CRL. This informs privileged credential boundaries in Group 3 (E2-2, E2-3).
 8. Owner pick for the local signing key file: no trust deadline (current) plus a revoked-list file when wanted, or a deadline and its length. E1-8 is deferred and not filed until picked.
-9. Must poisoned authority state terminate the process, or must the host isolate the affected owner and become unready? This unblocks Group 3 (A3-2).
-10. Which blobstore `Other` messages are frozen consumer contracts? This unblocks replacement of backend prose in Group 4 (A3-3).
-11. Must HTTP exposure remain explicit for every custom public operation? This unblocks generated publication policy in Group 4 (F1-1).
-12. Can Acme consume its pinned base operation’s wire shape while retaining separate identity and inspection behavior? This unblocks Group 4 (F1-4).
-13. Can pure CRUD applications use generated component crates without authored Rust files? This unblocks Group 4 (F1-3, F3-1).
-14. Can WAMN consume only public built wfe exports while source qualification remains inside the submodule? This unblocks Group 4 (H3-3).
-15. Which retained saved-edit acceptance run passed against the current freshness, watcher, and activation rules? This supplies the comparison result for Group 2 (F2-1 through F2-3).
-16. Can the normal developer command own the complete private stack, with external services available through explicit overrides? This unblocks Groups 2 and 4 (F2-5, F2-6, F3-2).
-17. Can the default author experience require Docker on Linux, or must the first release support another host platform? This unblocks Groups 2 and 4 (F2-8, F3-2).
-18. Which cold-start, warm-start, and saved-edit limits must the retained results enforce? This unblocks acceptance for Groups 2 and 4 (F2-11, G3-7).
-19. Does the ten-minute clock start with the installed SDK, Docker, and provisioned account, or include their installation and provisioning? This unblocks Group 4 (F3-7).
-20. Can root supply live statuses for quarantined tests and archive candidates, including which ignored cases represent defects or retired contracts? This unblocks Groups 3 and 4 (G2-1 through G2-4, G3-4, H2-2, H2-3).
-21. Which dashboard or collector owns the frozen PostgreSQL telemetry identifiers whose guard cites deleted documentation? This unblocks retained-contract decisions in Groups 3 and 4 (G2-6, H2-5).
-22. Must benchmark summaries remain readable without their raw result files? This defines the retained result contract in Group 4 (H1-7).
-23. Does an immutable Git source plus a compact history entry satisfy the rule that accepted plans remain untrimmed? This unblocks Group 4 (H2-2, H2-7).
-24. Where are the twelve historical performance artifacts retained, if anywhere? This unblocks evidence disposition in Group 4 (H2-6).
-25. Does any external tool still read `.beads/beads.jsonl`? This unblocks obsolete-export removal in Group 4 (H3-10).
+9. Confirm the reviewer's pick: a poisoned authority lock fails the operation and exits the host process, and Kubernetes restarts it. No isolation machinery, no unready-state logic. This settles A3-2 inside the A5 rewrite.
+10. Must HTTP exposure remain explicit for every custom public operation? This unblocks generated publication policy in Group 4 (F1-1).
+11. Can Acme consume its pinned base operation’s wire shape while retaining separate identity and inspection behavior? This unblocks Group 4 (F1-4).
+12. Can pure CRUD applications use generated component crates without authored Rust files? This unblocks Group 4 (F1-3, F3-1).
+13. Can WAMN consume only public built wfe exports while source qualification remains inside the submodule? This unblocks Group 4 (H3-3).
+14. Which retained saved-edit acceptance run passed against the current freshness, watcher, and activation rules? This supplies the comparison result for Group 2 (F2-1 through F2-3).
+15. Can the normal developer command own the complete private stack, with external services available through explicit overrides? This unblocks Groups 2 and 4 (F2-5, F2-6, F3-2).
+16. Can the default author experience require Docker on Linux, or must the first release support another host platform? This unblocks Groups 2 and 4 (F2-8, F3-2).
+17. Which cold-start, warm-start, and saved-edit limits must the retained results enforce? This unblocks acceptance for Groups 2 and 4 (F2-11, G3-7).
+18. Does the ten-minute clock start with the installed SDK, Docker, and provisioned account, or include their installation and provisioning? This unblocks Group 4 (F3-7).
+19. Can root supply live statuses for quarantined tests and archive candidates, including which ignored cases represent defects or retired contracts? This unblocks Groups 3 and 4 (G2-1 through G2-4, G3-4, H2-2, H2-3).
+20. Which dashboard or collector owns the frozen PostgreSQL telemetry identifiers whose guard cites deleted documentation? This unblocks retained-contract decisions in Groups 3 and 4 (G2-6, H2-5).
+21. Must benchmark summaries remain readable without their raw result files? This defines the retained result contract in Group 4 (H1-7).
+22. Does an immutable Git source plus a compact history entry satisfy the rule that accepted plans remain untrimmed? This unblocks Group 4 (H2-2, H2-7).
+23. Where are the twelve historical performance artifacts retained, if anywhere? This unblocks evidence disposition in Group 4 (H2-6).
+24. Does any external tool still read `.beads/beads.jsonl`? This unblocks obsolete-export removal in Group 4 (H3-10).
 
 Questions 8 and 10 of the first draft are answered in Rejected findings and proposals. Nothing from this list is filed until the owner answers.

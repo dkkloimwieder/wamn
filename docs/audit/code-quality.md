@@ -608,6 +608,8 @@ Deletes: The unconditional permission-denied mapping and conversion through `err
 
 Risk: Retry behavior changes. Add operation boundary tests for an unavailable principal database, a missing principal, and refused statement authority.
 
+Owner review 2026-10-31: keep, high, Group 3 Do, as written.
+
 ## Finding A3-2: Authority cleanup can panic during unwinding
 
 Severity: high  
@@ -622,6 +624,8 @@ Proposal: Replace the parallel claim maps with one scope record and one removal 
 Deletes: Parallel claim maps, repeated setters and removals, and lock-poison `expect` calls in cleanup.
 
 Risk: Claim lifetime and revocation change. Add subprocess tests for poisoned state during binding and unwinding. Extend cancellation tests to prove that later calls inherit no authority.
+
+Owner review 2026-10-31: keep, high, owned by A5 ([perf-arch](../plan/perf-arch.md)). The `claims.rs` claim maps are what the begin-operation and commit imports replace, so the one-scope-record fix is written inside that rewrite, not before. Question 1, the reviewer's pick for the owner to confirm: a poisoned authority lock fails the operation and exits the host process, and Kubernetes restarts it. No isolation machinery and no unready-state logic.
 
 ## Finding A3-3: Blobstore exposes backend prose and classifies timeouts by text
 
@@ -638,6 +642,8 @@ Deletes: Display-text timeout matching and backend `to_string()` calls in wire p
 
 Risk: Guests can depend on current message text. Add tests with backend errors that contain private paths and misleading timeout words. Preserve the existing lost-body reread behavior.
 
+Owner review 2026-10-31: In passing. Question 2 is answered: no blobstore message is a frozen contract. Replace freely.
+
 ## Finding A3-4: Durable workflow decisions depend on hidden error-chain types
 
 Severity: medium  
@@ -653,6 +659,8 @@ Deletes: `DeadlineAdjustments` as an error-context carrier and settlement downca
 
 Risk: Runs can complete or retry differently. Add tests for every terminal refusal, infrastructure redelivery, and deadline adjustments on failed execution.
 
+Owner review 2026-10-31: In passing, under the queued-run rulings already made for workflow runs. A typed execution result replaces the error-chain downcasts when `queue.rs` is next changed.
+
 ## Finding A3-5: Anyhow crosses public library boundaries across ten owners
 
 Severity: medium  
@@ -666,7 +674,9 @@ Proposal: Remove public visibility from implementation helpers. Give true public
 
 Deletes: Unnecessary public helpers, public `anyhow` signatures, and caller-side error inspection.
 
-Risk: Rust callers require migration. Add contract tests that distinguish refusal, absence, malformed artifacts, and unavailable infrastructure without matching display text.
+Risk: Rust callers require migration. The owner's existing tests cover each retrofit.
+
+Owner review 2026-10-31: In passing, per owner, when that owner is already being changed (the CLAUDE.md convention: no mechanical retrofit). The contract-test proposal is struck.
 
 ## Finding A3-6: SQLx maintains a second copy of the PostgreSQL wire taxonomy
 
@@ -683,6 +693,8 @@ Deletes: `WamnPgError` and its conversion match.
 
 Risk: Consumers of `pg_error()` require migration. Exercise every WIT case through SQLx and retain its SQLSTATE, constraint, and connection classification.
 
+Owner review 2026-10-31: Group 4 Do, small, with the coupling B3-4 SQLx fold. `WamnPgError` goes, and the generated wire error is the type.
+
 ## Finding A3-7: Diagnostic wrappers discard their original causes
 
 Severity: medium  
@@ -697,6 +709,8 @@ Proposal: Preserve contextual causes internally. Keep public diagnostics redacte
 Deletes: Cause-discarding conversions and the opaque activation wrapper.
 
 Risk: Diagnostic output can expose credentials if formatting becomes too broad. Add tests that preserve cause traversal while keeping public output and safe logs free of secrets.
+
+Owner review 2026-10-31: In passing, small.
 
 ## Finding A3-8: Credential validators duplicate error vocabularies and parser scaffolding
 
@@ -715,6 +729,8 @@ Risk: Consolidation can accidentally accept broader credentials. Run the existin
 
 Owner addendum 2026-10-31, re-scoped: [integration-schema](../plan/integration-schema.md) drops the credential import paths, so credentials enter by UI or API only. The five validators here parse database credentials for provisioning. They are the whole scope. No integration-credential parser is added.
 
+Owner review 2026-10-31: In passing, when integration-schema C1 to C3 or security E2-2 touch provisioning.
+
 ## Finding A3-9: Client error decoding invents missing contract data
 
 Severity: medium  
@@ -730,6 +746,8 @@ Deletes: Defaults that fabricate error codes, operation names, and revisions.
 
 Risk: Previously tolerated responses become explicit transport contract failures. Add cases for missing codes, invalid revisions, absent operations, and simultaneous value and error members.
 
+Owner review 2026-10-31: Group 3 Do, small. Client correctness.
+
 ## Finding A3-10: Native service files combine several independent lifecycles
 
 Severity: medium  
@@ -744,6 +762,8 @@ Proposal: Split host into argument admission, resource composition, local worklo
 Deletes: The large root implementations and duplicated setup exposed during extraction. Moving code alone does not reduce total code.
 
 Risk: Startup ordering, shutdown budgets, and CDC acknowledgment ordering can change. Retain host lifecycle tests and CDC tests for the first unacknowledged retry and bounded publication.
+
+Owner review 2026-10-31: `host.rs` waits for A5, which rewrites startup. The `cdc-reader` split is In passing.
 
 ## Finding A3-11: Release control files mix orchestration with implementation owners
 
@@ -762,6 +782,8 @@ Risk: Release identity, retry decisions, and process cleanup can change. Retain 
 
 Owner addendum 2026-10-31: `upgrade_environment.rs` is deleted under C3-3, so this row covers `publish_release.rs` and `dev/activation.rs`. Any issue filed from an audit row that names `connection_instances`, `connection_bindings`, `org_connections`, `integration_allow` or `wamn:connector` uses the names in the "Dropped or merged from main" table of [integration-schema](../plan/integration-schema.md).
 
+Owner review 2026-10-31: In passing with the Group 4 release-control work, `publish_release.rs` and `dev/activation.rs` only.
+
 ## Finding A3-12: Generator files need semantic splits, not blanket panic removal
 
 Severity: medium  
@@ -776,6 +798,8 @@ Proposal: Split manifest declarations from operation, SQL, identity, and model v
 Deletes: Generation-order JSON lookups, repeated codec fragments, and the large parent implementations. Keep justified formatting assertions.
 
 Risk: Generated contracts can change byte-for-byte. Use existing generation fixtures and guest compilation tests. Add malformed JSON result coverage for emitted codec assertions.
+
+Owner review 2026-10-31: after A5, with A1-11. Read the generator before any split.
 
 ## Finding A3-13: Routing and serving manifests combine policy, representation, and mechanics
 
@@ -792,6 +816,8 @@ Deletes: Large root bodies and repeated projection or validation code exposed by
 
 Risk: Authentication behavior and release digests must remain stable. Retain canonical-byte rejection, digest fixtures, credential refusal, CSRF, and route concurrency tests.
 
+Owner review 2026-10-31: `flow_http_routing.rs` waits for A5. The `serving_manifest.rs` split is In passing.
+
 ## Finding A3-14: The expect-over-allow policy does not hold across source and generated output
 
 Severity: low  
@@ -801,14 +827,16 @@ Evidence: `Cargo.toml:37`, `services/cdc-reader/src/lib.rs:1702`, `crates/platfo
 
 Problem: The workspace states that overrides use `expect` with reasons, but handwritten source and generated templates still use `allow`. Some suppressions cover entire modules. The lint command rejects warnings but does not itself enforce the declared override policy.
 
-Proposal: Enforce the policy for handwritten source. Keep unavoidable generated suppressions narrowly attached to generated items, with an explicit generated-code policy. Do not mechanically insert expectations into templates whose output varies by application.
+Proposal: A handwritten `allow` becomes `expect` when its file is touched. Generated output keeps `allow`. Do not mechanically insert expectations into templates whose output varies by application.
 
 Deletes: Unnecessary suppressions and blanket module exemptions.
 
-Risk: Different generated shapes emit different warnings. Exercise small and full generated packages, and prove that stale handwritten expectations fail the lint gate.
+Risk: Different generated shapes emit different warnings. Exercise small and full generated packages.
+
+Owner review 2026-10-31: In passing. Enforcement is rejected: no lint rule and no stale-expectation proof.
 
 ## Open questions for the owner
 
-1. Must poisoned authority state terminate the process, or must the host isolate the affected owner and become unready?
-2. Which blobstore `Other` messages are frozen consumer contracts before backend prose is replaced?
+1. Must poisoned authority state terminate the process, or must the host isolate the affected owner and become unready? Reviewer pick 2026-10-31, owner to confirm: a poisoned authority lock fails the operation and exits the host process, and Kubernetes restarts it. No isolation machinery, no unready-state logic (A3-2).
+2. Which blobstore `Other` messages are frozen consumer contracts before backend prose is replaced? Answered 2026-10-31: none. Replace freely (A3-3).
 
