@@ -1,6 +1,6 @@
 # Audit lane C: Update and upgrade
 
-Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message verbatim and checked that every finding cites a file and line. Beads: wamn-16jwe.1, wamn-16jwe.2, wamn-16jwe.3. Shared tool output: [measurements.md](measurements.md).
+Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and checked that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-16jwe.1, wamn-16jwe.2, wamn-16jwe.3. Shared tool output: [measurements.md](measurements.md).
 
 <!-- lane C1, bead wamn-16jwe.1 -->
 
@@ -103,26 +103,6 @@ Risk: Restarted numbering can block upgrades or conceal an incompatible database
 1. Which installed databases require data-preserving upgrades, and which can receive one explicit reset to the new baseline?
 2. Must old and new platform images serve concurrently during upgrades, or can schema changes require a maintenance interval?
 3. What live evidence closes `wamn-m6or2`? Commit `92cf2aded` corrects its fixture in this tree. `crates/control/lib/tests/environment_apply_kind.rs:3063` now requires component preload without an HTTP role, but this audit did not run it.
-
-## Proposed fix epics
-
-### One platform schema history
-
-1. Establish system and project baseline migrations
-2. Replace independent bootstrap and structural repair paths
-3. Prove fresh-install and upgrade equivalence
-
-### Upgrade installed clusters safely
-
-1. Advance schemas before dependent readers
-2. Remove installed-environment first-apply replay
-3. Prove retained-database upgrades across platform images
-
-### Recover from interrupted schema work
-
-1. Make control bootstrap transactional
-2. Define supported migration histories and refuse unknown state
-3. Prove rollback, retry, and incompatible-binary refusal
 
 <!-- lane C2, bead wamn-16jwe.2 -->
 
@@ -302,26 +282,6 @@ Risk: Test fresh installation and a supplied nonempty migration list through the
 2. Must contract floors become executable in the next lifecycle consolidation, or remain explicitly unsupported until the contract executor lands?
 3. Can standalone production `apply-package` become an internal environment phase, with a retained public command limited to explicitly owned disposable targets?
 
-## Proposed fix epics
-
-### One production lifecycle owner
-
-- Remove synthetic bootstrap uninstalls and duplicate package Jobs
-- Apply qualified package transitions under the environment lock
-- Remove production mutation stages from upgrade-environment
-
-### Observation-based recovery
-
-- Replace mutable completion shortcuts with current-state reconciliation
-- Repair pending Helm operations and live deployment drift
-- Remove credential retry gaps and reconcile current package objects
-
-### One schema and contract boundary
-
-- Consolidate platform-schema prerequisites under one executor
-- Commit qualified contract changes and floors atomically
-- Align lifecycle documentation and public verbs with implemented ownership
-
 <!-- lane C3, bead wamn-16jwe.3 -->
 
 ## Part 3: target model
@@ -448,22 +408,3 @@ These are proposed dispositions, not closures. Root must read live Beads before 
 
 1. Can upgrades use maintenance windows, as proposed, or must service remain available throughout schema changes?
 
-## Proposed fix epics
-
-### Desired state and one reconciler
-
-1. Pin platform bundles and remove environment JSON inputs
-2. Replace upgrade drivers with one reconciliation sequence
-3. Exercise interruption, retry, and competing callers
-
-### Versioned migrations as the only schema path
-
-1. Replace full-schema installation with initial migrations
-2. Unify platform and package migration execution
-3. Remove schema repair DDL and exercise authority preservation
-
-### Qualification and maintenance recovery
-
-1. Qualify complete transitions through the shared reconciler
-2. Remove online stages, floors, and inferred rollback
-3. Connect the platform UI to desired-state application

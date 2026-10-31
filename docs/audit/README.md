@@ -59,8 +59,7 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | G3-2 | [G](tests.md) | high | M | Test selection | Selection policy spans JSON, shell branches, preparation rules, and exceptional path mappings. |
 | H1-2 | [H](hygiene.md) | high | S | Selection failures | Failed Git reads can become an empty successful test selection. |
 | H3-1 | [H](hygiene.md) | high | S | Web dependencies | The parent pnpm installation omits dependency patches declared by the pinned wfe submodule. |
-| D1-2 | [D](deployment.md) | high | M | Cloud destinations | Telemetry and certificate rendering retain installation-specific values instead of declared destinations. |
-| D1-3 | [D](deployment.md) | high | S | RC telemetry | The RC installer consumes an incomplete collector template instead of its complete renderer. |
+| D1-3 | [D](deployment.md) | high | S | RC telemetry | Closed by D3-6. The RC path and its Dockerfile are deleted, so no separate collector fix exists. |
 | H2-1 | [H](hygiene.md) | high | M | Contract documentation | Active plans contradict current integration and write-log contracts. |
 | D2-7, D3-6, F1-7, F3-4, H1-6 | [D](deployment.md), [F](developer-experience.md), [H](hygiene.md) | high | L | Deployment fixtures | Application and check routes repeat builds, installation, credentials, collection, and cleanup. |
 | E3-5 | [E](security.md) | medium | L | Compiler containment | Import discovery compiles components, and cancelled callers cannot terminate detached compilation. |
@@ -134,9 +133,10 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | A3-12 | [A](code-quality.md) | medium | M | Generator structure | Manifest and codec files mix semantic stages and recover prior results through generated JSON. |
 | A3-13 | [A](code-quality.md) | medium | M | Runtime contracts | Routing and serving-manifest files mix policy, representation, and transport mechanics. |
 | C3-5 | [C](upgrade.md) | medium | L | Upgrade model | Maintenance upgrades can remove online stages, version minimums, progress storage, and inferred rollback. |
+| D1-2 | [D](deployment.md) | medium | M | Cloud destinations | Telemetry and certificate rendering retain installation-specific values instead of declared destinations. Lowered from high by the owner review. |
 | D1-4 | [D](deployment.md) | medium | M | Workload variants | Historical HTTP and materializer workloads preserve a second deployment model. |
 | D1-5 | [D](deployment.md) | medium | M | Host policy | Local development embeds Receiving cloud limits for every application. |
-| D1-6 | [D](deployment.md) | medium | M | CDC artifact | Production CDC uses the checks image while its dedicated image stage remains unpublished. |
+| D1-6 | [D](deployment.md) | medium | M | CDC artifact | Production CDC uses the checks image. The reader executable moves into the host image and the separate stage is deleted. |
 | D1-7 | [D](deployment.md) | medium | S | Operator pin | Host and operator installation select the upstream chart independently. |
 | D1-8 | [D](deployment.md) | medium | M | Administrative Jobs | Manual invitation and PAT Jobs freeze an older runner. |
 | D2-5, D3-5 | [D](deployment.md) | medium | L | Resource rendering | Helm, edited YAML, and Rust object builders compete to define deployed resources. |
@@ -210,8 +210,12 @@ The owner review of 2026-10-31 rejects the following. The report evidence stays 
 | C1-4: A failed control bootstrap can leave an installation that refuses every retry (narrowed, stays in Group 1) | Baseline histories and refusal of altered or newer records are rejected with C1-1. The retry part stays: make bootstrap retryable or delete the refusing check. |
 | E3-1: Registry descriptors can bypass byte admission | Downgraded from high to medium. Publication trusts the registry and WIT. Registry write access is the trusted boundary. |
 | The 51-epic chain and its effort table | Replaced by the four ordered groups below. Every effort row was M or L, so the table carried no information. |
+| D1-3: The RC path installs an incomplete collector variant | Closed by D3-6. The RC Dockerfile and the RC path are deleted in Group 1, so no separate collector fix is filed. |
+| D1-2: Cloud rendering ignores declared destination values | Downgraded from high to medium and moved to Group 1 In passing. `wamn-dev` is the only cluster. Fix when the collector and certificate renderers are next open. |
 | Question 8 (retained database data) | Answered: no installed database retains data. |
 | Question 10 (maintenance windows, version-minimum executor) | Answered by the C3-5 ruling. |
+| Question on external consumers of prototype manifests (H3-2, D1-9, D1-10) | Answered: nothing is applied outside repository automation. Delete without confirming external use. |
+| Question on CDC image identity (D1-6) | Moot: the reader executable moves into the host image, so no sixth image exists. |
 
 ## The six largest areas for improvement
 
@@ -360,7 +364,7 @@ The owner reviews of 2026-10-31 replace the epic chain with four ordered groups.
 
 Target: `platform apply` consumes an immutable bundle by digest. No Cargo, pnpm or registry write runs inside apply. Delete `upgrade_environment.rs` and its images, the older image builder and the RC Dockerfile, the environment JSON sidecars, the Rust object builders in favor of one Helm package, and eight of the nine deployment routes in favor of one deployment fixture.
 
-Do (42 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high.
+Do (40 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high.
 
 | Finding | Title | Severity | Deletes |
 | --- | --- | --- | --- |
@@ -372,7 +376,7 @@ Do (42 findings). The rows the review named, then every row that deletes a build
 | A3-11 | Release control files mix orchestration with implementation owners | medium | Monolithic parent bodies, the activation error wrapper, and duplicate infrastructure helpers where ownership already exists. |
 | D2-2 | The older image pipeline builds artifacts that deployment does not select | high | `tools/journey-image-cache`, the upgrade image and guest stages, their leases, relabeling, and duplicate registry authentication. Listed in Group 1 for the deletion and in Group 2 for the cache identity. |
 | H1-1 | The image cache omits actual build inputs | high | The parallel `COPIED` inventory, custom source-tag selection, and the production dependency on `tools/journey-image-cache`. |
-| D1-1 | KCL and JSON declare different application sets | high | Both environment JSON files, their required-sibling convention, and their package lists. Remove the old delivery configuration reader after its remaining consumers migrate. |
+| D1-1 | KCL and JSON declare different application sets | high | Both environment JSON files, their required-sibling convention, and their package lists. Remove the old delivery configuration reader after its remaining consumers migrate. The JSON also carries `context` and `gates_image`. Both are cluster facts and belong in `deploy/gcp/cluster.k`, not in any environment file. The empty `floors = {}` block in both environment `.k` files is deleted. |
 | H3-2 | Environment JSON creates a second deployment authority | high | Both environment JSON files, the obsolete `EnvironmentFile` reader, and companion-JSON discovery in package preparation. |
 | D2-5 | Deployment ownership is spread across CLI tools and Helm history | medium | Kubectl wrappers, Helm history parsing, first-party chart templates, and CLI-owned reconciliation loops. |
 | D3-5 | Helm plus KCL removes more machinery than a Rust operator | medium | `platform/manifests.rs` substitutions, Kubernetes object builders in `platform/cdc.rs` and `platform/edge.rs`, and independent WAMN identity and edge chart packages after their templates move. |
@@ -393,11 +397,9 @@ Do (42 findings). The rows the review named, then every row that deletes a build
 | C3-1 | Desired state still depends on checkout and local build inputs | high | Delete `deploy/gcp/environments/dkk--receiving--dev.json`, `deploy/gcp/environments/dkk--wms--dev.json`, and `crates/control/lib/src/delivery/environment.rs`. Delete deployment-time package discovery and builds from `platform/build.rs`, `platform/packages.rs`, and `platform/releases.rs`. Remove the local chart directory as an independent deployment selector. |
 | C3-3 | Multiple upgrade drivers own ordering, locking, and recovery | high | Delete `upgrade_environment.rs` and its sole-purpose `delivery/run_record.rs`. Delete the public `upgrade-environment` verb. Replace the numbered installer driver with shared reconciliation. Remove nested lifecycle wrappers from `platform/environments.rs` and direct installation from `platform/packages.rs`. Make `upgrade-schema`, `apply-package`, and `reconcile-run-plane` internal operations rather than alternative deployment entry points. |
 | C3-4 | Qualification covers separate slices instead of the complete transition | high | Merge `qualify_upgrade/` and `delivery/qualification.rs` orchestration around the shared executor. Delete the separate `qualify-upgrade` workflow and its operator-supplied result-file handoff. Replace the narrow qualification key and package-specific qualification storage with one transition result and references from applied facts. |
-| D1-2 | Cloud rendering ignores declared destination values | high | `deploy/gcp/otel-collector-values.yaml` as an independent authority. Remove installation-specific defaults from `letsencrypt.yaml` and the test assertion that preserves `wamn-dev-otel`. |
-| D1-3 | The RC path installs an incomplete collector variant | high | The RC-specific collector loading path. After consolidation, remove the second collector Deployment and Service template. |
-| D1-4 | Historical workloads retain a second deployment model | medium | `deploy/gcp/flow-http.yaml`, `deploy/gcp/wms-flow-http.yaml`, `deploy/gcp/materializer.yaml`, `deploy/gcp/wms-materializer.yaml`, and their snapshot generator. |
+| D1-4 | Historical workloads retain a second deployment model | medium | `deploy/gcp/flow-http.yaml`, `deploy/gcp/wms-flow-http.yaml`, `deploy/gcp/materializer.yaml`, `deploy/gcp/wms-materializer.yaml`, and their snapshot generator in `test-support/infrastructure/examples/workload_files.rs`. |
 | D1-5 | Local development embeds Receiving’s cloud host policy | medium | The Receiving manifest embedding, repeated policy values across host overlays, and tests that compare two consumers of the same org-specific input. |
-| D1-6 | Production CDC uses the check image | medium | Both historical CDC YAML files, the redundant `event-reader-rbac.yaml`, and the production dependency on the checks image. Retain the reader executable in checks where tests require it. |
+| D1-6 | Production CDC uses the check image | medium | Both historical CDC YAML files, the redundant `event-reader-rbac.yaml`, the `cdc-reader` Dockerfile stage, and the production dependency on the checks image. The reader executable moves into the host image. Retain it in checks where tests require it. |
 | D1-9 | The named orphan candidates have different consumer states | low | `identity-db.example.yaml`, `prometheus-local.yaml`, the CDC files covered by D1-6, and stale executor references. Do not recreate `executor.yaml`. |
 | D2-1 | A clean upgrade lacks the application builds that it consumes | high | Application build assumptions in the upgrade stages and deployment-time native/guest preparation. |
 | D2-3 | Cloud failures leave published version tags without a complete platform set | high | Independent resolution of seven version tags as the platform publication boundary. |
@@ -407,7 +409,7 @@ Do (42 findings). The rows the review named, then every row that deletes a build
 | D3-4 | Desired deployment inputs still have several owners | medium | Both committed environment JSON sidecars, `EnvironmentFile`, and the authored `host-group-receiving.yaml` and `host-group-wms.yaml` overlays. |
 | D3-7 | The installation lock cannot serialize different deployment machines | medium | The local file lock as the authority for cluster installation, and duplicated manual deployment writers in the runbook. |
 
-In passing (10 findings). Helper dedup, naming, count pins and doc links. Closed when the owning file is already open, never filed alone.
+In passing (11 findings). Helper dedup, naming, count pins and doc links. Closed when the owning file is already open, never filed alone.
 
 | Finding | Title | Severity | Deletes |
 | --- | --- | --- | --- |
@@ -418,9 +420,10 @@ In passing (10 findings). Helper dedup, naming, count pins and doc links. Closed
 | C2-4 | Completion markers replace current-state observation | medium | Completion-marker gating around environment reconciliation and finished-stage gating around mutable upgrade phases. |
 | C2-5 | Helm history equality bypasses recovery and drift repair | medium | The historical-values-only early return and separate interpretations of successful history versus current deployment state. |
 | C2-10 | Platform-schema ownership is scattered across lifecycle phases | low | The second project-upgrade invocation, platform-extension installation inside application application, and repeated prerequisite wiring in older orchestrators. |
+| D1-2 | Cloud rendering ignores declared destination values | medium | `deploy/gcp/otel-collector-values.yaml` as an independent authority. Remove installation-specific defaults from `letsencrypt.yaml` and the test assertion that preserves `wamn-dev-otel`. |
 | D1-7 | Operator and host releases select their dependency separately | medium | The independent installer version constant, independent artifact selection, and the test’s separate expected-version literal. |
-| D1-8 | Manual operator Jobs freeze an older runner | medium | Both operator YAML templates and the separate text-substitution renderer. |
-| D1-10 | Prototype deployment families survive through examples and test expectations | low | The unused Postgres, system-cluster, registry, credential-example, retention-example, and bootstrap families identified below. Remove associated test prerequisites after equivalent behavior is covered. |
+| D1-8 | Manual operator Jobs freeze an older runner | medium | Both operator YAML templates and the separate text-substitution renderer. The Job owner at `crates/control/lib/src/platform/install.rs:448` already renders with the stamped runner. Rename every surviving `mint-pat` reference to `issue-pat`. |
+| D1-10 | Prototype deployment families survive through examples and test expectations | low | The unused Postgres, system-cluster, registry, credential-example, retention-example, and bootstrap families in the variant inventory, deleted in one commit. Remove associated test prerequisites after equivalent behavior is covered. |
 
 ### Group 2: Rebuild only what changed
 
@@ -636,51 +639,50 @@ In passing (75 findings). Helper dedup, naming, count pins and doc links. Closed
 6. Can guest moves, component repinning, and resulting qualification occur in one release cycle? This unblocks Group 4 (B3-3 through B3-5).
 7. Which machine and cache states define timing comparisons, and can the build owner supply isolated cold and incremental results for the six development back-links? This unblocks timing acceptance for Groups 2 and 4 (B1-2, G3-7).
 8. Must authored SQL remain directly executable, or can composed installation recipes produce standalone SQL as build output? This unblocks Group 4 (A2-5, C3-2).
-9. Which external workflows still consume deployment JSON or prototype backup, retention, registry, and bootstrap manifests? This unblocks Group 1 (H3-2, D1-9, D1-10).
-10. Can `environment.k` own local and deployed coordinates, with the default developer command generating its private local document? This unblocks Groups 1 and 2 (D3-4, F2-4, F3-2).
-11. Can kind and GCP consume one release build graph, with local builds retained as a developer adapter? This unblocks Group 1 (D2-2).
-12. Which local/deployed host behaviors must match, and must WMS retain its distinct concurrency limit? This unblocks Groups 1 and 3 (D1-5, G2-4).
-13. Can `upgrade-environment` disappear after its preparation, resume, and credential-retirement requirements move to the shared owners? This unblocks Group 1 (B2-1, C2-2, C2-7, D2-1).
-14. Can production `apply-package` become an internal environment phase, with any retained standalone command limited to explicitly owned disposable targets? This unblocks Group 1 (C2-2).
-15. What live result closes `wamn-m6or2` after fixture correction `92cf2aded`? This defines retained preload acceptance for Group 1 (C1-2).
-16. Can R12 change so that qualification identifies complete transitions, including charts, schemas, CDC, auxiliary images, and qualification executables? This unblocks Group 1 (C3-4, D3-2, D1-6).
-17. Who approves qualification cases for unfamiliar applications, and which application business tests must deployment require beyond generic platform qualification? This unblocks Group 3 (B2-6, F3-5).
-18. Can the identity journey replace its repository `evidence/` requirement with caller-owned temporary result storage? This unblocks Group 4 (H1-5).
-19. Which disposable GKE project, existing fixtures, and budget support provider-specific tests before merge and promotion? This unblocks Groups 1 and 3 (D3-6, D3-3, G3-3).
-20. Does any external workflow still require `kind-gate-build` or `kind-gate-image-remove`? This unblocks Group 4 (H1-12).
-21. Which deployed coordinates currently produce colliding credential names? This unblocks safe replacement in Group 3 (E1-1, E2-1).
-22. Must an organization control credential remain trusted with authority across every organization? This decides the database boundary in Group 3 (E2-2).
-23. Is every operator certificate intentionally platform-wide, and how must one certificate be revoked without replacing its CA? This informs privileged credential boundaries in Group 3 (E2-2, E2-3).
-24. Must org isolation survive compromise of one native host or theft of its scheduler certificate? This defines acceptance for Group 3 (E1-2).
-25. Are cache delays permitted only after lost invalidation, or also after natural credential expiry? This unblocks Group 3 (E1-6, E1-7).
-26. What maximum disconnected period permits continued trust in an local signing key set? This unblocks Group 3 (E1-8).
-27. Which independently enforced network controls protect deployed identity databases, plaintext services, and standing development fixtures? This establishes the live boundary for Group 3 (E1-5, E2-3 through E2-5).
-28. Who owns certificate renewal and the chart CA’s recorded 365-day expiry? This unblocks transport lifecycle acceptance in Group 3 (E2-3, E2-4).
-29. Who owns refreshes for WASI-Virt, its adapter, and the pg-walstream patch, and what refresh interval applies? This unblocks Group 3 (E3-8).
-30. Does another check scan the web dependency graph, including the pinned wfe dependency resolution? This determines the remaining scan scope in Group 3 (E3-8).
-31. Must WASI-Virt provenance report a measured adapter digest instead of its current constant? This unblocks provenance acceptance in Group 3 (E3-8).
-32. Is registry write access intentionally sufficient to bypass component admission? This decides the trusted publication boundary in Group 3 (E3-1).
-33. What measured condition permits serving hosts to leave aggregate memory count mode? This unblocks Group 3 (E3-4).
-34. Must poisoned authority state terminate the process, or must the host isolate the affected owner and become unready? This unblocks Group 3 (A3-2).
-35. Which blobstore `Other` messages are frozen consumer contracts? This unblocks replacement of backend prose in Group 4 (A3-3).
-36. Can host operations explicitly share authored shapes while resolved contract bytes and generated clients remain unchanged? This unblocks Group 4 (A2-3).
-37. Must SQL literal quoting support nondefault PostgreSQL string parsing, or can callers require the default server behavior? This defines quoting acceptance in Group 4 (A2-11).
-38. Must HTTP exposure remain explicit for every custom public operation? This unblocks generated publication policy in Group 4 (F1-1).
-39. Can Acme consume its pinned base operation’s wire shape while retaining separate identity and inspection behavior? This unblocks Group 4 (F1-4).
-40. Can pure CRUD applications use generated component crates without authored Rust files? This unblocks Group 4 (F1-3, F3-1).
-41. Can WAMN consume only public built wfe exports while source qualification remains inside the submodule? This unblocks Group 4 (H3-3).
-42. Which retained saved-edit acceptance run passed against the current freshness, watcher, and activation rules? This supplies the comparison result for Group 2 (F2-1 through F2-3).
-43. Can the normal developer command own the complete private stack, with external services available through explicit overrides? This unblocks Groups 2 and 4 (F2-5, F2-6, F3-2).
-44. Can the default author experience require Docker on Linux, or must the first release support another host platform? This unblocks Groups 2 and 4 (F2-8, F3-2).
-45. Which cold-start, warm-start, saved-edit, build, qualification, and commit-to-running limits must the retained results enforce? This unblocks acceptance for Groups 2 and 4 (F2-11, D2-8, G3-7).
-46. Does the ten-minute clock start with the installed SDK, Docker, and provisioned account, or include their installation and provisioning? This unblocks Group 4 (F3-7).
-47. Can root supply live statuses for quarantined tests and archive candidates, including which ignored cases represent defects or retired contracts? This unblocks Groups 3 and 4 (G2-1 through G2-4, G3-4, H2-2, H2-3).
-48. Which dashboard or collector owns the frozen PostgreSQL telemetry identifiers whose guard cites deleted documentation? This unblocks retained-contract decisions in Groups 3 and 4 (G2-6, H2-5).
-49. Which CI service and protected reference own integration and promotion? This unblocks Group 1 (D3-3).
-50. Must startup-burst measurement remain supported despite its absent repository execution path? This unblocks Group 4 (A1-1).
-51. Must benchmark summaries remain readable without their raw result files? This defines the retained result contract in Group 4 (H1-7).
-52. Does an immutable Git source plus a compact history entry satisfy the rule that accepted plans remain untrimmed? This unblocks Group 4 (H2-2, H2-7).
-53. Where are the twelve historical performance artifacts retained, if anywhere? This unblocks evidence disposition in Group 4 (H2-6).
-54. Does any external tool still read `.beads/beads.jsonl`? This unblocks obsolete-export removal in Group 4 (H3-10).
+9. Can `environment.k` own local and deployed coordinates, with the default developer command generating its private local document? This unblocks Groups 1 and 2 (D3-4, F2-4, F3-2).
+10. Can kind and GCP consume one release build graph, with local builds retained as a developer adapter? This unblocks Group 1 (D2-2).
+11. Which local/deployed host behaviors must match, and must WMS retain its distinct concurrency limit? This unblocks Groups 1 and 3 (D1-5, G2-4).
+12. Can `upgrade-environment` disappear after its preparation, resume, and credential-retirement requirements move to the shared owners? This unblocks Group 1 (B2-1, C2-2, C2-7, D2-1).
+13. Can production `apply-package` become an internal environment phase, with any retained standalone command limited to explicitly owned disposable targets? This unblocks Group 1 (C2-2).
+14. What live result closes `wamn-m6or2` after fixture correction `92cf2aded`? This defines retained preload acceptance for Group 1 (C1-2).
+15. Can R12 change so that qualification identifies complete transitions, including charts, schemas, CDC, auxiliary images, and qualification executables? This unblocks Group 1 (C3-4, D3-2).
+16. Who approves qualification cases for unfamiliar applications, and which application business tests must deployment require beyond generic platform qualification? This unblocks Group 3 (B2-6, F3-5).
+17. Can the identity journey replace its repository `evidence/` requirement with caller-owned temporary result storage? This unblocks Group 4 (H1-5).
+18. Which disposable GKE project, existing fixtures, and budget support provider-specific tests before merge and promotion? This unblocks Groups 1 and 3 (D3-6, D3-3, G3-3).
+19. Does any external workflow still require `kind-gate-build` or `kind-gate-image-remove`? This unblocks Group 4 (H1-12).
+20. Which deployed coordinates currently produce colliding credential names? This unblocks safe replacement in Group 3 (E1-1, E2-1).
+21. Must an organization control credential remain trusted with authority across every organization? This decides the database boundary in Group 3 (E2-2).
+22. Is every operator certificate intentionally platform-wide, and how must one certificate be revoked without replacing its CA? This informs privileged credential boundaries in Group 3 (E2-2, E2-3).
+23. Must org isolation survive compromise of one native host or theft of its scheduler certificate? This defines acceptance for Group 3 (E1-2).
+24. Are cache delays permitted only after lost invalidation, or also after natural credential expiry? This unblocks Group 3 (E1-6, E1-7).
+25. What maximum disconnected period permits continued trust in an local signing key set? This unblocks Group 3 (E1-8).
+26. Which independently enforced network controls protect deployed identity databases, plaintext services, and standing development fixtures? This establishes the live boundary for Group 3 (E1-5, E2-3 through E2-5).
+27. Who owns certificate renewal and the chart CA’s recorded 365-day expiry? This unblocks transport lifecycle acceptance in Group 3 (E2-3, E2-4).
+28. Who owns refreshes for WASI-Virt, its adapter, and the pg-walstream patch, and what refresh interval applies? This unblocks Group 3 (E3-8).
+29. Does another check scan the web dependency graph, including the pinned wfe dependency resolution? This determines the remaining scan scope in Group 3 (E3-8).
+30. Must WASI-Virt provenance report a measured adapter digest instead of its current constant? This unblocks provenance acceptance in Group 3 (E3-8).
+31. Is registry write access intentionally sufficient to bypass component admission? This decides the trusted publication boundary in Group 3 (E3-1).
+32. What measured condition permits serving hosts to leave aggregate memory count mode? This unblocks Group 3 (E3-4).
+33. Must poisoned authority state terminate the process, or must the host isolate the affected owner and become unready? This unblocks Group 3 (A3-2).
+34. Which blobstore `Other` messages are frozen consumer contracts? This unblocks replacement of backend prose in Group 4 (A3-3).
+35. Can host operations explicitly share authored shapes while resolved contract bytes and generated clients remain unchanged? This unblocks Group 4 (A2-3).
+36. Must SQL literal quoting support nondefault PostgreSQL string parsing, or can callers require the default server behavior? This defines quoting acceptance in Group 4 (A2-11).
+37. Must HTTP exposure remain explicit for every custom public operation? This unblocks generated publication policy in Group 4 (F1-1).
+38. Can Acme consume its pinned base operation’s wire shape while retaining separate identity and inspection behavior? This unblocks Group 4 (F1-4).
+39. Can pure CRUD applications use generated component crates without authored Rust files? This unblocks Group 4 (F1-3, F3-1).
+40. Can WAMN consume only public built wfe exports while source qualification remains inside the submodule? This unblocks Group 4 (H3-3).
+41. Which retained saved-edit acceptance run passed against the current freshness, watcher, and activation rules? This supplies the comparison result for Group 2 (F2-1 through F2-3).
+42. Can the normal developer command own the complete private stack, with external services available through explicit overrides? This unblocks Groups 2 and 4 (F2-5, F2-6, F3-2).
+43. Can the default author experience require Docker on Linux, or must the first release support another host platform? This unblocks Groups 2 and 4 (F2-8, F3-2).
+44. Which cold-start, warm-start, saved-edit, build, qualification, and commit-to-running limits must the retained results enforce? This unblocks acceptance for Groups 2 and 4 (F2-11, D2-8, G3-7).
+45. Does the ten-minute clock start with the installed SDK, Docker, and provisioned account, or include their installation and provisioning? This unblocks Group 4 (F3-7).
+46. Can root supply live statuses for quarantined tests and archive candidates, including which ignored cases represent defects or retired contracts? This unblocks Groups 3 and 4 (G2-1 through G2-4, G3-4, H2-2, H2-3).
+47. Which dashboard or collector owns the frozen PostgreSQL telemetry identifiers whose guard cites deleted documentation? This unblocks retained-contract decisions in Groups 3 and 4 (G2-6, H2-5).
+48. Which CI service and protected reference own integration and promotion? This unblocks Group 1 (D3-3).
+49. Must startup-burst measurement remain supported despite its absent repository execution path? This unblocks Group 4 (A1-1).
+50. Must benchmark summaries remain readable without their raw result files? This defines the retained result contract in Group 4 (H1-7).
+51. Does an immutable Git source plus a compact history entry satisfy the rule that accepted plans remain untrimmed? This unblocks Group 4 (H2-2, H2-7).
+52. Where are the twelve historical performance artifacts retained, if anywhere? This unblocks evidence disposition in Group 4 (H2-6).
+53. Does any external tool still read `.beads/beads.jsonl`? This unblocks obsolete-export removal in Group 4 (H3-10).
 
 Questions 8 and 10 of the first draft are answered in Rejected findings and proposals. Nothing from this list is filed until the owner answers.

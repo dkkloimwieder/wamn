@@ -1,6 +1,6 @@
 # Audit lane B: Coupling and architecture
 
-Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message verbatim and checked that every finding cites a file and line. Beads: wamn-m0c2w.1, wamn-m0c2w.2, wamn-m0c2w.3. Shared tool output: [measurements.md](measurements.md).
+Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and checked that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-m0c2w.1, wamn-m0c2w.2, wamn-m0c2w.3. Shared tool output: [measurements.md](measurements.md).
 
 <!-- lane B1, bead wamn-m0c2w.1 -->
 
@@ -164,23 +164,6 @@ The small crates do not justify deletion by size alone. `wamn-pg-core` explicitl
 2. Does the owner accept a shared contract layer below generation, provisioning, and execution-host? The numbered runtime architecture leaves these relationships unspecified.
 3. Must control remain a reusable development-session host outside the CLI? That requirement determines how much orchestration can move into `services/ctl`.
 
-## Proposed fix epics
-
-1. Remove build tooling from serving dependencies
-   - Move package contracts below the generator
-   - Relocate release-profile derivation
-   - Remove generator dependencies from shared platform owners
-
-2. Restore isolated lower-layer tests
-   - Relocate cross-owner database tests
-   - Remove the six development back-edges
-   - Measure cold and incremental compilation costs
-
-3. Reduce shared hubs and expose the complete graph
-   - Consolidate artifact transfer and narrow control ownership
-   - Move canonical WIT out of native implementations
-   - Enforce workspace, feature, and dependency-kind boundaries
-
 <!-- lane B2, bead wamn-m0c2w.2 -->
 
 ## Part 2: control
@@ -304,26 +287,6 @@ Risk: Credential output permissions, projection identity, and refresh-versus-cla
 1. Can `upgrade-environment` be retired after migrating its resume records and credential-retirement behavior into the current lifecycle?
 2. Which application owner approves qualification case sets for packages beyond Receiving, Acme Receiving, and WMS?
 3. Must external consumers retain the `wamn-control` Rust API, or can the umbrella disappear without a compatibility facade?
-
-## Proposed fix epics
-
-### One owner for environment mutation
-
-1. Replace upgrade-environment with delivery preparation and one locked transition
-2. Consolidate provisioning grants and environment identity rules
-3. Return provisioning results directly and keep file emission in the CLI
-
-### Separate developer and delivery applications
-
-1. Move the developer binary and session engine into services/dev
-2. Move release and upgrade qualification execution into tools/delivery
-3. Make platform installation consume prepared build artifacts
-
-### Replace the control umbrella
-
-1. Extract the sole package executor and pure upgrade evidence rules
-2. Extract release construction, admission, and publication
-3. Consolidate process adapters and prove bounded cleanup
 
 <!-- lane B3, bead wamn-m0c2w.3 -->
 
@@ -522,22 +485,3 @@ Risk: Test discovery, executable paths, and feature propagation can change. Pres
 2. Does the owner accept broader Cargo feature selection for the grouped host and scenario binaries? Their processes and credentials remain separate.
 3. Can the guest migration and required component repinning occur in one release qualification cycle?
 
-## Proposed fix epics
-
-### Separate contracts from compilation
-
-1. Extract shared manifest, schema, and execution contracts
-2. Consolidate provisioning and package build owners
-3. Enforce compiler-free deployed dependency graphs
-
-### Consolidate native owners
-
-1. Consolidate identity, runtime, and workflow implementations
-2. Consolidate control and cloud service package ownership
-3. Consolidate test support, suites, and tool binaries
-
-### Consolidate guest ownership
-
-1. Fold application data and single-consumer helpers into owners
-2. Reduce first-party workspaces to three
-3. Repin migrated components and qualify the release

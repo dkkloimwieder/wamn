@@ -1,6 +1,6 @@
 # Audit lane H: Hygiene
 
-Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message verbatim and checked that every finding cites a file and line. Beads: wamn-lt36n.1, wamn-lt36n.2, wamn-lt36n.3. Shared tool output: [measurements.md](measurements.md).
+Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and checked that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-lt36n.1, wamn-lt36n.2, wamn-lt36n.3. Shared tool output: [measurements.md](measurements.md).
 
 <!-- lane H1, bead wamn-lt36n.1 -->
 
@@ -269,32 +269,6 @@ Production image preparation, collector rendering, and local registry preparatio
 2. Must benchmark summaries remain readable without their raw result files? This determines the retained artifact contract.
 3. Can the old identity journey’s repository `evidence/` requirement disappear when its Rust replacement owns temporary results?
 
-## Proposed fix epics
-
-### Tool correctness
-
-1. Make image reuse depend on complete build inputs
-2. Reject failed selection reads and incomplete runner arguments
-3. Restore descriptor verdicts and enforce the train submodule gate
-
-### Shared test infrastructure
-
-1. Merge application lifecycle adapters into shared Rust infrastructure
-2. Move identity journey orchestration into its Rust test owner
-3. Move standalone fixture diagnostics into discoverable owner tests
-
-### Shell surface reduction
-
-1. Share minimal shell helpers and the installer template
-2. Move production preparation behind existing control owners
-3. Delete retired transformation and manual gate tools
-
-### Benchmark integrity
-
-1. Retain benchmark identity and failure detail in one result contract
-2. Give cloud floor experiments complete cleanup and bounded waits
-3. Reuse development lifecycle operations in the local benchmark
-
 <!-- lane H2, bead wamn-lt36n.2 -->
 
 ## Part 2: docs
@@ -534,26 +508,6 @@ Risk: Navigation can hide a retained requirement. Test that every retained plan 
 2. Does an immutable Git source plus a compact history entry satisfy the rule at `docs/plan/manifest-authoring.md:94` that accepted plans remain untrimmed?
 3. Where are the twelve historical performance artifacts retained, if anywhere?
 
-## Proposed fix epics
-
-### One owner for each current contract
-
-1. Consolidate implemented contracts into architecture and operations
-2. Move standing rules out of the completed deployment plan
-3. Reduce mixed plans to unresolved design
-
-### Retire completed plans and copied histories
-
-1. Reconcile closed scope against live Beads
-2. Replace completed plans and snapshots with history entries
-3. Move the previous audit out of active planning
-
-### Repair documentation navigation and evidence
-
-1. Repair missing paths and heading links
-2. Resolve unavailable historical proof
-3. Publish and test the documentation indexes
-
 <!-- lane H3, bead wamn-lt36n.3 -->
 
 ## Part 3: web and stray files
@@ -719,28 +673,3 @@ Risk: An external reader can still depend on the old filename. Search repository
 1. Can WAMN consume only public built wfe exports, with source qualification confined to the submodule?
 2. Does any external tool still read `.beads/beads.jsonl` or the deployment JSON files?
 
-## Proposed fix epics
-
-### One web dependency boundary
-
-1. Preserve wfe repairs in the root installation
-2. Declare workspace dependencies and consume public package entries
-3. Consolidate Vite policy and lint scope
-
-### One owner for shared web behavior
-
-1. Move sync presentation into the platform UI
-2. Consolidate Receiving and WMS browser support
-3. Consolidate application bundle parsing tests
-
-### One deployment declaration path
-
-1. Resolve packages from authored environments and dependencies
-2. Replace legacy environment JSON readers
-3. Delete redundant environment JSON files
-
-### Remove unused web and tracker surface
-
-1. Remove unnecessary exports and the root generator dependency
-2. Move chart type requirements to their wfe owner
-3. Delete the obsolete Beads export and temporary file

@@ -1,6 +1,6 @@
 # Audit lane A: Code quality
 
-Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message verbatim and checked that every finding cites a file and line. Beads: wamn-v3cpv.1, wamn-v3cpv.2, wamn-v3cpv.3. Shared tool output: [measurements.md](measurements.md).
+Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and checked that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-v3cpv.1, wamn-v3cpv.2, wamn-v3cpv.3. Shared tool output: [measurements.md](measurements.md).
 
 <!-- lane A1, bead wamn-v3cpv.1 -->
 
@@ -265,26 +265,6 @@ Risk: Preserve workflow lowering, materializer decisions, event admission, SQLit
 3. Does an external consumer use these unpublished Rust APIs? This audit establishes repository callers only.
 4. Can root supply the retained feature-tree output and generated packages before dependency deletions are accepted?
 
-## Proposed fix epics
-
-### Delete unreachable measurement and cache code
-
-1. Delete the uncalled startup-burst module
-2. Delete the unused router wiring cache
-3. Remove unused operator-recovery helpers
-
-### Remove unused dependencies and runtime APIs
-
-1. Remove the confirmed native and guest dependency declarations
-2. Delete unused runtime, engine, and generator methods
-3. Delete the Kubernetes credential placeholder
-
-### Reduce production and generated surfaces
-
-1. Move portable test utilities into test support
-2. Restrict internal router, SQLite, and materializer visibility
-3. Emit only operation-required codec support
-
 <!-- lane A2, bead wamn-v3cpv.2 -->
 
 ## Part 2: duplication
@@ -545,32 +525,6 @@ Risk: Absence must not hide malformed JSON or remove generated routes. Add packa
 2. Can record-history depend on the shared scalar contract, or must its current dependency-free build remain a constraint?
 3. Can host contract shapes use explicit shared assignments while generated clients and resolved contract bytes remain unchanged?
 
-## Proposed fix epics
-
-### Canonical contract ownership
-
-- Unify scalar normalization and strict validation
-- Replace repeated host contract files with shared shapes
-- Consolidate PostgreSQL quoting and digest formatting
-
-### Process and guest execution
-
-- Route one-shot control commands through owned execution
-- Collapse PostgreSQL adapter and transaction duplication
-- Share HTTP guest transport policy
-
-### Schema and test foundations
-
-- Compose authority SQL from one template
-- Centralize database and workflow fixtures
-- Reuse one test repository-root helper
-
-### Repository and web tooling
-
-- Share web build policies and bundle assertions
-- Consolidate pinned installers and shell command helpers
-- Delete empty attachment documents after unifying absence handling
-
 <!-- lane A3, bead wamn-v3cpv.3 -->
 
 ## Part 3: errors, panics, file size
@@ -792,28 +746,3 @@ Risk: Different generated shapes emit different warnings. Exercise small and ful
 1. Must poisoned authority state terminate the process, or must the host isolate the affected owner and become unready?
 2. Which blobstore `Other` messages are frozen consumer contracts before backend prose is replaced?
 
-## Proposed fix epics
-
-### Preserve boundary meaning
-
-1. Preserve operation binding failure categories
-2. Return explicit workflow failures and deadline adjustments
-3. Replace public anyhow results with owner contracts
-
-### Consolidate errors without new wire taxonomies
-
-1. Remove the duplicate SQLx PostgreSQL enum
-2. Consolidate credential input refusals
-3. Preserve internal causes and reject malformed client errors
-
-### Make authority cleanup and storage errors predictable
-
-1. Consolidate claim scope ownership and infallible revocation
-2. Freeze redacted blobstore fallback messages
-3. Enforce the handwritten lint override policy
-
-### Split files by existing ownership seams
-
-1. Separate native service composition and lifecycle owners
-2. Separate release orchestration from infrastructure adapters
-3. Separate generator and routing contract owners

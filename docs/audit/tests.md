@@ -1,6 +1,6 @@
 # Audit lane G: Tests
 
-Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message verbatim and checked that every finding cites a file and line. Beads: wamn-lybom.1, wamn-lybom.2, wamn-lybom.3. Shared tool output: [measurements.md](measurements.md).
+Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and checked that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-lybom.1, wamn-lybom.2, wamn-lybom.3. Shared tool output: [measurements.md](measurements.md).
 
 <!-- lane G1, bead wamn-lybom.1 -->
 
@@ -265,26 +265,6 @@ Risk: Ready-only polling must still fail on `Pending`. Retain `callback_error_do
 
 1. Do external consumers require the `wamn-gate-harness` or `wamn-fixture-package` crate names? Internal callers can migrate together.
 
-## Proposed fix epics
-
-### Consolidate shared test support
-
-- Merge harness and fixture-package into infrastructure while preserving the PostgreSQL production dependency
-- Share command capture, private files, temporary directories, paths, clocks, and ready-only polling
-- Replace cross-suite source imports with explicit fixture APIs
-
-### Consolidate PostgreSQL test mechanics
-
-- Share connections and parsed credential or database replacement
-- Share PostgreSQL command capture while preserving transaction and refusal behavior
-- Share generation-state observations and disposable-role cleanup
-
-### Consolidate fixture data and test doubles
-
-- Replace name-only package and environment copies with minimal shared fixtures
-- Share admitted-component, router graph, recording-store, and offline runtime builders
-- Share recursive package copying while retaining upgrade and saved-edit assertions
-
 <!-- lane G2, bead wamn-lybom.2 -->
 
 ## Part 2: ignored and pinned
@@ -386,26 +366,6 @@ Risk: Selection can fail before authentication coverage executes. The bootstrap 
 1. Can root supply the current open “fails on main” beads? `bd list --readonly --status open --limit 0` failed with `Error: failed to open database: embeddeddolt: init schema: embeddeddolt: open db: failed to load database "wamn": openat LOCK: read-only file system`. Neither passive export contains the seven quarantine IDs. Automatic export is disabled at `.beads/config.yaml:69`, so their current statuses remain unverified.
 2. Which shared host behaviors must the restored parity test enforce? Its broad comparison removes many deliberate differences at `crates/control/lib/src/dev/activation.rs:2234`.
 3. Which current dashboard or collector owns the frozen PostgreSQL telemetry identifiers? The guard cites deleted archive documents at `tests/conformance/tests/effect_spans.rs:645`. Preserve the identifiers until that ownership is resolved.
-
-## Proposed fix epics
-
-### Restore quarantined behavioral proofs
-
-1. Restore history reconstruction and retention tests
-2. Replace shared-fixture grant snapshots with visibility contracts
-3. Restore introspection relation equality and refusal coverage
-
-### Separate infrastructure selection from failures
-
-1. Restore registry rendering and host parity tests
-2. Run owned PostgreSQL credential tests by default
-3. Name identity prerequisites in ignored tests
-
-### Retain contracts and delete incidental pins
-
-1. Delete redundant inventory and publication-count pins
-2. Replace complete DDL snapshots with existing semantic proofs
-3. Resolve the current owner of frozen telemetry identifiers
 
 <!-- lane G3, bead wamn-lybom.3 -->
 
@@ -575,16 +535,3 @@ Risk: Tight budgets can reject correct behavior on slower machines. Retain the r
 2. Which bead-only ignored tests represent current defects, and which represent retired contracts?
 3. Which machine and cache state define the timing baseline?
 
-## Proposed fix epics
-
-### Test tiers and selection
-
-1. Split mixed test targets into the six execution tiers
-2. Replace suite mappings and shell exceptions with tests/selection.toml
-3. Normalize prerequisites and remove ignored subprocess helpers
-
-### Merge evidence and execution cost
-
-1. Execute required live and deployment suites on the combined merge head
-2. Isolate generated contracts and merge shared delivery setup
-3. Retain execution counts and calibrate tier duration budgets

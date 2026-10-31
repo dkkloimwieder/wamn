@@ -1,6 +1,6 @@
 # Audit lane D: Deployment
 
-Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message verbatim and checked that every finding cites a file and line. Beads: wamn-xm69b.1, wamn-xm69b.2, wamn-xm69b.3. Shared tool output: [measurements.md](measurements.md).
+Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and checked that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-xm69b.1, wamn-xm69b.2, wamn-xm69b.3. Shared tool output: [measurements.md](measurements.md).
 
 <!-- lane D1, bead wamn-xm69b.1 -->
 
@@ -22,13 +22,13 @@ Problem: WMS KCL declares `wamn_wms`, `rest_connector`, `rest_consumer_fixture`,
 
 Proposal: Compile each environment once. Derive build, publication, broker, qualification, and deployment inputs from its application declarations and package dependencies.
 
-Deletes: Both environment JSON files, their required-sibling convention, and their package lists. Remove the old delivery configuration reader after its remaining consumers migrate.
+Deletes: Both environment JSON files, their required-sibling convention, and their package lists. Remove the old delivery configuration reader after its remaining consumers migrate. The JSON also carries `context` and `gates_image`. Both are cluster facts and belong in `deploy/gcp/cluster.k`, not in any environment file. The empty `floors = {}` block in both environment `.k` files is deleted.
 
 Risk: Legacy delivery and `tools/test-changes` consume the JSON format. Replace the test at `crates/control/lib/src/platform/build.rs:433`, which currently requires that format. Add a regression that derives all four WMS packages without JSON siblings, then exercise `platform_apply_kind`.
 
 ## Finding D1-2: Cloud rendering ignores declared destination values
 
-Severity: high  
+Severity: medium  
 Effort: M  
 Area: `deploy/gcp/otel-collector-values.yaml`, `deploy/gcp/letsencrypt.yaml`, `crates/control/lib/src/platform/manifests.rs`
 
@@ -42,6 +42,8 @@ Deletes: `deploy/gcp/otel-collector-values.yaml` as an independent authority. Re
 
 Risk: A second project can receive telemetry failures or DNS challenge failures. Extend `both_providers_render_every_install_manifest` with different project, bucket, email, and domain values. Require every rendered destination to follow those inputs.
 
+Owner review 2026-10-31: severity lowered from high to medium. `wamn-dev` is the only cluster, so the committed values are wrong only for a second project. Fix this when the collector and certificate renderers are next open.
+
 ## Finding D1-3: The RC path installs an incomplete collector variant
 
 Severity: high  
@@ -52,11 +54,7 @@ Evidence: `deploy/infra/otel-collector.yaml:38`, `deploy/infra/otel-collector.ya
 
 Problem: The infrastructure collector is a partial template. Both containers lack images, and its configuration refers to an `otlp` receiver without declaring one. The shared telemetry renderer supplies the missing configuration and images. The RC installer reads the partial template directly and only replaces the separate `serve-echo` image.
 
-Proposal: Give every collector consumer the same complete renderer. Keep test exporter differences as inputs to that renderer.
-
-Deletes: The RC-specific collector loading path. After consolidation, remove the second collector Deployment and Service template.
-
-Risk: Static inspection shows an invalid Pod specification before the RC trace test starts. Add a pure rendering regression that requires images and declared receivers. Then run the RC path at `tests/integration/src/rc.rs:222`.
+Closed by D3-6 (owner review 2026-10-31): the RC Dockerfile and the RC path are deleted in Group 1. No separate collector fix.
 
 ## Finding D1-4: Historical workloads retain a second deployment model
 
@@ -68,9 +66,9 @@ Evidence: `deploy/gcp/flow-http.yaml:45`, `deploy/gcp/flow-http.yaml:48`, `deplo
 
 Problem: Four committed workloads preserve the old `default` and `wms` host groups and short environment keys. The current chart derives release names and selects both host group and release. The historical HTTP declarations also lack interfaces present in the current chart. Their generator writes deployment snapshots, while current deployment reads the release chart.
 
-Proposal: Make the release chart the sole Kubernetes workload definition. Generate inspection output on demand from the same inputs used for deployment.
+Proposal: Delete the four files and their snapshot generator. The release chart is already the sole Kubernetes workload definition.
 
-Deletes: `deploy/gcp/flow-http.yaml`, `deploy/gcp/wms-flow-http.yaml`, `deploy/gcp/materializer.yaml`, `deploy/gcp/wms-materializer.yaml`, and their snapshot generator.
+Deletes: `deploy/gcp/flow-http.yaml`, `deploy/gcp/wms-flow-http.yaml`, `deploy/gcp/materializer.yaml`, `deploy/gcp/wms-materializer.yaml`, and their snapshot generator in `test-support/infrastructure/examples/workload_files.rs`.
 
 Risk: Historical manual commands name these files. Update those references when deleting them. Use prekind rendering and `environment_apply_kind` to prove release selectors, interfaces, entry images, and Services.
 
@@ -84,9 +82,9 @@ Evidence: `crates/control/lib/src/dev/activation.rs:898`, `crates/control/lib/sr
 
 Problem: Local activation combines release-chart defaults with an embedded Receiving cloud manifest. It takes database pool sizes, request limits, and Wasmtime limits from that manifest for every application. Receiving allows four concurrent starts, while WMS declares one. The parity test compares against Receiving again, so it does not establish WMS parity.
 
-Proposal: Define one application-independent host policy. Render local process arguments and cluster host values from that policy plus explicit environment inputs.
+Proposal: Local development reads only `deploy/platform/release/values.yaml`. Drop the host-group include. Any per-application host difference is a chart value in the environment, not a second file.
 
-Deletes: The Receiving manifest embedding, repeated policy values across host overlays, and tests that compare two consumers of the same tenant-specific input.
+Deletes: The Receiving manifest embedding, repeated policy values across host overlays, and tests that compare two consumers of the same org-specific input.
 
 Risk: Pool and concurrency behavior can change. Extend `local_host_matches_the_deployed_host_contract` to cover Receiving and WMS with explicit expected differences.
 
@@ -100,9 +98,9 @@ Evidence: `crates/control/lib/src/platform/cdc.rs:21`, `crates/control/lib/src/p
 
 Problem: Platform installation runs the CDC reader from the qualification gates image. That image also contains control executables and test fixtures. A dedicated CDC image stage already exists, but the platform build does not publish it. The two historical CDC manifests carry another independently pinned reader image.
 
-Proposal: Publish and select the dedicated CDC artifact through the same image authority as other deployed services. Keep one coordinate-derived CDC Deployment renderer.
+Proposal: A sixth published image per build is build cost. Put the reader executable in the host image and delete the separate `cdc-reader` Dockerfile stage. Use the gates image for CDC only until that lands. Keep one coordinate-derived CDC Deployment renderer.
 
-Deletes: Both historical CDC YAML files, the redundant `event-reader-rbac.yaml`, and the production dependency on the gates image. Retain the reader executable in gates where tests require it.
+Deletes: Both historical CDC YAML files, the redundant `event-reader-rbac.yaml`, the `cdc-reader` Dockerfile stage, and the production dependency on the gates image. Retain the reader executable in gates where tests require it.
 
 Risk: Reader replacement must preserve one reader per replication slot and the environment’s credential names. Extend `readers_use_environment_secret_names_and_detect_live_drift`, then exercise CDC in `platform_apply_kind`.
 
@@ -134,7 +132,7 @@ Problem: Both operator Jobs pin runner `0.1.36`, while the current platform char
 
 Proposal: Render operator Jobs through the existing Job owner with the stamped runner image and explicit operation arguments.
 
-Deletes: Both operator YAML templates and the separate text-substitution renderer.
+Deletes: Both operator YAML templates and the separate text-substitution renderer. The Job owner at `crates/control/lib/src/platform/install.rs:448` already renders with the stamped runner. Rename every surviving `mint-pat` reference to `issue-pat`.
 
 Risk: Invitation and token minting require different arguments and output handling. Preserve their behavior through Job rendering tests and an identity integration test using the stamped runner.
 
@@ -152,7 +150,7 @@ Proposal: Delete unused examples and historical CDC carriers. Retain the NATS di
 
 Deletes: `identity-db.example.yaml`, `prometheus-local.yaml`, the CDC files covered by D1-6, and stale executor references. Do not recreate `executor.yaml`.
 
-Risk: Preserve `a_guest_never_sees_the_host_process_environment`; its behavioral assertion remains valid. Keep the NATS diagnostic until an equivalent operation proves stream access.
+Risk: Preserve `a_guest_never_sees_the_host_process_environment`. Its behavioral assertion remains valid. Keep the NATS diagnostic until an equivalent operation proves stream access. Owner answer 2026-10-31: nothing is applied outside repository automation. Delete without confirming external use.
 
 ## Finding D1-10: Prototype deployment families survive through examples and test expectations
 
@@ -166,15 +164,17 @@ Problem: The tree retains a legacy Postgres Deployment, a separate system databa
 
 Proposal: Keep current installation resources and canonical SQL. Move surviving behavioral assertions to current renderers, then remove prototype carriers and their shell wrapper.
 
-Deletes: The unused Postgres, system-cluster, registry, credential-example, retention-example, and bootstrap families identified below. Remove associated test prerequisites after equivalent behavior is covered.
+Deletes: The unused Postgres, system-cluster, registry, credential-example, retention-example, and bootstrap families identified in the variant inventory. Remove associated test prerequisites after equivalent behavior is covered.
 
-Risk: Repository searches cannot establish whether operators still apply these files externally. Preserve credential boundary tests, `deployment_declarations`, and current cluster journeys before deletion.
+Risk: Owner answer 2026-10-31: nothing is applied outside repository automation, so delete without confirming external use. Preserve credential boundary tests, `deployment_declarations`, and current cluster journeys before deletion.
 
 ### Variant inventory
 
 Path abbreviations below expand as follows: `G` = `deploy/gcp`, `I` = `deploy/infra`, `P` = `deploy/platform`, `R` = `deploy/platform/release`, `C` = `crates/control/lib/src/platform`, and `D` = `crates/control/lib/src/dev`.
 
 “Delete after migration” means the consumer remains useful, but its separate deployment definition disappears.
+
+The `wamn-system` namespace family is one prototype set: `P/postgres.yaml`, `P/wamn-sysdb.yaml`, `P/registry.yaml`, `I/minio.yaml`, `I/nats-jetstream.yaml`, `I/otel-collector.yaml`, both prometheus files, `P/scenario-worker.yaml`, every `*.example.yaml`, `P/values-host-default.yaml`, both PAT overlays, and `deploy/mvp`. Delete it in one commit, not per finding.
 
 | Variant | Consumer and evidence | Target disposition |
 | --- | --- | --- |
@@ -184,7 +184,7 @@ Path abbreviations below expand as follows: `G` = `deploy/gcp`, `I` = `deploy/in
 | Five `G/connections/*.json` files | Computed filenames in `crates/control/lib/tests/support/prekind_render.rs:21`, `:24`, `:40` | Keep owned request examples. They are not orphans. |
 | `G/guard/{main.py,guard.py,test_guard.py,requirements.txt,config.json}` | Guard entry point and tests; configuration loads at `G/guard/guard.py:12` | Keep guard behavior. Generate its deployment configuration from project identity. |
 | `I/cert-manager.yaml`, `I/cnpg-operator.yaml` | Installer: `C/install.rs:481`, `:641`; cluster fixtures | Keep pinned upstream artifacts. |
-| `I/barman-cloud-plugin.yaml`, `I/minio.yaml` | Backup documentation references in `crates/control/provision/src/backup.rs:9`, `:16`; no executable manifest consumer found | Delete unused installation prototypes after confirming external use. Preserve backup behavior separately. |
+| `I/barman-cloud-plugin.yaml`, `I/minio.yaml` | Backup documentation references in `crates/control/provision/src/backup.rs:9`, `:16`; no executable manifest consumer found | Delete. Preserve backup behavior separately. |
 | `G/cnpg-cluster.yaml` | Current installer and local benchmark: `C/install.rs:652`, `tools/bench/local.sh:152` | Keep one cluster definition with provider inputs. |
 | `I/cnpg-cluster.yaml` | Test cluster construction: `test-support/infrastructure/delivery_cluster.rs:438` | Delete after fixtures use the current cluster definition. |
 | `P/postgres.yaml`, `P/wamn-sysdb.yaml` | Generic declaration/governance expectations; no current installation consumer found | Delete prototype carriers after test migration. |
@@ -229,9 +229,9 @@ Path abbreviations below expand as follows: `G` = `deploy/gcp`, `I` = `deploy/in
 | `edge-web` | Cluster Rust web service; `Dockerfile:109`, `C/edge.rs:194` | No. |
 | `roles` | Exported HTTP and materializer components; `Dockerfile:234` | No. |
 | `edge` | Physical ARM64 device binary; `Dockerfile:301` | Keep while physical edge devices remain supported. |
-| `cdc-reader` | Dedicated service artifact, currently bypassed by platform installation; `Dockerfile:189` | Use it for D1-6. |
-| `scenario-worker` | Standalone authoring service image; `Dockerfile:182`; absent from platform image list | Delete this final image stage if deployment remains local-only. Preserve its executable in `ctl` and `runner`. |
-| `cranelift-dev` | Optional development shell; `Dockerfile:304` | No deployment consumer. Delete if the shell is no longer supported. |
+| `cdc-reader` | Dedicated service artifact, currently bypassed by platform installation; `Dockerfile:189` | Delete the stage under D1-6. The reader executable moves into `host`. |
+| `scenario-worker` | Standalone authoring service image; `Dockerfile:182`; absent from platform image list | Delete now. Preserve its executable in `ctl` and `runner`. |
+| `cranelift-dev` | Optional development shell; `Dockerfile:304` | No deployment consumer. Delete now. |
 
 The remaining Docker stages supply source, builds, composition, case executables, or copied files to these artifacts. They are build dependencies, not separate deployment variants.
 
@@ -239,7 +239,7 @@ The remaining Docker stages supply source, builds, composition, case executables
 
 This inventory covers deployment parameters and rendering literals. It excludes comments, test assertions, SQL role identifiers, and Kubernetes API-version boilerplate. Comma-separated numbers identify individual lines. Shared prefixes use the path abbreviations above.
 
-Repetition inside a generated upstream bundle is intentional. Competing authored defaults and committed rendered snapshots are the deletion targets.
+Repetition inside a generated upstream bundle (cert-manager, cnpg, barman) is intentional and is not listed. Competing authored defaults and committed rendered snapshots are the deletion targets. After the prototype set is gone, the identity URL and NATS URL rows below are the follow-up list for one Rust constant each.
 
 #### Images
 
@@ -293,9 +293,6 @@ The following are explicit namespace declarations and namespace lists in manifes
 | `identity` | `G/auth-nats-clients.yaml:11`; `G/identity-certificate.yaml:9`; `G/identity-operator-ca.yaml:11,19,32,41`; `G/operator/invite.yaml:22`; `G/operator/mint-pat.yaml:25` |
 | `__ENVIRONMENT_NAMESPACE__` | `P/host-environment-certs.example.yaml:79,102`; `P/runtime-operator-events-rbac.example.yaml:19,29` |
 | `wamn-system` | `deploy/gates/serve-echo.yaml:15,39`; socket Job `:17`; trace Job `:26`; `I/cnpg-cluster.yaml:25`; `I/minio.yaml:22,39,85,102`; `I/nats-jetstream.yaml:32,74,97,113`; `I/otel-collector.yaml:8,46,95`; `I/prometheus.yaml:12,35,76`; `I/values-wamn.yaml:169,181`; `P/audit-retention-db.example.yaml:38`; audit CronJob `:29`; `P/event-reader-rbac.yaml:19`; host database example `:32`; HTTP example `:12,28`; identity database example `:13`; materializer example `:41`; `P/postgres.yaml:21,91,114`; registry credentials example `:39,50,60,70`; `P/registry.yaml:119,137,186,198,279`; run-retention database example `:54`; run-retention CronJob `:42`; operator event RBAC `:37`; scenario worker `:133,215`; host default values `:116`; Receiving PAT values `:33`; WMS PAT values `:36`; `P/wamn-sysdb.yaml:36` |
-| `cert-manager` | `I/cert-manager.yaml:12789,12804,12819,13234,13254,13274,13294,13314,13334,13354,13374,13394,13416,13472,13511,13535,13542,13556,13563,13587,13611,13640,13704,13787,13913,13959` |
-| `kube-system` | `I/cert-manager.yaml:13425,13451,13497,13521` |
-| `cnpg-system` | `I/cnpg-operator.yaml:19173,19569,20061,20067,20081,20185,20205,20225,20245,20271,20291,20311,20331,20351`; `I/barman-cloud-plugin.yaml:727,736,923,931,944,960,970,984,999,1070,1088,1108` |
 
 Current Rust namespace reads and writes repeat:
 
@@ -330,8 +327,6 @@ WIT namespaces also repeat across the workload representations:
 | Guest Rust `1.99.0` | `Dockerfile:117,118,137,141,143,145,147`; native base separately uses `rust:1.99-trixie` at `Dockerfile:20` |
 | Local image tag `dev` | `P/identity/values.yaml:3`; `P/values-host-default.yaml:101`; also embedded in the repeated image references above |
 | Integration version `1` | `G/environments/dkk--wms--dev.k:12,13` |
-| Generator metadata `v0.21.0` | `I/cnpg-operator.yaml:12,484,704,8353,8950,9027,9246,18629,18827,19021`; `I/barman-cloud-plugin.yaml:5` |
-| cert-manager `v1.21.0` | Bundle labels at `I/cert-manager.yaml:33,3364,3653,3978,4891,8843,12795,12810,12825,12838,12870,12896,12922,12957,12998,13058,13095,13112,13135,13163,13185,13211,13227,13247,13267,13287,13307,13327,13347,13367,13387,13408,13431,13457,13478,13503,13527,13548,13569,13593,13617,13646,13661,13710,13725,13793,13808,13887,13926`; image tags at `:13675,13739,13822` |
 
 The equal `0.1.0` literals represent several separate contracts. They require ownership by package/interface, not a single global version constant.
 
@@ -350,29 +345,9 @@ The equal `0.1.0` literals represent several separate contracts. They require ow
 
 ## Open questions for the owner
 
-1. Which prototype manifests remain in use outside repository automation, especially backup, retention, registry, and bootstrap resources?
-2. Must local WMS retain its distinct concurrency limit, or does one platform host policy replace both application policies?
-3. Does the platform image identity need to cover deployed CDC bytes, alongside the host and role components?
+1. Must local WMS retain its distinct concurrency limit, or does one platform host policy replace both application policies?
 
-## Proposed fix epics
-
-### One environment declaration
-
-1. Derive build and publication packages from compiled KCL
-2. Remove legacy environment JSON configuration
-3. Render cloud destinations from their owning documents
-
-### One workload and host definition
-
-1. Move test and local consumers onto shared workload contracts
-2. Remove historical workloads and host snapshots
-3. Publish the dedicated CDC artifact through the platform image owner
-
-### Retire deployment prototypes
-
-1. Reuse the pinned operator artifact for cluster and host installation
-2. Replace manual operator templates with current Job rendering
-3. Remove orphan examples and preserve surviving behavioral tests
+Answered 2026-10-31: nothing is applied outside repository automation, so prototype manifests are deleted without confirming external use. The CDC image identity question is moot because the reader executable moves into the host image (D1-6).
 
 <!-- lane D2, bead wamn-xm69b.2 -->
 
@@ -541,26 +516,6 @@ Risk: Receipts must exclude credentials and distinguish reused work from execute
 2. Must kind and GCP both execute builds, or can local execution remain a developer adapter to one release build graph?
 3. Which cold-build, cached-build, qualification, and commit-to-running budgets must the retained release receipt enforce?
 
-## Proposed fix epics
-
-### One artifact build graph
-
-1. Build application packages before publication from a clean checkout
-2. Delete obsolete upgrade and RC artifact recipes
-3. Publish complete platform sets by digest
-
-### One deployment owner
-
-1. Replace kubectl and provider shell-outs with client calls
-2. Move environment lifecycle work into an operator
-3. Remove installer compilation and recursive ctl execution
-
-### One qualification and evidence path
-
-1. Share disposable cluster fixtures across gate owners
-2. Bound every retained child process
-3. Retain release timing and artifact receipts
-
 <!-- lane D3, bead wamn-xm69b.3 -->
 
 ## Part 3: target path
@@ -721,22 +676,3 @@ This assessment uses repository reads and shared measurements. No build, test, o
 2. Which disposable GKE project and budget will support qualification of provider-specific behavior through the same apply path?
 3. Can R12 change so that qualification identifies the complete deployment bundle, including the chart and deployed auxiliary images?
 
-## Proposed fix epics
-
-### Epic: One declaration and renderer
-
-1. Consolidate deployment inputs into KCL documents
-2. Fold WAMN Kubernetes resources into one Helm package
-3. Replace provider mutations with kind and GKE values
-
-### Epic: One built and qualified candidate
-
-1. Move candidate creation entirely into the build workflow
-2. Qualify the complete immutable deployment bundle
-3. Migrate nine deployment routes to the common fixture
-
-### Epic: One protected promotion path
-
-1. Extend the merge train through artifact qualification
-2. Serialize cluster deployment and refuse stale promotion
-3. Prove fresh installation, recovery, and rollback on kind and GKE

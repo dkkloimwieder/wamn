@@ -1,6 +1,6 @@
 # Audit lane F: Developer experience
 
-Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message verbatim and checked that every finding cites a file and line. Beads: wamn-rk4wz.1, wamn-rk4wz.2, wamn-rk4wz.3. Shared tool output: [measurements.md](measurements.md).
+Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and checked that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-rk4wz.1, wamn-rk4wz.2, wamn-rk4wz.3. Shared tool output: [measurements.md](measurements.md).
 
 <!-- lane F1, bead wamn-rk4wz.1 -->
 
@@ -173,26 +173,6 @@ Risk: Shared controllers can change retry identity, revision handling, or omitte
 1. Can pure CRUD applications use generated component crates with no authored Rust files?
 2. Must HTTP exposure remain explicit for each custom public operation?
 3. Can Acme consume its pinned base operation’s wire shape while retaining separate identity and inspection behavior?
-
-## Proposed fix epics
-
-### Derive operation boundaries once
-
-1. Generate custom publication schemas and hashes
-2. Generate custom Rust boundary types and adapters
-3. Derive overlay contract shapes from pinned base artifacts
-
-### Remove application execution scaffolding
-
-1. Build CRUD components without authored wrapper crates
-2. Generate direct statement projection handlers
-3. Reuse shared scalar and cursor implementations
-
-### Reduce application interface and test setup
-
-1. Share CRUD controllers in the operator shell
-2. Share application build and deployment test fixtures
-3. Prove the two-input CRUD authoring path
 
 <!-- lane F2, bead wamn-rk4wz.2 -->
 
@@ -410,26 +390,6 @@ Risk: Warm caches can hide first-run costs. Record cache state and require a suc
 3. What cold-start, warm-start, and saved-edit latency limits must the developer loop meet?
 4. Which existing saved-edit acceptance run passed against the current freshness and watcher rules?
 
-## Proposed fix epics
-
-### Restore the saved-edit loop
-
-1. Separate source preparation from artifact freshness enforcement
-2. Derive watched files from build inputs
-3. Preserve the active application through candidate failures
-
-### Own local startup
-
-1. Start and stop one private development stack
-2. Derive environment identity and local startup defaults
-3. Prepare only the selected application and runtime artifacts
-
-### Make startup reproducible
-
-1. Establish the supported host prerequisite contract
-2. Prepare and execute selected tests through one runner
-3. Record cold and warm startup and edit timings
-
 <!-- lane F3, bead wamn-rk4wz.3 -->
 
 ## Part 3: target path
@@ -585,20 +545,3 @@ Risk: Hidden preparation can produce a misleading passing result. The proposed j
 2. Can the default author experience require Docker on Linux, or must the first release support another host platform?
 3. Which application-specific business tests must deployment require in addition to generic platform qualification?
 
-## Proposed fix epics
-
-### Standalone application authoring
-
-1. Generate a standalone manifest-and-SQL starter
-2. Make development startup own local services and artifacts
-3. Generate standard screens through the shared shell
-
-### Platform-owned contracts and delivery
-
-1. Move generic tests and operational documentation to platform owners
-2. Qualify releases by capabilities instead of application names
-3. Deliver runtime and browser artifacts through one deploy command
-
-### Ten-minute acceptance
-
-1. Run the executable hello-app quickstart within a measured 600-second budget

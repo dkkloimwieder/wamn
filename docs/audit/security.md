@@ -1,6 +1,6 @@
 # Audit lane E: Security
 
-Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message verbatim and checked that every finding cites a file and line. Beads: wamn-hgdta.1, wamn-hgdta.2, wamn-hgdta.3. Shared tool output: [measurements.md](measurements.md).
+Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and checked that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-hgdta.1, wamn-hgdta.2, wamn-hgdta.3. Shared tool output: [measurements.md](measurements.md).
 
 <!-- lane E1, bead wamn-hgdta.1 -->
 
@@ -140,30 +140,6 @@ Risk: Schema snapshots change. Schema and authority tests must pass without the 
 4. Is every operator certificate intentionally a platform-wide credential, and what revokes one certificate without replacing the CA?
 5. Are cache delays acceptable only after lost invalidation, or also after natural credential expiry?
 
-## Proposed fix epics
-
-### Isolate credential and cache authority
-
-1. Replace ambiguous Kubernetes credential names
-2. Remove shared authorization values from NATS
-3. Scope scheduler identities and invalidations
-
-### Give membership and grants one owner
-
-1. Serialize grant projection across all writers
-2. Require active organization membership at admission
-3. Unify CLI and HTTP grant rules
-
-### Bound credential trust
-
-1. Require authenticated TLS for identity databases
-2. Preserve credential and cache deadlines
-3. Expire offline signing key trust
-
-### Remove unused credential machinery
-
-1. Delete the application API-key substrate
-
 <!-- lane E2, bead wamn-hgdta.2 -->
 
 ## Part 2: secrets and transport
@@ -265,26 +241,6 @@ Risk: Image updates become deliberate release changes. A manifest gate must reje
 3. Which external network controls protect the plaintext services and development fixtures? This source audit cannot establish the live network boundary.
 4. Who owns the chart CA's renewal and expiry date? `deploy/infra/values-wamn.yaml:24` records a 365-day CA with no renewal path.
 5. Must SQL literal quoting support nondefault string parsing? `crates/platform/pg-core/src/lib.rs:167` escapes apostrophes but does not state that server precondition.
-
-## Proposed fix epics
-
-Credential and organization isolation
-
-1. Replace ambiguous credential resource names
-2. Bind control database authority to authenticated organization scope
-3. Prove isolation across organizations and credential stores
-
-Authenticated internal transport
-
-1. Require authenticated TLS for Postgres and replication
-2. Require TLS for event clients and broker peers
-3. Establish certificate renewal ownership and expiry tests
-
-Secret and image boundaries
-
-1. Retire shared administrator fixtures and restrict backup identities
-2. Remove credential disclosure from command diagnostics
-3. Require non-root services and reviewed image digests
 
 <!-- lane E3, bead wamn-hgdta.3 -->
 
@@ -392,22 +348,3 @@ Risk: Fresh scans can block releases and expose fixture-only findings. A gate te
 4. Does another gate scan the web dependency graph? `web/wfe` is pinned at `f158f65c0f737ba92c3df0fc74003d28906a9c08`, and ancestry checks govern updates, but the supplied web measurement is unused-code analysis (`tools/submodule-check/src/main.rs:62`, measurements.md section 8).
 5. Must WASI-Virt provenance output measure its adapter digest? The executable currently prints a constant (`crates/platform/component-virtualizer/src/main.rs:46`).
 
-## Proposed fix epics
-
-### Enforce artifact and runtime authority
-
-1. Derive component facts from bytes at trusted publication
-2. Enforce aggregate memory and runtime socket policy
-3. Bound package transfer and extraction
-
-### Contain compilation and connector retention
-
-1. Bound and cancel component compilation
-2. Release retired connector code and bytes
-3. Move environment initialization before threads
-
-### Refresh the supply chain
-
-1. Upgrade vulnerable native dependency families
-2. Gate fresh advisories across maintained dependency domains
-3. Retire the pg-walstream patch and remove unused dependencies
