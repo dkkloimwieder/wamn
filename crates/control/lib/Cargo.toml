@@ -115,8 +115,7 @@ wamn-control-provision = { workspace = true, features = ["test-util"] }
 wamn-project-state = { workspace = true, features = ["test-util"] }
 wamn-test-infrastructure = { workspace = true }
 wamn-test-postgres = { workspace = true }
-test-wit-component = { package = "wit-component", version = "=0.254.2", features = ["dummy-module"] }
-test-wit-parser = { package = "wit-parser", version = "=0.254.2" }
+wit-component = { workspace = true, features = ["dummy-module"] }
 wat = "=1.254.2"
 
 [lints]

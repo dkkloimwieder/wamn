@@ -15,11 +15,11 @@ wamn-component-policy.workspace = true
 wasmparser.workspace = true
 wasm-encoder = { workspace = true, features = ["wasmparser"] }
 wat = "=1.254.2"
-wit-component = "=0.254.2"
-wit-parser = "=0.254.2"
+wit-component = { workspace = true }
+wit-parser = { workspace = true }
 
 [dev-dependencies]
-wit-component = { version = "=0.254.2", features = ["dummy-module"] }
+wit-component = { workspace = true, features = ["dummy-module"] }
 
 [lints]
 workspace = true
