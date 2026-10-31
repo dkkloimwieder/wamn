@@ -193,15 +193,15 @@ pub async fn publish_declarations(
     for (name, connections) in [
         (
             "label_fixture",
-            json!({"labels":{"interfaces":["wasmcloud:blobstore/blobstore@0.1.0"],"mode":"write"}}),
+            json!({"labels":{"interface":"wasmcloud:blobstore/blobstore@0.1.0","mode":"write"}}),
         ),
         (
             "http_fixture",
             json!({
-                "upstream":{"interfaces":["wamn:connection/http@0.1.0"],"mode":"write"},
-                "signed-upstream":{"interfaces":["wamn:connection/http@0.1.0"],"mode":"write"},
-                "api-key-upstream":{"interfaces":["wamn:connection/http@0.1.0"],"mode":"write"},
-                "aws-upstream":{"interfaces":["wamn:connection/http@0.1.0"],"mode":"write"}
+                "upstream":{"interface":"wamn:connection/http@0.1.0","mode":"write"},
+                "signed-upstream":{"interface":"wamn:connection/http@0.1.0","mode":"write"},
+                "api-key-upstream":{"interface":"wamn:connection/http@0.1.0","mode":"write"},
+                "aws-upstream":{"interface":"wamn:connection/http@0.1.0","mode":"write"}
             }),
         ),
     ] {

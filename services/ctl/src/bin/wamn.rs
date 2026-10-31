@@ -125,7 +125,7 @@ mod tests {
                 "publish",
                 "fixture",
                 "--artifact-base",
-                "localhost/connectors",
+                "localhost/integrations",
                 "--registry-auth-file",
                 "/tmp/auth.json",
                 "--database-url",

@@ -921,7 +921,7 @@ mod tests {
         client.execute("INSERT INTO platform.integration(id,integration_type,name,status) VALUES($1::text::uuid,'http','erp','active');",&[&integration]).await.unwrap();
         client.execute("INSERT INTO platform.connection(id,integration_id,integration_type,status) VALUES($1::text::uuid,$2::text::uuid,'http','active')",&[&connection,&integration]).await.unwrap();
         client.execute("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES('tenant-a',$1,$2)",&[&facts.manifest_digest.as_str(),&manifest.canonical_bytes()]).await.unwrap();
-        client.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interfaces,mode) VALUES('tenant-a',$1,'orders','erp',ARRAY['wamn:connection/http@0.1.0'],'read')",&[&component.component_digest]).await.unwrap();
+        client.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interface,mode) VALUES('tenant-a',$1,'orders','erp','wamn:connection/http@0.1.0','read')",&[&component.component_digest]).await.unwrap();
         client.execute("INSERT INTO catalog.release_connection(env_key,manifest_digest,connection_id,version) VALUES('tenant-a',$1,$2::text::uuid,1)",&[&facts.manifest_digest.as_str(),&connection]).await.unwrap();
         client.execute("INSERT INTO catalog.connection_binding(env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES('tenant-a',$1,$2,'orders','erp',$3::text::uuid)",&[&facts.manifest_digest.as_str(),&component.component_digest,&connection]).await.unwrap();
         client.batch_execute("COMMIT").await.unwrap();

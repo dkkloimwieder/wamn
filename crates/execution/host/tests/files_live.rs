@@ -148,7 +148,7 @@ impl FileHost {
             ("files_no_cdn", "files-no-cdn", "write"),
         ] {
             let id: String=host.admin.query_one("SELECT c.id::text FROM platform.connection c JOIN platform.integration i ON i.id=c.integration_id WHERE i.name=$1",&[&name]).await?.get(0);
-            host.admin.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interfaces,mode) VALUES($1,$2,$3,$4,ARRAY['wasmcloud:blobstore/blobstore@0.1.0'],$5)",&[&ENV_KEY,&component.descriptor.component_digest,&component.package_id,&alias,&mode]).await?;
+            host.admin.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,'wasmcloud:blobstore/blobstore@0.1.0',$5)",&[&ENV_KEY,&component.descriptor.component_digest,&component.package_id,&alias,&mode]).await?;
             host.admin.execute("INSERT INTO catalog.release_connection(env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3::text::uuid,1) ON CONFLICT DO NOTHING",&[&ENV_KEY,&release.release().manifest_digest.as_str(),&id]).await?;
             host.admin.execute("INSERT INTO catalog.connection_binding(env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES($1,$2,$3,$4,$5,$6::text::uuid)",&[&ENV_KEY,&release.release().manifest_digest.as_str(),&component.descriptor.component_digest,&component.package_id,&alias,&id]).await?;
         }

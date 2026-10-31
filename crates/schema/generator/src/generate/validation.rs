@@ -1462,7 +1462,12 @@ fn validate_authored_variants(
 
 fn validate_connections(manifest: &PackageManifest) -> Result<(), GenerateError> {
     for name in manifest.connections.keys() {
-        validate_identifier(&name.replace('-', "_"), "connection")?;
+        if !crate::manifest::valid_connection_name(name) {
+            return Err(GenerateError::new(
+                GenerateErrorType::InvalidConnection,
+                "connection name must match ^[a-z][a-z0-9-]{0,62}$",
+            ));
+        }
     }
     Ok(())
 }

@@ -1256,7 +1256,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         &args.project,
         application.map_or("", |release| release.scope().environment.as_str()),
     ));
-    let connectors = match (application, args.component_artifact_base.as_deref()) {
+    let integrations = match (application, args.component_artifact_base.as_deref()) {
         (Some(release), Some(base)) => {
             let registry_name = wamn_catalog::parse_component_artifact_base(base)?;
             let registry_credentials = match RegistryPullCredential::select(args.registry_auth_file.as_deref(), args.registry_token_metadata)? {
@@ -1265,7 +1265,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 RegistryPullCredential::TokenMetadata => wamn_package_artifact::registry_credentials::RegistryCredentialSource::MetadataServer,
             };
             Some(Arc::new(
-                wamn_runtime::connectors::Connectors::new(
+                wamn_runtime::integrations::Integrations::new(
                     Arc::clone(&facts),
                     release,
                     &postgres,
@@ -1344,8 +1344,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         }
         None => None,
     };
-    if let (Some(operations), Some(connectors)) = (&operations, &connectors) {
-        operations.set_connectors(Arc::clone(connectors))?;
+    if let (Some(operations), Some(integrations)) = (&operations, &integrations) {
+        operations.set_integrations(Arc::clone(integrations))?;
     }
     if let (Some(operations), Some(((workload, reference), _))) = (&operations, &local_workload) {
         let component = workload
@@ -1614,11 +1614,9 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         None
     };
 
-    if let (Some(connectors), Some(release)) = (&connectors, application) {
-        plugins.push(Arc::new(wamn_runtime::connectors::ConnectorIngress {
-            postgres: Arc::clone(&postgres),
-            project: args.project.clone(),
-            connectors: Arc::clone(connectors),
+    if let (Some(integrations), Some(release)) = (&integrations, application) {
+        plugins.push(Arc::new(wamn_runtime::integrations::IntegrationIngress {
+            integrations: Arc::clone(integrations),
             release: Arc::clone(release),
         }));
     }

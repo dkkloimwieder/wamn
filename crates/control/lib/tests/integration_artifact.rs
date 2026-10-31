@@ -1,4 +1,4 @@
-//! Connector source identity and registry publication use real artifacts.
+//! Integration source identity and registry publication use real artifacts.
 
 use std::path::{Path, PathBuf};
 
@@ -11,7 +11,7 @@ mod local_registry;
 fn fixture() -> wamn_test_infrastructure::scratch::ScratchRoot {
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
     let root = scratch.path();
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/connector");
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/integration");
     std::fs::create_dir_all(root.join("integrations/fixture/src")).unwrap();
     std::fs::create_dir_all(root.join("tools")).unwrap();
     for file in ["Cargo.toml", "Cargo.lock", "src/lib.rs"] {
@@ -45,7 +45,7 @@ async fn registry(root: &Path, label: &str) -> (local_registry::LocalRegistry, P
     )
     .unwrap();
     let configuration = PackageRegistry {
-        artifact_base: format!("{}/wamn/connectors", registry.address),
+        artifact_base: format!("{}/wamn/integrations", registry.address),
         registry_auth_file: auth,
         insecure_registry: true,
         oci_ca_paths: Vec::<PathBuf>::new(),
@@ -71,7 +71,7 @@ async fn build_digest_tracks_source_bytes_and_survives_another_checkout() {
     .unwrap();
     let edited = integration::build(first.path(), "fixture").await.unwrap();
     assert_ne!(a.digest, edited.digest);
-    assert!(a.directory.join("connector.wasm").is_file());
+    assert!(a.directory.join("integration.wasm").is_file());
     assert!(a.directory.join("manifest.json").is_file());
     let config: serde_json::Value =
         serde_json::from_slice(&std::fs::read(a.directory.join("config.json")).unwrap()).unwrap();
@@ -87,7 +87,7 @@ async fn publish_pushes_by_digest_and_records_the_catalog_as_control() {
     let database = wamn_control_provision::test_database::system();
     database.execute(&["SET ROLE wamn_system; INSERT INTO registry.integration_type(code,runtime_type,exclusive) VALUES ('fixture','wasm',false)"]).unwrap();
     let fixture = fixture();
-    let (_registry, configuration) = registry(fixture.path(), "connector").await;
+    let (_registry, configuration) = registry(fixture.path(), "integration").await;
     let built = integration::build(fixture.path(), "fixture").await.unwrap();
     integration::publish(
         &built,
@@ -120,21 +120,24 @@ async fn publish_pushes_by_digest_and_records_the_catalog_as_control() {
     let row = client.query_one("SELECT digest, count(*) OVER (), exports FROM registry.integration_type_version WHERE integration_type='fixture'", &[]).await.unwrap();
     assert_eq!(row.get::<_, String>(0), built.digest);
     assert_eq!(row.get::<_, i64>(1), 1);
-    assert!(row.get::<_, Vec<String>>(2).is_empty());
+    assert_eq!(
+        row.get::<_, Vec<String>>(2),
+        ["wamn:integration/health@0.1.0"]
+    );
     let repository = Repository::open(&configuration, &built.digest).unwrap();
     let (manifest, digest) = repository.manifest().await.unwrap().unwrap();
     assert_eq!(digest, built.digest);
     let manifest: serde_json::Value = serde_json::from_slice(&manifest).unwrap();
     assert_eq!(manifest["artifactType"], integration::ARTIFACT_TYPE);
-    let wasm = wamn_package_artifact::connector::pull(&configuration, "fixture", &built.digest)
+    let wasm = wamn_package_artifact::integration::pull(&configuration, "fixture", &built.digest)
         .await
         .unwrap();
     assert_eq!(
         wasm,
-        std::fs::read(built.directory.join("connector.wasm")).unwrap()
+        std::fs::read(built.directory.join("integration.wasm")).unwrap()
     );
     assert!(
-        wamn_package_artifact::connector::pull(&configuration, "other", &built.digest)
+        wamn_package_artifact::integration::pull(&configuration, "other", &built.digest)
             .await
             .is_err()
     );
@@ -145,17 +148,16 @@ async fn publish_pushes_by_digest_and_records_the_catalog_as_control() {
             .await
             .is_err()
     );
-    assert_eq!(
-        client
-            .query_one(
-                "SELECT registry.connector_pin_error($1,$2)",
-                &[&built.code, &built.digest]
-            )
-            .await
-            .unwrap()
-            .get::<_, Option<String>>(0),
-        None
-    );
+    let catalog: serde_json::Value = client.query_one(
+        "SELECT registry.configure_integration_type('fixture','integration_type.list','{}'::jsonb)", &[],
+    ).await.unwrap().get(0);
+    let published = catalog["integration_types"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["code"] == built.code)
+        .unwrap();
+    assert_eq!(published["versions"][0]["digest"], built.digest);
 }
 
 #[tokio::test]
@@ -165,7 +167,7 @@ async fn publish_refuses_an_unknown_integration_without_creating_catalog_rows() 
     let _lock = wamn_test_postgres::lock();
     let database = wamn_control_provision::test_database::system();
     let fixture = fixture();
-    let (_registry, configuration) = registry(fixture.path(), "unknown-connector").await;
+    let (_registry, configuration) = registry(fixture.path(), "unknown-integration").await;
     let built = integration::build(fixture.path(), "fixture").await.unwrap();
     let error = integration::publish(
         &built,

@@ -53,8 +53,29 @@ pub struct PackageManifest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectionDeclaration {
-    pub interfaces: Vec<String>,
+    pub interface: String,
     pub mode: ConnectionMode,
+}
+
+/// Whether a declared connection name is a WIT label of at most 63 bytes.
+pub fn valid_connection_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 63
+        && name.as_bytes()[0].is_ascii_lowercase()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
+/// Whether the host selects the connection by name at run time.
+pub fn host_connection_interface(interface: &str) -> bool {
+    matches!(
+        interface,
+        "wamn:connection/http@0.1.0"
+            | "wasmcloud:blobstore/blobstore@0.1.0"
+            | "wasmcloud:blobstore/container@0.1.0"
+            | "wasmcloud:blobstore/types@0.1.0"
+    )
 }
 
 /// The operations that a connection binding permits.
@@ -683,18 +704,19 @@ impl PackageManifest {
             ));
         }
         for (name, connection) in &manifest.connections {
-            validate_identifier(&name.replace('-', "_"), "connection")?;
-            if connection.interfaces.is_empty()
-                || connection.interfaces.iter().any(|interface| {
-                    !matches!(
-                        wit_parser::parse_use_path(interface),
-                        Ok(wit_parser::ParsedUsePath::Package(_, _))
-                    )
-                })
-            {
+            if !valid_connection_name(name) {
                 return Err(GenerateError::new(
                     GenerateErrorType::InvalidConnection,
-                    "connection interfaces must contain WIT interface identities",
+                    "connection name must match ^[a-z][a-z0-9-]{0,62}$",
+                ));
+            }
+            if !matches!(
+                wit_parser::parse_use_path(&connection.interface),
+                Ok(wit_parser::ParsedUsePath::Package(_, _))
+            ) {
+                return Err(GenerateError::new(
+                    GenerateErrorType::InvalidConnection,
+                    "connection interface must be a WIT interface identity",
                 ));
             }
             if name == "postgres" {

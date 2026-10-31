@@ -9,6 +9,13 @@ license.workspace = true
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
 wasi-virt.workspace = true
+wac-graph.workspace = true
+wit-component.workspace = true
+wit-parser.workspace = true
+
+[dev-dependencies]
+test-wit-component = { package = "wit-component", version = "=0.254.2", features = ["dummy-module"] }
+test-wit-parser = { package = "wit-parser", version = "=0.254.2" }
 
 [lints]
 workspace = true

@@ -1378,9 +1378,9 @@ mod tests {
         {
             operation["component"] = serde_json::json!(primary);
         }
-        document["connections"] = serde_json::json!({"secondary_only":{"interfaces":["wamn:connection/http@0.1.0"],"mode":"write"}});
+        document["connections"] = serde_json::json!({"secondary-only":{"interface":"wamn:connection/http@0.1.0","mode":"write"}});
         document["components"]["secondary"] =
-            serde_json::json!({"connections": ["postgres", "secondary_only"]});
+            serde_json::json!({"connections": ["postgres", "secondary-only"]});
         document["custom_operations"]["audit.observe"]["component"] =
             serde_json::json!("secondary");
         let manifest: wamn_schema_generator::PackageManifest =

@@ -71,22 +71,95 @@ fn output_identity(output: &Path) -> anyhow::Result<PathBuf> {
 }
 
 fn virtualize(input: &Path) -> anyhow::Result<Vec<u8>> {
+    virtualize_bytes(&std::fs::read(input)?)
+}
+
+fn virtualize_bytes(bytes: &[u8]) -> anyhow::Result<Vec<u8>> {
+    use wac_graph::{CompositionGraph, EncodeOptions, plug, types::Package};
+
+    let wit_component::DecodedWasm::Component(resolve, world) = wit_component::decode(bytes)?
+    else {
+        anyhow::bail!("virtualization requires a component");
+    };
+    let imports: Vec<_> = resolve.worlds[world]
+        .imports
+        .values()
+        .filter_map(|item| match item {
+            wit_parser::WorldItem::Interface { id, .. } => resolve.id_of(*id),
+            _ => None,
+        })
+        .collect();
+    let imported = |prefix: &str| imports.iter().any(|name| name.starts_with(prefix));
     let mut virtualizer = WasiVirt::new();
-
-    // Preserve the already-admitted clock capability while encapsulating the
-    // ambient CLI surface linked by Rust std.
-    virtualizer.clocks(true);
-    virtualizer.env().deny_all();
-    virtualizer.exit(false);
-    virtualizer.stdio().deny();
+    if imported("wasi:clocks/") {
+        virtualizer.clocks(true);
+    }
+    if imported("wasi:cli/environment") {
+        virtualizer.env().deny_all();
+    }
+    if imported("wasi:cli/exit") {
+        virtualizer.exit(false);
+    }
+    if imported("wasi:cli/std") || imported("wasi:cli/terminal") {
+        virtualizer.stdio().deny();
+    }
     virtualizer.wasm_opt(false);
-    virtualizer.compose_component_path(input);
-    virtualizer
-        .filter_imports()
-        .context("filter virtualization to the component's imported WASI surface")?;
-
     let result = virtualizer
         .finish()
+        .context("build the pinned WASI virtualization adapter")?;
+    // The repository's composer reads current component-model named imports.
+    let mut graph = CompositionGraph::new();
+    let adapter = Package::from_bytes("wasi-virt", None, result.adapter, graph.types_mut())?;
+    let adapter = graph.register_package(adapter)?;
+    let component = Package::from_bytes("component", None, bytes, graph.types_mut())?;
+    let component = graph.register_package(component)?;
+    plug(&mut graph, vec![adapter], component)
         .context("compose the pinned WASI virtualization adapter")?;
-    Ok(result.adapter)
+    graph
+        .encode(EncodeOptions::default())
+        .context("encode the virtualized component")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn virtualization_preserves_two_labels_of_one_typed_interface() -> anyhow::Result<()> {
+        let mut resolve = test_wit_parser::Resolve::new();
+        resolve.push_str("environment.wit", "package wasi:cli@0.2.12; interface environment { get-environment: func() -> list<tuple<string, string>>; }")?;
+        let package = resolve.push_str("named.wit", "package example:meter@1.0.0; interface read { get: func() -> u16; } world client { import first: read; import second: read; import wasi:cli/environment@0.2.12; }")?;
+        let world = resolve.select_world(&[package], Some("client"))?;
+        let mut module = test_wit_component::dummy_module(
+            &resolve,
+            world,
+            test_wit_parser::ManglingAndAbi::Standard32,
+        );
+        test_wit_component::embed_component_metadata(
+            &mut module,
+            &resolve,
+            world,
+            test_wit_component::StringEncoding::UTF8,
+        )?;
+        let bytes = test_wit_component::ComponentEncoder::default()
+            .module(&module)?
+            .validate(true)
+            .encode()?;
+        let bytes = super::virtualize_bytes(&bytes)?;
+        let wit_component::DecodedWasm::Component(resolve, world) = wit_component::decode(&bytes)?
+        else {
+            panic!("component")
+        };
+        for label in ["first", "second"] {
+            let item =
+                &resolve.worlds[world].imports[&wit_parser::WorldKey::Name(label.to_owned())];
+            let wit_parser::WorldItem::Interface { id, .. } = item else {
+                panic!("interface")
+            };
+            assert_eq!(
+                resolve.id_of(*id).as_deref(),
+                Some("example:meter/read@1.0.0")
+            );
+        }
+        assert!(!resolve.worlds[world].imports.values().any(|item| matches!(item, wit_parser::WorldItem::Interface { id, .. } if resolve.id_of(*id).as_deref() == Some("wasi:cli/environment@0.2.12"))));
+        Ok(())
+    }
 }

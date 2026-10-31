@@ -21,6 +21,8 @@ or to name a set that no CHECK carries. A model query that one table answers
 states its sort and filters, and the generator writes its SQL.
 """
 
+import regex
+
 type ColumnType = "boolean" | "int32" | "int64" | "float64" | "text" | "bytes" | "numeric" | "timestamptz" | "json" | "uuid"
 type Direction = "ascending" | "descending"
 type ResultClass = "one" | "optional_one" | "page" | "bounded_list"
@@ -368,12 +370,11 @@ schema Routes:
 
 schema Connection:
     """An external connection requirement. Deployment supplies the named row."""
-    interfaces: [str]
+    interface: str
     mode: "read" | "write"
 
     check:
-        len(interfaces) > 0, "interfaces is empty"
-        all interface in interfaces { interface != "" }, "interface is empty"
+        interface != "", "interface is empty"
 
 schema Package:
     """The whole manifest. A package's wamn.k is one Package instance."""
@@ -393,6 +394,7 @@ schema Package:
     routes?: Routes
 
     check:
+        all name in connections { regex.match(name, "^[a-z][a-z0-9-]{0,62}$") }, "connection name must match ^[a-z][a-z0-9-]{0,62}$"
         # A model checks nothing here: an operation assigned with = replaces
         # the model's fill only after the model's own checks run.
         all _, model in models {

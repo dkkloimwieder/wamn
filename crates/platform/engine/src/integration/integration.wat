@@ -1,7 +1,7 @@
 ;; HTTP fixture. The host supplies only the private binding.
 (module
-  (import "wamn:connector/bound@0.1.0" "authority" (func $authority (param i32)))
-  (import "wamn:connector/bound@0.1.0" "credential" (func $credential (param i32)))
+  (import "wamn:integration/bound@0.1.0" "authority" (func $authority (param i32)))
+  (import "wamn:integration/bound@0.1.0" "credential" (func $credential (param i32)))
   (import "wasi:sockets/instance-network@0.2.12" "instance-network" (func $network (result i32)))
   (import "wasi:sockets/tcp-create-socket@0.2.12" "create-tcp-socket" (func $create (param i32 i32)))
   (import "wasi:sockets/tcp@0.2.12" "[method]tcp-socket.start-connect"
@@ -17,6 +17,8 @@
   (import "wasi:sockets/tcp@0.2.12" "[resource-drop]tcp-socket" (func $drop-socket (param i32)))
   (import "wasi:sockets/network@0.2.12" "[resource-drop]network" (func $drop-network (param i32)))
   (memory (export "memory") 1)
+  (func (export "wamn:integration/health@0.1.0#check") (result i32)
+    i32.const 256 i32.const 0 i32.store8 i32.const 256)
   (data (i32.const 1024) "\47\45\54\20\2f\73\61\6d\70\6c\65\20\48\54\54\50\2f\31\2e\31\0d\0a\48\6f\73\74\3a\20\66\69\78\74\75\72\65\0d\0a\41\75\74\68\6f\72\69\7a\61\74\69\6f\6e\3a\20\42\65\61\72\65\72\20")
   (data (i32.const 1200) "\0d\0a\43\6f\6e\6e\65\63\74\69\6f\6e\3a\20\63\6c\6f\73\65\0d\0a\0d\0a")
   (data (i32.const 1400) "socket failure")
@@ -34,7 +36,7 @@
         i32.const 136 i32.const 1400 i32.store
         i32.const 140 i32.const 14 i32.store))
     i32.const 128)
-  (func (export "wamn:connector/reader@0.1.0#get") (param i32 i32) (param $request i32) (param $request-len i32) (result i32)
+  (func (export "test:integration/protocol#get") (param $request i32) (param $request-len i32) (result i32)
     (local $port i32) (local $cursor i32) (local $end i32) (local $net i32) (local $socket i32) (local $poll i32)
     (local $input i32) (local $output i32) (local $code i32) (local $status i32) (local $length i32)
     ;; The request contains a NUL and bytes that are not valid UTF-8.

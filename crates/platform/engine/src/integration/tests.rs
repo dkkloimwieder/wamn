@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -8,7 +9,7 @@ use wit_parser::Resolve;
 use self::node_bindings::wamn::node::types::{Emission, NodeContext, NodeError};
 
 use super::*;
-use crate::component_admission::{ComponentAdmissionErrorType, validate_connector_admission};
+use crate::component_admission::{ComponentAdmissionErrorType, validate_integration_admission};
 
 mod node_bindings {
     wash_runtime::wasmtime::component::bindgen!({
@@ -18,36 +19,45 @@ mod node_bindings {
     });
 }
 
-fn guest(world: &str, wat: &str) -> anyhow::Result<Vec<u8>> {
+fn guest(world: &str, wat: &str, labels: &[String]) -> anyhow::Result<Vec<u8>> {
     let mut resolve = Resolve::new();
     resolve.push_str("io.wit", include_str!("io.wit"))?;
     resolve.push_str("sockets.wit", include_str!("sockets.wit"))?;
     resolve.push_str(
-        "connector.wit",
-        include_str!("../../../runtime/wit/deps/wamn-connector/package.wit"),
+        "integration.wit",
+        include_str!("../../../runtime/wit/deps/wamn-integration/package.wit"),
     )?;
     resolve.push_str(
         "node.wit",
         include_str!("../../../../execution/workflow/router/wit/package.wit"),
     )?;
+    let mut imports = String::new();
+    for name in labels {
+        write!(imports, "import {name}: protocol;")?;
+    }
     let package = resolve.push_str(
         "fixture.wit",
-        r"
-        package test:connector;
-        world socket-connector {
-          import wamn:connector/bound@0.1.0;
+        &format!(r"
+        package test:integration;
+        interface protocol {{
+          variant error {{ unbound, unavailable, authority-denied, credential-unavailable, timeout, transport(string) }}
+          get: func(request: list<u8>) -> result<list<u8>, error>;
+        }}
+        world socket-integration {{
+          import wamn:integration/bound@0.1.0;
           import wasi:sockets/instance-network@0.2.12;
           import wasi:sockets/tcp-create-socket@0.2.12;
           import wasi:sockets/tcp@0.2.12;
           import wasi:io/poll@0.2.12;
           import wasi:io/streams@0.2.12;
-          export wamn:connector/reader@0.1.0;
-        }
-        world application {
-          import wamn:connector/reader@0.1.0;
+          export protocol;
+          export wamn:integration/health@0.1.0;
+        }}
+        world application {{
+          {imports}
           export wamn:node/handler@0.1.0;
-        }
-    ",
+        }}
+    "),
     )?;
     let world = resolve.select_world(&[package], Some(world))?;
     let mut module = wat::parse_str(wat)?;
@@ -58,34 +68,34 @@ fn guest(world: &str, wat: &str) -> anyhow::Result<Vec<u8>> {
         .encode()
 }
 
-fn socket_connector(ip: std::net::Ipv4Addr, delta: i32) -> anyhow::Result<Vec<u8>> {
-    let wat = include_str!("connector.wat").replace("PORT_DELTA", &delta.to_string());
+fn socket_integration(ip: std::net::Ipv4Addr, delta: i32) -> anyhow::Result<Vec<u8>> {
+    let wat = include_str!("integration.wat").replace("PORT_DELTA", &delta.to_string());
     let wat = ["HOST_A", "HOST_B", "HOST_C", "HOST_D"]
         .into_iter()
         .zip(ip.octets())
         .fold(wat, |wat, (key, value)| {
             wat.replace(key, &value.to_string())
         });
-    guest("socket-connector", &wat)
+    guest("socket-integration", &wat, &[])
 }
 
 #[test]
-fn connector_byte_admission_refuses_postgres_blobstore_and_other_effects() -> anyhow::Result<()> {
+fn integration_byte_admission_refuses_postgres_blobstore_and_other_effects() -> anyhow::Result<()> {
     let engine = crate::build_engine(&[])?;
     for interface in [
         "wamn:postgres/statements@0.4.0",
         "wamn:postgres/client@0.4.0",
         "wasmcloud:blobstore/blobstore@0.1.0",
         "wasi:http/outgoing-handler@0.2.12",
-        "wamn:connector/reader@0.1.0",
+        "wamn:integration/health@0.1.0",
         "wasi:filesystem/types@0.2.12",
         "wasi:sockets/tcp@0.3.0",
     ] {
         let bytes = wat::parse_str(format!(
             r#"(component (import "{interface}" (instance (export "effect" (func)))))"#
         ))?;
-        let error = validate_connector_admission(&engine, &bytes, "forbidden")
-            .expect_err("connector effect must refuse");
+        let error = validate_integration_admission(&engine, &bytes, "forbidden")
+            .expect_err("integration effect must refuse");
         assert_eq!(
             error.error_type(),
             ComponentAdmissionErrorType::ImportPolicyRefused,
@@ -97,19 +107,19 @@ fn connector_byte_admission_refuses_postgres_blobstore_and_other_effects() -> an
 }
 
 #[test]
-fn connector_byte_admission_refuses_missing_reader_and_wrong_signature() -> anyhow::Result<()> {
+fn integration_byte_admission_refuses_missing_health_and_wrong_signature() -> anyhow::Result<()> {
     let engine = crate::build_engine(&[])?;
     let empty = wat::parse_str("(component)")?;
     let mut resolve = Resolve::new();
     let package = resolve.push_str(
         "wrong.wit",
         r"
-        package wamn:connector@0.1.0;
-        interface reader { get: func(request: string) -> u32; }
-        world connector { export reader; }
+        package wamn:integration@0.1.0;
+        interface health { check: func(request: string) -> u32; }
+        world integration { export health; }
     ",
     )?;
-    let world = resolve.select_world(&[package], Some("connector"))?;
+    let world = resolve.select_world(&[package], Some("integration"))?;
     let mut module =
         wit_component::dummy_module(&resolve, world, wit_parser::ManglingAndAbi::Standard32);
     embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8)?;
@@ -118,18 +128,18 @@ fn connector_byte_admission_refuses_missing_reader_and_wrong_signature() -> anyh
         .validate(true)
         .encode()?;
     for bytes in [empty, wrong] {
-        let error = validate_connector_admission(&engine, &bytes, "wrong-reader")
-            .expect_err("the exact reader contract is required");
+        let error = validate_integration_admission(&engine, &bytes, "wrong-health")
+            .expect_err("the exact health contract is required");
         assert_eq!(
             error.error_type(),
-            ComponentAdmissionErrorType::ConnectorExportMismatch
+            ComponentAdmissionErrorType::IntegrationExportMismatch
         );
     }
     Ok(())
 }
 
 #[test]
-fn connector_binding_refuses_metadata_and_nonexact_authorities() {
+fn integration_binding_refuses_metadata_and_nonexact_authorities() {
     for authority in [
         "169.254.1.1:80",
         "169.254.169.254:80",
@@ -147,7 +157,7 @@ fn connector_binding_refuses_metadata_and_nonexact_authorities() {
         "example.com:0",
     ] {
         assert!(
-            ConnectorBinding::new(authority, None).is_err(),
+            IntegrationBinding::new(authority, None).is_err(),
             "{authority}"
         );
     }
@@ -158,15 +168,15 @@ fn connector_binding_refuses_metadata_and_nonexact_authorities() {
         "[fd00::1]:502",
         "plc.example.com:502",
     ] {
-        ConnectorBinding::new(authority, None).expect("an exact private authority is allowed");
+        IntegrationBinding::new(authority, None).expect("an exact private authority is allowed");
     }
     let binding =
-        ConnectorBinding::new("plc.example.com:502", Some("private-secret".to_owned())).unwrap();
+        IntegrationBinding::new("plc.example.com:502", Some("private-secret".to_owned())).unwrap();
     assert!(!format!("{binding:?}").contains("private-secret"));
 }
 
 #[test]
-fn connector_address_policy_requires_a_private_ip_literal() {
+fn integration_address_policy_requires_a_private_ip_literal() {
     for (authority, allow_private) in [
         ("10.0.0.2:502", true),
         ("192.168.1.2:502", true),
@@ -179,7 +189,7 @@ fn connector_address_policy_requires_a_private_ip_literal() {
         ("plc.example.com:502", false),
     ] {
         let authority = authority.parse().expect("authority");
-        let policy = connector_address_policy(&authority);
+        let policy = integration_address_policy(&authority);
         assert_eq!(policy.allow_private, allow_private, "{authority}");
         assert_eq!(policy.permits("10.0.0.2".parse().unwrap()), allow_private);
         assert!(policy.permits("8.8.8.8".parse().unwrap()));
@@ -194,6 +204,36 @@ fn connector_address_policy_requires_a_private_ip_literal() {
                 "{authority}: {denied}"
             );
         }
+    }
+}
+
+async fn read(
+    integration: &Integration,
+    request: Vec<u8>,
+) -> anyhow::Result<Result<Vec<u8>, String>> {
+    let result = integration
+        .call(
+            "test:integration/protocol",
+            "get",
+            &[Val::List(request.into_iter().map(Val::U8).collect())],
+        )
+        .await?;
+    match result.as_slice() {
+        [Val::Result(Ok(Some(value)))] => match value.as_ref() {
+            Val::List(values) => Ok(Ok(values
+                .iter()
+                .map(|value| match value {
+                    Val::U8(byte) => *byte,
+                    _ => panic!("byte"),
+                })
+                .collect())),
+            _ => anyhow::bail!("fixture returned no bytes"),
+        },
+        [Val::Result(Err(Some(value)))] => match value.as_ref() {
+            Val::Variant(name, _) => Ok(Err(name.clone())),
+            _ => anyhow::bail!("fixture returned no error"),
+        },
+        _ => anyhow::bail!("fixture returned an invalid result"),
     }
 }
 
@@ -247,7 +287,7 @@ fn server(
 }
 
 #[tokio::test]
-async fn enforced_connector_reaches_bound_private_address_and_never_opens_unbound_connection()
+async fn enforced_integration_reaches_bound_private_address_and_never_opens_unbound_connection()
 -> anyhow::Result<()> {
     // The application engine keeps its production Count default.
     let _application_engine = crate::build_engine(&[])?;
@@ -266,22 +306,22 @@ async fn enforced_connector_reaches_bound_private_address_and_never_opens_unboun
         ),
         (format!("10.255.255.253:{port}"), 0, false),
     ] {
-        let connector = Connector::load(
-            &socket_connector(ip, delta)?,
-            ConnectorBinding::new(&authority, Some("private-secret".to_owned()))?,
+        let integration = Integration::load(
+            &socket_integration(ip, delta)?,
+            IntegrationBinding::new(&authority, Some("private-secret".to_owned()))?,
         )
         .await?;
         let before = accepts.load(Ordering::SeqCst);
         let result = tokio::time::timeout(
             Duration::from_secs(5),
-            connector.get("fixture".to_owned(), vec![0, 255, 128, 1]),
+            read(&integration, vec![0, 255, 128, 1]),
         )
         .await??;
         if expected {
             assert_eq!(result.unwrap(), b"200\0\xff");
             assert_eq!(accepts.load(Ordering::SeqCst), before + 1);
         } else {
-            assert!(matches!(result, Err(ConnectorError::AuthorityDenied)));
+            assert!(matches!(result, Err(ref error) if error == "authority-denied"));
             assert_eq!(
                 accepts.load(Ordering::SeqCst),
                 before,
@@ -302,7 +342,7 @@ struct Application {
         (Result<Emission, NodeError>,),
     >,
     context: NodeContext,
-    _workload: ResolvedWorkload,
+    workload: ResolvedWorkload,
     _egress: Arc<dyn HostHandler>,
 }
 
@@ -320,28 +360,38 @@ impl Application {
     }
 }
 
-async fn application(connections: HashMap<String, Arc<Connector>>) -> anyhow::Result<Application> {
+async fn application(
+    connections: HashMap<String, Arc<Integration>>,
+) -> anyhow::Result<Application> {
     let engine = crate::build_engine(&[])?;
-    let bytes = guest("application", include_str!("application.wat"))?;
-    let declaration = serde_json::from_value(serde_json::json!({
-        "scope": {"env_key": "test", "package-id": "connector_fixture", "package-version": "0.1.0"},
-        "component": "application", "interface-version": "0.1.0",
-        "operations": {"wamn:node/handler@0.1.0": {
-            "input-ports": [], "output-ports": [], "parameters": []
-        }}, "connections": []
-    }))?;
-    crate::component_admission::validate_component_admission(
-        &engine,
-        &bytes,
-        crate::component_admission::ComponentAdmissionRequest {
-            declaration,
-            admitted_platform_packages: std::collections::BTreeSet::from([
-                "wamn:connector".to_owned()
-            ]),
-            base_digests: std::collections::BTreeSet::new(),
-        },
-    )?;
-    let plugin: Arc<dyn HostPlugin> = Arc::new(ConnectorReader::new(connections));
+    let mut labels: Vec<_> = connections.keys().cloned().collect();
+    labels.sort();
+    if labels.is_empty() {
+        labels.push("fixture".into());
+    }
+    let mut imports = String::new();
+    for (index, label) in labels.iter().enumerate() {
+        write!(
+            imports,
+            r#"(import "{label}" "get" (func $get-{index} (param i32 i32 i32)))"#
+        )?;
+    }
+    let call = if labels.len() == 1 {
+        "i32.const 2048 i32.const 4 i32.const 16 call $get-0".to_owned()
+    } else {
+        format!(
+            "(if (i32.eq (i32.load8_u (i32.load offset=96 (local.get $args))) (i32.const {})) (then i32.const 2048 i32.const 4 i32.const 16 call $get-1) (else i32.const 2048 i32.const 4 i32.const 16 call $get-0))",
+            labels[1].as_bytes()[0]
+        )
+    };
+    let wat = include_str!("application.wat")
+        .replace("IMPORTS", &imports)
+        .replace("CALL", &call);
+    let bytes = guest("application", &wat, &labels)?;
+    let plugin: Arc<dyn HostPlugin> = Arc::new(IntegrationImports::new(
+        connections,
+        HashSet::from(["test:integration/protocol".to_owned()]),
+    ));
     let plugins = HashMap::from([(plugin.id(), plugin)]);
     let egress: Arc<dyn HostHandler> = Arc::new(NullServer::default());
     let unresolved = engine.initialize_workload(
@@ -354,7 +404,7 @@ async fn application(connections: HashMap<String, Arc<Connector>>) -> anyhow::Re
                 bytes: bytes.into(),
                 ..Component::default()
             }],
-            host_interfaces: vec![WitInterface::from(READER)],
+            host_interfaces: vec![WitInterface::from("test:integration/protocol")],
             annotations: HashMap::new(),
             service: None,
             volumes: Vec::new(),
@@ -407,31 +457,32 @@ async fn application(connections: HashMap<String, Arc<Connector>>) -> anyhow::Re
         store,
         run,
         context,
-        _workload: workload,
+        workload,
         _egress: egress,
     })
 }
 
 #[tokio::test]
-async fn application_calls_production_connector_reader_in_a_separate_store() -> anyhow::Result<()> {
+async fn application_calls_production_integration_imports_in_a_separate_store() -> anyhow::Result<()>
+{
     let (listener, ip) = private_listener().await?;
     let port = listener.local_addr()?.port();
     let (accepts, server) = server(listener, "private-secret", 200);
-    let connector = Arc::new(
-        Connector::load(
-            &socket_connector(ip, 0)?,
-            ConnectorBinding::new(&format!("{ip}:{port}"), Some("private-secret".to_owned()))?,
+    let integration = Arc::new(
+        Integration::load(
+            &socket_integration(ip, 0)?,
+            IntegrationBinding::new(&format!("{ip}:{port}"), Some("private-secret".to_owned()))?,
         )
         .await?,
     );
-    let mut app = application(HashMap::from([("fixture".to_owned(), connector.clone())])).await?;
+    let mut app = application(HashMap::from([("fixture".to_owned(), integration.clone())])).await?;
     for _ in 0..2 {
         assert_eq!(app.run("fixture").await?.payload, "200");
     }
     assert_eq!(accepts.load(Ordering::SeqCst), 2);
     assert_ne!(
         &app.store.data().active_ctx.store_id,
-        &connector
+        &integration
             .inner
             .lock()
             .await
@@ -445,18 +496,18 @@ async fn application_calls_production_connector_reader_in_a_separate_store() -> 
 }
 
 #[tokio::test]
-async fn application_routes_two_named_connectors_and_returns_unbound() -> anyhow::Result<()> {
+async fn application_routes_two_named_integrations_and_refuses_unbound() -> anyhow::Result<()> {
     let (modbus_listener, ip) = private_listener().await?;
     let modbus_port = modbus_listener.local_addr()?.port();
     let printer_listener = tokio::net::TcpListener::bind((ip, 0)).await?;
     let printer_port = printer_listener.local_addr()?.port();
     let (modbus_accepts, modbus_server) = server(modbus_listener, "modbus-secret", 200);
     let (printer_accepts, printer_server) = server(printer_listener, "printer-secret", 201);
-    let bytes = socket_connector(ip, 0)?;
+    let bytes = socket_integration(ip, 0)?;
     let modbus = Arc::new(
-        Connector::load(
+        Integration::load(
             &bytes,
-            ConnectorBinding::new(
+            IntegrationBinding::new(
                 &format!("{ip}:{modbus_port}"),
                 Some("modbus-secret".to_owned()),
             )?,
@@ -464,9 +515,9 @@ async fn application_routes_two_named_connectors_and_returns_unbound() -> anyhow
         .await?,
     );
     let printer = Arc::new(
-        Connector::load(
+        Integration::load(
             &bytes,
-            ConnectorBinding::new(
+            IntegrationBinding::new(
                 &format!("{ip}:{printer_port}"),
                 Some("printer-secret".to_owned()),
             )?,
@@ -482,7 +533,11 @@ async fn application_routes_two_named_connectors_and_returns_unbound() -> anyhow
     assert_eq!(modbus_accepts.load(Ordering::SeqCst), 1);
     assert_eq!(printer_accepts.load(Ordering::SeqCst), 0);
     assert_eq!(app.run("printer").await?.payload, "201");
-    assert_eq!(app.run("unknown").await?.payload, "\"unbound\"");
+    let error = application(HashMap::new())
+        .await
+        .err()
+        .expect("an unbound label refuses instantiation");
+    assert!(format!("{error:#}").contains("unbound"));
     assert_eq!(modbus_accepts.load(Ordering::SeqCst), 1);
     assert_eq!(printer_accepts.load(Ordering::SeqCst), 1);
     let modbus = modbus.inner.lock().await;
@@ -501,5 +556,34 @@ async fn application_routes_two_named_connectors_and_returns_unbound() -> anyhow
     );
     modbus_server.abort();
     printer_server.abort();
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_undeclared_name_refuses_before_dispatch() -> anyhow::Result<()> {
+    let integration = Arc::new(
+        Integration::load(
+            &socket_integration("192.168.1.2".parse()?, 0)?,
+            IntegrationBinding::new("192.168.1.2:502", None)?,
+        )
+        .await?,
+    );
+    let connections = HashMap::from([("fixture".to_owned(), integration)]);
+    let application = application(connections.clone()).await?;
+    let imports = Arc::new(IntegrationImports::new(
+        connections,
+        HashSet::from(["test:integration/protocol".to_owned()]),
+    ));
+    let components = application.workload.components();
+    let mut components = components.write().await;
+    let component = components
+        .values_mut()
+        .next()
+        .expect("application component");
+    let error = imports
+        .add_to_linker(&mut WorkloadItem::Component(component), &HashSet::new())
+        .await
+        .expect_err("an undeclared label refuses before dispatch");
+    assert!(error.to_string().contains("connection undeclared: fixture"));
     Ok(())
 }

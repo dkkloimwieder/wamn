@@ -241,8 +241,8 @@ CREATE TABLE catalog.connection_requirement (
     env_key text NOT NULL,
     component_digest text NOT NULL CHECK (component_digest ~ '^sha256:[0-9a-f]{64}$'),
     package_id text NOT NULL,
-    name text NOT NULL,
-    interfaces text[] NOT NULL CHECK (cardinality(interfaces) > 0),
+    name text NOT NULL CHECK (name ~ '^[a-z][a-z0-9-]{0,62}$'),
+    interface text NOT NULL,
     mode text NOT NULL CHECK (mode IN ('read', 'write')),
     PRIMARY KEY (env_key, component_digest, package_id, name)
 );

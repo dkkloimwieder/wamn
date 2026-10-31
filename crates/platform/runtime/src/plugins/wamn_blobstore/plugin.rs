@@ -565,6 +565,43 @@ fn build_gcs_store(container: &str) -> anyhow::Result<Arc<object_store::gcp::Goo
     Ok(Arc::new(store))
 }
 
+/// List the first object under candidate storage coordinates without writing facts.
+pub async fn health(
+    integration_type: &str,
+    parameters: &serde_json::Value,
+    credential: Option<&str>,
+) -> anyhow::Result<()> {
+    use object_store::list::{PaginatedListOptions, PaginatedListStore};
+
+    let field = |name: &str| {
+        parameters[name]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("storage parameter missing: {name}"))
+    };
+    let container = field("container")?;
+    let prefix = object_store::path::Path::parse(field("prefix")?)?;
+    let store: Arc<dyn PaginatedListStore> = match integration_type {
+        "gcs" => build_gcs_store(container)?,
+        "s3" => build_s3_store(
+            field("endpoint")?,
+            container,
+            credential.ok_or_else(|| anyhow::anyhow!("storage credential unavailable"))?,
+        )?,
+        _ => anyhow::bail!("unsupported storage integration"),
+    };
+    let prefix = format!("{}/", prefix.as_ref().trim_end_matches('/'));
+    store
+        .list_paginated(
+            Some(&prefix),
+            PaginatedListOptions {
+                max_keys: Some(1),
+                ..PaginatedListOptions::default()
+            },
+        )
+        .await?;
+    Ok(())
+}
+
 /// The `wamn.blobstore` span over one guest object-store effect.
 ///
 /// Carries the shared identity vocabulary plus the invocation this component

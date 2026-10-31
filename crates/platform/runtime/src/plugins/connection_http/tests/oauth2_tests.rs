@@ -249,7 +249,7 @@ impl Fixture {
                 let name: String = row.get(2);
                 admin.execute("INSERT INTO platform.integration(id,integration_type,name,status) VALUES($1,'http',$2,'active')", &[&integration,&name]).await.unwrap();
                 admin.execute("INSERT INTO platform.connection(id,integration_id,integration_type,status) VALUES($1,$2,'http','active')", &[&connection,&integration]).await.unwrap();
-                admin.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interfaces,mode) VALUES($1,$2,'package_a',$3,ARRAY['wamn:connection/http@0.1.0'],'write')", &[&env_key,&invocation.component_digest,&name]).await.unwrap();
+                admin.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,'package_a',$3,'wamn:connection/http@0.1.0','write')", &[&env_key,&invocation.component_digest,&name]).await.unwrap();
                 admin.execute("INSERT INTO catalog.release_connection(env_key,manifest_digest,connection_id,version) VALUES($1,$2,$3,1)", &[&env_key,&manifest_digest,&connection]).await.unwrap();
                 admin.execute("INSERT INTO catalog.connection_binding(env_key,manifest_digest,component_digest,package_id,name,connection_id) VALUES($1,$2,$3,'package_a',$4,$5)", &[&env_key,&manifest_digest,&invocation.component_digest,&name,&connection]).await.unwrap();
             }

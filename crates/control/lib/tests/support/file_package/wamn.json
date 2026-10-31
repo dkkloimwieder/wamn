@@ -22,21 +22,15 @@
   "connections": {
     "files": {
       "mode": "write",
-      "interfaces": [
-        "wasmcloud:blobstore/blobstore@0.1.0"
-      ]
+      "interface": "wasmcloud:blobstore/blobstore@0.1.0"
     },
-    "files_read": {
+    "files-read": {
       "mode": "read",
-      "interfaces": [
-        "wasmcloud:blobstore/blobstore@0.1.0"
-      ]
+      "interface": "wasmcloud:blobstore/blobstore@0.1.0"
     },
-    "files_no_cdn": {
+    "files-no-cdn": {
       "mode": "write",
-      "interfaces": [
-        "wasmcloud:blobstore/blobstore@0.1.0"
-      ]
+      "interface": "wasmcloud:blobstore/blobstore@0.1.0"
     }
   },
   "components": {

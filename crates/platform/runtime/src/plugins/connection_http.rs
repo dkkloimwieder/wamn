@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use anyhow::Context as _;
 use tokio::time::Instant;
 
 use tracing::Instrument as _;
@@ -1269,6 +1270,99 @@ async fn execute(
     })
 }
 
+/// Test candidate HTTP parameters without writing connection facts.
+pub async fn health(
+    parameters: &serde_json::Value,
+    auth_type: &str,
+    credential: Option<&str>,
+) -> Result<(), String> {
+    async {
+        let base = parameters["primary-authority"]
+            .as_str()
+            .context("HTTP authority missing")?;
+        let authority = parse_http_connection_authority(base, TlsPolicy::VerifyAuthority, None)?;
+        let url = url::Url::parse(authority.canonical_base_url())?;
+        anyhow::ensure!(url.scheme() == "https", "HTTP health requires TLS");
+        let host = url.host_str().context("HTTP authority has no host")?;
+        let port = url
+            .port_or_known_default()
+            .context("HTTP authority has no port")?;
+        let allowed = [AllowedHost::Authority(format!("{host}:{port}").parse()?)];
+        let (target, endpoint) = bound_http_target(&authority, authority.canonical_base_url())?;
+        let mut decision = resolve_http_request(
+            &authority,
+            &target,
+            &allowed,
+            &ConnectionNetworkPolicy,
+            &TokioDnsResolver,
+        )
+        .await?;
+        decision.logical_url = endpoint;
+        let transport = HttpTransport::new()?;
+        let scope = ClientScope {
+            connection: ConnectionScope {
+                env_key: "health".into(),
+                project: "health".into(),
+                environment: "health".into(),
+                instance: "health".into(),
+            },
+            package: "health".into(),
+            component_digest: "health".into(),
+            requirement: "health".into(),
+            binding_hash: "health".into(),
+            definition_hash: "health".into(),
+            generation: 0,
+        };
+        let request = Request {
+            requirement: "health".into(),
+            method: "HEAD".into(),
+            path_and_query: "/".into(),
+            headers: Vec::new(),
+            body: None,
+            idempotency_key: None,
+        };
+        let auth = parameters
+            .get("auth")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+        let headers = if auth_type == "oauth2_client_credentials" {
+            let credential = oauth2_credential(&auth, credential)
+                .map_err(|_| anyhow::anyhow!("HTTP authentication unavailable"))?;
+            let (target, endpoint) = bound_http_target(&authority, &credential.token_url)?;
+            let mut token_decision = resolve_http_request(
+                &authority,
+                &target,
+                &allowed,
+                &ConnectionNetworkPolicy,
+                &TokioDnsResolver,
+            )
+            .await?;
+            token_decision.logical_url = endpoint;
+            let token = fetch_oauth2_token(&transport, scope.clone(), &token_decision, &credential)
+                .await
+                .map_err(|_| anyhow::anyhow!("HTTP authentication unavailable"))?;
+            HashMap::from([(
+                "authorization".into(),
+                format!("Bearer {}", token.access_token),
+            )])
+        } else {
+            authentication::headers(auth_type, &auth, credential, &request, &mut decision)
+                .map_err(|_| anyhow::anyhow!("HTTP authentication unavailable"))?
+        };
+        let response = execute(&transport, scope, decision, &request, headers)
+            .await
+            .map_err(|_| anyhow::anyhow!("HTTP health request failed"))?;
+        health_status(response.status)
+    }
+    .await
+    .map_err(|error: anyhow::Error| error.to_string())
+}
+
+fn health_status(status: u16) -> anyhow::Result<()> {
+    anyhow::ensure!(!matches!(status, 401 | 403 | 500..=599), "{status}");
+    Ok(())
+}
+
 pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::Result<()> {
     http::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)
 }
@@ -2369,6 +2463,19 @@ mod tests {
 
 #[cfg(test)]
 mod connection_mode_tests {
+    #[test]
+    fn health_accepts_only_the_ruled_statuses() {
+        for status in [200, 204, 301, 400, 404, 429] {
+            super::health_status(status).unwrap();
+        }
+        for status in [401, 403, 500, 503, 599] {
+            assert_eq!(
+                super::health_status(status).unwrap_err().to_string(),
+                status.to_string()
+            );
+        }
+    }
+
     #[test]
     fn read_mode_refuses_every_mutating_http_method() {
         for method in ["GET", "HEAD"] {

@@ -622,7 +622,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
             "package":{"id":"http_fixture","version":"1.0.0"},
             "required_platform_policy_contract":{"id":"fixture_data_access","state":"satisfied"},
             "models":{},"components":{},
-            "connections":{"upstream":{"interfaces":["wamn:connection/http@0.1.0"],"mode":"write"},"signed-upstream":{"interfaces":["wamn:connection/http@0.1.0"],"mode":"write"},"api-key-upstream":{"interfaces":["wamn:connection/http@0.1.0"],"mode":"write"},"aws-upstream":{"interfaces":["wamn:connection/http@0.1.0"],"mode":"write"}}
+            "connections":{"upstream":{"interface":"wamn:connection/http@0.1.0","mode":"write"},"signed-upstream":{"interface":"wamn:connection/http@0.1.0","mode":"write"},"api-key-upstream":{"interface":"wamn:connection/http@0.1.0","mode":"write"},"aws-upstream":{"interface":"wamn:connection/http@0.1.0","mode":"write"}}
         }),
     )?)?;
     // The system floor seeds the active cloud target used by this document.
@@ -647,7 +647,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
                 &connection.store_alias,
                 ConnectionTypeDescriptor::http_v1(),
             );
-            project.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interfaces,mode) VALUES($1,$2,$3,$4,ARRAY['wamn:connection/http@0.1.0'],'write') ON CONFLICT DO NOTHING",&[&env_key,&component.descriptor.component_digest,&component.package_id,&connection.store_alias]).await?;
+            project.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,'wamn:connection/http@0.1.0','write') ON CONFLICT DO NOTHING",&[&env_key,&component.descriptor.component_digest,&component.package_id,&connection.store_alias]).await?;
             let selection = wamn_runtime::local_application::selection(
                 &requirement,
                 &upstream.connection_id,

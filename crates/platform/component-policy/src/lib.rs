@@ -6,8 +6,8 @@
 //! publication. WAMN installs the runtime's `SocketPolicy` with
 //! `EgressMode::Count`, which records policy refusals and allows traffic.
 //! Tenant artifacts never reach that path because admission rejects the
-//! package outright. The connector profile admits pinned sockets and refuses
-//! every other effect. Connector stores enforce their bound authority.
+//! package outright. The integration profile admits pinned sockets and refuses
+//! every other effect. Integration stores enforce their bound authority.
 //! `AllowedIPNameLookups`, `allowed_hosts`, and
 //! the vanilla address-range defaults remain runtime policy layers; none grants
 //! publication authority. See
@@ -67,11 +67,11 @@ pub fn instance_type<'a>(name: &'a str, implements: Option<&'a str>) -> &'a str 
     implements.unwrap_or(name)
 }
 
-/// The production admission profiles for platform components and connectors.
+/// The production admission profiles for platform components and integrations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PolicyProfile {
     FirstParty,
-    Connector,
+    Integration,
 }
 
 /// A successful policy analysis.
@@ -84,14 +84,14 @@ pub fn analyze(
     profile: PolicyProfile,
     label: &str,
 ) -> Result<PolicyReport, EgressGuardError> {
-    if profile == PolicyProfile::Connector {
+    if profile == PolicyProfile::Integration {
         let denied = imports
             .iter()
-            .filter(|name| !connector_import(name))
+            .filter(|name| !integration_import(name))
             .map(str::to_owned)
             .collect::<Vec<_>>();
         if !denied.is_empty() {
-            return Err(EgressGuardError::ConnectorImport {
+            return Err(EgressGuardError::IntegrationImport {
                 component: label.to_owned(),
                 imports: denied,
             });
@@ -106,12 +106,12 @@ pub fn analyze(
 // of the resolved `wasmtime-wasi` (docs/plan/alignment.md W3).
 include!(concat!(env!("OUT_DIR"), "/wasi_ceiling.rs"));
 
-fn connector_import(name: &str) -> bool {
+fn integration_import(name: &str) -> bool {
     match (import_pkg(name), import_version(name)) {
         ("wasi:sockets" | "wasi:io" | "wasi:clocks" | "wasi:random", Some(version)) => {
             admits_version(WASI_FAMILY, version)
         }
-        _ => name == "wamn:connector/bound@0.1.0",
+        _ => name == "wamn:integration/bound@0.1.0",
     }
 }
 
@@ -214,10 +214,15 @@ pub struct CapabilityRow {
 /// virtualized artifact imports random at the version Rust std's
 /// `wasm32-wasip2` target links: `0.2.12` on toolchain 1.99.0, measured on the
 /// `jsonata` node (wamn-upl3.2, wamn-ro7m). The family row admits it.
-pub const CAPABILITY_REGISTRY: [CapabilityRow; 10] = [
+pub const CAPABILITY_REGISTRY: [CapabilityRow; 11] = [
     // Versions we author.
     CapabilityRow {
-        package: "wamn:connector",
+        package: "wamn:modbus",
+        version: "1.0.0",
+        posture: Posture::Effect,
+    },
+    CapabilityRow {
+        package: "wamn:integration",
         version: "0.1.0",
         posture: Posture::Effect,
     },
@@ -280,7 +285,7 @@ pub const CAPABILITY_REGISTRY: [CapabilityRow; 10] = [
 /// (docs/architecture/capabilities.md#import-admission). Platform components
 /// keep it: they are admitted by [`analyze`], which this list does not reach.
 pub const APPLICATION_DENIED_INTERFACES: [&str; 2] =
-    ["wamn:postgres/client", "wamn:connector/bound"];
+    ["wamn:postgres/client", "wamn:integration/bound"];
 
 /// Whether an application component may not import this interface instance type.
 fn is_denied_to_applications(import_name: &str) -> bool {
@@ -446,8 +451,8 @@ pub const DENIED_EGRESS_PKG: &str = "wasi:sockets";
 /// Refusal of a component whose world imports a denied egress surface.
 #[derive(Debug)]
 pub enum EgressGuardError {
-    /// A connector imports an effect outside its bound sockets.
-    ConnectorImport {
+    /// An integration imports an effect outside its bound sockets.
+    IntegrationImport {
         component: String,
         imports: Vec<String>,
     },
@@ -463,9 +468,9 @@ pub enum EgressGuardError {
 impl std::fmt::Display for EgressGuardError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            EgressGuardError::ConnectorImport { component, imports } => write!(
+            EgressGuardError::IntegrationImport { component, imports } => write!(
                 formatter,
-                "connector {component:?} imports unadmitted interface(s) {imports:?}"
+                "integration {component:?} imports unadmitted interface(s) {imports:?}"
             ),
             EgressGuardError::RawSocketImport { component, imports } => write!(
                 formatter,
@@ -519,19 +524,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn connector_profile_grants_only_bound_sockets_and_ambient_imports() {
+    fn integration_profile_grants_only_bound_sockets_and_ambient_imports() {
         let imports = ComponentImports::new(
             [
-                "wamn:connector/bound@0.1.0",
+                "wamn:integration/bound@0.1.0",
                 "wasi:sockets/tcp@0.2.12",
                 "wasi:io/streams@0.2.12",
             ]
             .map(str::to_owned),
         );
-        analyze(&imports, PolicyProfile::Connector, "connector").expect("bound sockets");
+        analyze(&imports, PolicyProfile::Integration, "integration").expect("bound sockets");
         analyze_tenant(
             &imports,
-            &BTreeSet::from(["wamn:connector".to_owned()]),
+            &BTreeSet::from(["wamn:integration".to_owned()]),
             "application",
         )
         .expect_err("application has no sockets or binding");
@@ -540,12 +545,12 @@ mod tests {
             "wasmcloud:blobstore/blobstore@0.1.0",
             "wasi:http/outgoing-handler@0.2.12",
             "wasi:sockets/tcp@0.3.0",
-            "wamn:connector/reader@0.1.0",
+            "wamn:modbus/read@1.0.0",
         ] {
             analyze(
                 &ComponentImports::new([effect.to_owned()]),
-                PolicyProfile::Connector,
-                "connector",
+                PolicyProfile::Integration,
+                "integration",
             )
             .expect_err("unlisted effect");
         }
@@ -726,7 +731,7 @@ mod tests {
                 Some(Posture::Ambient),
                 "{admitted:?} is in the 0.2 family"
             );
-            assert!(connector_import(admitted), "{admitted:?} is refused");
+            assert!(integration_import(admitted), "{admitted:?} is refused");
         }
         let above = format!("wasi:io/streams@0.2.{}", WASI_CEILING + 1);
         for refused in [
@@ -744,13 +749,13 @@ mod tests {
         ] {
             assert_eq!(import_posture(refused), None, "{refused:?} is admitted");
         }
-        assert!(connector_import("wamn:connector/bound@0.1.0"));
+        assert!(integration_import("wamn:integration/bound@0.1.0"));
         for refused in [
-            "wamn:connector/bound@0.1.1",
+            "wamn:integration/bound@0.1.1",
             "wasi:io/streams@0.3.0",
             above.as_str(),
         ] {
-            assert!(!connector_import(refused), "{refused:?} is admitted");
+            assert!(!integration_import(refused), "{refused:?} is admitted");
         }
         assert_eq!(import_version("wamn:postgres/client@0.1.0"), Some("0.1.0"));
         assert_eq!(import_version("wasi:clocks@0.2.12"), Some("0.2.12"));
@@ -779,7 +784,7 @@ mod tests {
         ] {
             assert_eq!(import_posture(&name), None, "{name} is admitted");
         }
-        assert!(!connector_import(&format!("wasi:sockets/tcp@0.2.{above}")));
+        assert!(!integration_import(&format!("wasi:sockets/tcp@0.2.{above}")));
     }
 
     /// The registry is a closed set with unique keys; a duplicate row would let

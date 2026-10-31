@@ -1,4 +1,4 @@
-//! Read holding registers through the host-owned Modbus TCP binding.
+//! Bound Modbus TCP register operations and gateway health.
 
 #![cfg_attr(target_arch = "wasm32", no_std)]
 
@@ -13,13 +13,14 @@ mod guest_runtime;
 mod component {
     use alloc::{format, string::String, vec::Vec};
     wit_bindgen::generate!({
-        path: ["../../crates/platform/runtime/wit/deps/wamn-connector", "wit"],
-        world: "wamn:modbus/modbus",
+        path: ["../../crates/platform/runtime/wit/deps/wamn-integration", "wit"],
+        world: "wamn:modbus/client@1.0.0",
         generate_all,
         std_feature,
     });
 
-    use exports::wamn::connector::reader::{ConnectorError, Guest};
+    use exports::wamn::modbus::{read, write};
+    use read::Error;
     use wasi::sockets::network::{
         ErrorCode, IpAddressFamily, IpSocketAddress, Ipv4SocketAddress, Ipv6SocketAddress,
     };
@@ -27,79 +28,145 @@ mod component {
     struct Modbus;
     export!(Modbus);
 
-    fn transport(error: impl core::fmt::Debug) -> ConnectorError {
-        ConnectorError::Transport(format!("{error:?}"))
+    fn transport(error: impl core::fmt::Debug) -> Error {
+        Error::Transport(format!("{error:?}"))
     }
 
-    fn socket_error(error: ErrorCode) -> ConnectorError {
+    fn socket_error(error: ErrorCode) -> Error {
         match error {
-            ErrorCode::AccessDenied => ConnectorError::AuthorityDenied,
-            ErrorCode::Timeout => ConnectorError::Timeout,
+            ErrorCode::AccessDenied => Error::AuthorityDenied,
+            ErrorCode::Timeout => Error::Timeout,
             error => transport(error),
         }
     }
 
-    impl Guest for Modbus {
-        fn get(_: String, request: Vec<u8>) -> Result<Vec<u8>, ConnectorError> {
-            let frame = super::request_frame(&request).map_err(transport)?;
-            let authority = wamn::connector::bound::authority();
-            // Modbus connections use an explicit IP literal and TCP port.
-            let address: core::net::SocketAddr = authority.parse().map_err(transport)?;
-            let (family, address) = match address {
-                core::net::SocketAddr::V4(address) => {
-                    let [a, b, c, d] = address.ip().octets();
-                    (
-                        IpAddressFamily::Ipv4,
-                        IpSocketAddress::Ipv4(Ipv4SocketAddress {
-                            port: address.port(),
-                            address: (a, b, c, d),
-                        }),
-                    )
-                }
-                core::net::SocketAddr::V6(address) => {
-                    let [a, b, c, d, e, f, g, h] = address.ip().segments();
-                    (
-                        IpAddressFamily::Ipv6,
-                        IpSocketAddress::Ipv6(Ipv6SocketAddress {
-                            port: address.port(),
-                            address: (a, b, c, d, e, f, g, h),
-                            flow_info: 0,
-                            scope_id: 0,
-                        }),
-                    )
-                }
-            };
-            let network = wasi::sockets::instance_network::instance_network();
-            let socket = wasi::sockets::tcp_create_socket::create_tcp_socket(family)
-                .map_err(socket_error)?;
-            socket
-                .start_connect(&network, address)
-                .map_err(socket_error)?;
-            let (input, output) = loop {
-                match socket.finish_connect() {
-                    Ok(streams) => break streams,
-                    Err(ErrorCode::WouldBlock) => socket.subscribe().block(),
-                    Err(error) => return Err(socket_error(error)),
-                }
-            };
-            output.blocking_write_and_flush(&frame).map_err(transport)?;
-            let mut response = Vec::new();
-            // A normal response has nine header bytes and two bytes per register.
-            let size = 9 + usize::from(u16::from_be_bytes([request[3], request[4]])) * 2;
-            while response.len() < size {
-                let bytes = input
-                    .blocking_read((size - response.len()) as u64)
-                    .map_err(transport)?;
-                if bytes.is_empty() {
-                    continue;
-                }
-                response.extend(bytes);
-                if response.len() >= 9 && response[7] & 0x80 != 0 {
-                    return Err(transport("Modbus exception"));
-                }
-            }
-            super::response_registers(&frame, &response).map_err(transport)
+    impl read::Guest for Modbus {
+        fn read_registers(unit: u8, addr: u16, count: u16) -> Result<Vec<u16>, Error> {
+            read_registers(unit, addr, count)
         }
+    }
+
+    impl write::Guest for Modbus {
+        fn read_registers(unit: u8, addr: u16, count: u16) -> Result<Vec<u16>, write::Error> {
+            read_registers(unit, addr, count).map_err(write_error)
+        }
+        fn write_register(unit: u8, addr: u16, value: u16) -> Result<(), write::Error> {
+            write_register(unit, addr, value).map_err(write_error)
+        }
+    }
+
+    fn write_error(error: Error) -> write::Error {
+        match error {
+            Error::Unavailable => write::Error::Unavailable,
+            Error::AuthorityDenied => write::Error::AuthorityDenied,
+            Error::Timeout => write::Error::Timeout,
+            Error::Transport(detail) => write::Error::Transport(detail),
+        }
+    }
+
+    fn write_register(unit: u8, addr: u16, value: u16) -> Result<(), Error> {
+        let [hi, lo] = addr.to_be_bytes();
+        let [value_hi, value_lo] = value.to_be_bytes();
+        if unit == 0 || unit > 247 {
+            return Err(transport("invalid Modbus unit"));
+        }
+        let frame = [0, 1, 0, 0, 0, 6, unit, 6, hi, lo, value_hi, value_lo];
+        let response = exchange(Some(&frame))?;
+        if response != frame {
+            return Err(transport(
+                "Modbus write response does not match the request",
+            ));
+        }
+        Ok(())
+    }
+
+    impl exports::wamn::integration::health::Guest for Modbus {
+        fn check() -> Result<(), String> {
+            exchange(None)
+                .map(|_| ())
+                .map_err(|error| format!("{error:?}"))
+        }
+    }
+
+    fn read_registers(unit: u8, addr: u16, count: u16) -> Result<Vec<u16>, Error> {
+        let [hi, lo] = addr.to_be_bytes();
+        let [count_hi, count_lo] = count.to_be_bytes();
+        let frame = super::request_frame(&[unit, hi, lo, count_hi, count_lo]).map_err(transport)?;
+        let response = exchange(Some(&frame))?;
+        let registers = super::response_registers(&frame, &response).map_err(transport)?;
+        Ok(registers
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|register| u16::from_be_bytes(*register))
+            .collect())
+    }
+
+    fn exchange(frame: Option<&[u8; 12]>) -> Result<Vec<u8>, Error> {
+        let authority = wamn::integration::bound::authority();
+        // Modbus connections use an explicit IP literal and TCP port.
+        let address: core::net::SocketAddr = authority.parse().map_err(transport)?;
+        let (family, address) = match address {
+            core::net::SocketAddr::V4(address) => {
+                let [a, b, c, d] = address.ip().octets();
+                (
+                    IpAddressFamily::Ipv4,
+                    IpSocketAddress::Ipv4(Ipv4SocketAddress {
+                        port: address.port(),
+                        address: (a, b, c, d),
+                    }),
+                )
+            }
+            core::net::SocketAddr::V6(address) => {
+                let [a, b, c, d, e, f, g, h] = address.ip().segments();
+                (
+                    IpAddressFamily::Ipv6,
+                    IpSocketAddress::Ipv6(Ipv6SocketAddress {
+                        port: address.port(),
+                        address: (a, b, c, d, e, f, g, h),
+                        flow_info: 0,
+                        scope_id: 0,
+                    }),
+                )
+            }
+        };
+        let network = wasi::sockets::instance_network::instance_network();
+        let socket =
+            wasi::sockets::tcp_create_socket::create_tcp_socket(family).map_err(socket_error)?;
+        socket
+            .start_connect(&network, address)
+            .map_err(socket_error)?;
+        let (input, output) = loop {
+            match socket.finish_connect() {
+                Ok(streams) => break streams,
+                Err(ErrorCode::WouldBlock) => socket.subscribe().block(),
+                Err(error) => return Err(socket_error(error)),
+            }
+        };
+        let Some(frame) = frame else {
+            return Ok(Vec::new());
+        };
+        output.blocking_write_and_flush(frame).map_err(transport)?;
+        let mut response = Vec::new();
+        // A normal response has nine header bytes and two bytes per register.
+        let size = if frame[7] == 6 {
+            12
+        } else {
+            9 + usize::from(u16::from_be_bytes([frame[10], frame[11]])) * 2
+        };
+        while response.len() < size {
+            let bytes = input
+                .blocking_read((size - response.len()) as u64)
+                .map_err(transport)?;
+            if bytes.is_empty() {
+                continue;
+            }
+            response.extend(bytes);
+            if response.len() >= 9 && response[7] & 0x80 != 0 {
+                return Err(transport("Modbus exception"));
+            }
+        }
+        Ok(response)
     }
 }
 

@@ -1,4 +1,4 @@
-//! Isolated connector stores and the application reader bridge.
+//! Isolated integration stores and named application imports.
 
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
@@ -18,46 +18,36 @@ use wash_runtime::plugin::{HostPlugin, PluginBindings, WitInterfaces};
 use wash_runtime::sockets::policy::{EgressMode, SocketPolicy};
 use wash_runtime::types::{Component, LocalResources, Workload};
 use wash_runtime::wasmtime::Store;
-use wash_runtime::wasmtime::component::TypedFunc;
+use wash_runtime::wasmtime::component::{Instance, Type, Val};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
-mod bindings {
-    wash_runtime::wasmtime::component::bindgen!({
-        path: "../runtime/wit/deps/wamn-connector",
-        world: "connector",
-        wasmtime_crate: wash_runtime::wasmtime,
-    });
-}
-
-pub use bindings::exports::wamn::connector::reader::ConnectorError;
-
-pub const READER: &str = "wamn:connector/reader@0.1.0";
-const BOUND: &str = "wamn:connector/bound@0.1.0";
-type Read = TypedFunc<(String, Vec<u8>), (Result<Vec<u8>, ConnectorError>,)>;
+pub const HEALTH: &str = "wamn:integration/health@0.1.0";
+const BOUND: &str = "wamn:integration/bound@0.1.0";
 
 /// A host-resolved binding. Credentials never enter an application store.
-pub struct ConnectorBinding {
+pub struct IntegrationBinding {
     authority: hyper::http::uri::Authority,
     credential: Option<String>,
+    parameters: String,
     preparation: Option<Arc<std::sync::Mutex<Option<WorkloadComponent>>>>,
 }
 
-impl std::fmt::Debug for ConnectorBinding {
+impl std::fmt::Debug for IntegrationBinding {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ConnectorBinding")
+        f.debug_struct("IntegrationBinding")
             .field("authority", &self.authority)
             .finish_non_exhaustive()
     }
 }
 
-impl ConnectorBinding {
+impl IntegrationBinding {
     /// Bind one exact authority. Wildcards and metadata destinations refuse.
     pub fn new(authority: &str, credential: Option<String>) -> anyhow::Result<Self> {
         let authority: hyper::http::uri::Authority =
-            authority.parse().context("parse connector authority")?;
+            authority.parse().context("parse integration authority")?;
         anyhow::ensure!(
             authority.port_u16().is_some_and(|port| port != 0),
-            "connector authority needs a nonzero port"
+            "integration authority needs a nonzero port"
         );
         let host = authority
             .host()
@@ -66,7 +56,7 @@ impl ConnectorBinding {
             .to_ascii_lowercase();
         anyhow::ensure!(
             !host.is_empty() && !host.contains(['*', '%']) && !authority.as_str().contains('@'),
-            "connector authority needs an exact host"
+            "integration authority needs an exact host"
         );
         anyhow::ensure!(
             !matches!(
@@ -79,24 +69,37 @@ impl ConnectorBinding {
                     | "metadata.azure.internal"
                     | "host.wasmcloud.internal"
             ),
-            "connector metadata or host sentinel authority is denied"
+            "integration metadata or host sentinel authority is denied"
         );
         if let Ok(ip) = host.parse::<IpAddr>() {
             anyhow::ensure!(
                 EgressAddressPolicy::default().permits(ip),
-                "connector authority address is denied"
+                "integration authority address is denied"
             );
         }
         Ok(Self {
             authority,
             credential,
+            parameters: "{}".to_owned(),
             preparation: None,
         })
+    }
+
+    /// Use validated generation parameters and expose only custom credentials.
+    pub fn with_parameters(mut self, mut parameters: serde_json::Value, auth_type: &str) -> Self {
+        if let Some(parameters) = parameters.as_object_mut() {
+            parameters.remove("auth");
+        }
+        self.parameters = parameters.to_string();
+        if auth_type != "custom" {
+            self.credential = None;
+        }
+        self
     }
 }
 
 // A DNS name grants public addresses only. Private ranges need a literal grant.
-fn connector_address_policy(authority: &hyper::http::uri::Authority) -> EgressAddressPolicy {
+fn integration_address_policy(authority: &hyper::http::uri::Authority) -> EgressAddressPolicy {
     let ip = authority
         .host()
         .trim_matches(['[', ']'])
@@ -175,10 +178,10 @@ pub fn compile_count(digest: &str) -> usize {
 
 fn code_workload(digest: &str, bytes: Vec<u8>, resources: LocalResources) -> Workload {
     Workload {
-        namespace: "wamn-connector".to_owned(),
+        namespace: "wamn-integration".to_owned(),
         name: digest.to_owned(),
         components: vec![Component {
-            name: "connector".to_owned(),
+            name: "integration".to_owned(),
             digest: Some(digest.to_owned()),
             bytes: bytes.into(),
             local_resources: resources,
@@ -192,9 +195,9 @@ fn code_workload(digest: &str, bytes: Vec<u8>, resources: LocalResources) -> Wor
 }
 
 #[async_trait::async_trait]
-impl HostPlugin for ConnectorBinding {
+impl HostPlugin for IntegrationBinding {
     fn id(&self) -> &'static str {
-        "wamn-connector-bound"
+        "wamn-integration-bound"
     }
     fn world(&self) -> WitWorld {
         WitWorld {
@@ -208,7 +211,7 @@ impl HostPlugin for ConnectorBinding {
         _: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
         if let Some(preparation) = &self.preparation {
-            crate::component_admission::validate_connection_code(item.component(), "connector")?;
+            crate::component_admission::validate_connection_code(item.component(), "integration")?;
             if let WorkloadItem::Component(component) = item {
                 // Clone before linking the credential. Retain only the compiled
                 // template and wash-runtime's live compile reference.
@@ -219,43 +222,45 @@ impl HostPlugin for ConnectorBinding {
         }
         let authority = self.authority.to_string();
         let credential = self.credential.clone();
+        let parameters = self.parameters.clone();
         let mut bound = item.linker().instance(BOUND)?;
         bound.func_wrap("authority", move |_, ()| Ok((authority.clone(),)))?;
+        bound.func_wrap("parameters", move |_, ()| Ok((parameters.clone(),)))?;
         bound.func_wrap("credential", move |_, ()| Ok((credential.clone(),)))?;
         Ok(())
     }
 }
 
-struct ConnectorStore {
+struct IntegrationStore {
     store: Store<SharedCtx>,
-    get: Read,
+    instance: Instance,
     // Store host references are weak. Keep the workload and handler alive.
     _workload: ResolvedWorkload,
     _egress: Arc<dyn HostHandler>,
 }
 
-/// One connector instance and one store, shared by its application calls.
-pub struct Connector {
-    inner: Mutex<ConnectorStore>,
+/// One integration instance and one store, shared by its application calls.
+pub struct Integration {
+    inner: Mutex<IntegrationStore>,
     digest: String,
 }
 
-impl std::fmt::Debug for Connector {
+impl std::fmt::Debug for Integration {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Connector")
+        f.debug_struct("Integration")
             .field("digest", &self.digest)
             .finish_non_exhaustive()
     }
 }
 
-impl Connector {
-    /// Compile and link a connector before any running store stops.
+impl Integration {
+    /// Compile and link a integration before any running store stops.
     pub async fn prepare(
         bytes: Vec<u8>,
-        mut binding: ConnectorBinding,
-    ) -> anyhow::Result<PreparedConnector> {
+        mut binding: IntegrationBinding,
+    ) -> anyhow::Result<PreparedIntegration> {
         let digest = crate::component_admission::component_digest(&bytes);
-        let policy = connector_address_policy(&binding.authority);
+        let policy = integration_address_policy(&binding.authority);
         let code = tokio::task::spawn_blocking(move || address_engine(policy))
             .await
             .context("join connection engine construction")??;
@@ -319,7 +324,7 @@ impl Connector {
                 // A reader with no bound import still needs byte admission.
                 crate::component_admission::validate_connection_code(
                     component.component(),
-                    "connector",
+                    "integration",
                 )?;
                 let mut template = component.clone();
                 template.with_plugins(HashMap::new());
@@ -329,15 +334,15 @@ impl Connector {
         }
         drop(components);
         drop(admitted);
-        Ok(PreparedConnector {
+        Ok(PreparedIntegration {
             workload,
             egress,
             digest,
         })
     }
 
-    /// Admit, compile and start a connector with enforced egress.
-    pub async fn load(bytes: &[u8], binding: ConnectorBinding) -> anyhow::Result<Self> {
+    /// Admit, compile and start a integration with enforced egress.
+    pub async fn load(bytes: &[u8], binding: IntegrationBinding) -> anyhow::Result<Self> {
         Self::prepare(bytes.to_vec(), binding).await?.start().await
     }
 
@@ -354,45 +359,67 @@ impl Connector {
             .to_string()
     }
 
-    /// Call the reader without transferring any store-owned handles.
-    pub async fn get(
+    /// Call one typed export with values that carry no store-owned resources.
+    pub async fn call(
         &self,
-        connection: String,
-        request: Vec<u8>,
-    ) -> anyhow::Result<Result<Vec<u8>, ConnectorError>> {
+        interface: &str,
+        function: &str,
+        parameters: &[Val],
+    ) -> anyhow::Result<Vec<Val>> {
         let mut inner = self.inner.lock().await;
         inner.store.set_epoch_deadline(1);
-        let get = inner.get;
-        match tokio::time::timeout(
-            crate::engine::MAX_HOST_CALL_DURATION,
-            get.call_async(&mut inner.store, (connection, request)),
-        )
+        let instance = inner.instance;
+        let export = instance
+            .get_export_index(&mut inner.store, None, interface)
+            .context("integration interface missing")?;
+        let function = instance
+            .get_export_index(&mut inner.store, Some(&export), function)
+            .context("integration function missing")?;
+        let function = instance
+            .get_func(&mut inner.store, function)
+            .context("integration export is not a function")?;
+        let mut results = vec![Val::Bool(false); function.ty(&inner.store).results().len()];
+        tokio::time::timeout(crate::engine::MAX_HOST_CALL_DURATION, async {
+            function
+                .call_async(&mut inner.store, parameters, &mut results)
+                .await?;
+            Ok::<_, anyhow::Error>(results)
+        })
         .await
-        {
-            Ok(reply) => Ok(reply?.0),
-            Err(_) => Ok(Err(ConnectorError::Timeout)),
+        .context("integration call timed out")?
+    }
+
+    /// Test the remote service through the version's required health export.
+    pub async fn health(&self) -> anyhow::Result<Result<(), String>> {
+        match self.call(HEALTH, "check", &[]).await?.as_slice() {
+            [Val::Result(Ok(None))] => Ok(Ok(())),
+            [Val::Result(Err(Some(error)))] => match error.as_ref() {
+                Val::String(error) => Ok(Err(error.clone())),
+                _ => anyhow::bail!("invalid integration health error"),
+            },
+            _ => anyhow::bail!("invalid integration health result"),
         }
     }
 }
 
-/// A compiled workload with prepared links and no running connector store.
-pub struct PreparedConnector {
+/// A compiled workload with prepared links and no running integration store.
+pub struct PreparedIntegration {
     workload: ResolvedWorkload,
     egress: Arc<dyn HostHandler>,
     digest: String,
 }
 
-impl std::fmt::Debug for PreparedConnector {
+impl std::fmt::Debug for PreparedIntegration {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PreparedConnector")
+        f.debug_struct("PreparedIntegration")
             .field("digest", &self.digest)
             .finish_non_exhaustive()
     }
 }
 
-impl PreparedConnector {
+impl PreparedIntegration {
     /// Start from prepared code. This step performs no compilation or registry I/O.
-    pub async fn start(self) -> anyhow::Result<Connector> {
+    pub async fn start(self) -> anyhow::Result<Integration> {
         let Self {
             workload,
             egress,
@@ -404,7 +431,7 @@ impl PreparedConnector {
             .await
             .keys()
             .next()
-            .context("connector component missing")?
+            .context("integration component missing")?
             .to_string();
         let mut store = workload.new_store(&id).await?;
         // Epochs yield to the deadline future instead of imposing a ten millisecond call limit.
@@ -416,18 +443,11 @@ impl PreparedConnector {
             pre.instantiate_async(&mut store),
         )
         .await
-        .context("connector startup timed out")??;
-        let reader = instance
-            .get_export_index(&mut store, None, READER)
-            .context("connector reader missing")?;
-        let get = instance
-            .get_export_index(&mut store, Some(&reader), "get")
-            .context("connector get missing")?;
-        let get = instance.get_typed_func(&mut store, get)?;
-        Ok(Connector {
-            inner: Mutex::new(ConnectorStore {
+        .context("integration startup timed out")??;
+        Ok(Integration {
+            inner: Mutex::new(IntegrationStore {
                 store,
-                get,
+                instance,
                 _workload: workload,
                 _egress: egress,
             }),
@@ -439,138 +459,192 @@ impl PreparedConnector {
 /// Resolve the current immutable instance from the facts of one call.
 #[async_trait::async_trait]
 pub trait ConnectionDispatch: std::fmt::Debug + Send + Sync {
-    async fn resolve(&self, name: &str) -> anyhow::Result<Option<Arc<Connector>>>;
+    async fn resolve(&self, name: &str) -> anyhow::Result<Option<Arc<Integration>>>;
 }
 
-/// Routes application binding names through the current connection facts.
+/// Routes named imports through the current connection facts.
 #[derive(Debug)]
-pub struct ConnectorReader {
+pub struct IntegrationImports {
     dispatch: Arc<dyn ConnectionDispatch>,
+    interfaces: HashSet<String>,
 }
 
-impl ConnectorReader {
-    pub fn from_dispatch(dispatch: Arc<dyn ConnectionDispatch>) -> Self {
-        Self { dispatch }
+impl IntegrationImports {
+    pub fn from_dispatch(
+        dispatch: Arc<dyn ConnectionDispatch>,
+        interfaces: HashSet<String>,
+    ) -> Self {
+        Self {
+            dispatch,
+            interfaces,
+        }
+    }
+
+    pub async fn resolve(&self, name: &str) -> anyhow::Result<Option<Arc<Integration>>> {
+        self.dispatch.resolve(name).await
+    }
+
+    pub fn interfaces(&self) -> impl Iterator<Item = &str> {
+        self.interfaces.iter().map(String::as_str)
     }
 
     /// Observe the current store without exposing its handles.
     #[cfg(feature = "test-util")]
-    pub async fn store_id(&self, connection: &str) -> anyhow::Result<Option<String>> {
-        Ok(match self.dispatch.resolve(connection).await? {
+    pub async fn store_id(&self, name: &str) -> anyhow::Result<Option<String>> {
+        Ok(match self.dispatch.resolve(name).await? {
             Some(instance) => Some(instance.store_id().await),
             None => None,
         })
     }
 
     #[cfg(any(test, feature = "test-util"))]
-    pub fn new(connections: HashMap<String, Arc<Connector>>) -> Self {
-        Self::from_dispatch(Arc::new(FixedReads(connections)))
+    pub fn new(
+        connections: HashMap<String, Arc<Integration>>,
+        interfaces: HashSet<String>,
+    ) -> Self {
+        Self::from_dispatch(Arc::new(FixedImports(connections)), interfaces)
     }
 
-    /// Link this application's reader into its existing workload.
-    pub fn add_to_linker(
+    /// Bind every declared label before the application can instantiate.
+    pub async fn add_to_linker(
         self: &Arc<Self>,
         item: &mut WorkloadItem<'_>,
-        names: HashSet<String>,
-    ) -> anyhow::Result<()> {
-        let reader = Arc::clone(self);
-        let names = Arc::new(names);
-        item.linker().instance(READER)?.func_wrap_async(
-            "get",
-            move |_, (connection, request): (String, Vec<u8>)| {
-                let reader = Arc::clone(&reader);
-                let names = Arc::clone(&names);
-                Box::new(async move {
-                    let result = reader
-                        .get_declared(&names, connection, request)
-                        .await
-                        .map_err(|error| {
-                            wash_runtime::wasmtime::Error::msg(format!("{error:#}"))
-                        })?;
-                    Ok((result,))
-                })
-            },
-        )?;
-        Ok(())
-    }
-
-    /// Refuse a name outside the calling component's declarations.
-    pub async fn get_declared(
-        &self,
         names: &HashSet<String>,
-        connection: String,
-        request: Vec<u8>,
-    ) -> anyhow::Result<Result<Vec<u8>, ConnectorError>> {
-        anyhow::ensure!(
-            names.contains(&connection),
-            "connection undeclared: {connection}"
-        );
-        self.get(connection, request).await
-    }
-
-    /// Forward bytes to the named binding, or return unbound. A binding that
-    /// does not resolve answers unavailable, so the calling store stays usable.
-    pub async fn get(
-        &self,
-        connection: String,
-        request: Vec<u8>,
-    ) -> anyhow::Result<Result<Vec<u8>, ConnectorError>> {
-        match self.dispatch.resolve(&connection).await {
-            Ok(Some(instance)) => instance.get(connection, request).await,
-            Ok(None) => Ok(Err(ConnectorError::Unbound)),
-            Err(error) => {
-                tracing::warn!(connection, error = %format!("{error:#}"), "connection did not resolve");
-                Ok(Err(ConnectorError::Unavailable))
+    ) -> anyhow::Result<()> {
+        use wash_runtime::wasmtime::component::types::ComponentItem;
+        let component = item.component().clone();
+        let ty = component.component_type();
+        let engine = component.engine();
+        for (label, import) in ty.imports(engine) {
+            let Some(interface) = import.implements else {
+                continue;
+            };
+            if !self.interfaces.contains(interface) {
+                continue;
+            }
+            anyhow::ensure!(names.contains(label), "connection undeclared: {label}");
+            anyhow::ensure!(
+                self.dispatch.resolve(label).await?.is_some(),
+                "unbound: {label}"
+            );
+            let ComponentItem::ComponentInstance(import) = import.ty else {
+                anyhow::bail!("connection import is not an interface: {label}")
+            };
+            let mut instance = item.linker().instance(label)?;
+            for (function, export) in import.exports(engine) {
+                match export.ty {
+                    ComponentItem::ComponentFunc(function_type) => {
+                        let result_types = function_type.results().collect::<Vec<_>>();
+                        let unavailable = matches!(result_types.as_slice(), [Type::Result(result)]
+                            if matches!(result.err(), Some(Type::Variant(error))
+                                if error.cases().any(|case| case.name == "unavailable" && case.ty.is_none())));
+                        let dispatch = Arc::clone(&self.dispatch);
+                        let label = label.to_owned();
+                        let interface = interface.to_owned();
+                        let name = function.to_owned();
+                        instance.func_new_async(function, move |_, _, parameters, results| {
+                            let dispatch = Arc::clone(&dispatch);
+                            let label = label.clone();
+                            let interface = interface.clone();
+                            let name = name.clone();
+                            Box::new(async move {
+                                let instance =
+                                    dispatch.resolve(&label).await.and_then(|instance| {
+                                        instance.with_context(|| format!("unbound: {label}"))
+                                    });
+                                let instance = match instance {
+                                    Ok(instance) => instance,
+                                    Err(error) => {
+                                        if unavailable {
+                                            tracing::warn!(
+                                                connection = label,
+                                                interface,
+                                                "integration did not resolve"
+                                            );
+                                            results[0] = Val::Result(Err(Some(Box::new(
+                                                Val::Variant("unavailable".to_owned(), None),
+                                            ))));
+                                            return Ok(());
+                                        }
+                                        return Err(wash_runtime::wasmtime::Error::msg(format!(
+                                            "{error:#}"
+                                        )));
+                                    }
+                                };
+                                let values = instance
+                                    .call(&interface, &name, parameters)
+                                    .await
+                                    .map_err(|error| {
+                                        wash_runtime::wasmtime::Error::msg(format!("{error:#}"))
+                                    })?;
+                                if values.len() != results.len() {
+                                    return Err(wash_runtime::wasmtime::Error::msg(
+                                        "integration result count mismatch",
+                                    ));
+                                }
+                                results.clone_from_slice(&values);
+                                Ok(())
+                            })
+                        })?;
+                    }
+                    ComponentItem::Type(_) => {}
+                    _ => anyhow::bail!(
+                        "integration interface contains a store-owned resource: {interface}"
+                    ),
+                }
             }
         }
+        Ok(())
     }
 }
 
 #[cfg(any(test, feature = "test-util"))]
 #[derive(Debug)]
-struct FixedReads(HashMap<String, Arc<Connector>>);
+struct FixedImports(HashMap<String, Arc<Integration>>);
 
 #[cfg(any(test, feature = "test-util"))]
 #[async_trait::async_trait]
-impl ConnectionDispatch for FixedReads {
-    async fn resolve(&self, name: &str) -> anyhow::Result<Option<Arc<Connector>>> {
+impl ConnectionDispatch for FixedImports {
+    async fn resolve(&self, name: &str) -> anyhow::Result<Option<Arc<Integration>>> {
         Ok(self.0.get(name).cloned())
     }
 }
 
 #[cfg(any(test, feature = "test-util"))]
 #[async_trait::async_trait]
-impl HostPlugin for ConnectorReader {
+impl HostPlugin for IntegrationImports {
     fn id(&self) -> &'static str {
-        "wamn-connector-reader"
+        "wamn-integration-imports"
     }
     fn world(&self) -> WitWorld {
         WitWorld {
-            imports: HashSet::from([WitInterface::from(READER)]),
+            imports: self.interfaces().map(WitInterface::from).collect(),
             exports: HashSet::new(),
         }
+    }
+    fn supports_named_instances(&self) -> bool {
+        true
     }
     async fn on_workload_item_bind<'a>(
         &self,
         item: &mut WorkloadItem<'a>,
         _: WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
-        item.linker().instance(READER)?.func_wrap_async(
-            "get",
-            |ctx, (connection, request): (String, Vec<u8>)| {
-                let reader = ctx
-                    .data()
-                    .active_ctx
-                    .get_plugin::<Self>("wamn-connector-reader");
-                Box::new(async move {
-                    let result = reader.get(connection, request).await.map_err(|error| {
-                        wash_runtime::wasmtime::Error::msg(format!("{error:#}"))
-                    })?;
-                    Ok((result,))
-                })
-            },
-        )?;
-        Ok(())
+        let imports = Arc::new(Self::from_dispatch(
+            Arc::clone(&self.dispatch),
+            self.interfaces.clone(),
+        ));
+        let ty = item.component().component_type();
+        let names = ty
+            .imports(item.component().engine())
+            .filter(|(_, import)| {
+                import
+                    .implements
+                    .is_some_and(|interface| self.interfaces.contains(interface))
+            })
+            .map(|(name, _)| name.to_owned())
+            .collect();
+        imports.add_to_linker(item, &names).await
     }
 }
 
@@ -579,15 +653,35 @@ mod tests;
 
 #[cfg(test)]
 mod declaration_tests {
+    #[test]
+    fn bound_values_remove_auth_and_expose_only_custom_credentials() {
+        for auth_type in ["none", "http_basic", "custom"] {
+            let binding = super::IntegrationBinding::new("example.com:443", Some("private-secret".into())).unwrap()
+                .with_parameters(serde_json::json!({"authority":"example.com:443", "sample-count":3, "auth":{"name":"private-placement"}}), auth_type);
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&binding.parameters).unwrap(),
+                serde_json::json!({"authority":"example.com:443", "sample-count":3})
+            );
+            assert_eq!(
+                binding.credential.as_deref(),
+                (auth_type == "custom").then_some("private-secret")
+            );
+            assert!(!format!("{binding:?}").contains("private-secret"));
+        }
+    }
+
     use super::*;
     #[tokio::test]
     async fn a_new_bound_credential_links_without_compiling_again() -> anyhow::Result<()> {
         let mut resolve = wit_parser::Resolve::new();
         let package = resolve.push_str(
             "read.wit",
-            include_str!("../../runtime/wit/deps/wamn-connector/package.wit"),
+            &format!(
+                "{} world fixture {{ import bound; export health; }}",
+                include_str!("../../runtime/wit/deps/wamn-integration/package.wit")
+            ),
         )?;
-        let world = resolve.select_world(&[package], Some("connector"))?;
+        let world = resolve.select_world(&[package], Some("fixture"))?;
         let mut module =
             wit_component::dummy_module(&resolve, world, wit_parser::ManglingAndAbi::Standard32);
         wit_component::embed_component_metadata(
@@ -601,20 +695,20 @@ mod declaration_tests {
             .validate(true)
             .encode()?;
         let digest = crate::component_admission::component_digest(&bytes);
-        let first = Connector::load(
+        let first = Integration::load(
             &bytes,
-            ConnectorBinding::new("example.com:443", Some("first".into()))?,
+            IntegrationBinding::new("example.com:443", Some("first".into()))?,
         )
         .await?;
         assert_eq!(compile_count(&digest), 1);
-        let second = Connector::load(
+        let second = Integration::load(
             &bytes,
-            ConnectorBinding::new("example.com:443", Some("second".into()))?,
+            IntegrationBinding::new("example.com:443", Some("second".into()))?,
         )
         .await?;
         assert_eq!(compile_count(&digest), 1);
         assert_ne!(first.store_id().await, second.store_id().await);
-        let code = address_engine(connector_address_policy(&"example.com:443".parse()?))?;
+        let code = address_engine(integration_address_policy(&"example.com:443".parse()?))?;
         assert!(
             code.admitted.lock().await[&digest]
                 .pre_instantiate_ref()
@@ -624,35 +718,14 @@ mod declaration_tests {
         // A component custom section changes the digest without changing its WIT.
         changed.extend([0, 2, 1, b'v']);
         let changed_digest = crate::component_admission::component_digest(&changed);
-        let third = Connector::load(
+        let third = Integration::load(
             &changed,
-            ConnectorBinding::new("example.com:443", Some("third".into()))?,
+            IntegrationBinding::new("example.com:443", Some("third".into()))?,
         )
         .await?;
         assert_eq!(compile_count(&changed_digest), 1);
         assert_eq!(compile_count(&digest), 1);
         assert_ne!(second.store_id().await, third.store_id().await);
         Ok(())
-    }
-
-    #[tokio::test]
-    async fn an_undeclared_name_refuses_before_dispatch() {
-        let reader = ConnectorReader::new(HashMap::new());
-        let names = HashSet::from(["meter".to_owned()]);
-        assert!(
-            reader
-                .get_declared(&names, "other".into(), Vec::new())
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("connection undeclared")
-        );
-        assert!(matches!(
-            reader
-                .get_declared(&names, "meter".into(), Vec::new())
-                .await
-                .unwrap(),
-            Err(ConnectorError::Unbound)
-        ));
     }
 }

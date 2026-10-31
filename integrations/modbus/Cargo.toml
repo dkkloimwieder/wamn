@@ -2,7 +2,7 @@
 name = "wamn-modbus"
 version = "0.1.0"
 edition = "2024"
-description = "Bound Modbus TCP holding-register reader."
+description = "Bound Modbus TCP register operations and gateway health."
 license = "Apache-2.0"
 
 [lib]

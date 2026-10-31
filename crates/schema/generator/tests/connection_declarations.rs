@@ -6,7 +6,7 @@ fn manifest() -> serde_json::Value {
     json!({"package":{"id":"fixture","version":"1.0.0"},
         "required_platform_policy_contract":{"id":"fixture_data_access","state":"satisfied"},
         "models":{},"components":{"fixture":{"connections":[]}},
-        "connections":{"signed-upstream":{"interfaces":["wamn:connector/reader@0.1.0"],"mode":"read"}}})
+        "connections":{"signed-upstream":{"interface":"wamn:modbus/read@1.0.0","mode":"read"}}})
 }
 
 #[test]
@@ -30,12 +30,12 @@ fn connection_shape_refuses_missing_invalid_and_value_fields() {
         json!({"interfaces":["wamn:connection/http@0.1.0"]}),
         json!({"integration_type":"http","mode":"read"}),
         json!({"integration":"http","mode":"read"}),
-        json!({"interfaces":["invalid"],"mode":"read"}),
+        json!({"interface":"invalid","mode":"read"}),
         json!({"interfaces":[],"mode":"read"}),
-        json!({"interfaces":["wamn:connection/http@0.1.0"],"mode":"execute"}),
-        json!({"interfaces":["wamn:connection/http@0.1.0"],"mode":"read","url":"https://example.com"}),
-        json!({"interfaces":["wamn:connection/http@0.1.0"],"mode":"read","credential":"secret"}),
-        json!({"interfaces":["wamn:connection/http@0.1.0"],"mode":"read","parameters":{}}),
+        json!({"interface":"wamn:connection/http@0.1.0","mode":"execute"}),
+        json!({"interface":"wamn:connection/http@0.1.0","mode":"read","url":"https://example.com"}),
+        json!({"interface":"wamn:connection/http@0.1.0","mode":"read","credential":"secret"}),
+        json!({"interface":"wamn:connection/http@0.1.0","mode":"read","parameters":{}}),
     ] {
         let mut value = manifest();
         value["connections"]["signed-upstream"] = entry;
@@ -54,17 +54,17 @@ fn kcl_checks_interfaces_mode_and_no_values() {
     let path = directory.join("wamn.k");
     for (entry, valid) in [
         (
-            r#"interfaces = ["example:meter/read@1.0.0"], mode = "read""#,
+            r#"interface = "example:meter/read@1.0.0", mode = "read""#,
             true,
         ),
         (
-            r#"interfaces = ["wamn:connection/http@0.1.0"], mode = "write""#,
+            r#"interface = "wamn:connection/http@0.1.0", mode = "write""#,
             true,
         ),
         (r#"integration = "http""#, false),
         (r#"mode = "read""#, false),
         (r#"interfaces = [], mode = "read""#, false),
-        (r#"interfaces = [""], mode = "read""#, false),
+        (r#"interface = "", mode = "read""#, false),
         (r#"integration = "http", mode = "execute""#, false),
         (
             r#"integration = "http", mode = "read", url = "https://example.com""#,
@@ -90,4 +90,25 @@ manifest.Package {{
         assert_eq!(compiled.is_ok(), valid, "{entry}: {compiled:?}");
     }
     std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn connection_names_use_the_same_label_rule_as_install() {
+    for (name, valid) in [
+        ("a".to_owned(), true),
+        ("a".repeat(63), true),
+        ("a".repeat(64), false),
+        ("with-digits-42".to_owned(), true),
+        (String::new(), false),
+        ("Upper".to_owned(), false),
+        ("has_underscore".to_owned(), false),
+        ("1first".to_owned(), false),
+        ("two.words".to_owned(), false),
+    ] {
+        let mut value = manifest();
+        let declaration = value["connections"]["signed-upstream"].clone();
+        value["connections"] = json!({name.clone(): declaration});
+        let parsed = PackageManifest::from_slice(&serde_json::to_vec(&value).unwrap());
+        assert_eq!(parsed.is_ok(), valid, "{name:?}: {parsed:?}");
+    }
 }

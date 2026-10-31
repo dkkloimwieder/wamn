@@ -1,4 +1,4 @@
-//! Build and publish digest-addressed wasm connector artifacts.
+//! Build and publish digest-addressed wasm integration artifacts.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -10,11 +10,11 @@ use tokio::process::Command;
 use wamn_catalog::RuntimeType;
 use wamn_package_artifact::{PackageRegistry, Repository, sha256_digest};
 
-/// OCI artifact type for one independently published connector.
-pub use wamn_package_artifact::connector::ARTIFACT_TYPE;
-use wamn_package_artifact::connector::{CONFIG_TYPE, WASM_TYPE};
+/// OCI artifact type for one independently published integration.
+pub use wamn_package_artifact::integration::ARTIFACT_TYPE;
+use wamn_package_artifact::integration::{CONFIG_TYPE, WASM_TYPE};
 
-/// The immutable output of a local connector build.
+/// The immutable output of a local integration build.
 #[derive(Debug)]
 pub struct BuiltIntegration {
     pub code: String,
@@ -53,7 +53,7 @@ fn source_files(
         let kind = entry.file_type()?;
         ensure!(
             !kind.is_symlink(),
-            "connector source contains a symbolic link: {}",
+            "integration source contains a symbolic link: {}",
             path.display()
         );
         if kind.is_dir() {
@@ -117,7 +117,7 @@ pub async fn build(repository: &Path, code: &str) -> anyhow::Result<BuiltIntegra
         .arg(&manifest_path)
         .output()
         .await
-        .context("build connector")?;
+        .context("build integration")?;
     ensure!(
         output.status.success(),
         "build integration {code}: {}",
@@ -149,17 +149,18 @@ pub async fn build(repository: &Path, code: &str) -> anyhow::Result<BuiltIntegra
                 .map(PathBuf::from);
         }
     }
-    let component = std::fs::read(component_path.context("connector build gave no wasm cdylib")?)?;
+    let component =
+        std::fs::read(component_path.context("integration build gave no wasm cdylib")?)?;
     ensure!(
         wasmparser::Parser::is_component(&component),
-        "connector output is not a WebAssembly component"
+        "integration output is not a WebAssembly component"
     );
     wasmparser::Validator::new()
         .validate_all(&component)
-        .context("invalid connector component")?;
+        .context("invalid integration component")?;
     ensure!(
         inputs == source_digest(&root)?,
-        "connector sources changed during the build"
+        "integration sources changed during the build"
     );
     let config = wamn_execution_contract::canonical_json_bytes(&json!({
         "code":code, "runtime_type":RuntimeType::Wasm, "source_digest":inputs
@@ -176,7 +177,7 @@ pub async fn build(repository: &Path, code: &str) -> anyhow::Result<BuiltIntegra
         .join(&digest[7..]);
     std::fs::create_dir_all(&directory)?;
     for (name, bytes) in [
-        ("connector.wasm", &component),
+        ("integration.wasm", &component),
         ("config.json", &config),
         ("manifest.json", &manifest),
     ] {
@@ -232,17 +233,23 @@ pub async fn publish(
     let (manifest, digest) = repository
         .manifest()
         .await?
-        .context("published connector is absent")?;
+        .context("published integration is absent")?;
     ensure!(
         manifest == built.manifest && digest == built.digest,
-        "published connector manifest differs from its build"
+        "published integration manifest differs from its build"
     );
     let pulled =
-        wamn_package_artifact::connector::pull(registry, &built.code, &built.digest).await?;
+        wamn_package_artifact::integration::pull(registry, &built.code, &built.digest).await?;
     ensure!(
         pulled == built.component,
-        "published connector bytes differ from its build"
+        "published integration bytes differ from its build"
     );
+    let engine = wamn_engine::build_engine(&[])?;
+    wamn_engine::component_admission::validate_integration_admission(
+        &engine,
+        &pulled,
+        &built.code,
+    )?;
     let exports = crate::connection_requirement::exported_interfaces(&pulled)?;
     let mut system = crate::environment::analyse::connect(database_url).await?;
     let tx = system.transaction().await?;

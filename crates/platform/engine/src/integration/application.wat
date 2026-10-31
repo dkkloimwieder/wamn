@@ -1,6 +1,6 @@
 ;; The application forwards a logical request. It imports no binding values.
 (module
-  (import "wamn:connector/reader@0.1.0" "get" (func $get (param i32 i32 i32 i32 i32)))
+  IMPORTS
   (memory (export "memory") 1)
   (data (i32.const 2048) "\00\ff\80\01")
   (data (i32.const 2080) "\22unbound\22")
@@ -11,10 +11,7 @@
     local.get $ptr)
   ;; The canonical ABI passes the large node context and input indirectly.
   (func (export "wamn:node/handler@0.1.0#run") (param $args i32) (result i32)
-    local.get $args i32.load offset=96
-    local.get $args i32.load offset=100
-    i32.const 2048 i32.const 4
-    i32.const 16 call $get
+    CALL
     (if (i32.load8_u (i32.const 16)) (then
       ;; Only the unbound case can produce this emission.
       (if (i32.load8_u (i32.const 20)) (then unreachable))

@@ -1657,12 +1657,13 @@ async fn prepare_local_bindings(
             .find(|package| package.package.id == input.package_id)
             .and_then(|package| package.connections.get(input.requirement.store_alias()))
             .context("local connection declaration missing")?;
-        let interfaces = crate::connection_requirement::require_imports(
+        let interface = crate::connection_requirement::require_imports(
             admission.bytes(),
-            &declaration.interfaces,
+            input.requirement.store_alias(),
+            &declaration.interface,
         )?;
         let mode = if input.read_only { "read" } else { "write" };
-        tx.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interfaces,mode) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING", &[&config.activation_identity().env_key(),&input.requirement.component_digest(),&input.package_id,&input.requirement.store_alias(),&interfaces,&mode]).await?;
+        tx.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING", &[&config.activation_identity().env_key(),&input.requirement.component_digest(),&input.package_id,&input.requirement.store_alias(),&interface,&mode]).await?;
     }
     tx.commit().await?;
     Ok(prepared)

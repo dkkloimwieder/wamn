@@ -9,6 +9,8 @@ const INPUTS: &[&str] = &[
     "kcl",
     "Cargo.toml",
     "build.rs",
+    "../../platform/component-virtualizer/src",
+    "../../platform/component-virtualizer/Cargo.toml",
     "../../../deploy/sql/record-history.sql",
     "../../../deploy/sql/record-history-app-grants.sql",
 ];
@@ -20,6 +22,8 @@ fn main() -> io::Result<()> {
     println!("cargo:rerun-if-changed=kcl");
     println!("cargo:rerun-if-changed=Cargo.toml");
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=../../platform/component-virtualizer/src");
+    println!("cargo:rerun-if-changed=../../platform/component-virtualizer/Cargo.toml");
     println!("cargo:rerun-if-changed=../../../deploy/sql/record-history.sql");
     println!("cargo:rerun-if-changed=../../../deploy/sql/record-history-app-grants.sql");
 

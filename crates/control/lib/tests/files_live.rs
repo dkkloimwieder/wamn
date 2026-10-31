@@ -29,12 +29,12 @@ fn file_fixture_declares_each_binding_mode() {
     let _: wamn_catalog::ComponentDeclaration = serde_json::from_value(declaration)
         .expect("the fixture uses the current component declaration");
     assert_eq!(
-        package["connections"]["files"]["interfaces"],
-        serde_json::json!(["wasmcloud:blobstore/blobstore@0.1.0"])
+        package["connections"]["files"]["interface"],
+        serde_json::json!("wasmcloud:blobstore/blobstore@0.1.0")
     );
     assert_eq!(package["connections"]["files"]["mode"], "write");
-    assert_eq!(package["connections"]["files_read"]["mode"], "read");
-    assert_eq!(package["connections"]["files_no_cdn"]["mode"], "write");
+    assert_eq!(package["connections"]["files-read"]["mode"], "read");
+    assert_eq!(package["connections"]["files-no-cdn"]["mode"], "write");
 }
 
 #[tokio::test]

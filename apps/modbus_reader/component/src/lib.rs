@@ -7,7 +7,8 @@
 
 wit_bindgen::generate!({
     path: [
-        "../../../crates/platform/runtime/wit/deps/wamn-connector",
+        "../../../crates/platform/runtime/wit/deps/wamn-integration",
+        "../../../integrations/modbus/wit",
         "../../../crates/execution/workflow/router/wit",
         "../../target/wamn/modbus_reader/wit",
         "wit",
@@ -21,7 +22,7 @@ wit_bindgen::generate!({
 });
 
 use exports::modbus_reader::register::read as contract;
-use wamn::connector::reader::{self, ConnectorError};
+use registers::{self as read_registers, Error};
 
 struct Application;
 export!(Application);
@@ -35,7 +36,7 @@ mod codec {
 }
 
 async fn read(
-    (): &mut (),
+    unit: &mut u8,
     request: contract::ReadRequest,
 ) -> Result<contract::ReadResult, contract::ReadError> {
     let invalid = |field: &str| {
@@ -43,21 +44,55 @@ async fn read(
             field: field.to_owned(),
         })
     };
-    let unit = u8::try_from(request.unit).map_err(|_| invalid("value.unit"))?;
     let address = u16::try_from(request.address).map_err(|_| invalid("value.address"))?;
-    let [hi, lo] = address.to_be_bytes();
-    let bytes = reader::get("registers", &[unit, hi, lo, 0, 1]).map_err(|error| match error {
-        ConnectorError::Unavailable => contract::ReadError::Unavailable,
-        ConnectorError::Timeout => contract::ReadError::Timeout,
-        ConnectorError::Transport(_) => contract::ReadError::Retry,
-        _ => contract::ReadError::InternalError,
-    })?;
-    let [hi, lo]: [u8; 2] = bytes
+    let registers =
+        read_registers::read_registers(*unit, address, 1).map_err(|error| match error {
+            Error::Unavailable => contract::ReadError::Unavailable,
+            Error::Timeout => contract::ReadError::Timeout,
+            Error::Transport(_) => contract::ReadError::Retry,
+            Error::AuthorityDenied => contract::ReadError::InternalError,
+        })?;
+    let [register]: [u16; 1] = registers
         .try_into()
         .map_err(|_| contract::ReadError::InternalError)?;
     Ok(contract::ReadResult {
-        register: i32::from(u16::from_be_bytes([hi, lo])),
+        register: i32::from(register),
     })
 }
 
-codec::export_operation!(Application, contract, wamn::node::types, (), read, codec);
+use wamn::node::types::{Emission, ErrorDetail, NodeContext, NodeError};
+
+fn invalid(message: &str) -> NodeError {
+    NodeError::InvalidInput(ErrorDetail {
+        message: message.to_owned(),
+        code: Some("invalid_input".into()),
+    })
+}
+
+impl contract::Guest for Application {
+    async fn run(
+        context: NodeContext,
+        input: Vec<contract::ReadItem>,
+    ) -> Result<Vec<contract::ReadOutcome>, NodeError> {
+        codec::validate(&input).map_err(|error| invalid(error.context()))?;
+        let mut unit = serde_json::from_str::<serde_json::Value>(&context.config)
+            .ok()
+            .and_then(|value| {
+                value["unit"]
+                    .as_u64()
+                    .and_then(|unit| u8::try_from(unit).ok())
+            })
+            .filter(|unit| (1..=247).contains(unit))
+            .ok_or_else(|| invalid("unit must be between 1 and 247"))?;
+        Ok(codec::run(input, &mut unit, read).await)
+    }
+
+    async fn run_json(context: NodeContext, input: String) -> Result<Emission, NodeError> {
+        let input = codec::decode(&input).map_err(|error| invalid(error.context()))?;
+        let output = <Self as contract::Guest>::run(context, input).await?;
+        Ok(Emission {
+            payload: codec::encode(&output),
+            port: None,
+        })
+    }
+}

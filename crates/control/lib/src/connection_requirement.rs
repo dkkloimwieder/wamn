@@ -6,10 +6,6 @@ use anyhow::{Context as _, ensure};
 use tokio_postgres::Transaction;
 use wamn_schema_generator::PackageManifest;
 
-/// Read canonical interface identities from the component's import world.
-pub(crate) fn imported_interfaces(bytes: &[u8]) -> anyhow::Result<Vec<String>> {
-    world_interfaces(bytes, false)
-}
 pub(crate) fn exported_interfaces(bytes: &[u8]) -> anyhow::Result<Vec<String>> {
     world_interfaces(bytes, true)
 }
@@ -35,15 +31,28 @@ fn world_interfaces(bytes: &[u8], exports: bool) -> anyhow::Result<Vec<String>> 
     names.dedup();
     Ok(names)
 }
-pub(crate) fn require_imports(bytes: &[u8], declared: &[String]) -> anyhow::Result<Vec<String>> {
-    let imports = imported_interfaces(bytes)?;
-    for interface in declared {
-        ensure!(
-            imports.contains(interface),
-            "declared interface {interface} is not imported by the component"
-        );
-    }
-    Ok(declared.to_vec())
+pub(crate) fn require_imports(bytes: &[u8], name: &str, interface: &str) -> anyhow::Result<String> {
+    ensure!(
+        wamn_schema_generator::valid_connection_name(name),
+        "connection name must match ^[a-z][a-z0-9-]{{0,62}}$: {name}"
+    );
+    let wit_component::DecodedWasm::Component(resolve, world) = wit_component::decode(bytes)?
+    else {
+        anyhow::bail!("connection authority needs a component binary")
+    };
+    let host = wamn_schema_generator::host_connection_interface(interface);
+    let found = resolve.worlds[world].imports.iter().any(|(key, item)| {
+        let wit_parser::WorldItem::Interface { id, .. } = item else {
+            return false;
+        };
+        let matches = resolve.id_of(*id).as_deref() == Some(interface);
+        matches && (host || matches!(key, wit_parser::WorldKey::Name(label) if label == name))
+    });
+    ensure!(
+        found,
+        "declared connection {name} does not import {interface} under its required label"
+    );
+    Ok(interface.to_owned())
 }
 
 pub(crate) async fn install(
@@ -66,12 +75,39 @@ pub(crate) async fn install(
             wamn_engine::component_admission::component_digest(&bytes) == digest,
             "component differs from its admitted digest {digest}"
         );
+        let wit_component::DecodedWasm::Component(resolve, world) = wit_component::decode(&bytes)?
+        else {
+            anyhow::bail!("connection authority needs a component binary")
+        };
+        for (key, item) in &resolve.worlds[world].imports {
+            let (wit_parser::WorldKey::Name(label), wit_parser::WorldItem::Interface { id, .. }) =
+                (key, item)
+            else {
+                continue;
+            };
+            let Some(interface) = resolve.id_of(*id) else {
+                continue;
+            };
+            if wamn_schema_generator::host_connection_interface(&interface)
+                || interface.starts_with("wamn:postgres/")
+            {
+                continue;
+            }
+            ensure!(
+                connections.contains(label)
+                    && manifest
+                        .connections
+                        .get(label)
+                        .is_some_and(|declared| declared.interface == interface),
+                "connection undeclared: {label} importing {interface}"
+            );
+        }
         for name in &connections {
             let declaration = manifest
                 .connections
                 .get(name)
                 .with_context(|| format!("package declares no connection {name}"))?;
-            let interfaces = require_imports(&bytes, &declaration.interfaces)?;
+            let interface = require_imports(&bytes, name, &declaration.interface)?;
             let mode = match declaration.mode {
                 wamn_schema_generator::ConnectionMode::Read => "read",
                 wamn_schema_generator::ConnectionMode::Write => "write",
@@ -81,16 +117,16 @@ pub(crate) async fn install(
                 &digest,
                 &manifest.package.id,
                 &name,
-                &interfaces,
+                &interface,
                 &mode,
             ];
             written += tx.execute(
-                "INSERT INTO catalog.connection_requirement (env_key,component_digest,package_id,name,interfaces,mode) \
+                "INSERT INTO catalog.connection_requirement (env_key,component_digest,package_id,name,interface,mode) \
                  VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING", &params,
             ).await?;
             let exact: bool = tx.query_one(
                 "SELECT EXISTS (SELECT FROM catalog.connection_requirement WHERE env_key=$1 AND component_digest=$2 \
-                 AND package_id=$3 AND name=$4 AND interfaces=$5 AND mode=$6)", &params,
+                 AND package_id=$3 AND name=$4 AND interface=$5 AND mode=$6)", &params,
             ).await?.get(0);
             ensure!(
                 exact,
@@ -104,6 +140,35 @@ pub(crate) async fn install(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn install_requires_the_declared_label_for_a_typed_interface() {
+        let mut resolve = test_wit_parser::Resolve::new();
+        let package = resolve.push_str("typed.wit", "package example:meter@1.0.0; interface read { get: func() -> u16; } world client { import registers: read; }").unwrap();
+        let world = resolve.select_world(&[package], Some("client")).unwrap();
+        let mut module = test_wit_component::dummy_module(
+            &resolve,
+            world,
+            test_wit_parser::ManglingAndAbi::Standard32,
+        );
+        test_wit_component::embed_component_metadata(
+            &mut module,
+            &resolve,
+            world,
+            test_wit_component::StringEncoding::UTF8,
+        )
+        .unwrap();
+        let bytes = test_wit_component::ComponentEncoder::default()
+            .module(&module)
+            .unwrap()
+            .validate(true)
+            .encode()
+            .unwrap();
+        super::require_imports(&bytes, "registers", "example:meter/read@1.0.0").unwrap();
+        assert!(super::require_imports(&bytes, "other", "example:meter/read@1.0.0").is_err());
+        assert!(super::require_imports(&bytes, "bad_name", "example:meter/read@1.0.0").is_err());
+        assert!(super::require_imports(&bytes, "registers", "example:meter/write@1.0.0").is_err());
+    }
+
     #[test]
     fn install_refuses_a_declared_interface_not_imported() {
         let mut resolve = wit_parser::Resolve::new();
@@ -135,7 +200,7 @@ mod tests {
             .encode()
             .unwrap();
         assert_eq!(
-            super::imported_interfaces(&bytes).unwrap(),
+            super::world_interfaces(&bytes, false).unwrap(),
             [
                 "wamn:connection/http@0.1.0",
                 "wamn:connection/metadata@0.1.0",
@@ -146,9 +211,8 @@ mod tests {
             ["wamn:connection/http@0.1.0"]
         );
         assert!(
-            super::require_imports(&bytes, &["wasmcloud:blobstore/blobstore@0.1.0".into()])
-                .is_err()
+            super::require_imports(&bytes, "files", "wasmcloud:blobstore/blobstore@0.1.0").is_err()
         );
-        super::require_imports(&bytes, &["wamn:connection/http@0.1.0".into()]).unwrap();
+        super::require_imports(&bytes, "upstream", "wamn:connection/http@0.1.0").unwrap();
     }
 }

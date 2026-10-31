@@ -1,5 +1,4 @@
 package wamn:modbus-example;
 world application {
-    import wamn:connector/reader@0.1.0;
     include modbus-reader:generated/generated;
 }

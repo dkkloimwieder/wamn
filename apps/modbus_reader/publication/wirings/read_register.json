@@ -8,7 +8,7 @@
       "component": "modbus_reader",
       "interface-version": "0.1.0",
       "operation": "modbus-reader:register/read",
-      "params": {}
+      "params": {"unit": 1}
     },
     "result": {
       "component": "jsonata",

@@ -143,12 +143,12 @@ async fn assertions(run: &Run, fixture: &Fixture) -> anyhow::Result<()> {
         ensure!(mutate(id,"files","public").await?["value"]["url"]==url,"expose is idempotent");
         for _ in 0..2 {ensure!(mutate(id,"files","application").await?.get("value").is_some(),"unexpose is idempotent");}
         ensure!(client.get(url).send().await?.status().as_u16()==404,"unexpose removes the origin object at once");
-        let denied = client.post(format!("{base}/api/files/files?binding=files_read&name=denied.txt"))
+        let denied = client.post(format!("{base}/api/files/files?binding=files-read&name=denied.txt"))
             .header("host",&fixture.route_host).header("authorization",&fixture.session)
             .header("content-type","text/plain").body("denied").send().await?;
         ensure!(denied.status().as_u16()==403,"a read binding refuses deployed uploads");
-        let no_cdn = upload("files_no_cdn",b"no CDN").await?;
-        ensure!(mutate(no_cdn,"files_no_cdn","public").await?["error"]["code"]=="cdn_host_required",
+        let no_cdn = upload("files-no-cdn",b"no CDN").await?;
+        ensure!(mutate(no_cdn,"files-no-cdn","public").await?["error"]["code"]=="cdn_host_required",
             "a store without cdn_host refuses public exposure");
         Ok::<_,anyhow::Error>(())
     }.await;

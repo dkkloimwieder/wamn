@@ -8,7 +8,7 @@ pub mod connection_authority;
 pub mod connection_facts;
 pub mod connection_generation;
 pub mod connection_memory;
-pub mod connectors;
+pub mod integrations;
 mod kv_memory;
 pub mod local_application;
 pub mod plugins;

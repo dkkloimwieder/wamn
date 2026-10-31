@@ -20,14 +20,14 @@ fn document() -> EnvironmentDocument {
     })).unwrap()).unwrap()
 }
 fn package(integration_type: &str) -> PackageManifest {
-    let interfaces = vec![match integration_type {
+    let interface = match integration_type {
         "http" => "wamn:connection/http@0.1.0",
         "gcs" | "s3" => "wasmcloud:blobstore/blobstore@0.1.0",
-        _ => "wamn:connector/reader@0.1.0",
-    }];
+        _ => "wamn:modbus/read@1.0.0",
+    };
     PackageManifest::from_slice(&serde_json::to_vec(&json!({
         "package":{"id":"fixture","version":"1"},"required_platform_policy_contract":{"id":"fixture_access","state":"satisfied"},
-        "models":{},"components":{},"connections":{"upstream":{"interfaces":interfaces,"mode":"write"}}
+        "models":{},"components":{},"connections":{"upstream":{"interface":interface,"mode":"write"}}
     })).unwrap()).unwrap()
 }
 async fn seed(client: &mut tokio_postgres::Client) {
@@ -387,12 +387,8 @@ async fn apply_refuses_a_connection_version_missing_one_required_interface() {
         .await
         .unwrap();
     let mut package = package("http");
-    package
-        .connections
-        .get_mut("upstream")
-        .unwrap()
-        .interfaces
-        .push("wamn:connection/metadata@0.1.0".into());
+    package.connections.get_mut("upstream").unwrap().interface =
+        "wamn:connection/metadata@0.1.0".into();
     assert_eq!(
         bindings::analyse(&client, &document(), &[package])
             .await
@@ -448,4 +444,22 @@ async fn blobstore_interfaces_accept_another_storage_provider() {
         .unwrap();
     assert_eq!(bindings.len(), 1);
     assert_eq!(bindings[0].integration_type, "gcs");
+}
+
+#[tokio::test]
+async fn publish_refuses_wasm_and_native_worlds_without_health() {
+    let database = wamn_control_provision::test_database::system();
+    let client = connect(database.url()).await;
+    client.batch_execute("SET ROLE wamn_system; INSERT INTO registry.integration_type(code,runtime_type,exclusive) VALUES ('native-health','native',false); SET ROLE wamn_control").await.unwrap();
+    for code in ["modbus", "native-health"] {
+        let error = client.query_one("SELECT registry.publish_integration($1,2,$2,$3,$4,$5)", &[
+            &code, &format!("sha256:{}", "a".repeat(64)),
+            &json!({"type":"object","properties":{"authority":{"type":"string","immutable":true}},"required":["authority"]}),
+            &"wamn:modbus/client@1.0.0", &vec!["wamn:modbus/read@1.0.0".to_owned()],
+        ]).await.unwrap_err();
+        assert_eq!(
+            error.as_db_error().unwrap().message(),
+            "health_export_required"
+        );
+    }
 }

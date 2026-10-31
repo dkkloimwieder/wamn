@@ -7,7 +7,9 @@ use anyhow::Context as _;
 use moka::sync::Cache;
 use oci_client::secrets::RegistryAuth;
 use tokio::sync::Mutex;
-use wamn_engine::connector::{ConnectionDispatch, Connector, ConnectorBinding, ConnectorReader};
+use wamn_engine::integration::{
+    ConnectionDispatch, Integration, IntegrationBinding, IntegrationImports,
+};
 use wamn_package_artifact::registry_credentials::RegistryCredentialSource;
 use wamn_package_artifact::{PackageRegistry, Repository};
 
@@ -20,7 +22,7 @@ type InstanceKey = (uuid::Uuid, i64, Option<uuid::Uuid>);
 #[derive(Debug, Clone)]
 struct LinkedRead {
     digest: String,
-    instance: Arc<Connector>,
+    instance: Arc<Integration>,
 }
 
 #[derive(Debug)]
@@ -48,24 +50,25 @@ impl std::fmt::Debug for ReadResources {
 }
 
 #[derive(Debug)]
-struct ApplicationReads {
+struct ComponentReads {
     resources: Arc<ReadResources>,
-    // Immutable declarations map each name to its component and package.
-    names: HashMap<String, (String, String)>,
+    component: String,
+    package: String,
+    names: HashSet<String>,
 }
 
 #[async_trait::async_trait]
-impl ConnectionDispatch for ApplicationReads {
-    async fn resolve(&self, name: &str) -> anyhow::Result<Option<Arc<Connector>>> {
-        let Some((component, package)) = self.names.get(name) else {
+impl ConnectionDispatch for ComponentReads {
+    async fn resolve(&self, name: &str) -> anyhow::Result<Option<Arc<Integration>>> {
+        if !self.names.contains(name) {
             return Ok(None);
-        };
+        }
         let resources = &self.resources;
         // Serialize fact observations and first links so an old observation cannot
         // evict a newer link, and concurrent misses prepare only one instance.
         let mut state = resources.state.lock().await;
         let release = resources.facts.release(&resources.manifest_digest).await?;
-        let Some(binding) = release.binding(component, package, name) else {
+        let Some(binding) = release.binding(&self.component, &self.package, name) else {
             return Ok(None);
         };
         let id = binding.connection_id;
@@ -98,11 +101,15 @@ impl ConnectionDispatch for ApplicationReads {
         let authority = generation.parameters["authority"]
             .as_str()
             .context("wasm connection needs authority")?;
-        let credential = match fact.credential_id {
+        let credential = match fact
+            .credential_id
+            .filter(|_| generation.auth_type == "custom")
+        {
             Some(id) => Some(resources.facts.secret(&id).await?.expose().to_owned()),
             None => None,
         };
-        let bound = ConnectorBinding::new(authority, credential)?;
+        let bound = IntegrationBinding::new(authority, credential)?
+            .with_parameters(generation.parameters.clone(), &generation.auth_type);
         let bytes = if let Some(bytes) = state.bytes.get(digest) {
             Arc::clone(bytes)
         } else {
@@ -121,7 +128,7 @@ impl ConnectionDispatch for ApplicationReads {
                 ),
             )?;
             let bytes = Arc::new(
-                wamn_package_artifact::connector::pull_from(
+                wamn_package_artifact::integration::pull_from(
                     &repository,
                     &generation.integration_type,
                     digest,
@@ -131,7 +138,7 @@ impl ConnectionDispatch for ApplicationReads {
             state.bytes.insert(digest.to_owned(), Arc::clone(&bytes));
             bytes
         };
-        let instance = Arc::new(Connector::load(&bytes, bound).await?);
+        let instance = Arc::new(Integration::load(&bytes, bound).await?);
         state.linked.insert(
             key,
             LinkedRead {
@@ -169,13 +176,14 @@ impl ReadState {
     }
 }
 
-/// Process-owned readers with immutable declarations and shared links by identity.
+/// Process-owned imports with immutable declarations and shared links by identity.
 #[derive(Debug)]
-pub struct Connectors {
-    readers: HashMap<String, Arc<ConnectorReader>>,
+pub struct Integrations {
+    imports: HashMap<(String, String), Arc<IntegrationImports>>,
+    declarations: HashMap<(String, String), HashSet<String>>,
 }
 
-impl Connectors {
+impl Integrations {
     /// Read immutable declarations before the application stores load.
     pub async fn new(
         facts: Arc<ConnectionFacts>,
@@ -196,87 +204,146 @@ impl Connectors {
                 bytes: HashMap::new(),
             }),
         });
-        let mut declarations = release
-            .scope()
-            .applications
-            .keys()
-            .map(|name| (name.clone(), HashMap::new()))
-            .collect::<HashMap<_, _>>();
+        let mut imports = HashMap::new();
+        let mut declarations = HashMap::new();
         for component in &release.manifest().components {
-            let application = wamn_catalog::application_for_package(
-                &release.scope().applications,
-                &component.package_id,
-            )
-            .context("connection component has no application")?;
-            let names = postgres
-                .declared_connection_names(
-                    project,
-                    &release.scope().env_key,
-                    &component.package_id,
-                    &component.descriptor.component_digest,
-                )
+            let digest = &component.descriptor.component_digest;
+            let package = &component.package_id;
+            let declared = postgres
+                .declared_connection_interfaces(project, &release.scope().env_key, package, digest)
                 .await?;
-            let declared = declarations
-                .get_mut(application)
-                .context("connection application is not declared")?;
-            for name in names {
-                // The application declares one target for each name, even when
-                // several of its components declare that same name.
-                declared.entry(name).or_insert_with(|| {
-                    (
-                        component.descriptor.component_digest.clone(),
-                        component.package_id.clone(),
-                    )
-                });
-            }
+            let declared: Vec<_> = declared
+                .into_iter()
+                .filter(|(_, interface)| !host_interface(interface))
+                .collect();
+            let names: HashSet<_> = declared.iter().map(|(name, _)| name.clone()).collect();
+            let interfaces = declared
+                .into_iter()
+                .map(|(_, interface)| interface)
+                .collect();
+            let dispatch = Arc::new(ComponentReads {
+                resources: Arc::clone(&resources),
+                component: digest.clone(),
+                package: package.clone(),
+                names: names.clone(),
+            });
+            let key = (digest.clone(), package.clone());
+            declarations.insert(key.clone(), names);
+            imports.insert(
+                key,
+                Arc::new(IntegrationImports::from_dispatch(dispatch, interfaces)),
+            );
         }
         Ok(Self {
-            readers: declarations
-                .into_iter()
-                .map(|(application, names)| {
-                    let dispatch = Arc::new(ApplicationReads {
-                        resources: Arc::clone(&resources),
-                        names,
-                    });
-                    (
-                        application,
-                        Arc::new(ConnectorReader::from_dispatch(dispatch)),
-                    )
-                })
-                .collect(),
+            imports,
+            declarations,
         })
     }
 
-    pub fn reader(&self, application: &str) -> anyhow::Result<Arc<ConnectorReader>> {
-        self.readers
-            .get(application)
+    pub fn interfaces(&self) -> HashSet<wash_runtime::wit::WitInterface> {
+        self.imports
+            .values()
+            .flat_map(|imports| imports.interfaces())
+            .map(wash_runtime::wit::WitInterface::from)
+            .collect()
+    }
+
+    pub fn imports(
+        &self,
+        component: &str,
+        package: &str,
+    ) -> anyhow::Result<Arc<IntegrationImports>> {
+        self.imports
+            .get(&(component.to_owned(), package.to_owned()))
             .cloned()
-            .context("connection application is not declared")
+            .context("connection component is not declared")
+    }
+
+    /// Link only the labels declared by the exact component and package owners.
+    pub async fn add_to_linker(
+        &self,
+        item: &mut wash_runtime::engine::workload::WorkloadItem<'_>,
+        owners: &[(&str, &str)],
+    ) -> anyhow::Result<()> {
+        let mut routes = HashMap::new();
+        let mut interfaces = HashSet::new();
+        for &(component, package) in owners {
+            let key = (component.to_owned(), package.to_owned());
+            let Some(names) = self.declarations.get(&key) else {
+                continue;
+            };
+            let imports = self.imports(component, package)?;
+            for name in names {
+                routes
+                    .entry(name.clone())
+                    .or_insert_with(Vec::new)
+                    .push(Arc::clone(&imports));
+            }
+            interfaces.extend(imports.interfaces().map(str::to_owned));
+        }
+        let names = routes.keys().cloned().collect();
+        let imports = Arc::new(IntegrationImports::from_dispatch(
+            Arc::new(ComponentImports { routes }),
+            interfaces,
+        ));
+        imports.add_to_linker(item, &names).await
     }
 }
 
-/// Reader for the native HTTP entry. Operation workloads bind their own application.
+fn host_interface(interface: &str) -> bool {
+    interface.starts_with("wamn:connection/") || interface.starts_with("wasmcloud:blobstore/")
+}
+
 #[derive(Debug)]
-pub struct ConnectorIngress {
-    pub postgres: Arc<crate::plugins::wamn_postgres::WamnPostgres>,
-    pub project: String,
-    pub connectors: Arc<Connectors>,
+struct ComponentImports {
+    routes: HashMap<String, Vec<Arc<IntegrationImports>>>,
+}
+
+#[async_trait::async_trait]
+impl ConnectionDispatch for ComponentImports {
+    async fn resolve(&self, name: &str) -> anyhow::Result<Option<Arc<Integration>>> {
+        let Some(imports) = self.routes.get(name) else {
+            return Ok(None);
+        };
+        let mut resolved = None;
+        for imports in imports {
+            let Some(instance) = imports.resolve(name).await? else {
+                return Ok(None);
+            };
+            if let Some(previous) = &resolved {
+                anyhow::ensure!(
+                    Arc::ptr_eq(previous, &instance),
+                    "unbound: component bindings differ for {name}"
+                );
+            }
+            resolved = Some(instance);
+        }
+        Ok(resolved)
+    }
+}
+
+/// Typed imports of the native HTTP entry, scoped to its component owners.
+#[derive(Debug)]
+pub struct IntegrationIngress {
+    pub integrations: Arc<Integrations>,
     pub release: Arc<wamn_engine::release_manifest::LoadedRelease>,
 }
 
 #[async_trait::async_trait]
-impl wash_runtime::plugin::HostPlugin for ConnectorIngress {
+impl wash_runtime::plugin::HostPlugin for IntegrationIngress {
     fn id(&self) -> &'static str {
-        "wamn-connector-ingress"
+        "wamn-integration-ingress"
     }
     fn world(&self) -> wash_runtime::wit::WitWorld {
         wash_runtime::wit::WitWorld {
-            imports: HashSet::from([wash_runtime::wit::WitInterface::from(
-                wamn_engine::connector::READER,
-            )]),
+            imports: self.integrations.interfaces(),
             exports: HashSet::new(),
         }
     }
+    fn supports_named_instances(&self) -> bool {
+        true
+    }
+
     async fn on_workload_item_bind<'a>(
         &self,
         item: &mut wash_runtime::engine::workload::WorkloadItem<'a>,
@@ -285,35 +352,31 @@ impl wash_runtime::plugin::HostPlugin for ConnectorIngress {
         let manifest = self.release.manifest();
         anyhow::ensure!(
             manifest.composed_entry.is_some(),
-            "connector ingress requires a composed entry"
+            "integration ingress requires a composed entry"
         );
         let package = &manifest
             .composing_member()
-            .context("connector entry has no composing member")?
+            .context("integration entry has no composing member")?
             .package_id;
         let application =
             wamn_catalog::application_for_package(&self.release.scope().applications, package)
-                .context("connector entry application is ambiguous")?;
-        let mut names = HashSet::new();
-        for component in manifest.components.iter().filter(|component| {
-            wamn_catalog::application_for_package(
-                &self.release.scope().applications,
-                &component.package_id,
-            ) == Some(application)
-        }) {
-            names.extend(
-                self.postgres
-                    .declared_connection_names(
-                        &self.project,
-                        &self.release.scope().env_key,
-                        &component.package_id,
-                        &component.descriptor.component_digest,
-                    )
-                    .await?,
-            );
-        }
-        self.connectors
-            .reader(application)?
-            .add_to_linker(item, names)
+                .context("integration entry application is ambiguous")?;
+        let owners = manifest
+            .components
+            .iter()
+            .filter(|component| {
+                wamn_catalog::application_for_package(
+                    &self.release.scope().applications,
+                    &component.package_id,
+                ) == Some(application)
+            })
+            .map(|component| {
+                (
+                    component.descriptor.component_digest.as_str(),
+                    component.package_id.as_str(),
+                )
+            })
+            .collect::<Vec<_>>();
+        self.integrations.add_to_linker(item, &owners).await
     }
 }

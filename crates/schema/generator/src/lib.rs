@@ -88,7 +88,8 @@ pub use manifest::{
     SortDeclaration, SortKey, StateGuardDeclaration, StaticSqlFetch, StaticSqlRelationDeclaration,
     StaticSqlStatementDeclaration, StaticSqlValueDeclaration, Target, TieBreakerDeclaration,
     TombstoneColumn, canonical_operation_identity, canonical_operation_prefix,
-    resolve_operation_reference, sealed_operation_reference, validate_operation_vocabulary,
+    host_connection_interface, resolve_operation_reference, sealed_operation_reference,
+    valid_connection_name, validate_operation_vocabulary,
 };
 pub use materialize::{
     classify_statements_with_existing_grants_in_transaction, introspect_package,

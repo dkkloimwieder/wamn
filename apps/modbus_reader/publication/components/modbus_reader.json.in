@@ -23,7 +23,7 @@
           }
         }
       ],
-      "parameters": []
+      "parameters": [{"name":"unit","schema":{"type":"integer","minimum":1,"maximum":247},"required":true}]
     }
   },
   "connections": []

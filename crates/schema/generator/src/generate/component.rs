@@ -345,6 +345,12 @@ fn emit_package_world(
     // The custom lines come first, where the authored world had them, so each
     // component keeps its world byte for byte.
     let mut imports = String::new();
+    for (name, declaration) in &manifest.connections {
+        if !crate::manifest::host_connection_interface(&declaration.interface) {
+            writeln!(imports, "  import {name}: {};", declaration.interface)
+                .expect("writing to a String cannot fail");
+        }
+    }
     let mut exports = String::new();
     let mut postgres = !models.is_empty();
     for (local, operation) in &manifest.custom_operations {
@@ -372,7 +378,7 @@ fn emit_package_world(
             .expect("writing to a String cannot fail");
         }
     }
-    if exports.is_empty() {
+    if exports.is_empty() && imports.is_empty() {
         return Ok(());
     }
 

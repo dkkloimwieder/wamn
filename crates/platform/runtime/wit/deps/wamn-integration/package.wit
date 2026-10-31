@@ -1,0 +1,15 @@
+package wamn:integration@0.1.0;
+
+/// Only the integration store receives these values.
+interface bound {
+  /// One exact host and port, with brackets around an IPv6 address.
+  authority: func() -> string;
+  /// The validated generation parameters, without auth, as JSON.
+  parameters: func() -> string;
+  /// Only custom authentication exposes a credential to integration code.
+  credential: func() -> option<string>;
+}
+
+interface health {
+  check: func() -> result<_, string>;
+}

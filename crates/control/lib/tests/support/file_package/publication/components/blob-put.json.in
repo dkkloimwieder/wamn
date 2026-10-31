@@ -58,11 +58,11 @@
       "requirement-type": "blobstore"
     },
     {
-      "store-alias": "files_read",
+      "store-alias": "files-read",
       "requirement-type": "blobstore"
     },
     {
-      "store-alias": "files_no_cdn",
+      "store-alias": "files-no-cdn",
       "requirement-type": "blobstore"
     }
   ]

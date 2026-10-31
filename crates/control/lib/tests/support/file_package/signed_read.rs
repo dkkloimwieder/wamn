@@ -123,8 +123,8 @@ pub(super) fn signed_read_fixture(env_key: &str) -> anyhow::Result<SignedReadFix
         "signed read file fixture",
         ReleaseScope::new(env_key, "dev").with_applications(serde_json::from_value(json!({
             "files": {"packages": ["file_fixture"], "connections": {
-                "files": super::files::STORE_NAME, "files_read": super::files::STORE_NAME,
-                "files_no_cdn": "files-no-cdn"
+                "files": super::files::STORE_NAME, "files-read": super::files::STORE_NAME,
+                "files-no-cdn": "files-no-cdn"
             }}
         }))?),
     )?);

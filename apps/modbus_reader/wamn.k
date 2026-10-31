@@ -14,7 +14,6 @@ manifest.Package {
             idempotent_by = "stateless"
             input.fields = [
                 manifest.request_id
-                {path = "value.unit", type = "int32"}
                 {path = "value.address", type = "int32"}
             ]
             result = {class = "one", fields = [{path = "register", type = "int32"}]}
@@ -22,6 +21,6 @@ manifest.Package {
             error_details = {unavailable = {}}
         }
     }
-    connections = {registers = {interfaces = ["wamn:connector/reader@0.1.0"], mode = "read"}}
+    connections = {registers = {interface = "wamn:modbus/read@1.0.0", mode = "read"}}
     components = {modbus_reader = {connections = ["registers"]}}
 }

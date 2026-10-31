@@ -16,16 +16,14 @@ use wamn_control::{
     integration,
 };
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql, sql};
-use wamn_engine::connector::{
-    Connector, ConnectorBinding, ConnectorError, ConnectorReader, READER,
-};
+use wamn_engine::integration::{Integration, IntegrationBinding, IntegrationImports};
 use wamn_package_artifact::{
     PackageRegistry,
     registry_credentials::{RegistryCredentialSource, read_registry_credentials},
 };
 use wamn_runtime::{
     connection_credentials::ConnectionCredentials, connection_facts::ConnectionFacts,
-    connection_memory::ConnectionMemory, connectors::Connectors,
+    connection_memory::ConnectionMemory, integrations::Integrations,
 };
 use wash_runtime::{
     engine::{ctx::SharedCtx, workload::ResolvedWorkload},
@@ -36,7 +34,10 @@ use wash_runtime::{
     observability::{MeterKind, Meters},
     plugin::{HostPlugin, PluginBindings},
     types::{Component, Workload},
-    wasmtime::{Store, component::TypedFunc},
+    wasmtime::{
+        Store,
+        component::{TypedFunc, Val},
+    },
     wit::WitInterface,
 };
 
@@ -50,6 +51,26 @@ mod node {
 }
 use node::wamn::node::types::{Emission, NodeContext, NodeError};
 type Run = TypedFunc<(NodeContext, String), (Result<Emission, NodeError>,)>;
+
+async fn read_register(instance: &Integration, interface: &str, unit: u8) -> anyhow::Result<u16> {
+    let result = instance
+        .call(
+            interface,
+            "read-registers",
+            &[Val::U8(unit), Val::U16(7), Val::U16(1)],
+        )
+        .await?;
+    match result.as_slice() {
+        [Val::Result(Ok(Some(value)))] => match value.as_ref() {
+            Val::List(values) => match values.as_slice() {
+                [Val::U16(register)] => Ok(*register),
+                _ => anyhow::bail!("unexpected register response"),
+            },
+            _ => anyhow::bail!("unexpected read response"),
+        },
+        _ => anyhow::bail!("read failed: {result:?}"),
+    }
+}
 
 async fn connect(url: &str) -> anyhow::Result<tokio_postgres::Client> {
     let (client, driver) = tokio_postgres::connect(url, tokio_postgres::NoTls).await?;
@@ -69,7 +90,7 @@ fn fixture(root: &Path) -> anyhow::Result<()> {
         "integrations/modbus/wit/world.wit",
         "integrations/modbus/wit/deps/io.wit",
         "integrations/modbus/wit/deps/sockets.wit",
-        "crates/platform/runtime/wit/deps/wamn-connector/package.wit",
+        "crates/platform/runtime/wit/deps/wamn-integration/package.wit",
     ] {
         let target = root.join(file);
         std::fs::create_dir_all(target.parent().unwrap())?;
@@ -97,9 +118,20 @@ async fn simulator() -> anyhow::Result<(String, Arc<AtomicUsize>, tokio::task::J
                 }
                 let mut frame = [0; 12];
                 stream.read_exact(&mut frame).await.unwrap();
-                assert_eq!(&frame[2..], &[0, 0, 0, 6, 1, 3, 0, 7, 0, 1]);
+                assert_eq!(&frame[2..6], &[0, 0, 0, 6]);
+                if frame[7] == 6 {
+                    assert_eq!(&frame[6..], &[17, 6, 0, 7, 0xbe, 0xef]);
+                    stream.write_all(&frame).await.unwrap();
+                    return;
+                }
+                assert_eq!(&frame[7..], &[3, 0, 7, 0, 1]);
+                let [hi, lo] = if frame[6] == 1 {
+                    [0x12, 0x34]
+                } else {
+                    [0, frame[6]]
+                };
                 let mut response = frame[..2].to_vec();
-                response.extend([0, 0, 0, 5, 1, 3, 2, 0x12, 0x34]);
+                response.extend([0, 0, 0, 5, frame[6], 3, 2, hi, lo]);
                 stream.write_all(&response).await.unwrap();
             });
         }
@@ -115,7 +147,7 @@ struct Application {
 }
 
 impl Application {
-    async fn load(reader: Arc<ConnectorReader>) -> anyhow::Result<Self> {
+    async fn load(reader: Arc<IntegrationImports>) -> anyhow::Result<Self> {
         let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let package = repository.join("apps/modbus_reader");
         wamn_schema_generator::receipt::check_current(&package)?;
@@ -137,7 +169,7 @@ impl Application {
             .clone();
         let request = wamn_engine::component_admission::ComponentAdmissionRequest {
             declaration: serde_json::from_value(declaration)?,
-            admitted_platform_packages: ["wamn:connector".into()].into(),
+            admitted_platform_packages: ["wamn:modbus".into()].into(),
             base_digests: std::collections::BTreeSet::new(),
         };
         wamn_engine::component_admission::validate_component_admission(&engine, &bytes, request)?;
@@ -155,7 +187,7 @@ impl Application {
                         bytes: bytes.into(),
                         ..Component::default()
                     }],
-                    host_interfaces: vec![WitInterface::from(READER)],
+                    host_interfaces: vec![WitInterface::from("wamn:modbus/read@1.0.0")],
                     annotations: HashMap::new(),
                     service: None,
                     volumes: vec![],
@@ -199,10 +231,16 @@ impl Application {
     }
 
     async fn read(&mut self) -> anyhow::Result<Result<Emission, NodeError>> {
+        self.read_unit(1).await
+    }
+
+    async fn read_unit(&mut self, unit: u8) -> anyhow::Result<Result<Emission, NodeError>> {
         let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let wiring: serde_json::Value = serde_json::from_slice(&std::fs::read(
             repository.join("apps/modbus_reader/publication/wirings/read_register.json"),
         )?)?;
+        let mut config = wiring["nodes"]["read"]["params"].clone();
+        config["unit"] = json!(unit);
         let context = NodeContext {
             wiring_id: "read_register".into(),
             wiring_version: 1,
@@ -213,9 +251,9 @@ impl Application {
             traceparent: None,
             tracestate: None,
             deadline_ms: Some(5000),
-            config: wiring["nodes"]["read"]["params"].to_string(),
+            config: config.to_string(),
         };
-        let input = json!([{"request_id":"live", "value":{"unit":1,"address":7}}]).to_string();
+        let input = json!([{"request_id":"live", "value":{"address":7}}]).to_string();
         let run = self.run;
         let (result,) = self
             .store
@@ -346,7 +384,7 @@ async fn apply(
     let canonical = loaded_release(document)?.manifest().canonical_bytes();
     tx.execute("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",&[&env_key,&digest,&canonical]).await?;
     for (package, digest) in members {
-        tx.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interfaces,mode) VALUES($1,$2,$3,'registers',$4,'read') ON CONFLICT DO NOTHING",&[&env_key,&digest,&package,&vec![READER.to_owned()]]).await?;
+        tx.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,'registers',$4,'read') ON CONFLICT DO NOTHING",&[&env_key,&digest,&package,&"wamn:modbus/read@1.0.0"]).await?;
     }
     bindings::write(
         &tx,
@@ -392,28 +430,32 @@ async fn published_modbus_versions_link_before_the_next_call() -> anyhow::Result
         oci_ca_paths: vec![],
     };
     let first = integration::build(scratch.path(), "modbus").await?;
-    integration::publish(&first, &configuration, database.url(), &integration::Publication {version:2, parameter_schema:json!({"type":"object","properties":{"authority":{"type":"string","minLength":1,"immutable":true}},"required":["authority"]}),operations:"wamn:modbus/modbus".into()}).await?;
+    integration::publish(&first, &configuration, database.url(), &integration::Publication {version:2, parameter_schema:json!({"type":"object","properties":{"authority":{"type":"string","minLength":1,"immutable":true}},"required":["authority"]}),operations:"wamn:modbus/client@1.0.0".into()}).await?;
     let source_path = scratch.path().join("integrations/modbus/src/lib.rs");
     let source_bytes = std::fs::read_to_string(&source_path)?;
     std::fs::write(
         &source_path,
         source_bytes.replace(
-            "super::response_registers(&frame, &response).map_err(transport)",
-            "super::response_registers(&frame, &response).map(|mut registers| { registers[1] = registers[1].wrapping_add(1); registers }).map_err(transport)",
+            "super::response_registers(&frame, &response).map_err(transport)?",
+            "super::response_registers(&frame, &response).map(|mut registers| { registers[1] = registers[1].wrapping_add(1); registers }).map_err(transport)?",
         ),
     )?;
     let second = integration::build(scratch.path(), "modbus").await?;
-    integration::publish(&second, &configuration, database.url(), &integration::Publication {version:3, parameter_schema:json!({"type":"object","properties":{"authority":{"type":"string","minLength":1,"immutable":true}},"required":["authority"]}),operations:"wamn:modbus/modbus".into()}).await?;
+    integration::publish(&second, &configuration, database.url(), &integration::Publication {version:3, parameter_schema:json!({"type":"object","properties":{"authority":{"type":"string","minLength":1,"immutable":true}},"required":["authority"]}),operations:"wamn:modbus/client@1.0.0".into()}).await?;
     assert_ne!(first.digest, second.digest);
     let (authority, accepts, simulator_task) = simulator().await?;
+    let (observer_authority, _, observer_task) = simulator().await?;
     let tx = admin.transaction().await?;
     tx.batch_execute(&bind_platform_principal_sql(
         PlatformComponent::Provisioning,
     ))
     .await?;
     let store = wamn_test_infrastructure::credentials::LocalCredentials::create()?;
-    for name in ["meter", "observer-meter"] {
-        wamn_test_infrastructure::credentials::define(&tx,"acme",&json!({"project":"one","env":"dev","name":name,"integration_type":"modbus","auth_type":"none","parameters":{"authority":authority}}),&store).await?;
+    for (name, endpoint) in [
+        ("meter", &authority),
+        ("observer-meter", &observer_authority),
+    ] {
+        wamn_test_infrastructure::credentials::define(&tx,"acme",&json!({"project":"one","env":"dev","name":name,"integration_type":"modbus","auth_type":"none","parameters":{"authority":endpoint}}),&store).await?;
     }
     tx.commit().await?;
     let mut document = EnvironmentDocument::from_json(&serde_json::to_vec(
@@ -427,7 +469,7 @@ async fn published_modbus_versions_link_before_the_next_call() -> anyhow::Result
         release.release().manifest_digest.to_string(),
     );
     let package = wamn_schema_generator::PackageManifest::from_slice(&serde_json::to_vec(
-        &json!({"package":{"id":"modbus_reader","version":"0.1.0"},"required_platform_policy_contract":{"id":"modbus_reader_data_access","state":"satisfied"},"models":{},"components":{},"connections":{"registers":{"interfaces":["wamn:connector/reader@0.1.0"],"mode":"read"}}}),
+        &json!({"package":{"id":"modbus_reader","version":"0.1.0"},"required_platform_policy_contract":{"id":"modbus_reader_data_access","state":"satisfied"},"models":{},"components":{},"connections":{"registers":{"interface":"wamn:modbus/read@1.0.0","mode":"read"}}}),
     )?)?;
     let mut observer_package = package.clone();
     observer_package.package.id = "observer_fixture".into();
@@ -441,7 +483,7 @@ async fn published_modbus_versions_link_before_the_next_call() -> anyhow::Result
     )
     .await?;
     // A dedicated reader login fixes scope through session_user, independent of GUCs.
-    let login = format!("c9_connector_{}", std::process::id());
+    let login = format!("c9_integration_{}", std::process::id());
     database.execute(&[
         &sql::grant_connection_reader_surface_sql(),
         &format!("CREATE ROLE {login} LOGIN PASSWORD 'fixture'; GRANT wamn_conn_reader TO {login}; GRANT CONNECT ON DATABASE \"{}\" TO {login}; BEGIN; SET LOCAL ROLE wamn_system; {} INSERT INTO wamn_authority.author_login_tenants(login_identity,env_key,org_id,project_id,environment) VALUES ('{login}','acme--one--dev','acme','one','dev'); COMMIT;", database.name(), bind_platform_principal_sql(PlatformComponent::Provisioning)),
@@ -492,8 +534,8 @@ async fn published_modbus_versions_link_before_the_next_call() -> anyhow::Result
         "one",
         "dev",
     ));
-    let connectors = Arc::new(
-        Connectors::new(
+    let integrations = Arc::new(
+        Integrations::new(
             Arc::clone(&facts),
             &release,
             &postgres,
@@ -503,12 +545,31 @@ async fn published_modbus_versions_link_before_the_next_call() -> anyhow::Result
         )
         .await?,
     );
-    let reader = connectors.reader("reader")?;
-    let observer = connectors.reader("observer")?;
+    let reader = integrations.imports(&format!("sha256:{}", "a".repeat(64)), "modbus_reader")?;
+    let observer =
+        integrations.imports(&format!("sha256:{}", "b".repeat(64)), "observer_fixture")?;
     let sibling = observer.store_id("registers").await?.unwrap();
     let mut application = Application::load(Arc::clone(&reader)).await?;
     let app_store = application.store.data().active_ctx.store_id.clone();
     assert_eq!(application.read().await?.unwrap().payload, "4660");
+    assert_eq!(application.read_unit(17).await?.unwrap().payload, "17");
+    let writer = reader
+        .resolve("registers")
+        .await?
+        .context("writer binding")?;
+    assert_eq!(
+        read_register(&writer, "wamn:modbus/write@1.0.0", 17).await?,
+        17
+    );
+    let written = writer
+        .call(
+            "wamn:modbus/write@1.0.0",
+            "write-register",
+            &[Val::U8(17), Val::U16(7), Val::U16(0xbeef)],
+        )
+        .await?;
+    assert!(matches!(written.as_slice(), [Val::Result(Ok(None))]));
+
     assert_eq!(
         observer.store_id("registers").await?.as_deref(),
         Some(sibling.as_str())
@@ -526,11 +587,15 @@ async fn published_modbus_versions_link_before_the_next_call() -> anyhow::Result
     control.batch_execute("SET ROLE wamn_control").await?;
     control
         .query_one(
-            "SELECT registry.publish_integration('modbus',4,$1,$2,'wamn:modbus/modbus',$3)",
+            "SELECT registry.publish_integration('modbus',4,$1,$2,'wamn:modbus/client@1.0.0',$3)",
             &[
                 &absent,
                 &parameters,
-                &vec!["wamn:connector/reader@0.1.0".to_string()],
+                &vec![
+                    "wamn:modbus/read@1.0.0".to_string(),
+                    "wamn:modbus/write@1.0.0".to_string(),
+                    "wamn:integration/health@0.1.0".to_string(),
+                ],
             ],
         )
         .await?;
@@ -558,13 +623,13 @@ async fn published_modbus_versions_link_before_the_next_call() -> anyhow::Result
     // The engine counts compiles by the digest of the component bytes.
     let code = |built: &integration::BuiltIntegration| -> anyhow::Result<String> {
         Ok(wamn_engine::component_admission::component_digest(
-            &std::fs::read(built.directory.join("connector.wasm"))?,
+            &std::fs::read(built.directory.join("integration.wasm"))?,
         ))
     };
     let (first_code, second_code) = (code(&first)?, code(&second)?);
-    let compiled = wamn_engine::connector::compile_count(&first_code);
+    let compiled = wamn_engine::integration::compile_count(&first_code);
     assert_eq!(compiled, 1);
-    assert_eq!(wamn_engine::connector::compile_count(&second_code), 0);
+    assert_eq!(wamn_engine::integration::compile_count(&second_code), 0);
     let id = facts.env_connections().await?.connections["meter"];
     let old = facts.connection(&id).await?.unwrap();
     let tx = admin.transaction().await?;
@@ -598,7 +663,10 @@ async fn published_modbus_versions_link_before_the_next_call() -> anyhow::Result
         reader.store_id("registers").await?.unwrap(),
         before_generation
     );
-    assert_eq!(wamn_engine::connector::compile_count(&first_code), compiled);
+    assert_eq!(
+        wamn_engine::integration::compile_count(&first_code),
+        compiled
+    );
     let pid = std::process::id();
     let mut measurements = Vec::new();
     let mut previous = reader.store_id("registers").await?.unwrap();
@@ -638,14 +706,15 @@ async fn published_modbus_versions_link_before_the_next_call() -> anyhow::Result
         } else {
             &first_code
         };
-        assert_eq!(wamn_engine::connector::compile_count(pin_code), 1);
+        assert_eq!(wamn_engine::integration::compile_count(pin_code), 1);
         let elapsed = changed.elapsed();
+        let observer_instance = observer
+            .resolve("registers")
+            .await?
+            .context("observer binding")?;
         assert_eq!(
-            observer
-                .get("registers".into(), vec![1, 0, 7, 0, 1])
-                .await?
-                .unwrap(),
-            [0x12, 0x34]
+            read_register(&observer_instance, "wamn:modbus/read@1.0.0", 1).await?,
+            0x1234
         );
         let current = reader.store_id("registers").await?.unwrap();
         assert_ne!(previous, current);
@@ -658,30 +727,33 @@ async fn published_modbus_versions_link_before_the_next_call() -> anyhow::Result
         );
         measurements.push(json!({"change":change,"digest":pin,"change_to_success_ms":elapsed.as_secs_f64()*1000.0}));
     }
-    assert!(matches!(
-        reader.get("unknown".into(), vec![]).await?,
-        Err(ConnectorError::Unbound)
-    ));
-    // Build a connector that attempts another port, under the same enforced binding.
+    assert!(reader.resolve("unknown").await?.is_none());
+    // Build a integration that attempts another port, under the same enforced binding.
     let denied_listener = tokio::net::TcpListener::bind("0.0.0.0:0").await?;
     let denied_port = denied_listener.local_addr()?.port();
     let host = authority.rsplit_once(':').unwrap().0;
     let malicious = source_bytes.replace(
-        "let authority = wamn::connector::bound::authority();",
+        "let authority = wamn::integration::bound::authority();",
         &format!("let authority = String::from(\"{host}:{denied_port}\");"),
     );
     std::fs::write(&source_path, malicious)?;
     let denied = integration::build(scratch.path(), "modbus").await?;
-    let denied = Connector::load(
-        &std::fs::read(denied.directory.join("connector.wasm"))?,
-        ConnectorBinding::new(&authority, None)?,
+    let denied = Integration::load(
+        &std::fs::read(denied.directory.join("integration.wasm"))?,
+        IntegrationBinding::new(&authority, None)?,
     )
     .await?;
     let before = accepts.load(Ordering::SeqCst);
-    assert!(matches!(
-        denied.get("registers".into(), vec![1, 0, 7, 0, 1]).await?,
-        Err(ConnectorError::AuthorityDenied)
-    ));
+    let result = denied
+        .call(
+            "wamn:modbus/read@1.0.0",
+            "read-registers",
+            &[Val::U8(1), Val::U16(7), Val::U16(1)],
+        )
+        .await?;
+    assert!(
+        matches!(result.as_slice(), [Val::Result(Err(Some(error)))] if matches!(error.as_ref(), Val::Variant(name, _) if name == "authority-denied"))
+    );
     assert_eq!(accepts.load(Ordering::SeqCst), before);
     assert!(
         tokio::time::timeout(Duration::from_millis(30), denied_listener.accept())
@@ -698,6 +770,7 @@ async fn published_modbus_versions_link_before_the_next_call() -> anyhow::Result
         )?,
     )?;
     simulator_task.abort();
+    observer_task.abort();
     database.execute(&[&format!(
         "RESET ROLE; DROP OWNED BY {login}; DROP ROLE {login};"
     )])?;

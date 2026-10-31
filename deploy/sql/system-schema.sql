@@ -116,8 +116,9 @@ CREATE TABLE registry.integration_type_auth (
     PRIMARY KEY (integration_type, auth_type)
 );
 
-INSERT INTO registry.integration_type (code, runtime_type, exclusive) VALUES
-    ('http', 'host', false), ('gcs', 'host', false), ('s3', 'host', false), ('modbus', 'wasm', false);
+INSERT INTO registry.integration_type (code, runtime_type, exclusive, resource_key_template) VALUES
+    ('http', 'host', false, NULL), ('gcs', 'host', false, NULL), ('s3', 'host', false, NULL),
+    ('modbus', 'wasm', true, 'tcp:{authority}');
 
 INSERT INTO registry.integration_type_version
     (integration_type, version, digest, parameter_schema, operations, exports, published_at) VALUES
@@ -127,8 +128,8 @@ INSERT INTO registry.integration_type_version
      '{"type":"object","properties":{"provider":{"type":"string","enum":["gcs"],"immutable":true},"container":{"type":"string","minLength":1,"immutable":true},"prefix":{"type":"string","minLength":1,"immutable":true},"cdn_host":{"type":"string","minLength":1}},"required":["container","prefix","provider"]}', 'wasmcloud:blobstore/imports@0.1.0', ARRAY['wasmcloud:blobstore/types@0.1.0','wasmcloud:blobstore/container@0.1.0','wasmcloud:blobstore/blobstore@0.1.0'], transaction_timestamp()),
     ('s3', 1, NULL,
      '{"type":"object","properties":{"provider":{"type":"string","enum":["s3"],"immutable":true},"container":{"type":"string","minLength":1,"immutable":true},"prefix":{"type":"string","minLength":1,"immutable":true},"cdn_host":{"type":"string","minLength":1},"endpoint":{"type":"string","minLength":1,"immutable":true}},"required":["container","prefix","endpoint"]}', 'wasmcloud:blobstore/imports@0.1.0', ARRAY['wasmcloud:blobstore/types@0.1.0','wasmcloud:blobstore/container@0.1.0','wasmcloud:blobstore/blobstore@0.1.0'], transaction_timestamp()),
-    ('modbus', 1, 'sha256:23dc5ca1d9bbbb546ed4f92ca1c358ad04abbe0655f4c1afa76ff948ab5e08e4',
-     '{"type":"object","properties":{"authority":{"type":"string","minLength":1,"immutable":true}},"required":["authority"]}', 'wamn:modbus/modbus', ARRAY['wamn:connector/reader@0.1.0'], transaction_timestamp());
+    ('modbus', 1, 'sha256:37c3fc98df0a7b1cdf230dfa16956d34e832b6f1198a04293932170674e0d682',
+     '{"type":"object","properties":{"authority":{"type":"string","minLength":1,"immutable":true}},"required":["authority"]}', 'wamn:modbus/client@1.0.0', ARRAY['wamn:modbus/read@1.0.0','wamn:modbus/write@1.0.0','wamn:integration/health@0.1.0'], transaction_timestamp());
 
 INSERT INTO registry.auth_type (code, credential_schema, parameter_schema, http_only) VALUES
     ('http_basic', '{"type":"object","properties":{"username":{"type":"string"},"password":{"type":"string"}},"required":["username","password"]}',
@@ -1398,6 +1399,9 @@ BEGIN
     END IF;
     IF runtime IN ('wasm','native') AND artifact_digest IS NULL THEN
         RAISE EXCEPTION 'digest_required' USING ERRCODE='22023';
+    END IF;
+    IF runtime IN ('wasm','native') AND NOT COALESCE('wamn:integration/health@0.1.0'=ANY(exported_interfaces),false) THEN
+        RAISE EXCEPTION 'health_export_required' USING ERRCODE='22023';
     END IF;
     IF parameters->>'type' IS DISTINCT FROM 'object' OR jsonb_typeof(parameters->'properties') IS DISTINCT FROM 'object'
         OR exported_operations IS NULL OR exported_operations='' OR exported_interfaces IS NULL THEN

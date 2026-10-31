@@ -94,6 +94,21 @@ impl ResolvedActiveWiring {
 }
 
 impl WamnPostgres {
+    /// Read the interfaces declared by the exact package and component.
+    pub async fn declared_connection_interfaces(
+        &self,
+        project: &str,
+        env_key: &str,
+        package: &str,
+        digest: &str,
+    ) -> anyhow::Result<Vec<(String, String)>> {
+        let (connection, _) = self
+            .checkout_platform(project, AuthorityClass::ExecutorPlatform)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        Ok(connection.query("SELECT name,interface FROM catalog.connection_requirement WHERE env_key=$1 AND package_id=$2 AND component_digest=$3", &[&env_key,&package,&digest]).await?.into_iter().map(|row| (row.get(0),row.get(1))).collect())
+    }
+
     /// Read only names declared by the selected package and component closure.
     pub async fn declared_connection_names(
         &self,

@@ -1,4 +1,4 @@
-//! Read independently published connector artifacts by their environment pins.
+//! Read independently published integration artifacts by their environment pins.
 
 use std::time::Duration;
 
@@ -9,16 +9,16 @@ use wamn_catalog::RuntimeType;
 
 use crate::{PackageRegistry, Repository, ensure_digest, registry_pull, sha256_digest};
 
-/// OCI artifact type for one connector.
-pub const ARTIFACT_TYPE: &str = "application/vnd.wamn.connector.v1";
-/// OCI configuration media type for connector identity and source bytes.
-pub const CONFIG_TYPE: &str = "application/vnd.wamn.connector.config.v1+json";
-/// OCI layer media type for connector component bytes.
+/// OCI artifact type for one integration.
+pub const ARTIFACT_TYPE: &str = "application/vnd.wamn.integration.v1";
+/// OCI configuration media type for integration identity and source bytes.
+pub const CONFIG_TYPE: &str = "application/vnd.wamn.integration.config.v1+json";
+/// OCI layer media type for integration component bytes.
 pub const WASM_TYPE: &str = "application/wasm";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ConnectorConfig {
+struct IntegrationConfig {
     code: String,
     runtime_type: RuntimeType,
     source_digest: String,
@@ -35,7 +35,7 @@ pub async fn pull(registry: &PackageRegistry, code: &str, digest: &str) -> anyho
     pull_from(&repository, code, digest).await
 }
 
-/// Read a connector through an already authenticated repository.
+/// Read a integration through an already authenticated repository.
 pub async fn pull_from(
     repository: &Repository,
     code: &str,
@@ -44,19 +44,19 @@ pub async fn pull_from(
     ensure_digest(digest)?;
     ensure!(
         repository.reference.digest() == Some(digest),
-        "connector repository is not pinned to the requested digest"
+        "integration repository is not pinned to the requested digest"
     );
     let (bytes, _) = repository
         .manifest()
         .await?
-        .context("connector artifact is absent")?;
+        .context("integration artifact is absent")?;
     let manifest: OciImageManifest = serde_json::from_slice(&bytes)?;
     ensure!(
         manifest.artifact_type.as_deref() == Some(ARTIFACT_TYPE)
             && manifest.config.media_type == CONFIG_TYPE
             && manifest.layers.len() == 1
             && manifest.layers[0].media_type == WASM_TYPE,
-        "artifact {digest} is not a wasm connector"
+        "artifact {digest} is not a wasm integration"
     );
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     let config = registry_pull::blob(
@@ -69,12 +69,12 @@ pub async fn pull_from(
     ensure!(
         sha256_digest(&config) == manifest.config.digest
             && usize::try_from(manifest.config.size) == Ok(config.len()),
-        "connector configuration differs from its descriptor"
+        "integration configuration differs from its descriptor"
     );
-    let config: ConnectorConfig = serde_json::from_slice(&config)?;
+    let config: IntegrationConfig = serde_json::from_slice(&config)?;
     ensure!(
         config.code == code && config.runtime_type == RuntimeType::Wasm,
-        "connector artifact does not belong to wasm integration {code}"
+        "integration artifact does not belong to wasm integration {code}"
     );
     ensure_digest(&config.source_digest)?;
     let descriptor = &manifest.layers[0];
@@ -88,14 +88,14 @@ pub async fn pull_from(
     ensure!(
         sha256_digest(&component) == descriptor.digest
             && usize::try_from(descriptor.size) == Ok(component.len()),
-        "connector component differs from its descriptor"
+        "integration component differs from its descriptor"
     );
     Ok(component)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::ConnectorConfig;
+    use super::IntegrationConfig;
     use wamn_catalog::RuntimeType;
 
     #[test]
@@ -105,10 +105,10 @@ mod tests {
             "runtime_type": "wasm",
             "source_digest": format!("sha256:{}", "a".repeat(64)),
         });
-        let parsed: ConnectorConfig = serde_json::from_value(config.clone()).unwrap();
+        let parsed: IntegrationConfig = serde_json::from_value(config.clone()).unwrap();
         assert_eq!(parsed.runtime_type, RuntimeType::Wasm);
 
         config["runtime_type"] = "component".into();
-        assert!(serde_json::from_value::<ConnectorConfig>(config).is_err());
+        assert!(serde_json::from_value::<IntegrationConfig>(config).is_err());
     }
 }

@@ -101,8 +101,8 @@ async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
         .await?
         .get(0);
     admin.execute(
-        "INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interfaces,mode) \
-         VALUES($1,$2,$3,'erp',ARRAY['wamn:connection/http@0.1.0'],'write')",
+        "INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interface,mode) \
+         VALUES($1,$2,$3,'erp','wamn:connection/http@0.1.0','write')",
         &[&ENV_KEY,&component_digest,&PACKAGE],
     ).await?;
     let graph = WiringDocument::new(

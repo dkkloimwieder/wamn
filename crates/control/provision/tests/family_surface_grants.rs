@@ -903,8 +903,8 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
              VALUES ('00000000-0000-4000-8000-000000000011','http','upstream','active');\n\
              INSERT INTO platform.connection (id,integration_id,integration_type,status) \
              VALUES ('00000000-0000-4000-8000-000000000012','00000000-0000-4000-8000-000000000011','http','active');\n\
-             INSERT INTO catalog.connection_requirement (env_key,component_digest,package_id,name,interfaces,mode) \
-             VALUES ('tenant-a','{digest}','orders','upstream',ARRAY['wamn:connection/http@0.1.0'],'write');\n\
+             INSERT INTO catalog.connection_requirement (env_key,component_digest,package_id,name,interface,mode) \
+             VALUES ('tenant-a','{digest}','orders','upstream','wamn:connection/http@0.1.0','write');\n\
              INSERT INTO catalog.release_connection (env_key,manifest_digest,connection_id,version) \
              VALUES ('tenant-a','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','00000000-0000-4000-8000-000000000012',1);\n\
              INSERT INTO catalog.connection_binding (env_key,manifest_digest,component_digest,package_id,name,connection_id) \

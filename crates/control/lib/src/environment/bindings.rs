@@ -145,7 +145,7 @@ pub async fn analyse(
                 .ok_or_else(|| refuse("integration_version_missing", &at))?;
             let integration_type: String = row.get(1);
             let exports: Vec<String> = row.get(9);
-            if !exports_satisfy(&exports, &declaration.interfaces) {
+            if !exports_satisfy(&exports, std::slice::from_ref(&declaration.interface)) {
                 return Err(refuse("integration_import_unsatisfied", at));
             }
             let runtime: String = row.get(2);
@@ -230,13 +230,13 @@ pub async fn write(
         let id: String = row.get(0);
         changed += tx.execute("INSERT INTO catalog.release_connection(env_key,manifest_digest,connection_id,version) VALUES ($1,$2,$3::text::uuid,$4) ON CONFLICT (env_key,manifest_digest,connection_id) DO UPDATE SET version=EXCLUDED.version WHERE catalog.release_connection.version IS DISTINCT FROM EXCLUDED.version", &[&env_key,&digest,&id,&integration.version]).await?;
     }
-    for row in tx.query("SELECT component_digest,package_id,name,interfaces FROM catalog.connection_requirement WHERE env_key=$1", &[&env_key]).await? {
+    for row in tx.query("SELECT component_digest,package_id,name,interface FROM catalog.connection_requirement WHERE env_key=$1", &[&env_key]).await? {
         let package: String=row.get(1);
         let Some(application)=wamn_catalog::application_for_package(&document.applications,&package) else {continue};
         let name: String=row.get(2);
         let Some(binding)=bindings.iter().find(|b| b.application==application && b.alias==name) else {continue};
-        let required: Vec<String>=row.get(3);
-        anyhow::ensure!(exports_satisfy(&binding.exports,&required),"integration_import_unsatisfied: {application}.{name}");
+        let required: String=row.get(3);
+        anyhow::ensure!(exports_satisfy(&binding.exports,std::slice::from_ref(&required)),"integration_import_unsatisfied: {application}.{name}");
         let component: String=row.get(0);
         names.push(serde_json::json!({"component_digest":component,"package_id":package,"name":name}));
         changed += tx.execute("INSERT INTO catalog.connection_binding(env_key,manifest_digest,component_digest,package_id,name,connection_id) SELECT $1,$2,$3,$4,$5,$6::text::uuid WHERE EXISTS(SELECT FROM catalog.releases r CROSS JOIN LATERAL jsonb_array_elements(convert_from(r.canonical_bytes,'UTF8')::jsonb->'components') c WHERE r.env_key=$1 AND r.manifest_digest=$2 AND c->>'package-id'=$4 AND c->'descriptor'->>'component-digest'=$3) ON CONFLICT (env_key,manifest_digest,component_digest,package_id,name) DO UPDATE SET connection_id=EXCLUDED.connection_id WHERE catalog.connection_binding.connection_id IS DISTINCT FROM EXCLUDED.connection_id", &[&env_key,&digest,&component,&package,&name,&binding.connection_id]).await?;

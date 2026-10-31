@@ -710,8 +710,11 @@ These rows are the parameters of a generation, the artifact and exports of a ver
 A secret never leaves the host.
 A rotation makes a new credential id, so the delete of the connection key is enough to reach the new secret.
 
-The [engine](../../crates/platform/engine/src/connector.rs) compiles the component of a wasm or native version once per component digest and keeps it in host memory.
-The [dispatch](../../crates/platform/runtime/src/connectors.rs) links an instance per (connection id, generation, credential id) from that compiled component.
+The [engine](../../crates/platform/engine/src/integration.rs) compiles the component of a wasm or native version once per component digest and keeps it in host memory.
+The [dispatch](../../crates/platform/runtime/src/integrations.rs) links an instance per (connection id, generation, credential id) from that compiled component.
+Typed integration imports use labels, the connection names that code declares.
+The host resolves each label by its component digest, package, and name.
+HTTP and blobstore select a declared connection name at run time.
 A connection write or a credential change links again, but it never compiles again.
 The dispatch keeps at most 1024 links, and it drops a link that no current fact names on the next fact change of that connection.
 

@@ -229,7 +229,7 @@ fn vendored_wasi_packages_are_registered_or_deliberately_absent() {
 fn registry_is_closed_and_every_row_is_reachable() {
     assert_eq!(
         CAPABILITY_REGISTRY.len(),
-        10,
+        11,
         "the registry is a closed set; changing its size is a ruled expansion"
     );
     let effects: Vec<&str> = CAPABILITY_REGISTRY
@@ -241,8 +241,9 @@ fn registry_is_closed_and_every_row_is_reachable() {
         effects,
         // wamn:postgres 0.2.0 is the owner ruling on wamn-utci (2026-09-26).
         vec![
-            // C9.1 grants the reader. The private bound interface stays denied.
-            "wamn:connector",
+            "wamn:modbus",
+            // The private bound interface stays denied.
+            "wamn:integration",
             "wamn:postgres",
             "wamn:postgres",
             "wamn:connection",

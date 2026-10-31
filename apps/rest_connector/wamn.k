@@ -39,6 +39,6 @@ manifest.Package {
             errors = ["invalid_input", "retry", "timeout", "internal_error"]
         }
     }
-    connections = {upstream = {interfaces = ["wamn:connection/http@0.1.0"], mode = "read"}}
+    connections = {upstream = {interface = "wamn:connection/http@0.1.0", mode = "read"}}
     components = {rest_connector = {connections = ["postgres"]}}
 }

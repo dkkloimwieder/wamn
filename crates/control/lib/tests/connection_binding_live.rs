@@ -137,13 +137,13 @@ async fn admit_component(
     let requirement = ComponentConnectionRequirement::new(digest, store_alias, descriptor);
     project
         .execute(
-            "INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interfaces,mode) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING",
+            "INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING",
             &[
                 &ENV_KEY,
                 &requirement.component_digest(),
                 &package_id,
                 &requirement.store_alias(),
-                &vec![requirement.requirement().contract.clone()],
+                &requirement.requirement().contract,
                 &if requirement.requirement().requirement_type=="http" {"read"} else {"write"},
             ],
         )
@@ -429,11 +429,11 @@ impl Authority {
     }
 }
 fn declarations(integration_type: &str, mode: &str) -> wamn_schema_generator::PackageManifest {
-    let interfaces = vec!["wamn:connection/http@0.1.0"];
+    let interface = "wamn:connection/http@0.1.0";
     let connections = if integration_type == "s3" {
-        json!({"labels":{"interfaces":["wasmcloud:blobstore/blobstore@0.1.0"],"mode":"write"},"erp":{"interfaces":["wamn:connection/http@0.1.0"],"mode":"read"}})
+        json!({"labels":{"interface":"wasmcloud:blobstore/blobstore@0.1.0","mode":"write"},"erp":{"interface":"wamn:connection/http@0.1.0","mode":"read"}})
     } else {
-        json!({"erp":{"interfaces":interfaces,"mode":mode}})
+        json!({"erp":{"interface":interface,"mode":mode}})
     };
     serde_json::from_value(json!({"package":{"id":PACKAGE,"version":PACKAGE_VERSION},"required_platform_policy_contract":{"id":"fixture_access","state":"satisfied"},"models":{},"components":{},"connections":connections})).unwrap()
 }

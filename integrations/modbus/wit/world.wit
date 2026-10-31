@@ -1,11 +1,35 @@
-package wamn:modbus;
+package wamn:modbus@1.0.0;
 
-world modbus {
-    import wamn:connector/bound@0.1.0;
+interface read {
+    variant error {
+        unavailable,
+        authority-denied,
+        timeout,
+        transport(string),
+    }
+    read-registers: func(unit: u8, addr: u16, count: u16) -> result<list<u16>, error>;
+}
+
+interface write {
+    variant error {
+        unavailable,
+        authority-denied,
+        timeout,
+        transport(string),
+    }
+    read-registers: func(unit: u8, addr: u16, count: u16) -> result<list<u16>, error>;
+    write-register: func(unit: u8, addr: u16, value: u16) -> result<_, error>;
+}
+
+// write_interfaces = ["wamn:modbus/write@1.0.0"]
+world client {
+    import wamn:integration/bound@0.1.0;
     import wasi:sockets/instance-network@0.2.12;
     import wasi:sockets/tcp-create-socket@0.2.12;
     import wasi:sockets/tcp@0.2.12;
     import wasi:io/poll@0.2.12;
     import wasi:io/streams@0.2.12;
-    export wamn:connector/reader@0.1.0;
+    export read;
+    export write;
+    export wamn:integration/health@0.1.0;
 }

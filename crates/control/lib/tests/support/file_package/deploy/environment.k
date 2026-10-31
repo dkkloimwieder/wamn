@@ -17,8 +17,8 @@ environment.Environment {
             packages = ["file_fixture"]
             connections = {
                 files = "file-store"
-                files_read = "file-store"
-                files_no_cdn = "files-no-cdn"
+                "files-read" = "file-store"
+                "files-no-cdn" = "files-no-cdn"
             }
         }
     }

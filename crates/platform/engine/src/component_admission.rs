@@ -48,28 +48,28 @@ pub enum ComponentAdmissionErrorType {
     OperationSignatureMismatch,
     InvalidComponentFacts,
     StatementInstanceMismatch,
-    ConnectorExportMismatch,
+    IntegrationExportMismatch,
 }
 
-/// Exact bytes admitted for an isolated connector store.
+/// Exact bytes admitted for an isolated integration store.
 #[derive(Debug)]
-pub struct AdmittedConnector {
+pub struct AdmittedIntegration {
     digest: String,
 }
 
-impl AdmittedConnector {
+impl AdmittedIntegration {
     /// The digest of the admitted bytes.
     pub fn digest(&self) -> &str {
         &self.digest
     }
 }
 
-/// Admit a connector with bound sockets and the exact reader contract.
-pub fn validate_connector_admission(
+/// Admit an integration with bound sockets and the required health contract.
+pub fn validate_integration_admission(
     engine: &Engine,
     component_bytes: &[u8],
     label: &str,
-) -> Result<AdmittedConnector, ComponentAdmissionError> {
+) -> Result<AdmittedIntegration, ComponentAdmissionError> {
     let refuse = |kind, source: anyhow::Error| ComponentAdmissionError::new(kind, label, source);
     let component = Component::new(engine.inner(), component_bytes).map_err(|source| {
         refuse(
@@ -78,7 +78,7 @@ pub fn validate_connector_admission(
         )
     })?;
     validate_connection_code(&component, label)?;
-    Ok(AdmittedConnector {
+    Ok(AdmittedIntegration {
         digest: component_digest(component_bytes),
     })
 }
@@ -97,7 +97,7 @@ pub(crate) fn validate_connection_code(
         }));
     wamn_component_policy::analyze(
         &imports,
-        wamn_component_policy::PolicyProfile::Connector,
+        wamn_component_policy::PolicyProfile::Integration,
         label,
     )
     .map_err(|source| {
@@ -107,32 +107,36 @@ pub(crate) fn validate_connection_code(
         )
     })?;
     let signature = || -> anyhow::Result<()> {
-        let exports = ty.exports(raw).collect::<Vec<_>>();
-        anyhow::ensure!(
-            exports.len() == 1 && exports[0].0 == crate::connector::READER,
-            "connector must export only {}",
-            crate::connector::READER
-        );
-        let ComponentItem::ComponentInstance(reader) = &exports[0].1.ty else {
-            anyhow::bail!("connector reader is not an interface instance");
+        let health = ty
+            .get_export(raw, crate::integration::HEALTH)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "integration world must export {}",
+                    crate::integration::HEALTH
+                )
+            })?;
+        let ComponentItem::ComponentInstance(health) = health.ty else {
+            anyhow::bail!("integration health is not an interface instance");
         };
-        let get = reader
-            .get_export(raw, "get")
-            .ok_or_else(|| anyhow::anyhow!("connector reader has no get function"))?;
-        let ComponentItem::ComponentFunc(get) = get.ty else {
-            anyhow::bail!("connector get is not a function");
+        let check = health
+            .get_export(raw, "check")
+            .ok_or_else(|| anyhow::anyhow!("integration health has no check function"))?;
+        let ComponentItem::ComponentFunc(check) = check.ty else {
+            anyhow::bail!("integration health check is not a function");
         };
         anyhow::ensure!(
-            !get.async_(),
-            "connector reader uses the synchronous component ABI"
+            !check.async_(),
+            "integration health uses the synchronous component ABI"
         );
-        get.typecheck::<(&str, &[u8]), (Result<Vec<u8>, crate::connector::ConnectorError>,)>(
-            &ty.instance_type(),
-        )?;
+        check.typecheck::<(), (Result<(), String>,)>(&ty.instance_type())?;
         Ok(())
     };
-    signature()
-        .map_err(|source| refuse(ComponentAdmissionErrorType::ConnectorExportMismatch, source))?;
+    signature().map_err(|source| {
+        refuse(
+            ComponentAdmissionErrorType::IntegrationExportMismatch,
+            source,
+        )
+    })?;
     Ok(())
 }
 
@@ -634,10 +638,14 @@ mod tests {
     // like any other non-dependency import.
     const NODE_TYPES_IMPORT: &str = "wamn:node/types@0.1.0";
 
-    const DEPENDENCY_WITS: [(&str, &str); 6] = [
+    const DEPENDENCY_WITS: [(&str, &str); 7] = [
         (
-            "wamn-connector.wit",
-            include_str!("../../runtime/wit/deps/wamn-connector/package.wit"),
+            "modbus.wit",
+            "package wamn:modbus@1.0.0; interface read { read-registers: func(addr: u16, count: u16) -> result<list<u16>, string>; }",
+        ),
+        (
+            "wamn-integration.wit",
+            include_str!("../../runtime/wit/deps/wamn-integration/package.wit"),
         ),
         (
             "wasi-clocks.wit",
@@ -780,22 +788,22 @@ mod tests {
     }
 
     #[test]
-    fn application_byte_admission_grants_reader_but_refuses_private_binding() {
+    fn application_byte_admission_grants_modbus_but_refuses_private_binding() {
         let engine = crate::build_engine(&[]).expect("engine");
-        let bytes = component_bytes("import wamn:connector/reader@0.1.0;");
+        let bytes = component_bytes("import wamn:modbus/read@1.0.0;");
         let mut granted = request();
         granted
             .admitted_platform_packages
-            .insert("wamn:connector".to_owned());
+            .insert("wamn:modbus".to_owned());
         validate_component_admission(&engine, &bytes, granted.clone())
-            .expect("reader grant admits");
+            .expect("modbus grant admits");
         let error = validate_component_admission(&engine, &bytes, request())
-            .expect_err("reader needs a grant");
+            .expect_err("modbus needs a grant");
         assert_eq!(
             error.error_type(),
             ComponentAdmissionErrorType::ImportPolicyRefused
         );
-        let bytes = component_bytes("import wamn:connector/bound@0.1.0;");
+        let bytes = component_bytes("import wamn:integration/bound@0.1.0;");
         let error = validate_component_admission(&engine, &bytes, granted)
             .expect_err("private binding never reaches applications");
         assert_eq!(
