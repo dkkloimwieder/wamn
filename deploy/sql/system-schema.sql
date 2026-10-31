@@ -144,7 +144,7 @@ INSERT INTO registry.auth_type (code, credential_schema, parameter_schema, http_
     ('oauth2_client_credentials_jwt', '{"type":"object","properties":{"private_key":{"type":"string"}},"required":["private_key"],"additionalProperties":false}',
      '{"type":"object","properties":{"client_id":{"type":"string"},"token_url":{"type":"string"},"scopes":{"type":"array","items":{"type":"string"}},"key_id":{"type":"string"},"algorithm":{"type":"string","enum":["PS256","ES256","RS256"]},"scope_separator":{"type":"string","enum":[" ",","],"default":" "}},"required":["client_id","token_url","key_id","algorithm"],"additionalProperties":false}', true),
     ('oauth2_authorization_code', '{"type":"object","properties":{"client_secret":{"type":"string"}},"required":["client_secret"]}',
-     '{"type":"object","properties":{"client_id":{"type":"string"},"token_url":{"type":"string"},"scopes":{"type":"array","items":{"type":"string"}}},"required":["client_id","token_url","scopes"]}', true),
+     '{"type":"object","properties":{"client_id":{"type":"string"},"authorize_url":{"type":"string"},"token_url":{"type":"string"},"scopes":{"type":"array","items":{"type":"string"}}},"required":["client_id","authorize_url","token_url","scopes"]}', true),
     ('aws_sigv4', '{"type":"object","properties":{"access_key_id":{"type":"string"},"secret_access_key":{"type":"string"}},"required":["access_key_id","secret_access_key"]}',
      '{"type":"object","properties":{"region":{"type":"string"},"service":{"type":"string"}},"required":["region","service"]}', true),
     ('custom', '{"type":"object"}',
@@ -1312,6 +1312,17 @@ DECLARE
     resource text;
     credentials jsonb;
 BEGIN
+    IF operation = 'connection.oauth_callback' THEN
+        SELECT * INTO existing FROM registry.connection
+        WHERE id=(payload->>'id')::uuid AND org=org_id FOR NO KEY UPDATE;
+        IF existing.id IS NULL THEN
+            RETURN jsonb_build_object('error','not_found','field','connection');
+        END IF;
+        RETURN registry.connection_summary(existing.id) || jsonb_build_object('credential',(
+            SELECT jsonb_build_object('store',k.store,'ref',k.ref,'version',k.version)
+            FROM registry.connection_generation g JOIN identity.credential k ON k.id=g.credential_id
+            WHERE (g.connection_id,g.generation)=(existing.id,existing.active_generation)));
+    END IF;
     IF operation <> 'connection.test' THEN
         PERFORM pg_advisory_xact_lock(hashtextextended('connections:' || org_id, 0));
     END IF;
@@ -1349,9 +1360,6 @@ BEGIN
     SELECT * INTO existing FROM registry.connection
     WHERE integration_id=selected.id AND env=environment FOR UPDATE;
     IF operation = 'connection.prepare' THEN
-        IF selected.auth_type = 'oauth2_authorization_code' THEN
-            RETURN jsonb_build_object('error','unsupported_auth_type','field','auth_type');
-        END IF;
         IF existing.id IS NULL THEN
             IF payload->>'action' <> 'connection.write' THEN
                 RETURN jsonb_build_object('error','not_found','field','connection');
@@ -1396,6 +1404,11 @@ BEGIN
                        FROM registry.integration_type_version WHERE integration_type=selected.integration_type));
     ELSIF existing.id IS NULL THEN
         RETURN jsonb_build_object('error','not_found','field','connection');
+    ELSIF operation = 'connection.authorize' THEN
+        IF selected.auth_type <> 'oauth2_authorization_code' THEN
+            RETURN jsonb_build_object('error','unsupported_auth_type','field','auth_type');
+        END IF;
+        RETURN registry.connection_summary(existing.id);
     ELSIF operation = 'connection.get' THEN
         RETURN registry.connection_summary(existing.id);
     ELSIF operation = 'connection.source_parameters' THEN

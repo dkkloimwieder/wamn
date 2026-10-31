@@ -342,6 +342,10 @@ pub struct HostArgs {
     #[arg(long, env = "WAMN_OAUTH_ENCRYPTION")]
     pub oauth_encryption: Option<String>,
 
+    /// Public HTTP origin of the control host, including the scheme.
+    #[arg(long, env = "WAMN_CONTROL_PUBLIC_ORIGIN")]
+    pub control_public_origin: Option<String>,
+
     /// Explicit registry/repository holding digest-addressed node components.
     #[arg(long, env = "WAMN_COMPONENT_ARTIFACT_BASE")]
     pub component_artifact_base: Option<String>,
@@ -1272,7 +1276,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             &args.project,
             application.map_or("", |release| release.scope().environment.as_str()),
         )
-        .with_oauth_encryption(oauth_encryption),
+        .with_oauth_encryption(oauth_encryption.clone()),
     );
     let integration_registry = if let Some(base) = &args.component_artifact_base {
         let registry_name = wamn_catalog::parse_component_artifact_base(base)?;
@@ -1568,6 +1572,20 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             .with_files(files.clone()),
         ))));
     }
+    let oauth = if args.control {
+        oauth_encryption
+            .map(|envelope| {
+                let origin = args
+                    .control_public_origin
+                    .as_deref()
+                    .context("control OAuth requires WAMN_CONTROL_PUBLIC_ORIGIN")?;
+                wamn_runtime::oauth_authorization::Authorization::new(origin, envelope)
+                    .map(Arc::new)
+            })
+            .transpose()?
+    } else {
+        None
+    };
     if let (Some(connection), Some(root)) = (&control, &release) {
         let mut health =
             wamn_runtime::connection_health::ConnectionHealth::new(Arc::clone(&http_transport));
@@ -1602,7 +1620,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 },
                 None,
             )
-            .with_connection_health(Arc::new(health)),
+            .with_connection_health(Arc::new(health))
+            .with_oauth(oauth.clone()),
         ))));
     }
 
@@ -1783,6 +1802,35 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             ingress = ingress.tls(tls);
         }
         let server = Arc::new(ingress.build().await?);
+        if let (Some(oauth), Some(control)) = (&oauth, &control) {
+            use wash_runtime::host::http::{IngressRoute, NormalizedPathPrefix, RouteScope};
+            let host = url::Url::parse(oauth.redirect_uri())?
+                .host_str()
+                .context("callback host missing")?
+                .to_owned();
+            let route = IngressRoute {
+                host,
+                path_prefix: NormalizedPathPrefix::new("/oauth/callback"),
+                scope: RouteScope::Ingress,
+            };
+            let (sender, mut requests) =
+                tokio::sync::mpsc::channel::<wash_runtime::host::http::ServiceHttpJob>(16);
+            server
+                .on_service_http_resolved("wamn-oauth-callback", &[route], sender)
+                .await?;
+            let oauth = Arc::clone(oauth);
+            let writer = Arc::clone(&control.writer);
+            let org = control.org.clone();
+            schedule_tasks.spawn(async move {
+                while let Some(job) = requests.recv().await {
+                    let response = wamn_execution_host::oauth_callback::response(
+                        &oauth, &writer, &org, job.req,
+                    )
+                    .await;
+                    let _ = job.resp_tx.send(Ok(response));
+                }
+            });
+        }
         let connections = server.connection_limit();
         probe_state.register(Arc::new(connections.clone()));
         ingress_connections = Some(connections);

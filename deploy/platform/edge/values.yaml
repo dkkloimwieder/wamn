@@ -11,7 +11,8 @@ image:
 # the environment's release, plain HTTP. The edge removes /api before it forwards.
 # files is the native file Service URL. File requests keep their full /api path.
 # The edge streams uploads without a configured size limit.
-# The optional control root has the same host/api shape and no files.
+# oauth forwards /oauth/callback unchanged to the control host.
+# The optional control root uses host/api, oauth: true, and no files.
 control: null
 applications: []
 #  - host: receiving.example.com

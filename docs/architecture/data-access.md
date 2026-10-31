@@ -1260,6 +1260,12 @@ Each verb reads its JSON request from `--file`.
 The request names the project, and connection requests also name the environment in `env`.
 The first connection write reads the credential value from `--credential-file`, except for authentication type `none`.
 `connection set-credential` reads later values from that flag too.
+
+`connection authorize` starts authorization code access under the same project administrator authority.
+The host returns an authorization URL, and `connection.get` returns the public `redirect_uri`.
+The callback stores both tokens in encrypted JSON after a successful exchange.
+A secret-only rotation retains the refresh token and makes the access token due for refresh.
+
 Responses and credential audit metadata contain the last four characters as a hint.
 Postgres stores the reference and never stores the value.
 

@@ -264,6 +264,8 @@ pub(super) async fn release(
         &mut desired["runtime-operator"]["runtime"]["hostGroups"][0],
         &super::oauth::configuration(document),
     )?;
+    desired["runtime-operator"]["runtime"]["hostGroups"][0]["env"].as_array_mut().expect("host environment").push(
+        json!({"name":"WAMN_CONTROL_PUBLIC_ORIGIN","value":format!("https://{}", document.route_hosts.control)}));
     let key_created = super::oauth::ensure_key(target, document).await?;
     desired["routeHost"] = document.route_hosts.control.clone().into();
     desired["platformUi"] = true.into();

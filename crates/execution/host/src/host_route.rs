@@ -84,6 +84,7 @@ pub struct HostRouteDelivery {
     next: Option<Arc<dyn RouteDelivery>>,
     files: Option<Arc<crate::file_route::FileRoutes>>,
     connection_health: Option<Arc<wamn_runtime::connection_health::ConnectionHealth>>,
+    oauth: Option<Arc<wamn_runtime::oauth_authorization::Authorization>>,
 }
 
 impl fmt::Debug for HostRouteDelivery {
@@ -109,6 +110,7 @@ impl HostRouteDelivery {
             next,
             files: None,
             connection_health: None,
+            oauth: None,
         }
     }
 
@@ -118,6 +120,15 @@ impl HostRouteDelivery {
         health: Arc<wamn_runtime::connection_health::ConnectionHealth>,
     ) -> Self {
         self.connection_health = Some(health);
+        self
+    }
+
+    /// Share the control callback configuration with the administration routes.
+    pub fn with_oauth(
+        mut self,
+        oauth: Option<Arc<wamn_runtime::oauth_authorization::Authorization>>,
+    ) -> Self {
+        self.oauth = oauth;
         self
     }
 
@@ -281,6 +292,7 @@ impl HostRouteDelivery {
                     org,
                     changes,
                     connection_health: self.connection_health.as_deref(),
+                    oauth: self.oauth.as_deref(),
                 }
                 .handle(attachment, &principal, payload)
                 .await

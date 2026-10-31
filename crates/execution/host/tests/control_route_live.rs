@@ -1916,3 +1916,6 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
 
 #[path = "support/connection_test.rs"]
 mod connection_test;
+
+#[path = "support/oauth_authorization.rs"]
+mod oauth_authorization;

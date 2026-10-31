@@ -90,6 +90,12 @@
       "type": "json",
       "nullable": false,
       "values": []
+    },
+    {
+      "path": "redirect_uri",
+      "type": "text",
+      "nullable": true,
+      "values": []
     }
   ]
 }

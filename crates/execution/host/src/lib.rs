@@ -11,6 +11,7 @@ pub mod environment_status;
 pub mod file_collector;
 pub mod file_route;
 mod host_route;
+pub mod oauth_callback;
 mod operation;
 mod read_cache;
 mod readiness;

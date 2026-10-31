@@ -128,6 +128,7 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | `wamn-control:user-role/revoke@0.9.0` | Takes `user_id` and `role`, and takes the role. An `admin` revoke refuses while the user holds `project-admin` in the project. Answers `revoked`. |
 | `wamn-control:number-counter/set@0.9.0` | Authority `Granted`. Takes `application`, `sequence`, `counter`, `key` and the `int64` `value`, and sets that counter. Answers `next_number`. Refusals: `invalid_input`, `sequence_not_found`, `counter_not_found`, `counter_assigned_per_key`, `number_live` and `idempotency_conflict`. |
 | `wamn-control:workflow/start@0.9.0` | Authority `Granted`. Takes `workflow_id`, `input_json` and `idempotency_key`, and admits one run of the enabled version of that [environment workflow](#environment-workflows). Answers `run_id`. Refusals: `invalid_input`, `active_role_required`, `workflow_not_enabled`, `workflow_not_served` and `idempotency_conflict`. |
+| `wamn-control:connection/authorize@0.9.0` | ProjectAdmin authority. Takes `project`, `env`, and `name`. Returns `authorization_url` for an authorization code connection. |
 | `wamn-control:control/mine@0.9.0` | `org_admin`, and the projects of the org that the caller administers: every project for an `org-admin`, else the projects where the caller holds `project-admin`. |
 | `wamn-control:user/list@0.9.0` | `users`: each member of the org with `principal_id`, `email`, `display_name`, the org-local `status` and `org_admin`. An `org-admin` reads it, and so does a `project-admin` of any project of the org. |
 | `wamn-control:user/invite@0.9.0` | Takes `email`, `display_name` and the optional `org_admin`, `project_admins` and `memberships` (`project`, `env`). Answers `principal_id`, `enrolled` and `invited`. |
@@ -733,6 +734,27 @@ The route returns no credential and writes no generation or credential row.
 
 A connection write or a credential change links again, but it never compiles again.
 The dispatch keeps at most 1024 links, and it drops a link that no current fact names on the next fact change of that connection.
+
+`connection.authorize` takes `project`, `env`, and `name` under ProjectAdmin authority and returns `authorization_url`.
+The `oauth2_authorization_code` connection stores `client_id`, `authorize_url`, `token_url`, and `scopes` in `parameters.auth`.
+Its credential contains `client_secret`.
+`connection.get` returns `redirect_uri` for registration with the provider.
+Calls return `unauthorized` until a callback stores the first token.
+Candidate `connection.test` continues to refuse this authentication type.
+
+The public control origin serves `GET /oauth/callback` without a session.
+`WAMN_CONTROL_PUBLIC_ORIGIN` supplies that origin, from `route_hosts.control` on deployed targets and the local control URL during development.
+The host appends `/oauth/callback` to that origin.
+`connection.authorize` stores 32 random bytes as base64url state and an encrypted PKCE verifier for ten minutes.
+PKCE binds the authorization code to the verifier through a SHA-256 challenge.
+The authorization URL preserves existing query parameters and adds the state, callback address, scopes, and S256 challenge.
+
+The callback locks the state and active connection generation, deletes the state, exchanges the code, and writes the encrypted token in one transaction.
+A successful callback consumes the state once.
+Every refusal rolls back, including provider errors, expired states, and stale generations.
+Expired or stale states remain until a generation write or connection deletion removes them.
+A generation write deletes pending states, so a later callback reports an unknown state.
+The callback escapes all page values and returns no credential material.
 
 OAuth storage uses `identity.oauth_token` and `identity.oauth_authorization` in the system database.
 Only the host connection role and the control role receive table grants.

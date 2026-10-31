@@ -199,9 +199,11 @@ pub fn validate_request(operation: &str, request: &Value) -> Result<(), Connecti
         ],
         "connection.copy" => &["project", "env", "name", "source_env"],
         "connection.set_credential" => &["project", "env", "name", "credential"],
-        "connection.get" | "connection.enable" | "connection.disable" | "connection.delete" => {
-            &["project", "env", "name"]
-        }
+        "connection.authorize"
+        | "connection.get"
+        | "connection.enable"
+        | "connection.disable"
+        | "connection.delete" => &["project", "env", "name"],
         _ => return Err(refuse("invalid_input", "operation")),
     };
     if object.keys().any(|key| !allowed.contains(&key.as_str())) {

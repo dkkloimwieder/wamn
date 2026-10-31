@@ -76,6 +76,15 @@ data:
           proxy_set_header Connection "";
         }
 
+{{- if .oauth }}
+        location = /oauth/callback {
+          proxy_pass http://api_{{ $index }};
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header Connection "";
+        }
+{{- end }}
+
         # Identity sets the session cookies with no Domain, so the browser
         # keeps them for this host.
         location /password/ {

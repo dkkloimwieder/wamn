@@ -1,0 +1,10 @@
+{
+  "operation": "wamn-control:connection/authorize@0.9.0",
+  "type": "command",
+  "label": "Authorize connection",
+  "grant": "wamn-control:connection/authorize@0.9.0",
+  "permission_token": "connection.authorize",
+  "result": "one",
+  "transaction": "explicit_per_input",
+  "visibility": "public"
+}

@@ -63,8 +63,11 @@ impl ControlRoutes<'_> {
             .await?;
         let mut drops = AuthDrops::default();
         let mut connection_drops = ConnectionDrops::default();
-        if attachment.route.type_.is_read() {
-            let result = administration::execute(
+        if operation == "connection.authorize" {
+            let oauth = self.oauth.ok_or_else(|| {
+                Refusal::Failed(anyhow::anyhow!("OAuth authorization unavailable"))
+            })?;
+            let context = administration::execute(
                 &transaction,
                 self.org,
                 operation,
@@ -73,6 +76,36 @@ impl ControlRoutes<'_> {
                 &mut connection_drops,
             )
             .await?;
+            let caller = caller
+                .as_str()
+                .parse::<uuid::Uuid>()
+                .map_err(|error| Refusal::Failed(error.into()))?;
+            let url = oauth
+                .authorize(&transaction, &context, caller)
+                .await
+                .map_err(|error| Refusal::Failed(error.into()))?;
+            transaction.commit().await?;
+            return Ok(json!({"authorization_url":url}));
+        }
+        if attachment.route.type_.is_read() {
+            let mut result = administration::execute(
+                &transaction,
+                self.org,
+                operation,
+                payload,
+                &mut drops,
+                &mut connection_drops,
+            )
+            .await?;
+            if operation == "connection.get" && result["auth_type"] == "oauth2_authorization_code" {
+                result["redirect_uri"] = self
+                    .oauth
+                    .ok_or_else(|| {
+                        Refusal::Failed(anyhow::anyhow!("OAuth authorization unavailable"))
+                    })?
+                    .redirect_uri()
+                    .into();
+            }
             transaction.commit().await?;
             return Ok(result);
         }

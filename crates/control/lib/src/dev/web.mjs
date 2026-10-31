@@ -94,6 +94,9 @@ function serve(dist, application, controlUrl) {
       if (url.pathname.startsWith("/password/")) {
         return proxy(request, response, config.issuer, request.url);
       }
+      if (!application && url.pathname === "/oauth/callback") {
+        return proxy(request, response, controlUrl, request.url, { host: request.headers.host });
+      }
       if (url.pathname.startsWith("/api/")) {
         const audience = new URL(request.headers.referer ?? "http://localhost").pathname.split("/")[1];
         if (application || audience?.startsWith("urn:wamn:project-env:")) {
@@ -140,8 +143,11 @@ try {
   const address = `127.0.0.1:${probe.address().port}`;
   await new Promise((resolve) => probe.close(resolve));
   const controlUrl = `http://${address}`;
+  const platform = serve(config.platform_ui, false, controlUrl);
+  servers.push(platform);
+  const url = await listen(platform);
   host = spawn(config.host, [...config.host_args, "--http-addr", address], {
-    env: config.host_env,
+    env: { ...config.host_env, WAMN_CONTROL_PUBLIC_ORIGIN: url },
     stdio: ["ignore", 2, 2],
   });
   host.on("error", (error) => {
@@ -183,9 +189,6 @@ try {
     if (Date.now() >= deadline) throw new Error("control route did not become ready");
     await delay(100);
   }
-  const platform = serve(config.platform_ui, false, controlUrl);
-  servers.push(platform);
-  const url = await listen(platform);
   const applications = [];
   for (const entry of config.packages) {
     const server = serve(entry.dist, true, controlUrl);

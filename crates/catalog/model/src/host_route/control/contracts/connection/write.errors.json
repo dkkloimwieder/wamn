@@ -28,15 +28,6 @@
       }
     },
     {
-      "literal": "unsupported_auth_type",
-      "from": "transaction_invariant",
-      "detail": {
-        "required": [
-          "field"
-        ]
-      }
-    },
-    {
       "literal": "resource_in_use",
       "from": "transaction_invariant",
       "detail": {

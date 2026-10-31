@@ -27,7 +27,9 @@ fn proxy_values(document: &ClusterDocument, routes: &BTreeMap<String, String>) -
                 "host": host, "api": format!("http://{release}-http.hosts.svc.cluster.local")
             });
             // The control host serves no native file routes.
-            if *host != document.route_hosts.control {
+            if *host == document.route_hosts.control {
+                application["oauth"] = true.into();
+            } else {
                 application["files"] =
                     format!("http://{release}-files.hosts.svc.cluster.local").into();
             }
@@ -344,7 +346,7 @@ mod tests {
         assert_eq!(
             values["applications"],
             json!([{
-                "host": "control.example.com", "api": "http://c-acme-http.hosts.svc.cluster.local"
+                "host": "control.example.com", "api": "http://c-acme-http.hosts.svc.cluster.local", "oauth": true
             }])
         );
         assert_eq!(values["neg"], true);

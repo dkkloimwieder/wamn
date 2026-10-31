@@ -266,7 +266,7 @@ where
     })
 }
 
-async fn write_row(
+pub(crate) async fn write_row(
     tx: &tokio_postgres::Transaction<'_>,
     connection: uuid::Uuid,
     encrypted: &Encrypted,

@@ -498,9 +498,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_generation_carries_its_authentication_and_authorization_code_refuses() {
+    async fn a_generation_carries_its_authentication() {
         use serde_json::json;
-        use wamn_platform_identity::{auth_changes::AuthDrops, connections::administration};
 
         let _lock = wamn_test_postgres::lock();
         let mut fixture = Fixture::new().await;
@@ -547,30 +546,6 @@ mod tests {
             .unwrap()
             .get(0);
         assert!(http_only);
-
-        let tx = fixture.admin.transaction().await.unwrap();
-        tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
-            wamn_control_provision::PlatformComponent::Provisioning,
-        ))
-        .await
-        .unwrap();
-        tx.batch_execute("SET LOCAL ROLE wamn_control")
-            .await
-            .unwrap();
-        administration::execute(&tx, "acme", "integration.write", &json!({"project":"project-a","name":"interactive","integration_type":"http","auth_type":"oauth2_authorization_code"}).to_string(), &mut AuthDrops::default(), &mut wamn_platform_identity::connection_changes::ConnectionDrops::default()).await.unwrap();
-        let error = administration::execute(
-            &tx,
-            "acme",
-            "connection.write",
-            &json!({"project":"project-a","env":"dev","name":"interactive","parameters":{}})
-                .to_string(),
-            &mut AuthDrops::default(),
-            &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
-        )
-        .await
-        .unwrap_err();
-        assert_eq!(error.code, "unsupported_auth_type");
-        assert_eq!(error.field, "auth_type");
     }
 
     #[tokio::test]

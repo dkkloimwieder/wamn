@@ -37,6 +37,7 @@ pub(super) struct Fixture {
     pause: Arc<Mutex<Option<ResponsePause>>>,
     key: tempfile::NamedTempFile,
     token_pause: Arc<Mutex<Option<ResponsePause>>>,
+    pkce: Arc<Mutex<Option<String>>>,
 }
 
 impl Fixture {
@@ -60,6 +61,8 @@ impl Fixture {
         let token_pause = Arc::new(Mutex::new(None::<ResponsePause>));
         let endpoint_pause = Arc::clone(&token_pause);
         let token_base = base.clone();
+        let pkce = Arc::new(Mutex::new(None::<String>));
+        let expected_pkce = Arc::clone(&pkce);
         let task = tokio::spawn(async move {
             loop {
                 let (tcp, _) = listener.accept().await.unwrap();
@@ -70,6 +73,7 @@ impl Fixture {
                 let token_pause = Arc::clone(&endpoint_pause);
                 let assertion_check = assertion_check.clone();
                 let token_base = token_base.clone();
+                let pkce = Arc::clone(&expected_pkce);
                 hyper::server::conn::http1::Builder::new()
                     .serve_connection(
                         TokioIo::new(tcp),
@@ -81,10 +85,36 @@ impl Fixture {
                             let token_pause = Arc::clone(&token_pause);
                             let assertion_check = assertion_check.clone();
                             let token_base = token_base.clone();
+                            let pkce = Arc::clone(&pkce);
                             async move {
                                 let (parts, body) = request.into_parts();
                                 let body = body.collect().await.unwrap().to_bytes().to_vec();
                                 let token = matches!(parts.uri.path(), "/bound/token" | "/bound/");
+                                let form: std::collections::HashMap<_, _> =
+                                    url::form_urlencoded::parse(&body).into_owned().collect();
+                                if token
+                                    && form
+                                        .get("grant_type")
+                                        .is_some_and(|grant| grant == "authorization_code")
+                                {
+                                    use base64::Engine as _;
+                                    use sha2::{Digest as _, Sha256};
+                                    assert_eq!(form["code"], "fixture-code+&");
+                                    assert_eq!(form["client_id"], CLIENT_ID);
+                                    assert_eq!(form["client_secret"], CLIENT_SECRET);
+                                    assert_eq!(
+                                        form["redirect_uri"],
+                                        "http://control.example.test/oauth/callback"
+                                    );
+                                    let challenge =
+                                        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+                                            Sha256::digest(form["code_verifier"].as_bytes()),
+                                        );
+                                    assert_eq!(
+                                        pkce.lock().unwrap().as_deref(),
+                                        Some(challenge.as_str())
+                                    );
+                                }
                                 let request = Observed {
                                     path: parts.uri.to_string(),
                                     method: parts.method.to_string(),
@@ -132,6 +162,7 @@ impl Fixture {
         std::fs::write(key.path(), [7_u8; 32]).unwrap();
         Self {
             key,
+            pkce,
             token_pause,
             credentials: crate::connection_credentials::test_util::Fixture::new().await,
             base,
@@ -1108,7 +1139,7 @@ async fn authorization_code_requires_a_row_and_keeps_or_replaces_the_refresh_tok
     .await;
     let plugin = fixture.plugin(&fixture.parameters()).await;
     let connection = plugin.facts.env_connections().await.unwrap().connections["handle"];
-    // Administration's authorization-code write is delivered by issue .5.
+    // This refresh-row test seeds the grant directly; the PKCE flow runs below.
     fixture
         .credentials
         .admin
@@ -1237,6 +1268,250 @@ async fn jwt_round_trip(algorithm: &'static str, separator: Option<&'static str>
     );
 }
 
+impl Fixture {
+    async fn authorize(&mut self, oauth: &crate::oauth_authorization::Authorization) -> url::Url {
+        let tx = self.credentials.admin.transaction().await.unwrap();
+        tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+        .await
+        .unwrap();
+        tx.batch_execute("SET LOCAL ROLE wamn_control")
+            .await
+            .unwrap();
+        let context = wamn_platform_identity::connections::administration::configure(
+            &tx,
+            "acme",
+            "connection.authorize",
+            &serde_json::json!({"project":"project-a","env":"dev","name":"handle"}),
+        )
+        .await
+        .unwrap();
+        let url = oauth
+            .authorize(
+                &tx,
+                &context,
+                wamn_control_provision::PlatformComponent::Provisioning.principal_id(),
+            )
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let url = url::Url::parse(&url).unwrap();
+        *self.pkce.lock().unwrap() = url
+            .query_pairs()
+            .find(|(key, _)| key == "code_challenge")
+            .map(|(_, value)| value.into_owned());
+        url
+    }
+
+    async fn rewrite(&mut self, secret: Option<&str>) {
+        let tx = self.credentials.admin.transaction().await.unwrap();
+        tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+        .await
+        .unwrap();
+        tx.batch_execute("SET LOCAL ROLE wamn_control")
+            .await
+            .unwrap();
+        let context = wamn_platform_identity::connections::administration::configure(
+            &tx,
+            "acme",
+            "connection.get",
+            &serde_json::json!({"project":"project-a","env":"dev","name":"handle"}),
+        )
+        .await
+        .unwrap();
+        let (operation, request) = match secret {
+            Some(secret) => (
+                "connection.set_credential",
+                serde_json::json!({"project":"project-a","env":"dev","name":"handle","credential":serde_json::json!({"client_secret":secret}).to_string()}),
+            ),
+            None => (
+                "connection.write",
+                serde_json::json!({"project":"project-a","env":"dev","name":"handle","parameters":context["parameters"]}),
+            ),
+        };
+        wamn_platform_identity::connections::administration::execute_with_store(
+            &tx,
+            "acme",
+            operation,
+            &request.to_string(),
+            &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+            &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
+            Some(self.credentials.store.as_ref()),
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn authorization_code_pkce_callback_refresh_and_secret_rotation() {
+    use base64::Engine as _;
+    let _lock = wamn_test_postgres::lock();
+    let mut first = serde_json::from_str::<serde_json::Value>(&token(1, Some(3600)).1).unwrap();
+    first["refresh_token"] = "original-refresh+&".into();
+    let mut fixture = Fixture::start(
+        vec![
+            (400, r#"{"error":"invalid_grant"}"#.into()),
+            (503, "provider unavailable".into()),
+            (200, first.to_string()),
+            token(2, Some(3600)),
+            token(3, Some(3600)),
+        ],
+        vec![200; 3],
+    )
+    .await;
+    let mut parameters = fixture.parameters();
+    parameters["authorize_url"] =
+        format!("{}authorize?audience=existing%2Bvalue", fixture.base).into();
+    let plugin = fixture
+        .plugin_with_auth(
+            &parameters,
+            "oauth2_authorization_code",
+            &serde_json::json!({"client_secret":CLIENT_SECRET}).to_string(),
+        )
+        .await;
+    let connection = plugin.facts.env_connections().await.unwrap().connections["handle"];
+    assert!(matches!(
+        fixture.send(&plugin, "handle").await,
+        Err(ConnectionError::Unauthorized)
+    ));
+    assert_eq!(fixture.counts(), (0, 0));
+    let oauth = crate::oauth_authorization::Authorization::new(
+        "http://control.example.test",
+        plugin.facts.oauth_encryption().unwrap(),
+    )
+    .unwrap()
+    .with_store(fixture.credentials.store.clone());
+    let url = fixture.authorize(&oauth).await;
+    let query: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
+    assert_eq!(query["audience"], "existing+value");
+    assert_eq!(query["response_type"], "code");
+    assert_eq!(query["client_id"], CLIENT_ID);
+    assert_eq!(query["redirect_uri"], oauth.redirect_uri());
+    assert_eq!(query["scope"], "orders:read orders:write+");
+    assert_eq!(query["code_challenge_method"], "S256");
+    assert_eq!(
+        base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(&query["state"])
+            .unwrap()
+            .len(),
+        32
+    );
+    let callback = url::form_urlencoded::Serializer::new(String::new())
+        .extend_pairs([
+            ("state", query["state"].as_str()),
+            ("code", "fixture-code+&"),
+        ])
+        .finish();
+    assert!(
+        oauth
+            .callback(&mut fixture.credentials.admin, "acme", &callback)
+            .await
+            .unwrap_err()
+            .reason
+            .contains("invalid_grant")
+    );
+    assert!(
+        oauth
+            .callback(&mut fixture.credentials.admin, "acme", &callback)
+            .await
+            .unwrap_err()
+            .reason
+            .contains("HTTP 503")
+    );
+    assert_eq!(
+        fixture
+            .credentials
+            .admin
+            .query_one(
+                "SELECT count(*) FROM identity.oauth_authorization WHERE state=$1",
+                &[&query["state"]]
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        1
+    );
+    assert_eq!(
+        fixture
+            .credentials
+            .admin
+            .query_one("SELECT count(*) FROM identity.oauth_token", &[])
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        0
+    );
+    oauth
+        .callback(&mut fixture.credentials.admin, "acme", &callback)
+        .await
+        .unwrap();
+    assert!(
+        oauth
+            .callback(&mut fixture.credentials.admin, "acme", &callback)
+            .await
+            .unwrap_err()
+            .reason
+            .contains("replayed")
+    );
+    fixture.send(&plugin, "handle").await.unwrap();
+    assert_eq!(
+        fixture.stored(connection).await.refresh_token.as_deref(),
+        Some("original-refresh+&")
+    );
+    fixture.due(&plugin).await;
+    fixture.send(&plugin, "handle").await.unwrap();
+    fixture.rewrite(Some("rotated-secret")).await;
+    assert_eq!(
+        fixture.stored(connection).await.refresh_token.as_deref(),
+        Some("original-refresh+&")
+    );
+    plugin.facts.read_again(&connection).await.unwrap();
+    fixture.send(&plugin, "handle").await.unwrap();
+    let observed = fixture.observed.lock().unwrap();
+    let refreshes: Vec<_> = observed
+        .iter()
+        .filter(|request| request.body.starts_with(b"grant_type=refresh_token"))
+        .collect();
+    assert_eq!(refreshes.len(), 2);
+    for request in &refreshes {
+        assert_eq!(
+            request.body,
+            b"grant_type=refresh_token&refresh_token=original-refresh%2B%26"
+        );
+    }
+    let basic = refreshes[1].headers["authorization"]
+        .to_str()
+        .unwrap()
+        .strip_prefix("Basic ")
+        .unwrap();
+    assert!(
+        String::from_utf8(
+            base64::engine::general_purpose::STANDARD
+                .decode(basic)
+                .unwrap()
+        )
+        .unwrap()
+        .ends_with(":rotated-secret")
+    );
+    assert_eq!(
+        observed
+            .iter()
+            .filter(|request| request.path == "/bound/api")
+            .map(|request| request.headers["authorization"].to_str().unwrap())
+            .collect::<Vec<_>>(),
+        [
+            "Bearer fixture-token-1",
+            "Bearer fixture-token-2",
+            "Bearer fixture-token-3"
+        ]
+    );
+}
+
 #[tokio::test]
 async fn jwt_ps256_locked_fetch_and_401_retry() {
     jwt_round_trip("PS256", Some(",")).await;
@@ -1277,4 +1552,120 @@ async fn jwt_wrong_algorithm_key_and_malformed_pem_dispatch_no_request() {
         ));
         assert_eq!(fixture.counts(), (0, 0));
     }
+}
+
+#[tokio::test]
+async fn authorization_code_expired_provider_error_and_new_generation_refuse_without_writes() {
+    let _lock = wamn_test_postgres::lock();
+    let mut fixture = Fixture::start(vec![], vec![]).await;
+    let mut parameters = fixture.parameters();
+    parameters["authorize_url"] = format!("{}authorize", fixture.base).into();
+    let plugin = fixture
+        .plugin_with_auth(
+            &parameters,
+            "oauth2_authorization_code",
+            &serde_json::json!({"client_secret":CLIENT_SECRET}).to_string(),
+        )
+        .await;
+    let oauth = crate::oauth_authorization::Authorization::new(
+        "http://control.example.test",
+        plugin.facts.oauth_encryption().unwrap(),
+    )
+    .unwrap()
+    .with_store(fixture.credentials.store.clone());
+    let url = fixture.authorize(&oauth).await;
+    let state = url
+        .query_pairs()
+        .find(|(key, _)| key == "state")
+        .unwrap()
+        .1
+        .into_owned();
+    let callback = format!("state={state}&code=unused");
+    assert!(
+        oauth
+            .callback(
+                &mut fixture.credentials.admin,
+                "acme",
+                &format!("state={state}&error=access_denied")
+            )
+            .await
+            .unwrap_err()
+            .reason
+            .contains("access_denied")
+    );
+    fixture.credentials.admin.execute("UPDATE identity.oauth_authorization SET expires_at=clock_timestamp()-interval '1 second' WHERE state=$1",&[&state]).await.unwrap();
+    assert_eq!(
+        oauth
+            .callback(&mut fixture.credentials.admin, "acme", &callback)
+            .await
+            .unwrap_err()
+            .reason,
+        "expired state"
+    );
+    assert_eq!(
+        fixture
+            .credentials
+            .admin
+            .query_one(
+                "SELECT count(*) FROM identity.oauth_authorization WHERE state=$1",
+                &[&state]
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        1
+    );
+    let url = fixture.authorize(&oauth).await;
+    let state = url
+        .query_pairs()
+        .find(|(key, _)| key == "state")
+        .unwrap()
+        .1
+        .into_owned();
+    // Exercise the generation guard independently of write's pending-state deletion.
+    fixture
+        .credentials
+        .admin
+        .execute(
+            "UPDATE identity.oauth_authorization SET generation=generation-1 WHERE state=$1",
+            &[&state],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        oauth
+            .callback(
+                &mut fixture.credentials.admin,
+                "acme",
+                &format!("state={state}&code=unused")
+            )
+            .await
+            .unwrap_err()
+            .reason,
+        "connection generation changed"
+    );
+    fixture.rewrite(None).await;
+    assert!(
+        oauth
+            .callback(
+                &mut fixture.credentials.admin,
+                "acme",
+                &format!("state={state}&code=unused")
+            )
+            .await
+            .unwrap_err()
+            .reason
+            .contains("unknown")
+    );
+    assert_eq!(fixture.counts(), (0, 0));
+    assert_eq!(
+        fixture
+            .credentials
+            .admin
+            .query_one("SELECT count(*) FROM identity.oauth_token", &[])
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        0
+    );
 }

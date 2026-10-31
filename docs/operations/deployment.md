@@ -69,7 +69,7 @@ Restrict access to the credential file:
 chmod 600 /private/credential.json
 ```
 
-Test the candidate before the first write:
+For authentication types other than `oauth2_authorization_code`, test the candidate before the first write:
 
 ```bash
 wamn-ctl connection test --file /private/connection.json --credential-file /private/credential.json
@@ -105,6 +105,34 @@ Set the replacement credential:
 ```bash
 wamn-ctl connection set-credential --file /private/target.json --credential-file /private/credential.json
 ```
+
+For `oauth2_authorization_code`, set `parameters.auth` to `client_id`, `authorize_url`, `token_url`, and a `scopes` array.
+Write the client secret through `--credential-file` as `{"client_secret":"..."}`.
+After the write, read the connection metadata:
+
+```bash
+wamn-ctl connection get --file /private/target.json
+```
+
+Register its `redirect_uri` with the provider.
+The deployed control host uses `https://<route_hosts.control>/oauth/callback`.
+The local control host uses its local public URL with `/oauth/callback`.
+Start authorization:
+
+```bash
+wamn-ctl connection authorize --file /private/target.json
+```
+
+Open the returned `authorization_url` within ten minutes.
+The provider returns to `GET /oauth/callback` on the control host.
+A success page means that the connection can serve calls.
+Until then, calls return `unauthorized`.
+The callback uses its random state as authority and needs no session.
+
+A failed provider exchange leaves the state available for another attempt.
+A replay, an expired state, or a generation change returns an error page.
+After expiry or a generation change, start authorization again.
+A secret-only `set-credential` retains the refresh token and forces refresh with the new secret.
 
 The control host writes credential values through the environment store.
 Postgres keeps their references and display hints.
