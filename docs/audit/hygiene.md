@@ -26,6 +26,8 @@ Deletes: The parallel `COPIED` inventory, custom source-tag selection, and the p
 
 Risk: Image reuse and qualification can select different artifacts. Extend `tests/conformance/tests/journey_image_cache.rs` with vendor-only and tool-only changes, and preserve the private-registry assertions in `registry_image_archive.rs`.
 
+Owner review 2026-10-31: Group 2 Do with deployment D2-2, the same deletion and one row. Cache identity from the whole build context is the P1 input-hash retag.
+
 ## Finding H1-2: Failed Git reads can produce an empty successful selection
 
 Severity: high  
@@ -41,6 +43,8 @@ Proposal: Complete both Git reads successfully before selecting tests. Treat unr
 Deletes: The unchecked process substitution around change discovery.
 
 Risk: The train can accept a revision without running its selected tests. Add Git-failure cases to `tests/conformance/tests/test_changes.rs` and assert that selection fails before Cargo runs.
+
+Owner review 2026-10-31: Group 3 Do, small. `tools/train-run` and `tools/train-tools-test` are kept as the local runner that tests a committed revision, but renamed, because `train` is a banned word and no merge train exists. Proposed name: `tools/test-revision`.
 
 ## Finding H1-3: The descriptor diagnostic can never pass
 
@@ -58,6 +62,8 @@ Deletes: The standalone 178-line diagnostic after its behavior moves to the host
 
 Risk: Descriptor initialization can lose executable coverage. Run both limit modes against the host binary and prove that either failed case makes the aggregate fail.
 
+Owner review 2026-10-31: Group 4 Do, small. Delete the diagnostic and keep its two limit assertions in the host tests.
+
 ## Finding H1-4: A missing argument can hang the Kubernetes runner
 
 Severity: medium  
@@ -73,6 +79,8 @@ Proposal: Require each argument value before advancing the parser. During the id
 Deletes: The unchecked argument branches, followed by the shell parser when its owner moves.
 
 Risk: Invalid invocations consume a worker instead of returning an error. Extend `tests/conformance/tests/kubernetes_gate_runner.rs` with bounded missing-value cases for every value-taking flag.
+
+Owner review 2026-10-31: In passing with H1-5. The parser goes when the shell runner goes.
 
 ## Finding H1-5: Identity tests still own a separate shell orchestration system
 
@@ -90,6 +98,8 @@ Deletes: Both shell runners after their callers move, plus the test that extract
 
 Risk: Consolidation can lose negative authentication cases or expose fixture secrets. Preserve the verdict cases in `kubernetes_gate_runner.rs` and run the complete disposable identity journey at its required acceptance boundary.
 
+Owner review 2026-10-31: Group 1 In passing with deployment D3-6. `identity-jwks-journey-run` and `kubernetes-gate-run` merge into the Rust identity tests and the one fixture. Question 3 is answered: yes, the repository `evidence/` requirement goes.
+
 ## Finding H1-6: Application lifecycle adapters duplicate resource management
 
 Severity: medium  
@@ -100,11 +110,7 @@ Evidence: `tools/receiving-cluster-journey-run:14`, `tools/wms-cluster-journey-r
 
 Problem: These adapters repeat cluster creation, image import, operator installation, inspection, and cleanup. Their Rust callers already own the test lifecycle, but delegate shared infrastructure behavior to separate shell interfaces.
 
-Proposal: Merge common process operations into `test-support/infrastructure`. Keep application assertions with their applications and retain exact resource ownership and leftover reporting.
-
-Deletes: The three lifecycle scripts and duplicated image-loading loops. Reduce `delivery-owned` to retained repository launch commands.
-
-Risk: Cleanup can remove the wrong resources or hide leftovers. Preserve `kind-cluster-delete-test` scenarios and both applications’ `owned_release_delivery` cases.
+Merged into deployment D3-6 (owner review 2026-10-31), the same three scripts. One row.
 
 ## Finding H1-7: Compact benchmark results lose their identity and failure detail
 
@@ -122,6 +128,8 @@ Deletes: The unused `metadata.json` handoff and independently maintained compact
 
 Risk: Existing baseline readers depend on the current format. Use saved results to prove conversion, including a contention result with conflicts and a result with request errors.
 
+Owner review 2026-10-31: In passing. One result writer keeps identity, workload, conflicts and errors, and summaries derive from it. Question 2 is answered: no, raw results are retained beside the summary.
+
 ## Finding H1-8: The cloud floor runner leaves work active after failure
 
 Severity: medium  
@@ -138,6 +146,8 @@ Deletes: The Job-only cleanup handler and unbounded discovery loop.
 
 Risk: Failed runs can leave a sampler active or alter the next experiment’s conditions. Inject a replay failure against a disposable floor database and prove cleanup and trigger restoration.
 
+Owner review 2026-10-31: In passing, when `gcp.sh` is next touched. The `COMMIT_DELAY` switch there stays by ruling.
+
 ## Finding H1-9: The train runner omits its documented submodule gate
 
 Severity: medium  
@@ -148,11 +158,13 @@ Evidence: `tools/train-run:73`, `tools/train-run:80`, `tools/submodule-check/src
 
 Problem: The operating instructions say that the train runs the submodule guard before integration. The runner initializes submodules and runs test selection, but never invokes that guard. No tracked automatic caller was found.
 
-Proposal: Invoke the existing guard from the train before its test stage. Keep this repository rule outside `wamn-ctl`.
+Proposal: The renamed revision runner (`tools/test-revision`, from H1-2) calls `submodule-check` before its test stage. Keep this repository rule outside `wamn-ctl`.
 
-Deletes: No production functionality. Remove any duplicate external invocation once the train owns it.
+Deletes: No production functionality. Remove any duplicate external invocation once the revision runner owns it.
 
-Risk: A backward or undeclared pin can reach integration. Extend `tools/train-tools-test` with guard failure propagation and retain the submodule tool’s ancestry cases.
+Risk: A backward or undeclared pin can reach integration. Extend the runner's self-test with guard failure propagation and retain the submodule tool’s ancestry cases.
+
+Owner review 2026-10-31: Group 3 Do, small, with H1-2.
 
 ## Finding H1-10: Four installers repeat one installation algorithm
 
@@ -164,11 +176,7 @@ Evidence: `tools/install-helm:19`, `tools/install-kcl:18`, `tools/install-tofu:1
 
 Problem: The installers repeat platform refusal, digest validation, temporary storage, download, permissions, and final replacement across 172 lines. Helm and KCL pins also appear independently in the Dockerfile.
 
-Proposal: Keep four small entry points and one installer template. Each entry supplies its version, URL, archive digest, binary digest, and extraction member. Share one pin declaration with image construction.
-
-Deletes: Repeated installer bodies and duplicate pin declarations.
-
-Risk: KCL callers require stdout to contain only the binary path. Prove cached reuse, corrupt downloads, corrupt cached binaries, raw-file installation, archive extraction, and unsupported-platform refusal with local fixtures.
+Merged into code-quality A2-10 (owner review 2026-10-31). In passing, no tests.
 
 ## Finding H1-11: Repository launchers repeat shell plumbing
 
@@ -180,11 +188,7 @@ Evidence: `tools/repo-lint:18`, `tools/contract-diff:18`, `tools/contract-diff:5
 
 Problem: The scripts copy root discovery, executable lookup, error output, and command-plan printing. Each copy maintains the same operational rules separately.
 
-Proposal: Add one small `tools/lib/common.sh` with error output, repository discovery, executable lookup, and command printing. Keep step aggregation local because the runners have different failure behavior. Keep `require-test-result` as the existing executable boundary.
-
-Deletes: Repeated plumbing in the retained launchers.
-
-Risk: Sourcing a helper can change working directories, traps, or stdout. Keep the library free of those side effects and retain each runner’s directory, dry-run, and failure-propagation cases.
+Merged into code-quality A2-14 (owner review 2026-10-31). In passing, one sourced file under `tools/`.
 
 ## Finding H1-12: Retired and unreferenced tools obscure the supported surface
 
@@ -200,7 +204,7 @@ Proposal: Delete the rename tool and the manual gate build/removal pair. Use the
 
 Deletes: All three scripts and tests whose sole subject is the removed command surface.
 
-Risk: Off-repository workflows can still call these commands. Resolve that ownership question before deletion, then prove the supported platform build and owned-cluster cleanup paths retain their required behavior.
+Risk: Prove that the supported platform build and owned-cluster cleanup paths retain their required behavior.
 
 ### Per-script decisions
 
@@ -211,7 +215,7 @@ Paths in this table are relative to `tools/`. “No caller” means no tracked e
 | `cargo-cranelift` | 22 | Native debug build adapter. Dockerfile and `cranelift_dev.rs`. | Keep. |
 | `contract-diff` | 87 | Run authoring and HTTP contract tests. Test instructions and `contract_diff.rs`. | Keep, share shell helpers. |
 | `delivery-owned` | 112 | Native build, delivery launch, image loading, teardown. Application fixtures and delivery harness. | Merge infrastructure actions into their Rust owner. Keep launch commands. |
-| `dev-collector` | 38 | Render local collector files. Local benchmark and Receiving timing example. | Merge into `wamn-control::dev`. |
+| `dev-collector` | 38 | Render local collector files. Local benchmark and Receiving timing example. | Into the F2-5 stack owner. |
 | `guest-rustflags` | 26 | Print reproducible guest build flags. Generator, Dockerfile, tests, benchmark. | Keep one shared build boundary. |
 | `http-reuse-run` | 147 | Start a private registry and run one exact live test. Test instructions. | Merge fixture lifecycle into integration test support. |
 | `identity-jwks-journey-run` | 511 | Deployed key and session journey. Cleanup test, architecture and plan references. | Merge into Rust identity tests. |
@@ -226,7 +230,7 @@ Paths in this table are relative to `tools/`. “No caller” means no tracked e
 | `kind-gate-image-remove` | 434 | Plan and remove retired node images. Gate builder and conformance tests. | Delete with the retired builder. |
 | `kind-kept-delete` | 25 | Remove resources named by `kept.json`. Environment tests and test instructions. | Merge into shared test infrastructure. |
 | `kubernetes-gate-run` | 367 | Run Jobs and produce verdict records. Identity runner and conformance tests. | Merge into the Rust test owner. |
-| `lane-start` | 90 | Prepare checkout, binaries, dependencies, and packages. Build and test instructions. | Keep as a repository bootstrap command. |
+| `lane-start` | 90 | Prepare checkout, binaries, dependencies, and packages. Build and test instructions. | Cut down and renamed under F2-7 (banned word). |
 | `local-registry` | 41 | Start or reuse a labeled host registry. Build instructions. | Merge into control-side local platform preparation. |
 | `native-descriptor-limit-check` | 178 | Exercise descriptor limits in host processes. No caller. | Merge into host tests. |
 | `rc-gate-run` | 63 | RC test lifecycle adapter. `tests/integration/src/rc/resources.rs`. | Merge into shared test infrastructure. |
@@ -236,8 +240,8 @@ Paths in this table are relative to `tools/`. “No caller” means no tracked e
 | `repo-lint-dependencies` | 127 | Enforce dependency boundaries. `repo-lint`. | Keep. |
 | `require-test-result` | 18 | Refuse successful commands with no passing test cases. Multiple runners and diagnostic examples. | Keep. |
 | `test-changes` | 520 | Select tests and prepare their inputs. Train and test instructions. | Keep as repository tooling. |
-| `train-run` | 80 | Test a committed revision in a detached checkout. Train self-tests and instructions. | Keep, include submodule guard. |
-| `train-tools-test` | 208 | Fake-command tests for selection and train behavior. Test instructions. | Keep behavior, merge into conformance discovery. |
+| `train-run` | 80 | Test a committed revision in a detached checkout. Self-tests and instructions. | Keep behavior, rename (`tools/test-revision`), call the submodule guard. |
+| `train-tools-test` | 208 | Fake-command tests for selection and runner behavior. Test instructions. | Keep behavior, rename with the runner. |
 | `wasmcloud-release-check` | 173 | Exercise exact upstream release sources. Conformance tests and cutover history. | Keep as explicit dependency-upgrade tooling. |
 | `wms-cluster-journey-run` | 134 | WMS lifecycle adapter. WMS cluster fixtures. | Merge into shared test infrastructure. |
 | `submodule-check/` | 411 | Detect undeclared and backward pins. Workspace manifest and train instructions. | Keep, wire into train. |
@@ -259,15 +263,19 @@ Paths below are relative to `tools/bench/`.
 | `profile-summary.py` | 90 | Summarize CPU samples. `local.sh`. | Keep as benchmark analysis. |
 | `src/main.rs` | 1,109 | Generate timed Receiving traffic and collect results. Local and tier runners. | Keep as a separate benchmark binary. |
 
-The support files also have live owners. Keep `test-changes-suites.json` (8 lines) with test selection and `component-virtualization.json` (7 lines) with package building. Keep `database-snapshot.sql` (8 lines) with profiling. Keep floor SQL beside its runner: `get.sql` (21), `update.sql` (83), `receipt.sql` (36), and `receipt-slots.sql` (30). Keep `gcp-client.yaml` (42 lines) with the cloud floor runner.
+The support files also have live owners. `test-changes-suites.json` (8 lines) is replaced by `tests/selection.toml` under G3-2. Keep `component-virtualization.json` (7 lines) with package building. Keep `database-snapshot.sql` (8 lines) with profiling. Keep floor SQL beside its runner: `get.sql` (21), `update.sql` (83), `receipt.sql` (36), and `receipt-slots.sql` (30). Keep `gcp-client.yaml` (42 lines) with the cloud floor runner.
 
-Production image preparation, collector rendering, and local registry preparation belong behind `wamn-ctl`, with implementation in `wamn-control`. Repository bootstrap, lint, train, benchmark analysis, and test fixtures retain their existing kinds of owners. This follows `docs/architecture/overview.md:46` and `docs/architecture/overview.md:53`.
+Production image preparation, collector rendering, and local registry preparation belong behind `wamn-ctl`, with implementation in `wamn-control`. Repository bootstrap, lint, revision testing, benchmark analysis, and test fixtures retain their existing types of owners. This follows `docs/architecture/overview.md:46` and `docs/architecture/overview.md:53`.
+
+Owner review 2026-10-31: Group 1 Do. Delete all three scripts now. Question 1 is answered: no off-repository workflow exists.
 
 ## Open questions for the owner
 
-1. Does an off-repository workflow still require `kind-gate-build` or `kind-gate-image-remove`?
-2. Must benchmark summaries remain readable without their raw result files? This determines the retained artifact contract.
-3. Can the old identity journey’s repository `evidence/` requirement disappear when its Rust replacement owns temporary results?
+All three questions were answered on 2026-10-31.
+
+1. No off-repository workflow exists. Delete all three scripts now (H1-12).
+2. No. Raw results are retained beside the summary (H1-7).
+3. Yes. The repository `evidence/` requirement goes (H1-5).
 
 <!-- lane H2, bead wamn-lt36n.2 -->
 
