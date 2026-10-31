@@ -172,7 +172,9 @@ Answered 2026-10-31: no timings are supplied for the six development edges, and 
 
 ## Part 2: control
 
-Replace the `wamn-control` umbrella with package, release, and environment owners. Put developer sessions in `services/dev` and repository delivery workflows in `tools/delivery`. Keep registry declarations, provisioning policy, and schema decisions separate.
+Replace the `wamn-control` umbrella with package, release, and environment owners. Keep registry declarations, provisioning policy, and schema decisions separate.
+
+Standing (owner review 2026-10-31): there is no delivery tool and no `tools/delivery`. `docs/plan/delivery.md` is deferred and there is no PR-gated CI. Where this part said delivery tool, the owner is the existing `wamn-ctl` verb (`build-platform`, `publish-release`, `qualify-release`) run locally or by an agent. Developer sessions stay where they are until the B1-4 and B2-5 question is answered.
 
 Measurements.md section 2 records 80,688 source lines, 32,437 test lines, and 71 `Command::new` expressions in `control/lib`. The current checkout contains those expressions in 26 source files. Including integration tests and support files gives the issue’s 37 files.
 
@@ -185,9 +187,7 @@ Effort: L
 Area: `crates/control/lib/src/upgrade_environment.rs`  
 Evidence: `crates/control/lib/src/upgrade_environment.rs:109`, `crates/control/lib/src/upgrade_environment.rs:736`, `crates/control/lib/src/upgrade_environment.rs:784`, `crates/control/lib/src/upgrade_environment.rs:984`, `crates/control/lib/src/environment/mod.rs:251`.  
 Problem: The upgrade workflow applies packages and reconciles grants during its Packages stage. It takes the environment lifecycle lock later, when Deploy calls `apply_release`. Package transaction locks protect individual database operations, but they do not serialize this complete workflow against environment apply or delete. The workflow also maintains a separate environment document under `deploy/gcp/environments`, while the current lifecycle uses `environment.k` (`crates/control/lib/src/delivery/environment.rs:15`).  
-Proposal: Delete the independent deployment engine. A delivery tool prepares source, artifacts, and qualification evidence, then submits one environment transition. The environment owner holds the lifecycle lock across all target mutations and calls the sole package executor.  
-Deletes: The duplicate package, schema, deployment, credential, and connection orchestration in `upgrade_environment.rs`. Remove the old environment JSON format after migrating its remaining inputs.  
-Risk: Upgrade resume behavior and credential retirement can change. Extend `environment_lock_live.rs:11` to prove that an upgrade refuses before package mutation while another lifecycle operation holds the lock. Retain the deployed rerun and rollback coverage in `environment_apply_kind.rs:642`.
+Closed by C3-3 (owner review 2026-10-31): `upgrade_environment.rs` is a Group 1 deletion. No tool submits a transition, and no upgrade-refusal test is written. `environment_lock_live.rs:11` and the rerun and rollback coverage at `environment_apply_kind.rs:642` stay as they are.
 
 ## Finding B2-2: Grant policy spans provisioning, verification, and schema repair
 
@@ -196,9 +196,9 @@ Effort: L
 Area: `crates/control/provision/src/sql.rs`, `crates/control/lib/src/provision_project_env/grants.rs`, `crates/schema/control/src/run_plane/plan.rs`  
 Evidence: `crates/control/provision/src/sql.rs:208`, `crates/control/provision/src/sql.rs:1068`, `crates/control/lib/src/provision_project_env/grants.rs:48`, `crates/control/lib/src/provision_project_env/grants.rs:456`, `crates/schema/control/src/run_plane/plan.rs:99`. Measurements.md section 9 records 128 commits to provisioning `sql.rs` in 90 days.  
 Problem: Provisioning renders role grants, control/lib defines their expected shape, and schema-control repairs some of the same privileges. Several checks reuse provisioning constants, but family dispatch and privilege construction still span owners. The 1,922-line `sql.rs` includes tests from line 1112, so its total size overstates production code. Its mixed authority responsibilities explain more than its length alone.  
-Proposal: Keep cluster roles, credential generations, and their grant declarations in provisioning. Give schema-control ownership of relation-level schema repair. Pass provisioning’s explicit grant requirements into repair and comparison functions. Keep database observation and mutation in the environment owner, and retain independent denial tests.  
-Deletes: Duplicate family dispatch and independently assembled expected grants in control/lib. Remove hard-coded copies of provisioning grant requirements from schema repair.  
-Risk: A mistaken consolidation can widen access. Preserve `family_surface_grants.rs:444`, `family_surface_grants.rs:730`, and `run_grant_confinement.rs:95`, including independent forbidden-access assertions.
+Proposal (owner review 2026-10-31, small, Group 3 Do): with run-plane repair deleted under C1-5, two owners remain. Provisioning renders grants in `sql.rs`, and control/lib keeps its own expected shape in `grants.rs`. One rule: provisioning declares, control/lib compares against that declaration, no copy.  
+Deletes: The independently assembled expected grants and duplicate family dispatch in `control/lib/src/provision_project_env/grants.rs`.  
+Risk: A mistaken consolidation can widen access. The three denial tests stay: `family_surface_grants.rs:444`, `family_surface_grants.rs:730`, and `run_grant_confinement.rs:95`.
 
 Owner addendum 2026-10-31, re-scoped: [integration-schema](../plan/integration-schema.md) drops `integration_allow` and `project_connection` because the binding is the permission. B2-2 covers the role to operation ACL only.
 
@@ -209,9 +209,7 @@ Effort: L
 Area: `crates/control/lib/src/apply_package.rs`, `crates/control/lib/src/qualify_upgrade`  
 Evidence: `crates/control/lib/src/apply_package.rs:179`, `crates/control/lib/src/apply_package.rs:431`, `crates/control/lib/src/apply_package.rs:465`, `crates/control/lib/src/qualify_upgrade/mod.rs:26`, `crates/control/lib/src/qualify_upgrade/scratch.rs:85`.  
 Problem: Qualification calls package application, while package preparation and transaction completion call back into qualification modules. These are Rust module dependencies rather than a Cargo cycle, but they prevent a clean extraction. Ordinary package application therefore shares an owner with private PostgreSQL startup, snapshot copying, and evidence-file publication.  
-Proposal: Create one package-control owner for application, stages, backfill, ownership, history, and data-access reconciliation. Put pure evidence formats and transition rules in schema-control. Put snapshot creation and proof execution in the delivery tool. Both production and qualification use the same transaction executor, with distinct admitted requests.  
-Deletes: Application’s dependency on the qualification runner. Remove scratch PostgreSQL and dump tooling from the package executor’s normal dependency closure.  
-Risk: Splitting at the wrong point breaks atomic base-and-overlay application or permits stale evidence. Preserve `apply_package_live.rs:933` and `qualify_upgrade/tests.rs:334`. Keep the lock order established at `apply_package.rs:407` inside the executor.
+Closed by the package-baseline deletion (owner review 2026-10-31): `qualify_upgrade/` is gone, so the callback cycle is gone. The package-control owner is the Group 4 crate map, not a separate finding.
 
 ## Finding B2-4: Process execution has several owners with different lifecycle guarantees
 
@@ -220,17 +218,9 @@ Effort: M
 Area: `crates/control/lib/src/owned_command.rs`, `kubectl.rs`, `release_chart.rs`, `environment`  
 Evidence: `crates/control/lib/src/owned_command.rs:26`, `crates/control/lib/src/kubectl.rs:63`, `crates/control/lib/src/kubectl.rs:86`, `crates/control/lib/src/release_chart.rs:666`, `crates/control/lib/src/environment/analyse.rs:549`, `crates/control/lib/src/environment/mod.rs:192`.  
 Problem: `owned_command` provides deadlines and descendant cleanup, but several Helm and kubectl paths await processes without a process deadline. An environment operation can retain its lifecycle lock while such a process stalls. The library helper also installs process-wide signal listeners, although the documented CLI boundary owns signals.  
-Proposal: Retain one bounded process primitive, with cancellation supplied by the calling application. Assign command construction and cleanup as follows.
+Merged into D2-4 (owner review 2026-10-31), the same finding. After Group 1 the surviving callers are `dev/`, `platform_build.rs`, `platform/provider.rs` and one Helm/kubectl adapter. All go through `owned_command.rs` with a caller-supplied deadline. Signal listeners move from the library to the CLI binary. Test-only calls stay with their tests.
 
-The developer service owns Git inspection in `git_source.rs` and `dev/watch.rs`, Cargo/SQLx preparation in `dev/coordinator.rs`, and the children in `dev/activation.rs`, `cdc_reader.rs`, `control.rs`, `environment.rs`, and `pat_issuer.rs`. It also owns connector builds from `integration.rs`.
-
-The delivery tool owns Docker, Cargo, Git, pnpm, gcloud build commands, and repository scripts from `platform_build.rs`, `platform/build.rs`, and the retained preparation stages of `upgrade_environment.rs`. It owns qualification’s Docker commands and `qualify_upgrade/scratch.rs` dump, restore, and PostgreSQL lifecycle.
-
-The platform CLI owns provider and pool commands from `platform/provider.rs` and `platform/pools.rs`. One Kubernetes/Helm adapter serves platform installation, environment analysis and writes, and release-chart operations. Remove direct calls from those domain modules.
-
-Test-only calls in `owned_command.rs`, `event_advisories.rs`, `platform/edge.rs`, `platform_build/inputs.rs`, and inline test modules stay with their tests. The eleven integration-test and support files retain fixture-process ownership.
-
-Deletes: Duplicate Helm and kubectl runners, synchronous context discovery in the environment library, and signal registration inside individual command executions.  
+Deletes: Duplicate Helm and kubectl runners, synchronous context discovery in the environment library, and signal registration inside the library.  
 Risk: Cancellation can leave descendants or expose secret diagnostics. Retain `owned_command.rs:147`. Add a stalled Helm/kubectl test that proves bounded failure, descendant cleanup, secret suppression, and lifecycle-lock release.
 
 ## Finding B2-5: Developer orchestration is reusable, but belongs to the developer application
@@ -244,6 +234,8 @@ Proposal: Move the `wamn` binary and development engine into `services/dev`, wit
 Deletes: `wamn-control::dev`, its umbrella exports, and the separate developer adapters in services/ctl after combining them with their implementation owner. Remove developer-only dependencies from the administrative CLI.  
 Risk: Stage ordering, watch invalidation, and cooperative shutdown can regress. Move the tests at `dev.rs:806`, `dev.rs:1005`, and `dev/session.rs:499` with the service. Preserve CLI coverage in `services/ctl/tests/dev_command.rs:21`.
 
+Owner review 2026-10-31: deferred with B1-4. The owner question stands: may `wamn dev` own the development engine?
+
 ## Finding B2-6: Release qualification embeds application test policy in the control library
 
 Severity: medium  
@@ -251,8 +243,8 @@ Effort: M
 Area: `crates/control/lib/src/delivery`  
 Evidence: `crates/control/lib/src/delivery/qualification.rs:18`, `crates/control/lib/src/delivery/qualification.rs:119`, `crates/control/lib/src/delivery/qualification.rs:327`, `crates/control/lib/src/environment/analyse.rs:516`, `crates/control/lib/src/delivery/qualification_artifact.rs:57`.  
 Problem: Qualification belongs here today because delivery produces evidence that environment apply consumes. However, the implementation also selects Receiving and WMS test names, mounts the Docker socket, and runs test executables. Supporting another application package set requires changing the control library’s closed match. Evidence consumption does not require those execution responsibilities.  
-Proposal: Move application selection and case execution into the delivery tool. Keep qualification payloads, immutable tags, and registry verification beside release artifacts in the release owner. Environment apply depends only on that verification API.  
-Deletes: Application case lists, Docker runner construction, and temporary test-result management from control/lib.  
+Proposal (owner review 2026-10-31, Group 3 Do, paired with F3-5): the `qualify-release` verb runs the case set the application itself declares, in its package beside its tests. The closed Receiving/WMS match and the Docker runner construction leave control/lib. Keep qualification payloads, immutable tags, and registry verification beside release artifacts. Environment apply depends only on that verification API. No approver: the application declares its cases.  
+Deletes: Application case lists, Docker runner construction, and temporary test-result management from control/lib.
 Risk: The split can accept incomplete evidence or reuse evidence for another image set. Preserve `release_qualification_live.rs:48` and the exact-case requirements at `delivery/qualification.rs:143`.
 
 ## Finding B2-7: Platform installation also acts as a repository build application
@@ -262,7 +254,7 @@ Effort: L
 Area: `crates/control/lib/src/platform`, `crates/control/lib/src/platform_build.rs`  
 Evidence: `crates/control/lib/src/platform/install.rs:54`, `crates/control/lib/src/platform/build.rs:45`, `crates/control/lib/src/platform/build.rs:56`, `crates/control/lib/src/platform_build.rs:236`, `crates/control/lib/src/upgrade_environment.rs:917`.  
 Problem: Platform installation selects numbered runbook steps, builds package and UI outputs, and invokes `wamn-ctl` for stamping. Upgrade orchestration invokes another `wamn-ctl` for qualification. These nested CLI calls create dependencies on binary locations, argument spelling, and printed results alongside existing Rust APIs.  
-Proposal: Put platform builds, stamping, and qualification preparation in the delivery tool. Installation consumes the resulting chart, image digests, package artifacts, and UI receipt. Keep provider setup and installation orchestration in services/ctl, with pure resource rendering in provisioning.  
+Proposal (owner review 2026-10-31, Group 1 Do, merged with D3-1, same Deletes): `build-platform` stays a `wamn-ctl` verb. `platform apply` consumes its outputs: the chart, image digests, package artifacts, and UI receipt. Keep provider setup and installation orchestration in services/ctl, with pure resource rendering in provisioning.
 Deletes: Build-machine discovery and build execution from installation. Remove self-invocation of `wamn-ctl`, duplicate stamp argument builders, and duplicate image preparation in upgrade-environment.  
 Risk: Image reuse and repeated installation can change. Retain `platform_apply_kind.rs:98`, plus `platform_build.rs:2318` and `platform_build.rs:2397` for stamping and build-before-push ordering.
 
@@ -277,6 +269,8 @@ Proposal: Give release-control ownership of component admission, package publica
 Deletes: `LocalApplicationFacts` construction from publication, unused database inputs from assembly, and duplicated local-versus-registry assembly paths. Remove the umbrella after its remaining responsibilities move.  
 Risk: Local and published releases can acquire different identities. Preserve `release_one_digest.rs:1`, its OCI-only publication assertions, and package digest tests.
 
+Owner review 2026-10-31: split. Now, In passing: drop the unused database inputs from the local assembler and the duplicated local-versus-registry assembly path. Group 4: the release-control crate of the README map.
+
 ## Finding B2-9: Provisioning APIs expose CLI output paths to internal callers
 
 Severity: medium  
@@ -288,11 +282,11 @@ Proposal: Keep registry coordinates, placement, policy declarations, and registr
 Deletes: Temporary credential file round trips in environment ensure, internal `emit_*` fields and `-` sentinels, pure SQL builders in control/lib, and the misplaced schema-control instance-claim module.  
 Risk: Credential output permissions, projection identity, and refresh-versus-claim ordering can regress. Preserve `provision_project_env/tests.rs:1025`, including concurrent identity conflicts and missing-projection refusal. Keep file-output security tests at the CLI boundary.
 
+Owner review 2026-10-31: In passing, when the integration-schema plan's C1 to C3 work touches `provision_project_env`. Return credential objects from the library. Files are a services/ctl concern only.
+
 ## Open questions for the owner
 
-1. Can `upgrade-environment` be retired after migrating its resume records and credential-retirement behavior into the current lifecycle?
-2. Which application owner approves qualification case sets for packages beyond Receiving, Acme Receiving, and WMS?
-3. Must external consumers retain the `wamn-control` Rust API, or can the umbrella disappear without a compatibility facade?
+All three questions were answered on 2026-10-31. `upgrade-environment` is deleted whole, and no resume records or retirement behavior migrate. The application declares its own qualification cases, with no approver. No external consumer uses the `wamn-control` API, so the umbrella may go without a facade (Group 4).
 
 <!-- lane B3, bead wamn-m0c2w.3 -->
 
