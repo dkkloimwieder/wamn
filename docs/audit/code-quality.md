@@ -455,6 +455,8 @@ Deletes: Six implementation lines, or nine including the forwarding wrapper, bef
 
 Risk: Generated SQL must retain identical bytes. The existing adversarial quoting test covers embedded quotes and identifier limits (`crates/platform/pg-core/src/lib.rs:125`).
 
+Owner review 2026-10-31: callers require the default server setting (`standard_conforming_strings` on). pg-core states that precondition in its doc comment. Nondefault parsing is unsupported.
+
 ## Finding A2-12: Raw digest helpers repeat one wire spelling
 
 Severity: low  

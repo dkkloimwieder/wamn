@@ -171,9 +171,7 @@ Effort: M
 Area: crates/identity/credential-store  
 Evidence: `crates/identity/credential-store/src/kubernetes.rs:21`, `crates/identity/credential-store/src/kubernetes.rs:26`, `crates/control/registry/src/identifiers.rs:87`, `crates/control/lib/src/environment/ensure.rs:866`, `crates/control/lib/src/release_chart.rs:490`  
 Problem: Names join org, project, and environment with single hyphens, although each component permits single hyphens. Coordinates `a/b-c/d` and `a/b/c-d` therefore produce the same Secret, ServiceAccount, Role, and RoleBinding. Both environments receive access to the same complete credential Secret, so a compromised host crosses the project boundary.  
-Proposal: Derive names from validated coordinates with the existing unambiguous `--` separator. Recreate affected Secrets and access resources without a fallback to ambiguous names.  
-Deletes: The two independent single-hyphen name formats in `kubernetes.rs`.  
-Risk: Existing references require replacement. A two-environment deployment test must prove distinct names and deny each ServiceAccount access to the other Secret.
+Merged into E1-1 (owner review 2026-10-31): one encoding, the double-hyphen convention, no fallback. Question 1 is answered: no current coordinates collide. The only deployed coordinates are `dkk--receiving--dev` and `dkk--wms--dev`.
 
 ## Finding E2-2: Org-scoped control credentials retain authority across organizations
 
@@ -182,20 +180,24 @@ Effort: L
 Area: crates/control/provision/src/sql.rs; deploy/sql/system-schema.sql  
 Evidence: `crates/control/provision/src/workload_role.rs:220`, `crates/control/provision/src/sql.rs:977`, `crates/control/provision/src/sql.rs:1034`, `deploy/sql/system-schema.sql:14`, `deploy/sql/system-schema.sql:1134`, `deploy/sql/system-schema.sql:1455`  
 Problem: Provisioning describes each control login as org-scoped, but its inherited grants permit writes across entire membership and role tables. These tables have no row isolation between organizations. Owner-executed connection functions also trust caller-supplied org arguments, so a stolen control credential can alter another organization's authority and connection records.  
-Proposal: Remove direct runtime writes to global authority tables. Expose narrow routines that derive permitted organization scope from the authenticated database login. Reserve global integration publication for the deployment owner.  
-Deletes: Broad control table grants and caller-selected organization authority in privileged functions.  
+Proposal: One control login per org, holding that org's environments and no other (the admin-hierarchy ruling). Authority tables in the system database carry the org key. The control login is one database role per org. Row security on the org key covers the membership, role and connection tables. Privileged functions derive the org from the login (`current_user`), never from an argument.  
+Deletes: Broad control table grants and every org argument to a privileged function.  
 Risk: Control operations require new database interfaces. Extend the live denial tests with two organizations and direct SQL attempts against the other organization's rows and functions.
+
+Owner review 2026-10-31: keep, high, Group 3 Do. Question 2 is answered: no, an org control host is trusted for its own org only.
 
 ## Finding E2-3: Postgres connections expose sensitive traffic without transport encryption
 
-Severity: high  
+Severity: medium  
 Effort: L  
 Area: deploy/**/cnpg-cluster.yaml; native Postgres clients  
 Evidence: `deploy/gcp/cnpg-cluster.yaml:51`, `deploy/platform/wamn-sysdb.yaml:64`, `services/identity/src/lib.rs:165`, `services/host/src/host.rs:782`, `services/cdc-reader/src/lib.rs:150`  
 Problem: Database admission rules explicitly accept non-TLS connections, and deployed identity and control clients use `NoTls`. SCRAM password authentication does not encrypt subsequent SQL traffic, including identity state, signing material, and application data. The CDC reader also defaults its replication transport to `sslmode=disable`.  
-Proposal: Require authenticated TLS for database clients and replication. Give one connection owner responsibility for CA trust and server-name validation, then require encrypted connections in Postgres admission rules.  
+Proposal: CNPG issues the server certificates already. One client connection owner validates the CA and the server name. The CDC default becomes `sslmode=verify-full`. Then the admission rule drops plaintext.  
 Deletes: Production `NoTls` connections, plaintext admission rules, and the CDC plaintext default.  
 Risk: Every database consumer requires trusted certificates. Deployment tests must reject plaintext, an untrusted CA, and a wrong server name while preserving identity, provisioning, and replication operations.
+
+Owner review 2026-10-31: keep, medium, Group 3 Do. It rides no image rebuild of its own, because host and identity change together with One NATS.
 
 ## Finding E2-4: Event NATS sends credentials and events over plaintext connections
 
@@ -208,7 +210,7 @@ Closed by [alignment](../plan/alignment.md) R1, R3 and R4 (owner addendum 2026-1
 
 ## Finding E2-5: Shared development infrastructure publishes administrator credentials
 
-Severity: medium  
+Severity: low  
 Effort: M  
 Area: deploy/platform/postgres.yaml; deploy/infra/minio.yaml; crates/control/provision/src/backup.rs  
 Evidence: `deploy/platform/postgres.yaml:35`, `deploy/platform/postgres.yaml:119`, `deploy/infra/minio.yaml:27`, `crates/control/provision/src/backup.rs:33`, `crates/control/provision/src/backup.rs:82`  
@@ -217,7 +219,9 @@ Proposal: Delete the standing Postgres fixture and create disposable databases f
 Deletes: `deploy/platform/postgres.yaml`, committed MinIO credential values, and shared root credential wiring in backup declarations.  
 Risk: Existing gate and recovery procedures require replacement inputs. Prove backup restoration and deny one cluster's credentials access to another cluster's objects.
 
-Owner addendum 2026-10-31, re-scoped: [integration-schema](../plan/integration-schema.md) drops `registry.credential_import`, `registry.import_connection_credentials` and `identity.credential.secret`, so credentials enter by UI or API only and plaintext secrets never sit in Postgres. What remains here: `deploy/platform/postgres.yaml` goes with the prototype set (D1-10), and the MinIO root and shared backup root identity.
+Owner addendum 2026-10-31, re-scoped: [integration-schema](../plan/integration-schema.md) drops `registry.credential_import`, `registry.import_connection_credentials` and `identity.credential.secret`, so credentials enter by UI or API only and plaintext secrets never sit in Postgres. `deploy/platform/postgres.yaml` goes with the prototype set (D1-10).
+
+Owner review 2026-10-31, re-scoped again: low, Group 1 In passing. MinIO is a local drop-in only. Cloud backups use Cloud Storage through the cluster's service account (Workload Identity), with no root credential. Delete `deploy/infra/minio.yaml` with the prototype set (D1-10) and the MinIO root wiring in `backup.rs`. No restricted backup credentials are created.
 
 ## Finding E2-6: Command help can disclose database passwords
 
@@ -230,6 +234,8 @@ Proposal: Suppress environment values for every secret argument and redact their
 Deletes: Secret values from generated help and unnecessary password-bearing command arguments.  
 Risk: Automation that passes URLs directly requires adjustment if flags disappear. Render each command's help with synthetic secret markers and prove that no marker appears.
 
+Owner review 2026-10-31: keep, small, Group 3 Do.
+
 ## Finding E2-7: Standalone service images default to root execution
 
 Severity: medium  
@@ -241,24 +247,30 @@ Proposal: Set an unprivileged numeric image user and require non-root execution 
 Deletes: Implicit root execution and unrestricted writable container filesystems.  
 Risk: UID changes affect private certificate files and writable directories. Deployment smoke tests must start each service with its real Secret mounts under the restricted identity.
 
+Owner review 2026-10-31: keep, medium, In passing. A `USER` line in the Dockerfile rebuilds every image, so it rides the One NATS build. The identity chart gets `runAsNonRoot` in the same change. `deploy/gcp/cdc-reader.yaml` and `scenario-worker.yaml` are already deleted under D1-6 and D1-10.
+
 ## Finding E2-8: Mutable base and infrastructure images weaken release provenance
 
-Severity: medium  
+Severity: low  
 Effort: M  
 Area: Dockerfile; deploy/gcp; deploy/infra  
 Evidence: `Dockerfile:20`, `Dockerfile:158`, `deploy/gcp/nats-jetstream.yaml:96`, `deploy/gcp/cnpg-cluster.yaml:39`, `deploy/gates/m1-postgres.Dockerfile:1`; measurements.md section 11  
 Problem: Build bases and deployed database and event-broker images use mutable tags without digests. The same source revision can therefore resolve different executable inputs across builds or node pulls. The shared measurements contain no container vulnerability scan, so this finding establishes an input-provenance gap.  
-Proposal: Pin shipping bases and infrastructure images by digest under one reviewed image declaration. Replace those pins through explicit image updates and qualification.  
-Deletes: Tag-only shipping image references and duplicate image declarations.  
-Risk: Image updates become deliberate release changes. A manifest gate must reject tag-only shipping references, and deployment qualification must exercise each replacement digest.
+Proposal: Pin the two infrastructure images (NATS, CNPG postgres) by digest in the one NATS manifest and `cnpg-cluster.yaml` when alignment rewrites them.  
+Deletes: Tag-only references for the two infrastructure images.  
+Risk: Image updates become deliberate changes to two manifests. Deployment qualification exercises each replacement digest.
+
+Owner review 2026-10-31: low, In passing, narrowed. The manifest check and the base-image digest pins are rejected. The Rust base follows `rust-toolchain.toml`, and a digest pin is churn on every toolchain bump.
 
 ## Open questions for the owner
 
-1. Do current environments contain colliding credential names? Inspect their coordinates before replacing names under E2-1.
-2. Is every org control host intentionally trusted with all organizations' authority? The database grants currently establish that boundary.
-3. Which external network controls protect the plaintext services and development fixtures? This source audit cannot establish the live network boundary.
-4. Who owns the chart CA's renewal and expiry date? `deploy/infra/values-wamn.yaml:24` records a 365-day CA with no renewal path.
-5. Must SQL literal quoting support nondefault string parsing? `crates/platform/pg-core/src/lib.rs:167` escapes apostrophes but does not state that server precondition.
+All five questions were answered on 2026-10-31.
+
+1. No current coordinates collide.
+2. No. An org control host is trusted for its own org only (E2-2).
+3. None. No NetworkPolicy exists. The cluster network is the boundary, and wamn-dev is a development cluster. E2-3 and One NATS close the plaintext part.
+4. Alignment R3: cert-manager owns the CA and renews it.
+5. Callers require the default server setting (`standard_conforming_strings` on). pg-core states that precondition in its doc comment. Nondefault parsing is unsupported. This closes the A2-11 question too.
 
 <!-- lane E3, bead wamn-hgdta.3 -->
 
