@@ -7,8 +7,12 @@ The guest names its requirement and logical input. The host owns endpoints, cred
 ## Import admission
 
 The code-owned [capability declaration](../../crates/platform/component-policy/src/lib.rs) defines the closed tenant import set.
-It admits exact package and version pairs.
-An absent pair refuses, without version ranges, normalization, or namespace guesses.
+It admits package and version pairs.
+A `wamn:*`, `wasmcloud:*` or `wasi:logging` row names an exact version.
+A `wasi:io`, `wasi:clocks` or `wasi:random` row names the family `0.2`.
+The family admits `0.2.N` up to the ceiling, the highest `0.2` patch that the host's Wasmtime links.
+The build reads the ceiling from the WIT of the linked `wasmtime-wasi`.
+An absent pair refuses, without other version ranges, normalization, or namespace guesses.
 An application component cannot import `wamn:postgres/client`, even with a grant, because it runs raw SQL outside the admitted statements.
 The platform's own native workloads use their separate publication authority.
 
@@ -20,14 +24,14 @@ The platform's own native workloads use their separate publication authority.
 | `wamn:connection` | `0.1.0` | Effect |
 | `wasmcloud:blobstore` | `0.1.0` | Effect |
 | `wasi:logging` | `0.1.0-draft` | Ambient |
-| `wasi:io` | `0.2.12` | Ambient |
-| `wasi:clocks` | `0.2.12` | Ambient |
-| `wasi:random` | `0.2.12` | Ambient |
+| `wasi:io` | family `0.2` | Ambient |
+| `wasi:clocks` | family `0.2` | Ambient |
+| `wasi:random` | family `0.2` | Ambient |
 
 Ambient interfaces support execution without a declared external effect.
 Effect interfaces require the admitted effect and binding facts.
 Both admission and component modeling classify platform packages from this same declaration.
-They classify the package independently of version, then enforce the exact admitted version.
+They classify the package independently of version, then enforce the admitted version or family.
 A foreign namespace alone does not make an import an application dependency.
 
 A guest-visible capability requires one pinned WIT contract and its corresponding host world.

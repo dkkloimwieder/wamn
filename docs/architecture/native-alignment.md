@@ -41,8 +41,8 @@ Any reuse change must include its resource rules and runtime implementation toge
 The adoption decision requires no benchmark.
 
 WASI-Virt is pinned to `448f6df8f688cee5d6995e96b1ffc31f9bf00742` with adapter SHA-256 `28eff8a2255812b440fbad2784a5a87660321e667331c17fb9a95f29caa85632`.
-The capability rows follow the adapter's emitted versions, not the authored WIT versions.
-A pin change must preserve that relationship.
+The `wasi:*` capability rows name the family of the adapter's emitted versions, not the authored WIT versions.
+A pin change must keep the emitted versions in that family and at or below the ceiling.
 Build shape serves admission policy and cannot weaken it.
 
 The OCI readers preserve WAMN configuration blobs and media types.

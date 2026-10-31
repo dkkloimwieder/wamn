@@ -60,15 +60,24 @@ fn linked_wit() -> PathBuf {
 /// The highest `N` in a `package wasi:<name>@0.2.N;` line of the WIT files.
 fn highest_patch(wit: &Path) -> u32 {
     let mut patches = Vec::new();
-    for entry in fs::read_dir(wit).unwrap_or_else(|error| panic!("read {}: {error}", wit.display())) {
+    for entry in fs::read_dir(wit).unwrap_or_else(|error| panic!("read {}: {error}", wit.display()))
+    {
         let path = entry.expect("a WIT entry").path();
         if path.extension().is_none_or(|extension| extension != "wit") {
             continue;
         }
         let text = fs::read_to_string(&path).expect("read a WIT file");
         patches.extend(text.lines().filter_map(|line| {
-            let version = line.trim().strip_prefix("package wasi:")?.split_once('@')?.1;
-            version.strip_suffix(';')?.strip_prefix("0.2.")?.parse::<u32>().ok()
+            let version = line
+                .trim()
+                .strip_prefix("package wasi:")?
+                .split_once('@')?
+                .1;
+            version
+                .strip_suffix(';')?
+                .strip_prefix("0.2.")?
+                .parse::<u32>()
+                .ok()
         }));
     }
     patches

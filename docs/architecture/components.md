@@ -112,7 +112,7 @@ The resulting component must satisfy the ordinary import policy without an exemp
 Existing `no_std` guests keep their separate workspace.
 
 The virtualizer can change imported WASI versions.
-Its revision and adapter digest must agree with the exact versions in the [capability declaration](capabilities.md#import-admission).
+Its revision and adapter digest stay exact, and the versions that it emits must be in the families of the [capability declaration](capabilities.md#import-admission).
 The [native alignment owner](native-alignment.md) records why this build step remains.
 The operations pages own build commands and artifact comparisons.
 

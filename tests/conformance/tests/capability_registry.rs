@@ -1,17 +1,27 @@
-//! The capability registry's inherited versions match the pinned WASI adapter.
+//! The capability registry's WASI families admit the pinned WASI adapter.
 //!
 //! Tenant admission sees virtualized component imports. The HTTP shell's
 //! vendored WIT describes a separate platform workload and cannot establish
 //! those versions. This gate generates adapter bytes through the pinned
 //! WASI-Virt public API and inspects their interfaces on the production engine.
-//! No guest build or external artifact is required.
+//! The WASI-Virt revision and adapter digest stay exact
+//! (docs/plan/alignment.md W2). No guest build or external artifact is
+//! required.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
-use wamn_component_policy::{CAPABILITY_REGISTRY, Posture, import_pkg, import_version};
+use wamn_component_policy::{
+    CAPABILITY_REGISTRY, Posture, WASI_FAMILY, capability_row, import_pkg, import_version,
+};
 use wash_runtime::wasmtime::component::Component;
 use wasi_virt::WasiVirt;
+
+/// The pins of docs/architecture/native-alignment.md.
+const WASI_VIRT_SOURCE_REV: &str = "448f6df8f688cee5d6995e96b1ffc31f9bf00742";
+const WASI_VIRT_ADAPTER_DIGEST: &str =
+    "sha256:28eff8a2255812b440fbad2784a5a87660321e667331c17fb9a95f29caa85632";
 
 fn repository_root() -> PathBuf {
     std::fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
@@ -65,28 +75,79 @@ fn vendored_wasi_versions(root: &Path) -> BTreeMap<String, BTreeSet<String>> {
     found
 }
 
-fn assert_registry_version(package: &str, interfaces: &[String]) {
+fn assert_registry_family(package: &str, interfaces: &[String]) {
     let row = CAPABILITY_REGISTRY
         .iter()
         .find(|row| row.package == package)
         .unwrap_or_else(|| panic!("{package} must carry a registry row"));
-    let versions: BTreeSet<&str> = interfaces
-        .iter()
-        .filter(|name| import_pkg(name) == package)
-        .map(|name| {
-            import_version(name)
-                .unwrap_or_else(|| panic!("pinned adapter interface {name} has no version"))
-        })
-        .collect();
     assert_eq!(
-        versions,
-        BTreeSet::from([row.version]),
-        "{package} registry version differs from the pinned adapter interfaces {interfaces:?}"
+        row.version, WASI_FAMILY,
+        "{package} row must name the family"
     );
+    let mut found = false;
+    for name in interfaces.iter().filter(|name| import_pkg(name) == package) {
+        found = true;
+        import_version(name)
+            .unwrap_or_else(|| panic!("pinned adapter interface {name} has no version"));
+        assert!(
+            capability_row(name).is_some_and(|admitted| admitted.package == package),
+            "the {package} row does not admit the pinned adapter interface {name}"
+        );
+    }
+    assert!(
+        found,
+        "the pinned adapter imports no {package}: {interfaces:?}"
+    );
+}
+
+/// The resolved WASI-Virt source revision and the digest of the adapter it
+/// embeds.
+fn resolved_wasi_virt() -> (String, String) {
+    let output = Command::new(env!("CARGO"))
+        .args(["metadata", "--locked", "--offline", "--format-version", "1"])
+        .current_dir(repository_root())
+        .output()
+        .expect("run cargo metadata");
+    assert!(
+        output.status.success(),
+        "cargo metadata failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("parse cargo metadata");
+    let package = metadata["packages"]
+        .as_array()
+        .expect("metadata packages")
+        .iter()
+        .find(|package| package["name"] == "wasi-virt")
+        .expect("the workspace resolves wasi-virt");
+    let source = package["source"].as_str().expect("a wasi-virt source");
+    let revision = source.rsplit_once('#').map_or_else(
+        || panic!("wasi-virt source {source} names no revision"),
+        |(_, revision)| revision.to_owned(),
+    );
+    let manifest = Path::new(package["manifest_path"].as_str().expect("a manifest path"));
+    let adapter = manifest
+        .parent()
+        .expect("a manifest directory")
+        .join("lib/virtual_adapter-wasip2.wasm");
+    let bytes = std::fs::read(&adapter)
+        .unwrap_or_else(|error| panic!("read {}: {error}", adapter.display()));
+    (
+        revision,
+        wamn_engine::component_admission::component_digest(&bytes),
+    )
 }
 
 #[test]
 fn capability_registry_wasi_rows_match_the_pinned_adapter() {
+    let (revision, adapter_digest) = resolved_wasi_virt();
+    assert_eq!(revision, WASI_VIRT_SOURCE_REV, "WASI-Virt revision moved");
+    assert_eq!(
+        adapter_digest, WASI_VIRT_ADAPTER_DIGEST,
+        "WASI-Virt adapter digest moved"
+    );
+
     let mut virtualizer = WasiVirt::new();
     // The production tool's fixed profile, before component-specific filtering.
     virtualizer.clocks(true);
@@ -111,7 +172,7 @@ fn capability_registry_wasi_rows_match_the_pinned_adapter() {
         wamn_engine::component_admission::component_digest(&adapter.adapter)
     );
     for package in ["wasi:io", "wasi:clocks"] {
-        assert_registry_version(package, &imports);
+        assert_registry_family(package, &imports);
     }
     assert!(
         imports.iter().all(|name| import_pkg(name) != "wasi:random"),
@@ -120,7 +181,7 @@ fn capability_registry_wasi_rows_match_the_pinned_adapter() {
 
     // The production profile leaves random unset, so the adapter neither
     // imports nor exports it: a guest's random import passes through at the
-    // version Rust std links. The registry row carries that version, and the
+    // version Rust std links. The registry row's family admits it, and the
     // `jsonata` node's admission test measures it on a real guest.
     let exports: Vec<String> = component
         .component_type()

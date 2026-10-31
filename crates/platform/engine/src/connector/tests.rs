@@ -79,7 +79,7 @@ fn connector_byte_admission_refuses_postgres_blobstore_and_other_effects() -> an
         "wasi:http/outgoing-handler@0.2.12",
         "wamn:connector/reader@0.1.0",
         "wasi:filesystem/types@0.2.12",
-        "wasi:sockets/tcp@0.2.9",
+        "wasi:sockets/tcp@0.3.0",
     ] {
         let bytes = wat::parse_str(format!(
             r#"(component (import "{interface}" (instance (export "effect" (func)))))"#
