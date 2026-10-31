@@ -200,6 +200,7 @@ pub struct Publication {
     pub version: i32,
     pub parameter_schema: Value,
     pub operations: String,
+    pub write_interfaces: Vec<String>,
 }
 
 /// Push the exact build by digest, read it back, then record its catalog entry.
@@ -213,6 +214,14 @@ pub async fn publish(
     database_url: &str,
     publication: &Publication,
 ) -> anyhow::Result<()> {
+    let exports = crate::connection_requirement::exported_interfaces(&built.component)?;
+    ensure!(
+        publication
+            .write_interfaces
+            .iter()
+            .all(|interface| exports.contains(interface)),
+        "write_interface_not_exported"
+    );
     let repository = Repository::open(registry, &built.digest)?;
     // Authenticate before the low-level blob and manifest writes.
     repository.manifest().await?;
@@ -250,12 +259,11 @@ pub async fn publish(
         &pulled,
         &built.code,
     )?;
-    let exports = crate::connection_requirement::exported_interfaces(&pulled)?;
     let mut system = crate::environment::analyse::connect(database_url).await?;
     let tx = system.transaction().await?;
     tx.batch_execute("SET LOCAL ROLE wamn_system").await?;
     tx.query_one(
-        "SELECT registry.publish_integration($1,$2,$3,$4::text::jsonb,$5,$6)",
+        "SELECT registry.publish_integration($1,$2,$3,$4::text::jsonb,$5,$6,$7)",
         &[
             &built.code,
             &publication.version,
@@ -263,6 +271,7 @@ pub async fn publish(
             &publication.parameter_schema.to_string(),
             &publication.operations,
             &exports,
+            &publication.write_interfaces,
         ],
     )
     .await?;

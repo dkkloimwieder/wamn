@@ -6059,6 +6059,7 @@ dependencies = [
  "wamn-execution-contract",
  "wamn-fixture-package",
  "wamn-identity-client",
+ "wamn-package-artifact",
  "wamn-platform-identity",
  "wamn-project-state",
  "wamn-run-state",

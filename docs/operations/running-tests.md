@@ -1388,3 +1388,14 @@ Each of these two cases takes up to about three minutes.
 ```bash
 cargo test -p wamn-control --test workflow_schedule_live -- --nocapture
 ```
+
+### Connection candidates
+
+Run the candidate route test with PostgreSQL 18, the local NATS binary, Docker, and the wasm32-wasip2 target available.
+Set `WAMN_NATIVE_C_NATS_BIN` to that NATS binary.
+The test starts private database, broker, registry, TLS, and Modbus fixtures.
+It tests good and bad candidates, version selection, cached compilation, authority refusal, and unchanged generation and credential counts.
+
+```bash
+cargo test --locked --offline -p wamn-execution-host --test control_route_live --features wamn-runtime/wasm_component_model_implements,wash-runtime/washlet connection_test::candidate_http_and_modbus_health_commit_nothing -- --ignored --exact --nocapture
+```

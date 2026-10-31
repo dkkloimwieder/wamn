@@ -430,7 +430,7 @@ async fn published_modbus_versions_link_before_the_next_call() -> anyhow::Result
         oci_ca_paths: vec![],
     };
     let first = integration::build(scratch.path(), "modbus").await?;
-    integration::publish(&first, &configuration, database.url(), &integration::Publication {version:2, parameter_schema:json!({"type":"object","properties":{"authority":{"type":"string","minLength":1,"immutable":true}},"required":["authority"]}),operations:"wamn:modbus/client@1.0.0".into()}).await?;
+    integration::publish(&first, &configuration, database.url(), &integration::Publication {version:2, parameter_schema:json!({"type":"object","properties":{"authority":{"type":"string","minLength":1,"immutable":true}},"required":["authority"]}),operations:"wamn:modbus/client@1.0.0".into(),write_interfaces:vec!["wamn:modbus/write@1.0.0".into()]}).await?;
     let source_path = scratch.path().join("integrations/modbus/src/lib.rs");
     let source_bytes = std::fs::read_to_string(&source_path)?;
     std::fs::write(
@@ -441,7 +441,7 @@ async fn published_modbus_versions_link_before_the_next_call() -> anyhow::Result
         ),
     )?;
     let second = integration::build(scratch.path(), "modbus").await?;
-    integration::publish(&second, &configuration, database.url(), &integration::Publication {version:3, parameter_schema:json!({"type":"object","properties":{"authority":{"type":"string","minLength":1,"immutable":true}},"required":["authority"]}),operations:"wamn:modbus/client@1.0.0".into()}).await?;
+    integration::publish(&second, &configuration, database.url(), &integration::Publication {version:3, parameter_schema:json!({"type":"object","properties":{"authority":{"type":"string","minLength":1,"immutable":true}},"required":["authority"]}),operations:"wamn:modbus/client@1.0.0".into(),write_interfaces:vec!["wamn:modbus/write@1.0.0".into()]}).await?;
     assert_ne!(first.digest, second.digest);
     let (authority, accepts, simulator_task) = simulator().await?;
     let (observer_authority, _, observer_task) = simulator().await?;
@@ -587,7 +587,7 @@ async fn published_modbus_versions_link_before_the_next_call() -> anyhow::Result
     control.batch_execute("SET ROLE wamn_control").await?;
     control
         .query_one(
-            "SELECT registry.publish_integration('modbus',4,$1,$2,'wamn:modbus/client@1.0.0',$3)",
+            "SELECT registry.publish_integration('modbus',4,$1,$2,'wamn:modbus/client@1.0.0',$3,ARRAY['wamn:modbus/write@1.0.0'])",
             &[
                 &absent,
                 &parameters,

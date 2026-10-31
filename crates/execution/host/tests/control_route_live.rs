@@ -1577,7 +1577,7 @@ async fn assert_definer_grantees(client: &Client) -> anyhow::Result<()> {
             &["wamn_control", "wamn_db_owner"],
         ),
         (
-            "registry.publish_integration(text, integer, text, jsonb, text, text[])",
+            "registry.publish_integration(text, integer, text, jsonb, text, text[], text[])",
             &["wamn_control"],
         ),
         (
@@ -1861,3 +1861,6 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
     std::fs::remove_dir_all(logins)?;
     Ok(())
 }
+
+#[path = "support/connection_test.rs"]
+mod connection_test;

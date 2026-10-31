@@ -32,6 +32,9 @@ impl ControlRoutes<'_> {
         caller: &PrincipalId,
         payload: &str,
     ) -> Result<Value, Refusal> {
+        if attachment.route.operation == "connection.test" {
+            return self.connection_test(attachment, caller, payload).await;
+        }
         let mut writer = self.writer.lock().await;
         let result = self
             .integration_administration_in(&mut writer, attachment, caller, payload)

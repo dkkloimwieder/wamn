@@ -96,6 +96,7 @@ async fn publish_pushes_by_digest_and_records_the_catalog_as_control() {
         &integration::Publication {
             version: 1,
             parameter_schema: serde_json::json!({"type":"object","properties":{}}),
+            write_interfaces: Vec::new(),
             operations: "test:fixture/client".into(),
         },
     )
@@ -108,6 +109,7 @@ async fn publish_pushes_by_digest_and_records_the_catalog_as_control() {
         &integration::Publication {
             version: 1,
             parameter_schema: serde_json::json!({"type":"object","properties":{}}),
+            write_interfaces: Vec::new(),
             operations: "test:fixture/client".into(),
         },
     )
@@ -176,6 +178,7 @@ async fn publish_refuses_an_unknown_integration_without_creating_catalog_rows() 
         &integration::Publication {
             version: 1,
             parameter_schema: serde_json::json!({"type":"object","properties":{}}),
+            write_interfaces: Vec::new(),
             operations: "test:fixture/client".into(),
         },
     )

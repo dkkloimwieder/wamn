@@ -1256,31 +1256,37 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         &args.project,
         application.map_or("", |release| release.scope().environment.as_str()),
     ));
-    let integrations = match (application, args.component_artifact_base.as_deref()) {
-        (Some(release), Some(base)) => {
-            let registry_name = wamn_catalog::parse_component_artifact_base(base)?;
-            let registry_credentials = match RegistryPullCredential::select(args.registry_auth_file.as_deref(), args.registry_token_metadata)? {
-                RegistryPullCredential::AuthFile(path) => wamn_package_artifact::registry_credentials::RegistryCredentialSource::Fixed(
-                    wamn_package_artifact::registry_credentials::read_registry_credentials(path, registry_name.registry())?),
-                RegistryPullCredential::TokenMetadata => wamn_package_artifact::registry_credentials::RegistryCredentialSource::MetadataServer,
-            };
-            Some(Arc::new(
-                wamn_runtime::integrations::Integrations::new(
-                    Arc::clone(&facts),
-                    release,
-                    &postgres,
-                    &args.project,
-                    wamn_package_artifact::PackageRegistry {
-                        artifact_base: base.to_owned(),
-                        registry_auth_file: args.registry_auth_file.clone().unwrap_or_default(),
-                        insecure_registry: args.allow_insecure_registries,
-                        oci_ca_paths: args.oci_ca_paths.clone(),
-                    },
-                    registry_credentials,
-                )
-                .await?,
-            ))
-        }
+    let integration_registry = if let Some(base) = &args.component_artifact_base {
+        let registry_name = wamn_catalog::parse_component_artifact_base(base)?;
+        let credentials = match RegistryPullCredential::select(args.registry_auth_file.as_deref(), args.registry_token_metadata)? {
+            RegistryPullCredential::AuthFile(path) => wamn_package_artifact::registry_credentials::RegistryCredentialSource::Fixed(
+                wamn_package_artifact::registry_credentials::read_registry_credentials(path, registry_name.registry())?),
+            RegistryPullCredential::TokenMetadata => wamn_package_artifact::registry_credentials::RegistryCredentialSource::MetadataServer,
+        };
+        Some((
+            wamn_package_artifact::PackageRegistry {
+                artifact_base: base.clone(),
+                registry_auth_file: args.registry_auth_file.clone().unwrap_or_default(),
+                insecure_registry: args.allow_insecure_registries,
+                oci_ca_paths: args.oci_ca_paths.clone(),
+            },
+            credentials,
+        ))
+    } else {
+        None
+    };
+    let integrations = match (application, &integration_registry) {
+        (Some(release), Some((registry, credentials))) => Some(Arc::new(
+            wamn_runtime::integrations::Integrations::new(
+                Arc::clone(&facts),
+                release,
+                &postgres,
+                &args.project,
+                registry.clone(),
+                credentials.clone(),
+            )
+            .await?,
+        )),
         _ => None,
     };
     let operations = match application {
@@ -1545,6 +1551,11 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         ))));
     }
     if let (Some(connection), Some(root)) = (&control, &release) {
+        let mut health =
+            wamn_runtime::connection_health::ConnectionHealth::new(Arc::clone(&http_transport));
+        if let Some((registry, credentials)) = &integration_registry {
+            health = health.with_registry(registry.clone(), credentials.clone());
+        }
         let identity = args.pat_issuer.clone().map(|endpoint| PatIssuerConfig {
             endpoint: Some(endpoint),
             client_cert: args.pat_client_cert.clone(),
@@ -1572,7 +1583,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                     changes: auth_changes.clone(),
                 },
                 None,
-            ),
+            )
+            .with_connection_health(Arc::new(health)),
         ))));
     }
 

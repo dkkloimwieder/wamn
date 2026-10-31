@@ -83,6 +83,7 @@ pub struct HostRouteDelivery {
     handlers: HostRouteHandlers,
     next: Option<Arc<dyn RouteDelivery>>,
     files: Option<Arc<crate::file_route::FileRoutes>>,
+    connection_health: Option<Arc<wamn_runtime::connection_health::ConnectionHealth>>,
 }
 
 impl fmt::Debug for HostRouteDelivery {
@@ -107,7 +108,17 @@ impl HostRouteDelivery {
             handlers,
             next,
             files: None,
+            connection_health: None,
         }
+    }
+
+    /// Use the process-owned artifact and transport resources for candidate tests.
+    pub fn with_connection_health(
+        mut self,
+        health: Arc<wamn_runtime::connection_health::ConnectionHealth>,
+    ) -> Self {
+        self.connection_health = Some(health);
+        self
     }
 
     /// Share the native file handlers with the JSON mutation routes.
@@ -269,6 +280,7 @@ impl HostRouteDelivery {
                     status: status.as_ref(),
                     org,
                     changes,
+                    connection_health: self.connection_health.as_deref(),
                 }
                 .handle(attachment, &principal, payload)
                 .await

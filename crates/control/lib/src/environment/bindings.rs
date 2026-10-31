@@ -54,6 +54,7 @@ pub struct Binding {
     pub mode: ConnectionMode,
     pub digest: Option<String>,
     pub exports: Vec<String>,
+    pub write_interfaces: Vec<String>,
     pub resolved: Option<crate::org_connection::ResolvedConnection>,
 }
 
@@ -148,6 +149,10 @@ pub async fn analyse(
             if !exports_satisfy(&exports, std::slice::from_ref(&declaration.interface)) {
                 return Err(refuse("integration_import_unsatisfied", at));
             }
+            let write_interfaces: Vec<String> = row.get(10);
+            if !mode_satisfies(declaration.mode, &declaration.interface, &write_interfaces) {
+                return Err(refuse("connection_read_imports_write_interface", at));
+            }
             let runtime: String = row.get(2);
             let resolved = if runtime == "host" {
                 let requirement_type =
@@ -173,11 +178,19 @@ pub async fn analyse(
                 mode: declaration.mode,
                 digest: row.get(5),
                 exports,
+                write_interfaces,
                 resolved,
             });
         }
     }
     Ok(bindings)
+}
+
+fn mode_satisfies(mode: ConnectionMode, interface: &str, write_interfaces: &[String]) -> bool {
+    mode != ConnectionMode::Read
+        || !write_interfaces
+            .iter()
+            .any(|export| interface_compatible(interface, export))
 }
 
 pub(crate) fn exports_satisfy(exports: &[String], required: &[String]) -> bool {
@@ -230,13 +243,15 @@ pub async fn write(
         let id: String = row.get(0);
         changed += tx.execute("INSERT INTO catalog.release_connection(env_key,manifest_digest,connection_id,version) VALUES ($1,$2,$3::text::uuid,$4) ON CONFLICT (env_key,manifest_digest,connection_id) DO UPDATE SET version=EXCLUDED.version WHERE catalog.release_connection.version IS DISTINCT FROM EXCLUDED.version", &[&env_key,&digest,&id,&integration.version]).await?;
     }
-    for row in tx.query("SELECT component_digest,package_id,name,interface FROM catalog.connection_requirement WHERE env_key=$1", &[&env_key]).await? {
+    for row in tx.query("SELECT component_digest,package_id,name,interface,mode FROM catalog.connection_requirement WHERE env_key=$1", &[&env_key]).await? {
         let package: String=row.get(1);
         let Some(application)=wamn_catalog::application_for_package(&document.applications,&package) else {continue};
         let name: String=row.get(2);
         let Some(binding)=bindings.iter().find(|b| b.application==application && b.alias==name) else {continue};
         let required: String=row.get(3);
         anyhow::ensure!(exports_satisfy(&binding.exports,std::slice::from_ref(&required)),"integration_import_unsatisfied: {application}.{name}");
+        let mode: String = row.get(4);
+        anyhow::ensure!(mode != "read" || mode_satisfies(ConnectionMode::Read, &required, &binding.write_interfaces), "connection_read_imports_write_interface: {application}.{name}");
         let component: String=row.get(0);
         names.push(serde_json::json!({"component_digest":component,"package_id":package,"name":name}));
         changed += tx.execute("INSERT INTO catalog.connection_binding(env_key,manifest_digest,component_digest,package_id,name,connection_id) SELECT $1,$2,$3,$4,$5,$6::text::uuid WHERE EXISTS(SELECT FROM catalog.releases r CROSS JOIN LATERAL jsonb_array_elements(convert_from(r.canonical_bytes,'UTF8')::jsonb->'components') c WHERE r.env_key=$1 AND r.manifest_digest=$2 AND c->>'package-id'=$4 AND c->'descriptor'->>'component-digest'=$3) ON CONFLICT (env_key,manifest_digest,component_digest,package_id,name) DO UPDATE SET connection_id=EXCLUDED.connection_id WHERE catalog.connection_binding.connection_id IS DISTINCT FROM EXCLUDED.connection_id", &[&env_key,&digest,&component,&package,&name,&binding.connection_id]).await?;
@@ -288,6 +303,27 @@ pub async fn project_authority(
 #[cfg(test)]
 mod tests {
     use super::interface_compatible;
+    #[test]
+    fn a_read_requirement_refuses_a_write_interface() {
+        use wamn_schema_generator::ConnectionMode::{Read, Write};
+        let writes = vec!["wamn:modbus/write@1.0.0".to_owned()];
+        assert!(!super::mode_satisfies(
+            Read,
+            "wamn:modbus/write@1.0.0",
+            &writes
+        ));
+        assert!(super::mode_satisfies(
+            Write,
+            "wamn:modbus/write@1.0.0",
+            &writes
+        ));
+        assert!(super::mode_satisfies(
+            Read,
+            "wamn:modbus/read@1.0.0",
+            &writes
+        ));
+    }
+
     #[test]
     fn imports_require_the_exported_interface_and_a_compatible_version() {
         assert!(interface_compatible(

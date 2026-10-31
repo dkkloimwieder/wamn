@@ -101,6 +101,7 @@ CREATE TABLE registry.integration_type_version (
     parameter_schema jsonb NOT NULL,
     operations       text NOT NULL,
     exports          text[] NOT NULL,
+    write_interfaces text[] NOT NULL DEFAULT '{}' CHECK (write_interfaces <@ exports),
     published_at     timestamptz NOT NULL,
     PRIMARY KEY (integration_type, version)
 );
@@ -121,15 +122,15 @@ INSERT INTO registry.integration_type (code, runtime_type, exclusive, resource_k
     ('modbus', 'wasm', true, 'tcp:{authority}');
 
 INSERT INTO registry.integration_type_version
-    (integration_type, version, digest, parameter_schema, operations, exports, published_at) VALUES
+    (integration_type, version, digest, parameter_schema, operations, exports, write_interfaces, published_at) VALUES
     ('http', 1, NULL,
-     '{"type":"object","properties":{"primary-authority":{"type":"string","minLength":1,"immutable":true},"tls-verification":{"type":"string","enum":["disabled","verify-authority"]}},"required":["primary-authority","tls-verification"]}', 'wamn:connection/http', ARRAY['wamn:connection/http@0.1.0'], transaction_timestamp()),
+     '{"type":"object","properties":{"primary-authority":{"type":"string","minLength":1,"immutable":true},"tls-verification":{"type":"string","enum":["disabled","verify-authority"]}},"required":["primary-authority","tls-verification"]}', 'wamn:connection/http', ARRAY['wamn:connection/http@0.1.0'], '{}', transaction_timestamp()),
     ('gcs', 1, NULL,
-     '{"type":"object","properties":{"provider":{"type":"string","enum":["gcs"],"immutable":true},"container":{"type":"string","minLength":1,"immutable":true},"prefix":{"type":"string","minLength":1,"immutable":true},"cdn_host":{"type":"string","minLength":1}},"required":["container","prefix","provider"]}', 'wasmcloud:blobstore/imports@0.1.0', ARRAY['wasmcloud:blobstore/types@0.1.0','wasmcloud:blobstore/container@0.1.0','wasmcloud:blobstore/blobstore@0.1.0'], transaction_timestamp()),
+     '{"type":"object","properties":{"provider":{"type":"string","enum":["gcs"],"immutable":true},"container":{"type":"string","minLength":1,"immutable":true},"prefix":{"type":"string","minLength":1,"immutable":true},"cdn_host":{"type":"string","minLength":1}},"required":["container","prefix","provider"]}', 'wasmcloud:blobstore/imports@0.1.0', ARRAY['wasmcloud:blobstore/types@0.1.0','wasmcloud:blobstore/container@0.1.0','wasmcloud:blobstore/blobstore@0.1.0'], '{}', transaction_timestamp()),
     ('s3', 1, NULL,
-     '{"type":"object","properties":{"provider":{"type":"string","enum":["s3"],"immutable":true},"container":{"type":"string","minLength":1,"immutable":true},"prefix":{"type":"string","minLength":1,"immutable":true},"cdn_host":{"type":"string","minLength":1},"endpoint":{"type":"string","minLength":1,"immutable":true}},"required":["container","prefix","endpoint"]}', 'wasmcloud:blobstore/imports@0.1.0', ARRAY['wasmcloud:blobstore/types@0.1.0','wasmcloud:blobstore/container@0.1.0','wasmcloud:blobstore/blobstore@0.1.0'], transaction_timestamp()),
+     '{"type":"object","properties":{"provider":{"type":"string","enum":["s3"],"immutable":true},"container":{"type":"string","minLength":1,"immutable":true},"prefix":{"type":"string","minLength":1,"immutable":true},"cdn_host":{"type":"string","minLength":1},"endpoint":{"type":"string","minLength":1,"immutable":true}},"required":["container","prefix","endpoint"]}', 'wasmcloud:blobstore/imports@0.1.0', ARRAY['wasmcloud:blobstore/types@0.1.0','wasmcloud:blobstore/container@0.1.0','wasmcloud:blobstore/blobstore@0.1.0'], '{}', transaction_timestamp()),
     ('modbus', 1, 'sha256:37c3fc98df0a7b1cdf230dfa16956d34e832b6f1198a04293932170674e0d682',
-     '{"type":"object","properties":{"authority":{"type":"string","minLength":1,"immutable":true}},"required":["authority"]}', 'wamn:modbus/client@1.0.0', ARRAY['wamn:modbus/read@1.0.0','wamn:modbus/write@1.0.0','wamn:integration/health@0.1.0'], transaction_timestamp());
+     '{"type":"object","properties":{"authority":{"type":"string","minLength":1,"immutable":true}},"required":["authority"]}', 'wamn:modbus/client@1.0.0', ARRAY['wamn:modbus/read@1.0.0','wamn:modbus/write@1.0.0','wamn:integration/health@0.1.0'], ARRAY['wamn:modbus/write@1.0.0'], transaction_timestamp());
 
 INSERT INTO registry.auth_type (code, credential_schema, parameter_schema, http_only) VALUES
     ('http_basic', '{"type":"object","properties":{"username":{"type":"string"},"password":{"type":"string"}},"required":["username","password"]}',
@@ -1274,7 +1275,9 @@ DECLARE
     resource text;
     credentials jsonb;
 BEGIN
-    PERFORM pg_advisory_xact_lock(hashtextextended('connections:' || org_id, 0));
+    IF operation <> 'connection.test' THEN
+        PERFORM pg_advisory_xact_lock(hashtextextended('connections:' || org_id, 0));
+    END IF;
     IF operation = 'connection.list' THEN
         RETURN jsonb_build_object('connections',COALESCE((SELECT jsonb_agg(registry.connection_summary(c.id) ORDER BY i.name)
             FROM registry.connection c JOIN registry.integration i ON i.id=c.integration_id
@@ -1284,6 +1287,27 @@ BEGIN
     WHERE org=org_id AND project=project_id AND name=row_name;
     IF selected.id IS NULL THEN
         RETURN jsonb_build_object('error','not_found','field','integration');
+    END IF;
+    IF operation = 'connection.test' THEN
+        IF NOT EXISTS(SELECT FROM registry.project_envs WHERE org=org_id AND project=project_id AND env=environment) THEN
+            RETURN jsonb_build_object('error','not_found','field','env');
+        END IF;
+        IF selected.auth_type = 'oauth2_authorization_code' THEN
+            RETURN jsonb_build_object('error','unsupported_auth_type','field','auth_type');
+        END IF;
+        SELECT * INTO existing FROM registry.connection
+        WHERE integration_id=selected.id AND env=environment;
+        RETURN jsonb_build_object('id',existing.id,'integration_type',selected.integration_type,
+            'runtime_type',(SELECT runtime_type FROM registry.integration_type WHERE code=selected.integration_type),
+            'auth_type',selected.auth_type,
+            'parameters',(SELECT parameters FROM registry.connection_generation WHERE (connection_id,generation)=(existing.id,existing.active_generation)),
+            'credential',(SELECT jsonb_build_object('store',k.store,'ref',k.ref,'version',k.version)
+                FROM registry.connection_generation g JOIN identity.credential k ON k.id=g.credential_id
+                WHERE (g.connection_id,g.generation)=(existing.id,existing.active_generation)),
+            'credential_schema',(SELECT credential_schema FROM registry.auth_type WHERE code=selected.auth_type),
+            'auth_schema',(SELECT parameter_schema FROM registry.auth_type WHERE code=selected.auth_type),
+            'versions',(SELECT jsonb_object_agg(v.version,to_jsonb(v)) FROM registry.integration_type_version v WHERE v.integration_type=selected.integration_type),
+            'schemas',(SELECT jsonb_agg(parameter_schema ORDER BY version) FROM registry.integration_type_version WHERE integration_type=selected.integration_type));
     END IF;
     SELECT * INTO existing FROM registry.connection
     WHERE integration_id=selected.id AND env=environment FOR UPDATE;
@@ -1385,7 +1409,7 @@ END $$;
 
 CREATE FUNCTION registry.publish_integration(
     integration_code text, published_version integer, artifact_digest text,
-    parameters jsonb, exported_operations text, exported_interfaces text[])
+    parameters jsonb, exported_operations text, exported_interfaces text[], writable_interfaces text[])
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE
     previous jsonb;
@@ -1402,6 +1426,9 @@ BEGIN
     END IF;
     IF runtime IN ('wasm','native') AND NOT COALESCE('wamn:integration/health@0.1.0'=ANY(exported_interfaces),false) THEN
         RAISE EXCEPTION 'health_export_required' USING ERRCODE='22023';
+    END IF;
+    IF writable_interfaces IS NULL OR NOT writable_interfaces <@ exported_interfaces THEN
+        RAISE EXCEPTION 'write_interface_not_exported' USING ERRCODE='22023';
     END IF;
     IF parameters->>'type' IS DISTINCT FROM 'object' OR jsonb_typeof(parameters->'properties') IS DISTINCT FROM 'object'
         OR exported_operations IS NULL OR exported_operations='' OR exported_interfaces IS NULL THEN
@@ -1444,8 +1471,8 @@ BEGIN
             RAISE EXCEPTION 'field_type_changed: %',field USING ERRCODE='22023';
         END IF;
     END LOOP;
-    INSERT INTO registry.integration_type_version(integration_type,version,digest,parameter_schema,operations,exports,published_at)
-    VALUES(integration_code,published_version,artifact_digest,parameters,exported_operations,exported_interfaces,transaction_timestamp());
+    INSERT INTO registry.integration_type_version(integration_type,version,digest,parameter_schema,operations,exports,write_interfaces,published_at)
+    VALUES(integration_code,published_version,artifact_digest,parameters,exported_operations,exported_interfaces,writable_interfaces,transaction_timestamp());
 END $$;
 
 
@@ -1459,7 +1486,7 @@ BEGIN
         'configure_external_system(text,text,jsonb)',
         'configure_integration(text,text,jsonb)',
         'configure_integration_type(text,text,jsonb)',
-        'publish_integration(text,integer,text,jsonb,text,text[])'
+        'publish_integration(text,integer,text,jsonb,text,text[],text[])'
     ] LOOP
         EXECUTE 'ALTER FUNCTION registry.' || signature || ' OWNER TO wamn_system';
         EXECUTE 'REVOKE ALL ON FUNCTION registry.' || signature || ' FROM PUBLIC';
@@ -1481,7 +1508,7 @@ CREATE TRIGGER wamn_record_history_stamp
 
 DO $control_surface$ BEGIN
   IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_control') THEN
-    REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; REVOKE ALL PRIVILEGES ON SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; GRANT USAGE ON SCHEMA "identity", "registry" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_roles" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."password_logins" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."principals" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_env_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_roles" TO "wamn_control"; GRANT SELECT ON TABLE "registry"."project_envs" TO "wamn_control"; GRANT SELECT, INSERT ON TABLE "registry"."projects" TO "wamn_control"; GRANT UPDATE ("status") ON TABLE "registry"."project_envs" TO "wamn_control"; DO $connection_acl$ BEGIN IF to_regprocedure('registry.retired_connection_credential(text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.retired_connection_credential(text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.connection_projection(text,text,text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.connection_projection(text,text,text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.publish_integration(text,integer,text,jsonb,text,text[])') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.publish_integration(text,integer,text,jsonb,text,text[]) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.configure_connection(text,text,jsonb)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.configure_connection(text,text,jsonb) TO "wamn_control"; END IF; END $connection_acl$;
+    REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; REVOKE ALL PRIVILEGES ON SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; GRANT USAGE ON SCHEMA "identity", "registry" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_roles" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."password_logins" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."principals" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_env_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_roles" TO "wamn_control"; GRANT SELECT ON TABLE "registry"."project_envs" TO "wamn_control"; GRANT SELECT, INSERT ON TABLE "registry"."projects" TO "wamn_control"; GRANT UPDATE ("status") ON TABLE "registry"."project_envs" TO "wamn_control"; DO $connection_acl$ BEGIN IF to_regprocedure('registry.retired_connection_credential(text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.retired_connection_credential(text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.connection_projection(text,text,text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.connection_projection(text,text,text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.publish_integration(text,integer,text,jsonb,text,text[],text[])') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.publish_integration(text,integer,text,jsonb,text,text[],text[]) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.configure_connection(text,text,jsonb)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.configure_connection(text,text,jsonb) TO "wamn_control"; END IF; END $connection_acl$;
   END IF;
 END $control_surface$;
 
@@ -1596,13 +1623,13 @@ END $$;
 
 -- Deployment reads project authority without an administration write grant.
 CREATE FUNCTION registry.resolve_environment_connection(org_id text, project_id text, environment text, target_name text, integration_name text, selected_version integer)
-RETURNS TABLE(id text, integration_type text, runtime_type text, parameters jsonb, parameter_schema jsonb, digest text, operations text, generation bigint, exclusive boolean, exports text[])
+RETURNS TABLE(id text, integration_type text, runtime_type text, parameters jsonb, parameter_schema jsonb, digest text, operations text, generation bigint, exclusive boolean, exports text[], write_interfaces text[])
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
 #variable_conflict use_variable
 BEGIN
  RETURN QUERY
  SELECT c.id::text, i.integration_type, t.runtime_type, g.parameters, v.parameter_schema,
-        v.digest, v.operations, c.active_generation, t.exclusive, v.exports
+        v.digest, v.operations, c.active_generation, t.exclusive, v.exports, v.write_interfaces
  FROM registry.integration i
  JOIN registry.connection c ON c.integration_id=i.id AND c.env=environment AND c.status='active'
  JOIN registry.project_envs e ON (e.org,e.project,e.env,e.target_id)=(c.org,c.project,c.env,c.target_id)

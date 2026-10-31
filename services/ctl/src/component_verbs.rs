@@ -19,7 +19,7 @@ pub struct ConfigurationArgs {
     /// JSON request with project, name, environment, and route parameters.
     #[arg(long)]
     pub file: PathBuf,
-    /// Credential value. Only write and set-credential accept this file.
+    /// Credential value. Write, test and set-credential accept this file.
     #[arg(long)]
     pub credential_file: Option<PathBuf>,
 }
@@ -34,6 +34,7 @@ pub struct ConnectionArgs {
 #[derive(Debug, Subcommand)]
 pub enum ConnectionCommand {
     Write(ConfigurationArgs),
+    Test(ConfigurationArgs),
     Copy(ConfigurationArgs),
     SetCredential(ConfigurationArgs),
     Disable(ConfigurationArgs),
@@ -88,7 +89,10 @@ fn request(args: &ConfigurationArgs, operation: &str) -> anyhow::Result<Value> {
     );
     if let Some(path) = &args.credential_file {
         ensure!(
-            matches!(operation, "connection.write" | "connection.set_credential"),
+            matches!(
+                operation,
+                "connection.write" | "connection.test" | "connection.set_credential"
+            ),
             "this route does not accept a credential"
         );
         value["credential"] = std::fs::read_to_string(path)
@@ -167,6 +171,7 @@ pub async fn configuration(args: ConfigurationArgs, operation: &str) -> anyhow::
 pub async fn connection(args: ConnectionArgs) -> anyhow::Result<()> {
     let (operation, args) = match args.command {
         ConnectionCommand::Write(args) => ("connection.write", args),
+        ConnectionCommand::Test(args) => ("connection.test", args),
         ConnectionCommand::Copy(args) => ("connection.copy", args),
         ConnectionCommand::SetCredential(args) => ("connection.set_credential", args),
         ConnectionCommand::Disable(args) => ("connection.disable", args),
@@ -205,6 +210,40 @@ mod tests {
             file: PathBuf::from("/tmp/request.json"),
             credential_file: None,
         }
+    }
+
+    #[test]
+    fn candidate_tests_read_the_credential_file_without_query_parameters() {
+        let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
+        let mut args = args();
+        args.file = scratch.path().join("request.json");
+        let credential = scratch.path().join("credential.json");
+        std::fs::write(
+            &args.file,
+            json!({"project":"app","env":"dev","name":"erp","parameters":{},"version":2})
+                .to_string(),
+        )
+        .unwrap();
+        std::fs::write(&credential, r#"{"key":"private-candidate"}"#).unwrap();
+        args.credential_file = Some(credential);
+        let value = request(&args, "connection.test").unwrap();
+        assert!(
+            value["credential"]
+                .as_str()
+                .unwrap()
+                .contains("private-candidate")
+        );
+        assert_eq!(value["version"], 2);
+        let request = route_request(
+            &reqwest::Client::new(),
+            &args,
+            route("connection.test").unwrap(),
+            &value,
+        )
+        .unwrap();
+        assert_eq!(request.method(), reqwest::Method::POST);
+        assert_eq!(request.url().path(), "/wamn_control/connection/test");
+        assert!(request.url().query().is_none());
     }
 
     #[test]

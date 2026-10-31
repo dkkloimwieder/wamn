@@ -1,0 +1,46 @@
+{
+  "fields": [
+    {
+      "path": "request_id",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.project",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.env",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.name",
+      "type": "text",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.parameters",
+      "type": "json",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "value.credential",
+      "type": "text",
+      "nullable": true,
+      "values": []
+    },
+    {
+      "path": "value.version",
+      "type": "int32",
+      "nullable": true,
+      "values": []
+    }
+  ]
+}

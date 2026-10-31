@@ -167,7 +167,8 @@ fn record_connection_drops(
     }
 }
 
-fn validate_request(operation: &str, request: &Value) -> Result<(), ConnectionError> {
+/// Validate the non-secret request shape before any database call.
+pub fn validate_request(operation: &str, request: &Value) -> Result<(), ConnectionError> {
     let object = request
         .as_object()
         .ok_or_else(|| refuse("invalid_input", "value"))?;
@@ -188,6 +189,14 @@ fn validate_request(operation: &str, request: &Value) -> Result<(), ConnectionEr
         ],
         "connection.list" => &["project", "env"],
         "connection.write" => &["project", "env", "name", "parameters", "credential"],
+        "connection.test" => &[
+            "project",
+            "env",
+            "name",
+            "parameters",
+            "credential",
+            "version",
+        ],
         "connection.copy" => &["project", "env", "name", "source_env"],
         "connection.set_credential" => &["project", "env", "name", "credential"],
         "connection.get" | "connection.enable" | "connection.disable" | "connection.delete" => {
@@ -219,11 +228,25 @@ fn validate_request(operation: &str, request: &Value) -> Result<(), ConnectionEr
     {
         return Err(refuse("invalid_input", "name"));
     }
-    if operation == "connection.write" && !request["parameters"].is_object() {
+    if matches!(operation, "connection.write" | "connection.test")
+        && !request["parameters"].is_object()
+    {
         return Err(refuse("invalid_input", "parameters"));
     }
     if operation == "connection.set_credential" && !request["credential"].is_string() {
         return Err(refuse("invalid_input", "credential"));
+    }
+    if operation == "connection.test"
+        && request
+            .get("version")
+            .filter(|value| !value.is_null())
+            .is_some_and(|value| {
+                value
+                    .as_i64()
+                    .is_none_or(|version| version <= 0 || version > i64::from(i32::MAX))
+            })
+    {
+        return Err(refuse("invalid_input", "version"));
     }
     Ok(())
 }
@@ -320,16 +343,7 @@ async fn generation(
         Vec::new()
     };
     for schema in required {
-        validate_required_fields(&request["parameters"], &schema)?;
-        if let Some(fields) = schema["properties"].as_object() {
-            for (field, definition) in fields {
-                if let Some(value) = request["parameters"].get(field)
-                    && !validates(value, definition)
-                {
-                    return Err(refuse("invalid_input", "parameters"));
-                }
-            }
-        }
+        validate_version_parameters(&request["parameters"], &schema)?;
     }
     let auth = context["auth_type"].as_str().expect("database auth type");
     let stored = if let Some(credential) = credential {
@@ -469,6 +483,24 @@ fn validate_required_fields(parameters: &Value, schema: &Value) -> Result<(), Co
     Ok(())
 }
 
+/// Validate the fields required by one selected or live version.
+pub fn validate_version_parameters(
+    parameters: &Value,
+    schema: &Value,
+) -> Result<(), ConnectionError> {
+    validate_required_fields(parameters, schema)?;
+    if let Some(fields) = schema["properties"].as_object() {
+        for (field, definition) in fields {
+            if let Some(value) = parameters.get(field)
+                && !validates(value, definition)
+            {
+                return Err(refuse("invalid_input", "parameters"));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Validate staged fields against the published union and preserve immutable values.
 pub fn validate_connection_parameters(
     parameters: &Value,
@@ -579,6 +611,25 @@ pub fn validates(value: &Value, schema: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn candidate_versions_are_optional_positive_integers() {
+        let mut request = json!({"project":"one","env":"dev","name":"api","parameters":{}});
+        validate_request("connection.test", &request).unwrap();
+        for version in [Value::Null, json!(1), json!(i32::MAX)] {
+            request["version"] = version;
+            validate_request("connection.test", &request).unwrap();
+        }
+        for version in [json!(0), json!(-1), json!(i64::MAX), json!("1")] {
+            request["version"] = version;
+            assert_eq!(
+                validate_request("connection.test", &request)
+                    .unwrap_err()
+                    .field,
+                "version"
+            );
+        }
+    }
 
     #[derive(Debug, Default)]
     struct RecordingStore(std::sync::Mutex<Vec<Vec<u8>>>);

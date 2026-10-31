@@ -1,0 +1,17 @@
+{
+  "class": "one",
+  "fields": [
+    {
+      "path": "ok",
+      "type": "boolean",
+      "nullable": false,
+      "values": []
+    },
+    {
+      "path": "error",
+      "type": "text",
+      "nullable": true,
+      "values": []
+    }
+  ]
+}

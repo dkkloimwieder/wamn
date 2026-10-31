@@ -42,6 +42,7 @@
 //! environment holds (`admin` holds every operation of the release), from its
 //! `platform.role` and `platform.permission`. It writes nothing.
 
+mod connection_test;
 mod integration;
 
 use std::collections::BTreeMap;
@@ -141,6 +142,7 @@ pub(crate) struct ControlRoutes<'a> {
     pub(crate) org: &'a str,
     /// Publishes each user row and status change of an environment.
     pub(crate) changes: &'a AuthChanges,
+    pub(crate) connection_health: Option<&'a wamn_runtime::connection_health::ConnectionHealth>,
 }
 
 /// What a write does to the application rows of one environment. A later

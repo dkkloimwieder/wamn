@@ -69,6 +69,25 @@ Restrict access to the credential file:
 chmod 600 /private/credential.json
 ```
 
+Test the candidate before the first write:
+
+```bash
+wamn-ctl connection test --file /private/connection.json --credential-file /private/credential.json
+```
+
+The command uses project administrator authority and answers `{"ok":true}` or `{"ok":false,"error":"..."}`.
+It writes no connection generation or credential and stops after ten seconds.
+
+An optional integer `version` in the request selects a published version.
+Without it, the host uses the live release's bound version, or the newest published version when nothing is bound.
+If you omit `--credential-file`, the host uses the existing credential when one exists.
+Candidate parameters must pass the same rules as a connection write, including immutable fields and live versions.
+
+An HTTP candidate needs an HTTPS authority and `tls-verification` set to `verify-authority`.
+Responses 401, 403 and 5xx fail with their status as the error. Other HTTP responses are healthy.
+The control host needs its existing component registry configuration for wasm and native candidates.
+It reads `WAMN_COMPONENT_ARTIFACT_BASE` with `WAMN_REGISTRY_AUTH_FILE` or registry token metadata.
+
 Write the connection with its first credential:
 
 ```bash
@@ -91,6 +110,14 @@ The control host writes credential values through the environment store.
 Postgres keeps their references and display hints.
 The baseline schema owns fresh installations, and the migration lists stay empty.
 [Integration and connection schema](../plan/integration-schema.md) defines administration, bindings, and version selection.
+
+### Integration write interfaces
+
+Publish a typed integration with one `--write-interface <interface>` flag for each export that permits writes.
+For Modbus, supply `--write-interface wamn:modbus/write@1.0.0` to `wamn-ctl integration publish modbus`.
+Publication refuses an interface that the component does not export.
+Host types use an empty list and enforce the declared mode at run time.
+Environment apply refuses a read requirement that imports a declared write interface.
 
 ## Deployment ordering
 

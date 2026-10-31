@@ -1272,6 +1272,7 @@ async fn execute(
 
 /// Test candidate HTTP parameters without writing connection facts.
 pub async fn health(
+    transport: &HttpTransport,
     parameters: &serde_json::Value,
     auth_type: &str,
     credential: Option<&str>,
@@ -1280,7 +1281,12 @@ pub async fn health(
         let base = parameters["primary-authority"]
             .as_str()
             .context("HTTP authority missing")?;
-        let authority = parse_http_connection_authority(base, TlsPolicy::VerifyAuthority, None)?;
+        let tls = match parameters["tls-verification"].as_str() {
+            Some("disabled") => TlsPolicy::Disabled,
+            Some("verify-authority") => TlsPolicy::VerifyAuthority,
+            _ => anyhow::bail!("HTTP TLS policy missing"),
+        };
+        let authority = parse_http_connection_authority(base, tls, None)?;
         let url = url::Url::parse(authority.canonical_base_url())?;
         anyhow::ensure!(url.scheme() == "https", "HTTP health requires TLS");
         let host = url.host_str().context("HTTP authority has no host")?;
@@ -1298,7 +1304,7 @@ pub async fn health(
         )
         .await?;
         decision.logical_url = endpoint;
-        let transport = HttpTransport::new()?;
+        let transport = transport.fresh();
         let scope = ClientScope {
             connection: ConnectionScope {
                 env_key: "health".into(),

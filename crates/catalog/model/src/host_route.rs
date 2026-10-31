@@ -347,6 +347,13 @@ const ROUTES: &[HostRoute] = &[
     },
     HostRoute {
         set: HostRouteSet::Control,
+        operation: "connection.test",
+        type_: OperationType::Command,
+        authority: HostRouteAuthority::ProjectAdmin,
+        handler: HostHandler::IntegrationAdministration,
+    },
+    HostRoute {
+        set: HostRouteSet::Control,
         operation: "connection.copy",
         type_: OperationType::Command,
         authority: HostRouteAuthority::ProjectAdmin,

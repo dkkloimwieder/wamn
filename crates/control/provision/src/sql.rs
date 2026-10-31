@@ -957,7 +957,7 @@ pub fn grant_connection_reader_surface_sql() -> String {
 pub const CONTROL_CONNECTION_FUNCTIONS: &[&str] = &[
     "retired_connection_credential(text)",
     "connection_projection(text,text,text)",
-    "publish_integration(text,integer,text,jsonb,text,text[])",
+    "publish_integration(text,integer,text,jsonb,text,text[],text[])",
     "configure_connection(text,text,jsonb)",
     "configure_external_system(text,text,jsonb)",
     "configure_integration(text,text,jsonb)",

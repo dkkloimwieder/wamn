@@ -138,6 +138,7 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | `wamn-control:org-admin/revoke@0.9.0` | Takes `principal_id` and removes `project-admin` throughout the org, then `org-admin`. Memberships stay. |
 | `wamn-control:environment/list@0.9.0` | Takes `project`. Answers `environments`: environments of the project as `{name, state}`. |
 | `wamn-control:environment/status@0.9.0` | Answers the digest, rollout, workload conditions, and live set of one environment. Adds nullable counts `users_with_role`, `roles`, and `memberships`. |
+| `wamn-control:connection/test@0.9.0` | Requires project-admin authority. Takes `project`, `env`, integration `name`, candidate `parameters`, optional `credential`, and optional `version`. Answers `{ok: true}` or `{ok: false, error}`. Writes nothing and stops after ten seconds. |
 | `wamn-control:project/create@0.9.0` | Creates a project with no environment. |
 | `wamn-control:release/profile@0.9.0` | Takes `project`, `env` and the `digest` of a release installed in that environment. Answers `operations`: for each export of the release's components, the members it `reaches`, each with the exports it holds, `imprecise` when it is a base member's whole statement set, and per statement the relations it reads, writes, deletes and locks, derived from the release's SQL over the environment's relation columns, and `roles`: each role of the environment with the `operations` it holds, `admin` every operation of the release. A view read reports the view columns and each base table with the columns that the view depends on through `pg_depend`. Writes nothing. |
 | `wamn-control:member/list@0.9.0` | Takes `project` and an optional `environment`. Answers `members`: each user with a membership or `project-admin` in the project, with `principal_id`, `email`, `display_name`, `org_admin`, `project_admin` and `environments`. |
@@ -715,6 +716,21 @@ The [dispatch](../../crates/platform/runtime/src/integrations.rs) links an insta
 Typed integration imports use labels, the connection names that code declares.
 The host resolves each label by its component digest, package, and name.
 HTTP and blobstore select a declared connection name at run time.
+
+Published versions record which exported interfaces permit writes in `write_interfaces`.
+Environment apply refuses a read declaration that imports one of those interfaces.
+Host types retain their method and storage enforcement at run time.
+
+`connection.test` validates candidate values with the connection writer's parameter and credential schemas.
+It uses the live release's bound version, or the newest published version when no live binding exists.
+An explicit version overrides that default.
+The host resolves metadata without creating a connection and rolls back its read transactions before network I/O.
+
+HTTP opens TLS and sends one authenticated HEAD on the base path.
+GCS and S3 list at most one object under the base prefix.
+Wasm and native health use the digest cache and a fresh store with candidate values.
+The route returns no credential and writes no generation or credential row.
+
 A connection write or a credential change links again, but it never compiles again.
 The dispatch keeps at most 1024 links, and it drops a link that no current fact names on the next fact change of that connection.
 

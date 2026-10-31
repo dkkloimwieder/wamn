@@ -229,7 +229,7 @@ async fn a_version_change_refuses_stored_values_that_do_not_validate() {
     let store = wamn_test_infrastructure::credentials::LocalCredentials::create().unwrap();
     wamn_test_infrastructure::credentials::define(&tx,"acme",&json!({"project":"one","env":"dev","name":"meter","integration_type":"modbus","auth_type":"none","parameters":{"authority":"127.0.0.1:502"}}),&store).await.unwrap();
     tx.commit().await.unwrap();
-    client.batch_execute("SET ROLE wamn_system; INSERT INTO registry.integration_type_version(integration_type,version,digest,parameter_schema,operations,exports,published_at) SELECT integration_type,2,digest,'{\"type\":\"object\",\"properties\":{\"authority\":{\"type\":\"string\"},\"unit\":{\"type\":\"integer\"}},\"required\":[\"authority\",\"unit\"]}',operations,exports,now() FROM registry.integration_type_version WHERE integration_type='modbus' AND version=1; SET ROLE wamn_db_owner").await.unwrap();
+    client.batch_execute("SET ROLE wamn_system; INSERT INTO registry.integration_type_version(integration_type,version,digest,parameter_schema,operations,exports,write_interfaces,published_at) SELECT integration_type,2,digest,'{\"type\":\"object\",\"properties\":{\"authority\":{\"type\":\"string\"},\"unit\":{\"type\":\"integer\"}},\"required\":[\"authority\",\"unit\"]}',operations,exports,write_interfaces,now() FROM registry.integration_type_version WHERE integration_type='modbus' AND version=1; SET ROLE wamn_db_owner").await.unwrap();
     let mut doc = document();
     doc.integrations.clear();
     doc.integrations.insert(
@@ -452,7 +452,7 @@ async fn publish_refuses_wasm_and_native_worlds_without_health() {
     let client = connect(database.url()).await;
     client.batch_execute("SET ROLE wamn_system; INSERT INTO registry.integration_type(code,runtime_type,exclusive) VALUES ('native-health','native',false); SET ROLE wamn_control").await.unwrap();
     for code in ["modbus", "native-health"] {
-        let error = client.query_one("SELECT registry.publish_integration($1,2,$2,$3,$4,$5)", &[
+        let error = client.query_one("SELECT registry.publish_integration($1,2,$2,$3,$4,$5,'{}')", &[
             &code, &format!("sha256:{}", "a".repeat(64)),
             &json!({"type":"object","properties":{"authority":{"type":"string","immutable":true}},"required":["authority"]}),
             &"wamn:modbus/client@1.0.0", &vec!["wamn:modbus/read@1.0.0".to_owned()],
@@ -462,4 +462,90 @@ async fn publish_refuses_wasm_and_native_worlds_without_health() {
             "health_export_required"
         );
     }
+}
+
+#[tokio::test]
+async fn apply_refuses_a_read_requirement_for_a_write_interface() {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_control_provision::test_database::system();
+    let mut client = connect(database.url()).await;
+    seed(&mut client).await;
+    let tx = client.transaction().await.unwrap();
+    tx.batch_execute("SET LOCAL ROLE wamn_control")
+        .await
+        .unwrap();
+    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+        wamn_control_provision::PlatformComponent::Provisioning,
+    ))
+    .await
+    .unwrap();
+    let store = wamn_test_infrastructure::credentials::LocalCredentials::create().unwrap();
+    wamn_test_infrastructure::credentials::define(&tx,"acme",&json!({"project":"one","env":"dev","name":"meter","integration_type":"modbus","auth_type":"none","parameters":{"authority":"192.168.1.2:502"}}),&store).await.unwrap();
+    tx.commit().await.unwrap();
+    client
+        .batch_execute("SET ROLE wamn_db_owner")
+        .await
+        .unwrap();
+    let mut doc = document();
+    doc.integrations = std::collections::BTreeMap::from([(
+        "meter".into(),
+        wamn_control::environment::document::Integration { version: 1 },
+    )]);
+    doc.applications
+        .get_mut("app")
+        .unwrap()
+        .connections
+        .insert("upstream".into(), "meter".into());
+    let mut manifest = package("modbus");
+    let declaration = manifest.connections.get_mut("upstream").unwrap();
+    declaration.interface = "wamn:modbus/write@1.0.0".into();
+    declaration.mode = wamn_schema_generator::ConnectionMode::Read;
+    assert_eq!(
+        bindings::analyse(&client, &doc, &[manifest.clone()])
+            .await
+            .unwrap_err()
+            .code,
+        "connection_read_imports_write_interface"
+    );
+    manifest.connections.get_mut("upstream").unwrap().mode =
+        wamn_schema_generator::ConnectionMode::Write;
+    assert_eq!(
+        bindings::analyse(&client, &doc, &[manifest.clone()])
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    let declaration = manifest.connections.get_mut("upstream").unwrap();
+    declaration.mode = wamn_schema_generator::ConnectionMode::Read;
+    declaration.interface = "wamn:modbus/read@1.0.0".into();
+    assert_eq!(
+        bindings::analyse(&client, &doc, &[manifest])
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn publish_refuses_write_interfaces_outside_the_exports() {
+    let database = wamn_control_provision::test_database::system();
+    let client = connect(database.url()).await;
+    client.batch_execute("SET ROLE wamn_control").await.unwrap();
+    let error = client
+        .query_one(
+            "SELECT registry.publish_integration('http',2,NULL,$1,'wamn:connection/http',$2,$3)",
+            &[
+                &json!({"type":"object","properties":{}}),
+                &vec!["wamn:connection/http@0.1.0"],
+                &vec!["wamn:modbus/write@1.0.0"],
+            ],
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.as_db_error().unwrap().message(),
+        "write_interface_not_exported"
+    );
 }

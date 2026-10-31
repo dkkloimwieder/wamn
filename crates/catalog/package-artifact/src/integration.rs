@@ -35,7 +35,7 @@ pub async fn pull(registry: &PackageRegistry, code: &str, digest: &str) -> anyho
     pull_from(&repository, code, digest).await
 }
 
-/// Read a integration through an already authenticated repository.
+/// Read an integration through an already authenticated repository.
 pub async fn pull_from(
     repository: &Repository,
     code: &str,
@@ -56,7 +56,7 @@ pub async fn pull_from(
             && manifest.config.media_type == CONFIG_TYPE
             && manifest.layers.len() == 1
             && manifest.layers[0].media_type == WASM_TYPE,
-        "artifact {digest} is not a wasm integration"
+        "artifact {digest} is not an integration component"
     );
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     let config = registry_pull::blob(
@@ -73,8 +73,9 @@ pub async fn pull_from(
     );
     let config: IntegrationConfig = serde_json::from_slice(&config)?;
     ensure!(
-        config.code == code && config.runtime_type == RuntimeType::Wasm,
-        "integration artifact does not belong to wasm integration {code}"
+        config.code == code
+            && matches!(config.runtime_type, RuntimeType::Wasm | RuntimeType::Native),
+        "integration artifact does not belong to integration {code}"
     );
     ensure_digest(&config.source_digest)?;
     let descriptor = &manifest.layers[0];

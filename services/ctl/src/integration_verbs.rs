@@ -35,6 +35,9 @@ enum IntegrationCommand {
         parameter_schema: PathBuf,
         #[arg(long)]
         operations: String,
+        /// Exported interface that permits writes. Repeat for each interface.
+        #[arg(long = "write-interface")]
+        write_interfaces: Vec<String>,
     },
     Write(crate::component_verbs::ConfigurationArgs),
     List(crate::component_verbs::ConfigurationArgs),
@@ -58,12 +61,14 @@ pub async fn run(args: IntegrationArgs) -> anyhow::Result<()> {
             version,
             parameter_schema,
             operations,
+            write_interfaces,
         } => {
             let built = wamn_control::integration::build(&repository, &code).await?;
             let publication = wamn_control::integration::Publication {
                 version,
                 parameter_schema: serde_json::from_slice(&std::fs::read(parameter_schema)?)?,
                 operations,
+                write_interfaces,
             };
             wamn_control::integration::publish(
                 &built,
@@ -101,4 +106,51 @@ pub async fn run(args: IntegrationArgs) -> anyhow::Result<()> {
         built.runtime_type,
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser as _;
+
+    #[derive(Debug, clap::Parser)]
+    struct Probe {
+        #[command(flatten)]
+        integration: super::IntegrationArgs,
+    }
+
+    #[test]
+    fn publish_accepts_repeatable_write_interfaces() {
+        let parsed = Probe::try_parse_from([
+            "probe",
+            "publish",
+            "modbus",
+            "--artifact-base",
+            "localhost/integrations",
+            "--registry-auth-file",
+            "/private/auth.json",
+            "--database-url",
+            "postgres://unused",
+            "--version",
+            "2",
+            "--parameter-schema",
+            "/private/schema.json",
+            "--operations",
+            "wamn:modbus/client@1.0.0",
+            "--write-interface",
+            "wamn:modbus/write@1.0.0",
+            "--write-interface",
+            "example:meter/write@1.0.0",
+        ])
+        .unwrap();
+        let super::IntegrationCommand::Publish {
+            write_interfaces, ..
+        } = parsed.integration.command
+        else {
+            panic!("publish");
+        };
+        assert_eq!(
+            write_interfaces,
+            ["wamn:modbus/write@1.0.0", "example:meter/write@1.0.0"]
+        );
+    }
 }
