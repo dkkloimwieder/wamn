@@ -25,11 +25,11 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | E3-4 | [E](security.md) | high | S | Guest memory | Serving defaults observe aggregate guest allocations instead of refusing excess allocation. |
 | A3-2 | [A](code-quality.md) | high | L | Authority lifetime | Claim cleanup can panic during unwinding before it finishes revoking authority. |
 | B2-1, C2-2, C3-3 | [B](coupling.md), [C](upgrade.md) | high | L | Lifecycle ownership | Parallel upgrade drivers mutate production packages outside one encompassing environment lock. |
-| C1-2, C2-1 | [C](upgrade.md) | high | M | Installed environments | Installer completion rules can skip schema preparation or replay an application with `release = none`. |
+| C1-2, C2-1 | [C](upgrade.md) | high | M | Installed environments | Installer completion rules can skip schema preparation or replay an application with `release = none`. C1-2 fix: the baseline SQL carries a content hash, install records it, apply refuses on a mismatch. C1-3 closes into C1-2. |
 | C2-3 | [C](upgrade.md) | high | L | Package upgrades | Environment apply requires successor facts that its own upgrade phase cannot establish. |
-| C1-4 | [C](upgrade.md) | high | M | Bootstrap recovery | Partial control bootstrap can leave a database that refuses every retry. |
-| C1-1, C1-5, C3-2 | [C](upgrade.md) | high | L | Schema ownership | Full-schema installation, empty migration streams, and partial repair provide different schema paths. |
-| C1-3 | [C](upgrade.md) | high | M | Upgrade ordering | Environment analysis reads schema-dependent facts before project migrations run. |
+| C1-4 | [C](upgrade.md) | high | M | Bootstrap recovery | Partial control bootstrap can leave a database that refuses every retry. Narrowed: bootstrap runs in one transaction and a retry recreates the system database. |
+| C1-1, C1-5, C3-2 | [C](upgrade.md) | high | L | Schema ownership | Full-schema installation, empty migration streams, and partial repair provide different schema paths. C1-1 is rejected and its Deletes inverted: the migration machinery is deleted now, the full-schema path stays. C1-6 closes into C1-1. |
+| C1-3 | [C](upgrade.md) | high | M | Upgrade ordering | Environment analysis reads schema-dependent facts before project migrations run. Closed into C1-2. |
 | C3-4, D3-2 | [C](upgrade.md), [D](deployment.md) | high | L | Qualification identity | Qualification omits parts of the deployed platform and schema transition. D3-2 is medium: the key stays release plus host image, and chart, identity, edge and runner changes are proved by `platform_apply_kind` on their branch. |
 | A2-2, B2-4, D2-4 | [A](code-quality.md), [B](coupling.md), [D](deployment.md) | high | M | Process lifetime | Command adapters bypass bounded execution and can retain lifecycle locks indefinitely. D2-4 itself is medium after Group 1 deletes most listed owners. |
 | C3-1, D1-1, D3-4, H3-2 | [C](upgrade.md), [D](deployment.md), [H](hygiene.md) | high | L | Desired state | KCL, JSON sidecars, host overlays, and local charts select competing deployment inputs. |
@@ -63,7 +63,7 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | D2-7, D3-6, F1-7, F3-4, H1-6 | [D](deployment.md), [F](developer-experience.md), [H](hygiene.md) | high | L | Deployment fixtures | Application and check routes repeat builds, installation, credentials, collection, and cleanup. |
 | E3-5 | [E](security.md) | medium | L | Compiler containment | Import discovery compiles components, and cancelled callers cannot terminate detached compilation. |
 | C2-8 | [C](upgrade.md) | medium | L | Contract version minimums | The declared contract phase has no admitted executor and separates contraction from version minimum recording. |
-| C1-6 | [C](upgrade.md) | medium | M | Migration history | Retained retired records conflict with the promised restart at migration `0001`. |
+| C1-6 | [C](upgrade.md) | medium | M | Migration history | Retained retired records conflict with the promised restart at migration `0001`. Closed into C1-1. |
 | C2-4 | [C](upgrade.md) | medium | M | Recovery | Completion markers skip mutable work without observing its current postconditions. |
 | C2-5 | [C](upgrade.md) | medium | M | Helm recovery | Historical values equality bypasses pending-operation recovery and repair of live deployment drift. |
 | C2-6 | [C](upgrade.md) | medium | M | Executor identity | Commit selection builds a target binary but still applies schema through the launching binary. |
@@ -205,9 +205,9 @@ The owner review of 2026-10-31 rejects the following. The report evidence stays 
 | --- | --- |
 | C3-5: Maintenance upgrades remove the need for online stages and inferred rollback | Maintenance-window lifecycle. Deployment state stays in Helm and Kubernetes, rollback is `helm rollback`, and an upgrade never stops user workflows. Keep the environment lock and the rolling drain of the old release. Drop the writer pause, maintenance windows and database-recorded rollout state. |
 | C2-8: The declared contract-version minimum path has no executor | Online stages and version minimums are not replaced by a maintenance window. Same ruling as C3-5. |
-| C1-1: Schema truth describes fresh installations but cannot advance installed databases | Migration machinery. The schema is squashed to one baseline during development and a reset is free. No migration streams, no executor. |
+| C1-1: Schema truth describes fresh installations but cannot advance installed databases | Migration machinery. The schema is squashed to one baseline during development and a reset is free. No migration streams, no executor. Deletes inverted: the full-schema installation path stays, and the machinery that serves only the deferred path is deleted now (`crates/control/provision/src/schema_migrations.rs` (both empty lists), `crates/control/lib/src/upgrade_schema.rs` and the `upgrade-schema` verb in `services/ctl/src/provisioning_verbs.rs`, `record_fresh_install` and its three callers, the migration record table `platform.schema_migrations` in `deploy/sql/app-schema-migrations.sql`, and their tests). Real migrations return when development is stable. |
 | C3-2: Fresh installation and reconciliation bypass versioned migrations | Migration machinery. Same ruling as C1-1. |
-| C1-4: A failed control bootstrap can leave an installation that refuses every retry (narrowed, stays in Group 1) | Baseline histories and refusal of altered or newer records are rejected with C1-1. The retry part stays: make bootstrap retryable or delete the refusing check. |
+| C1-4: A failed control bootstrap can leave an installation that refuses every retry (narrowed, stays in Group 1) | Baseline histories and refusal of altered or newer records are rejected with C1-1. The retry part stays. Simplest fix: bootstrap runs its batches in one transaction, and a retry that finds `registry` without a completed bootstrap drops and recreates the system database. No lock, no recorded stages. |
 | E3-1: Registry descriptors can bypass byte admission | Downgraded from high to medium. Publication trusts the registry and WIT. Registry write access is the trusted boundary. |
 | The 51-epic chain and its effort table | Replaced by the four ordered groups below. Every effort row was M or L, so the table carried no information. |
 | D1-3: The RC path installs an incomplete collector variant | Closed by D3-6. The RC Dockerfile and the RC path are deleted in Group 1, so no separate collector fix is filed. |
@@ -229,6 +229,8 @@ The owner review of 2026-10-31 rejects the following. The report evidence stays 
 | Question on the CI service and protected reference (D3-3) | Answered: none. The owner's machine and the agents run builds and installs, and merges are fast-forward. |
 | Question on a disposable GKE project (D3-6, D3-3, G3-3) | Answered: none. Kind is the qualification provider. GKE-only behavior is proved on wamn-dev under manual approval. |
 | Question on widening R12 (C3-4, D3-2) | Answered: no. R12 keeps the narrow key, release plus host image. |
+| Question on `wamn-m6or2` (C1-2) | Answered: it closes on the next green `environment_apply_kind` run on main. No dedicated run. |
+| C1-2's pending-work record and C1-3's schema advancement before analysis | Rejected. One baseline, so nothing advances. Apply compares the installed baseline hash with the candidate's and refuses with "schema changed, reset the environment database" on a mismatch. C1-3 closes into C1-2 with its Deletes widened to every project migration call. |
 
 ### Plans in flight
 
@@ -274,7 +276,7 @@ Platform installation forces `release = none` during its initial application (`c
 
 Delete the independent upgrade driver, mutable completion shortcuts, synthetic uninstall pass, and competing structural repair path. The owner rejected the maintenance model (C3-5, C2-8): deployment state stays in Helm and Kubernetes, rollback is `helm rollback`, and an upgrade never stops user workflows.
 
-The owner rejected the migration machinery (C1-1, C3-2) and the baseline-history part of C1-4. The schema is squashed to one baseline during development and a reset is free, because no installed database retains data. Only the deletions C1-5 and C1-6 stay.
+The owner rejected the migration machinery (C1-1, C3-2) and the baseline-history part of C1-4. The schema is squashed to one baseline during development and a reset is free, because no installed database retains data. The migration machinery is deleted now under the inverted C1-1 Deletes, C1-6 closes into C1-1, and C1-5 stays as a deletion only. C1-2 becomes a baseline content hash that install records and apply compares.
 
 ### 3. One artifact build and deployment path
 
@@ -420,9 +422,9 @@ Do (34 findings). The rows the review named, then every row that deletes a build
 | B2-3 | Package application depends on the qualification runner it must serve | high | ctl/runner | Application’s dependency on the qualification runner. Remove scratch PostgreSQL and dump tooling from the package executor’s normal dependency closure. |
 | B2-4 | Process execution has several owners with different lifecycle guarantees | high | ctl/runner | Duplicate Helm and kubectl runners, synchronous context discovery in the environment library, and signal registration inside individual command executions. |
 | B2-9 | Provisioning APIs expose CLI output paths to internal callers | medium | ctl/runner | Temporary credential file round trips in environment ensure, internal `emit_*` fields and `-` sentinels, pure SQL builders in control/lib, and the misplaced schema-control instance-claim module. |
-| C1-2 | Installer completion records substitute for database upgrade state | high | ctl/runner | The installed-environment replay of first apply and completion-marker decisions about schema readiness. |
-| C1-3 | Project migrations run after queries that already require the new schema | high | ctl/runner | The duplicate project migration calls in substrate ensure and package staging. |
-| C1-4 | A failed control bootstrap can leave an installation that refuses every retry | high | ctl/runner | The `registry` existence test as the installation-completion authority and the separate unrecorded bootstrap stages. Narrowed: make bootstrap retryable or delete the refusing check. Baseline histories stay rejected. |
+| C1-1 | Schema truth describes fresh installations but cannot advance installed databases | high | host, ctl/runner | Inverted by the owner review. The full-schema installation path stays. Delete `crates/control/provision/src/schema_migrations.rs` (both empty lists), `crates/control/lib/src/upgrade_schema.rs` and the `upgrade-schema` verb in `services/ctl/src/provisioning_verbs.rs`, `record_fresh_install` and its three callers, the migration record table `platform.schema_migrations` in `deploy/sql/app-schema-migrations.sql`, and their tests. C1-6 closes into this row. |
+| C1-2 | Installer completion records substitute for database upgrade state | high | ctl/runner | The installed-environment replay of first apply with `release = none` and completion-marker decisions about schema readiness (shared with C2-1). From C1-3: every project migration call. Fix: the baseline SQL carries a content hash, install records it, apply refuses on a mismatch with "schema changed, reset the environment database". |
+| C1-4 | A failed control bootstrap can leave an installation that refuses every retry | high | ctl/runner | The `registry` existence test as the installation-completion authority and the separate unrecorded bootstrap stages. Fix: one transaction, and a retry that finds `registry` without a completed bootstrap recreates the system database. No lock, no recorded stages. |
 | C2-1 | Platform setup can uninstall a serving environment | high | ctl/runner | The separate initial-apply Job, forced `DeclaredRelease::None`, and first-versus-final environment application split. |
 | C2-3 | Env apply cannot initiate an installed-package upgrade | high | ctl/runner | The unreachable staged-successor branch and duplicated prerequisite package application in the older orchestrators. |
 | C2-6 | Commit selection does not select the schema executor | medium | ctl/runner | Direct schema/package/deployment library calls from the commit-build coordinator and their duplicate stage records. |
@@ -438,14 +440,13 @@ Do (34 findings). The rows the review named, then every row that deletes a build
 | D3-2 | Qualification does not identify all deployed behavior | medium | ctl/runner | The qualification identity split between `ImageSet` and `QualificationImages` only. The key stays release digest plus host image digest. |
 | D3-4 | Desired deployment inputs still have several owners | medium | none | `EnvironmentFile` and the authored `host-group-receiving.yaml` and `host-group-wms.yaml` overlays. The JSON sidecars are deleted once, under D1-1. `environment.k` owns bindings and versions, not integration selections or floors. |
 
-In passing (13 findings). Helper dedup, naming, count pins and doc links. Closed when the owning file is already open, never filed alone.
+In passing (12 findings). Helper dedup, naming, count pins and doc links. Closed when the owning file is already open, never filed alone.
 
 | Finding | Title | Severity | Image | Deletes |
 | --- | --- | --- | --- | --- |
 | B2-5 | Developer orchestration is reusable, but belongs to the developer application | medium | ctl/runner | `wamn-control::dev`, its umbrella exports, and the separate developer adapters in services/ctl after combining them with their implementation owner. Remove developer-only dependencies from the administrative CLI. |
 | B2-8 | Publication mixes release construction with local runtime adaptation | medium | ctl/runner | `LocalApplicationFacts` construction from publication, unused database inputs from assembly, and duplicated local-versus-registry assembly paths. Remove the umbrella after its remaining responsibilities move. |
-| C1-5 | Run-plane repair is a partial second schema-upgrade engine | medium | host, ctl/runner | Structural SQL slicing, missing-column mutation, and separate table-bootstrap actions once the common migration path owns those changes. |
-| C1-6 | Retained migration records conflict with the promised restart at 0001 | medium | host, ctl/runner | The empty-list bypass and the test that treats an unrecognized retired record table as a successful no-op. Remove legacy adoption machinery if no retained installation requires it. |
+| C1-5 | Run-plane repair is a partial second schema-upgrade engine | medium | host, ctl/runner | Structural SQL slicing, missing-column mutation, and separate table-bootstrap actions. Deletion only. Reconciliation keeps grants, roles and policies. |
 | C2-4 | Completion markers replace current-state observation | medium | ctl/runner | Completion-marker gating around environment reconciliation and finished-stage gating around mutable upgrade phases. |
 | C2-5 | Helm history equality bypasses recovery and drift repair | medium | ctl/runner | The historical-values-only early return and separate interpretations of successful history versus current deployment state. |
 | C2-10 | Platform-schema ownership is scattered across lifecycle phases | low | ctl/runner | The second project-upgrade invocation, platform-extension installation inside application application, and repeated prerequisite wiring in older orchestrators. |
@@ -670,40 +671,39 @@ In passing (75 findings). Helper dedup, naming, count pins and doc links. Closed
 9. Can `environment.k` own local and deployed coordinates, with the default developer command generating its private local document? This unblocks Groups 1 and 2 (D3-4, F2-4, F3-2).
 10. Which local/deployed host behaviors must match, and must WMS retain its distinct concurrency limit? This unblocks Groups 1 and 3 (D1-5, G2-4).
 11. Can production `apply-package` become an internal environment phase, with any retained standalone command limited to explicitly owned disposable targets? This unblocks Group 1 (C2-2).
-12. What live result closes `wamn-m6or2` after fixture correction `92cf2aded`? This defines retained preload acceptance for Group 1 (C1-2).
-13. Who approves qualification cases for unfamiliar applications, and which application business tests must deployment require beyond generic platform qualification? This unblocks Group 3 (B2-6, F3-5).
-14. Can the identity journey replace its repository `evidence/` requirement with caller-owned temporary result storage? This unblocks Group 4 (H1-5).
-15. Does any external workflow still require `kind-gate-build` or `kind-gate-image-remove`? This unblocks Group 4 (H1-12).
-16. Which deployed coordinates currently produce colliding credential names? This unblocks safe replacement in Group 3 (E1-1, E2-1).
-17. Must an organization control credential remain trusted with authority across every organization? This decides the database boundary in Group 3 (E2-2).
-18. Is every operator certificate intentionally platform-wide, and how must one certificate be revoked without replacing its CA? This informs privileged credential boundaries in Group 3 (E2-2, E2-3).
-19. Are cache delays permitted only after lost invalidation, or also after natural credential expiry? This unblocks Group 3 (E1-6, E1-7).
-20. What maximum disconnected period permits continued trust in an local signing key set? This unblocks Group 3 (E1-8).
-21. Which independently enforced network controls protect deployed identity databases, plaintext services, and standing development fixtures? This establishes the live boundary for Group 3 (E1-5, E2-3, E2-5).
-22. Who owns refreshes for WASI-Virt, its adapter, and the pg-walstream patch, and what refresh interval applies? This unblocks Group 3 (E3-8).
-23. Does another check scan the web dependency graph, including the pinned wfe dependency resolution? This determines the remaining scan scope in Group 3 (E3-8).
-24. Must WASI-Virt provenance report a measured adapter digest instead of its current constant? This unblocks provenance acceptance in Group 3 (E3-8).
-25. Is registry write access intentionally sufficient to bypass component admission? This decides the trusted publication boundary in Group 3 (E3-1).
-26. What measured condition permits serving hosts to leave aggregate memory count mode? This unblocks Group 3 (E3-4).
-27. Must poisoned authority state terminate the process, or must the host isolate the affected owner and become unready? This unblocks Group 3 (A3-2).
-28. Which blobstore `Other` messages are frozen consumer contracts? This unblocks replacement of backend prose in Group 4 (A3-3).
-29. Can host operations explicitly share authored shapes while resolved contract bytes and generated clients remain unchanged? This unblocks Group 4 (A2-3).
-30. Must SQL literal quoting support nondefault PostgreSQL string parsing, or can callers require the default server behavior? This defines quoting acceptance in Group 4 (A2-11).
-31. Must HTTP exposure remain explicit for every custom public operation? This unblocks generated publication policy in Group 4 (F1-1).
-32. Can Acme consume its pinned base operation’s wire shape while retaining separate identity and inspection behavior? This unblocks Group 4 (F1-4).
-33. Can pure CRUD applications use generated component crates without authored Rust files? This unblocks Group 4 (F1-3, F3-1).
-34. Can WAMN consume only public built wfe exports while source qualification remains inside the submodule? This unblocks Group 4 (H3-3).
-35. Which retained saved-edit acceptance run passed against the current freshness, watcher, and activation rules? This supplies the comparison result for Group 2 (F2-1 through F2-3).
-36. Can the normal developer command own the complete private stack, with external services available through explicit overrides? This unblocks Groups 2 and 4 (F2-5, F2-6, F3-2).
-37. Can the default author experience require Docker on Linux, or must the first release support another host platform? This unblocks Groups 2 and 4 (F2-8, F3-2).
-38. Which cold-start, warm-start, and saved-edit limits must the retained results enforce? This unblocks acceptance for Groups 2 and 4 (F2-11, G3-7).
-39. Does the ten-minute clock start with the installed SDK, Docker, and provisioned account, or include their installation and provisioning? This unblocks Group 4 (F3-7).
-40. Can root supply live statuses for quarantined tests and archive candidates, including which ignored cases represent defects or retired contracts? This unblocks Groups 3 and 4 (G2-1 through G2-4, G3-4, H2-2, H2-3).
-41. Which dashboard or collector owns the frozen PostgreSQL telemetry identifiers whose guard cites deleted documentation? This unblocks retained-contract decisions in Groups 3 and 4 (G2-6, H2-5).
-42. Must startup-burst measurement remain supported despite its absent repository execution path? This unblocks Group 4 (A1-1).
-43. Must benchmark summaries remain readable without their raw result files? This defines the retained result contract in Group 4 (H1-7).
-44. Does an immutable Git source plus a compact history entry satisfy the rule that accepted plans remain untrimmed? This unblocks Group 4 (H2-2, H2-7).
-45. Where are the twelve historical performance artifacts retained, if anywhere? This unblocks evidence disposition in Group 4 (H2-6).
-46. Does any external tool still read `.beads/beads.jsonl`? This unblocks obsolete-export removal in Group 4 (H3-10).
+12. Who approves qualification cases for unfamiliar applications, and which application business tests must deployment require beyond generic platform qualification? This unblocks Group 3 (B2-6, F3-5).
+13. Can the identity journey replace its repository `evidence/` requirement with caller-owned temporary result storage? This unblocks Group 4 (H1-5).
+14. Does any external workflow still require `kind-gate-build` or `kind-gate-image-remove`? This unblocks Group 4 (H1-12).
+15. Which deployed coordinates currently produce colliding credential names? This unblocks safe replacement in Group 3 (E1-1, E2-1).
+16. Must an organization control credential remain trusted with authority across every organization? This decides the database boundary in Group 3 (E2-2).
+17. Is every operator certificate intentionally platform-wide, and how must one certificate be revoked without replacing its CA? This informs privileged credential boundaries in Group 3 (E2-2, E2-3).
+18. Are cache delays permitted only after lost invalidation, or also after natural credential expiry? This unblocks Group 3 (E1-6, E1-7).
+19. What maximum disconnected period permits continued trust in an local signing key set? This unblocks Group 3 (E1-8).
+20. Which independently enforced network controls protect deployed identity databases, plaintext services, and standing development fixtures? This establishes the live boundary for Group 3 (E1-5, E2-3, E2-5).
+21. Who owns refreshes for WASI-Virt, its adapter, and the pg-walstream patch, and what refresh interval applies? This unblocks Group 3 (E3-8).
+22. Does another check scan the web dependency graph, including the pinned wfe dependency resolution? This determines the remaining scan scope in Group 3 (E3-8).
+23. Must WASI-Virt provenance report a measured adapter digest instead of its current constant? This unblocks provenance acceptance in Group 3 (E3-8).
+24. Is registry write access intentionally sufficient to bypass component admission? This decides the trusted publication boundary in Group 3 (E3-1).
+25. What measured condition permits serving hosts to leave aggregate memory count mode? This unblocks Group 3 (E3-4).
+26. Must poisoned authority state terminate the process, or must the host isolate the affected owner and become unready? This unblocks Group 3 (A3-2).
+27. Which blobstore `Other` messages are frozen consumer contracts? This unblocks replacement of backend prose in Group 4 (A3-3).
+28. Can host operations explicitly share authored shapes while resolved contract bytes and generated clients remain unchanged? This unblocks Group 4 (A2-3).
+29. Must SQL literal quoting support nondefault PostgreSQL string parsing, or can callers require the default server behavior? This defines quoting acceptance in Group 4 (A2-11).
+30. Must HTTP exposure remain explicit for every custom public operation? This unblocks generated publication policy in Group 4 (F1-1).
+31. Can Acme consume its pinned base operation’s wire shape while retaining separate identity and inspection behavior? This unblocks Group 4 (F1-4).
+32. Can pure CRUD applications use generated component crates without authored Rust files? This unblocks Group 4 (F1-3, F3-1).
+33. Can WAMN consume only public built wfe exports while source qualification remains inside the submodule? This unblocks Group 4 (H3-3).
+34. Which retained saved-edit acceptance run passed against the current freshness, watcher, and activation rules? This supplies the comparison result for Group 2 (F2-1 through F2-3).
+35. Can the normal developer command own the complete private stack, with external services available through explicit overrides? This unblocks Groups 2 and 4 (F2-5, F2-6, F3-2).
+36. Can the default author experience require Docker on Linux, or must the first release support another host platform? This unblocks Groups 2 and 4 (F2-8, F3-2).
+37. Which cold-start, warm-start, and saved-edit limits must the retained results enforce? This unblocks acceptance for Groups 2 and 4 (F2-11, G3-7).
+38. Does the ten-minute clock start with the installed SDK, Docker, and provisioned account, or include their installation and provisioning? This unblocks Group 4 (F3-7).
+39. Can root supply live statuses for quarantined tests and archive candidates, including which ignored cases represent defects or retired contracts? This unblocks Groups 3 and 4 (G2-1 through G2-4, G3-4, H2-2, H2-3).
+40. Which dashboard or collector owns the frozen PostgreSQL telemetry identifiers whose guard cites deleted documentation? This unblocks retained-contract decisions in Groups 3 and 4 (G2-6, H2-5).
+41. Must startup-burst measurement remain supported despite its absent repository execution path? This unblocks Group 4 (A1-1).
+42. Must benchmark summaries remain readable without their raw result files? This defines the retained result contract in Group 4 (H1-7).
+43. Does an immutable Git source plus a compact history entry satisfy the rule that accepted plans remain untrimmed? This unblocks Group 4 (H2-2, H2-7).
+44. Where are the twelve historical performance artifacts retained, if anywhere? This unblocks evidence disposition in Group 4 (H2-6).
+45. Does any external tool still read `.beads/beads.jsonl`? This unblocks obsolete-export removal in Group 4 (H3-10).
 
 Questions 8 and 10 of the first draft are answered in Rejected findings and proposals. Nothing from this list is filed until the owner answers.

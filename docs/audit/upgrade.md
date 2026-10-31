@@ -17,11 +17,11 @@ Evidence: `crates/control/provision/src/schema_migrations.rs:3`, `crates/control
 
 Problem: The full SQL files define the intended schema, while each installed database holds its actual layout. `registry.meta.schema_version = '0.1'` identifies the registry format, not the precise installed DDL. Both migration lists are empty, and `upgrade-schema` returns success without examining the database. `postgres-init.sql` builds test fixtures and supplies no production upgrade path.
 
-Proposal: Use migrations, ordered database changes, as the sole authored path for both installation and upgrade. Put the current system and project schemas into explicit baseline migrations, then record each applied file and its hash in the existing ledger tables. Keep the registry format version separate. A generated full schema can later serve as an installation optimization if equivalence tests justify it. A declarative diff tool, which calculates changes from desired definitions, still needs explicit data conversions and authority rules here.
+Rejected (owner review 2026-10-31, see README). Standing rule for this part: during development the schema is one baseline, the full SQL files. Real migrations return when development is stable. No-cruft applies: machinery that serves only the deferred path is deleted now, not kept empty.
 
-Deletes: Independently maintained full-schema installation paths and `record_fresh_install`, which records migrations without executing them. Move the existing SQL into baseline migrations.
+Deletes (inverted): the full-schema installation path stays. Delete the migration machinery instead: `crates/control/provision/src/schema_migrations.rs` (both empty lists), `crates/control/lib/src/upgrade_schema.rs` and the `upgrade-schema` verb in `services/ctl/src/provisioning_verbs.rs`, `record_fresh_install` and its three callers, the migration record table `platform.schema_migrations` in `deploy/sql/app-schema-migrations.sql`, and their tests. The reviewer named `system-schema.sql` for the record table. The table is in `app-schema-migrations.sql`, which `schema_migrations.rs` includes.
 
-Risk: Migration ordering can break functions, roles, policies, or foreign keys. Prove that fresh installation and predecessor upgrade produce equivalent schemas, grants, seed data, and ledger entries.
+Risk: Fresh installation must still produce the full schema, grants and seed data. The existing installation tests prove that after the deletion.
 
 ## Finding C1-2: Installer completion records substitute for database upgrade state
 
@@ -32,11 +32,11 @@ Evidence: `crates/control/lib/src/platform/install.rs:309`, `crates/control/lib/
 
 Problem: `wamn-bj2kn` and `wamn-sdrnq` share one cause: newer code reaches older schemas after step 4.7 skips the completed bootstrap. Their reported symptoms differ: a missing connection-reader function and a missing `env_key` column. `wamn-zeg0z` exposes the opposite cache rule: a changed image reruns first apply with `release = none`, which requests removal of the serving release. These failures share an installer that models completed steps without a database upgrade lifecycle.
 
-Proposal: Let the database ledger decide pending schema work on every apply. Run schema advancement before dependent provisioning Jobs. Remove the synthetic first-apply document with `release = none` for installed environments and converge the substrate through the ordinary lifecycle. Git contains the later `wamn-zeg0z` fix `8a3b3cc29`, outside audited HEAD, but that replay fix supplies no schema upgrade path.
+Proposal (owner review 2026-10-31): the three failures (`wamn-bj2kn`, `wamn-sdrnq`, `wamn-zeg0z`) are real, and the original proposal is not. The baseline SQL carries a content hash. Install records it. Apply compares the installed hash with the candidate's hash and refuses with "schema changed, reset the environment database" when they differ. No pending-work record. Because there is one baseline, the hash check runs first, before analysis (C1-3 closes into this finding).
 
-Deletes: The installed-environment replay of first apply and completion-marker decisions about schema readiness.
+Deletes: The installed-environment replay of first apply with `release = none` and completion-marker decisions about schema readiness (shared with C2-1). From C1-3, widened: every project migration call, not only the duplicates in substrate ensure and package staging.
 
-Risk: A platform update can stop traffic or leave credentials incompatible with the database. Prove an image change against a retained database while requests continue and the serving release stays installed.
+Risk: An image change against a database with the same hash must keep the serving release installed while requests continue. An image change against a database with a different hash must refuse with the message above.
 
 ## Finding C1-3: Project migrations run after queries that already require the new schema
 
@@ -47,11 +47,7 @@ Evidence: `crates/control/lib/src/environment/mod.rs:276`, `crates/control/lib/s
 
 Problem: Environment apply reads installed packages during analysis before it reaches either project migration call. Those reads already require columns such as `env_key`. Restoring migration files alone cannot repair a predecessor database when analysis fails before the applier runs.
 
-Proposal: Resolve database identity through a small, stable bootstrap interface. Advance the system schema before control reads and each project schema before environment analysis. Then run ordinary analysis and reconciliation against the established schema revision.
-
-Deletes: The duplicate project migration calls in substrate ensure and package staging.
-
-Risk: Incorrect sequencing can migrate the wrong database or bypass identity checks. Test a registered predecessor database that lacks a column required by analysis, plus refusal of an unregistered database.
+Closed into C1-2 (owner review 2026-10-31). With one baseline there is nothing to advance before analysis. The hash check of C1-2 runs first. The Deletes stay, widened: every project migration call, not only the duplicates. They are listed under C1-2.
 
 ## Finding C1-4: A failed control bootstrap can leave an installation that refuses every retry
 
@@ -62,11 +58,11 @@ Evidence: `crates/control/lib/src/provision_system.rs:78`, `crates/control/lib/s
 
 Problem: The core system schema and portable control store run as separate batches without an enclosing transaction. A failure after the core batch leaves `registry` present, but a retry refuses any database with that schema. Domain assignment also runs after bootstrap, so completion spans several database operations without one atomic boundary.
 
-Proposal: Apply the complete database baseline, domain assignment, and migration records in one transaction under a database lock. Keep cluster-level role preparation convergent. Treat an existing baseline as recorded state that the common applier can inspect.
+Proposal (owner review 2026-10-31, narrowed): bootstrap runs its batches in one transaction. A retry that finds `registry` without a completed bootstrap drops and recreates the system database, because a reset is free. No lock, no recorded stages. Baseline histories and refusal of altered or newer records are rejected with C1-1.
 
 Deletes: The `registry` existence test as the installation-completion authority and the separate unrecorded bootstrap stages.
 
-Risk: A crash can strand a partially installed control database. Inject failure during the portable-store stage and before domain assignment, then prove rollback and successful retry.
+Risk: Inject a failure during the portable-store stage and before domain assignment, then prove that the retry recreates the database and completes.
 
 ## Finding C1-5: Run-plane repair is a partial second schema-upgrade engine
 
@@ -77,11 +73,11 @@ Evidence: `crates/schema/control/src/run_plane/schema.rs:160`, `crates/schema/co
 
 Problem: The reconciler parses SQL layout to create missing catalog tables and add missing run-plane columns. It does not provide equivalent evolution for existing catalog columns or the whole platform schema, whose presence is inferred from `platform.user`. The catalog file also creates `platform` relations outside the catalog-table loop. Repairing selected objects therefore cannot substitute for a complete upgrade.
 
-Proposal: Give ordered migrations ownership of structural changes, including backfills and constraint transitions. Retain reconciliation for credential grants and security rules that must continuously converge. Use schema observation to detect unsupported structural drift before serving traffic.
+Proposal (owner review 2026-10-31): deletion only. Reconciliation keeps grants, roles and policies, which must continuously converge. Structural repair goes. No migration path replaces it, because the schema is one baseline and a reset is free.
 
-Deletes: Structural SQL slicing, missing-column mutation, and separate table-bootstrap actions once the common migration path owns those changes.
+Deletes: Structural SQL slicing, missing-column mutation, and separate table-bootstrap actions in the run-plane planner and `reconcile_run_plane.rs`.
 
-Risk: Removing repair prematurely can break provisioning or weaken security convergence. Prove migration coverage alongside existing role, policy, and privilege-denial tests.
+Risk: Removing repair can weaken security convergence. Keep the existing role, policy, and privilege-denial tests green.
 
 ## Finding C1-6: Retained migration records conflict with the promised restart at 0001
 
@@ -92,17 +88,11 @@ Evidence: `crates/control/provision/src/schema_migrations.rs:4`, `crates/control
 
 Problem: The code promises that migrations can restart at `0001`, but its test deliberately retains a retired `0001` record. An empty list ignores that record today. A new file at ordinal one later collides with the retained path or hash and produces `schema-migration-drift`.
 
-Proposal: Establish an explicit baseline boundary and accept only supported histories. Refuse unknown or newer records even when there are no pending files. For greenfield databases, reject unsupported histories and require an explicit recreation decision instead of silently adopting them.
-
-Deletes: The empty-list bypass and the test that treats an unrecognized retired ledger as a successful no-op. Remove legacy adoption machinery if no retained installation requires it.
-
-Risk: Restarted numbering can block upgrades or conceal an incompatible database. Test retired records, newer histories, missing ordinals, and altered hashes.
+Closed into C1-1 (owner review 2026-10-31). The retired-record test, the empty-list bypass and the adoption machinery go with the migration tables.
 
 ## Open questions for the owner
 
-1. Which installed databases require data-preserving upgrades, and which can receive one explicit reset to the new baseline?
-2. Must old and new platform images serve concurrently during upgrades, or can schema changes require a maintenance interval?
-3. What live evidence closes `wamn-m6or2`? Commit `92cf2aded` corrects its fixture in this tree. `crates/control/lib/tests/environment_apply_kind.rs:3063` now requires component preload without an HTTP role, but this audit did not run it.
+All three questions were answered on 2026-10-31. No installed database requires a data-preserving upgrade: every one can be reset to the baseline. Old and new images serve concurrently (rolling), and a schema-breaking change during development is a reset, never a maintenance interval. `wamn-m6or2` closes on the next green `environment_apply_kind` run on main, with no dedicated run.
 
 <!-- lane C2, bead wamn-16jwe.2 -->
 
