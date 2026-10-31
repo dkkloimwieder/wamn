@@ -533,20 +533,20 @@ Risk: Publication currently uses target credentials and database state. A propos
 
 ## Finding D3-2: Qualification does not identify all deployed behavior
 
-Severity: high  
+Severity: medium  
 Effort: L  
 Area: `crates/control/lib/src/delivery/qualification_artifact.rs`  
 Evidence: `crates/control/lib/src/delivery/qualification_artifact.rs:57`, `crates/control/lib/src/delivery/qualification_artifact.rs:92`, `crates/control/lib/src/delivery/qualification.rs:174`, `crates/control/lib/src/platform/cdc.rs:21`.
 
 Problem: Qualification reuse depends on the release, host, HTTP component, and materializer component. It excludes chart templates, identity, edge, gates, and the runner. The gates image also supplies the deployed CDC reader, so its exclusion reaches production behavior. The current qualification proves a narrower unit than the proposed deployment path needs.
 
-Proposal: Qualify the release against the complete deployment bundle. That bundle fixes the chart and dependencies, deployed images, components, web assets, and qualification executable. Reuse evidence only when those inputs and required cases match. Preserve the environment-independent release digest, and record platform compatibility separately in the qualification artifact.
+Proposal: The qualification key is the release digest plus the host image digest. Chart, identity, edge and runner changes are proved by `platform_apply_kind` on the branch that touched them, never by re-qualifying releases. The CDC exclusion is moot once the reader lives in the host image (D1-6). Keep `qualify-upgrade` as a database transition proof inside the qualification workflow.
 
-This proposal changes the existing R12 policy explicitly. Replace the artifact format and refuse older evidence rather than adding compatibility branches. Keep `qualify-upgrade` as a database transition proof inside the qualification workflow.
+Owner review 2026-10-31: the wider qualification key is rejected. A key that covers chart templates, identity, edge and runner re-qualifies every release on every chart edit, which is the stated cost problem. R12 keeps the narrow key. Severity lowered from high to medium.
 
-Deletes: The qualification identity split between `ImageSet` and `QualificationImages`, and reuse across changed deployment templates or deployed auxiliary images.
+Deletes: The qualification identity split between `ImageSet` and `QualificationImages` only.
 
-Risk: Broader identity reduces qualification reuse. A proposed mutation test must change the chart, identity, CDC reader, edge, or case executable independently and require fresh evidence.
+Risk: One test proves that a release qualified against one host image digest is not reused against another.
 
 ## Finding D3-3: The merge train stops before deployment qualification
 
@@ -557,13 +557,7 @@ Evidence: `tools/train-run:67`, `tools/train-run:80`, `tools/test-changes:436`, 
 
 Problem: The train tests a committed revision, but its final step is `tools/test-changes run`. The deployment supplement runs prekind cases and one native host case, rather than the full ignored platform installation. The train produces no completed deployment bundle or qualification record. Successful logs also disappear after the run.
 
-Proposal: Keep the current change selection as the first train stage. Add the single artifact build, full platform installation on kind, application qualification, and retained results for the exact combined commit. Merge only that tested commit, or restart when the integration head changes. A separate trusted promotion job must select the qualified bundle and apply it.
-
-The CI service supplies triggers, credentials, concurrency, and result storage. Repository commands continue to own behavior. Preserve generated package preparation, because measurements.md section 3 records compile failures when those inputs are absent.
-
-Deletes: Successful-run evidence deletion from `train-run`, and the assumption that a passing native test train also qualifies deployment.
-
-Risk: Testing a combined head and merging different bytes invalidates the result. Extend `tools/train-tools-test` with moved-head, failed-qualification, missing-artifact, and promotion-refusal cases.
+Closed into D2-8 (owner review 2026-10-31): the proposal is rejected. No CI service, no protected reference, no promotion job, no "merge only the tested commit or restart". Merges are fast-forward after reviewer acceptance. A branch that touches install, chart or env apply files merges after `platform_apply_kind` passes on that branch. Builds are local. What survives is D2-8: keep successful logs. The train-tools-test cases are dropped.
 
 ## Finding D3-4: Desired deployment inputs still have several owners
 
@@ -579,12 +573,12 @@ Proposal: Give each fact one owner:
 1. `wamn.k` owns package declarations and build inputs.
 2. `project.k` owns cloud infrastructure managed by OpenTofu.
 3. `cluster.k` owns provider configuration and references to external resources.
-4. `environment.k` owns the coordinate, application mapping, release selection, policy, integration selections, and floors.
+4. `environment.k` owns the coordinate, application mapping, release selection, policy, bindings and versions. Connection definitions are UI or API (integration-schema plan).
 5. The immutable bundle owns artifact digests, chart dependencies, and qualification tools.
 
 Derive package locations from the build graph and host configuration from these inputs. Credentials and live integration records retain their existing authorities. Generated JSON, YAML, and `.tf.json` remain outputs.
 
-Deletes: Both committed environment JSON sidecars, `EnvironmentFile`, and the authored `host-group-receiving.yaml` and `host-group-wms.yaml` overlays.
+Deletes: `EnvironmentFile` and the authored `host-group-receiving.yaml` and `host-group-wms.yaml` overlays. The `deploy/gcp/environments/*.json` sidecars are deleted once, under D1-1.
 
 Risk: Package discovery must preserve base-before-overlay order. Extend the existing environment round-trip tests to cover both applications without sidecars or project-named host files.
 
@@ -599,7 +593,7 @@ Problem: Kubernetes resources come from Helm templates, committed YAML with Rust
 
 Proposal: Recommend Helm plus KCL. KCL compiles and constrains inputs, while Helm alone renders WAMN Kubernetes resources. Rust retains lifecycle decisions, database transactions, credential operations, and bounded execution.
 
-Use one WAMN chart package with explicit platform and environment scopes. Install separate instances for cluster services and each environment, so environment removal cannot remove shared services. Fold identity, edge, CDC, and host resources into that package. Retain upstream runtime-operator, CloudNativePG, and cert-manager as pinned dependencies with explicit installation order.
+Use one WAMN chart package with explicit platform and environment scopes. Install separate instances for cluster services and each environment, so environment removal cannot remove shared services. Fold the WAMN-owned templates (identity, edge, CDC, control) and the plugins and NATS values into that package. Per alignment R9, the operator, its CRDs, the `WorkloadDeployment`s and the subchart host Deployment stay as they are. Retain upstream runtime-operator, CloudNativePG, and cert-manager as pinned dependencies with explicit installation order.
 
 A Rust operator offers continuous repair and Kubernetes status conditions. It also requires custom resources, upgrades, watches, permissions, and deletion finalizers. The current lifecycle already supplies observation-based recovery through a bounded command, so that trade adds maintenance without a named requirement.
 
@@ -624,9 +618,9 @@ Proposal: Use `platform apply` and one shared fixture for all cluster-backed qua
 | `platform apply` | Retain as the public deployment entry point. Remove build and publication stages. |
 | Direct `env apply` | Retain its lifecycle library beneath the entry point. Remove separate installation instructions. |
 | `environment_apply_kind` | Retain lifecycle assertions. Replace its independent infrastructure setup with the common fixture. |
-| Kept delivery cluster | Retain coexistence assertions. Remove its separate installer in `delivery_cluster.rs`. |
-| Receiving cluster journey | Retain application assertions. Delete its independent lifecycle script. |
-| WMS cluster journey | Retain application assertions. Delete its independent lifecycle script. |
+| Kept delivery cluster | Retain coexistence assertions. Remove its separate installer in `delivery_cluster.rs`. Clusters are disposable per the cluster-stage rule, and one agent holds a cluster at a time. |
+| Receiving cluster journey | Move its application assertions into the fixture, then delete its lifecycle script. |
+| WMS cluster journey | Move its application assertions into the fixture, then delete its lifecycle script. |
 | RC gate cluster | Retain relevant protocol assertions. Remove its alternate images and host installation. |
 | MVP bootstrap | Delete after credential lifecycle coverage moves to the common path. |
 
@@ -640,26 +634,24 @@ Risk: Deleting fixtures can discard failure assertions. Move those assertions fi
 
 ## Finding D3-7: The installation lock cannot serialize different deployment machines
 
-Severity: medium  
+Severity: low  
 Effort: M  
 Area: `crates/control/lib/src/platform/lock.rs`  
 Evidence: `crates/control/lib/src/platform/lock.rs:24`, `crates/control/lib/src/platform/lock.rs:35`, `crates/control/lib/src/platform/install.rs:42`, `crates/control/lib/src/environment/lock.rs:21`.
 
 Problem: Platform installation locks a file in a local work directory. Different machines or work directories can therefore modify the same cluster concurrently. The environment database lock protects individual environments, but it does not serialize shared platform resources or establish promotion order.
 
-Proposal: Give each cluster one deployment queue and a cluster-visible installation lock. Keep the existing environment locks for their database lifecycle. The promotion job must compare its selected commit with the current protected selection before applying. Rollback changes that selection deliberately and follows the same deployment path.
+Proposal: A Kubernetes Lease held by the installer, released on exit, refused while held. Keep the existing environment locks for their database lifecycle. The installer stops when it loses the Lease. Retain Helm as deployment history.
 
-A Kubernetes Lease can coordinate installers before the system database exists. The installer must stop when it loses ownership. Retain Helm as deployment history rather than adding another deployment database.
+Owner review 2026-10-31: re-scoped to the Lease. No deployment queue, no promotion job, no protected selection. Severity lowered from medium to low.
 
 Deletes: The local file lock as the authority for cluster installation, and duplicated manual deployment writers in the runbook.
 
-Risk: A delayed worker can continue after another worker takes ownership. Proposed concurrency tests must cover two machines, lock loss, interruption, stale promotion, and explicit rollback.
+Risk: Two tests: two installers start and one is refused, and an installer that loses the Lease stops.
 
 This assessment uses repository reads and shared measurements. No build, test, or deployment ran. The checkout remained clean.
 
 ## Open questions for the owner
 
-1. Which CI service and protected reference will own integration and promotion?
-2. Which disposable GKE project and budget will support qualification of provider-specific behavior through the same apply path?
-3. Can R12 change so that qualification identifies the complete deployment bundle, including the chart and deployed auxiliary images?
+All three questions were answered on 2026-10-31. No CI service or protected reference exists or is planned: the owner's machine and the agents run builds and installs, and merges are fast-forward. No second GKE project: kind is the qualification provider, and GKE-only behavior is proved on wamn-dev under manual approval. R12 keeps the narrow key (release plus host image) per the D3-2 ruling.
 
