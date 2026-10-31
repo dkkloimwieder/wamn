@@ -225,11 +225,7 @@ Evidence: `crates/control/lib/src/upgrade_environment.rs:85`, `crates/control/li
 
 Problem: Retirement reads private credential files before determining which generations still need retirement. It deletes those files before the caller records stage completion. An interruption between deletion and record completion leaves a retry that requires missing files. Earlier package-stage retries also select another generation and mint another PAT instead of reusing a fixed operation identity.
 
-Proposal: Reuse credentials owned by the existing environment and publication paths. Where private outputs remain necessary, derive retry decisions from durable state and perform disposable-file cleanup after completion is durable.
-
-Deletes: The upgrade command’s separate generation-selection and PAT-minting workflow where existing owners already supply those credentials.
-
-Risk: Add interruption tests after credential preparation, retirement and private-file deletion. Each retry must finish without replacing an unrelated active generation or requiring deleted output.
+Closed with C3-3 (owner addendum 2026-10-31): the upgrade path is deleted. What survives is the admin flow of [integration-schema](../plan/integration-schema.md) ("Admin flow (no deployment)"): a credential is set through the UI or API, a new generation becomes active, and nothing deploys.
 
 ## Finding C2-8: The declared contract-floor path has no executor
 

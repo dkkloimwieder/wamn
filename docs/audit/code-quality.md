@@ -651,6 +651,8 @@ Deletes: Repeated error enums, formatting implementations, and common parser bra
 
 Risk: Consolidation can accidentally accept broader credentials. Run the existing credential refusal matrices and add cross-family credential swaps and redaction cases.
 
+Owner addendum 2026-10-31, re-scoped: [integration-schema](../plan/integration-schema.md) drops the credential import paths, so credentials enter by UI or API only. The five validators here parse database credentials for provisioning. They are the whole scope. No integration-credential parser is added.
+
 ## Finding A3-9: Client error decoding invents missing contract data
 
 Severity: medium  
@@ -695,6 +697,8 @@ Proposal: Keep publication as a coordinator over composition, projection, policy
 Deletes: Monolithic parent bodies, the activation error wrapper, and duplicate infrastructure helpers where ownership already exists.
 
 Risk: Release identity, retry decisions, and process cleanup can change. Retain canonical publication, upgrade-resume, and activation failure-path tests.
+
+Owner addendum 2026-10-31: `upgrade_environment.rs` is deleted under C3-3, so this row covers `publish_release.rs` and `dev/activation.rs`. Any issue filed from an audit row that names `connection_instances`, `connection_bindings`, `org_connections`, `integration_allow` or `wamn:connector` uses the names in the "Dropped or merged from main" table of [integration-schema](../plan/integration-schema.md).
 
 ## Finding A3-12: Generator files need semantic splits, not blanket panic removal
 

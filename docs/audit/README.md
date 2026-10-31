@@ -14,12 +14,12 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | --- | --- | --- | --- | --- | --- |
 | E1-1, E2-1 | [E](security.md) | high | M | Org credentials | Valid coordinates collide in Secret, ServiceAccount, Role, and RoleBinding names. |
 | E2-2 | [E](security.md) | high | L | Organization authority | An org control credential can change authority and connection records across organizations. |
-| E1-2 | [E](security.md) | high | L | Authorization cache | Shared NATS credentials permit forged grant answers for another environment. |
-| E3-1 | [E](security.md) | medium | M | Component admission | Publication trusts registry descriptors without deriving admission facts from the component bytes. |
+| E1-2 | [E](security.md) | high | L | Authorization cache | Shared NATS credentials permit forged grant answers for another environment. Closed by alignment R4, R5 and R7. |
+| E3-1 | [E](security.md) | medium | M | Component admission | Publication trusts registry descriptors without deriving admission facts from the component bytes. Waits for alignment W1 to W3. |
 | E1-3 | [E](security.md) | high | L | Grant revocation | A delayed grant projection can restore application administration after revocation. |
 | E1-4 | [E](security.md) | high | M | Membership | Concurrent grants can outlive deactivation, and session admission omits active org membership. |
 | E1-5, E2-3 | [E](security.md) | medium | L | Database transport | Native database and replication connections permit plaintext traffic, including signing material. |
-| E2-4 | [E](security.md) | medium | M | Event transport | Event NATS exposes credentials and event contents through plaintext connections. |
+| E2-4 | [E](security.md) | medium | M | Event transport | Event NATS exposes credentials and event contents through plaintext connections. Closed by alignment R1, R3 and R4. |
 | E3-2 | [E](security.md) | high | M | Dependencies | The recorded native dependency scan reports 17 vulnerabilities and 12 warnings. |
 | E3-3 | [E](security.md) | high | M | Artifact limits | Package download and extraction lack aggregate byte, layer, and file budgets. |
 | E3-4 | [E](security.md) | high | S | Guest memory | Serving defaults observe aggregate guest allocations instead of refusing excess allocation. |
@@ -37,7 +37,7 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | B2-7, D2-6, D3-1 | [B](coupling.md), [D](deployment.md) | high | L | Installation | Installation builds and publishes candidates, while a platform stamp can skip application freshness. |
 | D2-1 | [D](deployment.md) | high | M | Clean upgrades | Closed by C3-3. The upgrade path is deleted, so no clean-worktree upgrade test is written. |
 | B2-3 | [B](coupling.md) | high | L | Package execution | Package application calls back into the qualification runner that also calls package application. |
-| B2-2 | [B](coupling.md) | high | L | Grant declarations | Provisioning, comparison, and schema repair independently assemble parts of grant policy. |
+| B2-2 | [B](coupling.md) | high | L | Grant declarations | Provisioning, comparison, and schema repair independently assemble parts of grant policy. Re-scoped to the role to operation ACL. |
 | B1-1, B3-1 | [B](coupling.md) | high | L | Serving dependencies | Shared package types and release-profile logic pull the compiler into deployed services. |
 | B3-2 | [B](coupling.md) | high | L | Crate map | The proposed consolidation removes manifests while preserving engine, local runtime, and workflow restrictions. |
 | B3-3 | [B](coupling.md) | high | L | Crate migration | Consolidation needs dependency ordering, live graph enforcement, and explicit guest repinning. |
@@ -67,18 +67,18 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | C2-4 | [C](upgrade.md) | medium | M | Recovery | Completion markers skip mutable work without observing its current postconditions. |
 | C2-5 | [C](upgrade.md) | medium | M | Helm recovery | Historical values equality bypasses pending-operation recovery and repair of live deployment drift. |
 | C2-6 | [C](upgrade.md) | medium | M | Executor identity | Commit selection builds a target binary but still applies schema through the launching binary. |
-| C2-7 | [C](upgrade.md) | medium | M | Credential recovery | Upgrade cleanup deletes private outputs before durable stage completion, breaking interruption recovery. |
+| C2-7 | [C](upgrade.md) | medium | M | Credential recovery | Upgrade cleanup deletes private outputs before durable stage completion, breaking interruption recovery. Closed with C3-3. The plan's admin flow survives. |
 | C2-9 | [C](upgrade.md) | medium | M | Package reconciliation | Current package versions skip repair of derived history functions and triggers. |
 | D3-7 | [D](deployment.md) | medium | M | Cluster locking | A local installation lock cannot serialize different deployment machines. |
 | E1-6 | [E](security.md) | medium | M | Credential expiry | Cached PAT approval can remain valid after the credential expires. |
 | E1-7 | [E](security.md) | medium | M | Cache freshness | Replication gives old authorization facts a new cache lifetime. |
 | E1-8 | [E](security.md) | medium | M | Offline trust | File-backed signing keys remain trusted indefinitely. |
 | E1-9 | [E](security.md) | medium | M | Grant admission | CLI and HTTP mutations enforce different covering-grant and grantability rules. |
-| E2-5 | [E](security.md) | medium | M | Development credentials | Standing fixtures and backup declarations share known administrator credentials. |
+| E2-5 | [E](security.md) | medium | M | Development credentials | Standing fixtures and backup declarations share known administrator credentials. Re-scoped after integration-schema drops the credential import paths. |
 | E2-6 | [E](security.md) | medium | S | Secret diagnostics | Command help can print password-bearing environment values. |
 | E2-7 | [E](security.md) | medium | M | Container identity | Standalone service images and deployments default to root execution. |
 | E2-8 | [E](security.md) | medium | M | Image provenance | Mutable build and infrastructure tags permit different executable inputs for the same source. |
-| E3-6 | [E](security.md) | medium | M | Connector retention | Retired bindings leave compiled connector templates and component bytes retained without bounds. |
+| E3-6 | [E](security.md) | medium | M | Connector retention | Retired bindings leave compiled connector templates and component bytes retained without bounds. Reshaped by integration-schema Runtime refresh. Nothing separate is filed. |
 | E3-7 | [E](security.md) | medium | S | Process initialization | Engine construction mutates the process environment after threads and connection work start. |
 | E3-8 | [E](security.md) | medium | M | Dependency refresh | Identity checks provide no fresh advisory requirement across maintained dependency domains. |
 | A3-3 | [A](code-quality.md) | medium | M | Blobstore errors | Wire errors expose backend prose and classify timeouts through text matching. |
@@ -86,7 +86,7 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | A3-5 | [A](code-quality.md) | medium | L | Library errors | Public APIs expose `anyhow`, forcing callers to inspect chains or display text. |
 | A3-6 | [A](code-quality.md) | medium | S | PostgreSQL contract | SQLx duplicates the generated PostgreSQL wire error taxonomy. |
 | A3-7 | [A](code-quality.md) | medium | M | Diagnostics | Internal wrappers discard causes before the public redaction boundary. |
-| A3-8 | [A](code-quality.md) | medium | M | Credential parsing | Five provisioning validators repeat parser scaffolding and error vocabularies. |
+| A3-8 | [A](code-quality.md) | medium | M | Credential parsing | Five provisioning validators repeat parser scaffolding and error vocabularies. Re-scoped to the five database-credential validators. |
 | A3-9 | [A](code-quality.md) | medium | S | Client decoding | Malformed error envelopes acquire fabricated codes, operation names, and revisions. |
 | H1-4 | [H](hygiene.md) | medium | S | Runner arguments | A missing value can leave the Kubernetes shell runner in an endless parser loop. |
 | H1-8 | [H](hygiene.md) | medium | M | Benchmark cleanup | Failed cloud version minimum runs can leave sampling active or triggers altered. |
@@ -203,7 +203,7 @@ The owner review of 2026-10-31 rejects the following. The report evidence stays 
 
 | Finding or proposal | Ruling |
 | --- | --- |
-| C3-5: Maintenance upgrades remove the need for online stages and inferred rollback | Maintenance-window lifecycle. Deployment state stays in Helm and Kubernetes, rollback is `helm rollback`, and an upgrade never stops user workflows. Keep the environment lock. Drop drain, maintenance windows and database-recorded rollout state. |
+| C3-5: Maintenance upgrades remove the need for online stages and inferred rollback | Maintenance-window lifecycle. Deployment state stays in Helm and Kubernetes, rollback is `helm rollback`, and an upgrade never stops user workflows. Keep the environment lock and the rolling drain of the old release. Drop the writer pause, maintenance windows and database-recorded rollout state. |
 | C2-8: The declared contract-version minimum path has no executor | Online stages and version minimums are not replaced by a maintenance window. Same ruling as C3-5. |
 | C1-1: Schema truth describes fresh installations but cannot advance installed databases | Migration machinery. The schema is squashed to one baseline during development and a reset is free. No migration streams, no executor. |
 | C3-2: Fresh installation and reconciliation bypass versioned migrations | Migration machinery. Same ruling as C1-1. |
@@ -223,6 +223,28 @@ The owner review of 2026-10-31 rejects the following. The report evidence stays 
 | Question on `upgrade-environment` support (B2-1, C2-2, C2-7, D2-1) | Answered: not supported, deleted. |
 | Question on kind and GCP builds (D2-2) | Answered: one build graph, local by default, Cloud Build as overflow under the daily cap. Kind and GCP consume the same published artifacts. |
 | Question on build budgets (D2-8) | Answered: no budgets until the build record has produced numbers. |
+
+### Plans in flight
+
+Two plans change the platform the audit describes: [alignment](../plan/alignment.md) (One NATS R1 to R10, Edge and CDN C1 to C5, WASI match W1 to W3, deploy failures) and [integration-schema](../plan/integration-schema.md). A finding a plan already settles is closed by the plan, not re-proposed. Each row cites the ruling that closes or reshapes it. The plan's epic owns the change. Group 1 is control-crate and YAML work, so it rides the One NATS platform build. No Group 1 row forces its own build (alignment, Build cost and tests).
+
+| Finding | Ruling | Effect |
+| --- | --- | --- |
+| D1-4 | alignment, One NATS Deleted | `flow-http.yaml`, `materializer.yaml` and `wms-materializer.yaml` are the plan's deletions. The audit adds only `wms-flow-http.yaml` and the snapshot generator. |
+| D1-2 | alignment C1 | The `letsencrypt.yaml` and DNS-project part is moot under the Google-managed certificate. Only the collector destination part survives, In passing. |
+| D1-9 | alignment R8 | `evt-nats-check.yaml` goes with `evt-nats`. No NATS diagnostic is retained. |
+| Variant inventory | alignment, One NATS Deleted | `auth-nats-clients.yaml`, `host-environment-certs.example.yaml`, `wasmcloud-ca-issuer.yaml`, the `evt-nats-authorization` Secret and its generator are plan deletions. |
+| E1-2 | alignment R4, R5, R7 | Closed. Per-environment client certificates and key prefixes `$KV.wamn-auth.<env_key>.>`, proved by R5's two-environment test. The audit proposal (drop the bucket, read grants from Postgres) is rejected. The bucket stays. |
+| E2-4 | alignment R1, R3, R4 | Closed. TLS on, cert-manager CA, certificate-mapped users. The 365-day CA question is answered by R3. |
+| E1-8 | none | Unchanged. Not covered by either plan. |
+| E3-6 | integration-schema, Runtime refresh | Reshaped. Compile once per digest, link per generation, calls in flight finish. Retention bounds are set there. Nothing separate is filed. |
+| E2-5, A3-8 | integration-schema, Dropped or merged from main | Re-scoped. `registry.credential_import`, `import_connection_credentials` and `identity.credential.secret` are dropped, and credentials enter by UI or API only. E2-5 keeps the MinIO root and backup root identity (the Postgres fixture goes with D1-10). A3-8 keeps the five database-credential validators. |
+| E3-1 | alignment W1 to W3 | Admission matches family and ceiling. Any E3-1 work waits for W1 to W3 and must not re-pin exact versions. |
+| B2-2 | integration-schema, binding is the permission | Re-scoped to the role to operation ACL. `integration_allow` and `project_connection` are dropped. |
+| C2-7 | C3-3 and integration-schema, Admin flow | Closed. The upgrade path is deleted. What survives is the plan's admin flow, which deploys nothing. |
+| A3-11 and any row naming `connection_instances`, `connection_bindings`, `org_connections`, `integration_allow` or `wamn:connector` | integration-schema, Dropped or merged from main | Rename per that table before filing. |
+| Question on certificate renewal and the 365-day CA (E2-3, E2-4) | alignment R3 | Answered: cert-manager owns the CA and renews it. |
+| Question on org isolation under host compromise (E1-2) | alignment R5 | Answered: per-environment certificates, refused across environments. |
 
 ## The six largest areas for improvement
 
@@ -328,7 +350,7 @@ Use `apply`, `apply --dry-run`, `show`, `status`, and `delete` as the common lif
 
 `cluster.k` selects a platform bundle by digest. `environment.k` selects the application release. The release fixes package and overlay artifacts. The bundle carries one schema baseline. Helm and Kubernetes provide observations, not independent desired versions.
 
-One cluster-visible lock coordinates installation and environment locks cover every target mutation. Desired state is the selected bundle and release. Observed state is Helm and Kubernetes. Rollback is `helm rollback`. An upgrade never stops user workflows, so there is no drain, no maintenance window and no database-recorded rollout state. The schema is one baseline during development, and a reset is free. Sources: B2-1 through B2-4, C1-2, C1-3, C2-1 through C2-7, C2-9, C3-1, C3-3, C3-4, and D3-7. The owner rejected C3-5, C2-8, C1-1 and C3-2 and narrowed C1-4 (see Rejected findings and proposals).
+One cluster-visible lock coordinates installation and environment locks cover every target mutation. Desired state is the selected bundle and release. Observed state is Helm and Kubernetes. Rollback is `helm rollback`. An upgrade never stops user workflows. The rolling drain of the old release stays: releases coexist by digest, expand runs before the Helm write and contract runs after the drain ([integration-schema](../plan/integration-schema.md), Deployment). There is no writer pause, no maintenance window and no database-recorded rollout state. The schema is one baseline during development, and a reset is free. Sources: B2-1 through B2-4, C1-2, C1-3, C2-1 through C2-7, C2-9, C3-1, C3-3, C3-4, and D3-7. The owner rejected C3-5, C2-8, C1-1 and C3-2 and narrowed C1-4 (see Rejected findings and proposals).
 
 ### Deployment path
 
@@ -371,64 +393,63 @@ The owner reviews of 2026-10-31 replace the epic chain with four ordered groups.
 
 Target: `platform apply` consumes an immutable bundle by digest. No Cargo, pnpm or registry write runs inside apply. Delete `upgrade_environment.rs` and its images, the older image builder and the RC Dockerfile, the environment JSON sidecars, the Rust object builders in favor of one Helm package, and eight of the nine deployment routes in favor of one deployment fixture.
 
-Do (37 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high.
+Do (36 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high. The Image column names the images a row rebuilds: ctl/runner for the control library and Dockerfile, host as well for provisioning and schema-control (the host links both), none for YAML, tools and docs. Group 1 rides the One NATS platform build and no row forces its own.
 
-| Finding | Title | Severity | Deletes |
-| --- | --- | --- | --- |
-| D3-1 | Installation still builds and publishes its own candidate | high | Package and UI compilation from `platform/build.rs`, publication from `platform/releases.rs`, and the installer’s request to commit newly discovered release digests. From D2-6: installer PostgreSQL container management, pnpm invocation, debug executable lookup, and recursive ctl execution. |
-| B2-7 | Platform installation also acts as a repository build application | medium | Build-machine discovery and build execution from installation. Remove self-invocation of `wamn-ctl`, duplicate stamp argument builders, and duplicate image preparation in upgrade-environment. |
-| D2-6 | Installation couples package freshness to an unrelated platform stamp | medium | Merged with D3-1. The installer deletions are stated once under D3-1. |
-| B2-1 | Upgrade-environment mutates packages outside the environment lifecycle lock | high | The duplicate package, schema, deployment, credential, and connection orchestration in `upgrade_environment.rs`. Remove the old environment JSON format after migrating its remaining inputs. |
-| C2-2 | Production package changes escape the lifecycle lock | high | Independent production package coordination in `upgrade-environment` and `platform/packages.rs`, plus public mutation paths that bypass the environment owner. |
-| A3-11 | Release control files mix orchestration with implementation owners | medium | Monolithic parent bodies, the activation error wrapper, and duplicate infrastructure helpers where ownership already exists. |
-| D2-2 | The older image pipeline builds artifacts that deployment does not select | high | `tools/journey-image-cache`, the upgrade image and guest stages, their leases, relabeling, and duplicate registry authentication. Listed in Group 1 for the deletion and in Group 2 for the cache identity. |
-| H1-1 | The image cache omits actual build inputs | high | The parallel `COPIED` inventory, custom source-tag selection, and the production dependency on `tools/journey-image-cache`. |
-| D1-1 | KCL and JSON declare different application sets | high | Both environment JSON files, their required-sibling convention, and their package lists. Remove the old delivery configuration reader after its remaining consumers migrate. The JSON also carries `context` and `gates_image`. Both are cluster facts and belong in `deploy/gcp/cluster.k`, not in any environment file. The empty `floors = {}` block in both environment `.k` files is deleted. |
-| H3-2 | Environment JSON creates a second deployment authority | high | Both environment JSON files, the obsolete `EnvironmentFile` reader, and companion-JSON discovery in package preparation. |
-| D3-5 | Helm plus KCL removes more machinery than a Rust operator | medium | `platform/manifests.rs` substitutions, Kubernetes object builders in `platform/cdc.rs` and `platform/edge.rs`, and independent WAMN identity and edge chart packages after their templates move. |
-| D3-6 | Nine deployment routes must collapse into one fixture | medium | `tools/receiving-cluster-journey-run`, `tools/wms-cluster-journey-run`, `tools/delivery-owned`, `tools/rc-gate-run`, `tools/kind-gate-build`, `tests/integration/src/rc/Dockerfile`, and `deploy/mvp/`. Retain generic verdict and cleanup tools where callers still need them. |
-| D2-7 | Cluster checks retain separate artifact recipes and duplicated lifecycle code | medium | The RC Dockerfile, redundant journey image builds, and duplicated lifecycle branches. Retire per-node check-image cleanup when disposable clusters replace retained check clusters. Merged with D3-6. |
-| B2-2 | Grant policy spans provisioning, verification, and schema repair | high | Duplicate family dispatch and independently assembled expected grants in control/lib. Remove hard-coded copies of provisioning grant requirements from schema repair. |
-| B2-3 | Package application depends on the qualification runner it must serve | high | Application’s dependency on the qualification runner. Remove scratch PostgreSQL and dump tooling from the package executor’s normal dependency closure. |
-| B2-4 | Process execution has several owners with different lifecycle guarantees | high | Duplicate Helm and kubectl runners, synchronous context discovery in the environment library, and signal registration inside individual command executions. |
-| B2-9 | Provisioning APIs expose CLI output paths to internal callers | medium | Temporary credential file round trips in environment ensure, internal `emit_*` fields and `-` sentinels, pure SQL builders in control/lib, and the misplaced schema-control instance-claim module. |
-| C1-2 | Installer completion records substitute for database upgrade state | high | The installed-environment replay of first apply and completion-marker decisions about schema readiness. |
-| C1-3 | Project migrations run after queries that already require the new schema | high | The duplicate project migration calls in substrate ensure and package staging. |
-| C1-4 | A failed control bootstrap can leave an installation that refuses every retry | high | The `registry` existence test as the installation-completion authority and the separate unrecorded bootstrap stages. Narrowed: make bootstrap retryable or delete the refusing check. Baseline histories stay rejected. |
-| C2-1 | Platform setup can uninstall a serving environment | high | The separate initial-apply Job, forced `DeclaredRelease::None`, and first-versus-final environment application split. |
-| C2-3 | Env apply cannot initiate an installed-package upgrade | high | The unreachable staged-successor branch and duplicated prerequisite package application in the older orchestrators. |
-| C2-6 | Commit selection does not select the schema executor | medium | Direct schema/package/deployment library calls from the commit-build coordinator and their duplicate stage records. |
-| C2-7 | Credential cleanup creates an unrecoverable retry window | medium | The upgrade command’s separate generation-selection and PAT issuing workflow where existing owners already supply those credentials. |
-| C2-9 | Env apply skips reconciliation owned by the package applier | medium | The version-only skip around all package work and duplicate orchestration of selected derived objects. |
-| C3-1 | Desired state still depends on checkout and local build inputs | high | Delete `deploy/gcp/environments/dkk--receiving--dev.json`, `deploy/gcp/environments/dkk--wms--dev.json`, and `crates/control/lib/src/delivery/environment.rs`. Delete deployment-time package discovery and builds from `platform/build.rs`, `platform/packages.rs`, and `platform/releases.rs`. Remove the local chart directory as an independent deployment selector. |
-| C3-3 | Multiple upgrade drivers own ordering, locking, and recovery | high | Delete `upgrade_environment.rs` and its sole-purpose `delivery/run_record.rs`. Delete the public `upgrade-environment` verb. Replace the numbered installer driver with shared reconciliation. Remove nested lifecycle wrappers from `platform/environments.rs` and direct installation from `platform/packages.rs`. Make `upgrade-schema`, `apply-package`, and `reconcile-run-plane` internal operations rather than alternative deployment entry points. |
-| C3-4 | Qualification covers separate slices instead of the complete transition | high | Merge `qualify_upgrade/` and `delivery/qualification.rs` orchestration around the shared executor. Delete the separate `qualify-upgrade` workflow and its operator-supplied result-file handoff. Replace the narrow qualification key and package-specific qualification storage with one transition result and references from applied facts. |
-| D1-4 | Historical workloads retain a second deployment model | medium | `deploy/gcp/flow-http.yaml`, `deploy/gcp/wms-flow-http.yaml`, `deploy/gcp/materializer.yaml`, `deploy/gcp/wms-materializer.yaml`, and their snapshot generator in `test-support/infrastructure/examples/workload_files.rs`. |
-| D1-5 | Local development embeds Receiving’s cloud host policy | medium | The Receiving manifest embedding, repeated policy values across host overlays, and tests that compare two consumers of the same org-specific input. |
-| D1-6 | Production CDC uses the check image | medium | Both historical CDC YAML files, the redundant `event-reader-rbac.yaml`, the `cdc-reader` Dockerfile stage, and the production dependency on the checks image. The reader executable moves into the host image. Retain it in checks where tests require it. |
-| D1-9 | The named orphan candidates have different consumer states | low | `identity-db.example.yaml`, `prometheus-local.yaml`, the CDC files covered by D1-6, and stale executor references. Do not recreate `executor.yaml`. |
-| D2-4 | Several command owners bypass bounded process supervision | medium | Duplicate `output`, `run`, and command-timeout implementations. Scope is what survives Group 1, routed through `owned_command.rs` with a deadline. No second executor. |
-| D3-2 | Qualification does not identify all deployed behavior | high | The qualification identity split between `ImageSet` and `QualificationImages`, and reuse across changed deployment templates or deployed auxiliary images. |
-| D3-3 | The merge queue stops before deployment qualification | high | Successful-run evidence deletion from `train-run`, and the assumption that a passing native test merge queue also qualifies deployment. |
-| D3-4 | Desired deployment inputs still have several owners | medium | Both committed environment JSON sidecars, `EnvironmentFile`, and the authored `host-group-receiving.yaml` and `host-group-wms.yaml` overlays. |
-| D3-7 | The installation lock cannot serialize different deployment machines | medium | The local file lock as the authority for cluster installation, and duplicated manual deployment writers in the runbook. |
+| Finding | Title | Severity | Image | Deletes |
+| --- | --- | --- | --- | --- |
+| D3-1 | Installation still builds and publishes its own candidate | high | ctl/runner | Package and UI compilation from `platform/build.rs`, publication from `platform/releases.rs`, and the installer’s request to commit newly discovered release digests. From D2-6: installer PostgreSQL container management, pnpm invocation, debug executable lookup, and recursive ctl execution. |
+| B2-7 | Platform installation also acts as a repository build application | medium | ctl/runner | Build-machine discovery and build execution from installation. Remove self-invocation of `wamn-ctl`, duplicate stamp argument builders, and duplicate image preparation in upgrade-environment. |
+| D2-6 | Installation couples package freshness to an unrelated platform stamp | medium | ctl/runner | Merged with D3-1. The installer deletions are stated once under D3-1. |
+| B2-1 | Upgrade-environment mutates packages outside the environment lifecycle lock | high | ctl/runner | The duplicate package, schema, deployment, credential, and connection orchestration in `upgrade_environment.rs`. Remove the old environment JSON format after migrating its remaining inputs. |
+| C2-2 | Production package changes escape the lifecycle lock | high | ctl/runner | Independent production package coordination in `upgrade-environment` and `platform/packages.rs`, plus public mutation paths that bypass the environment owner. |
+| A3-11 | Release control files mix orchestration with implementation owners | medium | ctl/runner | Monolithic parent bodies, the activation error wrapper, and duplicate infrastructure helpers where ownership already exists. `upgrade_environment.rs` is deleted under C3-3, so the scope is `publish_release.rs` and `dev/activation.rs`. |
+| D2-2 | The older image pipeline builds artifacts that deployment does not select | high | ctl/runner | `tools/journey-image-cache`, the upgrade image and guest stages, their leases, relabeling, and duplicate registry authentication. Listed in Group 1 for the deletion and in Group 2 for the cache identity. |
+| H1-1 | The image cache omits actual build inputs | high | none | The parallel `COPIED` inventory, custom source-tag selection, and the production dependency on `tools/journey-image-cache`. |
+| D1-1 | KCL and JSON declare different application sets | high | ctl/runner | Both environment JSON files, their required-sibling convention, and their package lists. Remove the old delivery configuration reader after its remaining consumers migrate. The JSON also carries `context` and `gates_image`. Both are cluster facts and belong in `deploy/gcp/cluster.k`, not in any environment file. The empty `floors = {}` block in both environment `.k` files is deleted. |
+| H3-2 | Environment JSON creates a second deployment authority | high | ctl/runner | Both environment JSON files, the obsolete `EnvironmentFile` reader, and companion-JSON discovery in package preparation. |
+| D3-5 | Helm plus KCL removes more machinery than a Rust operator | medium | ctl/runner | `platform/manifests.rs` substitutions, Kubernetes object builders in `platform/cdc.rs` and `platform/edge.rs`, and independent WAMN identity and edge chart packages after their templates move. |
+| D3-6 | Nine deployment routes must collapse into one fixture | medium | none | `tools/receiving-cluster-journey-run`, `tools/wms-cluster-journey-run`, `tools/delivery-owned`, `tools/rc-gate-run`, `tools/kind-gate-build`, `tests/integration/src/rc/Dockerfile`, and `deploy/mvp/`. Retain generic verdict and cleanup tools where callers still need them. |
+| D2-7 | Cluster checks retain separate artifact recipes and duplicated lifecycle code | medium | none | The RC Dockerfile, redundant journey image builds, and duplicated lifecycle branches. Retire per-node check-image cleanup when disposable clusters replace retained check clusters. Merged with D3-6. |
+| B2-2 | Grant policy spans provisioning, verification, and schema repair | high | host, ctl/runner | Duplicate family dispatch and independently assembled expected grants in control/lib. Remove hard-coded copies of provisioning grant requirements from schema repair. Re-scoped to the role to operation ACL. `integration_allow` and `project_connection` are dropped by the integration-schema plan. |
+| B2-3 | Package application depends on the qualification runner it must serve | high | ctl/runner | Application’s dependency on the qualification runner. Remove scratch PostgreSQL and dump tooling from the package executor’s normal dependency closure. |
+| B2-4 | Process execution has several owners with different lifecycle guarantees | high | ctl/runner | Duplicate Helm and kubectl runners, synchronous context discovery in the environment library, and signal registration inside individual command executions. |
+| B2-9 | Provisioning APIs expose CLI output paths to internal callers | medium | ctl/runner | Temporary credential file round trips in environment ensure, internal `emit_*` fields and `-` sentinels, pure SQL builders in control/lib, and the misplaced schema-control instance-claim module. |
+| C1-2 | Installer completion records substitute for database upgrade state | high | ctl/runner | The installed-environment replay of first apply and completion-marker decisions about schema readiness. |
+| C1-3 | Project migrations run after queries that already require the new schema | high | ctl/runner | The duplicate project migration calls in substrate ensure and package staging. |
+| C1-4 | A failed control bootstrap can leave an installation that refuses every retry | high | ctl/runner | The `registry` existence test as the installation-completion authority and the separate unrecorded bootstrap stages. Narrowed: make bootstrap retryable or delete the refusing check. Baseline histories stay rejected. |
+| C2-1 | Platform setup can uninstall a serving environment | high | ctl/runner | The separate initial-apply Job, forced `DeclaredRelease::None`, and first-versus-final environment application split. |
+| C2-3 | Env apply cannot initiate an installed-package upgrade | high | ctl/runner | The unreachable staged-successor branch and duplicated prerequisite package application in the older orchestrators. |
+| C2-6 | Commit selection does not select the schema executor | medium | ctl/runner | Direct schema/package/deployment library calls from the commit-build coordinator and their duplicate stage records. |
+| C2-9 | Env apply skips reconciliation owned by the package applier | medium | ctl/runner | The version-only skip around all package work and duplicate orchestration of selected derived objects. |
+| C3-1 | Desired state still depends on checkout and local build inputs | high | ctl/runner | Delete `deploy/gcp/environments/dkk--receiving--dev.json`, `deploy/gcp/environments/dkk--wms--dev.json`, and `crates/control/lib/src/delivery/environment.rs`. Delete deployment-time package discovery and builds from `platform/build.rs`, `platform/packages.rs`, and `platform/releases.rs`. Remove the local chart directory as an independent deployment selector. |
+| C3-3 | Multiple upgrade drivers own ordering, locking, and recovery | high | ctl/runner | Delete `upgrade_environment.rs` and its sole-purpose `delivery/run_record.rs`. Delete the public `upgrade-environment` verb. Replace the numbered installer driver with shared reconciliation. Remove nested lifecycle wrappers from `platform/environments.rs` and direct installation from `platform/packages.rs`. Make `upgrade-schema`, `apply-package`, and `reconcile-run-plane` internal operations rather than alternative deployment entry points. |
+| C3-4 | Qualification covers separate slices instead of the complete transition | high | ctl/runner | Merge `qualify_upgrade/` and `delivery/qualification.rs` orchestration around the shared executor. Delete the separate `qualify-upgrade` workflow and its operator-supplied result-file handoff. Replace the narrow qualification key and package-specific qualification storage with one transition result and references from applied facts. |
+| D1-4 | Historical workloads retain a second deployment model | medium | none | `deploy/gcp/wms-flow-http.yaml` and the snapshot generator in `test-support/infrastructure/examples/workload_files.rs`. The other three files are alignment deletions. Do not file them twice. |
+| D1-5 | Local development embeds Receiving’s cloud host policy | medium | ctl/runner | The Receiving manifest embedding, repeated policy values across host overlays, and tests that compare two consumers of the same org-specific input. |
+| D1-6 | Production CDC uses the check image | medium | host, ctl/runner | Both historical CDC YAML files, the redundant `event-reader-rbac.yaml`, the `cdc-reader` Dockerfile stage, and the production dependency on the checks image. The reader executable moves into the host image. Retain it in checks where tests require it. |
+| D1-9 | The named orphan candidates have different consumer states | low | none | `identity-db.example.yaml`, `prometheus-local.yaml`, the CDC files covered by D1-6, `evt-nats-check.yaml` (alignment R8), and stale executor references. Do not recreate `executor.yaml`. |
+| D2-4 | Several command owners bypass bounded process supervision | medium | ctl/runner | Duplicate `output`, `run`, and command-timeout implementations. Scope is what survives Group 1, routed through `owned_command.rs` with a deadline. No second executor. |
+| D3-2 | Qualification does not identify all deployed behavior | high | ctl/runner | The qualification identity split between `ImageSet` and `QualificationImages`, and reuse across changed deployment templates or deployed auxiliary images. |
+| D3-3 | The merge queue stops before deployment qualification | high | none | Successful-run evidence deletion from `train-run`, and the assumption that a passing native test merge queue also qualifies deployment. |
+| D3-4 | Desired deployment inputs still have several owners | medium | none | Both committed environment JSON sidecars, `EnvironmentFile`, and the authored `host-group-receiving.yaml` and `host-group-wms.yaml` overlays. |
+| D3-7 | The installation lock cannot serialize different deployment machines | medium | ctl/runner | The local file lock as the authority for cluster installation, and duplicated manual deployment writers in the runbook. |
 
 In passing (12 findings). Helper dedup, naming, count pins and doc links. Closed when the owning file is already open, never filed alone.
 
-| Finding | Title | Severity | Deletes |
-| --- | --- | --- | --- |
-| B2-5 | Developer orchestration is reusable, but belongs to the developer application | medium | `wamn-control::dev`, its umbrella exports, and the separate developer adapters in services/ctl after combining them with their implementation owner. Remove developer-only dependencies from the administrative CLI. |
-| B2-8 | Publication mixes release construction with local runtime adaptation | medium | `LocalApplicationFacts` construction from publication, unused database inputs from assembly, and duplicated local-versus-registry assembly paths. Remove the umbrella after its remaining responsibilities move. |
-| C1-5 | Run-plane repair is a partial second schema-upgrade engine | medium | Structural SQL slicing, missing-column mutation, and separate table-bootstrap actions once the common migration path owns those changes. |
-| C1-6 | Retained migration records conflict with the promised restart at 0001 | medium | The empty-list bypass and the test that treats an unrecognized retired record table as a successful no-op. Remove legacy adoption machinery if no retained installation requires it. |
-| C2-4 | Completion markers replace current-state observation | medium | Completion-marker gating around environment reconciliation and finished-stage gating around mutable upgrade phases. |
-| C2-5 | Helm history equality bypasses recovery and drift repair | medium | The historical-values-only early return and separate interpretations of successful history versus current deployment state. |
-| C2-10 | Platform-schema ownership is scattered across lifecycle phases | low | The second project-upgrade invocation, platform-extension installation inside application application, and repeated prerequisite wiring in older orchestrators. |
-| D2-3 | Cloud failures leave published version tags without a complete platform set | medium | Independent resolution of seven version tags as the platform publication boundary. Push by digest, tag the set after the last push, one test. |
-| D1-2 | Cloud rendering ignores declared destination values | medium | `deploy/gcp/otel-collector-values.yaml` as an independent authority. Remove installation-specific defaults from `letsencrypt.yaml` and the test assertion that preserves `wamn-dev-otel`. |
-| D1-7 | Operator and host releases select their dependency separately | medium | The independent installer version constant, independent artifact selection, and the test’s separate expected-version literal. |
-| D1-8 | Manual operator Jobs freeze an older runner | medium | Both operator YAML templates and the separate text-substitution renderer. The Job owner at `crates/control/lib/src/platform/install.rs:448` already renders with the stamped runner. Rename every surviving `mint-pat` reference to `issue-pat`. |
-| D1-10 | Prototype deployment families survive through examples and test expectations | low | The unused Postgres, system-cluster, registry, credential-example, retention-example, and bootstrap families in the variant inventory, deleted in one commit. Remove associated test prerequisites after equivalent behavior is covered. |
+| Finding | Title | Severity | Image | Deletes |
+| --- | --- | --- | --- | --- |
+| B2-5 | Developer orchestration is reusable, but belongs to the developer application | medium | ctl/runner | `wamn-control::dev`, its umbrella exports, and the separate developer adapters in services/ctl after combining them with their implementation owner. Remove developer-only dependencies from the administrative CLI. |
+| B2-8 | Publication mixes release construction with local runtime adaptation | medium | ctl/runner | `LocalApplicationFacts` construction from publication, unused database inputs from assembly, and duplicated local-versus-registry assembly paths. Remove the umbrella after its remaining responsibilities move. |
+| C1-5 | Run-plane repair is a partial second schema-upgrade engine | medium | host, ctl/runner | Structural SQL slicing, missing-column mutation, and separate table-bootstrap actions once the common migration path owns those changes. |
+| C1-6 | Retained migration records conflict with the promised restart at 0001 | medium | host, ctl/runner | The empty-list bypass and the test that treats an unrecognized retired record table as a successful no-op. Remove legacy adoption machinery if no retained installation requires it. |
+| C2-4 | Completion markers replace current-state observation | medium | ctl/runner | Completion-marker gating around environment reconciliation and finished-stage gating around mutable upgrade phases. |
+| C2-5 | Helm history equality bypasses recovery and drift repair | medium | ctl/runner | The historical-values-only early return and separate interpretations of successful history versus current deployment state. |
+| C2-10 | Platform-schema ownership is scattered across lifecycle phases | low | ctl/runner | The second project-upgrade invocation, platform-extension installation inside application application, and repeated prerequisite wiring in older orchestrators. |
+| D2-3 | Cloud failures leave published version tags without a complete platform set | medium | ctl/runner | Independent resolution of seven version tags as the platform publication boundary. Push by digest, tag the set after the last push, one test. |
+| D1-2 | Cloud rendering ignores declared destination values | medium | ctl/runner | `deploy/gcp/otel-collector-values.yaml` as an independent authority and the test assertion that preserves `wamn-dev-otel`. The `letsencrypt.yaml` part is moot under alignment C1. |
+| D1-7 | Operator and host releases select their dependency separately | medium | ctl/runner | The independent installer version constant, independent artifact selection, and the test’s separate expected-version literal. |
+| D1-8 | Manual operator Jobs freeze an older runner | medium | none | Both operator YAML templates and the separate text-substitution renderer. The Job owner at `crates/control/lib/src/platform/install.rs:448` already renders with the stamped runner. Rename every surviving `mint-pat` reference to `issue-pat`. |
+| D1-10 | Prototype deployment families survive through examples and test expectations | low | none | The unused Postgres, system-cluster, registry, credential-example, retention-example, and bootstrap families in the variant inventory, deleted in one commit. Remove associated test prerequisites after equivalent behavior is covered. |
 
 ### Group 2: Rebuild only what changed
 
@@ -453,7 +474,7 @@ Do (10 findings). The rows the review named, then every row that deletes a build
 
 Target: one tier per target and one selection owner, mixed targets deleted (G3-1, G3-2, G3-6). Every ignore is fixed or deleted, and no ignore stays without a stated missing prerequisite (G2-8, G3-4). The security highs land here with no dependency on any crate move: E2-2 (an org control credential reaches its own org only), E1-2 (per-environment broker identity, grant answers local), E1-3, E1-4, A3-1, A3-2, A2-1, B2-6 and F3-5. Plaintext in-cluster transport (E1-5, E2-3, E2-4) is medium until a non-dev cluster exists.
 
-Do (28 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high.
+Do (26 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high.
 
 | Finding | Title | Severity | Deletes |
 | --- | --- | --- | --- |
@@ -463,7 +484,6 @@ Do (28 findings). The rows the review named, then every row that deletes a build
 | G2-8 | Empty prerequisite reasons conceal a built-service dependency | low | The empty prerequisite reasons and empty prerequisite calls where direct executable discovery supplies the required failure. |
 | G3-4 | Ignore reasons mix prerequisites, disabled tests, and child helpers | medium | Empty reasons, prose-only prerequisite lists, permanent bead-only ignores, and the ignored SQLite helper test. |
 | E2-2 | Org-scoped control credentials retain authority across organizations | high | Broad control table grants and caller-selected organization authority in privileged functions. |
-| E1-2 | Shared NATS credentials can forge another environment’s grants | high | Shared serialized `PrincipalGrants` values and their replication path. |
 | E1-3 | A delayed grant can restore revoked administration | high | Independent route-owned grant and revoke fan-out. |
 | E1-4 | Inactive organization membership is not an admission boundary | high | Role-only and environment-membership-only admission predicates for user principals. |
 | A3-1 | Operation binding turns infrastructure failures into permission denials | high | The unconditional permission-denied mapping and conversion through `error.to_string()`. |
@@ -473,10 +493,9 @@ Do (28 findings). The rows the review named, then every row that deletes a build
 | F3-5 | Release qualification rejects every new application identity | high | Remove the production `application_for` package allowlist and mandatory selection of Receiving/WMS test executables. Retain their business cases under their application owners. |
 | E1-5 | Identity database traffic carries signing material without TLS | medium | Production `NoTls` connections in the identity service. |
 | E2-3 | Postgres connections expose sensitive traffic without transport encryption | medium | Production `NoTls` connections, plaintext admission rules, and the CDC plaintext default. |
-| E2-4 | Event NATS sends credentials and events over plaintext connections | medium | Plaintext broker listeners, unauthenticated peer routes, and plaintext event endpoint defaults. |
 | E1-1 | Credential resource names collide across environments | high | The two independent single-hyphen naming formulas. |
 | E2-1 | Valid environment names share credential Secrets and ServiceAccounts | high | The two independent single-hyphen name formats in `kubernetes.rs`. |
-| E2-5 | Shared development infrastructure publishes administrator credentials | medium | `deploy/platform/postgres.yaml`, committed MinIO credential values, and shared root credential wiring in backup declarations. |
+| E2-5 | Shared development infrastructure publishes administrator credentials | medium | `deploy/platform/postgres.yaml`, committed MinIO credential values, and shared root credential wiring in backup declarations. Re-scoped: the import paths are dropped by the integration-schema plan, so only the MinIO root and backup root identity remain here. |
 | E2-7 | Standalone service images default to root execution | medium | Implicit root execution and unrestricted writable container filesystems. |
 | E2-8 | Mutable base and infrastructure images weaken release provenance | medium | Tag-only shipping image references and duplicate image declarations. |
 | E3-2 | The native lockfile contains reported security vulnerabilities | high | Vulnerable dependency resolutions and obsolete version assertions. |
@@ -486,7 +505,7 @@ Do (28 findings). The rows the review named, then every row that deletes a build
 | G3-3 | The merge queue omits required live behavior | high | Manual live-stage instructions as the only execution path for required cases. Remove the rule that cluster coverage depends only on edits to cluster tests. |
 | G3-5 | Generated output prevents isolated contract compilation | medium | Compile-time reads of generated application output from ordinary test targets. Remove application generation from documentation-only quality execution. |
 
-In passing (17 findings). Helper dedup, naming, count pins and doc links. Closed when the owning file is already open, never filed alone.
+In passing (16 findings). Helper dedup, naming, count pins and doc links. Closed when the owning file is already open, never filed alone.
 
 | Finding | Title | Severity | Deletes |
 | --- | --- | --- | --- |
@@ -496,9 +515,8 @@ In passing (17 findings). Helper dedup, naming, count pins and doc links. Closed
 | E1-9 | CLI and HTTP routes enforce different grant rules | medium | Transport-specific semantic guards and direct bypass paths. |
 | E1-10 | An unused API-key authority remains in the application schema | low | `API_KEY`, `platform.api_key`, its history scaffolding, and tests that only preserve the unused structure. |
 | E2-6 | Command help can disclose database passwords | medium | Secret values from generated help and unnecessary password-bearing command arguments. |
-| E3-1 | Registry descriptors can bypass byte admission | medium | The assumption that registry existence proves admission and the conversion of unchecked descriptors into admitted facts. |
+| E3-1 | Registry descriptors can bypass byte admission | medium | The assumption that registry existence proves admission and the conversion of unchecked descriptors into admitted facts. Waits for alignment W1 to W3. Do not re-pin exact versions. |
 | E3-5 | Execution deadlines do not contain compilation | medium | Full compilation solely for import discovery and unrestricted detached compilation work. |
-| E3-6 | Connector code remains retained after bindings retire | medium | Permanent compiled-template retention and the separate unbounded byte map. |
 | E3-7 | Engine construction mutates the environment after threads start | medium | Environment mutation from the shared engine constructor and its incomplete safety argument. |
 | E3-8 | Dependency identity checks do not provide a refresh policy | medium | Unused dependency declarations and stale advisory results as release evidence. Retire `vendor/pg-walstream` when upstream supplies the required typed keepalive API. |
 | G2-2 | Fixture grant inventories suppress the private-operation test | medium | The nineteen-entry shared-fixture snapshot, the absolute eighteen-grant assertion, and the `wamn-e1zd9` and `wamn-slf04` ignores. |
@@ -587,7 +605,7 @@ In passing (75 findings). Helper dedup, naming, count pins and doc links. Closed
 | A3-5 | Anyhow crosses public library boundaries across ten owners | medium | Unnecessary public helpers, public `anyhow` signatures, and caller-side error inspection. |
 | A3-6 | SQLx maintains a second copy of the PostgreSQL wire taxonomy | medium | `WamnPgError` and its conversion match. |
 | A3-7 | Diagnostic wrappers discard their original causes | medium | Cause-discarding conversions and the opaque activation wrapper. |
-| A3-8 | Credential validators duplicate error vocabularies and parser scaffolding | medium | Repeated error enums, formatting implementations, and common parser branches. |
+| A3-8 | Credential validators duplicate error vocabularies and parser scaffolding | medium | Repeated error enums, formatting implementations, and common parser branches. Re-scoped to the five database-credential validators. |
 | A3-9 | Client error decoding invents missing contract data | medium | Defaults that fabricate error codes, operation names, and revisions. |
 | A3-10 | Native service files combine several independent lifecycles | medium | The large root implementations and duplicated setup exposed during extraction. Moving code alone does not reduce total code. |
 | A3-12 | Generator files need semantic splits, not blanket panic removal | medium | Generation-order JSON lookups, repeated codec fragments, and the large parent implementations. Keep justified formatting assertions. |
@@ -656,36 +674,34 @@ In passing (75 findings). Helper dedup, naming, count pins and doc links. Closed
 18. Which deployed coordinates currently produce colliding credential names? This unblocks safe replacement in Group 3 (E1-1, E2-1).
 19. Must an organization control credential remain trusted with authority across every organization? This decides the database boundary in Group 3 (E2-2).
 20. Is every operator certificate intentionally platform-wide, and how must one certificate be revoked without replacing its CA? This informs privileged credential boundaries in Group 3 (E2-2, E2-3).
-21. Must org isolation survive compromise of one native host or theft of its scheduler certificate? This defines acceptance for Group 3 (E1-2).
-22. Are cache delays permitted only after lost invalidation, or also after natural credential expiry? This unblocks Group 3 (E1-6, E1-7).
-23. What maximum disconnected period permits continued trust in an local signing key set? This unblocks Group 3 (E1-8).
-24. Which independently enforced network controls protect deployed identity databases, plaintext services, and standing development fixtures? This establishes the live boundary for Group 3 (E1-5, E2-3 through E2-5).
-25. Who owns certificate renewal and the chart CA’s recorded 365-day expiry? This unblocks transport lifecycle acceptance in Group 3 (E2-3, E2-4).
-26. Who owns refreshes for WASI-Virt, its adapter, and the pg-walstream patch, and what refresh interval applies? This unblocks Group 3 (E3-8).
-27. Does another check scan the web dependency graph, including the pinned wfe dependency resolution? This determines the remaining scan scope in Group 3 (E3-8).
-28. Must WASI-Virt provenance report a measured adapter digest instead of its current constant? This unblocks provenance acceptance in Group 3 (E3-8).
-29. Is registry write access intentionally sufficient to bypass component admission? This decides the trusted publication boundary in Group 3 (E3-1).
-30. What measured condition permits serving hosts to leave aggregate memory count mode? This unblocks Group 3 (E3-4).
-31. Must poisoned authority state terminate the process, or must the host isolate the affected owner and become unready? This unblocks Group 3 (A3-2).
-32. Which blobstore `Other` messages are frozen consumer contracts? This unblocks replacement of backend prose in Group 4 (A3-3).
-33. Can host operations explicitly share authored shapes while resolved contract bytes and generated clients remain unchanged? This unblocks Group 4 (A2-3).
-34. Must SQL literal quoting support nondefault PostgreSQL string parsing, or can callers require the default server behavior? This defines quoting acceptance in Group 4 (A2-11).
-35. Must HTTP exposure remain explicit for every custom public operation? This unblocks generated publication policy in Group 4 (F1-1).
-36. Can Acme consume its pinned base operation’s wire shape while retaining separate identity and inspection behavior? This unblocks Group 4 (F1-4).
-37. Can pure CRUD applications use generated component crates without authored Rust files? This unblocks Group 4 (F1-3, F3-1).
-38. Can WAMN consume only public built wfe exports while source qualification remains inside the submodule? This unblocks Group 4 (H3-3).
-39. Which retained saved-edit acceptance run passed against the current freshness, watcher, and activation rules? This supplies the comparison result for Group 2 (F2-1 through F2-3).
-40. Can the normal developer command own the complete private stack, with external services available through explicit overrides? This unblocks Groups 2 and 4 (F2-5, F2-6, F3-2).
-41. Can the default author experience require Docker on Linux, or must the first release support another host platform? This unblocks Groups 2 and 4 (F2-8, F3-2).
-42. Which cold-start, warm-start, and saved-edit limits must the retained results enforce? This unblocks acceptance for Groups 2 and 4 (F2-11, G3-7).
-43. Does the ten-minute clock start with the installed SDK, Docker, and provisioned account, or include their installation and provisioning? This unblocks Group 4 (F3-7).
-44. Can root supply live statuses for quarantined tests and archive candidates, including which ignored cases represent defects or retired contracts? This unblocks Groups 3 and 4 (G2-1 through G2-4, G3-4, H2-2, H2-3).
-45. Which dashboard or collector owns the frozen PostgreSQL telemetry identifiers whose guard cites deleted documentation? This unblocks retained-contract decisions in Groups 3 and 4 (G2-6, H2-5).
-46. Which CI service and protected reference own integration and promotion? This unblocks Group 1 (D3-3).
-47. Must startup-burst measurement remain supported despite its absent repository execution path? This unblocks Group 4 (A1-1).
-48. Must benchmark summaries remain readable without their raw result files? This defines the retained result contract in Group 4 (H1-7).
-49. Does an immutable Git source plus a compact history entry satisfy the rule that accepted plans remain untrimmed? This unblocks Group 4 (H2-2, H2-7).
-50. Where are the twelve historical performance artifacts retained, if anywhere? This unblocks evidence disposition in Group 4 (H2-6).
-51. Does any external tool still read `.beads/beads.jsonl`? This unblocks obsolete-export removal in Group 4 (H3-10).
+21. Are cache delays permitted only after lost invalidation, or also after natural credential expiry? This unblocks Group 3 (E1-6, E1-7).
+22. What maximum disconnected period permits continued trust in an local signing key set? This unblocks Group 3 (E1-8).
+23. Which independently enforced network controls protect deployed identity databases, plaintext services, and standing development fixtures? This establishes the live boundary for Group 3 (E1-5, E2-3, E2-5).
+24. Who owns refreshes for WASI-Virt, its adapter, and the pg-walstream patch, and what refresh interval applies? This unblocks Group 3 (E3-8).
+25. Does another check scan the web dependency graph, including the pinned wfe dependency resolution? This determines the remaining scan scope in Group 3 (E3-8).
+26. Must WASI-Virt provenance report a measured adapter digest instead of its current constant? This unblocks provenance acceptance in Group 3 (E3-8).
+27. Is registry write access intentionally sufficient to bypass component admission? This decides the trusted publication boundary in Group 3 (E3-1).
+28. What measured condition permits serving hosts to leave aggregate memory count mode? This unblocks Group 3 (E3-4).
+29. Must poisoned authority state terminate the process, or must the host isolate the affected owner and become unready? This unblocks Group 3 (A3-2).
+30. Which blobstore `Other` messages are frozen consumer contracts? This unblocks replacement of backend prose in Group 4 (A3-3).
+31. Can host operations explicitly share authored shapes while resolved contract bytes and generated clients remain unchanged? This unblocks Group 4 (A2-3).
+32. Must SQL literal quoting support nondefault PostgreSQL string parsing, or can callers require the default server behavior? This defines quoting acceptance in Group 4 (A2-11).
+33. Must HTTP exposure remain explicit for every custom public operation? This unblocks generated publication policy in Group 4 (F1-1).
+34. Can Acme consume its pinned base operation’s wire shape while retaining separate identity and inspection behavior? This unblocks Group 4 (F1-4).
+35. Can pure CRUD applications use generated component crates without authored Rust files? This unblocks Group 4 (F1-3, F3-1).
+36. Can WAMN consume only public built wfe exports while source qualification remains inside the submodule? This unblocks Group 4 (H3-3).
+37. Which retained saved-edit acceptance run passed against the current freshness, watcher, and activation rules? This supplies the comparison result for Group 2 (F2-1 through F2-3).
+38. Can the normal developer command own the complete private stack, with external services available through explicit overrides? This unblocks Groups 2 and 4 (F2-5, F2-6, F3-2).
+39. Can the default author experience require Docker on Linux, or must the first release support another host platform? This unblocks Groups 2 and 4 (F2-8, F3-2).
+40. Which cold-start, warm-start, and saved-edit limits must the retained results enforce? This unblocks acceptance for Groups 2 and 4 (F2-11, G3-7).
+41. Does the ten-minute clock start with the installed SDK, Docker, and provisioned account, or include their installation and provisioning? This unblocks Group 4 (F3-7).
+42. Can root supply live statuses for quarantined tests and archive candidates, including which ignored cases represent defects or retired contracts? This unblocks Groups 3 and 4 (G2-1 through G2-4, G3-4, H2-2, H2-3).
+43. Which dashboard or collector owns the frozen PostgreSQL telemetry identifiers whose guard cites deleted documentation? This unblocks retained-contract decisions in Groups 3 and 4 (G2-6, H2-5).
+44. Which CI service and protected reference own integration and promotion? This unblocks Group 1 (D3-3).
+45. Must startup-burst measurement remain supported despite its absent repository execution path? This unblocks Group 4 (A1-1).
+46. Must benchmark summaries remain readable without their raw result files? This defines the retained result contract in Group 4 (H1-7).
+47. Does an immutable Git source plus a compact history entry satisfy the rule that accepted plans remain untrimmed? This unblocks Group 4 (H2-2, H2-7).
+48. Where are the twelve historical performance artifacts retained, if anywhere? This unblocks evidence disposition in Group 4 (H2-6).
+49. Does any external tool still read `.beads/beads.jsonl`? This unblocks obsolete-export removal in Group 4 (H3-10).
 
 Questions 8 and 10 of the first draft are answered in Rejected findings and proposals. Nothing from this list is filed until the owner answers.

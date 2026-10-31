@@ -38,7 +38,7 @@ Problem: The cluster document declares the telemetry bucket, project, cluster, z
 
 Proposal: Render cloud destinations from their owning documents. Let the project document own the DNS zone and guard destination. Let the cluster document supply runtime destinations.
 
-Deletes: `deploy/gcp/otel-collector-values.yaml` as an independent authority. Remove installation-specific defaults from `letsencrypt.yaml` and the test assertion that preserves `wamn-dev-otel`.
+Deletes: `deploy/gcp/otel-collector-values.yaml` as an independent authority and the test assertion that preserves `wamn-dev-otel`. The `letsencrypt.yaml` and DNS-project part is moot: [alignment](../plan/alignment.md) C1 replaces it with a Google-managed certificate by DNS authorization. Only the collector destination part survives, In passing.
 
 Risk: A second project can receive telemetry failures or DNS challenge failures. Extend `both_providers_render_every_install_manifest` with different project, bucket, email, and domain values. Require every rendered destination to follow those inputs.
 
@@ -68,7 +68,7 @@ Problem: Four committed workloads preserve the old `default` and `wms` host grou
 
 Proposal: Delete the four files and their snapshot generator. The release chart is already the sole Kubernetes workload definition.
 
-Deletes: `deploy/gcp/flow-http.yaml`, `deploy/gcp/wms-flow-http.yaml`, `deploy/gcp/materializer.yaml`, `deploy/gcp/wms-materializer.yaml`, and their snapshot generator in `test-support/infrastructure/examples/workload_files.rs`.
+Deletes: `deploy/gcp/wms-flow-http.yaml` and the snapshot generator in `test-support/infrastructure/examples/workload_files.rs`. The other three files (`flow-http.yaml`, `materializer.yaml`, `wms-materializer.yaml`) are owned by the One NATS "Deleted" list in [alignment](../plan/alignment.md). Do not file them twice.
 
 Risk: Historical manual commands name these files. Update those references when deleting them. Use prekind rendering and `environment_apply_kind` to prove release selectors, interfaces, entry images, and Services.
 
@@ -146,11 +146,11 @@ Evidence: `deploy/gcp/cdc-reader-wms.yaml:1`, `docs/history/gcp-install-history.
 
 Problem: `cdc-reader-wms.yaml` has historical documentation consumers, but current platform installation renders CDC in Rust. `evt-nats-check.yaml` remains an active manual runbook input, so it is not an orphan. Searches found no external consumer for `identity-db.example.yaml` or `prometheus-local.yaml`. The missing `executor.yaml` appears in test prose and failure text, not in a file read.
 
-Proposal: Delete unused examples and historical CDC carriers. Retain the NATS diagnostic until its runbook operation moves to the broker owner. Update the security test’s explanation to cite the current host.
+Proposal: Delete unused examples and historical CDC carriers. `evt-nats-check.yaml` goes with `evt-nats` under [alignment](../plan/alignment.md) R8. Update the security test’s explanation to cite the current host.
 
-Deletes: `identity-db.example.yaml`, `prometheus-local.yaml`, the CDC files covered by D1-6, and stale executor references. Do not recreate `executor.yaml`.
+Deletes: `identity-db.example.yaml`, `prometheus-local.yaml`, the CDC files covered by D1-6, `evt-nats-check.yaml` (with `evt-nats`, alignment R8), and stale executor references. Do not recreate `executor.yaml`.
 
-Risk: Preserve `a_guest_never_sees_the_host_process_environment`. Its behavioral assertion remains valid. Keep the NATS diagnostic until an equivalent operation proves stream access. Owner answer 2026-10-31: nothing is applied outside repository automation. Delete without confirming external use.
+Risk: Preserve `a_guest_never_sees_the_host_process_environment`. Its behavioral assertion remains valid. Owner answer 2026-10-31: nothing is applied outside repository automation. Delete without confirming external use.
 
 ## Finding D1-10: Prototype deployment families survive through examples and test expectations
 
@@ -202,8 +202,9 @@ The `wamn-system` namespace family is one prototype set: `P/postgres.yaml`, `P/w
 | `P/values-identity-default.yaml` | Declaration test only: `tests/system/tests/deployment_declarations.rs:423` | Delete redundant overlay after test migration. |
 | `G/values-identity.yaml` | Manual installation values; current installer independently renders values at `C/identity.rs:236` | Delete the frozen snapshot. |
 | `P/edge/` chart | Current nginx proxy: `C/edge.rs:58` | Keep. It serves a different role from the Rust web edge and physical edge binary. |
-| GCP certificate, auth-client, registry-helper, and placement manifests | Current installer: `C/manifests.rs:62`, `:72`, `C/install.rs:413`, `:499` | Keep required resources. Derive installation-specific values. |
-| Host account, control RBAC, operator event RBAC, host certificate examples | Current installation and fixtures: `C/manifests.rs:64`, `C/install.rs:547`, `:598` | Keep required resources with one namespace policy. |
+| GCP certificate, auth-client, registry-helper, and placement manifests | Current installer: `C/manifests.rs:62`, `:72`, `C/install.rs:413`, `:499` | Keep required resources. Derive installation-specific values. `G/auth-nats-clients.yaml` is an alignment deletion (One NATS, Deleted). |
+| Host account, control RBAC, operator event RBAC, host certificate examples | Current installation and fixtures: `C/manifests.rs:64`, `C/install.rs:547`, `:598` | Keep required resources with one namespace policy. `P/host-environment-certs.example.yaml` is an alignment deletion (One NATS, Deleted). |
+| `I/wasmcloud-ca-issuer.yaml`, the `evt-nats-authorization` Secret and its generator in `crates/control/provision` | One NATS clients and the password authorization file | Alignment deletion (One NATS, Deleted and R3, R4, R8). The cert-manager CA and certificate-mapped users replace them. |
 | `P/otel-collector.yaml` | Current installation, dev collector, tests: `C/install.rs:617`, `tools/dev-collector:13` | Keep complete collector definition. |
 | `G/otel-collector-values.yaml`, `I/otel-collector.yaml` | Cloud destinations and test collector variant | Delete independent carriers after D1-2 and D1-3. |
 | `I/prometheus.yaml`, `I/prometheus-local.yaml` | Only self-contained manual instructions found | Delete unused deployment examples. The local file names a private lane container. |

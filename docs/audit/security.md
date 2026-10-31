@@ -40,9 +40,7 @@ Effort: L
 Area: crates/platform/runtime/src/auth_cache.rs  
 Evidence: `deploy/gcp/auth-nats-clients.yaml:1`; `deploy/platform/host-environment-certs.example.yaml:28`; `crates/platform/runtime/src/auth_cache.rs:292`; `crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:2359`  
 Problem: Hosts and identity writers share the `wasmcloud-runtime` NATS identity. The inspected bundled NATS configuration grants that identity no subject restrictions. Hosts accept grant values from the shared bucket, so a stolen runtime certificate can publish an `admin` grant for a principal in another environment.  
-Proposal: Keep authorization answers local and read them from PostgreSQL. Use NATS only for scoped invalidation messages, with separate identities for each environment and writer.  
-Deletes: Shared serialized `PrincipalGrants` values and their replication path.  
-Risk: PostgreSQL receives more reads. A two-environment test must prove that one runtime credential cannot alter another environment’s effective grants.
+Closed by [alignment](../plan/alignment.md) R4, R5 and R7 (owner addendum 2026-10-31): every client authenticates by a client certificate mapped to a NATS user, each environment has its own certificate and the key prefix `$KV.wamn-auth.<env_key>.>`, and R5's two-environment test proves that environment A's certificate is refused on environment B's subjects and keys. The audit proposal (drop the bucket, read grants from PostgreSQL) is rejected. The bucket stays per R7. The One NATS epic owns the change.
 
 ## Finding E1-3: A delayed grant can restore revoked administration
 
@@ -109,6 +107,8 @@ Problem: File-backed keys load once and always report fresh evidence. After a si
 Proposal: Give offline key sets a finite trust deadline and require replacement before that deadline. Refuse new admission when the offline trust period ends.  
 Deletes: The unconditional `true` freshness result.  
 Risk: Disconnected devices eventually refuse sessions. A test must retain an old key set, advance beyond its trust deadline, and reject a newly signed token.
+
+Owner addendum 2026-10-31: unchanged. Neither [alignment](../plan/alignment.md) nor [integration-schema](../plan/integration-schema.md) covers file-backed signing keys.
 
 ## Finding E1-9: CLI and HTTP routes enforce different grant rules
 
@@ -186,9 +186,7 @@ Effort: M
 Area: deploy/gcp/nats-jetstream.yaml; deploy/infra/nats-jetstream.yaml  
 Evidence: `deploy/gcp/nats-jetstream.yaml:16`, `deploy/gcp/cdc-reader.yaml:59`, `crates/platform/runtime/src/plugins/wamn_jetstream.rs:638`, `services/cdc-reader/src/lib.rs:1091`, `deploy/infra/nats-jetstream.yaml:57`  
 Problem: The event broker has no configured TLS listener, while deployed clients connect with usernames and passwords over `nats://`. A network observer can obtain reusable broker credentials and event contents. The three-node manifest also exposes broker routes without configured peer authentication or TLS.  
-Proposal: Require authenticated TLS on event clients and mutual TLS between broker peers. Keep environment subject permissions as the authorization boundary.  
-Deletes: Plaintext broker listeners, unauthenticated peer routes, and plaintext event endpoint defaults.  
-Risk: Existing clients require broker trust material. A broker integration test must reject plaintext clients and unauthorized peers, then prove publish, consume, and reconnect behavior.
+Closed by [alignment](../plan/alignment.md) R1, R3 and R4 (owner addendum 2026-10-31): one NATS with TLS on, a cert-manager CA that renews, and certificate-mapped users with no passwords. The One NATS epic owns the change. The 365-day CA question is answered by R3.
 
 ## Finding E2-5: Shared development infrastructure publishes administrator credentials
 
@@ -200,6 +198,8 @@ Problem: The Postgres fixture ships a known superuser password, and MinIO ships 
 Proposal: Delete the standing Postgres fixture and create disposable databases for tests. Replace the shared backup root identity with credentials restricted to each cluster's backup prefix and an explicit encrypted endpoint.  
 Deletes: `deploy/platform/postgres.yaml`, committed MinIO credential values, and shared root credential wiring in backup declarations.  
 Risk: Existing gate and recovery procedures require replacement inputs. Prove backup restoration and deny one cluster's credentials access to another cluster's objects.
+
+Owner addendum 2026-10-31, re-scoped: [integration-schema](../plan/integration-schema.md) drops `registry.credential_import`, `registry.import_connection_credentials` and `identity.credential.secret`, so credentials enter by UI or API only and plaintext secrets never sit in Postgres. What remains here: `deploy/platform/postgres.yaml` goes with the prototype set (D1-10), and the MinIO root and shared backup root identity.
 
 ## Finding E2-6: Command help can disclose database passwords
 
@@ -263,6 +263,8 @@ Proposal: Derive admission facts from exact component bytes at the trusted publi
 Deletes: The assumption that registry existence proves admission and the conversion of unchecked descriptors into admitted facts.  
 Risk: Packages with stale or invented descriptors refuse. A crafted package test must hide a socket import in its descriptor and prove refusal before execution.
 
+Owner addendum 2026-10-31: [alignment](../plan/alignment.md) W1 to W3 change what admission matches (package family `0.2` and a build-derived ceiling). Any E3-1 work waits for W1 to W3 and must not re-pin exact versions.
+
 ## Finding E3-2: The native lockfile contains reported security vulnerabilities
 
 Severity: high  
@@ -314,9 +316,7 @@ Effort: M
 Area: `crates/platform/engine/src/connector.rs`, `crates/platform/runtime/src/connectors.rs`  
 Evidence: `crates/platform/engine/src/connector.rs:119`, `crates/platform/engine/src/connector.rs:126`, `crates/platform/engine/src/connector.rs:328`, `crates/platform/runtime/src/connectors.rs:27`, `crates/platform/runtime/src/connectors.rs:131`  
 Problem: Process-wide connector engines retain a compiled template for every admitted digest. Runtime readers separately retain component bytes in an unbounded map. Binding invalidation removes linked instances but leaves these digest-indexed copies. Repeated connector upgrades therefore retain obsolete artifacts until their owning process or reader disappears.  
-Proposal: Give connector code and bytes one bounded cache with ownership tied to active bindings. Release obsolete entries after the last active instance retires.  
-Deletes: Permanent compiled-template retention and the separate unbounded byte map.  
-Risk: Eviction can cause recompilation. A rotation test must preserve reuse for active digests and prove that retired digests release their retained code and bytes.
+Reshaped by [integration-schema](../plan/integration-schema.md) "Runtime refresh" (owner addendum 2026-10-31): a version's component is compiled once per digest, its instance is linked per (connection, generation, credential), and calls in flight finish on what they started with. Retention bounds are set there. The audit files nothing separate.
 
 ## Finding E3-7: Engine construction mutates the environment after threads start
 

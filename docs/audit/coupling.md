@@ -196,6 +196,8 @@ Proposal: Keep cluster roles, credential generations, and their grant declaratio
 Deletes: Duplicate family dispatch and independently assembled expected grants in control/lib. Remove hard-coded copies of provisioning grant requirements from schema repair.  
 Risk: A mistaken consolidation can widen access. Preserve `family_surface_grants.rs:444`, `family_surface_grants.rs:730`, and `run_grant_confinement.rs:95`, including independent forbidden-access assertions.
 
+Owner addendum 2026-10-31, re-scoped: [integration-schema](../plan/integration-schema.md) drops `integration_allow` and `project_connection` because the binding is the permission. B2-2 covers the role to operation ACL only.
+
 ## Finding B2-3: Package application depends on the qualification runner it must serve
 
 Severity: high  
