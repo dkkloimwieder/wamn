@@ -5,7 +5,7 @@
 Integrations are configured per project, connections per project environment, and an application uses a connection through a release-scoped binding.
 
 - **integration\_type** is the platform catalog of integration code (`http`, `s3`, `gcs`, `disk`, `modbus`, `netsuite_rest`, …). Every build or parameter-shape change is an **integration\_type\_version**.
-- **auth\_type** is a seeded platform catalog: exactly the schemes the host implements (`http_basic`, `api_key`, `hmac`, `oauth2_client_credentials`, `oauth2_authorization_code`, `aws_sigv4`, `custom`, `none`). Which auth types a type supports is a bridge table.
+- **auth\_type** is a seeded platform catalog: exactly the schemes the host implements (`http_basic`, `api_key`, `hmac`, `oauth2_client_credentials`, `oauth2_client_credentials_jwt`, `oauth2_authorization_code`, `aws_sigv4`, `custom`, `none`). Which auth types a type supports is a bridge table.
 - **integration** is one project's named instance of a type: name, type, auth type, optional external system. It holds no parameters. Different credentials against the same external account make a new integration of the same type.
 - **connection** is that integration in one project environment: all its parameters, its credential and its service principal, as immutable generations. Exactly one per integration per env.
 - **binding** maps a name an application declares in `wamn.k` to a connection, per release. Several components and applications may share one connection. `environment.k` apply writes bindings; nobody creates them by hand. No binding, no use for component calls; host-managed file access (`file.get`) reads a file through its own connection under the file permissions.
@@ -128,23 +128,36 @@ CREATE TABLE identity.credential (                     -- a reference, never the
     UNIQUE (id, connection_id)
 );
 
-CREATE TABLE identity.oauth_token (                    -- host-only; both OAuth types, shared across pods
+CREATE TABLE identity.oauth_token (                    -- host-only; every OAuth type, shared across pods
     connection_id  uuid PRIMARY KEY REFERENCES registry.connection (id) ON DELETE CASCADE,
     ciphertext     bytea NOT NULL,                       -- AES-256-GCM: access token; refresh token for authorization code
     nonce          bytea NOT NULL,
-    key_id         text NOT NULL,                        -- envelope key in Cloud KMS (local: key file)
+    wrapped_key    bytea NOT NULL,                       -- the row's AES-256 data key, wrapped by the envelope key
+    key_id         text NOT NULL,                        -- the envelope key: a Cloud KMS key version (local: key file id)
     expires_at     timestamptz NOT NULL,
     refresh_status text NOT NULL DEFAULT 'ok' CHECK (refresh_status IN ('ok', 'failing')),
     updated_at     timestamptz NOT NULL                  -- fetch and refresh lock the connection row, not this one
 );
 -- authorization code: no row = not authorized; calls refused until connection.authorize completes
--- client credentials: no row = no token yet; the first call fetches one with the client secret
+-- client credentials (secret or JWT): no row = no token yet; the first call fetches one
 -- every fetch and refresh: FOR NO KEY UPDATE on the registry.connection row (it always exists), re-read this row,
 -- call the provider only if the token is missing or due; connection.write and set_credential lock the same row
 -- with a new generation, in the same transaction:
 --   client credentials: delete this row when the credential or parameters.auth changes
 --   authorization code: delete this row when parameters.auth changes (authorize again);
 --                       set expires_at = '-infinity' when only the secret changes (the refresh token stays)
+
+CREATE TABLE identity.oauth_authorization (            -- one pending connection.authorize; single use
+    state         text PRIMARY KEY,                      -- 32 random bytes, base64url
+    connection_id uuid NOT NULL REFERENCES registry.connection (id) ON DELETE CASCADE,
+    generation    bigint NOT NULL,                       -- a newer active generation refuses the callback
+    code_verifier bytea NOT NULL,                        -- PKCE, encrypted like the token (wrapped_key, nonce, key_id below)
+    wrapped_key   bytea NOT NULL,
+    nonce         bytea NOT NULL,
+    key_id        text NOT NULL,
+    created_by    uuid NOT NULL,
+    expires_at    timestamptz NOT NULL                   -- 10 minutes after creation
+);
 
 CREATE TABLE registry.connection_generation (          -- immutable (trigger, as on main)
     connection_id uuid NOT NULL REFERENCES registry.connection (id) ON DELETE CASCADE,
@@ -432,7 +445,7 @@ Plaintext secrets never sit in Postgres. A credential row holds a reference (`st
 | Secret | Where |
 | --- | --- |
 | Static secret (API key, password, service-account JSON, OAuth client secret) | Kubernetes Secret first (kind and GKE, local parity), one Secret per env with one key per credential id, readable only by that env's host ServiceAccount (Role resourceNames); GCP Secret Manager next (native versions); file on local targets |
-| OAuth tokens (both OAuth types) | `identity.oauth_token`, AES-256-GCM, envelope key in Cloud KMS (local: key file) |
+| OAuth tokens (every OAuth type) | `identity.oauth_token`, AES-256-GCM, envelope key in Cloud KMS (local: key file) |
 
 - Old secret material is never read again, because configuration is never rolled back: it is destroyed asynchronously 5 minutes after a rotation becomes active. The credential row stays as audit metadata.
 - GKE application-layer secrets encryption (Cloud KMS) must be on for the Kubernetes backend.
@@ -441,10 +454,10 @@ Plaintext secrets never sit in Postgres. A credential row holds a reference (`st
 ### Auth runs in the host
 
 - The host applies auth on the outbound call, as it handles application auth today; integration code never holds the secret, except with `custom`, which hands it over through `bound.credential()`.
-- `http_basic`, `api_key`, `hmac`, both OAuth types and `aws_sigv4` are `http_only`. Non-HTTP types (Modbus, serial, raw TCP) use `none` or `custom`.
+- `http_basic`, `api_key`, `hmac`, the three OAuth types and `aws_sigv4` are `http_only`. Non-HTTP types (Modbus, serial, raw TCP) use `none` or `custom`. `oauth2_client_credentials_jwt` authenticates to the token endpoint with a signed JWT (RFC 7523 client assertion, the NetSuite machine-to-machine form) instead of a client secret.
 - Auth type sits on the integration, so every env of an integration uses the same auth; a different auth is a different integration.
 - The host keeps each credential's secret under its credential id. A rotation makes a new credential id, so the new generation's key delete is enough. A 401 or 403 drops the secret and the connection fact and reads both again; the host sends once more only when the fact names a new generation or credential, so a repeated send never carries the credential that was just refused. No strict emergency revocation.
-- OAuth refresh runs before expiry, once across all pods: a host locks the connection row (`FOR NO KEY UPDATE`), re-reads the token row, and calls the provider only if the token is missing or due. The same lock covers the first client-credentials fetch and serializes refresh with rotation. A failed refresh sets `refresh_status` and notifies; retries continue on a schedule. The cache is warmed at startup for bound connections; the connection key delete for a new generation drops it.
+- OAuth refresh runs before expiry, once across all pods: a host locks the connection row (`FOR NO KEY UPDATE`), re-reads the token row, and calls the provider only if the token is missing or due. The same lock covers the first client-credentials fetch and serializes refresh with rotation. A failed refresh sets `refresh_status` to `failing`; calls fail with `credential-unavailable`, and the next call tries again once `updated_at` is 30 s old; `connection.get` shows `refresh_status`. The host keeps the decrypted token in memory under (connection, generation) until 60 s before it expires; the connection key delete for a new generation drops it.
 
 ### Admin flow (no deployment)
 
@@ -453,7 +466,7 @@ Plaintext secrets never sit in Postgres. A credential row holds a reference (`st
 3. The control host writes the secret to the store and inserts a new immutable `identity.credential` row with the store's version id.
 4. A new generation pointing at that row becomes active, and the control host deletes the connection's memory key after the commit.
 5. There is no switching back: a wrong or leaked credential is fixed by setting a new one. The value is never shown again; the UI shows `hint`, `created_by`, `created_at`.
-6. `oauth2_authorization_code`: the first write carries the client secret; calls are refused as `unauthorized` until `connection.authorize` (the "connect" button) completes its callback on a platform route and the host writes the token row.
+6. `oauth2_authorization_code`: the first write carries the client secret; calls are refused as `unauthorized` until the token row exists. `connection.authorize` (the "connect" button) writes an `identity.oauth_authorization` row and returns the provider's authorization URL with `state` and a PKCE challenge. The provider redirects to the control host's `/oauth/callback`, which accepts a `state` that exists, is unexpired and names the connection's active generation, deletes the row, exchanges the code, and writes the token row.
 7. `connection.set_credential` is its own ACL operation; the audit log records who and when, never the value.
 
 ## Dropped or merged from main
