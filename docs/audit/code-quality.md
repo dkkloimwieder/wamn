@@ -323,11 +323,13 @@ Evidence: `apps/platform/execution/contract/src/canonical_scalar.rs:28`; `crates
 
 Problem: The three numeric helpers implement different acceptance and normalization rules. The client trims whitespace, accepts `+`, and removes a negative zero sign, while the shared helper does none of those. Four named timestamp helpers and an inline client formatter also implement overlapping rules. Cursor validation deliberately refuses spellings that request normalization accepts.
 
-Proposal: Make `wamn-execution-contract::canonical_scalar` the sole owner of scalar spelling. First establish PostgreSQL-backed examples, then expose normalization and strict validation separately. Keep database binary decoding and history JSON scanning with their existing owners.
+Proposal: Make `wamn-execution-contract::canonical_scalar` the one owner of scalar spelling. Cursor validation and request normalization accept the same spellings. Keep database binary decoding and history JSON scanning with their existing owners.
 
 Deletes: Approximately 140–180 net lines, including the history date arithmetic and duplicate numeric parsing.
 
 Risk: Changed bytes affect request identity, replay, history, and cursors. Extend `nested_request_bytes_canonicalize_uuid_time_and_numeric_once` and `noncanonical_timestamps_and_numeric_spellings_refuse` with negative zero, scale, offsets, invalid dates, and PostgreSQL comparisons (`crates/client/core/tests/request.rs:136`, `crates/schema/generator/tests/cursor.rs:110`).
+
+Owner review 2026-10-31: keep, high, Group 3 Do. Question 2 is answered: yes, record-history depends on execution-contract. Both land in `wamn-contract` under the crate map.
 
 ## Finding A2-2: Command runners bypass an existing lifecycle owner
 
@@ -339,11 +341,7 @@ Evidence: `crates/control/lib/src/platform/build.rs:328`; `crates/control/lib/sr
 
 Problem: Five runner surfaces repeat process execution or result handling. Several use unbounded `output()` calls, while `owned_command` already provides deadlines, cancellation, and descendant cleanup. The scoped count is 37 files containing `Command::new`, including tests; it does not mean 37 interchangeable runners.
 
-Proposal: Make `owned_command` the sole owner of bounded, one-shot child execution. Move common success handling there, then migrate the repeated runners. Keep command construction, qualification environment filtering, kubectl error classification, and supervised long-running processes with their current owners.
-
-Deletes: Approximately 60–100 net lines from repeated execution and success handling.
-
-Risk: Consolidation can expose Secret input in diagnostics or change cancellation behavior. Preserve kubectl suppression and extend `stuck_children_cancel_and_reap_descendants_with_diagnostics` to cover migrated entry points (`crates/control/lib/src/kubectl.rs:87`, `crates/control/lib/src/owned_command.rs:147`).
+Merged into deployment D2-4 (owner review 2026-10-31). What survives Group 1 is routed through `owned_command.rs` with a deadline. No separate text.
 
 ## Finding A2-3: Host contracts repeat thousands of authored JSON lines
 
@@ -361,6 +359,8 @@ Deletes: Measured gross deletion of 71 files and 3,020 repeated lines. Estimated
 
 Risk: Equal contracts can later need different behavior, so assignments must remain explicit. Compare resolved contract bytes and generated clients before and after, then run host-route and control-client live tests.
 
+Owner review 2026-10-31: keep, Group 4 Do, sequenced after [integration-schema](../plan/integration-schema.md) C1 to C3. The integration and connection host routes this finding cites (enable, delete, connection get and write) are renamed or dropped by that plan, so the shape assignment is written against the new routes. Question 3 is answered: yes, resolved contract bytes and generated clients stay unchanged, and per-operation files become build output.
+
 ## Finding A2-4: PostgreSQL adapters repeat transaction and tracing machinery
 
 Severity: medium  
@@ -377,6 +377,8 @@ Deletes: Approximately 150–220 net lines from the inspected production blocks.
 
 Risk: A shared path can accidentally substitute default authority for named authority or return a dirty connection to the pool. Exercise both binding feature sets and the existing authority, cancellation, transaction, and pool-isolation tests.
 
+Owner review 2026-10-31: In passing, after A5. The begin-operation and commit imports rewrite runtime's `wamn_postgres` plugin.
+
 ## Finding A2-5: Authority SQL remains embedded in four installation artifacts
 
 Severity: medium  
@@ -387,11 +389,13 @@ Evidence: `deploy/sql/catalog-schema-prefix.sql:45`; `deploy/sql/run-state.sql:9
 
 Problem: Four schema artifacts embed the same 40-line authority bootstrap. The files already identify a shared builder, so this is repeated distribution content rather than four independent designs. Keeping each schema standalone makes every authority change touch several authored artifacts.
 
-Proposal: Keep provisioning as the authority owner and store one SQL template. Compose installation recipes from that template and the schema bodies. Produce standalone SQL files only as build output, preserving role setup and transaction order.
+Proposal: One authority SQL file. Provisioning concatenates it with the schema bodies at install, preserving role setup and transaction order. The authored files stay plain SQL. No build step, no generated bundle.
 
 Deletes: Approximately 120–150 net lines from the four embedded copies.
 
 Risk: Installation order, function ownership, database-name substitution, and expression indexes must remain correct. Use `the_bootstrap_and_literal_renderings_install_the_same_object` and the live deployment SQL authority suite (`crates/control/provision/tests/tenant_key_live.rs:512`, `crates/control/provision/tests/deploy_sql_authority.rs:16`).
+
+Owner review 2026-10-31: In passing, inside the C1-1 baseline work, which already touches every file in `deploy/sql`. Question 1 is answered: authored SQL stays directly readable and executable. The installer composes, nothing generates. `crates/control/provision/src/tenant_key.rs` is part of the tenant feature removal in progress, not a target here.
 
 ## Finding A2-6: Database setup has three homes and repeated schema composition
 
@@ -401,13 +405,15 @@ Area: `test-support/infrastructure`, catalog, provisioning, and project-state te
 
 Evidence: `crates/catalog/model/src/test_database.rs:21`; `crates/control/provision/src/test_database.rs:24`; `crates/identity/project-state/src/test_database.rs:11`; `crates/control/provision/src/lib.rs:174`; `crates/control/lib/tests/package_data_access_live.rs:16`.
 
-Problem: The three `test_database.rs` files install different database floors, meaning required starting schemas. They are not interchangeable copies, but their placement spreads test setup across production libraries. The 33 direct `app-schema.sql` inclusions also let routine tests reconstruct installation order independently.
+Problem: The three `test_database.rs` files install different schema baselines, meaning required starting schemas. They are not interchangeable copies, but their placement spreads test setup across production libraries. The 33 direct `app-schema.sql` inclusions also let routine tests reconstruct installation order independently.
 
 Proposal: Make `test-support/infrastructure` own named system, catalog, and catalog-plus-platform fixtures. Keep `wamn-test-postgres` responsible only for server and database lifetime. Reuse production schema compositions, while retaining direct SQL reads in tests that inspect those artifacts themselves.
 
 Deletes: Move the three modules, totaling 154 lines, out of production libraries. Estimated net saving from shared setup and migrated callers: 60–120 lines.
 
 Risk: Fixtures must retain distinct owners, grants, and shared-role locking. Preserve the three fixture assertions and run provisioning denial tests against the replacement fixtures.
+
+Owner review 2026-10-31: In passing with tests G1-1.
 
 ## Finding A2-7: Workflow tests duplicate component and credential fixtures
 
@@ -425,6 +431,8 @@ Deletes: Approximately 90–110 net lines from the inspected pair.
 
 Risk: Shared setup can conceal a missing permission if it grants the union of both tests. Require each caller to request its exact role set, and retain manual-run and schedule denial assertions.
 
+Owner review 2026-10-31: In passing with the tests G1 fixture rows.
+
 ## Finding A2-8: HTTP guests duplicate transport policy helpers
 
 Severity: medium  
@@ -440,6 +448,8 @@ Proposal: Give a shared HTTP library under `apps/platform/no-std` ownership of t
 Deletes: Approximately 75–95 net lines from one copy of the helpers.
 
 Risk: Generated WIT types must retain their identity across both guests. Run both guest test suites, especially rate-limit handling and the page-two failure that discards partial results (`apps/platform/no-std/http-page/src/tests.rs:114`).
+
+Owner review 2026-10-31: Group 4 Do, with the coupling B3-4 and B3-5 guest moves, so the `no_std` guests are repinned once. The shared library lives in the `no_std` workspace.
 
 ## Finding A2-9: Web duplication is concentrated in build policy and bundle tests
 
@@ -457,6 +467,8 @@ Deletes: Approximately 55–75 net lines. Count zero savings from merging `brows
 
 Risk: Shared tooling must preserve worker filenames, Solid version enforcement, and application-specific cache exclusions. Run both bundle tests, both UI browser journeys, and Receiving offline tests.
 
+Owner review 2026-10-31: In passing with hygiene H3-4 and H3-8.
+
 ## Finding A2-10: Four installers repeat the same installation state machine
 
 Severity: medium  
@@ -471,7 +483,9 @@ Proposal: Make one repository installer own the lifecycle. Keep pinned versions,
 
 Deletes: Approximately 60–90 net lines.
 
-Risk: A shared installer must retain both archive and extracted-binary verification. Add isolated tests for valid cache, corrupt cache, bad download, failed extraction, and cleanup, using fake download commands and temporary directories.
+Risk: A shared installer must retain both archive and extracted-binary verification. The existing tool conformance tests cover it.
+
+Owner review 2026-10-31: In passing. The isolated installer tests are struck. Four scripts do not justify a test suite.
 
 ## Finding A2-11: Identifier quoting has an existing owner that two callers bypass
 
@@ -491,6 +505,8 @@ Risk: Generated SQL must retain identical bytes. The existing adversarial quotin
 
 Owner review 2026-10-31: callers require the default server setting (`standard_conforming_strings` on). pg-core states that precondition in its doc comment. Nondefault parsing is unsupported.
 
+Owner review 2026-10-31: Group 4 Do, small.
+
 ## Finding A2-12: Raw digest helpers repeat one wire spelling
 
 Severity: low  
@@ -506,6 +522,8 @@ Proposal: Make `wamn-execution-contract` own raw-byte digest formatting beside c
 Deletes: Approximately 20–30 net lines across the five implementations.
 
 Risk: Raw bytes must never pass through JSON serialization. Prove equality with fixed empty, binary, and text vectors, then retain release and package digest assertions.
+
+Owner review 2026-10-31: In passing, small.
 
 ## Finding A2-13: Tests rediscover the repository root despite an existing helper
 
@@ -523,6 +541,8 @@ Deletes: Approximately 120–150 net lines from test helpers.
 
 Risk: Test binaries must still find the checkout from another working directory and inside linked worktrees. Exercise representative conformance, generator, and application tests under both conditions.
 
+Owner review 2026-10-31: In passing.
+
 ## Finding A2-14: Four shell tools repeat failure and usage handling
 
 Severity: low  
@@ -533,11 +553,13 @@ Evidence: `tools/test-changes:6`; `tools/contract-diff:6`; `tools/repo-lint:6`; 
 
 Problem: Four tools repeat the same failure and usage functions with a different diagnostic prefix. Nearby checkout discovery also repeats. `train-run` has a fifth, smaller helper with another signature, so it is not an exact fifth copy (`tools/train-run:5`).
 
-Proposal: Make one small sourced module under `tools/lib` own failure, usage, and checkout discovery. Keep each tool's usage text and command behavior local. Leave the one-line `train-run` helper until its interface needs the shared behavior.
+Proposal: Make one small sourced file under `tools/` own failure, usage, and checkout discovery, with no tests of its own. Keep each tool's usage text and command behavior local. Leave the one-line `train-run` helper until its interface needs the shared behavior.
 
 Deletes: Approximately 20–35 net lines from the four tools.
 
 Risk: Exit codes, stderr prefixes, quoting, and invocation from another directory must remain stable. Run the existing conformance tests for these tools and their invalid-argument cases.
+
+Owner review 2026-10-31: In passing. One sourced file under `tools/`, no tests of its own.
 
 ## Finding A2-15: Four empty attachment documents represent the same absence
 
@@ -549,17 +571,21 @@ Evidence: `apps/rest_connector/publication/attachments.json:1`; `apps/netsuite/p
 
 Problem: The four identical files contain only `{}`. Publication already accepts an absent document, but the package attachment reader directly reads its path. Deleting the files alone therefore risks inconsistent behavior between readers.
 
-Proposal: Make the schema generator's attachment reader own the rule that a missing authored document means no authored attachments. Reuse that rule across readers, then delete the four empty files. Preserve generated attachments and refuse malformed documents.
+Proposal: The reader treats a missing `attachments.json` as none. Delete the four empty files in the same change. Preserve generated attachments and refuse malformed documents.
 
 Deletes: Four files and four authored lines. Net line saving depends on replacing the inconsistent reader behavior.
 
 Risk: Absence must not hide malformed JSON or remove generated routes. Add package-reader cases for missing, empty, malformed, and generated-only attachments, then exercise generation and publication for these four apps.
 
+Owner review 2026-10-31: In passing.
+
 ## Open questions for the owner
 
-1. Must authored SQL files remain directly executable as standalone artifacts, or can installation recipes and generated bundles replace them?
-2. Can record-history depend on the shared scalar contract, or must its current dependency-free build remain a constraint?
-3. Can host contract shapes use explicit shared assignments while generated clients and resolved contract bytes remain unchanged?
+All three questions were answered on 2026-10-31.
+
+1. Authored SQL stays directly readable and executable. The installer composes, nothing generates (A2-5).
+2. Yes. record-history depends on execution-contract, and both land in `wamn-contract` (A2-1).
+3. Yes. Resolved contract bytes and generated clients stay unchanged, and per-operation files become build output (A2-3).
 
 <!-- lane A3, bead wamn-v3cpv.3 -->
 
