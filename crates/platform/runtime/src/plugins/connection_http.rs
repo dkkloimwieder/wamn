@@ -1270,6 +1270,57 @@ async fn execute(
     })
 }
 
+async fn fetch_health_token(
+    transport: &HttpTransport,
+    decision: &AuthorityDecision,
+    credential: &Oauth2Credential,
+) -> Result<Oauth2Token, ConnectionError> {
+    use base64::Engine as _;
+
+    // RFC 6749 section 2.3.1 form-encodes both Basic components first.
+    let encode =
+        |value: &str| url::form_urlencoded::byte_serialize(value.as_bytes()).collect::<String>();
+    let basic = base64::engine::general_purpose::STANDARD.encode(format!(
+        "{}:{}",
+        encode(&credential.client_id),
+        encode(&credential.client_secret),
+    ));
+    let body = {
+        let mut form = url::form_urlencoded::Serializer::new(String::new());
+        form.append_pair("grant_type", "client_credentials");
+        if let Some(scope) = &credential.scope {
+            form.append_pair("scope", scope);
+        }
+        form.finish()
+    };
+    let request = hyper::Request::builder()
+        .method("POST")
+        .uri(decision.logical_url.as_ref())
+        .header("content-type", "application/x-www-form-urlencoded")
+        .header("authorization", format!("Basic {basic}"))
+        .body(body.as_bytes())
+        .map_err(|_| ConnectionError::CredentialUnavailable)?;
+    let response = transport
+        .send_once(decision, request)
+        .await
+        .map_err(|_| ConnectionError::CredentialUnavailable)?;
+    if response.status() != hyper::StatusCode::OK {
+        return Err(ConnectionError::CredentialUnavailable);
+    }
+    let token: Oauth2Token = serde_json::from_slice(response.body())
+        .map_err(|_| ConnectionError::CredentialUnavailable)?;
+    if !token.token_type.eq_ignore_ascii_case("bearer")
+        || token.access_token.is_empty()
+        || !token
+            .access_token
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-._~+/=".contains(&byte))
+    {
+        return Err(ConnectionError::CredentialUnavailable);
+    }
+    Ok(token)
+}
+
 /// Test candidate HTTP parameters without writing connection facts.
 pub async fn health(
     transport: &HttpTransport,
@@ -1304,21 +1355,6 @@ pub async fn health(
         )
         .await?;
         decision.logical_url = endpoint;
-        let transport = transport.fresh();
-        let scope = ClientScope {
-            connection: ConnectionScope {
-                env_key: "health".into(),
-                project: "health".into(),
-                environment: "health".into(),
-                instance: "health".into(),
-            },
-            package: "health".into(),
-            component_digest: "health".into(),
-            requirement: "health".into(),
-            binding_hash: "health".into(),
-            definition_hash: "health".into(),
-            generation: 0,
-        };
         let request = Request {
             requirement: "health".into(),
             method: "HEAD".into(),
@@ -1344,7 +1380,7 @@ pub async fn health(
             )
             .await?;
             token_decision.logical_url = endpoint;
-            let token = fetch_oauth2_token(&transport, scope.clone(), &token_decision, &credential)
+            let token = fetch_health_token(transport, &token_decision, &credential)
                 .await
                 .map_err(|_| anyhow::anyhow!("HTTP authentication unavailable"))?;
             HashMap::from([(
@@ -1355,10 +1391,18 @@ pub async fn health(
             authentication::headers(auth_type, &auth, credential, &request, &mut decision)
                 .map_err(|_| anyhow::anyhow!("HTTP authentication unavailable"))?
         };
-        let response = execute(&transport, scope, decision, &request, headers)
+        let headers = outbound_headers(&request, headers)
+            .map_err(|_| anyhow::anyhow!("HTTP authentication unavailable"))?;
+        let mut outbound = hyper::Request::builder()
+            .method("HEAD")
+            .uri(decision.logical_url.as_ref())
+            .body(&[] as &[u8])?;
+        *outbound.headers_mut() = headers;
+        let response = transport
+            .send_once(&decision, outbound)
             .await
             .map_err(|_| anyhow::anyhow!("HTTP health request failed"))?;
-        health_status(response.status)
+        health_status(response.status().as_u16())
     }
     .await
     .map_err(|error: anyhow::Error| error.to_string())

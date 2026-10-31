@@ -147,10 +147,6 @@ impl HttpTransport {
         Ok(Self::from_tls(tls))
     }
 
-    pub(crate) fn fresh(&self) -> Self {
-        Self::from_tls((*self.inner.tls).clone())
-    }
-
     /// Use a private trust root in local TLS tests.
     #[cfg(any(test, feature = "test-util"))]
     pub fn with_tls_config(tls: rustls::ClientConfig) -> Self {
@@ -197,6 +193,84 @@ impl HttpTransport {
             "HTTP connection request capacity exhausted",
         )?;
         // Admission precedes the only owned request-body copy.
+        let request = request.map(|body| Full::new(Bytes::copy_from_slice(body)));
+        let mut phase = Phase::AwaitingHead;
+        let result = timeout_at(deadline, async {
+            let response = http.request(request).await.map_err(head_error)?;
+            phase = Phase::ResponseBody;
+            let (parts, body) = response.into_parts();
+            let mut budget = header_budget(&parts.headers, (0, 0), phase)?;
+            let mut body = Limited::new(body, MAX_BODY_BYTES);
+            let mut bytes = BytesMut::new();
+            while let Some(frame) = body.frame().await {
+                let frame = frame.map_err(|error| {
+                    TransportError::new(ErrorType::Transport, phase, "HTTP response body lost")
+                        .with_source(error)
+                })?;
+                if let Some(data) = frame.data_ref() {
+                    bytes.extend_from_slice(data);
+                }
+                if let Some(trailers) = frame.trailers_ref() {
+                    budget = header_budget(trailers, budget, phase)?;
+                }
+            }
+            Ok(Response::from_parts(parts, bytes.freeze()))
+        })
+        .await;
+        match result {
+            Ok(result) => result,
+            Err(error) => Err(TransportError::new(
+                ErrorType::Timeout,
+                phase,
+                "HTTP transport deadline exceeded",
+            )
+            .with_source(error)),
+        }
+    }
+
+    /// Send once without retaining a client or acquiring connection scope.
+    pub(crate) async fn send_once(
+        &self,
+        decision: &AuthorityDecision,
+        mut request: Request<&[u8]>,
+    ) -> Result<Response<Bytes>, TransportError> {
+        let deadline = Instant::now() + REQUEST_TIMEOUT;
+        let target = target(decision, request.uri())?;
+        if request.body().len() > MAX_BODY_BYTES {
+            return Err(input("HTTP request body limit exceeded"));
+        }
+        let host = decision
+            .host_header
+            .parse()
+            .map_err(|error| input("Invalid HTTP host header").with_source(error))?;
+        request.headers_mut().insert(header::HOST, host);
+        let length = header::HeaderValue::from(request.body().len());
+        request.headers_mut().insert(header::CONTENT_LENGTH, length);
+        header_budget(request.headers(), (0, 0), Phase::BeforeDispatch)?;
+        let _request = acquire(&self.inner.requests, "HTTP request capacity exhausted")?;
+        let life = Arc::new(ClientLife {
+            _permit: acquire(&self.inner.clients, "HTTP client capacity exhausted")?,
+            quota: Arc::new(ScopeQuota {
+                sockets: Arc::new(Semaphore::new(1)),
+                requests: Arc::new(Semaphore::new(1)),
+            }),
+        });
+        let endpoint = PinnedConnector {
+            target,
+            tls: Arc::clone(&self.inner.tls),
+            sockets: Arc::clone(&self.inner.sockets),
+            life: Arc::clone(&life),
+        };
+        let http = Client::builder(ClientExecutor { life })
+            .pool_max_idle_per_host(0)
+            .timer(TokioTimer::new())
+            .retry_canceled_requests(false)
+            .http1_max_buf_size(MAX_HEADER_BYTES)
+            .http1_max_headers(MAX_HEADERS)
+            .http2_max_header_list_size(
+                u32::try_from(MAX_HEADER_BYTES).expect("32 KiB header limit fits u32"),
+            )
+            .build(endpoint);
         let request = request.map(|body| Full::new(Bytes::copy_from_slice(body)));
         let mut phase = Phase::AwaitingHead;
         let result = timeout_at(deadline, async {

@@ -19,6 +19,7 @@ use crate::connection_authority::{PinnedEndpoint, TlsPolicy, parse_http_connecti
 #[derive(Clone, Copy)]
 enum Reply {
     Ok,
+    Token,
     HeldBody,
     Disconnect,
     Redirect,
@@ -208,6 +209,7 @@ async fn serve_h1<I: AsyncRead + AsyncWrite + Unpin>(
         if io.read_exact(&mut body).await.is_err() {
             return;
         }
+        let is_head = method == "HEAD";
         observed.lock().expect("observed lock").push(Observed {
             host,
             method,
@@ -219,6 +221,8 @@ async fn serve_h1<I: AsyncRead + AsyncWrite + Unpin>(
         let io = io.get_mut();
         let response = match reply {
             Reply::Ok => b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".as_slice(),
+            Reply::Token if is_head => b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n".as_slice(),
+            Reply::Token => b"HTTP/1.1 200 OK\r\nContent-Length: 53\r\n\r\n{\"access_token\":\"health-token\",\"token_type\":\"Bearer\"}".as_slice(),
             Reply::HeldBody => b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n".as_slice(),
             Reply::Disconnect => return,
             Reply::Redirect => b"HTTP/1.1 307 Temporary Redirect\r\nLocation: http://169.254.169.254/\r\nContent-Length: 0\r\n\r\n".as_slice(),
@@ -318,6 +322,10 @@ async fn serve_h2<I: AsyncRead + AsyncWrite + Unpin + Send + 'static>(
             }
             let body = if matches!(reply, Reply::LargeBody) {
                 Bytes::from(vec![b'x'; MAX_BODY_BYTES + 1])
+            } else if matches!(reply, Reply::Token) && request.method == hyper::Method::HEAD {
+                Bytes::new()
+            } else if matches!(reply, Reply::Token) {
+                Bytes::from_static(br#"{"access_token":"health-token","token_type":"Bearer"}"#)
             } else {
                 Bytes::from_static(b"ok")
             };
@@ -532,6 +540,73 @@ async fn tls_http1_and_http2_keep_logical_identity_and_reuse_connections() {
                 .is_err()
         );
         assert_eq!(server.requests.load(Ordering::SeqCst), 2);
+    }
+}
+
+#[tokio::test]
+async fn one_shot_token_and_head_use_fresh_tls_without_retained_state() {
+    for http2 in [false, true] {
+        let server = Server::start(Reply::Token, Some(http2)).await;
+        let transport = server.transport();
+        let decision = server.decision();
+        let credential = super::super::Oauth2Credential {
+            client_id: "client id".into(),
+            client_secret: "test-secret".into(),
+            token_url: decision.logical_url.to_string(),
+            scope: Some("read".into()),
+        };
+        for _ in 0..2 {
+            let token = super::super::fetch_health_token(&transport, &decision, &credential)
+                .await
+                .expect("one-shot token");
+            assert_eq!(token.access_token, "health-token");
+            let outbound = Request::builder()
+                .method("HEAD")
+                .uri(decision.logical_url.as_ref())
+                .header(
+                    header::AUTHORIZATION,
+                    format!("Bearer {}", token.access_token),
+                )
+                .body(b"".as_slice())
+                .unwrap();
+            assert_eq!(
+                transport
+                    .send_once(&decision, outbound)
+                    .await
+                    .unwrap()
+                    .status(),
+                StatusCode::OK
+            );
+            let state = transport.inner.state.lock().unwrap();
+            assert!(state.clients.is_empty());
+            assert!(state.scopes.is_empty());
+        }
+        assert_eq!(server.accepts.load(Ordering::SeqCst), 4);
+        {
+            let observed = server.observed.lock().unwrap();
+            for pair in observed.as_chunks::<2>().0 {
+                assert_eq!(pair[0].method, "POST");
+                assert_eq!(pair[0].body, b"grant_type=client_credentials&scope=read");
+                assert!(
+                    pair[0]
+                        .authorization
+                        .as_deref()
+                        .unwrap()
+                        .starts_with("Basic ")
+                );
+                assert_eq!(pair[1].method, "HEAD");
+                assert_eq!(
+                    pair[1].authorization.as_deref(),
+                    Some("Bearer health-token")
+                );
+            }
+        }
+        wait_for(|| {
+            transport.inner.clients.available_permits() == MAX_CLIENTS
+                && transport.inner.sockets.available_permits() == MAX_SOCKETS
+        })
+        .await;
+        assert_eq!(transport.inner.requests.available_permits(), MAX_REQUESTS);
     }
 }
 
