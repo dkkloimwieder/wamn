@@ -223,7 +223,7 @@ Supporting findings: B2-1 through B2-4, C1-1 through C1-6, C2-1 through C2-10, a
 
 The control crate contains 80,688 source lines, 32,437 test lines, and 71 `Command::new` expressions (`docs/audit/measurements.md:57`). The upgrade driver alone spans 2,879 lines under A3-11. It applies packages at `crates/control/lib/src/upgrade_environment.rs:784`, then enters locked environment application at `:984`.
 
-Platform installation forces `release = none` during its initial application (`crates/control/lib/src/platform/environments.rs:46`). Environment analysis precedes schema preparation (`crates/control/lib/src/environment/mod.rs:276`). Both platform migration streams are empty (`crates/control/provision/src/schema_migrations.rs:93`, `:96`). This last behavior is deliberate under `docs/architecture/overview.md:66`, rather than an accidental missing implementation.
+Platform installation forces `release = none` during its initial application (`crates/control/lib/src/platform/environments.rs:46`). Environment analysis precedes schema preparation (`crates/control/lib/src/environment/mod.rs:276`). Both platform migration streams are empty (`crates/control/provision/src/schema_migrations.rs:93`, `:96`). This last behavior is deliberate under `docs/architecture/overview.md:67`, rather than an accidental missing implementation.
 
 Delete the independent upgrade driver, mutable completion shortcuts, synthetic uninstall pass, and competing structural repair path. Under the proposed maintenance model, also delete online stages and floors, so one locked transition owns schema changes, deployment, and recovery.
 
@@ -269,7 +269,7 @@ Delete mandatory component wrappers, statement includes, repeated custom contrac
 
 Supporting findings: A2-6, A2-7, A2-13, B1-2, B3-6, G1-1 through G1-15, G2-1 through G2-8, G3-1 through G3-7, and H1-2 through H3-10.
 
-Direct all-target linting produced 16 compilation errors from absent generated application files (`docs/audit/measurements.md:128`). Copy detection records 201 duplicated lines between Receiving and WMS tests (`:697`). G2 counts 136 first-party ignore attributes, including seven quarantines and one subprocess helper (`docs/audit/tests.md:293`).
+Direct all-target linting produced 16 compilation errors from absent generated application files (`docs/audit/measurements.md:128`). Copy detection records 201 duplicated lines between Receiving and WMS tests (`:697`). G2 counts 136 first-party ignore attributes, including seven quarantines and one subprocess helper (`docs/audit/tests.md:292`).
 
 The train ends at source-test execution and deletes successful logs (`tools/train-run:60`, `:80`). A standalone descriptor diagnostic creates two cases but requires four passes (`tools/native-descriptor-limit-check:129`, `:158`, `:167`). H2-7 identifies 3,891 lines in three overlapping historical snapshots. H3-10 identifies about 7.6 MB in obsolete tracker files.
 
