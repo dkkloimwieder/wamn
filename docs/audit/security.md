@@ -8,9 +8,9 @@ Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file,
 
 ### Threat model
 
-This static review found risks in tenant isolation, grant revocation, and cached authority. No files changed, and no builds or tests ran. The final Git status was clean. Identity spans five libraries and one service, as recorded in measurements.md section 2.
+This static review found risks in org isolation, grant revocation, and cached authority. No files changed, and no builds or tests ran. The final Git status was clean. Identity spans five libraries and one service, as recorded in measurements.md section 2.
 
-Actors are anonymous clients, human users, service principals, organization administrators, project administrators, provisioning operators, and compromised workloads. A principal is global. Organization membership and environment access are separate grants. Deactivation must remove access within one organization while preserving access elsewhere (`docs/architecture/overview.md:175`).
+Actors are anonymous clients, users, service principals, organization administrators, project administrators, provisioning operators, and compromised workloads. A principal is global. Organization membership and environment access are separate grants. Deactivation must remove access within one organization while preserving access elsewhere (`docs/architecture/overview.md:175`).
 
 Assets include application data, operation grants, credential secrets, password hashes, renewal credentials, signing keys, and service availability. Trust boundaries separate clients from HTTPS endpoints, identity from PostgreSQL, hosts from environment databases, hosts from Kubernetes Secrets, and hosts from the shared NATS cache.
 
@@ -25,13 +25,15 @@ The inspected identity router protects operator writes and requires credentials 
 ## Finding E1-1: Credential resource names collide across environments
 
 Severity: high  
-Effort: M  
+Effort: S  
 Area: crates/identity/credential-store/src/kubernetes.rs  
 Evidence: `crates/identity/credential-store/src/kubernetes.rs:21`; `crates/control/lib/src/environment/ensure.rs:826`; `crates/control/lib/src/environment/ensure.rs:866`  
 Problem: Secret and ServiceAccount names join organization, project, and environment with single hyphens. Valid coordinates such as `acme/orders-eu/prod` and `acme/orders/eu-prod` produce identical names. Provisioning reuses existing resources, so these environments share a Secret and its read authority within the same namespace.  
-Proposal: Use one collision-free coordinate encoding for Secrets, ServiceAccounts, Roles, and RoleBindings. Reuse the existing double-hyphen convention.  
+Proposal: Use one collision-free coordinate encoding for Secrets, ServiceAccounts, Roles, and RoleBindings: the existing double-hyphen convention. No fallback for old names.  
 Deletes: The two independent single-hyphen naming formulas.  
-Risk: Existing resource references change. A test must provision both colliding coordinates and prove that neither account can read the other Secret.
+Risk: Existing resource references change. The only deployed coordinates are `dkk--receiving--dev` and `dkk--wms--dev`, and they do not collide. A test must provision both colliding coordinates and prove that neither account can read the other Secret.
+
+Owner review 2026-10-31: keep, Group 3 Do, small. One encoding, no fallback.
 
 ## Finding E1-2: Shared NATS credentials can forge another environment’s grants
 
@@ -49,24 +51,28 @@ Effort: L
 Area: crates/execution/host/src/control_route.rs  
 Evidence: `crates/execution/host/src/control_route.rs:323`; `crates/execution/host/src/control_route.rs:337`; `crates/execution/host/src/control_route.rs:685`; `crates/execution/host/src/control_route.rs:1072`  
 Problem: Administrative grants commit system rows before writing application rows, while revocation removes application rows before committing system rows. The mutex coordinates only one host process. Across two hosts, a delayed grant can write application `admin` after a revoke completes, leaving ordinary environment membership sufficient to use the restored privilege.  
-Proposal: Give grant projection one serialized owner across hosts, CLI commands, and environment provisioning. Apply explicit environment rows from current committed authority, with durable recovery after interruption.  
-Deletes: Independent route-owned grant and revoke fan-out.  
+Proposal: Fix the order and hold a database lock. Application rows are a projection of committed system authority. Write them while holding the system row lock for (principal, environment), so a grant and a revoke cannot interleave. Recovery re-projects the application rows from committed system state. No new owner process.  
+Deletes: The grant-before-revoke ordering difference and the process-local mutex as the only coordination.  
 Risk: Administration completion and recovery behavior change. A test must pause a grant after its system commit, complete a revoke elsewhere, and prove that resumed work cannot restore `admin`.
+
+Owner review 2026-10-31: keep, high, Group 3 Do. Not one serialized owner across hosts. Ordering plus the row lock.
 
 ## Finding E1-4: Inactive organization membership is not an admission boundary
 
 Severity: high  
-Effort: M  
+Effort: S  
 Area: crates/identity/platform/src/org.rs  
 Evidence: `crates/identity/platform/src/org.rs:27`; `crates/identity/platform/src/org.rs:75`; `crates/identity/platform/src/org.rs:470`; `crates/identity/platform/src/control.rs:52`; `crates/identity/platform/src/session_token.rs:152`  
 Problem: Grant admission reads active membership without locking its row. A concurrent deactivation can remove existing grants and mark membership inactive before the admitted grant writes new rows. Control and application session admission inspect the resulting roles or environment membership without requiring active organization membership.  
-Proposal: Make active organization membership a required authorization predicate. Serialize membership transitions and grant writes through the same membership row.  
-Deletes: Role-only and environment-membership-only admission predicates for human principals.  
+Proposal: Grant admission locks the membership row (`SELECT ... FOR UPDATE`). Session admission requires active org membership in addition to roles.  
+Deletes: Role-only and environment-membership-only admission predicates for user principals.  
 Risk: Previously inconsistent accounts lose access. A concurrent grant/deactivation test must prove that inactive membership cannot retain or regain authority, including control sessions.
+
+Owner review 2026-10-31: keep, high, Group 3 Do, small.
 
 ## Finding E1-5: Identity database traffic carries signing material without TLS
 
-Severity: high  
+Severity: medium  
 Effort: M  
 Area: services/identity/src/lib.rs  
 Evidence: `services/identity/src/lib.rs:156`; `services/identity/src/lib.rs:165`; `crates/identity/platform/src/session_keys.rs:182`; `crates/identity/platform/src/password.rs:555`  
@@ -75,31 +81,37 @@ Proposal: Require authenticated TLS for identity database connections, including
 Deletes: Production `NoTls` connections in the identity service.  
 Risk: Database certificates and connection inputs must change. Transport tests must reject plaintext, an untrusted certificate, and a certificate for another hostname.
 
+Owner review 2026-10-31: medium, Group 3 Do. CNPG serves TLS by default, so the change is the client side. Question 2 is answered: no independent transport encryption exists, and this finding is the fix.
+
 ## Finding E1-6: Cached PAT approval survives credential expiry
 
 Severity: medium  
-Effort: M  
+Effort: S  
 Area: crates/platform/runtime/src/auth_cache.rs  
 Evidence: `crates/platform/runtime/src/auth_cache.rs:72`; `crates/platform/runtime/src/auth_cache.rs:135`; `crates/platform/runtime/src/plugins/route_authentication.rs:504`; `crates/identity/platform/src/kv_memory.rs:11`  
 Problem: Cached token approvals contain a receipt time but no credential deadline. A PAT accepted just before expiry remains accepted for up to 60 seconds without another identity read. A session’s cached authority approval can likewise outlive its source PAT, even while the signed session remains valid.  
-Proposal: Cache explicit authority deadlines and expire approval at the earlier of that deadline and the cache deadline. Alternatively, remove identity approval caching.  
+Proposal: Cache entries carry the credential deadline. Approval expires at the earlier of the credential deadline and the cache deadline.  
 Deletes: Deadline-free `Token` approval entries.  
 Risk: Requests near expiry begin to refuse earlier. A test with an active cache must cross natural PAT expiry without publishing an invalidation and expect refusal immediately.
+
+Owner review 2026-10-31: keep, small. Question 5 is answered: a cache delay is acceptable only after a lost invalidation. Natural expiry refuses immediately.
 
 ## Finding E1-7: Cache replication restarts the age of old authorization facts
 
 Severity: medium  
-Effort: M  
+Effort: S  
 Area: crates/platform/runtime/src/kv_memory.rs  
 Evidence: `crates/platform/runtime/src/kv_memory.rs:130`; `crates/platform/runtime/src/kv_memory.rs:178`; `crates/platform/runtime/src/kv_memory.rs:244`; `crates/identity/platform/src/auth_changes.rs:115`  
 Problem: Watch delivery assigns `Instant::now()` to every received value and ignores its original age. A host that receives a nearly expired value gives it another full cache lifetime. This exceeds the documented 60-second backstop when an invalidation is lost.  
-Proposal: Preserve one absolute freshness deadline across reads, publication, and replication. Removing shared authorization values, as proposed in E1-2, removes this replication failure.  
+Proposal: Carry one absolute deadline through reads, publication, and replication.  
 Deletes: Receipt-time renewal of replicated authorization values.  
 Risk: Old watch entries become immediate misses. A delayed-delivery test must prove that replication never extends the original deadline.
 
+Owner review 2026-10-31: keep, small. This adds a field. The alignment R7 rule that the `auth_cache` tests pass unchanged still holds.
+
 ## Finding E1-8: File-backed signing keys remain trusted indefinitely
 
-Severity: medium  
+Severity: low  
 Effort: M  
 Area: crates/identity/session/src/file_keys.rs  
 Evidence: `crates/identity/session/src/file_keys.rs:30`; `crates/identity/session/src/file_keys.rs:80`; `services/edge/src/authenticator.rs:52`  
@@ -110,6 +122,8 @@ Risk: Disconnected devices eventually refuse sessions. A test must retain an old
 
 Owner addendum 2026-10-31: unchanged. Neither [alignment](../plan/alignment.md) nor [integration-schema](../plan/integration-schema.md) covers file-backed signing keys.
 
+Owner review 2026-10-31: low, deferred. The architecture ruling for the local box is: trust a verified token until its expiry, keep no session state, and a revoked-list file can ship with the bundle later. A trust deadline on the key file means a disconnected box refuses every session after the deadline. The owner picks one of: no deadline (current) plus the revoked-list file when wanted, or a deadline and its length. Not filed until picked (question 3).
+
 ## Finding E1-9: CLI and HTTP routes enforce different grant rules
 
 Severity: medium  
@@ -117,9 +131,11 @@ Effort: M
 Area: crates/control/lib/src/user_role.rs; crates/control/lib/src/role_permission.rs  
 Evidence: `crates/control/lib/src/user_role.rs:152`; `crates/identity/platform/src/application.rs:436`; `crates/execution/host/src/application_route.rs:407`; `crates/execution/host/src/application_route.rs:365`; `crates/control/lib/src/role_permission.rs:49`  
 Problem: The HTTP route refuses removal of application `admin` while `project-admin` covers it, but the CLI calls an unconditional delete. The HTTP permission route also rejects fixed host operations before calling an owner function that does not enforce that rule. The shared owner therefore permits states that another entry point declares invalid.  
-Proposal: Put grantability and covering-grant rules in the owning mutation boundary. Make CLI and HTTP callers use the same authorized operation.  
+Proposal: One authorized mutation owner for grants and revokes. CLI and HTTP call it. The covering rule (project-admin covers application admin) and the no-escalation-beyond-yourself rule live there and nowhere else.  
 Deletes: Transport-specific semantic guards and direct bypass paths.  
 Risk: Some existing CLI commands begin to refuse. A parity test must submit the same covered revoke and fixed-operation grant through both entry points.
+
+Owner review 2026-10-31: keep, medium, Group 3 Do.
 
 ## Finding E1-10: An unused API-key authority remains in the application schema
 
@@ -132,13 +148,15 @@ Proposal: Delete the unused application API-key substrate. Keep credential autho
 Deletes: `API_KEY`, `platform.api_key`, its history scaffolding, and tests that only preserve the unused structure.  
 Risk: Schema snapshots change. Schema and authority tests must pass without the table, while PAT and session authentication tests retain their behavior.
 
+Owner review 2026-10-31: keep as a deletion, Group 1 In passing. It is a schema baseline change.
+
 ## Open questions for the owner
 
-1. Must tenant isolation survive compromise of one native host or theft of its scheduler certificate?
-2. Does every deployed identity database connection have independently enforced transport encryption?
-3. What maximum disconnected period justifies continued trust in an edge signing key set?
-4. Is every operator certificate intentionally a platform-wide credential, and what revokes one certificate without replacing the CA?
-5. Are cache delays acceptable only after lost invalidation, or also after natural credential expiry?
+1. Must org isolation survive compromise of one native host or theft of its scheduler certificate? Answered 2026-10-31 by alignment R5: a compromised host or stolen runtime certificate reaches only its own environment. That is the boundary.
+2. Does every deployed identity database connection have independently enforced transport encryption? Answered 2026-10-31: no. E1-5 is the fix.
+3. Owner pick (E1-8): no trust deadline on the local key file (current) plus a revoked-list file when wanted, or a deadline and its length.
+4. Is every operator certificate intentionally a platform-wide credential, and what revokes one certificate without replacing the CA? Reviewer pick 2026-10-31, owner to confirm: yes, the provisioning operator certificate is one platform-wide principal by design. Revocation is short certificate lifetimes under cert-manager (alignment R3), not a CRL.
+5. Are cache delays acceptable only after lost invalidation, or also after natural credential expiry? Answered 2026-10-31 under E1-6: only after a lost invalidation. Natural expiry refuses immediately.
 
 <!-- lane E2, bead wamn-hgdta.2 -->
 

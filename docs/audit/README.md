@@ -12,13 +12,13 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 
 | id | report file | severity | effort | area | one-line summary |
 | --- | --- | --- | --- | --- | --- |
-| E1-1, E2-1 | [E](security.md) | high | M | Org credentials | Valid coordinates collide in Secret, ServiceAccount, Role, and RoleBinding names. |
+| E1-1, E2-1 | [E](security.md) | high | S | Org credentials | Valid coordinates collide in Secret, ServiceAccount, Role, and RoleBinding names. One encoding, the double-hyphen convention, no fallback. The two deployed coordinates do not collide. |
 | E2-2 | [E](security.md) | high | L | Organization authority | An org control credential can change authority and connection records across organizations. |
 | E1-2 | [E](security.md) | high | L | Authorization cache | Shared NATS credentials permit forged grant answers for another environment. Closed by alignment R4, R5 and R7. |
 | E3-1 | [E](security.md) | medium | M | Component admission | Publication trusts registry descriptors without deriving admission facts from the component bytes. Waits for alignment W1 to W3. |
-| E1-3 | [E](security.md) | high | L | Grant revocation | A delayed grant projection can restore application administration after revocation. |
-| E1-4 | [E](security.md) | high | M | Membership | Concurrent grants can outlive deactivation, and session admission omits active org membership. |
-| E1-5, E2-3 | [E](security.md) | medium | L | Database transport | Native database and replication connections permit plaintext traffic, including signing material. |
+| E1-3 | [E](security.md) | high | L | Grant revocation | A delayed grant projection can restore application administration after revocation. Ordering plus the system row lock for (principal, environment). No new owner process. |
+| E1-4 | [E](security.md) | high | S | Membership | Concurrent grants can outlive deactivation, and session admission omits active org membership. Lock the membership row on grant. Session admission requires active org membership. |
+| E1-5, E2-3 | [E](security.md) | medium | L | Database transport | Native database and replication connections permit plaintext traffic, including signing material. CNPG serves TLS by default. The change is the client side. |
 | E2-4 | [E](security.md) | medium | M | Event transport | Event NATS exposes credentials and event contents through plaintext connections. Closed by alignment R1, R3 and R4. |
 | E3-2 | [E](security.md) | high | M | Dependencies | The recorded native dependency scan reports 17 vulnerabilities and 12 warnings. |
 | E3-3 | [E](security.md) | high | M | Artifact limits | Package download and extraction lack aggregate byte, layer, and file budgets. |
@@ -69,10 +69,10 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | C2-6 | [C](upgrade.md) | medium | M | Executor identity | Commit selection builds a target binary but still applies schema through the launching binary. Closed by C3-3. |
 | C2-7 | [C](upgrade.md) | medium | M | Credential recovery | Upgrade cleanup deletes private outputs before durable stage completion, breaking interruption recovery. Closed with C3-3. The plan's admin flow survives. |
 | C2-9 | [C](upgrade.md) | medium | M | Package reconciliation | Current package versions skip repair of derived history functions and triggers. |
-| E1-6 | [E](security.md) | medium | M | Credential expiry | Cached PAT approval can remain valid after the credential expires. |
-| E1-7 | [E](security.md) | medium | M | Cache freshness | Replication gives old authorization facts a new cache lifetime. |
-| E1-8 | [E](security.md) | medium | M | Offline trust | File-backed signing keys remain trusted indefinitely. |
-| E1-9 | [E](security.md) | medium | M | Grant admission | CLI and HTTP mutations enforce different covering-grant and grantability rules. |
+| E1-6 | [E](security.md) | medium | S | Credential expiry | Cached PAT approval can remain valid after the credential expires. Entries carry the credential deadline. |
+| E1-7 | [E](security.md) | medium | S | Cache freshness | Replication gives old authorization facts a new cache lifetime. One absolute deadline through replication. Adds a field. |
+| E1-8 | [E](security.md) | low | M | Offline trust | File-backed signing keys remain trusted indefinitely. Deferred until the owner picks a deadline or none plus a revoked-list file. |
+| E1-9 | [E](security.md) | medium | M | Grant admission | CLI and HTTP mutations enforce different covering-grant and grantability rules. One authorized mutation owner. The covering and no-escalation rules live there only. |
 | E2-5 | [E](security.md) | medium | M | Development credentials | Standing fixtures and backup declarations share known administrator credentials. Re-scoped after integration-schema drops the credential import paths. |
 | E2-6 | [E](security.md) | medium | S | Secret diagnostics | Command help can print password-bearing environment values. |
 | E2-7 | [E](security.md) | medium | M | Container identity | Standalone service images and deployments default to root execution. |
@@ -174,7 +174,7 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | A1-9 | [A](code-quality.md) | low | S | Credential placeholder | An unused Kubernetes credential provider always returns an unimplemented error. |
 | A2-12 | [A](code-quality.md) | low | S | Digest spelling | Raw-byte digest helpers independently implement one wire spelling. |
 | A2-14, H1-11 | [A](code-quality.md), [H](hygiene.md) | low | S | Shell plumbing | Repository launchers repeat failure handling, discovery, lookup, and command printing. |
-| E1-10 | [E](security.md) | low | S | Unused authority | Application API-key schema, history, and tests preserve a credential path that runtime does not read. |
+| E1-10 | [E](security.md) | low | S | Unused authority | Application API-key schema, history, and tests preserve a credential path that runtime does not read. Group 1 In passing: a schema baseline change. |
 | A1-10 | [A](code-quality.md) | low | S | Guest dependencies | Nine guest dependency declarations have no confirmed use. |
 | A2-11 | [A](code-quality.md) | low | S | SQL quoting | Callers duplicate identifier quoting despite an existing owner. |
 | A2-15 | [A](code-quality.md) | low | S | Empty declarations | Four empty attachment documents remain because readers disagree about absence. |
@@ -251,6 +251,12 @@ The owner review of 2026-10-31 rejects the following. The report evidence stays 
 | "Halve the package count" and the 88 to 44 arithmetic | Dropped. Package count is not a goal. Delete a package when it has one consumer or no enforced boundary. Keep one when `tools/repo-lint-dependencies` enforces something through it. |
 | Question on Cargo package names (B3-2) | Answered: no external automation depends on them. |
 | Question on one qualification cycle for guest moves (B3-3 through B3-5) | Answered: yes. A guest repin is a new release digest, and one `qualify-release` run covers it. |
+| E1-3: one serialized grant owner across hosts, CLI and provisioning | Rejected as written. The fix is ordering plus a database lock: application rows are a projection of committed system authority, written under the system row lock for (principal, environment). No new owner process. |
+| E1-6: remove identity approval caching | Rejected. Entries carry the credential deadline instead. |
+| E1-8: File-backed signing keys remain trusted indefinitely | Deferred, low. The local box trusts a verified token until its expiry and keeps no session state. The owner picks: no deadline (current) plus a revoked-list file when wanted, or a deadline and its length. Not filed until picked. |
+| Question on colliding deployed coordinates (E1-1, E2-1) | Answered: none. The only deployed coordinates are `dkk--receiving--dev` and `dkk--wms--dev`. No fallback for old names. |
+| Question on independent transport encryption for identity databases (E1-5) | Answered: no. E1-5 is the fix. |
+| Question on cache delays after natural expiry (E1-6, E1-7) | Answered: a cache delay is acceptable only after a lost invalidation. Natural expiry refuses immediately. |
 | C1-2's pending-work record and C1-3's schema advancement before analysis | Rejected. One baseline, so nothing advances. Apply compares the installed baseline hash with the candidate's and refuses with "schema changed, reset the environment database" on a mismatch. C1-3 closes into C1-2 with its Deletes widened to every project migration call. |
 
 ### Plans in flight
@@ -455,13 +461,14 @@ Do (27 findings). The rows the review named, then every row that deletes a build
 | D3-2 | Qualification does not identify all deployed behavior | medium | ctl/runner | The qualification identity split between `ImageSet` and `QualificationImages` only. The key stays release digest plus host image digest. |
 | D3-4 | Desired deployment inputs still have several owners | medium | none | `EnvironmentFile` and the authored `host-group-receiving.yaml` and `host-group-wms.yaml` overlays. The JSON sidecars are deleted once, under D1-1. `environment.k` owns bindings and versions, not integration selections or floors. |
 
-In passing (12 findings). Helper dedup, naming, count pins and doc links. Closed when the owning file is already open, never filed alone.
+In passing (13 findings). Helper dedup, naming, count pins and doc links. Closed when the owning file is already open, never filed alone.
 
 | Finding | Title | Severity | Image | Deletes |
 | --- | --- | --- | --- | --- |
 | B2-8 | Publication mixes release construction with local runtime adaptation | medium | ctl/runner | The unused database inputs from the local assembler and the duplicated local-versus-registry assembly path. The release-control crate is Group 4. |
 | B2-9 | Provisioning APIs expose CLI output paths to internal callers | medium | ctl/runner | Temporary credential file round trips in environment ensure, internal `emit_*` fields and `-` sentinels. Return credential objects from the library. Files are a services/ctl concern. When the integration-schema work touches `provision_project_env`. |
 | C1-5 | Run-plane repair is a partial second schema-upgrade engine | medium | host, ctl/runner | Structural SQL slicing, missing-column mutation, and separate table-bootstrap actions. Deletion only. Reconciliation keeps grants, roles and policies. |
+| E1-10 | An unused API-key authority remains in the application schema | low | host, ctl/runner | `API_KEY`, `platform.api_key`, its history scaffolding, and tests that only preserve the unused structure. A schema baseline change. |
 | C2-4 | Completion markers replace current-state observation | medium | ctl/runner | Completion-marker gating around environment reconciliation and finished-stage gating around mutable upgrade phases. Markers stay for immutable artifacts and qualification results only. |
 | C2-5 | Helm history equality bypasses recovery and drift repair | medium | ctl/runner | The historical-values-only early return and separate interpretations of successful history versus current deployment state. Resolve the pending Helm operation first. |
 | C2-10 | Platform-schema ownership is scattered across lifecycle phases | low | ctl/runner | Platform-extension installation inside the application-package applier, moved into substrate setup. The duplicate migration calls vanish under C1-1. |
@@ -495,7 +502,7 @@ Do (10 findings). The rows the review named, then every row that deletes a build
 
 Target: one tier per target and one selection owner, mixed targets deleted (G3-1, G3-2, G3-6). Every ignore is fixed or deleted, and no ignore stays without a stated missing prerequisite (G2-8, G3-4). The security highs land here with no dependency on any crate move: E2-2 (an org control credential reaches its own org only), E1-2 (per-environment broker identity, grant answers local), E1-3, E1-4, A3-1, A3-2, A2-1, B2-6 and F3-5. Plaintext in-cluster transport (E1-5, E2-3, E2-4) is medium until a non-dev cluster exists.
 
-Do (28 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high.
+Do (29 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high.
 
 | Finding | Title | Severity | Deletes |
 | --- | --- | --- | --- |
@@ -507,16 +514,17 @@ Do (28 findings). The rows the review named, then every row that deletes a build
 | G2-8 | Empty prerequisite reasons conceal a built-service dependency | low | The empty prerequisite reasons and empty prerequisite calls where direct executable discovery supplies the required failure. |
 | G3-4 | Ignore reasons mix prerequisites, disabled tests, and child helpers | medium | Empty reasons, prose-only prerequisite lists, permanent bead-only ignores, and the ignored SQLite helper test. |
 | E2-2 | Org-scoped control credentials retain authority across organizations | high | Broad control table grants and caller-selected organization authority in privileged functions. |
-| E1-3 | A delayed grant can restore revoked administration | high | Independent route-owned grant and revoke fan-out. |
-| E1-4 | Inactive organization membership is not an admission boundary | high | Role-only and environment-membership-only admission predicates for user principals. |
+| E1-3 | A delayed grant can restore revoked administration | high | The grant-before-revoke ordering difference and the process-local mutex as the only coordination. Ordering plus the system row lock, no new owner process. |
+| E1-4 | Inactive organization membership is not an admission boundary | high | Role-only and environment-membership-only admission predicates for user principals. Lock the membership row on grant. Session admission requires active org membership. |
+| E1-9 | CLI and HTTP routes enforce different grant rules | medium | Transport-specific semantic guards and direct bypass paths. One authorized mutation owner. The covering and no-escalation rules live there only. |
 | A3-1 | Operation binding turns infrastructure failures into permission denials | high | The unconditional permission-denied mapping and conversion through `error.to_string()`. |
 | A3-2 | Authority cleanup can panic during unwinding | high | Parallel claim maps, repeated setters and removals, and lock-poison `expect` calls in cleanup. |
 | A2-1 | Scalar spelling rules already diverge | high | Approximately 140–180 net lines, including the history date arithmetic and duplicate numeric parsing. |
 | B2-6 | Release qualification embeds application test policy in the control library | medium | Application case lists (the closed Receiving/WMS match), Docker runner construction, and temporary test-result management from control/lib. The application declares its case set in its package beside its tests. |
 | F3-5 | Release qualification rejects every new application identity | high | Remove the production `application_for` package allowlist and mandatory selection of Receiving/WMS test executables. Retain their business cases under their application owners. |
-| E1-5 | Identity database traffic carries signing material without TLS | medium | Production `NoTls` connections in the identity service. |
+| E1-5 | Identity database traffic carries signing material without TLS | medium | Production `NoTls` connections in the identity service. CNPG serves TLS by default. Client side only. |
 | E2-3 | Postgres connections expose sensitive traffic without transport encryption | medium | Production `NoTls` connections, plaintext admission rules, and the CDC plaintext default. |
-| E1-1 | Credential resource names collide across environments | high | The two independent single-hyphen naming formulas. |
+| E1-1 | Credential resource names collide across environments | high | The two independent single-hyphen naming formulas. One encoding, the double-hyphen convention, no fallback. |
 | E2-1 | Valid environment names share credential Secrets and ServiceAccounts | high | The two independent single-hyphen name formats in `kubernetes.rs`. |
 | E2-5 | Shared development infrastructure publishes administrator credentials | medium | `deploy/platform/postgres.yaml`, committed MinIO credential values, and shared root credential wiring in backup declarations. Re-scoped: the import paths are dropped by the integration-schema plan, so only the MinIO root and backup root identity remain here. |
 | E2-7 | Standalone service images default to root execution | medium | Implicit root execution and unrestricted writable container filesystems. |
@@ -528,15 +536,12 @@ Do (28 findings). The rows the review named, then every row that deletes a build
 | G3-3 | The merge queue omits required live behavior | high | Manual live-stage instructions as the only execution path for required cases. Remove the rule that cluster coverage depends only on edits to cluster tests. |
 | G3-5 | Generated output prevents isolated contract compilation | medium | Compile-time reads of generated application output from ordinary test targets. Remove application generation from documentation-only quality execution. |
 
-In passing (16 findings). Helper dedup, naming, count pins and doc links. Closed when the owning file is already open, never filed alone.
+In passing (13 findings). Helper dedup, naming, count pins and doc links. Closed when the owning file is already open, never filed alone.
 
 | Finding | Title | Severity | Deletes |
 | --- | --- | --- | --- |
-| E1-6 | Cached PAT approval survives credential expiry | medium | Deadline-free `Token` approval entries. |
-| E1-7 | Cache replication restarts the age of old authorization facts | medium | Receipt-time renewal of replicated authorization values. |
-| E1-8 | File-backed signing keys remain trusted indefinitely | medium | The unconditional `true` freshness result. |
-| E1-9 | CLI and HTTP routes enforce different grant rules | medium | Transport-specific semantic guards and direct bypass paths. |
-| E1-10 | An unused API-key authority remains in the application schema | low | `API_KEY`, `platform.api_key`, its history scaffolding, and tests that only preserve the unused structure. |
+| E1-6 | Cached PAT approval survives credential expiry | medium | Deadline-free `Token` approval entries. Entries carry the credential deadline. |
+| E1-7 | Cache replication restarts the age of old authorization facts | medium | Receipt-time renewal of replicated authorization values. One absolute deadline through replication. Adds a field. |
 | E2-6 | Command help can disclose database passwords | medium | Secret values from generated help and unnecessary password-bearing command arguments. |
 | E3-1 | Registry descriptors can bypass byte admission | medium | The assumption that registry existence proves admission and the conversion of unchecked descriptors into admitted facts. Waits for alignment W1 to W3. Do not re-pin exact versions. |
 | E3-5 | Execution deadlines do not contain compilation | medium | Full compilation solely for import discovery and unrestricted detached compilation work. |
@@ -683,36 +688,34 @@ In passing (75 findings). Helper dedup, naming, count pins and doc links. Closed
 8. Which local/deployed host behaviors must match, and must WMS retain its distinct concurrency limit? This unblocks Groups 1 and 3 (D1-5, G2-4).
 9. Can the identity journey replace its repository `evidence/` requirement with caller-owned temporary result storage? This unblocks Group 4 (H1-5).
 10. Does any external workflow still require `kind-gate-build` or `kind-gate-image-remove`? This unblocks Group 4 (H1-12).
-11. Which deployed coordinates currently produce colliding credential names? This unblocks safe replacement in Group 3 (E1-1, E2-1).
-12. Must an organization control credential remain trusted with authority across every organization? This decides the database boundary in Group 3 (E2-2).
-13. Is every operator certificate intentionally platform-wide, and how must one certificate be revoked without replacing its CA? This informs privileged credential boundaries in Group 3 (E2-2, E2-3).
-14. Are cache delays permitted only after lost invalidation, or also after natural credential expiry? This unblocks Group 3 (E1-6, E1-7).
-15. What maximum disconnected period permits continued trust in an local signing key set? This unblocks Group 3 (E1-8).
-16. Which independently enforced network controls protect deployed identity databases, plaintext services, and standing development fixtures? This establishes the live boundary for Group 3 (E1-5, E2-3, E2-5).
-17. Who owns refreshes for WASI-Virt, its adapter, and the pg-walstream patch, and what refresh interval applies? This unblocks Group 3 (E3-8).
-18. Does another check scan the web dependency graph, including the pinned wfe dependency resolution? This determines the remaining scan scope in Group 3 (E3-8).
-19. Must WASI-Virt provenance report a measured adapter digest instead of its current constant? This unblocks provenance acceptance in Group 3 (E3-8).
-20. Is registry write access intentionally sufficient to bypass component admission? This decides the trusted publication boundary in Group 3 (E3-1).
-21. What measured condition permits serving hosts to leave aggregate memory count mode? This unblocks Group 3 (E3-4).
-22. Must poisoned authority state terminate the process, or must the host isolate the affected owner and become unready? This unblocks Group 3 (A3-2).
-23. Which blobstore `Other` messages are frozen consumer contracts? This unblocks replacement of backend prose in Group 4 (A3-3).
-24. Can host operations explicitly share authored shapes while resolved contract bytes and generated clients remain unchanged? This unblocks Group 4 (A2-3).
-25. Must SQL literal quoting support nondefault PostgreSQL string parsing, or can callers require the default server behavior? This defines quoting acceptance in Group 4 (A2-11).
-26. Must HTTP exposure remain explicit for every custom public operation? This unblocks generated publication policy in Group 4 (F1-1).
-27. Can Acme consume its pinned base operation’s wire shape while retaining separate identity and inspection behavior? This unblocks Group 4 (F1-4).
-28. Can pure CRUD applications use generated component crates without authored Rust files? This unblocks Group 4 (F1-3, F3-1).
-29. Can WAMN consume only public built wfe exports while source qualification remains inside the submodule? This unblocks Group 4 (H3-3).
-30. Which retained saved-edit acceptance run passed against the current freshness, watcher, and activation rules? This supplies the comparison result for Group 2 (F2-1 through F2-3).
-31. Can the normal developer command own the complete private stack, with external services available through explicit overrides? This unblocks Groups 2 and 4 (F2-5, F2-6, F3-2).
-32. Can the default author experience require Docker on Linux, or must the first release support another host platform? This unblocks Groups 2 and 4 (F2-8, F3-2).
-33. Which cold-start, warm-start, and saved-edit limits must the retained results enforce? This unblocks acceptance for Groups 2 and 4 (F2-11, G3-7).
-34. Does the ten-minute clock start with the installed SDK, Docker, and provisioned account, or include their installation and provisioning? This unblocks Group 4 (F3-7).
-35. Can root supply live statuses for quarantined tests and archive candidates, including which ignored cases represent defects or retired contracts? This unblocks Groups 3 and 4 (G2-1 through G2-4, G3-4, H2-2, H2-3).
-36. Which dashboard or collector owns the frozen PostgreSQL telemetry identifiers whose guard cites deleted documentation? This unblocks retained-contract decisions in Groups 3 and 4 (G2-6, H2-5).
-37. Must startup-burst measurement remain supported despite its absent repository execution path? This unblocks Group 4 (A1-1).
-38. Must benchmark summaries remain readable without their raw result files? This defines the retained result contract in Group 4 (H1-7).
-39. Does an immutable Git source plus a compact history entry satisfy the rule that accepted plans remain untrimmed? This unblocks Group 4 (H2-2, H2-7).
-40. Where are the twelve historical performance artifacts retained, if anywhere? This unblocks evidence disposition in Group 4 (H2-6).
-41. Does any external tool still read `.beads/beads.jsonl`? This unblocks obsolete-export removal in Group 4 (H3-10).
+11. Must an organization control credential remain trusted with authority across every organization? This decides the database boundary in Group 3 (E2-2).
+12. Confirm the reviewer's pick: the provisioning operator certificate is one platform-wide principal by design, and revocation is short certificate lifetimes under cert-manager (alignment R3), not a CRL. This informs privileged credential boundaries in Group 3 (E2-2, E2-3).
+13. Owner pick for the local signing key file: no trust deadline (current) plus a revoked-list file when wanted, or a deadline and its length. E1-8 is deferred and not filed until picked.
+14. Which independently enforced network controls protect plaintext services and standing development fixtures? This establishes the live boundary for Group 3 (E2-3, E2-5). Identity databases are answered: none, E1-5 is the fix.
+15. Who owns refreshes for WASI-Virt, its adapter, and the pg-walstream patch, and what refresh interval applies? This unblocks Group 3 (E3-8).
+16. Does another check scan the web dependency graph, including the pinned wfe dependency resolution? This determines the remaining scan scope in Group 3 (E3-8).
+17. Must WASI-Virt provenance report a measured adapter digest instead of its current constant? This unblocks provenance acceptance in Group 3 (E3-8).
+18. Is registry write access intentionally sufficient to bypass component admission? This decides the trusted publication boundary in Group 3 (E3-1).
+19. What measured condition permits serving hosts to leave aggregate memory count mode? This unblocks Group 3 (E3-4).
+20. Must poisoned authority state terminate the process, or must the host isolate the affected owner and become unready? This unblocks Group 3 (A3-2).
+21. Which blobstore `Other` messages are frozen consumer contracts? This unblocks replacement of backend prose in Group 4 (A3-3).
+22. Can host operations explicitly share authored shapes while resolved contract bytes and generated clients remain unchanged? This unblocks Group 4 (A2-3).
+23. Must SQL literal quoting support nondefault PostgreSQL string parsing, or can callers require the default server behavior? This defines quoting acceptance in Group 4 (A2-11).
+24. Must HTTP exposure remain explicit for every custom public operation? This unblocks generated publication policy in Group 4 (F1-1).
+25. Can Acme consume its pinned base operation’s wire shape while retaining separate identity and inspection behavior? This unblocks Group 4 (F1-4).
+26. Can pure CRUD applications use generated component crates without authored Rust files? This unblocks Group 4 (F1-3, F3-1).
+27. Can WAMN consume only public built wfe exports while source qualification remains inside the submodule? This unblocks Group 4 (H3-3).
+28. Which retained saved-edit acceptance run passed against the current freshness, watcher, and activation rules? This supplies the comparison result for Group 2 (F2-1 through F2-3).
+29. Can the normal developer command own the complete private stack, with external services available through explicit overrides? This unblocks Groups 2 and 4 (F2-5, F2-6, F3-2).
+30. Can the default author experience require Docker on Linux, or must the first release support another host platform? This unblocks Groups 2 and 4 (F2-8, F3-2).
+31. Which cold-start, warm-start, and saved-edit limits must the retained results enforce? This unblocks acceptance for Groups 2 and 4 (F2-11, G3-7).
+32. Does the ten-minute clock start with the installed SDK, Docker, and provisioned account, or include their installation and provisioning? This unblocks Group 4 (F3-7).
+33. Can root supply live statuses for quarantined tests and archive candidates, including which ignored cases represent defects or retired contracts? This unblocks Groups 3 and 4 (G2-1 through G2-4, G3-4, H2-2, H2-3).
+34. Which dashboard or collector owns the frozen PostgreSQL telemetry identifiers whose guard cites deleted documentation? This unblocks retained-contract decisions in Groups 3 and 4 (G2-6, H2-5).
+35. Must startup-burst measurement remain supported despite its absent repository execution path? This unblocks Group 4 (A1-1).
+36. Must benchmark summaries remain readable without their raw result files? This defines the retained result contract in Group 4 (H1-7).
+37. Does an immutable Git source plus a compact history entry satisfy the rule that accepted plans remain untrimmed? This unblocks Group 4 (H2-2, H2-7).
+38. Where are the twelve historical performance artifacts retained, if anywhere? This unblocks evidence disposition in Group 4 (H2-6).
+39. Does any external tool still read `.beads/beads.jsonl`? This unblocks obsolete-export removal in Group 4 (H3-10).
 
 Questions 8 and 10 of the first draft are answered in Rejected findings and proposals. Nothing from this list is filed until the owner answers.
