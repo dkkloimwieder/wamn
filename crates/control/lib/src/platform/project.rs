@@ -294,7 +294,7 @@ mod tests {
             "dns_zone": {"name": "wamn-dev", "dns_name": "wamn.dev.", "description": "wamn.dev public zone"},
             "guard_state": {"bucket": "wamn-dev-tofu-state", "service_account": "wamn-guard@wamn-dev.iam.gserviceaccount.com"},
             "node_pools": [
-                {"name": "main", "machine_type": "e2-standard-2", "spot": true, "disk_type": "pd-standard", "disk_size": 30, "size": 1, "label": "", "taint": ""},
+                {"name": "main", "machine_type": "e2-standard-2", "spot": true, "disk_type": "pd-standard", "disk_size": 30, "size": 2, "label": "", "taint": ""},
                 {"name": "bench", "machine_type": "e2-standard-2", "spot": true, "disk_type": "pd-standard", "disk_size": 30, "size": 1, "label": "role=bench-host", "taint": "role=bench-host:NoSchedule"},
                 {"name": "pg", "machine_type": "e2-standard-2", "spot": false, "disk_type": "pd-standard", "disk_size": 50, "size": 1, "label": "role=postgres", "taint": "role=postgres:NoSchedule"}
             ]

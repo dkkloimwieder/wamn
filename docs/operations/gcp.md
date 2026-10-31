@@ -365,7 +365,7 @@ cargo build --locked -p wamn-ctl --bin wamn-ctl --bin wamn -p wamn-scenario-work
 
 The agent runs this procedure as `wamn-agent@wamn-dev` with the agent's `CLOUDSDK_CONFIG`. The agent posts the saved plan, and it applies that plan only after the owner approves it. The state bucket of section 1 and the project resources of section 2 must exist first.
 
-[deploy/gcp/project.k](../../deploy/gcp/project.k) declares the cluster and the pools `main`, `pg` and `bench`. The pool `main` holds one Spot node. A taint restricts which pods can use a node. The pool `pg` holds one node for PostgreSQL alone. Its taint keeps every other pod off, and the `Cluster` selects it (section 4.5).
+[deploy/gcp/project.k](../../deploy/gcp/project.k) declares the cluster and the pools `main`, `pg` and `bench`. The pool `main` holds two Spot nodes. A taint restricts which pods can use a node. The pool `pg` holds one node for PostgreSQL alone. Its taint keeps every other pod off, and the `Cluster` selects it (section 4.5).
 
 The pool `bench` holds one Spot node for the Receiving host alone. Its taint keeps every other pod off, and an admission policy places the host there (section 4.9). The 8-vCPU project quota sets its size.
 
