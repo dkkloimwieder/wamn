@@ -446,16 +446,16 @@ Problem: Authors currently assemble an application inside the platform repositor
 Proposal: Make this the complete author path:
 
 ```bash
-wamn new hello_app
+wamn new application hello_app
 cd hello_app
-$EDITOR wamn.k migrations/0001_initial.sql
+$EDITOR wamn.k schema.sql
 wamn dev
 wamn deploy acme/hello/dev
 ```
 
-`wamn new hello_app` generates `wamn.k`, an initial SQL migration, `.gitignore`, and a short README linking the platform quickstart. The starter declares a greeting model and its create, read, update, and delete operations.
+`wamn new application hello_app` generates `wamn.k`, one SQL baseline file (`schema.sql`), `.gitignore`, and a short README linking the platform quickstart. `wamn new` has three names, application, service and overlay `--base`, and no flags. The starter declares a greeting model and its create, read, update, and delete operations.
 
-The editor step changes the schema, declared operations, labels, and visible fields. SQL owns database types. Generation derives operation contracts from the migrated database.
+The editor step changes the schema, declared operations, labels, and visible fields. SQL owns database types. Generation derives operation contracts from the installed baseline.
 
 `wamn dev` generates `target/wamn/hello_app/`. Its output contains the compiled manifest, SQL, contracts, WIT interfaces, Rust implementation, component bytes, browser client, web bundle, and `build.json`. WIT defines component interfaces. The build receipt records inputs and output digests. Generated Cargo manifests and wrappers remain build output.
 
@@ -466,6 +466,8 @@ Custom Rust remains an explicit extension for business behavior that declaration
 Deletes: Remove mandatory authored Cargo crates, WIT path lists, generated-code includes, and publication boilerplate from the default application shape. Replace repository-relative tool discovery for this path.
 
 Risk: Standalone builds can change component interfaces or artifact identity. A proposed `hello_app_from_empty_directory` test must build and invoke every starter operation without the platform checkout.
+
+Owner review 2026-10-31: keep, Group 4 Do, in the templates priority. Generated Cargo manifests and wrappers stay build output. The `hello_app_from_empty_directory` test stands.
 
 ## Finding F3-2: `wamn dev` must own its local services and first-run setup
 
@@ -478,11 +480,13 @@ Problem: Starting an application requires platform setup before the development 
 
 Proposal: Let bare `wamn dev` discover the current package, start isolated services, generate credentials and environment mapping, build, activate, and watch. Reuse the existing provisioning and supervision owners. Keep their strict internal documents generated in a private cache directory.
 
-Ship matching platform binaries, guests, and shell assets with the SDK or its pinned development image. Preserve separate credential roles and deployed runtime behavior. Local startup must work before the first Git commit.
+Ship matching platform binaries, guests, and shell assets with the SDK. Docker supplies only PostgreSQL, NATS and the collector. Preserve separate credential roles and deployed runtime behavior. Local startup must work before the first Git commit.
 
 Deletes: Remove mandatory infrastructure flags, binary paths, handwritten local environment documents, and the separate standup step from the default author path. Remove committed HEAD as a local execution prerequisite.
 
 Risk: Automatic setup can reset another session or leave services running. Proposed tests must prove two-session isolation and cleanup. Retain the existing compatible-edit and invalid-SQL behavior described at `docs/operations/running-tests.md:628`. Explicitly run `local_host_matches_the_deployed_host_contract`, currently ignored at `crates/control/lib/src/dev/activation.rs:2051`.
+
+Owner review 2026-10-31: keep, Group 2 Do. The pinned development image is struck.
 
 ## Finding F3-3: Generated descriptions need a default application renderer
 
@@ -493,15 +497,7 @@ Evidence: `apps/wamn_receiving/web/README.md:8` assigns requests, selectors, val
 
 Problem: Generated descriptions provide presentation data, but authors still connect them to requests and screens. The shared shell reduces duplication without removing the per-application web project. The existing platform UI entry does not automatically render arbitrary application models.
 
-Proposal: Keep `apps/platform_ui` as the control application and shared shell owner. Publish the shell as an SDK dependency instead of importing its repository source.
-
-For a default application, generate the route map and standard table, detail, and form bindings. Build those modules with the platform-owned web toolchain. Store the resulting application bundle in its package artifact. The author maintains no `web/package.json`, Vite configuration, or generic TSX screens.
-
-An optional authored `web/` package supplies custom workflows through the same shell and generated clients. Receiving retains its custom receipt and offline behavior. Both modes use the same session, transport, permission filtering, and release selection.
-
-Deletes: Remove mandatory per-application web manifests and Vite files. Replace mechanical screen bindings with generated bindings. Delete the repository source alias once the shell package supplies the interface.
-
-Risk: Generic rendering can lose reference labels, action parameters, validation, or permission filtering. A proposed browser test must exercise generated CRUD screens and a custom screen together. Preserve the Receiving behavior documented at `docs/operations/running-tests.md:1214`.
+Owned by the ui-split work with F1-8, the owner's developer-experience priority 1 (owner review 2026-10-31). The shell as an SDK dependency and the generated default screens are decided there. The audit files nothing separate. The evidence above is the pointer.
 
 ## Finding F3-4: Platform tests and operational instructions remain application responsibilities
 
@@ -522,6 +518,8 @@ Deletes: Remove duplicated application setup helpers and generic platform assert
 
 Risk: Moving assertions can remove domain coverage accidentally. Run the platform fixture suite and retained Receiving/WMS business histories before deleting each duplicate. Measurements.md section 3 also records 16 compile errors from missing generated inputs. The platform test entry must prepare those inputs itself.
 
+Owner review 2026-10-31: keep, Group 1 In passing with deployment D3-6. One platform fixture, `platform_fixture` owns the generic suites, and applications keep business tests.
+
 ## Finding F3-5: Release qualification rejects every new application identity
 
 Severity: high  
@@ -539,6 +537,8 @@ Deletes: Remove the production `application_for` package allowlist and mandatory
 
 Risk: Generic qualification can accept an application while missing domain failures. Keep domain tests required by the application delivery policy. Proposed qualification tests must accept an unfamiliar package ID and reject malformed contracts, missing artifacts, and invalid grants. Preserve refusal of absent or mismatched qualification evidence.
 
+Owner review 2026-10-31: keep, Group 3 Do with coupling B2-6. Platform qualification runs the generic cases against the exact artifacts, and the application's own case set is what it declares beside its tests. Question 3 is answered: exactly the cases the application declares, and the platform imposes none.
+
 ## Finding F3-6: Deployment needs one author command over the existing control owners
 
 Severity: high  
@@ -554,7 +554,9 @@ Generate the application mapping for the single-application default. Keep admini
 
 Deletes: Remove author-maintained deployment scripts, manual digest transfers, and a separate web-upload step from the default path. Keep lower-level operator verbs for administration and recovery.
 
-Risk: Retries can select different bytes or expose an API before its browser files exist. A proposed `deploy_hello_exact_release` test must cover first deployment, unchanged retry, qualification failure, upload failure, and rollback. Preserve immutable package tags and the environment lifecycle lock.
+Risk: Retries can select different bytes or expose an API before its browser files exist. A proposed `deploy_hello_exact_release` test covers first deployment and unchanged retry only. Preserve immutable package tags and the environment lifecycle lock.
+
+Owner review 2026-10-31: keep, Group 1 Do, sequenced after deployment D3-1, because platform apply consumes an immutable bundle. `wamn deploy <org/project/env>` is orchestration over the existing verbs and nothing more. It is the deployment-ergonomics priority: a client submits without an operator. The qualification-failure, upload-failure and rollback tests are dropped.
 
 ## Finding F3-7: The ten-minute target lacks a matching acceptance test
 
@@ -567,15 +569,19 @@ Problem: Existing tests start after substantial preparation and use established 
 
 Proposal: Add one platform-owned acceptance journey that runs the proposed commands verbatim. Start with the installed SDK, Docker, and provisioned account. Count downloads and preparation after `wamn new` in the result.
 
-Create a greeting, change its field in SQL and `wamn.k`, observe the local change, deploy, sign in, and read the deployed value. Record elapsed time, cache state, stage results, and cleanup. Require completion within 600 seconds on a named runner. Publish installation time separately.
+Create a greeting, change its field in SQL and `wamn.k`, observe the local change, deploy, sign in, and read the deployed value. Record elapsed time, cache state, stage results, and cleanup. The first run of the journey is the measurement, and a limit follows measurement. Publish installation time separately.
 
 Deletes: Replace the hello-app procedure with this executable quickstart. Remove author-maintained smoke-test setup for generated behavior.
 
 Risk: Hidden preparation can produce a misleading passing result. The proposed journey must run outside the platform checkout with empty application caches. It must fail when required generated outputs or browser files are absent.
 
+Owner review 2026-10-31: keep the quickstart journey as one platform-owned test, Group 4, after F3-1 and F3-6. It runs the commands verbatim from an empty directory. The 600-second requirement and the named runner are dropped. Question 1 is answered: the clock starts after SDK installation and account provisioning.
+
 ## Open questions for the owner
 
-1. Does the ten-minute clock use the proposed installed-SDK baseline, or include SDK installation and account provisioning?
-2. Can the default author experience require Docker on Linux, or must the first release support another host platform?
-3. Which application-specific business tests must deployment require in addition to generic platform qualification?
+All three questions were answered on 2026-10-31.
+
+1. The clock starts after SDK installation and account provisioning. The first run is the measurement, and a limit follows it (F3-7).
+2. Docker on Linux x86_64 is the supported host for now, the reviewer's pick recorded in the README for the owner to confirm.
+3. Exactly the cases the application declares beside its tests. The platform imposes none (F3-5).
 
