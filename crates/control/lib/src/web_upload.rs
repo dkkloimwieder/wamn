@@ -22,7 +22,8 @@ use crate::web_scope::{SCOPE_CACHE, SCOPE_CONTENT_TYPE, SCOPE_FILE, scope_file_b
 
 /// A built file name carries its content hash, so a browser keeps it.
 const ASSET_CACHE: &str = "public, max-age=31536000, immutable";
-/// The index names the current files, so a browser asks again at every load.
+/// The index names the current files, and the service worker `sw.js` keeps
+/// its name across builds, so a browser asks again at every load.
 const INDEX_CACHE: &str = "no-cache";
 /// The client of one package, as [`upload_release`] left it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -241,7 +242,7 @@ pub async fn write_files(
             .strip_prefix(dist)?
             .to_str()
             .context("a built file name is UTF-8")?;
-        let cache = if relative == "index.html" {
+        let cache = if relative == "index.html" || relative == "sw.js" {
             INDEX_CACHE
         } else if relative.starts_with("assets/") {
             ASSET_CACHE
@@ -261,7 +262,9 @@ pub async fn write_files(
     Ok(())
 }
 
-/// Write one object create-only with its Cache-Control and content type.
+/// Write one object create-only with its Cache-Control and content type. An
+/// existing object with equal bytes is the write of an earlier run that
+/// stopped, so it stays. An existing object with other bytes refuses.
 async fn put(
     store: &dyn ObjectStore,
     root: &str,
@@ -274,19 +277,38 @@ async fn put(
     attributes.insert(Attribute::CacheControl, cache.into());
     attributes.insert(Attribute::ContentType, content_type.into());
     let key = object_store::path::Path::from(format!("{root}/{relative}"));
-    store
+    let written = store
         .put_opts(
             &key,
-            bytes.into(),
+            bytes.clone().into(),
             PutOptions {
                 mode: PutMode::Create,
                 attributes,
                 ..PutOptions::default()
             },
         )
-        .await
-        .map(|_| ())
-        .with_context(|| format!("write {key}; an existing object is never replaced"))
+        .await;
+    match written {
+        Err(
+            object_store::Error::AlreadyExists { .. } | object_store::Error::Precondition { .. },
+        ) => {
+            let existing = store
+                .get(&key)
+                .await
+                .with_context(|| format!("read the existing {key}"))?
+                .bytes()
+                .await
+                .with_context(|| format!("read the existing {key}"))?;
+            ensure!(
+                existing.as_ref() == bytes.as_slice(),
+                "write {key}; an existing object with other bytes is never replaced"
+            );
+            Ok(())
+        }
+        written => written
+            .map(|_| ())
+            .with_context(|| format!("write {key}; an existing object is never replaced")),
+    }
 }
 
 /// The project that a client package `@wamn/<project>-client` names.
@@ -443,6 +465,43 @@ mod tests {
             built_files(&dist, "wamn_wms-2.1.3").unwrap().unwrap().len(),
             2
         );
+        std::fs::remove_dir_all(&dist).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_rerun_keeps_equal_objects_and_the_service_worker_is_not_cached() {
+        let dist = std::env::temp_dir().join(format!("wamn-web-rerun-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dist);
+        std::fs::create_dir_all(dist.join("assets")).unwrap();
+        std::fs::write(dist.join("index.html"), "index").unwrap();
+        std::fs::write(dist.join("sw.js"), "worker").unwrap();
+        std::fs::write(dist.join("assets/main.css"), "style").unwrap();
+        let store = InMemory::new();
+        // An earlier run wrote one asset, then stopped.
+        store
+            .put(
+                &object_store::path::Path::from(format!("{HEAD}/assets/main.css")),
+                "style".into(),
+            )
+            .await
+            .unwrap();
+        let mut files = Vec::new();
+        collect(&dist, &mut files).unwrap();
+        write_files(&store, HEAD, &dist, &mut files, SCOPE)
+            .await
+            .expect("the rerun keeps the equal asset and writes the rest");
+        let worker = store
+            .get(&object_store::path::Path::from(format!("{HEAD}/sw.js")))
+            .await
+            .unwrap();
+        assert_eq!(
+            worker
+                .attributes
+                .get(&object_store::Attribute::CacheControl)
+                .map(AsRef::as_ref),
+            Some(super::INDEX_CACHE)
+        );
+        assert_eq!(&worker.bytes().await.unwrap()[..], b"worker");
         std::fs::remove_dir_all(&dist).unwrap();
     }
 

@@ -116,13 +116,13 @@ It prints no line for a skipped package.
 ## Object writes and errors
 
 Both modes write assets first, generated `config.json` next, and `index.html` last.
-Each write creates a new object and never replaces an existing object, even when its bytes match.
+Each write creates a new object and never replaces an existing object.
 A failed upload can leave objects behind. The command performs no rollback.
-A retry after a partial upload can therefore refuse an existing asset before it reaches the index.
+A retry after a partial upload keeps each existing object whose bytes are equal, and refuses an object with other bytes.
 
-[write_files](../../crates/control/lib/src/web_upload.rs) accepts `index.html` and files under `assets/`.
+[write_files](../../crates/control/lib/src/web_upload.rs) accepts `index.html`, the service worker `sw.js`, and files under `assets/`.
 Assets carry `Cache-Control: public, max-age=31536000, immutable`.
-The index and generated `config.json` carry `Cache-Control: no-cache`.
+The index, `sw.js` and generated `config.json` carry `Cache-Control: no-cache`.
 The accepted extensions are `html`, `js`, `css`, `json`, `map`, `svg`, `png`, `ico`, `woff2`, and `woff`.
 
 The [CLI](../../services/ctl/src/web.rs) and [upload implementation](../../crates/control/lib/src/web_upload.rs) report these errors:
@@ -141,9 +141,10 @@ The [CLI](../../services/ctl/src/web.rs) and [upload implementation](../../crate
 | `release <requested> is not the release <deployed> that <coordinate> serves` | Use the digest from the newest successful revision. |
 | `the package artifact <tag> holds no built web client` | Publish the package with its built web files. |
 | `the package artifact <tag> holds no web client index.html` | Include the built index in the package artifact. |
-| `the build wrote <path>, which has no declared cache rule` | Keep built files under `assets/`, except for `index.html`. The uploader generates `config.json`. |
+| `the build wrote <path>, which has no declared cache rule` | Keep built files under `assets/`, except for `index.html` and `sw.js`. The uploader generates `config.json`. |
 | `the build wrote <path>, which has no declared content type` | Use a supported file extension. |
-| `write <key>; an existing object is never replaced` | Inspect the underlying storage error. An existing object, missing access, or a failed storage request can cause this error. |
+| `write <key>; an existing object with other bytes is never replaced` | An earlier upload wrote other bytes under this release path. Inspect the object before you delete it. |
+| `write <key>; an existing object is never replaced` | Inspect the underlying storage error. Missing access or a failed storage request can cause this error. |
 
 Argument errors and upload failures return a nonzero exit status.
 The command has no overwrite, delete, or resume flag.
