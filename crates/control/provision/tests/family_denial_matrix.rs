@@ -375,6 +375,14 @@ const CONTROL_MATRIX: [FamilyReach; 3] = [
     FamilyReach {
         family: WorkloadRoleFamily::Control,
         relations: &[
+            "identity.oauth_authorization|DELETE|table",
+            "identity.oauth_authorization|INSERT|table",
+            "identity.oauth_authorization|SELECT|table",
+            "identity.oauth_authorization|UPDATE|table",
+            "identity.oauth_token|DELETE|table",
+            "identity.oauth_token|INSERT|table",
+            "identity.oauth_token|SELECT|table",
+            "identity.oauth_token|UPDATE|table",
             "identity.org_memberships|DELETE|table",
             "identity.org_memberships|INSERT|table",
             "identity.org_memberships|SELECT|table",

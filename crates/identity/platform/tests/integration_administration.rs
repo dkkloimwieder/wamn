@@ -162,3 +162,72 @@ async fn write_and_copy_keep_environment_generations_and_credentials_separate() 
     assert!(!metadata.contains("private-dev"));
     assert!(!metadata.contains("private-prod"));
 }
+
+#[tokio::test]
+async fn oauth_writers_invalidate_rows_in_the_generation_transaction() {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_control_provision::test_database::system();
+    let (mut client, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
+        .await
+        .unwrap();
+    tokio::spawn(driver);
+    client
+        .batch_execute("BEGIN; SET LOCAL ROLE wamn_system")
+        .await
+        .unwrap();
+    client
+        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+        .await
+        .unwrap();
+    client
+        .batch_execute(
+            &wamn_control_provision::test_database::seed_org_project_env_sql("acme", "app", "dev"),
+        )
+        .await
+        .unwrap();
+    client.batch_execute("UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT").await.unwrap();
+    let store = RecordingStore::default();
+    execute(&mut client, &store, "integration.write", json!({"project":"app","name":"oauth","integration_type":"http","auth_type":"oauth2_client_credentials"})).await;
+    let mut parameters = json!({"primary-authority":"https://example.invalid","tls-verification":"disabled",
+        "auth":{"client_id":"first","token_url":"https://example.invalid/token","scopes":[]}});
+    let created = execute(
+        &mut client,
+        &store,
+        "connection.write",
+        json!({"project":"app","env":"dev","name":"oauth",
+        "parameters":parameters,"credential":r#"{"client_secret":"private-first"}"#}),
+    )
+    .await;
+    let id = created["id"].as_str().unwrap();
+    for (operation, change_auth) in [
+        ("connection.set_credential", false),
+        ("connection.write", false),
+        ("connection.write", true),
+    ] {
+        client.execute("INSERT INTO identity.oauth_token(connection_id,ciphertext,nonce,wrapped_key,key_id,expires_at,updated_at)
+            VALUES($1::text::uuid,'\\x01','\\x02','\\x03','file:test',now()+interval '1 hour',now())", &[&id]).await.unwrap();
+        client.execute("INSERT INTO identity.oauth_authorization(state,connection_id,generation,code_verifier,wrapped_key,nonce,key_id,created_by,expires_at)
+            SELECT 'pending',id,active_generation,'\\x04','\\x03','\\x02','file:test',service_principal_id,now()+interval '10 minutes'
+            FROM registry.connection WHERE id=$1::text::uuid", &[&id]).await.unwrap();
+        let mut request = json!({"project":"app","env":"dev","name":"oauth"});
+        if change_auth {
+            parameters["auth"]["client_id"] = "second".into();
+        } else {
+            request["credential"] = r#"{"client_secret":"private-next"}"#.into();
+        }
+        if operation == "connection.write" {
+            request["parameters"] = parameters.clone();
+        }
+        let result = execute(&mut client, &store, operation, request).await;
+        assert!(result["active_generation"].as_i64().unwrap() > 1);
+        let counts = client.query_one("SELECT (SELECT count(*) FROM identity.oauth_token),(SELECT count(*) FROM identity.oauth_authorization)", &[]).await.unwrap();
+        assert_eq!(counts.get::<_, i64>(0), 0, "{operation} token invalidation");
+        assert_eq!(
+            counts.get::<_, i64>(1),
+            0,
+            "{operation} pending authorization invalidation"
+        );
+    }
+}

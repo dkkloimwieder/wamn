@@ -19,3 +19,6 @@ pub mod release_manifest_source;
 pub mod session_keys;
 
 pub mod connection_credentials;
+
+pub mod oauth_encryption;
+mod pod_identity;

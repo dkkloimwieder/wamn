@@ -338,6 +338,10 @@ pub struct HostArgs {
     #[arg(long, requires = "control", conflicts_with = "local_application")]
     pub local_control: Option<PathBuf>,
 
+    /// OAuth envelope provider as JSON: local, or gcp with project and region.
+    #[arg(long, env = "WAMN_OAUTH_ENCRYPTION")]
+    pub oauth_encryption: Option<String>,
+
     /// Explicit registry/repository holding digest-addressed node components.
     #[arg(long, env = "WAMN_COMPONENT_ARTIFACT_BASE")]
     pub component_artifact_base: Option<String>,
@@ -1247,15 +1251,29 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         application.map(|release| release.scope().env_key.as_str()),
         Arc::clone(&memory),
     );
-    let facts = Arc::new(ConnectionFacts::new(
-        memory,
-        changes,
-        Arc::clone(&credentials),
-        Arc::clone(&postgres),
-        application.map_or("", |release| release.scope().env_key.as_str()),
-        &args.project,
-        application.map_or("", |release| release.scope().environment.as_str()),
-    ));
+    let oauth_encryption = args
+        .oauth_encryption
+        .as_deref()
+        .map(|value| {
+            let configuration =
+                serde_json::from_str(value).context("decode WAMN_OAUTH_ENCRYPTION")?;
+            wamn_runtime::oauth_encryption::Envelope::open(&configuration)
+                .map(Arc::new)
+                .context("open OAuth envelope encryption")
+        })
+        .transpose()?;
+    let facts = Arc::new(
+        ConnectionFacts::new(
+            memory,
+            changes,
+            Arc::clone(&credentials),
+            Arc::clone(&postgres),
+            application.map_or("", |release| release.scope().env_key.as_str()),
+            &args.project,
+            application.map_or("", |release| release.scope().environment.as_str()),
+        )
+        .with_oauth_encryption(oauth_encryption),
+    );
     let integration_registry = if let Some(base) = &args.component_artifact_base {
         let registry_name = wamn_catalog::parse_component_artifact_base(base)?;
         let credentials = match RegistryPullCredential::select(args.registry_auth_file.as_deref(), args.registry_token_metadata)? {

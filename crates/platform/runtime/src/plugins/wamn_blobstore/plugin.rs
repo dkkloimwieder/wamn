@@ -556,7 +556,7 @@ fn build_s3_store(
 /// Build Cloud Storage with pod metadata credentials and IAM signing.
 /// Explicit providers prevent fallback to stored ADC keys.
 fn build_gcs_store(container: &str) -> anyhow::Result<Arc<object_store::gcp::GoogleCloudStorage>> {
-    let (credentials, signing_credentials) = super::pod_identity::providers()?;
+    let (credentials, signing_credentials) = crate::pod_identity::providers()?;
     let store = GoogleCloudStorageBuilder::new()
         .with_credentials(credentials)
         .with_signing_credentials(signing_credentials)

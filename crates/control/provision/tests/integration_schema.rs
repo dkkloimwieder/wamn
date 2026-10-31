@@ -378,3 +378,173 @@ fn environment_row_delete_cascades_to_its_connections() {
            ASSERT NOT EXISTS(SELECT FROM identity.credential);
          END $$;");
 }
+
+fn oauth_rows() -> &'static str {
+    "INSERT INTO identity.oauth_token(connection_id,ciphertext,nonce,wrapped_key,key_id,expires_at,updated_at)
+     SELECT id,'\\x01','\\x02','\\x03','file:test',now()+interval '1 hour',now() FROM registry.connection;
+     INSERT INTO identity.oauth_authorization(state,connection_id,generation,code_verifier,wrapped_key,nonce,key_id,created_by,expires_at)
+     SELECT id::text,id,active_generation,'\\x04','\\x03','\\x02','file:test',service_principal_id,now()+interval '10 minutes'
+     FROM registry.connection;"
+}
+
+fn oauth_rotation(
+    auth: &str,
+    secret_changed: bool,
+    auth_changed: bool,
+    expected: &str,
+    rollback: bool,
+) {
+    let parameters = if auth_changed {
+        r#"{"auth":{"client_id":"new"}}"#
+    } else {
+        r#"{"tls-verification":"disabled"}"#
+    };
+    let stored = if secret_changed {
+        r#", "stored_credential":{"id":"00000000-0000-0000-0000-000000000043","store":"file","ref":"next","version":"1"}"#
+    } else {
+        ""
+    };
+    run(&format!(
+        "BEGIN;
+         INSERT INTO registry.auth_type(code,credential_schema,parameter_schema,http_only)
+         SELECT 'oauth2_client_credentials_jwt',credential_schema,parameter_schema,http_only
+         FROM registry.auth_type WHERE code='oauth2_client_credentials';
+         INSERT INTO registry.integration_type_auth VALUES('http','oauth2_client_credentials_jwt');
+         UPDATE registry.integration SET auth_type='{auth}' WHERE name='first';
+         {}
+         -- Keep the fixture outside the transaction that this test rolls back.
+         COMMIT;
+         BEGIN;
+         DO $$ DECLARE result jsonb; BEGIN
+           result := registry.configure_connection('acme','connection.finish',
+             '{{\"project\":\"app\",\"env\":\"dev\",\"name\":\"first\",\"parameters\":{parameters}{stored}}}');
+           ASSERT result->>'error' IS NULL,result::text;
+           ASSERT (SELECT active_generation FROM registry.connection WHERE id='00000000-0000-0000-0000-000000000031')=3;
+           {expected}
+           ASSERT NOT EXISTS(SELECT FROM identity.oauth_authorization WHERE connection_id='00000000-0000-0000-0000-000000000031');
+           ASSERT EXISTS(SELECT FROM identity.oauth_authorization WHERE connection_id='00000000-0000-0000-0000-000000000032');
+           ASSERT EXISTS(SELECT FROM identity.oauth_token WHERE connection_id='00000000-0000-0000-0000-000000000032');
+         END $$;
+         {}",
+        oauth_rows(),
+        if rollback { "ROLLBACK; DO $$ BEGIN
+           ASSERT (SELECT active_generation FROM registry.connection WHERE id='00000000-0000-0000-0000-000000000031')=2;
+           ASSERT (SELECT count(*) FROM identity.oauth_token)=2;
+           ASSERT (SELECT count(*) FROM identity.oauth_authorization)=2;
+         END $$;" } else { "COMMIT;" },
+    ));
+}
+
+const TOKEN_DELETED: &str = "ASSERT NOT EXISTS(SELECT FROM identity.oauth_token WHERE connection_id='00000000-0000-0000-0000-000000000031');";
+
+#[test]
+fn oauth_client_credentials_secret_rotation_deletes_token() {
+    for auth in ["oauth2_client_credentials", "oauth2_client_credentials_jwt"] {
+        oauth_rotation(auth, true, false, TOKEN_DELETED, false);
+    }
+}
+
+#[test]
+fn oauth_client_credentials_auth_rotation_deletes_token() {
+    for auth in ["oauth2_client_credentials", "oauth2_client_credentials_jwt"] {
+        oauth_rotation(auth, false, true, TOKEN_DELETED, false);
+    }
+}
+
+#[test]
+fn oauth_authorization_code_auth_rotation_deletes_token() {
+    for secret_changed in [false, true] {
+        oauth_rotation(
+            "oauth2_authorization_code",
+            secret_changed,
+            true,
+            TOKEN_DELETED,
+            false,
+        );
+    }
+}
+
+#[test]
+fn oauth_authorization_code_secret_rotation_expires_token() {
+    oauth_rotation("oauth2_authorization_code", true, false,
+        "ASSERT (SELECT expires_at='-infinity'::timestamptz AND ciphertext='\\x01'::bytea AND nonce='\\x02'::bytea AND wrapped_key='\\x03'::bytea AND key_id='file:test'
+         FROM identity.oauth_token WHERE connection_id='00000000-0000-0000-0000-000000000031');", false);
+}
+
+#[test]
+fn oauth_unchanged_auth_preserves_token_and_discards_pending_authorization() {
+    for auth in [
+        "oauth2_client_credentials",
+        "oauth2_client_credentials_jwt",
+        "oauth2_authorization_code",
+    ] {
+        oauth_rotation(
+            auth,
+            false,
+            false,
+            "ASSERT (SELECT expires_at>now() FROM identity.oauth_token WHERE connection_id='00000000-0000-0000-0000-000000000031');",
+            false,
+        );
+    }
+}
+
+#[test]
+fn oauth_rotation_rollback_restores_tokens_and_pending_authorization() {
+    oauth_rotation(
+        "oauth2_client_credentials",
+        true,
+        false,
+        TOKEN_DELETED,
+        true,
+    );
+}
+
+#[test]
+fn oauth_rows_cascade_with_connection() {
+    run(&format!("{}
+        DELETE FROM registry.connection WHERE id='00000000-0000-0000-0000-000000000031';
+        DO $$ BEGIN
+          ASSERT NOT EXISTS(SELECT FROM identity.oauth_token WHERE connection_id='00000000-0000-0000-0000-000000000031');
+          ASSERT NOT EXISTS(SELECT FROM identity.oauth_authorization WHERE connection_id='00000000-0000-0000-0000-000000000031');
+          ASSERT (SELECT count(*) FROM identity.oauth_token)=1;
+          ASSERT (SELECT count(*) FROM identity.oauth_authorization)=1;
+        END $$;", oauth_rows()));
+}
+
+#[test]
+fn oauth_tables_refuse_application_and_administration() {
+    run(&format!(
+        "RESET ROLE;
+         DO $$ DECLARE role_name text; BEGIN
+           FOREACH role_name IN ARRAY ARRAY['wamn_app','wamn_administration'] LOOP
+             IF to_regrole(role_name) IS NULL THEN EXECUTE format('CREATE ROLE %I NOLOGIN',role_name); END IF;
+           END LOOP;
+         END $$;
+         {} {}
+         DO $$ DECLARE role_name text; relation text; statement text; BEGIN
+           FOREACH role_name IN ARRAY ARRAY['wamn_app','wamn_administration'] LOOP
+             FOREACH relation IN ARRAY ARRAY['oauth_token','oauth_authorization'] LOOP
+               FOREACH statement IN ARRAY ARRAY['SELECT * FROM identity.','DELETE FROM identity.','UPDATE identity.'] LOOP
+                 EXECUTE format('SET LOCAL ROLE %I',role_name);
+                 BEGIN
+                   EXECUTE statement || quote_ident(relation) || CASE WHEN statement='UPDATE identity.' THEN ' SET key_id=key_id' ELSE '' END;
+                   RAISE EXCEPTION 'OAuth table access must refuse';
+                 EXCEPTION WHEN insufficient_privilege THEN NULL; END;
+                 RESET ROLE;
+               END LOOP;
+               ASSERT NOT has_table_privilege(role_name,'identity.'||relation,'INSERT,SELECT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER');
+               ASSERT NOT has_any_column_privilege(role_name,'identity.'||relation,'SELECT,INSERT,UPDATE,REFERENCES');
+             END LOOP;
+           END LOOP;
+           FOREACH role_name IN ARRAY ARRAY['wamn_control','wamn_conn_reader'] LOOP
+             FOREACH relation IN ARRAY ARRAY['oauth_token','oauth_authorization'] LOOP
+               ASSERT has_schema_privilege(role_name,'identity','USAGE');
+               ASSERT has_table_privilege(role_name,'identity.'||relation,'SELECT') AND has_table_privilege(role_name,'identity.'||relation,'INSERT')
+                  AND has_table_privilege(role_name,'identity.'||relation,'UPDATE') AND has_table_privilege(role_name,'identity.'||relation,'DELETE');
+             END LOOP;
+           END LOOP;
+         END $$;",
+        wamn_control_provision::sql::grant_control_surface_sql(),
+        wamn_control_provision::sql::grant_connection_reader_surface_sql(),
+    ));
+}

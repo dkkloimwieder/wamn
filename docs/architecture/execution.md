@@ -734,6 +734,24 @@ The route returns no credential and writes no generation or credential row.
 A connection write or a credential change links again, but it never compiles again.
 The dispatch keeps at most 1024 links, and it drops a link that no current fact names on the next fact change of that connection.
 
+OAuth storage uses `identity.oauth_token` and `identity.oauth_authorization` in the system database.
+Only the host connection role and the control role receive table grants.
+Each row uses a fresh AES-256 data key and AES-256-GCM encryption.
+An envelope key protects that data key.
+The shared [encryption module](../../crates/platform/runtime/src/oauth_encryption.rs) supports regional Cloud KMS and a local key file.
+The host reads its provider from `WAMN_OAUTH_ENCRYPTION`.
+Use `gcp` for Cloud KMS or `local` for a key file.
+[Deployment instructions](../operations/gcp.md#49-platform-install-inputs) describe that configuration.
+Each host retains at most 1024 unwrapped keys and evicts the least recently used key.
+The cache identity includes both `key_id` and `wrapped_key`.
+Debug output omits keys and plaintext.
+
+The generation transaction deletes tokens for either client credentials type when credentials or `parameters.auth` change.
+For authorization code, a change to `parameters.auth` deletes the token.
+A secret change alone sets its expiry to negative infinity and preserves its encrypted token bytes.
+Every new generation deletes pending authorizations for that connection.
+Connection deletion cascades to both OAuth tables.
+
 Every writer of these facts records the change in a [`ConnectionDrops`](../../crates/identity/platform/src/connection_changes.rs).
 Its caller deletes the keys of the list after the commit.
 A failed delete is logged, the commit stands, and the 60 seconds bound it.

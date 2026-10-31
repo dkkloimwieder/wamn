@@ -3,7 +3,7 @@
 //!
 //! The CDC reader, identity reader and connection reader each hold a scoped
 //! login for a distinct stable role. Their grant sets stay separate.
-//! The connection reader accesses immutable credentials in the system database.
+//! The connection reader accesses immutable credentials and encrypted OAuth rows in the system database.
 //! [`SystemReader`] accepts only families with a defined read surface.
 //!
 //! Everything here is pure. [`parse_system_reader_url`] is what lets a consumer

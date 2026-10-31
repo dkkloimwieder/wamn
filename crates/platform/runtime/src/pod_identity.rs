@@ -15,7 +15,7 @@ use tokio::sync::{Mutex, OnceCell};
 const METADATA: &str =
     "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/";
 
-pub(super) struct PodToken {
+pub(crate) struct PodToken {
     client: reqwest::Client,
     cached: Mutex<Option<(Instant, Arc<GcpCredential>)>>,
 }
@@ -25,12 +25,12 @@ impl fmt::Debug for PodToken {
     }
 }
 #[derive(Debug)]
-pub(super) struct PodSigner {
+pub(crate) struct PodSigner {
     client: reqwest::Client,
     email: OnceCell<String>,
 }
 
-pub(super) fn providers() -> Result<(Arc<PodToken>, Arc<PodSigner>), reqwest::Error> {
+pub(crate) fn providers() -> Result<(Arc<PodToken>, Arc<PodSigner>), reqwest::Error> {
     let client = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())

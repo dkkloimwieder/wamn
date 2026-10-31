@@ -380,6 +380,7 @@ async fn generation(
     if let Some(stored) = &stored {
         request["stored_credential"] = stored.clone();
     }
+    // The generation transaction also invalidates OAuth tokens and pending authorizations.
     let result = configure(tx, org, "connection.finish", &request).await;
     if result.is_err()
         && let Some(stored) = stored

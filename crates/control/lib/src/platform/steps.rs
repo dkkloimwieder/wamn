@@ -118,6 +118,14 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
             document.buckets.web
         ),
     };
+    // The hosts namespace grant covers the environment hosts and the control
+    // host (hosts/default) alike.
+    let oauth_key = OwnerInput {
+        name: format!("OAuth envelope key wamn/oauth-token in {region}"),
+        instructions: format!(
+            "NUMBER=$(gcloud projects describe {project} --format 'value(projectNumber)')\ngcloud services enable cloudkms.googleapis.com --project {project}\ngcloud kms keyrings create wamn --project {project} --location {region}\ngcloud kms keys create oauth-token --project {project} --location {region} --keyring wamn --purpose encryption\ngcloud kms keys add-iam-policy-binding oauth-token --project {project} --location {region} --keyring wamn --member \"{hosts}\" --role roles/cloudkms.cryptoKeyEncrypterDecrypter"
+        ),
+    };
     let registry_owner = history(
         format!("Artifact Registry {registry} (immutable tags)"),
         "1",
@@ -194,7 +202,7 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
             number: "4.9", title: "Platform install inputs",
             runs: Runner::Verb("Kubernetes API"),
             inputs: vec![("project_id", project.clone()), ("registry", registry.clone()), ("node placement", "label=role=bench-host, taint=role=bench-host:NoSchedule".into()), ("host service accounts", "hosts/wamn-host, hosts/wamn-host-<org>-<project>-<env>".into()), ("registry helper and Role", "hosts/wamn-registry-helper, hosts/wamn-control-status".into()), ("auth NATS certificate", "platform/wamn-ctl-auth-nats".into())],
-            owner_inputs: vec![host_grants.clone()],
+            owner_inputs: if document.provider == Provider::Gcp { vec![host_grants.clone(), oauth_key] } else { vec![host_grants.clone()] },
         },
         InstallStep {
             number: "4.10", title: "Platform file",
@@ -308,5 +316,36 @@ fn history(name: String, sections: &str) -> OwnerInput {
         instructions: format!(
             "made by the owner: docs/history/gcp-install-history.md sections {sections} (docs/operations/gcp.md section 2)"
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oauth_owner_commands_create_a_regional_key_and_grant_the_hosts_namespace() {
+        let document = serde_json::from_value(serde_json::json!({
+            "provider": "gcp", "project_id": "test-project", "zone": "us-central1-a",
+            "cluster_name": "test", "org": "test", "owner_email": "owner@example.com",
+            "registry": "localhost:5000", "buckets": {"web": "test-web", "otel": "test-otel", "state": "test-state"},
+            "route_hosts": {"control": "control.example.com"}, "resend_from": "sender@example.com"
+        })).unwrap();
+        let commands: Vec<_> = install_steps(&document, "test")
+            .into_iter()
+            .flat_map(|step| step.owner_inputs)
+            .filter(|input| input.name == "OAuth envelope key wamn/oauth-token in us-central1")
+            .collect();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(
+            commands[0].instructions.lines().collect::<Vec<_>>(),
+            vec![
+                "NUMBER=$(gcloud projects describe test-project --format 'value(projectNumber)')",
+                "gcloud services enable cloudkms.googleapis.com --project test-project",
+                "gcloud kms keyrings create wamn --project test-project --location us-central1",
+                "gcloud kms keys create oauth-token --project test-project --location us-central1 --keyring wamn --purpose encryption",
+                "gcloud kms keys add-iam-policy-binding oauth-token --project test-project --location us-central1 --keyring wamn --member \"principalSet://iam.googleapis.com/projects/$NUMBER/locations/global/workloadIdentityPools/test-project.svc.id.goog/namespace/hosts\" --role roles/cloudkms.cryptoKeyEncrypterDecrypter",
+            ]
+        );
     }
 }

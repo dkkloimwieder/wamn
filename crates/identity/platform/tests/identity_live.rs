@@ -571,6 +571,8 @@ async fn identity_relations_carry_stamps(client: &tokio_postgres::Client) {
     let expected_columns = [
         "credential.created_at timestamp with time zone nullable=NO no_default=true".to_owned(),
         "credential.created_by uuid nullable=NO no_default=true".to_owned(),
+        "oauth_authorization.created_by uuid nullable=NO no_default=true".to_owned(),
+        "oauth_token.updated_at timestamp with time zone nullable=NO no_default=true".to_owned(),
     ]
     .into_iter()
     .chain(RELATIONS.iter().flat_map(|relation| {

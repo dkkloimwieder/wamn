@@ -93,7 +93,7 @@ async fn control_plane_tables(client: &Client) -> i64 {
     client
         .query_one(
             "SELECT count(*) FROM information_schema.tables \
-              WHERE table_name IN ('credential', 'target', 'target_application', 'integrations')",
+              WHERE table_name IN ('credential', 'oauth_token', 'oauth_authorization', 'target', 'target_application', 'integrations')",
             &[],
         )
         .await
@@ -183,7 +183,7 @@ async fn credentials_are_inaccessible_to_application_roles() {
     let client = connect(database.url()).await;
     client.batch_execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN CREATE ROLE wamn_app NOLOGIN; END IF; END $$").await.unwrap();
     let exposed: Vec<String> = client.query(
-        "SELECT c.oid::regclass::text FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_%' AND (c.relname LIKE '%credential%' OR c.relname IN ('pats','password_tokens','password_logins')) AND c.relkind IN ('r','p','v','m','f') AND (has_table_privilege('wamn_app',c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR has_any_column_privilege('wamn_app',c.oid,'SELECT,INSERT,UPDATE,REFERENCES')) ORDER BY 1",
+        "SELECT c.oid::regclass::text FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_%' AND (c.relname LIKE '%credential%' OR c.relname IN ('pats','password_tokens','password_logins','oauth_token','oauth_authorization')) AND c.relkind IN ('r','p','v','m','f') AND (has_table_privilege('wamn_app',c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR has_any_column_privilege('wamn_app',c.oid,'SELECT,INSERT,UPDATE,REFERENCES')) ORDER BY 1",
         &[],
     ).await.unwrap().iter().map(|row| row.get(0)).collect();
     assert!(
@@ -191,7 +191,7 @@ async fn credentials_are_inaccessible_to_application_roles() {
         "credential relations exposed to wamn_app: {exposed:?}"
     );
     let routines: Vec<String> = client.query(
-        "SELECT p.oid::regprocedure::text FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_%' AND (p.prosrc ~* '(credential|password|secret|token|identity[.]pats)' OR p.prorettype IN (SELECT reltype FROM pg_class WHERE relname IN ('credential','password_credentials','password_tokens','password_logins','pats'))) AND has_function_privilege('wamn_app',p.oid,'EXECUTE') ORDER BY 1",
+        "SELECT p.oid::regprocedure::text FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_%' AND (p.prosrc ~* '(credential|password|secret|token|identity[.]pats)' OR p.prorettype IN (SELECT reltype FROM pg_class WHERE relname IN ('oauth_token','oauth_authorization','credential','password_credentials','password_tokens','password_logins','pats'))) AND has_function_privilege('wamn_app',p.oid,'EXECUTE') ORDER BY 1",
         &[],
     ).await.unwrap().iter().map(|row| row.get(0)).collect();
     assert!(

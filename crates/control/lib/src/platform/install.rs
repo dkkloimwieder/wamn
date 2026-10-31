@@ -1370,7 +1370,7 @@ mod tests {
         .unwrap();
         for step in install_steps(&document, "test")
             .into_iter()
-            .filter(|step| matches!(step.number, "4.3" | "4.4" | "4.4.1" | "4.5"))
+            .filter(|step| matches!(step.number, "4.3" | "4.4" | "4.4.1" | "4.5" | "4.9"))
         {
             let error = wait_error(&step, anyhow::anyhow!("readiness timed out")).to_string();
             assert!(error.starts_with(&format!(

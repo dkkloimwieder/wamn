@@ -744,6 +744,42 @@ kubectl -n hosts apply -f deploy/platform/control-status-rbac.yaml
 
 The owner made the grants of the namespace `hosts` (section 1). IAM is owner-only, so the install identity does not read them. The first apply with a release (4.17) is the proof. If a grant is missing, the host pull fails with 403.
 
+OAuth envelope encryption uses the regional key `wamn/oauth-token`.
+The owner supplies the key and grants before step 4.9.
+The grant to the namespace `hosts` covers the environment hosts and the control host, which runs as `hosts/default`.
+Run these commands with the owner account for `wamn-dev`:
+
+```bash
+NUMBER=$(gcloud projects describe wamn-dev --format 'value(projectNumber)')
+gcloud services enable cloudkms.googleapis.com --project wamn-dev
+gcloud kms keyrings create wamn --project wamn-dev --location us-central1
+gcloud kms keys create oauth-token --project wamn-dev --location us-central1 --keyring wamn --purpose encryption
+gcloud kms keys add-iam-policy-binding oauth-token --project wamn-dev --location us-central1 --keyring wamn \
+  --member "principalSet://iam.googleapis.com/projects/$NUMBER/locations/global/workloadIdentityPools/wamn-dev.svc.id.goog/namespace/hosts" \
+  --role roles/cloudkms.cryptoKeyEncrypterDecrypter
+```
+
+Set `WAMN_OAUTH_ENCRYPTION` on application hosts and the control host through their deployment environment:
+
+```bash
+WAMN_OAUTH_ENCRYPTION='{"provider":"gcp","project":"wamn-dev","region":"us-central1"}'
+```
+
+The host uses its pod identity token for the Cloud KMS REST API.
+It records the key version from the encrypt response in each row.
+For local deployments, set `WAMN_OAUTH_ENCRYPTION='{"provider":"local"}'` and mount the same envelope key on both host types.
+Set `WAMN_OAUTH_KEY_FILE` to that file path.
+The file must contain exactly 32 random bytes and use mode `0600`.
+Keep the key across restarts because a replacement key cannot decrypt existing rows.
+Use a private directory for the file:
+
+```bash
+umask 077
+head -c 32 /dev/urandom > /private/oauth-key
+chmod 0600 /private/oauth-key
+export WAMN_OAUTH_KEY_FILE=/private/oauth-key
+```
+
 ### 4.10 Platform file
 
 `wamn-ctl env` reads its platform inputs from the environment (`Platform::from_env` in `crates/control/lib/src/environment/mod.rs`). Write them into one file. Every later step starts with `. $HOME/.cache/wamn-install/platform.sh`:

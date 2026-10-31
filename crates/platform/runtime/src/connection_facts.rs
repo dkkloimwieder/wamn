@@ -58,6 +58,7 @@ impl std::fmt::Debug for Secret {
 
 /// The connection facts one host reads for the calls of one environment.
 pub struct ConnectionFacts {
+    oauth_encryption: Option<Arc<crate::oauth_encryption::Envelope>>,
     memory: Arc<ConnectionMemory>,
     changes: ConnectionChanges,
     reader: Arc<ConnectionCredentials>,
@@ -92,6 +93,7 @@ impl ConnectionFacts {
         environment: &str,
     ) -> Self {
         Self {
+            oauth_encryption: None,
             memory,
             changes,
             reader,
@@ -104,6 +106,19 @@ impl ConnectionFacts {
             secrets: bounded(),
             seen: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Share this host's envelope key cache with its OAuth operations.
+    pub fn with_oauth_encryption(
+        mut self,
+        envelope: Option<Arc<crate::oauth_encryption::Envelope>>,
+    ) -> Self {
+        self.oauth_encryption = envelope;
+        self
+    }
+
+    pub fn oauth_encryption(&self) -> Option<Arc<crate::oauth_encryption::Envelope>> {
+        self.oauth_encryption.clone()
     }
 
     pub fn env_key(&self) -> &str {

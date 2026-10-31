@@ -940,7 +940,7 @@ pub fn grant_identity_reader_surface_sql() -> String {
     )
 }
 
-/// Reserve schema access for the environment reader.
+/// Grant the host its environment readers and encrypted OAuth storage.
 pub fn grant_connection_reader_surface_sql() -> String {
     let mut sql =
         grant_system_reader_surface_sql(WorkloadRoleFamily::ConnectionReader, "registry", &[]);
@@ -950,6 +950,8 @@ pub fn grant_connection_reader_surface_sql() -> String {
         " REVOKE ALL PRIVILEGES ON ALL FUNCTIONS IN SCHEMA registry, identity FROM {role}; GRANT EXECUTE ON FUNCTION registry.read_connection_credential(text,text,text,uuid), registry.read_file_connection(text,text,text,uuid), registry.read_connection_fact(text,text,text,uuid), registry.read_connection_generation(text,text,text,uuid,bigint), registry.read_connection_secret(text,text,text,uuid), registry.read_env_connections(text,text,text), registry.read_integration_version(text,integer) TO {role};"
     )
     .expect("writing to a String cannot fail");
+    write!(sql, " GRANT USAGE ON SCHEMA identity TO {role}; GRANT SELECT, INSERT, UPDATE, DELETE ON identity.oauth_token, identity.oauth_authorization TO {role};")
+        .expect("writing to a String cannot fail");
     sql
 }
 
@@ -973,8 +975,10 @@ const CONTROL_WRITE: &[&str] = &["SELECT", "INSERT", "UPDATE", "DELETE"];
 /// control session is live. It writes the org memberships and the org, project
 /// and environment grants of the org operations, and it reads the projects and
 /// environments those grants cover. The `project.create` route writes a
-/// project. It holds nothing else in the control database.
-pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 8] = [
+/// project. It also stores encrypted OAuth tokens and pending authorizations.
+pub const CONTROL_SURFACE: [(&str, &str, &[&str]); 10] = [
+    ("identity", "oauth_authorization", CONTROL_WRITE),
+    ("identity", "oauth_token", CONTROL_WRITE),
     ("identity", "org_memberships", CONTROL_WRITE),
     ("identity", "org_roles", CONTROL_WRITE),
     ("identity", "password_logins", &["SELECT"]),

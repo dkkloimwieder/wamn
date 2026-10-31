@@ -1061,6 +1061,37 @@ CREATE TABLE identity.credential (
     created_by    uuid NOT NULL,
     UNIQUE (id, connection_id)
 );
+CREATE TABLE identity.oauth_token (                    -- host-only; every OAuth type, shared across pods
+    connection_id  uuid PRIMARY KEY REFERENCES registry.connection (id) ON DELETE CASCADE,
+    ciphertext     bytea NOT NULL,                       -- AES-256-GCM: access token; refresh token for authorization code
+    nonce          bytea NOT NULL,
+    wrapped_key    bytea NOT NULL,                       -- the row's AES-256 data key, wrapped by the envelope key
+    key_id         text NOT NULL,                        -- the envelope key: a Cloud KMS key version (local: key file id)
+    expires_at     timestamptz NOT NULL,
+    refresh_status text NOT NULL DEFAULT 'ok' CHECK (refresh_status IN ('ok', 'failing')),
+    updated_at     timestamptz NOT NULL                  -- fetch and refresh lock the connection row, not this one
+);
+-- authorization code: no row = not authorized; calls refused until connection.authorize completes
+-- client credentials (secret or JWT): no row = no token yet; the first call fetches one
+-- every fetch and refresh: FOR NO KEY UPDATE on the registry.connection row (it always exists), re-read this row,
+-- call the provider only if the token is missing or due; connection.write and set_credential lock the same row
+-- with a new generation, in the same transaction:
+--   client credentials: delete this row when the credential or parameters.auth changes
+--   authorization code: delete this row when parameters.auth changes (authorize again);
+--                       set expires_at = '-infinity' when only the secret changes (the refresh token stays)
+
+CREATE TABLE identity.oauth_authorization (            -- one pending connection.authorize; single use
+    state         text PRIMARY KEY,                      -- 32 random bytes, base64url
+    connection_id uuid NOT NULL REFERENCES registry.connection (id) ON DELETE CASCADE,
+    generation    bigint NOT NULL,                       -- a newer active generation refuses the callback
+    code_verifier bytea NOT NULL,                        -- PKCE, encrypted like the token (wrapped_key, nonce, key_id below)
+    wrapped_key   bytea NOT NULL,
+    nonce         bytea NOT NULL,
+    key_id        text NOT NULL,
+    created_by    uuid NOT NULL,
+    expires_at    timestamptz NOT NULL                   -- 10 minutes after creation
+);
+
 CREATE TABLE registry.connection_generation (
     connection_id uuid NOT NULL REFERENCES registry.connection (id) ON DELETE CASCADE,
     generation    bigint NOT NULL CHECK (generation > 0),
@@ -1368,7 +1399,7 @@ BEGIN
         -- The row lock owns allocation. Every write affects this environment alone.
         SELECT COALESCE(max(g.generation),0)+1 INTO next_generation
         FROM registry.connection_generation g WHERE g.connection_id=existing.id;
-        SELECT g.credential_id INTO credential FROM registry.connection_generation g
+        SELECT g.credential_id,g.parameters INTO credential,parameters FROM registry.connection_generation g
         WHERE (g.connection_id,g.generation)=(existing.id,existing.active_generation);
         IF payload->'stored_credential' IS NOT NULL THEN
             credential := (payload->'stored_credential'->>'id')::uuid;
@@ -1379,6 +1410,16 @@ BEGIN
         IF (selected.auth_type='none') <> (credential IS NULL) THEN
             RETURN jsonb_build_object('error','invalid_input','field','credential');
         END IF;
+        IF parameters->'auth' IS DISTINCT FROM payload->'parameters'->'auth' THEN
+            DELETE FROM identity.oauth_token WHERE connection_id=existing.id;
+        ELSIF payload->'stored_credential' IS NOT NULL THEN
+            IF selected.auth_type IN ('oauth2_client_credentials','oauth2_client_credentials_jwt') THEN
+                DELETE FROM identity.oauth_token WHERE connection_id=existing.id;
+            ELSIF selected.auth_type='oauth2_authorization_code' THEN
+                UPDATE identity.oauth_token SET expires_at='-infinity' WHERE connection_id=existing.id;
+            END IF;
+        END IF;
+        DELETE FROM identity.oauth_authorization WHERE connection_id=existing.id;
         INSERT INTO registry.connection_generation(connection_id,generation,parameters,credential_id)
         VALUES(existing.id,next_generation,payload->'parameters',credential);
         UPDATE registry.connection SET active_generation=next_generation WHERE id=existing.id;
@@ -1508,7 +1549,7 @@ CREATE TRIGGER wamn_record_history_stamp
 
 DO $control_surface$ BEGIN
   IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_control') THEN
-    REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; REVOKE ALL PRIVILEGES ON SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; GRANT USAGE ON SCHEMA "identity", "registry" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_roles" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."password_logins" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."principals" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_env_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_roles" TO "wamn_control"; GRANT SELECT ON TABLE "registry"."project_envs" TO "wamn_control"; GRANT SELECT, INSERT ON TABLE "registry"."projects" TO "wamn_control"; GRANT UPDATE ("status") ON TABLE "registry"."project_envs" TO "wamn_control"; DO $connection_acl$ BEGIN IF to_regprocedure('registry.retired_connection_credential(text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.retired_connection_credential(text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.connection_projection(text,text,text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.connection_projection(text,text,text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.publish_integration(text,integer,text,jsonb,text,text[],text[])') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.publish_integration(text,integer,text,jsonb,text,text[],text[]) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.configure_connection(text,text,jsonb)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.configure_connection(text,text,jsonb) TO "wamn_control"; END IF; END $connection_acl$;
+    REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; REVOKE ALL PRIVILEGES ON SCHEMA "identity", "provisioning", "registry" FROM "wamn_control"; GRANT USAGE ON SCHEMA "identity", "registry" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."org_roles" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."oauth_authorization" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."oauth_token" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."password_logins" TO "wamn_control"; GRANT SELECT ON TABLE "identity"."principals" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_env_memberships" TO "wamn_control"; GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "identity"."project_roles" TO "wamn_control"; GRANT SELECT ON TABLE "registry"."project_envs" TO "wamn_control"; GRANT SELECT, INSERT ON TABLE "registry"."projects" TO "wamn_control"; GRANT UPDATE ("status") ON TABLE "registry"."project_envs" TO "wamn_control"; DO $connection_acl$ BEGIN IF to_regprocedure('registry.retired_connection_credential(text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.retired_connection_credential(text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.connection_projection(text,text,text)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.connection_projection(text,text,text) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.publish_integration(text,integer,text,jsonb,text,text[],text[])') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.publish_integration(text,integer,text,jsonb,text,text[],text[]) TO "wamn_control"; END IF; END $connection_acl$; DO $connection_acl$ BEGIN IF to_regprocedure('registry.configure_connection(text,text,jsonb)') IS NOT NULL THEN GRANT EXECUTE ON FUNCTION registry.configure_connection(text,text,jsonb) TO "wamn_control"; END IF; END $connection_acl$;
   END IF;
 END $control_surface$;
 
@@ -1736,4 +1777,11 @@ DO $$ BEGIN
    registry.read_env_connections(text,text,text),
    registry.read_integration_version(text,integer) TO wamn_conn_reader;
  END IF;
+END $$;
+
+DO $$ BEGIN
+    IF to_regrole('wamn_conn_reader') IS NOT NULL THEN
+        GRANT USAGE ON SCHEMA identity TO wamn_conn_reader;
+        GRANT SELECT, INSERT, UPDATE, DELETE ON identity.oauth_token, identity.oauth_authorization TO wamn_conn_reader;
+    END IF;
 END $$;

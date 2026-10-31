@@ -479,6 +479,14 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
     assert_eq!(
         load_role_grants(&admin_url, WorkloadRoleFamily::ConnectionReader.acl_role()),
         vec![
+            "relation|identity|oauth_authorization|DELETE|false".to_owned(),
+            "relation|identity|oauth_authorization|INSERT|false".to_owned(),
+            "relation|identity|oauth_authorization|SELECT|false".to_owned(),
+            "relation|identity|oauth_authorization|UPDATE|false".to_owned(),
+            "relation|identity|oauth_token|DELETE|false".to_owned(),
+            "relation|identity|oauth_token|INSERT|false".to_owned(),
+            "relation|identity|oauth_token|SELECT|false".to_owned(),
+            "relation|identity|oauth_token|UPDATE|false".to_owned(),
             "routine|registry|read_connection_credential|EXECUTE|false".to_owned(),
             "routine|registry|read_connection_fact|EXECUTE|false".to_owned(),
             "routine|registry|read_connection_generation|EXECUTE|false".to_owned(),
@@ -486,9 +494,10 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
             "routine|registry|read_env_connections|EXECUTE|false".to_owned(),
             "routine|registry|read_file_connection|EXECUTE|false".to_owned(),
             "routine|registry|read_integration_version|EXECUTE|false".to_owned(),
+            "schema|identity|identity|USAGE|false".to_owned(),
             "schema|registry|registry|USAGE|false".to_owned(),
         ],
-        "the connection reader holds only registry schema access and credential reader execution"
+        "the connection reader holds OAuth storage access and credential reader execution"
     );
     assert_eq!(
         reader_sqlstate(&reader_url[2].1, "SELECT id FROM registry.connection"),
