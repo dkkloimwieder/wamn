@@ -192,11 +192,14 @@ fn retired_material_ages_from_the_first_replacement() {
       INSERT INTO identity.credential(id,connection_id,store,ref,version,created_at,created_by)
       VALUES ('00000000-0000-0000-0000-000000000043','00000000-0000-0000-0000-000000000031',
               'file','new','new',now(),'00000000-0000-0000-0000-000000000001');
+      -- The owner seeds historical generations before the insert stamp resumes.
+      ALTER TABLE registry.connection_generation DISABLE TRIGGER wamn_record_history_stamp;
       INSERT INTO registry.connection_generation(connection_id,generation,credential_id,created_at,created_by)
       VALUES ('00000000-0000-0000-0000-000000000031',3,'00000000-0000-0000-0000-000000000043',
               now()-interval '6 minutes','00000000-0000-0000-0000-000000000001'),
              ('00000000-0000-0000-0000-000000000031',4,'00000000-0000-0000-0000-000000000043',
               now(),'00000000-0000-0000-0000-000000000001');
+      ALTER TABLE registry.connection_generation ENABLE TRIGGER wamn_record_history_stamp;
       UPDATE registry.connection SET active_generation=4 WHERE id='00000000-0000-0000-0000-000000000031';
       COMMIT;
       DO $$ BEGIN
@@ -212,9 +215,12 @@ fn retired_material_stays_during_the_five_minute_grace() {
       INSERT INTO identity.credential(id,connection_id,store,ref,version,created_at,created_by)
       VALUES ('00000000-0000-0000-0000-000000000043','00000000-0000-0000-0000-000000000031',
               'file','new','new',now(),'00000000-0000-0000-0000-000000000001');
+      -- The owner seeds historical generations before the insert stamp resumes.
+      ALTER TABLE registry.connection_generation DISABLE TRIGGER wamn_record_history_stamp;
       INSERT INTO registry.connection_generation(connection_id,generation,credential_id,created_at,created_by)
       VALUES ('00000000-0000-0000-0000-000000000031',3,'00000000-0000-0000-0000-000000000043',
               now()-interval '4 minutes','00000000-0000-0000-0000-000000000001');
+      ALTER TABLE registry.connection_generation ENABLE TRIGGER wamn_record_history_stamp;
       UPDATE registry.connection SET active_generation=3 WHERE id='00000000-0000-0000-0000-000000000031';
       COMMIT;
       DO $$ BEGIN

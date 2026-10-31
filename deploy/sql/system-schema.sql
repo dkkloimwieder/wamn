@@ -1070,6 +1070,14 @@ CREATE TABLE registry.connection_generation (
     FOREIGN KEY (credential_id, connection_id)
         REFERENCES identity.credential (id, connection_id)
 );
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT ON identity.credential
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by');
+CREATE TRIGGER wamn_record_history_stamp
+    BEFORE INSERT ON registry.connection_generation
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by');
 ALTER TABLE registry.connection ADD FOREIGN KEY (id, active_generation)
     REFERENCES registry.connection_generation (connection_id, generation) DEFERRABLE INITIALLY DEFERRED;
 
@@ -1339,16 +1347,15 @@ BEGIN
         WHERE (g.connection_id,g.generation)=(existing.id,existing.active_generation);
         IF payload->'stored_credential' IS NOT NULL THEN
             credential := (payload->'stored_credential'->>'id')::uuid;
-            INSERT INTO identity.credential(id,connection_id,store,ref,version,hint,created_at,created_by)
+            INSERT INTO identity.credential(id,connection_id,store,ref,version,hint)
             VALUES(credential,existing.id,payload->'stored_credential'->>'store',payload->'stored_credential'->>'ref',
-                payload->'stored_credential'->>'version',payload->'stored_credential'->>'hint',
-                transaction_timestamp(),current_setting('app.user_id')::uuid);
+                payload->'stored_credential'->>'version',payload->'stored_credential'->>'hint');
         END IF;
         IF (selected.auth_type='none') <> (credential IS NULL) THEN
             RETURN jsonb_build_object('error','invalid_input','field','credential');
         END IF;
-        INSERT INTO registry.connection_generation(connection_id,generation,parameters,credential_id,created_at,created_by)
-        VALUES(existing.id,next_generation,payload->'parameters',credential,transaction_timestamp(),current_setting('app.user_id')::uuid);
+        INSERT INTO registry.connection_generation(connection_id,generation,parameters,credential_id)
+        VALUES(existing.id,next_generation,payload->'parameters',credential);
         UPDATE registry.connection SET active_generation=next_generation WHERE id=existing.id;
         RETURN registry.connection_summary(existing.id);
     ELSIF operation IN ('connection.enable','connection.disable') THEN

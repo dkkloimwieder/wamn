@@ -279,15 +279,30 @@ for declaration in re.findall(r"\b(?:struct|enum)\s+\w+[^;{]*\{[^}]*\}", without
 acquisitions = re.findall(r"let scope = ClientScope \{(.*?)\n        \};", parent, re.S)
 expected_acquisition = """
 connection:ConnectionScope{env_key:self.env_key.clone(),project:self.project.clone(),
-environment:environment.into(),instance:snapshot.instance_id.as_deref().ok_or(ConnectionError::Unbound)?.into(),},
+environment:environment.into(),instance:connection.to_string().into(),},
 package:invocation.package_id.clone().into(),component_digest:invocation.component_digest.clone().into(),
 requirement:request.requirement.clone().into(),
 binding_hash:snapshot.validation_hash.as_deref().ok_or(ConnectionError::Unbound)?.into(),
 definition_hash:snapshot.definition_hash.as_deref().ok_or(ConnectionError::CredentialUnavailable)?.into(),
-generation:snapshot.generation.ok_or(ConnectionError::CredentialUnavailable)?,
+generation,
 """
 if len(acquisitions) != 1 or compact(acquisitions[0]) != compact(expected_acquisition):
     refuse("ClientScope acquisition must use the attested env_key/project/environment/binding/generation values")
+attestations = re.findall(r"let connection: uuid::Uuid = snapshot(.*?)let scope = ClientScope", parent, re.S)
+expected_attestation = """
+.instance_id.as_deref()
+    .and_then(|id| id.parse().ok()).ok_or(ConnectionError::Unbound)?;
+let generation = snapshot.generation.ok_or(ConnectionError::CredentialUnavailable)?;
+let fact = self.facts.connection(&connection).await
+    .map_err(|_| ConnectionError::CredentialUnavailable)?
+    .filter(|fact| fact.status == ConnectionStatus::Active)
+    .ok_or(ConnectionError::CredentialUnavailable)?;
+if fact.active_generation != generation {
+    return Ok(Attempt::Stale { connection, used: fact, });
+}
+"""
+if len(attestations) != 1 or compact(attestations[0]) != compact(expected_attestation):
+    refuse("ClientScope connection and generation must come from the attested snapshot")
 if compact(transport).count("letkey=ClientKey{scope,target};") != 1:
     refuse("ClientKey acquisition must retain both supplied scope and approved target")
 PY
