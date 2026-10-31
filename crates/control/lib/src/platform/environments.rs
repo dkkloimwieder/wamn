@@ -44,6 +44,11 @@ pub(super) async fn apply(
     let mut changed = false;
     for (_, mut environment) in super::broker::documents(environments)? {
         if initial {
+            // After 4.17 applied a release, a first apply with release none
+            // would uninstall it, so a new platform image does not rerun it.
+            if released(target, &environment).await? {
+                continue;
+            }
             environment.release = DeclaredRelease::None;
         }
         let mut request = request(document, &environment, &image, initial, &auth)?;
@@ -102,6 +107,27 @@ pub(super) async fn apply(
         }
     }
     Ok(changed)
+}
+
+/// Whether the release apply of 4.17 completed for `environment`.
+async fn released(
+    target: &Target,
+    environment: &crate::environment::document::EnvironmentDocument,
+) -> anyhow::Result<bool> {
+    let env_key = wamn_control_registry::project_env_key(
+        &environment.org,
+        &environment.project,
+        &environment.env,
+    );
+    let completion: Option<serde_json::Value> = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "platform",
+        "configmap",
+        &format!("wamn-install-platform-apply-{env_key}"),
+    )
+    .await?;
+    Ok(completion.is_some())
 }
 
 fn qualification_refusal<'a>(log: &'a str, digest: &str) -> Option<&'a str> {

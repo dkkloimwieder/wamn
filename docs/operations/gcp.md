@@ -467,6 +467,7 @@ Runtime, materializer, and a publisher copy live in `hosts`.
 An unchanged apply writes no broker Secret.
 Before `platform apply`, build each new platform version once with `build-platform`, as section 4.6 describes.
 Step 4.11 runs `env apply` for each environment as a Job, with `release = "none"`.
+It skips an environment after 4.17 applied a release to it, because a first apply would uninstall that release.
 The Job mounts a private document copy, database credentials, and the scheduler NATS certificate.
 It uses the runner's pinned KCL compiler and its own Kubernetes account.
 An unchanged completed Job skips when its input digest matches.

@@ -13,6 +13,8 @@
 //! WMS publishes through the same release Job as Receiving.
 //! WMS stays unqualified and must refuse. The host qualifies Receiving, then
 //! the test applies only Receiving through HTTPS checks in 4.21 and requires an unchanged rerun.
+//! Before the rerun, the test deletes the first apply completion, as a new
+//! platform image changes its digest, and requires that 4.11 keeps the release.
 //! Independent checks record their failures and continue. Required setup stops
 //! the case if a later check needs it. The final error names every failed check.
 //! The cluster guard removes the cluster and registries after either outcome.
@@ -866,6 +868,25 @@ cluster.Cluster {{
     let mut secrets = secret_versions(&kubeconfig, &context).await?;
     let control_secrets = control_secret_versions(&kubeconfig, &context).await?;
     secrets.extend(control_secrets.clone());
+    // A new platform image changes the first apply digest. Without its
+    // completion, the rerun must still keep the release that 4.17 applied.
+    let deleted = Command::new("kubectl")
+        .arg("--kubeconfig")
+        .arg(&kubeconfig)
+        .args(["--context", &context, "--namespace", "platform"])
+        .args([
+            "delete",
+            "configmap",
+            "wamn-install-platform-first-apply-test--receiving--dev",
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .context("delete the first apply completion")?;
+    ensure!(
+        deleted.status.success(),
+        "delete the first apply completion: {}",
+        String::from_utf8_lossy(&deleted.stderr)
+    );
     let mut repeated = Vec::new();
     install::apply(
         &serving,
@@ -908,6 +929,24 @@ cluster.Cluster {{
             .await,
         );
     }
+    let result = async {
+        let release = wamn_control::environment::analyse::deployed_release(
+            &wamn_control::release_chart::Target {
+                kubeconfig: kubeconfig.clone(),
+                context: context.clone(),
+                namespace: "hosts".into(),
+            },
+            "test--receiving--dev",
+        )
+        .await?;
+        ensure!(
+            release.as_deref() == Some(digest.as_str()),
+            "the rerun did not keep the applied release"
+        );
+        Ok(())
+    }
+    .await;
+    failures.record("4.11 keeps the applied release", result);
     failures.record("4.19", require_web_skip(&repeated));
     failures.record("4.19.1", require_platform_ui_skip(&repeated));
     failures.record("4.20", require_edge_skip(&repeated));
