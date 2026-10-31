@@ -32,7 +32,7 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | C1-3 | [C](upgrade.md) | high | M | Upgrade ordering | Environment analysis reads schema-dependent facts before project migrations run. Closed into C1-2. |
 | C3-4, D3-2 | [C](upgrade.md), [D](deployment.md) | high | L | Qualification identity | Qualification omits parts of the deployed platform and schema transition. D3-2 is medium: the key stays release plus host image, and chart, identity, edge and runner changes are proved by `platform_apply_kind` on their branch. C3-4 is closed: nothing to qualify under the package-baseline ruling. |
 | A2-2, B2-4, D2-4 | [A](code-quality.md), [B](coupling.md), [D](deployment.md) | high | M | Process lifetime | Command adapters bypass bounded execution and can retain lifecycle locks indefinitely. D2-4 itself is medium after Group 1 deletes most listed owners. B2-4 is merged into D2-4: survivors go through `owned_command.rs` with a caller deadline, signal listeners move to the CLI binary. A2-2 merges into D2-4. |
-| C3-1, D1-1, D3-4, H3-2 | [C](upgrade.md), [D](deployment.md), [H](hygiene.md) | high | L | Desired state | KCL, JSON sidecars, host overlays, and local charts select competing deployment inputs. |
+| C3-1, D1-1, D3-4, H3-2 | [C](upgrade.md), [D](deployment.md), [H](hygiene.md) | high | L | Desired state | KCL, JSON sidecars, host overlays, and local charts select competing deployment inputs. H3-2 merges into D1-1. |
 | D2-2, H1-1 | [D](deployment.md), [H](hygiene.md) | high | M | Image production | The older image pipeline builds unselected artifacts and omits real inputs from its cache identity. One row, Group 2 Do. Cache identity from the whole build context is the input-hash retag. |
 | B2-7, D2-6, D3-1 | [B](coupling.md), [D](deployment.md) | high | L | Installation | Installation builds and publishes candidates, while a platform stamp can skip application freshness. `build-platform` stays a `wamn-ctl` verb and `platform apply` consumes its outputs. |
 | D2-1 | [D](deployment.md) | high | M | Clean upgrades | Closed by C3-3. The upgrade path is deleted, so no clean-worktree upgrade test is written. |
@@ -57,7 +57,7 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | G3-1 | [G](tests.md) | high | L | Test tiers | Default and ignored tests do not identify their infrastructure or execution boundary. Five tiers: unit, contract, live-postgres, live-nats, kind. No GKE tier. Unit and contract per issue, live per merge, kind per epic. |
 | G3-2 | [G](tests.md) | high | M | Test selection | Selection policy spans JSON, shell branches, preparation rules, and exceptional path mappings. `tests/selection.toml` is the one policy file. Documentation-only changes select nothing. |
 | H1-2 | [H](hygiene.md) | high | S | Selection failures | Failed Git reads can become an empty successful test selection. Group 3 Do, small. The revision runner is renamed `tools/test-revision`. |
-| H3-1 | [H](hygiene.md) | high | S | Web dependencies | The parent pnpm installation omits dependency patches declared by the pinned wfe submodule. |
+| H3-1 | [H](hygiene.md) | high | S | Web dependencies | The parent pnpm installation omits dependency patches declared by the pinned wfe submodule. Group 4 Do, small, first of the web rows. The root install resolves the submodule's patches. |
 | D1-3 | [D](deployment.md) | high | S | RC telemetry | Closed by D3-6. The RC path and its Dockerfile are deleted, so no separate collector fix exists. |
 | H2-1 | [H](hygiene.md) | high | M | Contract documentation | Active plans contradict current integration and write-log contracts. Group 4 Do. `plan/integrations.md` and `plan/write-log.md` are deleted now. `integration-schema.md` is the integration authority until C1 to C3 land. |
 | D2-7, D3-6, F1-7, F3-4, H1-6 | [D](deployment.md), [F](developer-experience.md), [H](hygiene.md) | high | L | Deployment fixtures | Application and check routes repeat builds, installation, credentials, collection, and cleanup. F1-7 is Group 1 In passing with D3-6. F3-4 is Group 1 In passing with D3-6. |
@@ -123,7 +123,7 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | G1-7 | [G](tests.md) | medium | M | Package fixtures | Three manifests and several environment documents repeat one fixture shape. |
 | A2-7 | [A](code-quality.md) | medium | S | Workflow fixtures | Manual-run and schedule tests repeat component and scoped credential setup. In passing with the G1 fixture rows. |
 | A2-8 | [A](code-quality.md) | medium | M | HTTP guests | Request and pagination guests repeat transport policy helpers. Group 4 Do with the B3-4 and B3-5 guest moves, one repin. The library lives in the `no_std` workspace. |
-| A2-9, H3-4, H3-8 | [A](code-quality.md), [H](hygiene.md) | medium | M | Web tooling | Applications repeat Vite policy, worker naming, Solid assertions, and bundle parsing tests. In passing. |
+| A2-9, H3-4, H3-8 | [A](code-quality.md), [H](hygiene.md) | medium | M | Web tooling | Applications repeat Vite policy, worker naming, Solid assertions, and bundle parsing tests. In passing. H3-4 and H3-8 are In passing with A2-9. |
 | A2-10, H1-10 | [A](code-quality.md), [H](hygiene.md) | medium | S | Tool installation | Four pinned installers repeat one download and installation lifecycle. In passing. No installer test suite. |
 | A1-6 | [A](code-quality.md) | medium | S | Native dependencies | Forty-eight native dependency declarations have no confirmed use. Delete all 48 in the per-crate commits. `cargo check --all-targets` per package is the check. |
 | A1-11 | [A](code-quality.md) | medium | M | Generated support | Codec templates emit helpers and constants that particular operations never use. In passing, after A5: the inversion rewrites the generated adapters. |
@@ -159,11 +159,11 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | H2-4 | [H](hygiene.md) | medium | S | Agent instructions | Standing repository rules remain inside a completed deployment plan. Small: rules to `CLAUDE.md`, the version procedure to `building.md`, cloud prerequisites to `gcp.md`. |
 | H2-5 | [H](hygiene.md) | medium | S | Documentation links | Active pages contain missing source paths and retired anchors. The five `wamn-sync.md` links now. The rest die with H2-2 and H2-7 or are repaired In passing. |
 | H2-6 | [H](hygiene.md) | medium | M | Historical evidence | Twelve historical links present unavailable artifacts as inspectable evidence. Delete the twelve links and the proof wording. Each claim keeps its bead reference and the note "evidence not retained". |
-| H3-3 | [H](hygiene.md) | medium | M | Web boundaries | Source aliases conceal undeclared dependencies and private package imports. |
-| H3-5 | [H](hygiene.md) | medium | M | Shared presentation | The tooling package owns application sync UI despite its documented role. |
-| H3-6 | [H](hygiene.md) | medium | S | Web lint | Equivalent Solid application code receives different rules, and generated exclusions are incomplete. |
-| H3-7 | [H](hygiene.md) | medium | M | Browser fixtures | Scenario drivers repeat authentication, interaction, forwarding, and capture support. |
-| H3-10 | [H](hygiene.md) | low | S | Tracker files | An obsolete export and an empty temporary file retain about 7.6 MB beside the canonical export. |
+| H3-3 | [H](hygiene.md) | medium | M | Web boundaries | Source aliases conceal undeclared dependencies and private package imports. Group 4 Do. wfe is consumed through its package exports only. |
+| H3-5 | [H](hygiene.md) | medium | M | Shared presentation | The tooling package owns application sync UI despite its documented role. Owned by the ui-split work with F1-8 and F3-3. The generic sync engine is `@wfe/sync`. Nothing separate is filed. |
+| H3-6 | [H](hygiene.md) | medium | S | Web lint | Equivalent Solid application code receives different rules, and generated exclusions are incomplete. In passing, small. |
+| H3-7 | [H](hygiene.md) | medium | M | Browser fixtures | Scenario drivers repeat authentication, interaction, forwarding, and capture support. In passing with the G1 fixture rows. |
+| H3-10 | [H](hygiene.md) | low | S | Tracker files | An obsolete export and an empty temporary file retain about 7.6 MB beside the canonical export. Group 1 Do: delete both files now. |
 | H2-7 | [H](hygiene.md) | low | M | Historical snapshots | Three overlapping history snapshots contain 3,891 lines beside current reference owners. Delete the three snapshot pages. Git holds them. Fix the source comments that cite old sections first. |
 | H1-12 | [H](hygiene.md) | low | S | Retired tools | An applied rename tool and unused check build/removal pair retain 653 lines. Group 1 Do: delete all three now. |
 | A1-3 | [A](code-quality.md) | low | S | Recovery helpers | Most operator-recovery helpers have no caller beyond their own tests. Delete, Group 4 Do, one commit per crate. `connection_refused` and its test stay in test support. |
@@ -196,7 +196,7 @@ Within each severity, risk reduction takes priority, followed by estimated delet
 | G2-6 | [G](tests.md) | low | S | Incidental counts | Table totals and a publication count freeze implementation choices without a named contract. In passing when those files are open. |
 | G2-7 | [G](tests.md) | low | S | SQL snapshots | A complete formatted DDL snapshot repeats behavior already covered by semantic tests. Closed by the tenant feature removal: the three files go whole. |
 | H2-8 | [H](hygiene.md) | low | S | Documentation navigation | The plan index omits alignment work, and history lacks a successor map. Keep the structure and `docs/testing/`. Add `alignment.md`, `integration-schema.md` and `audit/` to the indexes. The untrimmed-plan rule is deleted. |
-| H3-9 | [H](hygiene.md) | low | S | Web exports | Three unnecessary exports and one root dependency can leave without deleting their active implementations. |
+| H3-9 | [H](hygiene.md) | low | S | Web exports | Three unnecessary exports and one root dependency can leave without deleting their active implementations. In passing, small. |
 
 ### Rejected findings and proposals
 
@@ -318,6 +318,9 @@ The owner review of 2026-10-31 rejects the following. The report evidence stays 
 | Question on live statuses for the archive candidates (H2-2, H2-3) | Answered: the agent runs `bd show` live for each before deleting. The passive export is not a status source. |
 | Question on an immutable Git source plus a history entry (H2-2, H2-7) | Answered: yes. |
 | Question on the twelve historical performance artifacts (H2-6) | Answered: retained nowhere. |
+| H3-2: Environment JSON creates a second deployment authority | Merged into D1-1, the same deletion. One row. |
+| Question on public wfe exports (H3-3) | Answered: yes. Source qualification stays inside the submodule, and WAMN imports no private wfe script. |
+| Question on external readers of `.beads/beads.jsonl` and the deployment JSON (H3-10, H3-2) | Answered: none. Delete now. |
 | Question on the owner of the frozen PostgreSQL telemetry identifiers (G2-6, H2-5) | Answered: the identifiers stay. The guard cites the collector template in `deploy/platform/otel-collector.yaml`, the only current consumer, instead of the deleted archive documents. No dashboard owns them. |
 | C1-2's pending-work record and C1-3's schema advancement before analysis | Rejected. One baseline, so nothing advances. Apply compares the installed baseline hash with the candidate's and refuses with "schema changed, reset the environment database" on a mismatch. C1-3 closes into C1-2 with its Deletes widened to every project migration call. |
 
@@ -344,7 +347,7 @@ Two plans change the platform the audit describes: [alignment](../plan/alignment
 | Question on org isolation under host compromise (E1-2) | alignment R5 | Answered: per-environment certificates, refused across environments. |
 | A3-2, A3-10 (`host.rs`), A3-12, A3-13 (`flow_http_routing.rs`), A1-11 | [perf-arch](../plan/perf-arch.md) A5 | A5 rewrites the claim maps, host startup, the generated adapters and the routing file. Each fix is written inside that rewrite, not before. A3-2 stays Group 3 Do under A5's ownership. |
 | F1-1, F1-2, F1-4, F1-5 | [perf-arch](../plan/perf-arch.md) A5 | After A5. Publication records, boundary types, overlay composition and generated projections change with the composed HTTP workload. |
-| F1-8, F3-3 | ui split, owner developer-experience priority 1 | Owned there, including the shell as an SDK dependency and the generated default screens. The audit files nothing separate. |
+| F1-8, F3-3, H3-5 | ui split, owner developer-experience priority 1 | Owned there, including the shell as an SDK dependency, the generated default screens and the shared sync presentation. The generic sync engine is `@wfe/sync` in the wfe repository. The audit files nothing separate. |
 | G3-3 (the rest) | D2-8 | Closed into D2-8, as D3-3 was. Two sentences survive: every selected suite executes its cases and zero executed cases fails, and a branch touching install, chart or env apply files merges only after `platform_apply_kind` passes on it. |
 | G2-7 | tenant feature removal in progress | Closed. `tenant_key.rs`, `tenant_key_live.rs` and `tenant_scope.rs` are the retired tenant feature and go whole. No snapshot to trim. |
 | B1-3 and every crate move inside runtime or execution-host | [perf-arch](../plan/perf-arch.md) A5 | The application as the HTTP workload is the ruled direction and lands before any re-measurement. Moves inside runtime and execution-host before A5 are churn and wait. |
@@ -503,12 +506,12 @@ Do (27 findings). The rows the review named, then every row that deletes a build
 | D3-1 | Installation still builds and publishes its own candidate | high | ctl/runner | Package and UI compilation from `platform/build.rs`, publication from `platform/releases.rs`, and the installer’s request to commit newly discovered release digests. From D2-6: installer PostgreSQL container management, pnpm invocation, debug executable lookup, and recursive ctl execution. |
 | F3-6 | Deployment needs one author command over the existing control owners | high | ctl/runner | Remove author-maintained deployment scripts, manual digest transfers, and a separate web-upload step from the default path. Keep lower-level operator verbs for administration and recovery. After D3-1. Orchestration over the existing verbs and nothing more. Tests: first deployment and unchanged retry only. |
 | H1-12 | Retired and unreferenced tools obscure the supported surface | low | none | All three scripts and tests whose sole subject is the removed command surface. Delete all three now. |
+| H3-10 | Obsolete Beads files remain tracked beside the canonical export | low | none | `.beads/beads.jsonl` and `.beads/.~issues.jsonl.3646117766`, about 7.6 MB combined. Delete both now. |
 | B2-7 | Platform installation also acts as a repository build application | medium | ctl/runner | Same Deletes as D3-1. `build-platform` stays a `wamn-ctl` verb and `platform apply` consumes its outputs. |
 | D2-6 | Installation couples package freshness to an unrelated platform stamp | medium | ctl/runner | Merged with D3-1. The installer deletions are stated once under D3-1. |
 | C2-2 | Production package changes escape the lifecycle lock | high | ctl/runner | Independent production package coordination in `platform/packages.rs`, the public `apply-package` verb, and every mutation path that bypasses the environment owner. Package application is an internal phase of `env apply` under the environment lock. `wamn dev` calls the library. |
 | D2-2 | The older image pipeline builds artifacts that deployment does not select | high | ctl/runner | `tools/journey-image-cache`, the upgrade image and guest stages, their leases, relabeling, and duplicate registry authentication. Listed in Group 1 for the deletion and in Group 2 for the cache identity. |
-| D1-1 | KCL and JSON declare different application sets | high | ctl/runner | Both environment JSON files, their required-sibling convention, and their package lists. Remove the old delivery configuration reader after its remaining consumers migrate. The JSON also carries `context` and `gates_image`. Both are cluster facts and belong in `deploy/gcp/cluster.k`, not in any environment file. The empty `floors = {}` block in both environment `.k` files is deleted. |
-| H3-2 | Environment JSON creates a second deployment authority | high | ctl/runner | Both environment JSON files, the obsolete `EnvironmentFile` reader, and companion-JSON discovery in package preparation. |
+| D1-1 | KCL and JSON declare different application sets | high | ctl/runner | Both environment JSON files, their required-sibling convention, and their package lists. Remove the old delivery configuration reader after its remaining consumers migrate. The JSON also carries `context` and `gates_image`. Both are cluster facts and belong in `deploy/gcp/cluster.k`, not in any environment file. The empty `floors = {}` block in both environment `.k` files is deleted. Absorbs H3-2: the `EnvironmentFile` reader and companion-JSON discovery go with the JSON files. |
 | D3-5 | Helm plus KCL removes more machinery than a Rust operator | medium | ctl/runner | `platform/manifests.rs` substitutions, Kubernetes object builders in `platform/cdc.rs` and `platform/edge.rs`, and independent WAMN identity and edge chart packages after their templates move. Alignment R9: the operator, CRDs, `WorkloadDeployment`s and the subchart host Deployment stay as they are. Only WAMN-owned templates and the plugins and NATS values move. |
 | D3-6 | Nine deployment routes must collapse into one fixture | medium | none | `tools/receiving-cluster-journey-run`, `tools/wms-cluster-journey-run`, `tools/delivery-owned`, `tools/rc-gate-run`, `tools/kind-gate-build`, `tests/integration/src/rc/Dockerfile`, and `deploy/mvp/`. Retain generic verdict and cleanup tools where callers still need them. Clusters are disposable and one agent holds a cluster at a time. Receiving and WMS assertions move into the fixture before their scripts go. Absorbs H1-6: the three lifecycle scripts and duplicated image-loading loops, with `delivery-owned` reduced to launch commands. |
 | D2-7 | Cluster checks retain separate artifact recipes and duplicated lifecycle code | medium | none | The RC Dockerfile, redundant journey image builds, and duplicated lifecycle branches. Retire per-node check-image cleanup when disposable clusters replace retained check clusters. Merged with D3-6. |
@@ -638,7 +641,7 @@ In passing (9 findings). Helper dedup, naming, count pins and doc links. Closed 
 
 Target: dormant surfaces and unused dependencies first (A1-x, A1-6, A1-10), then the contract JSON (A2-3), then the crate map. Authoring rows follow the owner's developer-experience priority: ui split, then deployment ergonomics, then templates such as `wamn new`. Crate consolidation is last because it forces full rebuilds and guest repins and must not precede the build and deploy fixes. Helper and fixture dedup (G1-x, A2-x) lands only when the file is already being changed, never as its own issue. Authoring rows F1-x and F3-x stay here.
 
-Do (38 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high.
+Do (34 findings). The rows the review named, then every row that deletes a build, image, route, file or test target, or carries severity high.
 
 | Finding | Title | Severity | Deletes |
 | --- | --- | --- | --- |
@@ -674,14 +677,10 @@ Do (38 findings). The rows the review named, then every row that deletes a build
 | H2-2 | Closed work remains in the active plan collection | medium | The eleven completed plan files and their index entries. One history line each: bead and commit. `bd show` live before each deletion. |
 | H2-5 | Local links contain five live missing paths and three missing anchors | medium | Obsolete source claims and links to retired deployment files. Do not recreate removed implementation files to satisfy documentation links. The five `wamn-sync.md` links now. The rest die with H2-2 and H2-7 or are repaired In passing. |
 | H2-6 | Historical proof claims point to absent evidence | medium | The twelve dead links and the proof wording. Each claim keeps its bead reference and the note "evidence not retained". |
-| H3-1 | The parent install omits wfe dependency repairs | high | No source deletion initially. Remove the separate, inconsistent installation assumptions. |
-| H3-3 | Source aliases hide dependencies between workspace packages | medium | Cross-package source aliases, matching TypeScript path overrides, and Receiving’s direct import of the private wfe transformation script. |
-| H3-4 | Shared Vite configuration owns too little | medium | Repeated Solid-version plugins, resolution blocks, test defaults, and worker filename callbacks. Replace manually restated Vite interface shapes with Vite’s own types. |
-| H3-5 | The tooling package still owns application UI | medium | `web/shell/src/sync.tsx`, `web/shell/src/status.ts`, and their old test location after relocation. Remove Solid and sync runtime dependencies from the tooling package when no remaining code needs them. |
-| H3-8 | Bundle parsing tests are copies with different parameters | low | The duplicated build, parse, diagnostic, and cleanup bodies. |
-| H3-9 | Three exports and one root dependency are removable | low | Three unnecessary exports and one dependency declaration initially. Later, delete consumer chart-type dependencies and path mappings after their owner supplies the types. |
+| H3-1 | The parent install omits wfe dependency repairs | high | No source deletion initially. Remove the separate, inconsistent installation assumptions. The root install resolves the submodule's patches. First of the web rows. |
+| H3-3 | Source aliases hide dependencies between workspace packages | medium | Cross-package source aliases, matching TypeScript path overrides, and Receiving’s direct import of the private wfe transformation script. wfe through its package exports only. |
 
-In passing (49 findings). Helper dedup, naming, count pins and doc links. Closed when the owning file is already open, never filed alone.
+In passing (51 findings). Helper dedup, naming, count pins and doc links. Closed when the owning file is already open, never filed alone.
 
 | Finding | Title | Severity | Deletes |
 | --- | --- | --- | --- |
@@ -731,9 +730,11 @@ In passing (49 findings). Helper dedup, naming, count pins and doc links. Closed
 | H2-4 | Standing repository rules live inside a completed deployment plan | medium | The standing-rule block from the deployment plan and repeated “How this plan is worked” imports from other plans. Rules to `CLAUDE.md`. |
 | H2-7 | Change histories occupy pages that readers use as references | low | Redundant historical snapshots after preserving their source revisions. The three snapshot pages `gcp-install-history.md`, `platform-ui-history.md`, and `deployment-pre-apply.md` contain 3,891 lines. Fix the source comments that cite old sections first. |
 | H2-8 | Navigation omits active alignment work and lacks a history map | low | Completed plan entries, copied status lists, and snapshot pages covered by the preceding findings. Add only the compact history index. Add `alignment.md`, `integration-schema.md` and `audit/` to the indexes. The untrimmed-plan rule is deleted. |
+| H3-4 | Shared Vite configuration owns too little | medium | Repeated Solid-version plugins, resolution blocks, test defaults, and worker filename callbacks. Replace manually restated Vite interface shapes with Vite’s own types. With A2-9. |
+| H3-8 | Bundle parsing tests are copies with different parameters | low | The duplicated build, parse, diagnostic, and cleanup bodies. With A2-9. |
+| H3-9 | Three exports and one root dependency are removable | low | The two export modifiers, the re-export and the root `@wfe/generator` dependency. |
 | H3-6 | ESLint applies different rules to equivalent application code | medium | The separate platform-only rule block and stale `web/demo` exclusion. |
-| H3-7 | Browser drivers duplicate fixture and transport support | medium | Repeated fixture parsing, sign-in functions, receipt actions, and HTTP forwarding implementations. Retain every scenario entry point. |
-| H3-10 | Obsolete Beads files remain tracked beside the canonical export | low | `.beads/beads.jsonl` and `.beads/.~issues.jsonl.3646117766`, about 7.6 MB combined. |
+| H3-7 | Browser drivers duplicate fixture and transport support | medium | Repeated fixture parsing, sign-in functions, receipt actions, and HTTP forwarding implementations. Retain every scenario entry point. With the G1 fixture rows. |
 
 ## Open questions for the owner
 
@@ -741,8 +742,6 @@ In passing (49 findings). Helper dedup, naming, count pins and doc links. Closed
 2. Confirm the reviewer's pick: the provisioning operator certificate is one platform-wide principal by design, and revocation is short certificate lifetimes under cert-manager (alignment R3), not a CRL. This informs privileged credential boundaries in Group 3 (E2-2, E2-3).
 3. Owner pick for the local signing key file: no trust deadline (current) plus a revoked-list file when wanted, or a deadline and its length. E1-8 is deferred and not filed until picked.
 4. Confirm the reviewer's pick: a poisoned authority lock fails the operation and exits the host process, and Kubernetes restarts it. No isolation machinery, no unready-state logic. This settles A3-2 inside the A5 rewrite.
-5. Can WAMN consume only public built wfe exports while source qualification remains inside the submodule? This unblocks Group 4 (H3-3).
-6. Confirm the reviewer's pick: Docker on Linux x86_64 is the supported developer host for now. This settles the host contract for Groups 2 and 4 (F2-8, F3-2).
-7. Does any external tool still read `.beads/beads.jsonl`? This unblocks obsolete-export removal in Group 4 (H3-10).
+5. Confirm the reviewer's pick: Docker on Linux x86_64 is the supported developer host for now. This settles the host contract for Groups 2 and 4 (F2-8, F3-2).
 
 Questions 8 and 10 of the first draft are answered in Rejected findings and proposals. Nothing from this list is filed until the owner answers.

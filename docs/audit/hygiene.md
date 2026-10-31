@@ -540,6 +540,8 @@ All three questions were answered on 2026-10-31.
 
 ## Part 3: web and stray files
 
+Owner review 2026-10-31: the web rows follow the ui-split priority, and the shell and the sync presentation move with it.
+
 Read-only audit at `8c831349d3116aac27d9ca6f59a499da1c87efc7`. No files changed. No builds or tests ran. Test references below describe proposed validation.
 
 The six first-party Cargo lockfiles have live owners. Keep the native, guest, and isolated `no_std` lockfiles (`Cargo.toml:1`, `apps/Cargo.toml:1`, `apps/platform/no-std/Cargo.toml:3`). Keep the Modbus lockfile and both fixture lockfiles because tests copy or build those independent projects (`crates/control/lib/tests/connector_restart_live.rs:60`, `crates/control/lib/tests/integration_artifact.rs:17`, `crates/control/lib/tests/support/http-fixture/Dockerfile:3`). The seventh tracked lockfile belongs to vendored code (`vendor/pg-walstream/Cargo.lock:1`).
@@ -555,11 +557,13 @@ Evidence: `pnpm-workspace.yaml:35`, `pnpm-lock.yaml:3162`, `web/wfe/pnpm-workspa
 
 Problem: WAMN installs wfe packages through the parent workspace, but the parent omits the patches declared by wfe. The parent lockfile resolves unpatched dependencies, while the submodule lockfile records patched versions. These repairs affect focus listeners and ownership of scroll state. Therefore, the pinned submodule commit alone does not reproduce its dependency behavior.
 
-Proposal: The root workspace must own the effective installation policy. Reference the patch files from the pinned submodule and retain their single source there. Qualify wfe through the same dependency resolution that WAMN uses.
+Proposal: The root pnpm workspace references the wfe patch files from the pinned submodule. One source for the patches, resolved by the root install. Qualify wfe through the same dependency resolution that WAMN uses.
 
 Deletes: No source deletion initially. Remove the separate, inconsistent installation assumptions.
 
 Risk: Focus dismissal and scroll restoration can differ between standalone wfe tests and WAMN applications. Run the existing wfe interaction qualification under the parent installation, followed by the relevant platform browser interactions.
+
+Owner review 2026-10-31: keep, Group 4 Do, small, first of the web rows.
 
 ## Finding H3-2: Environment JSON creates a second deployment authority
 
@@ -570,11 +574,7 @@ Evidence: `deploy/gcp/environments/dkk--wms--dev.json:10`, `deploy/gcp/environme
 
 Problem: The JSON files repeat cluster, registry, route, bucket, package, and image facts owned elsewhere. They remain active inputs, rather than disposable generated output. The WMS KCL document declares REST applications, but its JSON package list contains only WMS. Platform package discovery and test preparation read that smaller JSON list.
 
-Proposal: Resolve application packages from the authored environment document and application dependencies. Resolve infrastructure from the cluster document and image identities from the stamped chart. Remove `EnvironmentFile` after its callers use those owners.
-
-Deletes: Both environment JSON files, the obsolete `EnvironmentFile` reader, and companion-JSON discovery in package preparation.
-
-Risk: Immediate deletion breaks publication, delivery, and test preparation. Replace the existing package-discovery test at `crates/control/lib/src/platform/build.rs:432` with coverage of the complete WMS application set. Run the affected environment deployment case.
+Merged into deployment D1-1 (owner review 2026-10-31), the same deletion. One row.
 
 ## Finding H3-3: Source aliases hide dependencies between workspace packages
 
@@ -585,11 +585,13 @@ Evidence: `apps/platform_ui/src/shell.tsx:15`, `apps/platform_ui/package.json:17
 
 Problem: The platform UI imports `@wamn/web-runtime` without declaring that dependency. Receiving imports `@wamn/platform-ui` through source aliases without declaring that dependency. Receiving also maps wfe packages directly into submodule source. These paths conceal the dependency graph and couple applications to repository layout.
 
-Proposal: Give each shared package a declared public entry and require consumers to declare workspace dependencies. Consume wfe through its package exports. Keep source-level wfe qualification inside the submodule.
+Proposal: Each shared package declares a public entry, and consumers declare workspace dependencies. wfe is consumed through its package exports only. Source-level wfe qualification stays inside the submodule, and WAMN imports no private wfe script.
 
 Deletes: Cross-package source aliases, matching TypeScript path overrides, and Receiving’s direct import of the private wfe transformation script.
 
 Risk: Package resolution and generated component types can fail during the transition. Run the existing platform and Receiving type tests and bundle parsing tests.
+
+Owner review 2026-10-31: keep, Group 4 Do. Question 1 is answered: yes.
 
 ## Finding H3-4: Shared Vite configuration owns too little
 
@@ -606,6 +608,8 @@ Deletes: Repeated Solid-version plugins, resolution blocks, test defaults, and w
 
 Risk: Worker URLs, offline reloads, and development routing can break. Run both existing bundle tests, Receiving’s offline browser case, and sync-bench’s worker and audience-path tests.
 
+Owner review 2026-10-31: In passing with code-quality A2-9, one Vite owner in `web/shell`.
+
 ## Finding H3-5: The tooling package still owns application UI
 
 Severity: medium  
@@ -615,11 +619,7 @@ Evidence: `web/shell/README.md:3`, `web/shell/src/sync.tsx:15`, `web/shell/src/s
 
 Problem: The package describes itself as shared tooling with no UI components. It nevertheless owns the shared sync status and refused-write panels. Both consumers reach into its source directory. This leaves application UI outside the platform UI owner and makes a tooling package depend on Solid.
 
-Proposal: Move the shared sync presentation into a public platform UI entry. Keep outbox storage and application-specific resubmission behavior with their existing owners. Leave Vite and browser tooling in the tooling package.
-
-Deletes: `web/shell/src/sync.tsx`, `web/shell/src/status.ts`, and their old test location after relocation. Remove Solid and sync runtime dependencies from the tooling package when no remaining code needs them.
-
-Risk: Refused-write correction, expired entries, and startup status can regress. Retain the status tests and run Receiving sync tests and sync-bench packaging-write tests against the new entry.
+Owned by the ui-split work with F1-8 and F3-3, the owner's developer-experience priority 1 (owner review 2026-10-31). The shared sync presentation moves to the platform UI owner, and the generic sync engine is `@wfe/sync` in the wfe repository, by ruling. The audit files nothing separate. The evidence above is the pointer.
 
 ## Finding H3-6: ESLint applies different rules to equivalent application code
 
@@ -636,6 +636,8 @@ Deletes: The separate platform-only rule block and stale `web/demo` exclusion.
 
 Risk: Enabling the missing rules can expose existing violations. Inspect ESLint’s effective configuration for representative platform, Receiving, and generated files, then run lint on the affected authored sources.
 
+Owner review 2026-10-31: In passing, small. One lint policy for authored Solid code, generated client directories excluded, and the submodule keeps its own.
+
 ## Finding H3-7: Browser drivers duplicate fixture and transport support
 
 Severity: medium  
@@ -650,6 +652,8 @@ Proposal: Give Receiving browser support one owner beside its tests. Give the WM
 Deletes: Repeated fixture parsing, sign-in functions, receipt actions, and HTTP forwarding implementations. Retain every scenario entry point.
 
 Risk: Shared support can accidentally remove differences that a scenario requires. Run `local_receiving_screens`, `local_receiving_sync`, and `local_receiving_offline`, plus the affected WMS outbox scenarios.
+
+Owner review 2026-10-31: In passing with the tests G1 fixture rows. Browser fixtures sit beside their tests.
 
 ## Finding H3-8: Bundle parsing tests are copies with different parameters
 
@@ -666,6 +670,8 @@ Deletes: The duplicated build, parse, diagnostic, and cleanup bodies.
 
 Risk: Consolidation can omit one application or a worker entry. Preserve separate named application cases and include Receiving’s worker in the emitted-module assertion.
 
+Owner review 2026-10-31: In passing with code-quality A2-9.
+
 ## Finding H3-9: Three exports and one root dependency are removable
 
 Severity: low  
@@ -681,6 +687,8 @@ Deletes: Three unnecessary exports and one dependency declaration initially. Lat
 
 Risk: Generated descriptions and compiler resolution can depend on imports absent from the authored source scan. Run the existing generated-description test and affected package type tests.
 
+Owner review 2026-10-31: In passing, small. The two export modifiers, the re-export and the root `@wfe/generator` dependency. sync-bench's generator dependency and Playwright stay as stated.
+
 ## Finding H3-10: Obsolete Beads files remain tracked beside the canonical export
 
 Severity: low  
@@ -694,10 +702,14 @@ Proposal: Keep Dolt as the live tracker and `.beads/issues.jsonl` as the designa
 
 Deletes: `.beads/beads.jsonl` and `.beads/.~issues.jsonl.3646117766`, about 7.6 MB combined.
 
-Risk: An external reader can still depend on the old filename. Search repository consumers and preserve the canonical export’s issue IDs and memory records. No application test is required.
+Risk: Preserve the canonical export’s issue IDs and memory records. No application test is required.
+
+Owner review 2026-10-31: Group 1 Do. Delete `.beads/beads.jsonl` and the temporary file now. Question 2 is answered: no external tool reads either file or the deployment JSON.
 
 ## Open questions for the owner
 
-1. Can WAMN consume only public built wfe exports, with source qualification confined to the submodule?
-2. Does any external tool still read `.beads/beads.jsonl` or the deployment JSON files?
+Both questions were answered on 2026-10-31.
+
+1. Yes. Source qualification stays inside the submodule, and WAMN imports no private wfe script (H3-3).
+2. No. No external tool reads either file or the deployment JSON (H3-10, H3-2).
 
