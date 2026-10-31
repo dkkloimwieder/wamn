@@ -278,13 +278,13 @@ Evidence: `crates/control/lib/src/platform/document.rs:18` declares no platform 
 
 Problem: The documents do not fully determine the requested deployment. The selected checkout, JSON files, and local chart directory contribute additional desired state. Reapplying an unchanged document therefore depends on inputs outside that document.
 
-Proposal: `cluster.k` pins one immutable platform bundle by digest. That bundle contains charts, all platform image digests, the migration runner, and the system and project migration streams. Each `environment.k` pins its application release digest and declares environment configuration. The release supplies the exact package artifact closure, including base and overlay pins. Package versions and schema targets derive from those artifacts.
+Proposal: `cluster.k` pins one immutable platform bundle by digest. That bundle contains charts, all platform image digests, and the package artifact closure. Each `environment.k` pins its application release digest and declares environment configuration. The release supplies the exact package artifact closure, including base and overlay pins. Package versions and schema targets derive from those artifacts.
 
 Credentials remain external references. Kubernetes, Helm, and PostgreSQL hold observed state. They do not independently select the desired release. Build and publication commands produce artifacts before application and never mutate the destination environment.
 
 Deletes: Delete `deploy/gcp/environments/dkk--receiving--dev.json`, `deploy/gcp/environments/dkk--wms--dev.json`, and `crates/control/lib/src/delivery/environment.rs`. Delete deployment-time package discovery and builds from `platform/build.rs`, `platform/packages.rs`, and `platform/releases.rs`. Remove the local chart directory as an independent deployment selector.
 
-Risk: Deployment loses its dependency on source directories and local build output. Extend `platform_apply_kind` to install from pinned artifacts without either input. An identical second apply must produce no deployment or migration writes.
+Risk: Deployment loses its dependency on source directories and local build output. Extend `platform_apply_kind` to install from pinned artifacts without either input. An identical second apply must produce no deployment writes.
 
 ## Finding C3-2: Fresh installation and reconciliation bypass versioned migrations
 
@@ -318,7 +318,7 @@ Evidence: `upgrade_environment.rs:109` defines an eleven-stage driver. `platform
 
 Problem: The drivers disagree about the unit of work and the evidence that permits progress. A completed local stage differs from an observation that the destination still matches. The local installer lock also cannot coordinate callers on different machines.
 
-Proposal: Keep `platform apply` and `env apply` as scope selectors for one reconciler. Use one cluster-scoped Kubernetes Lease to coordinate callers, including first installation. Database transactions retain their own migration locks. Lease loss stops further effects.
+Proposal: Keep `platform apply` and `env apply` as scope selectors for one reconciler. Use one cluster-scoped Kubernetes Lease to coordinate callers, including first installation. Lease loss stops further effects.
 
 The reconciler resolves artifacts, observes installed facts, and requires qualification before destination schema changes. It then stops admission and automation, drains affected work, executes migrations, deploys the selected artifacts, and waits for readiness. It reopens admission only after the affected scope reaches its target.
 
@@ -326,7 +326,7 @@ The three upgrade flows use that sequence:
 
 1. A platform image upgrade changes the bundle digest in `cluster.k`. Application release digests remain unchanged.
 2. A package upgrade publishes a release with the complete successor package closure, then changes the digest in `environment.k`.
-3. A schema upgrade appends migrations and publishes the owning platform bundle or package release. Runtime images can remain unchanged.
+3. A schema change during development is a new release plus a reset of the affected tables.
 
 A retry observes migration records and live resources again. Logs explain execution but never authorize skipping a step. Cross-database application is not atomic. After partial progress, affected services remain paused until reconciliation succeeds.
 
@@ -362,19 +362,19 @@ Proposal: Use the maintenance model from Finding C3-3. Drain all affected writer
 
 Recovery proceeds forward from committed migration records. Returning to earlier code requires an explicit document change and qualification against the schema that remains installed. Schema reversal requires an authored migration or an explicit backup restoration.
 
-Deletes: Delete `crates/schema/generator/src/upgrade_stage.rs`, `package_upgrade/progress.rs`, and `qualify_upgrade/stage.rs`. Remove online-stage branches from package application. Delete `catalog.package_upgrade_stages`, `catalog.package_floors`, the document’s `floors` field, and floor application from `environment/contract.rs`. Retain obsolete-binding cleanup. Delete history-derived rollback in `environment/rollback.rs`. Delete tests whose sole subject is online coexistence, while retaining data-preservation and authority assertions.
+Deletes: Delete `crates/schema/generator/src/upgrade_stage.rs`, `package_upgrade/progress.rs`, and `qualify_upgrade/stage.rs`. Remove online-stage branches from package application. Delete `catalog.package_upgrade_stages`, `catalog.package_floors`, the document’s `floors` field, and floor application from `environment/contract.rs`. Retain obsolete-binding cleanup. Delete tests whose sole subject is online coexistence, while retaining data-preservation and authority assertions.
 
 Risk: Upgrades interrupt service, and large transactional migrations can exceed the maintenance window. Test that active work blocks migration, failed SQL preserves rows, retries resume correctly, and incompatible earlier releases refuse. Uninterrupted upgrades require a different owner decision before these deletions.
 
 The following exported open beads lose their current implementation premise:
 
-- `wamn-qpgq`: historical cutovers no longer need migration ports because the initial installation replaces existing state. Migration-only ownership remains acceptance for Finding C3-2. Evidence: `.beads/issues.jsonl:3469`.
-- `wamn-eycl`: the separate `environment.upgrade` saga disappears. The UI instead submits desired state through the same reconciler. UI support remains required. Evidence: `.beads/issues.jsonl:3458`.
+- `wamn-qpgq`: historical cutovers no longer need migration ports because the initial installation replaces existing state. Its acceptance is the baseline hash check of C1-2, because C3-2 is rejected. Evidence: `.beads/issues.jsonl:3469`.
+- `wamn-eycl`: the separate `environment.upgrade` saga disappears. There is no package upgrade in development. A release change is an `environment.k` apply, and the UI submits that document. Evidence: `.beads/issues.jsonl:3458`.
 - `wamn-ev5g6`: its equal-deadline premise already disappears in current source. `platform/job.rs:15` allows 900 seconds around the 600-second readiness budget. Evidence: `.beads/issues.jsonl:1919`.
 
 These are proposed dispositions, not closures. Root must read live Beads before disposition and cite the relevant implementation commit. Qualification transport and teardown findings `wamn-byw08`, `wamn-uvqx9`, and `wamn-dxcpf` remain relevant.
 
-Rejected (owner review 2026-10-31, see README): maintenance-window lifecycle. Deployment state stays in Helm and Kubernetes, rollback is `helm rollback`, an upgrade never stops user workflows, and the rolling drain of the old release stays. The Deletes line above is nonetheless carried out by the package-baseline deletion in Part 2, because there is no in-place package upgrade.
+Rejected (owner review 2026-10-31, see README): maintenance-window lifecycle. Deployment state stays in Helm and Kubernetes, rollback is `helm rollback`, an upgrade never stops user workflows, and the rolling drain of the old release stays. The Deletes line above is nonetheless carried out by the package-baseline deletion in Part 2, because there is no in-place package upgrade, with one exception: `environment/rollback.rs` stays. Rollback is `helm rollback` by ruling, and the integration-schema plan defines `env rollback --reason` as applying the previous deployed digest.
 
 ## Open questions for the owner
 
