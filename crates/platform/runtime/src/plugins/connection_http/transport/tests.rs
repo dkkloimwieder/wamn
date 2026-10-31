@@ -549,12 +549,12 @@ async fn one_shot_token_and_head_use_fresh_tls_without_retained_state() {
         let server = Server::start(Reply::Token, Some(http2)).await;
         let transport = server.transport();
         let decision = server.decision();
-        let credential = super::super::Oauth2Credential {
-            client_id: "client id".into(),
-            client_secret: "test-secret".into(),
-            token_url: decision.logical_url.to_string(),
-            scope: Some("read".into()),
-        };
+        let credential = super::super::oauth2_request(
+            "oauth2_client_credentials",
+            &serde_json::json!({"client_id":"client id", "token_url":decision.logical_url.as_ref(), "scopes":["read"]}),
+            Some(r#"{"client_secret":"test-secret"}"#),
+            None,
+        ).unwrap();
         for _ in 0..2 {
             let token = super::super::fetch_health_token(&transport, &decision, &credential)
                 .await

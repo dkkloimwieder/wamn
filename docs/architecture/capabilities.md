@@ -158,6 +158,7 @@ The host reads both objects and applies the selected scheme.
 | `api_key` | `{"key":"…"}` | `{"in":"header","name":"x-api-key"}` or `{"in":"query","name":"api_key"}` |
 | `hmac` | `{"secret":"…"}` | `{"algorithm":"sha256","header":"x-signature"}` |
 | `oauth2_client_credentials` | `{"client_secret":"…"}` | `{"client_id":"…","token_url":"…","scopes":["…"]}` |
+| `oauth2_client_credentials_jwt` | `{"private_key":"PEM"}` | `{"client_id":"…","token_url":"…","scopes":["…"],"key_id":"…","algorithm":"PS256","scope_separator":","}` |
 | `aws_sigv4` | `{"access_key_id":"…","secret_access_key":"…"}` | `{"region":"…","service":"…"}` |
 | `custom` | An object defined by the integration implementation | `{}` |
 | `none` | No credential | `{}` |
@@ -173,12 +174,27 @@ The host signs the exact outbound body bytes and injects `sha256=<lowercase hex>
 The secret and header name must be nonempty, and the name must be valid and not reserved by the host.
 The HMAC shape refuses unknown fields and algorithms other than `sha256`.
 
-OAuth2 client credentials use a client secret from the store and public fields from `parameters.auth`.
+The `oauth2_client_credentials` type uses a client secret from the store and public fields from `parameters.auth`.
 The `scopes` field is an array of strings.
 The host requests a client-credentials token with HTTP Basic authentication and a form body.
 The token endpoint stays inside the bound authority and base path and uses the same transport and address policy.
 The host caches tokens for the connection and active credential generation until `expires_in` minus 60 seconds.
 Missing expiry, expiry at most 60 seconds, or an unrepresentable expiry permits only the current send.
+
+The `oauth2_client_credentials_jwt` type authenticates with a signed JWT, a JSON Web Token, instead of a client secret.
+The credential holds a PEM private key. RSA accepts PKCS#8 or PKCS#1, and P-256 accepts PKCS#8.
+The host supports PS256, RS256, and ES256. ES256 uses the fixed 64-byte signature format.
+The assertion header carries `alg`, `kid` from `key_id`, and `typ` set to `JWT`.
+
+The claims carry `iss` from `client_id`, `aud` from `token_url`, and `iat` from the host clock.
+The expiry, `exp`, is 300 seconds later. Each assertion carries a fresh random 256-bit `jti`.
+Optional `scopes` form the `scope` claim and the form field. Empty scopes omit both.
+The `scope_separator` accepts a space or comma and defaults to a space.
+
+The token form carries `grant_type=client_credentials`, the RFC 7523 `client_assertion_type`, and `client_assertion`.
+Malformed keys or keys that do not match the algorithm return `credential-unavailable` before dispatch.
+Connection health uses the same assertion request and token response rules.
+Both client credentials types use the shared encrypted token row and locked refresh path described in [execution](execution.md#connection-memory).
 
 The host injects `Authorization: Bearer` into the API request.
 An API 401 removes the cached token and causes one fresh token request and one API retry.

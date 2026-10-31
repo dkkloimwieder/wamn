@@ -406,10 +406,6 @@ fn oauth_rotation(
     };
     run(&format!(
         "BEGIN;
-         INSERT INTO registry.auth_type(code,credential_schema,parameter_schema,http_only)
-         SELECT 'oauth2_client_credentials_jwt',credential_schema,parameter_schema,http_only
-         FROM registry.auth_type WHERE code='oauth2_client_credentials';
-         INSERT INTO registry.integration_type_auth VALUES('http','oauth2_client_credentials_jwt');
          UPDATE registry.integration SET auth_type='{auth}' WHERE name='first';
          {}
          -- Keep the fixture outside the transaction that this test rolls back.

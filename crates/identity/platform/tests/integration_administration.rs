@@ -231,3 +231,113 @@ async fn oauth_writers_invalidate_rows_in_the_generation_transaction() {
         );
     }
 }
+
+#[tokio::test]
+async fn jwt_connection_write_enforces_credential_and_auth_schemas() {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_control_provision::test_database::system();
+    let (mut client, driver) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
+        .await
+        .unwrap();
+    tokio::spawn(driver);
+    client
+        .batch_execute("BEGIN; SET LOCAL ROLE wamn_system")
+        .await
+        .unwrap();
+    client
+        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+        .await
+        .unwrap();
+    client
+        .batch_execute(
+            &wamn_control_provision::test_database::seed_org_project_env_sql("acme", "app", "dev"),
+        )
+        .await
+        .unwrap();
+    client.batch_execute("UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='cloud'); COMMIT").await.unwrap();
+    let store = RecordingStore::default();
+    execute(&mut client, &store, "integration.write", json!({"project":"app","name":"jwt","integration_type":"http","auth_type":"oauth2_client_credentials_jwt"})).await;
+    let valid = json!({"project":"app","env":"dev","name":"jwt",
+        "parameters":{"primary-authority":"https://example.invalid","tls-verification":"disabled",
+            "auth":{"client_id":"client","token_url":"https://example.invalid/token","key_id":"certificate-id","algorithm":"PS256","scopes":["a","b"]}},
+        "credential":r#"{"private_key":"PEM is parsed when the host signs"}"#});
+    let mut invalid = Vec::new();
+    for field in ["client_id", "token_url", "key_id", "algorithm"] {
+        let mut request = valid.clone();
+        request["parameters"]["auth"]
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        invalid.push(request);
+    }
+    for (field, value) in [
+        ("algorithm", json!("PS384")),
+        ("scope_separator", json!(";")),
+        ("scopes", json!([1])),
+        ("client_id", json!(1)),
+        ("token_url", json!(1)),
+        ("key_id", json!(1)),
+    ] {
+        let mut request = valid.clone();
+        request["parameters"]["auth"][field] = value;
+        invalid.push(request);
+    }
+    for credential in [
+        "{}",
+        r#"{"private_key":1}"#,
+        r#"{"private_key":"PEM","extra":true}"#,
+        r#"{"client_secret":"secret"}"#,
+    ] {
+        let mut request = valid.clone();
+        request["credential"] = credential.into();
+        invalid.push(request);
+    }
+    for request in invalid {
+        let tx = client.transaction().await.unwrap();
+        tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+        .await
+        .unwrap();
+        tx.batch_execute("SET LOCAL ROLE wamn_control")
+            .await
+            .unwrap();
+        let result = administration::execute_with_store(
+            &tx,
+            "acme",
+            "connection.write",
+            &request.to_string(),
+            &mut AuthDrops::default(),
+            &mut wamn_platform_identity::connection_changes::ConnectionDrops::default(),
+            Some(&store),
+        )
+        .await;
+        assert_eq!(result.unwrap_err().code, "invalid_input");
+        tx.rollback().await.unwrap();
+    }
+    assert!(
+        store.0.lock().unwrap().is_empty(),
+        "refused values never enter the store"
+    );
+    for algorithm in ["PS256", "ES256", "RS256"] {
+        for separator in [None, Some(" "), Some(",")] {
+            let mut request = valid.clone();
+            request["parameters"]["auth"]["algorithm"] = algorithm.into();
+            if let Some(separator) = separator {
+                request["parameters"]["auth"]["scope_separator"] = separator.into();
+            }
+            let result = execute(&mut client, &store, "connection.write", request).await;
+            assert!(result["id"].is_string());
+            assert!(!result.to_string().contains("PEM"));
+        }
+    }
+    let mut request = valid;
+    request["parameters"]["auth"]
+        .as_object_mut()
+        .unwrap()
+        .remove("scopes");
+    let result = execute(&mut client, &store, "connection.write", request).await;
+    assert!(result["id"].is_string());
+}

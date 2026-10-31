@@ -45,6 +45,7 @@ use crate::connection_facts::{ConnectionFacts, Secret};
 use crate::connection_memory::{ConnectionFact, ConnectionStatus};
 
 mod authentication;
+mod jwt;
 mod network_policy;
 pub mod transport;
 
@@ -727,13 +728,6 @@ impl ConnectionHttp {
             },
             &envelope,
             |old| async move {
-                // Issue .4 supplies the signed client assertion at this provider seam.
-                anyhow::ensure!(
-                    auth_type != "oauth2_client_credentials_jwt",
-                    "OAuth client assertion unavailable"
-                );
-                let credential = oauth2_credential_for(auth_type, parameters, material)
-                    .map_err(|_| anyhow::anyhow!("OAuth credential unavailable"))?;
                 let refresh = if auth_type == "oauth2_authorization_code" {
                     Some(
                         old.and_then(|token| token.refresh_token)
@@ -742,7 +736,9 @@ impl ConnectionHttp {
                 } else {
                     None
                 };
-                let (target, endpoint) = bound_http_target(authority, &credential.token_url)?;
+                let request = oauth2_request(auth_type, parameters, material, refresh.as_deref())
+                    .map_err(|_| anyhow::anyhow!("OAuth credential unavailable"))?;
+                let (target, endpoint) = bound_http_target(authority, &request.token_url)?;
                 let mut decision = resolve_http_request(
                     authority,
                     &target,
@@ -752,15 +748,9 @@ impl ConnectionHttp {
                 )
                 .await?;
                 decision.logical_url = endpoint;
-                let token = fetch_oauth2_token(
-                    &self.transport,
-                    scope.clone(),
-                    &decision,
-                    &credential,
-                    refresh.as_deref(),
-                )
-                .await
-                .map_err(|_| anyhow::anyhow!("OAuth provider unavailable"))?;
+                let token = fetch_oauth2_token(&self.transport, scope.clone(), &decision, &request)
+                    .await
+                    .map_err(|_| anyhow::anyhow!("OAuth provider unavailable"))?;
                 Ok(crate::oauth_token::Fetched {
                     token: crate::oauth_token::Token {
                         access_token: Some(token.access_token),
@@ -826,13 +816,6 @@ struct Oauth2Credential {
     scope: Option<String>,
 }
 
-fn oauth2_credential(
-    parameters: &serde_json::Value,
-    material: Option<&str>,
-) -> Result<Oauth2Credential, ConnectionError> {
-    oauth2_credential_for("oauth2_client_credentials", parameters, material)
-}
-
 fn oauth2_credential_for(
     auth_type: &str,
     parameters: &serde_json::Value,
@@ -878,14 +861,24 @@ struct Oauth2Token {
     refresh_token: Option<String>,
 }
 
-async fn fetch_oauth2_token(
-    transport: &HttpTransport,
-    scope: ClientScope,
-    decision: &AuthorityDecision,
-    credential: &Oauth2Credential,
+struct Oauth2Request {
+    token_url: String,
+    body: String,
+    authorization: Option<String>,
+}
+
+fn oauth2_request(
+    auth_type: &str,
+    parameters: &serde_json::Value,
+    material: Option<&str>,
     refresh_token: Option<&str>,
-) -> Result<Oauth2Token, ConnectionError> {
+) -> Result<Oauth2Request, ConnectionError> {
     use base64::Engine as _;
+
+    if auth_type == "oauth2_client_credentials_jwt" {
+        return jwt::request(parameters, material, chrono::Utc::now().timestamp());
+    }
+    let credential = oauth2_credential_for(auth_type, parameters, material)?;
 
     // RFC 6749 section 2.3.1 form-encodes both Basic components first.
     let encode =
@@ -908,17 +901,46 @@ async fn fetch_oauth2_token(
         }
         form.finish()
     };
-    let request = hyper::Request::builder()
+    Ok(Oauth2Request {
+        token_url: credential.token_url,
+        body,
+        authorization: Some(format!("Basic {basic}")),
+    })
+}
+
+fn token_request<'a>(
+    decision: &AuthorityDecision,
+    request: &'a Oauth2Request,
+) -> Result<hyper::Request<&'a [u8]>, ConnectionError> {
+    let mut builder = hyper::Request::builder()
         .method("POST")
         .uri(decision.logical_url.as_ref())
-        .header("content-type", "application/x-www-form-urlencoded")
-        .header("authorization", format!("Basic {basic}"))
-        .body(body.as_bytes())
-        .map_err(|_| ConnectionError::CredentialUnavailable)?;
+        .header("content-type", "application/x-www-form-urlencoded");
+    if let Some(authorization) = &request.authorization {
+        builder = builder.header("authorization", authorization);
+    }
+    builder
+        .body(request.body.as_bytes())
+        .map_err(|_| ConnectionError::CredentialUnavailable)
+}
+
+async fn fetch_oauth2_token(
+    transport: &HttpTransport,
+    scope: ClientScope,
+    decision: &AuthorityDecision,
+    request: &Oauth2Request,
+) -> Result<Oauth2Token, ConnectionError> {
+    let request = token_request(decision, request)?;
     let response = transport
         .execute(scope, decision, request)
         .await
         .map_err(|_| ConnectionError::CredentialUnavailable)?;
+    parse_oauth2_token(&response)
+}
+
+fn parse_oauth2_token(
+    response: &hyper::Response<bytes::Bytes>,
+) -> Result<Oauth2Token, ConnectionError> {
     if response.status() != hyper::StatusCode::OK {
         return Err(ConnectionError::CredentialUnavailable);
     }
@@ -1344,52 +1366,14 @@ async fn execute(
 async fn fetch_health_token(
     transport: &HttpTransport,
     decision: &AuthorityDecision,
-    credential: &Oauth2Credential,
+    request: &Oauth2Request,
 ) -> Result<Oauth2Token, ConnectionError> {
-    use base64::Engine as _;
-
-    // RFC 6749 section 2.3.1 form-encodes both Basic components first.
-    let encode =
-        |value: &str| url::form_urlencoded::byte_serialize(value.as_bytes()).collect::<String>();
-    let basic = base64::engine::general_purpose::STANDARD.encode(format!(
-        "{}:{}",
-        encode(&credential.client_id),
-        encode(&credential.client_secret),
-    ));
-    let body = {
-        let mut form = url::form_urlencoded::Serializer::new(String::new());
-        form.append_pair("grant_type", "client_credentials");
-        if let Some(scope) = &credential.scope {
-            form.append_pair("scope", scope);
-        }
-        form.finish()
-    };
-    let request = hyper::Request::builder()
-        .method("POST")
-        .uri(decision.logical_url.as_ref())
-        .header("content-type", "application/x-www-form-urlencoded")
-        .header("authorization", format!("Basic {basic}"))
-        .body(body.as_bytes())
-        .map_err(|_| ConnectionError::CredentialUnavailable)?;
+    let request = token_request(decision, request)?;
     let response = transport
         .send_once(decision, request)
         .await
         .map_err(|_| ConnectionError::CredentialUnavailable)?;
-    if response.status() != hyper::StatusCode::OK {
-        return Err(ConnectionError::CredentialUnavailable);
-    }
-    let token: Oauth2Token = serde_json::from_slice(response.body())
-        .map_err(|_| ConnectionError::CredentialUnavailable)?;
-    if !token.token_type.eq_ignore_ascii_case("bearer")
-        || token.access_token.is_empty()
-        || !token
-            .access_token
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"-._~+/=".contains(&byte))
-    {
-        return Err(ConnectionError::CredentialUnavailable);
-    }
-    Ok(token)
+    parse_oauth2_token(&response)
 }
 
 /// Test candidate HTTP parameters without writing connection facts.
@@ -1438,10 +1422,13 @@ pub async fn health(
             .get("auth")
             .cloned()
             .unwrap_or_else(|| serde_json::json!({}));
-        let headers = if auth_type == "oauth2_client_credentials" {
-            let credential = oauth2_credential(&auth, credential)
+        let headers = if matches!(
+            auth_type,
+            "oauth2_client_credentials" | "oauth2_client_credentials_jwt"
+        ) {
+            let token_request = oauth2_request(auth_type, &auth, credential, None)
                 .map_err(|_| anyhow::anyhow!("HTTP authentication unavailable"))?;
-            let (target, endpoint) = bound_http_target(&authority, &credential.token_url)?;
+            let (target, endpoint) = bound_http_target(&authority, &token_request.token_url)?;
             let mut token_decision = resolve_http_request(
                 &authority,
                 &target,
@@ -1451,7 +1438,7 @@ pub async fn health(
             )
             .await?;
             token_decision.logical_url = endpoint;
-            let token = fetch_health_token(transport, &token_decision, &credential)
+            let token = fetch_health_token(transport, &token_decision, &token_request)
                 .await
                 .map_err(|_| anyhow::anyhow!("HTTP authentication unavailable"))?;
             HashMap::from([(

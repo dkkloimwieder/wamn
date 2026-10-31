@@ -21,6 +21,8 @@ struct Observed {
     body: Vec<u8>,
 }
 
+type AssertionCheck = Arc<dyn Fn(&Observed, &str) + Send + Sync>;
+
 type ResponsePause = (
     tokio::sync::oneshot::Sender<()>,
     tokio::sync::oneshot::Receiver<()>,
@@ -39,6 +41,14 @@ pub(super) struct Fixture {
 
 impl Fixture {
     pub(super) async fn start(tokens: Vec<(u16, String)>, api: Vec<u16>) -> Self {
+        Self::start_checked(tokens, api, None).await
+    }
+
+    async fn start_checked(
+        tokens: Vec<(u16, String)>,
+        api: Vec<u16>,
+        assertion_check: Option<AssertionCheck>,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}/bound/", listener.local_addr().unwrap());
         let observed = Arc::new(Mutex::new(Vec::new()));
@@ -49,6 +59,7 @@ impl Fixture {
         let response_pause = Arc::clone(&pause);
         let token_pause = Arc::new(Mutex::new(None::<ResponsePause>));
         let endpoint_pause = Arc::clone(&token_pause);
+        let token_base = base.clone();
         let task = tokio::spawn(async move {
             loop {
                 let (tcp, _) = listener.accept().await.unwrap();
@@ -57,6 +68,8 @@ impl Fixture {
                 let api = api.clone();
                 let pause = Arc::clone(&response_pause);
                 let token_pause = Arc::clone(&endpoint_pause);
+                let assertion_check = assertion_check.clone();
+                let token_base = token_base.clone();
                 hyper::server::conn::http1::Builder::new()
                     .serve_connection(
                         TokioIo::new(tcp),
@@ -66,16 +79,22 @@ impl Fixture {
                             let api = api.clone();
                             let pause = Arc::clone(&pause);
                             let token_pause = Arc::clone(&token_pause);
+                            let assertion_check = assertion_check.clone();
+                            let token_base = token_base.clone();
                             async move {
                                 let (parts, body) = request.into_parts();
                                 let body = body.collect().await.unwrap().to_bytes().to_vec();
                                 let token = matches!(parts.uri.path(), "/bound/token" | "/bound/");
-                                observed.lock().unwrap().push(Observed {
+                                let request = Observed {
                                     path: parts.uri.to_string(),
                                     method: parts.method.to_string(),
                                     headers: parts.headers,
                                     body,
-                                });
+                                };
+                                if token && let Some(assertion_check) = assertion_check {
+                                    assertion_check(&request, &token_base);
+                                }
+                                observed.lock().unwrap().push(request);
                                 let (status, body) = if token {
                                     tokens
                                         .lock()
@@ -803,7 +822,7 @@ fn malformed_credentials_and_parameters_refuse() {
         Some(r#"{"client_secret":1}"#),
         Some(r#"{"client_secret":"private","extra":true}"#),
     ] {
-        assert!(oauth2_credential(&valid, material).is_err());
+        assert!(oauth2_credential_for("oauth2_client_credentials", &valid, material).is_err());
     }
     let secret = serde_json::json!({"client_secret":CLIENT_SECRET}).to_string();
     let mut invalid = vec![serde_json::json!(null)];
@@ -821,7 +840,9 @@ fn malformed_credentials_and_parameters_refuse() {
         serde_json::json!({"client_id":CLIENT_ID,"token_url":"https://example.com/token","scopes":[],"extra":true}),
     ]);
     for parameters in invalid {
-        assert!(oauth2_credential(&parameters, Some(&secret)).is_err());
+        assert!(
+            oauth2_credential_for("oauth2_client_credentials", &parameters, Some(&secret)).is_err()
+        );
     }
 }
 
@@ -1158,5 +1179,102 @@ async fn authorization_code_requires_a_row_and_keeps_or_replaces_the_refresh_tok
             grant.body,
             b"grant_type=refresh_token&refresh_token=old-refresh"
         );
+    }
+}
+
+async fn jwt_round_trip(algorithm: &'static str, separator: Option<&'static str>) {
+    use super::super::jwt::tests::{assert_assertion, material};
+
+    let _lock = wamn_test_postgres::lock();
+    let identifiers = Arc::new(Mutex::new(Vec::new()));
+    let recorded = Arc::clone(&identifiers);
+    let assertion_check: AssertionCheck = Arc::new(move |request, base| {
+        assert_eq!(request.method, "POST");
+        assert!(!request.headers.contains_key("authorization"));
+        assert_eq!(
+            request.headers["content-type"],
+            "application/x-www-form-urlencoded"
+        );
+        let jti = assert_assertion(
+            &request.body,
+            algorithm,
+            CLIENT_ID,
+            &format!("{base}token?audience=api"),
+            Some(if separator == Some(",") { "a,b" } else { "a b" }),
+            None,
+        );
+        let mut identifiers = recorded.lock().unwrap();
+        assert!(!identifiers.contains(&jti));
+        identifiers.push(jti);
+    });
+    let mut fixture = Fixture::start_checked(
+        vec![token(1, Some(3600)), token(2, Some(3600))],
+        vec![401, 200],
+        Some(assertion_check),
+    )
+    .await;
+    let mut parameters = fixture.parameters();
+    parameters["scopes"] = serde_json::json!(["a", "b"]);
+    parameters["key_id"] = "certificate-id".into();
+    parameters["algorithm"] = algorithm.into();
+    if let Some(separator) = separator {
+        parameters["scope_separator"] = separator.into();
+    }
+    let plugin = fixture
+        .plugin_with_auth(
+            &parameters,
+            "oauth2_client_credentials_jwt",
+            &material(algorithm),
+        )
+        .await;
+    assert_eq!(fixture.send(&plugin, "handle").await.unwrap().status, 200);
+    assert_eq!(fixture.counts(), (2, 2));
+    assert_eq!(identifiers.lock().unwrap().len(), 2);
+    let connection = plugin.facts.env_connections().await.unwrap().connections["handle"];
+    assert_eq!(
+        fixture.stored(connection).await.access_token.as_deref(),
+        Some("fixture-token-2")
+    );
+}
+
+#[tokio::test]
+async fn jwt_ps256_locked_fetch_and_401_retry() {
+    jwt_round_trip("PS256", Some(",")).await;
+}
+
+#[tokio::test]
+async fn jwt_es256_locked_fetch_and_401_retry() {
+    jwt_round_trip("ES256", None).await;
+}
+
+#[tokio::test]
+async fn jwt_rs256_locked_fetch_and_401_retry() {
+    jwt_round_trip("RS256", Some(" ")).await;
+}
+
+#[tokio::test]
+async fn jwt_wrong_algorithm_key_and_malformed_pem_dispatch_no_request() {
+    use super::super::jwt::tests::{P256, RSA};
+
+    let _lock = wamn_test_postgres::lock();
+    let mut fixture = Fixture::start(vec![], vec![]).await;
+    for (algorithm, pem) in [
+        ("PS256", P256),
+        ("RS256", P256),
+        ("ES256", RSA),
+        ("PS256", "not PEM"),
+    ] {
+        let mut parameters = fixture.parameters();
+        parameters["key_id"] = "certificate-id".into();
+        parameters["algorithm"] = algorithm.into();
+        let material = serde_json::json!({"private_key":pem}).to_string();
+        let plugin = fixture
+            .plugin_with_auth(&parameters, "oauth2_client_credentials_jwt", &material)
+            .await;
+        assert!(matches!(
+            fixture.send(&plugin, "handle").await,
+            Err(ConnectionError::CredentialUnavailable)
+        ));
+        assert_eq!(fixture.counts(), (0, 0));
     }
 }
