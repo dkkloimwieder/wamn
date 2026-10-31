@@ -102,6 +102,10 @@ pub fn analyze(
     Ok(PolicyReport)
 }
 
+// The highest `wasi:*@0.2` patch the host links, read at build from the WIT
+// of the resolved `wasmtime-wasi` (docs/plan/alignment.md W3).
+include!(concat!(env!("OUT_DIR"), "/wasi_ceiling.rs"));
+
 fn connector_import(name: &str) -> bool {
     match (import_pkg(name), import_version(name)) {
         ("wasi:sockets" | "wasi:io" | "wasi:clocks" | "wasi:random", Some("0.2.12")) => true,
@@ -708,6 +712,27 @@ mod tests {
             Some("0.1.0-draft")
         );
         assert_eq!(import_version("wasi:clocks"), None);
+    }
+
+    /// W3: the ceiling is the patch the linked `wasmtime-wasi` WIT declares
+    /// for `wasi:io`, and an import one patch above it is refused.
+    #[test]
+    fn wasi_ceiling_is_the_linked_wit_patch() {
+        let io = std::fs::read_to_string(concat!(env!("WAMN_LINKED_WASI_WIT"), "/io.wit"))
+            .expect("read the linked wasi:io WIT");
+        assert!(
+            io.lines()
+                .any(|line| line.trim() == format!("package wasi:io@0.2.{WASI_CEILING};")),
+            "the linked wasi:io WIT is not at 0.2.{WASI_CEILING}"
+        );
+        let above = WASI_CEILING + 1;
+        for name in [
+            format!("wasi:io/streams@0.2.{above}"),
+            format!("wasi:clocks/monotonic-clock@0.2.{above}"),
+        ] {
+            assert_eq!(import_posture(&name), None, "{name} is admitted");
+        }
+        assert!(!connector_import(&format!("wasi:sockets/tcp@0.2.{above}")));
     }
 
     /// The registry is a closed set with unique keys; a duplicate row would let
