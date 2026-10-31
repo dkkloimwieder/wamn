@@ -100,6 +100,8 @@ All three questions were answered on 2026-10-31. No installed database requires 
 
 The lifecycle has one advertised deployment owner but three production orchestration paths. The largest risks are an implicit uninstall during `platform apply` and package mutations outside the environment lock.
 
+Owner ruling 2026-10-31: one baseline covers application packages as well as the platform schema. Migrations are a future problem, because current greenfield work is high churn and replacement. A package's SQL is one baseline. A package schema change during development is a new release and a reset of that application's tables. There is no in-place package upgrade. The package-upgrade machinery is deleted under that ruling, about 9,000 lines in `crates/control/lib`: `crates/control/lib/src/package_upgrade.rs` and `package_upgrade/` (lineage, accepted evidence, progress), the expand, backfill and contract stages of `apply_package/` (`stage.rs`, `backfill.rs`, `migration_policy.rs`, `abandon.rs`), `qualify_upgrade/` and the `qualify-upgrade` verb, `environment/contract.rs`, the tables `catalog.package_upgrade_qualifications`, `catalog.package_upgrade_stages` and `catalog.package_floors` in `deploy/sql/catalog-schema.sql`, their tests, and `migrations/0002+` under each application (nine files), collapsed to one `0001` per package or the generator's full SQL.
+
 Source reviewed at `8c831349d3116aac27d9ca6f59a499da1c87efc7`. No files changed. No builds or tests ran. Test cases named below are proposed validation. Shared measurements report 80,688 source lines in `wamn-control` and 1,033 duplicated lines within that crate (measurements.md section 2 and section 7). The overlap below concerns behavior, beyond text duplication.
 
 | Verb | Reads | Locks | Writes | External programs | Retry model |
@@ -140,11 +142,11 @@ Evidence: `crates/control/lib/src/upgrade_environment.rs:108`, `crates/control/l
 
 Problem: `upgrade-environment` changes schema and packages before its deployment stage acquires the lifecycle lock. Platform package Jobs and standalone `apply-package` also use only database transaction locks. The production evidence reader assumes that apply holds the lifecycle lock, but these callers do not establish that assumption. A concurrent rollback or delete can therefore interleave with package transition work.
 
-Proposal: One environment operation owns production transitions from predecessor observation through drain. Package executors become internal phases under that operation. Qualification remains a separate source-read operation, with predecessor state rechecked under the lifecycle lock before mutation.
+Proposal (owner review 2026-10-31): `upgrade-environment` is deleted under C3-3. What remains is `platform/packages.rs` Jobs and the standalone `apply-package` verb. Package application becomes an internal phase of `env apply` under the environment lock. The public `apply-package` verb is deleted. `wamn dev` calls the library.
 
-Deletes: Independent production package coordination in `upgrade-environment` and `platform/packages.rs`, plus public mutation paths that bypass the environment owner.
+Deletes: Independent production package coordination in `platform/packages.rs`, the public `apply-package` verb in `services/ctl`, and every mutation path that bypasses the environment owner.
 
-Risk: Preserve atomic base-plus-overlay application and backfill resumption. Add a database-backed contention test that holds the lifecycle lock and attempts each production entry point. Every competing mutation must refuse before writing.
+Risk: Add a database-backed contention test that holds the lifecycle lock and attempts package application through `env apply`. The competing caller must refuse before writing.
 
 ## Finding C2-3: Env apply cannot initiate an installed-package upgrade
 
@@ -155,11 +157,7 @@ Evidence: `crates/control/lib/src/environment/analyse.rs:415`, `crates/control/l
 
 Problem: Analysis accepts a successor only when its lineage and accepted evidence already exist in the project database. The stage then tries to apply a successor whose recorded predecessor equals the current lineage leaf, although recording that successor makes the predecessor cease to be the leaf. It also calls the unqualified applier, which refuses pending successor migrations. Fresh installation works, but an installed upgrade needs another path to mutate the database first.
 
-Proposal: Give the environment owner one executable transition plan containing the candidate artifacts and exact qualification evidence. Analysis establishes admissibility without requiring installation first. The package phase applies that plan atomically where required.
-
-Deletes: The unreachable staged-successor branch and duplicated prerequisite package application in the older orchestrators.
-
-Risk: Test additive upgrade, base-plus-overlay upgrade and interrupted backfill through the public `env apply` path. The current environment fixture explicitly lacks a staged-package upgrade.
+Closed by the package-baseline deletion (owner review 2026-10-31). The unreachable staged-successor branch and the successor evidence path go with `package_upgrade.rs` and the apply-package stages. No additive-upgrade test is written.
 
 ## Finding C2-4: Completion markers replace current-state observation
 
@@ -170,7 +168,7 @@ Evidence: `crates/control/lib/src/platform/job.rs:424`, `crates/control/lib/src/
 
 Problem: Platform Jobs skip when a stored input digest matches, without observing their current postconditions. Environment Jobs use this default, so a matching marker can prevent `env apply` from repairing a deleted resource. The upgrade run record similarly skips every previously finished stage, even after external state changes. These are historical checkpoints, not observation-judged ensures.
 
-Proposal: Retain caching for immutable artifacts and qualification results. Always invoke reconciliation for mutable environment state, with the owning phase deciding whether work remains.
+Proposal (owner review 2026-10-31, kept at medium): markers stay for immutable artifacts and qualification results only. Every mutable phase runs its reconciliation and decides itself whether work remains.
 
 Deletes: Completion-marker gating around environment reconciliation and finished-stage gating around mutable upgrade phases.
 
@@ -185,7 +183,7 @@ Evidence: `crates/control/lib/src/environment/analyse.rs:592`, `crates/control/l
 
 Problem: The write phase skips Helm when desired values equal the newest successful historical revision. That return occurs before pending-operation recovery. A later pending revision can remain stuck, and changed or missing live resources receive no Helm repair. Readiness and drain can report the resulting mismatch, but repeated apply repeats the same shortcut.
 
-Proposal: Resolve the current Helm operation before considering a skip. Skip the write only when current release status and owned resources satisfy the desired deployment.
+Proposal (owner review 2026-10-31, small): resolve the pending Helm operation first. Skip the write only when release status and owned resources match the desired deployment.
 
 Deletes: The historical-values-only early return and separate interpretations of successful history versus current deployment state.
 
@@ -200,11 +198,7 @@ Evidence: `crates/control/lib/src/upgrade_environment.rs:294`, `crates/control/l
 
 Problem: The command checks out and builds the requested commit, but schema application calls the launching process’s linked library. Package application and deployment also call that process’s implementations, while release qualification invokes the newly built binary. The resulting run mixes executor versions despite its commit-addressed identity.
 
-Proposal: Remove production schema and package stages from the source-upgrade orchestrator. Execute deployment through one artifact-bound control runner, whose schema declarations, package executor and chart belong to the selected platform.
-
-Deletes: Direct schema/package/deployment library calls from the commit-build coordinator and their duplicate stage records.
-
-Risk: Add a subprocess test with distinguishable launcher and target executors. The selected target must supply every production executor. Current empty migration lists do not exercise this distinction.
+Closed by C3-3 (owner review 2026-10-31): the commit-build coordinator `upgrade_environment.rs` is deleted, so no executor mix remains.
 
 ## Finding C2-7: Credential cleanup creates an unrecoverable retry window
 
@@ -226,11 +220,7 @@ Evidence: `crates/control/lib/src/environment/contract.rs:106`, `crates/control/
 
 Problem: The floor path specifically requires a contract-phase package and passes it to package application. Package preparation admits only expand and backfill stages, so this path always refuses before contract execution. The planned path also separates package application from floor recording into different transactions, contrary to the package-upgrade contract.
 
-Proposal: One qualified contract executor owns selected-release SQL validation, schema contraction and floor advancement in one database transaction. The environment owner establishes the host/run condition and calls that executor after drain.
-
-Deletes: The separate `apply_contract` followed by `record_floor` orchestration and duplicated contract admission decisions.
-
-Risk: Add tests for selected-release SQL failure, older consumers, interruption before commit and rollback below the floor. Schema changes and floor advancement must commit together.
+Rejected (owner review 2026-10-31, see README): online stages and version minimums are not replaced by a maintenance window, and under the package-baseline ruling there is no contract phase at all. `environment/contract.rs` and the contract admission in `qualify_upgrade/stage.rs` go with the package-baseline deletion.
 
 ## Finding C2-9: Env apply skips reconciliation owned by the package applier
 
@@ -241,9 +231,9 @@ Evidence: `crates/control/lib/src/environment/stage.rs:113`, `crates/control/lib
 
 Problem: The package applier observes and repairs generated history functions and triggers even when migration application is an exact retry. Env apply skips that applier when the package version is current. It therefore repairs grants through its separate reconciliation call but leaves other package-derived objects unrepaired.
 
-Proposal: Separate immutable migration advancement from reconciliation of package-derived objects. The environment package phase invokes the same reconciliation owner for current versions without reexecuting migrations.
+Proposal (owner review 2026-10-31, small): derived-object reconciliation (history functions, triggers, grants) runs on every apply regardless of package version.
 
-Deletes: The version-only skip around all package work and duplicate orchestration of selected derived objects.
+Deletes: The version-only skip around all package work.
 
 Risk: Remove a generated history trigger, then apply the unchanged environment document. The trigger must return, application rows must remain unchanged and no migration record must advance.
 
@@ -262,19 +252,19 @@ Deletes: The second project-upgrade invocation, platform-extension installation 
 
 Risk: Test fresh installation and a supplied nonempty migration list through the shared executor. Platform prerequisites must exist before package DDL, and an exact retry must execute no migration twice.
 
+Owner review 2026-10-31: In passing. The duplicate migration calls vanish under C1-1. What is left is moving platform-extension installation out of the application-package applier into substrate setup.
+
 ## Open questions for the owner
 
-1. Can `upgrade-environment` lose its production schema, package and credential stages after existing delivery commands absorb its preparation work?
-2. Must contract floors become executable in the next lifecycle consolidation, or remain explicitly unsupported until the contract executor lands?
-3. Can standalone production `apply-package` become an internal environment phase, with a retained public command limited to explicitly owned disposable targets?
+All three questions were answered on 2026-10-31. `upgrade-environment` is deleted whole, and nothing is absorbed. Contract version minimums are unsupported, and the contract-phase code is deleted. Package application is an internal phase of `env apply`, with no public command.
 
 <!-- lane C3, bead wamn-16jwe.3 -->
 
 ## Part 3: target model
 
-Use `cluster.k` and its `environment.k` documents as one desired-state tree. One reconciler moves installed state toward that tree. Versioned migrations provide the only schema path.
+Use `cluster.k` and its `environment.k` documents as one desired-state tree. One reconciler moves installed state toward that tree.
 
-Greenfield assumption: existing `wamn-dev` state can be dropped and reinstalled. The replacement starts with initial migrations and carries no legacy conversion path. This proposal accepts maintenance windows during upgrades.
+Owner review 2026-10-31: the two premises of this part, versioned migrations as the only schema path and maintenance windows during upgrades, are rejected (C3-2, C3-5, and the package-baseline ruling in Part 2). The schema is one baseline and a reset is free. The rolling drain stays and no writer pauses. C3-1 and C3-3 stay as Group 1 deletions, C3-4 closes, and the migration and maintenance sentences below are superseded where they appear.
 
 This lane changed no files and ran no builds or tests. Bead statuses below come from the checkout export, not the live database.
 
@@ -316,6 +306,8 @@ Deletes: Move definitions from `deploy/sql/system-schema.sql`, `app-schema.sql`,
 
 Risk: Missing grants, policies, or initialization order can break a fresh installation. Compare fresh installation with predecessor-to-target migration, including effective privileges under actual service roles. Retain the atomicity assertion in `qualify_upgrade/tests/overlay.rs:753`, which requires a second package failure to preserve the original state.
 
+Rejected (owner review 2026-10-31, see README): migration machinery. The schema is one baseline during development and a reset is free. The machinery itself is deleted under the inverted C1-1 Deletes.
+
 ## Finding C3-3: Multiple upgrade drivers own ordering, locking, and recovery
 
 Severity: high  
@@ -342,6 +334,8 @@ Deletes: Delete `upgrade_environment.rs` and its sole-purpose `delivery/run_reco
 
 Risk: A crash between database commits and rollout can leave a partly upgraded cluster. Extend `platform_apply_kind` and `environment_apply_kind` with interruption, retry, and competing-caller cases. Require one migration application and no admission before readiness.
 
+Owner review 2026-10-31: the deletions stay. The sentences about stopping admission, executing migrations and reopening admission are superseded. The rolling drain stays, no writer pauses, and there are no migrations to execute. The cluster-scoped Lease is D3-7.
+
 ## Finding C3-4: Qualification covers separate slices instead of the complete transition
 
 Severity: high  
@@ -352,17 +346,7 @@ Evidence: `delivery/qualification_artifact.rs:57` records a release digest, thre
 
 Problem: Neither result identifies the complete transition across platform schema, packages, shared services, and deployment artifacts. A schema-only change can leave the existing release qualification key unchanged. The split also requires separate application boundaries to combine the results correctly.
 
-Proposal: Qualification means successful execution of the resolved transition on disposable targets through the same reconciler. One qualification entry point produces one immutable result for that transition.
-
-The result identifies predecessor and target platform bundles, release and package digests, migration checksums, expected schema and privilege facts, and the test-suite digest. Empty installation is an explicit predecessor. Package transitions exercise copied predecessor data and ownership. Platform transitions exercise every affected release against the selected shared services.
-
-Qualification includes migration failure and retry behavior, retained data, authority boundaries, startup, and application cases. Application requires matching artifact identities and migration history. It also evaluates migration preconditions against current data under the migration locks.
-
-Qualification does not promise that arbitrary future data satisfies a migration. Reuse requires identical transition inputs and test definitions.
-
-Deletes: Merge `qualify_upgrade/` and `delivery/qualification.rs` orchestration around the shared executor. Delete the separate `qualify-upgrade` workflow and its operator-supplied result-file handoff. Replace the narrow qualification key and package-specific qualification storage with one transition result and references from applied facts.
-
-Risk: Incorrect reuse can admit an untested migration or identity image. Add cases where only either input changes and require refusal of the old result. Preserve source-isolation assertions from `qualify_upgrade/tests.rs:334`. Preserve complete-overlay and atomicity assertions from `qualify_upgrade/tests/overlay.rs:781`.
+Closed (owner review 2026-10-31): there is nothing to qualify. Package transitions do not exist under the package-baseline ruling, and R12 keeps the narrow key, release digest plus host image digest (D3-2). `qualify_upgrade/` and the `qualify-upgrade` verb go with the package-baseline deletion.
 
 ## Finding C3-5: Maintenance upgrades remove the need for online stages and inferred rollback
 
@@ -390,7 +374,9 @@ The following exported open beads lose their current implementation premise:
 
 These are proposed dispositions, not closures. Root must read live Beads before disposition and cite the relevant implementation commit. Qualification transport and teardown findings `wamn-byw08`, `wamn-uvqx9`, and `wamn-dxcpf` remain relevant.
 
+Rejected (owner review 2026-10-31, see README): maintenance-window lifecycle. Deployment state stays in Helm and Kubernetes, rollback is `helm rollback`, an upgrade never stops user workflows, and the rolling drain of the old release stays. The Deletes line above is nonetheless carried out by the package-baseline deletion in Part 2, because there is no in-place package upgrade.
+
 ## Open questions for the owner
 
-1. Can upgrades use maintenance windows, as proposed, or must service remain available throughout schema changes?
+Answered 2026-10-31: no maintenance windows. Service remains available, old and new images serve concurrently, and a schema-breaking change during development is a reset.
 
