@@ -142,22 +142,19 @@ pub(crate) async fn install(
 mod tests {
     #[test]
     fn install_requires_the_declared_label_for_a_typed_interface() {
-        let mut resolve = test_wit_parser::Resolve::new();
+        let mut resolve = wit_parser::Resolve::new();
         let package = resolve.push_str("typed.wit", "package example:meter@1.0.0; interface read { get: func() -> u16; } world client { import registers: read; }").unwrap();
         let world = resolve.select_world(&[package], Some("client")).unwrap();
-        let mut module = test_wit_component::dummy_module(
-            &resolve,
-            world,
-            test_wit_parser::ManglingAndAbi::Standard32,
-        );
-        test_wit_component::embed_component_metadata(
+        let mut module =
+            wit_component::dummy_module(&resolve, world, wit_parser::ManglingAndAbi::Standard32);
+        wit_component::embed_component_metadata(
             &mut module,
             &resolve,
             world,
-            test_wit_component::StringEncoding::UTF8,
+            wit_component::StringEncoding::UTF8,
         )
         .unwrap();
-        let bytes = test_wit_component::ComponentEncoder::default()
+        let bytes = wit_component::ComponentEncoder::default()
             .module(&module)
             .unwrap()
             .validate(true)

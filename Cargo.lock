@@ -5714,9 +5714,7 @@ dependencies = [
  "wac-graph 0.12.0",
  "wasi-virt",
  "wit-component 0.254.2",
- "wit-component 0.259.0",
  "wit-parser 0.254.2",
- "wit-parser 0.259.0",
 ]
 
 [[package]]

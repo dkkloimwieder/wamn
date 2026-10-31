@@ -14,8 +14,7 @@ wit-component.workspace = true
 wit-parser.workspace = true
 
 [dev-dependencies]
-test-wit-component = { package = "wit-component", version = "=0.254.2", features = ["dummy-module"] }
-test-wit-parser = { package = "wit-parser", version = "=0.254.2" }
+wit-component = { workspace = true, features = ["dummy-module"] }
 
 [lints]
 workspace = true

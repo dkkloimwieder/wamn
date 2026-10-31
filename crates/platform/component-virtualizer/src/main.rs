@@ -124,22 +124,19 @@ fn virtualize_bytes(bytes: &[u8]) -> anyhow::Result<Vec<u8>> {
 mod tests {
     #[test]
     fn virtualization_preserves_two_labels_of_one_typed_interface() -> anyhow::Result<()> {
-        let mut resolve = test_wit_parser::Resolve::new();
+        let mut resolve = wit_parser::Resolve::new();
         resolve.push_str("environment.wit", "package wasi:cli@0.2.12; interface environment { get-environment: func() -> list<tuple<string, string>>; }")?;
         let package = resolve.push_str("named.wit", "package example:meter@1.0.0; interface read { get: func() -> u16; } world client { import first: read; import second: read; import wasi:cli/environment@0.2.12; }")?;
         let world = resolve.select_world(&[package], Some("client"))?;
-        let mut module = test_wit_component::dummy_module(
-            &resolve,
-            world,
-            test_wit_parser::ManglingAndAbi::Standard32,
-        );
-        test_wit_component::embed_component_metadata(
+        let mut module =
+            wit_component::dummy_module(&resolve, world, wit_parser::ManglingAndAbi::Standard32);
+        wit_component::embed_component_metadata(
             &mut module,
             &resolve,
             world,
-            test_wit_component::StringEncoding::UTF8,
+            wit_component::StringEncoding::UTF8,
         )?;
-        let bytes = test_wit_component::ComponentEncoder::default()
+        let bytes = wit_component::ComponentEncoder::default()
             .module(&module)?
             .validate(true)
             .encode()?;

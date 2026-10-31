@@ -784,7 +784,9 @@ mod tests {
         ] {
             assert_eq!(import_posture(&name), None, "{name} is admitted");
         }
-        assert!(!integration_import(&format!("wasi:sockets/tcp@0.2.{above}")));
+        assert!(!integration_import(&format!(
+            "wasi:sockets/tcp@0.2.{above}"
+        )));
     }
 
     /// The registry is a closed set with unique keys; a duplicate row would let
