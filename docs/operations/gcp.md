@@ -321,7 +321,7 @@ gcloud container clusters list --project wamn-dev
 gcloud compute disks list --project wamn-dev --format="table(name,sizeGb,users.basename(),description)"
 ```
 
-The disks of the volumes of `wamn-pg-1`, `data-evt-nats-0`, and `otel-collector-queue` stay after the delete.
+The disks of the volumes of `wamn-pg-1`, `data-wamn-nats-0`, and `otel-collector-queue` stay after the delete.
 The collector's [volume claim](../../deploy/platform/otel-collector.yaml#L98) requests `1Gi`.
 Delete each one by name, one command for each disk:
 
@@ -339,7 +339,7 @@ gcloud compute network-endpoint-groups delete wamn-edge --zone us-central1-a --p
 
 If the backend service names no group, `remove-backend` refuses, and the agent runs only the delete.
 
-The work directory of section 4.1 holds the files of the deleted cluster. These are the event NATS users, the gate logins, the release digests, the stamped chart and the platform file. Remove them so that section 4 makes them again. Stop the port-forwards of the old cluster and remove the work directory:
+The work directory of section 4.1 holds the files of the deleted cluster. These are the NATS client certificate of `wamn-ctl`, the gate logins, the release digests, the stamped chart and the platform file. Remove them so that section 4 makes them again. Stop the port-forwards of the old cluster and remove the work directory:
 
 ```bash
 pkill -f '^kubectl -n platform port-forward'
@@ -458,17 +458,15 @@ It holds one install lock in its work directory. It writes its kubeconfig, stamp
 Each done or skipped progress line includes elapsed seconds.
 On GCP, it requests the production certificate directly.
 It stamps the registry images in 4.6, provisions in 4.7, and writes platform inputs in 4.9 without editing committed files.
-Step 4.8 derives event users from the built packages of each `environments/*.k` beside `cluster.k`.
-It preserves `platform-seal` and existing passwords, merges authorization, and writes each environment's credential Secrets.
-The `platform-seal` user denies all publish and subscribe subjects.
-The Secrets use `evt-nats-<org>--<project>--<env>-<role>` names.
-Provisioning, publisher, and observer Secrets live in `platform`.
-Runtime, materializer, and a publisher copy live in `hosts`.
-An unchanged apply writes no broker Secret.
+Step 4.8 adds one certificate user for each `environments/*.k` beside `cluster.k`.
+The user is `wamn-env-<org>--<project>--<env>`, and its Certificate and Secret are `hosts/wamn-nats-<org>--<project>--<env>`.
+It also writes the control host user `wamn-control-<org>` and drops every password user of an older install.
+The config reloader of the NATS reads the new authorization file, so no NATS restart happens.
+An unchanged apply writes no authorization Secret.
 Before `platform apply`, build each new platform version once with `build-platform`, as section 4.6 describes.
 Step 4.11 runs `env apply` for each environment as a Job, with `release = "none"`.
 It skips an environment after 4.17 applied a release to it, because a first apply would uninstall that release.
-The Job mounts a private document copy, database credentials, and the scheduler NATS certificate.
+The Job mounts a private document copy, database credentials, and the NATS certificate of `wamn-ctl`.
 It uses the runner's pinned KCL compiler and its own Kubernetes account.
 An unchanged completed Job skips when its input digest matches.
 Step 4.12 reads the key from the Secret Manager secret `identity-resend` and writes the Secret `identity/identity-resend`. It refuses a missing, empty, or whitespace-bearing key with the section 1 item.
@@ -509,27 +507,33 @@ The issuer must be Let's Encrypt production, not `(STAGING)`.
 
 | Namespace | Holds |
 | --- | --- |
-| `platform` | the runtime operator, its NATS and CA, the event NATS, PostgreSQL, the collector |
+| `platform` | the runtime operator, the one NATS, PostgreSQL, the collector |
 | `identity` | identity |
 | `hosts` | the release namespace: the hosts of every environment and the CDC readers |
 | `edge` | the edge and the public certificate |
 
-The operator release runs in `platform`. [values-operator.yaml](../../deploy/gcp/values-operator.yaml) makes it watch `hosts`. cert-manager reads a ClusterIssuer CA from its own namespace, so the operator CA is copied there:
+The operator release runs in `platform`. [values-operator.yaml](../../deploy/gcp/values-operator.yaml) makes it watch `hosts` and names the one NATS for the scheduler and the data connections.
+cert-manager owns the CA: [nats-certificates.yaml](../../deploy/infra/nats-certificates.yaml) holds the self-signed root, the ClusterIssuer `wasmcloud-ca`, the four Secrets that the operator chart mounts, and the certificates of the platform clients.
+The one NATS, [nats-jetstream.yaml](../../deploy/gcp/nats-jetstream.yaml), requires TLS and maps each client certificate to a user.
+`platform apply` installs the CA first, then the NATS, then the operator release. The manual procedure is:
 
 ```bash
 for n in platform identity hosts; do kubectl create namespace $n; done
+kubectl apply -f deploy/infra/nats-certificates.yaml
+kubectl wait --for=condition=Ready clusterissuer/wasmcloud-ca --timeout=120s
+kubectl -n platform wait --for=condition=Ready certificate --all --timeout=120s
+kubectl -n hosts wait --for=condition=Ready certificate --all --timeout=120s
+# platform apply writes the Secret platform/wamn-nats-authorization (crates/control/lib/src/platform/broker.rs).
+kubectl apply -f deploy/gcp/nats-jetstream.yaml
+kubectl -n platform rollout status statefulset/wamn-nats --timeout=300s
 helm upgrade --install --namespace platform wamn oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.11.0 \
   -f deploy/infra/values-wamn.yaml -f deploy/gcp/values-operator.yaml --wait --timeout 5m
 sed -e 's/__ENVIRONMENT_NAMESPACE__/hosts/' -e 's/namespace: wamn-system/namespace: platform/' \
   deploy/platform/runtime-operator-events-rbac.example.yaml | kubectl apply -f -
-kubectl -n platform get secret wasmcloud-ca -o json | python3 -c "
-import json,sys;d=json.load(sys.stdin);m=d['metadata'];d['metadata']={'name':m['name'],'namespace':'cert-manager'};print(json.dumps(d))" \
-  | kubectl apply -f -
-kubectl apply -f deploy/infra/wasmcloud-ca-issuer.yaml
-kubectl wait --for=condition=Ready clusterissuer/wasmcloud-ca --timeout=60s
-sed 's/__ENVIRONMENT_NAMESPACE__/hosts/' deploy/platform/host-environment-certs.example.yaml | kubectl apply -f -
-kubectl -n hosts wait --for=condition=Ready certificate/wasmcloud-runtime-tls certificate/wasmcloud-data-tls --timeout=120s
 ```
+
+On an install from before One NATS, `platform apply` also deletes the old event NATS `evt-nats` with its volume and its password Secrets, keeps the four chart Secrets that cert-manager now issues, and deletes every leaf Secret of the old CA so that cert-manager issues it again.
+No event data carries over. `env apply` of each environment then creates its streams again.
 
 The namespace `identity` exists now. Step 4.12 writes its Secret `identity-resend` from Secret Manager.
 
@@ -653,91 +657,27 @@ kubectl -n identity get secret identity-tls -o jsonpath='{.data.ca\.crt}' | base
 for ns in hosts edge; do kubectl -n $ns create configmap identity-ca --from-file=ca.crt=$W/identity-ca.crt; done
 ```
 
-### 4.8 Event NATS
+### 4.8 Environment NATS users
 
 `platform apply` runs this step.
-The following commands describe the manual procedure.
+For each environment it writes the certificate user and the Certificate of section 4.4 into the Secret `platform/wamn-nats-authorization`.
+The user publishes the environment's events, reads its own stream and consumers, and reaches only its own keys of the memory buckets `wamn-auth` and `wamn-connection`.
+It holds no stream or consumer management. Only `wamn-ctl` and the provisioning Jobs hold it.
 
-One event NATS serves both environments. Write the users of each environment into its own private directory. The composed `env_key` is `<org>--<project>--<env>`, which `env apply` derives from the coordinate:
-
-```bash
-W=$HOME/.cache/wamn-install
-for project in receiving wms; do
-  mkdir -m 700 $W/evt-$project
-  cargo run --locked -p wamn-test-infrastructure --example event_broker_files -- \
-    $W/evt-$project nats://evt-nats.platform.svc.cluster.local:4222 \
-    dkk $project dev dkk--$project--dev 1 "$PWD/apps/target/wamn/wamn_$project/wamn.json"
-done
-```
-
-`authorization.conf` is `authorization: ` followed by JSON. Merge the users of the two files:
-
-```bash
-W=$HOME/.cache/wamn-install; E=$W/evt-receiving/event-nats; F=$W/evt-wms/event-nats
-(umask 077; python3 - $E/authorization.conf $F/authorization.conf > $W/merged-authorization.conf <<'PY'
-import json, sys
-def users(path):
-    return json.loads(open(path).read().split(':', 1)[1])['users']
-merged = users(sys.argv[1]) + users(sys.argv[2])
-print('authorization: ' + json.dumps({'users': merged}))
-PY
-)
-```
-
-Make the broker Secret, install the broker, and make the user Secrets:
-
-```bash
-W=$HOME/.cache/wamn-install; E=$W/evt-receiving/event-nats; F=$W/evt-wms/event-nats
-kubectl -n platform create secret generic evt-nats-authorization --from-file=authorization.conf=$W/merged-authorization.conf
-kubectl apply -f deploy/gcp/nats-jetstream.yaml
-kubectl -n platform rollout status statefulset/evt-nats --timeout=300s
-for role in provisioning publisher observer; do
-  kubectl -n platform create secret generic evt-nats-$role \
-    --from-file=username=$E/$role-username --from-file=password=$E/$role-password
-  kubectl -n platform create secret generic evt-nats-wms-$role \
-    --from-file=username=$F/$role-username --from-file=password=$F/$role-password
-done
-kubectl -n hosts create secret generic evt-nats-publisher \
-  --from-file=username=$E/publisher-username --from-file=password=$E/publisher-password
-kubectl -n hosts create secret generic evt-nats-wms-publisher \
-  --from-file=username=$F/publisher-username --from-file=password=$F/publisher-password
-kubectl -n hosts create secret generic wamn-event-nats \
-  --from-file=username=$E/runtime-username --from-file=password=$E/runtime-password \
-  --from-literal=org=dkk --from-literal=project=receiving --from-literal=environment=dev \
-  --from-literal=stream_replicas=1 --from-literal=dup_window_secs=120
-kubectl -n hosts create secret generic wamn-materializer-nats --from-file=binding.json=$E/binding.json
-kubectl -n hosts create secret generic wamn-event-nats-wms \
-  --from-file=username=$F/runtime-username --from-file=password=$F/runtime-password \
-  --from-literal=org=dkk --from-literal=project=wms --from-literal=environment=dev \
-  --from-literal=stream_replicas=1 --from-literal=dup_window_secs=120
-kubectl -n hosts create secret generic wamn-materializer-nats-wms --from-file=binding.json=$F/binding.json
-```
-
-Make sure that the provisioning user can read the source stream. The log shows `"config":{"name":"EVT_3_dkk_9_receiving_3_dev"`:
-
-```bash
-kubectl apply -f deploy/gcp/evt-nats-check.yaml
-kubectl -n platform wait pod/evt-nats-check --for=jsonpath='{.status.phase}'=Succeeded --timeout=90s
-kubectl -n platform logs evt-nats-check
-kubectl -n platform delete pod evt-nats-check
-```
-
-Forward the event NATS and the scheduler NATS to this machine. `wamn-ctl` publishes its auth changes on the scheduler NATS:
+Forward the one NATS to this machine. The server certificate names `127.0.0.1` for this:
 
 ```bash
 W=$HOME/.cache/wamn-install
-setsid kubectl -n platform port-forward svc/evt-nats 14222:4222 > $W/pf-nats.log 2>&1 < /dev/null &
-setsid kubectl -n platform port-forward svc/nats 14223:4222 > $W/pf-sched.log 2>&1 < /dev/null &
+setsid kubectl -n platform port-forward svc/wamn-nats 14222:4222 > $W/pf-nats.log 2>&1 < /dev/null &
 ```
 
 ### 4.9 Platform install inputs
 
-`env apply` makes none of these objects and touches no IAM. The registry helper names the `wamn` credential helper for the host pulls and holds no credential. Each host runs as the service account of its environment, and the platform Jobs run as `wamn-host`. Both take the grants of the namespace `hosts` (section 1). The Role `wamn-control-status` gives the control operation `environment.status` its reads. The policy [bench-host-placement.yaml](../../deploy/gcp/bench-host-placement.yaml) gives the Receiving host pod the selector and the toleration of pool `bench`, because the host chart has no field for them. [auth-nats-clients.yaml](../../deploy/gcp/auth-nats-clients.yaml) holds the scheduler NATS client certificates of identity and `wamn-ctl`, which publish auth changes to the hosts. The two platform manifests state no namespace, so apply them into the release namespace:
+`env apply` makes none of these objects and touches no IAM. The registry helper names the `wamn` credential helper for the host pulls and holds no credential. Each host runs as the service account of its environment, and the platform Jobs run as `wamn-host`. Both take the grants of the namespace `hosts` (section 1). The Role `wamn-control-status` gives the control operation `environment.status` its reads. The policy [bench-host-placement.yaml](../../deploy/gcp/bench-host-placement.yaml) gives the Receiving host pod the selector and the toleration of pool `bench`, because the host chart has no field for them. The two platform manifests state no namespace, so apply them into the release namespace:
 
 ```bash
 kubectl apply -f deploy/gcp/registry-helper.yaml
 kubectl apply -f deploy/gcp/bench-host-placement.yaml
-kubectl apply -f deploy/gcp/auth-nats-clients.yaml
 kubectl -n hosts apply -f deploy/platform/wamn-host-serviceaccount.yaml
 kubectl -n hosts apply -f deploy/platform/control-status-rbac.yaml
 ```
@@ -795,17 +735,15 @@ export WAMN_RELEASE_CHART=$W/release-chart
 export WAMN_RELEASE_ARTIFACT_BASE=us-central1-docker.pkg.dev/wamn-dev/wamn/releases
 export WAMN_PACKAGE_ARTIFACT_BASE=us-central1-docker.pkg.dev/wamn-dev/wamn/packages
 export WAMN_REGISTRY_AUTH_FILE=$W/registry/config.json
-export WAMN_EVENT_NATS_URL=nats://127.0.0.1:14222
-# The scheduler NATS of the auth changes, through the port-forward of section 4.8.
-export WAMN_NATS_URL=nats://127.0.0.1:14223
-export WAMN_NATS_TLS_SERVER_NAME=nats.platform.svc.cluster.local
-export WAMN_NATS_TLS_CA=$W/auth-nats/ca.crt
-export WAMN_NATS_TLS_CERT=$W/auth-nats/tls.crt
-export WAMN_NATS_TLS_KEY=$W/auth-nats/tls.key
-if [ ! -d $W/auth-nats ]; then
-  (umask 077; mkdir $W/auth-nats
+# The one NATS through the port-forward of section 4.8, as the user wamn-ctl.
+export WAMN_NATS_URL=nats://127.0.0.1:14222
+export WAMN_NATS_TLS_CA=$W/nats/ca.crt
+export WAMN_NATS_TLS_CERT=$W/nats/tls.crt
+export WAMN_NATS_TLS_KEY=$W/nats/tls.key
+if [ ! -d $W/nats ]; then
+  (umask 077; mkdir $W/nats
    for k in ca.crt tls.crt tls.key; do
-     kubectl -n platform get secret wamn-ctl-auth-nats -o jsonpath="{.data.${k//./\\.}}" | base64 -d > $W/auth-nats/$k
+     kubectl -n platform get secret wamn-ctl-nats -o jsonpath="{.data.${k//./\\.}}" | base64 -d > $W/nats/$k
    done)
 fi
 export DOCKER_CONFIG=$W/docker
@@ -818,11 +756,6 @@ token = sys.stdin.read().strip()
 fd = os.open(os.path.join(sys.argv[1], "config.json"), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
 os.write(fd, json.dumps({"auths": {"us-central1-docker.pkg.dev": {"username": "oauth2accesstoken", "password": token}}}).encode())
 os.close(fd)' $W/registry
-}
-# The provisioning user of the event NATS for one environment.
-use_env() {
-  export WAMN_EVENT_NATS_USERNAME="$(cat $W/evt-$1/event-nats/provisioning-username)"
-  export WAMN_EVENT_NATS_PASSWORD_FILE=$W/evt-$1/event-nats/provisioning-password
 }
 # The instance suffix and the superuser URL of one environment database.
 suffix() { kubectl -n platform get database -o name | sed -n "s#.*/wamn-db-dkk--$1--dev--##p"; }
@@ -847,7 +780,6 @@ The following commands describe the manual procedure.
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
 for project in receiving wms; do
-  use_env $project
   sed 's/^    release = .*/    release = "none"/' deploy/gcp/environments/dkk--$project--dev.k > $W/dkk--$project--dev.k
   $CARGO_TARGET_DIR/debug/wamn-ctl env apply $W/dkk--$project--dev.k --dry-run
   $CARGO_TARGET_DIR/debug/wamn-ctl env apply $W/dkk--$project--dev.k
@@ -1139,12 +1071,11 @@ The verb prints that refusal and the `qualify-release` command for the build mac
 After host qualification succeeds, rerun `platform apply` with the same release digest.
 The Job applies that qualified release through the existing `env apply` path.
 
-The apply installs the release chart of each environment in `hosts`. `WAMN_RELEASE_HOST_GROUP` names the platform part of its host group: the NATS URLs, the event NATS Secrets, the registry helper and the identity CA:
+The apply installs the release chart of each environment in `hosts`. `WAMN_RELEASE_HOST_GROUP` names the platform part of its host group: the event coordinates, the registry helper and the identity CA. The release chart adds the NATS URL, the environment certificate and the materializer's `plugins` entry:
 
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
 for project in receiving wms; do
-  use_env $project
   export WAMN_RELEASE_HOST_GROUP=deploy/gcp/host-group-$project.yaml
   $CARGO_TARGET_DIR/debug/wamn-ctl env apply deploy/gcp/environments/dkk--$project--dev.k --dry-run
   $CARGO_TARGET_DIR/debug/wamn-ctl env apply deploy/gcp/environments/dkk--$project--dev.k
@@ -1178,7 +1109,7 @@ Each log shows `registration loaded`, the three `preflight` lines and `walsender
 `platform apply` runs `wamn web upload` as a Job for each environment and its declared release digest.
 The Job runs in `hosts` as `wamn-host`, which takes the grants of the namespace `hosts` (section 1, item 15).
 It reads the built clients from package artifacts and writes them below `gs://<buckets.web>/clients/<package>/<digest hex>/`.
-It leaves `WAMN_EVENT_NATS_URL` unset.
+It leaves `WAMN_NATS_URL` unset.
 The Job runner saves the log before it deletes the Job and its temporary Secrets.
 A completed Job with the same input digest skips the upload.
 
@@ -1384,7 +1315,7 @@ The guard sets every pool to 0 nodes at 03:00 New York time (07:00 UTC) every da
 $CARGO_TARGET_DIR/debug/wamn-ctl platform wake deploy/gcp/cluster.k
 ```
 
-The verb resizes pool `pg` first, then the other pools. It prints one line for each pool. The `Cluster` keeps its old `Ready` condition while its pod is gone, so the verb then waits up to 900 seconds for the pod `wamn-pg-1` to exist and be Ready. Last, it waits up to 600 seconds for the statefulset `evt-nats` to roll out.
+The verb resizes pool `pg` first, then the other pools. It prints one line for each pool. The `Cluster` keeps its old `Ready` condition while its pod is gone, so the verb then waits up to 900 seconds for the pod `wamn-pg-1` to exist and be Ready. Last, it waits up to 600 seconds for the statefulset `wamn-nats` to roll out.
 
 The port-forwards end with their pods, so start them again (sections 4.5 and 4.8).
 
@@ -1434,7 +1365,6 @@ Send one recovery mail to an enrolled address to prove delivery. Then the owner 
 
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
-use_env receiving
 $CARGO_TARGET_DIR/debug/wamn-ctl env delete dkk/receiving/dev
 ```
 
@@ -1456,13 +1386,11 @@ kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -Atc \
   "select slot_name, active, wal_status, invalidation_reason from pg_replication_slots"
 ```
 
-`recover-capture-gap` drops the lost slot, makes it again under the same name and writes the open gap row. It connects as the observer user of the environment:
+`recover-capture-gap` drops the lost slot, makes it again under the same name and writes the open gap row. It connects as `wamn-ctl` with the `WAMN_NATS_*` inputs of the platform file:
 
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
-WAMN_PG_ADMIN_URL="$(db_url wms)" $CARGO_TARGET_DIR/debug/wamn-ctl recover-capture-gap --org dkk --project wms --env dev \
-  --nats-url nats://127.0.0.1:14222 --nats-username "$(cat $W/evt-wms/event-nats/observer-username)" \
-  --nats-password-file $W/evt-wms/event-nats/observer-password
+WAMN_PG_ADMIN_URL="$(db_url wms)" $CARGO_TARGET_DIR/debug/wamn-ctl recover-capture-gap --org dkk --project wms --env dev
 ```
 
 After the resync, or on the owner's word while no resync exists, run `close-capture-gap`. The reader resumes within 30 seconds:

@@ -168,7 +168,7 @@ The expected value of the test must not come from the code under test.
 Receiving command histories and WMS operation/replay assertions use real components, the HTTP shell, production authorization, and disposable PostgreSQL.
 The fixture composes the pinned HTTP entry with the application and binds operation authority from its format-11 manifest.
 They share the in-process runtime setup in `tests/integration/src/local_application.rs`.
-The fixture starts a private scheduler NATS with TLS and replicates the host auth cache from its `wamn-auth` bucket.
+The fixture starts a private NATS with TLS and replicates the host auth cache from its `wamn-auth` bucket.
 Set `WAMN_NATIVE_C_NATS_BIN` to a local `nats-server` executable.
 These tests need no registry, cluster, gate binary, or container image.
 Deployment tests retain startup, restart, queue, CDC/materializer, and label delivery assertions.

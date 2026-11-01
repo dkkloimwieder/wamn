@@ -14,7 +14,7 @@ Build the platform UI with `pnpm --filter @wamn/platform-ui build`.
 `--platform-ui` defaults to `apps/platform_ui/dist` and accepts another built directory.
 If you change the manifest vocabulary of `wamn.json` or the KCL schema module, build `wamn` again first.
 The loop runs the binary you built, so an older one refuses the manifest with `unknown field`.
-Use only disposable PostgreSQL 18, scheduler NATS, event NATS, and telemetry services.
+Use only disposable PostgreSQL 18, one NATS with TLS, and telemetry services.
 The system administrator URL must name `wamn_system` without a query or fragment.
 `wamn dev up` resets its control store, so shared or durable targets are unsuitable.
 An environment template keeps the catalog functions of the standup that created it.
@@ -64,12 +64,10 @@ The `dev up` command neither copies nor imports a credential file.
 
 Supply `--platform-domain` with the domain of the platform principal emails, for example `example.invalid`.
 The emitted configuration stores it in `platform_domain`.
-Supply event runtime credentials separately from provisioning credentials.
+Supply `--nats-url` with the one NATS, and `--nats-tls-ca`, `--nats-tls-cert` and `--nats-tls-key` with one client certificate.
+The certificate maps to a user with every permission: the host, the reader, stream provisioning and the materializer use it.
 Declare `--stream-replicas` and `--dup-window-secs` explicitly.
-Use `--event-provisioning-username` and `--event-provisioning-password-file` for stream creation.
-Use `--event-nats-username` and `--event-nats-password-file` for runtime access.
 Supply `--cdc-reader-binary` with the built `wamn-cdc-reader`.
-Use `--event-publisher-username` and `--event-publisher-password-file` for the credential that the reader publishes with.
 
 The command runs `enable-cdc-project-env`, which is the verb that the cluster runs.
 The verb provisions the event streams with the materializer consumers of the packages, and it records the reader registration.
@@ -79,10 +77,10 @@ At each activation, the loop applies the CDC SQL of the verb to the target and s
 The reader logs to `cdc-reader.log` in the environment directory, and the loop waits until it streams.
 The loop stops the reader before it replaces the target, and the target lease drops the replication slot before the drop.
 
-Use `--event-materializer-username` and `--event-materializer-password-file` for the credential that the materializer consumes with.
-The command writes `materializer-nats.json` into the environment directory with mode 0600, in the shape of the cluster's binding Secret.
-The file names the server, the credential, its private inbox prefix, and the environment's source stream and subjects.
-`materializer_nats_binding_file` in `dev.json` names the file, and the loop passes it to the host as `--materializer-nats-binding-file`.
+The command writes `host-config.yaml` into the environment directory with mode 0600.
+It holds the `plugins` entry that the release chart declares: the `wasmcloud-nats` binding `events` with the environment's stream, subjects and inbox.
+The binding names no server, so it uses the host's data connection and its certificate.
+`host_config_file` in `dev.json` names the file, and the loop passes it to the host as `--user-config`.
 
 The loop runs the platform materializer as a second workload beside the release, as the cluster does.
 At each activation, the loop renders `deploy/platform/materializer.example.yaml` with `render_materializer`, the renderer of the cluster files.

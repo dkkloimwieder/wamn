@@ -269,7 +269,10 @@ They cannot create, update, or delete streams or consumers.
 Activation compares declared stream fields, including foreign sources, mirrors, filters, and delivery policy.
 The consumer check compares only the fields wamn sets; the broker owns every other consumer field, and the check does not compare it.
 
-The event broker remains separate from the scheduler broker.
+The platform runs one NATS for the scheduler, the events and the host memories.
+Each client presents a certificate, and the server maps it to a NATS user.
+An environment's user reaches only its own events, stream consumers and memory keys.
+Only the provisioning client creates, updates or deletes streams and consumers.
 NATS replication remains separate from Kubernetes workload replicas.
 The host carries the declared stream replica count and duplicate window into activation.
 No runtime default substitutes for a missing declaration.

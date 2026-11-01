@@ -509,7 +509,7 @@ Its first tick is strictly after startup.
 At each tick it reads the enabled schedule rows of every declared application with one `SELECT` (`application = ANY(...)`), and calls `WamnPostgres::admit_schedule_run` for each row whose cron names that minute.
 A host whose environment declares no application runs no schedule task.
 An enable or a disable between ticks takes effect at the next tick.
-The task polls the rows; it does not reload on an enable or disable message over event NATS, which would cost one more subject and a stale window when the broker is lost.
+The task polls the rows; it does not reload on an enable or disable message over NATS, which would cost one more subject and a stale window when the broker is lost.
 The run has input `{"due":"<due RFC 3339>"}` and key `schedule:<application>/<workflow id>:<due RFC 3339>`, with UTC spelled as `Z`.
 Replicas use the same key, so concurrent admissions return one run.
 The run executes as the `workflow` user with its execution role, or with `admin` for type `invoker`.
@@ -626,7 +626,7 @@ Already admitted work retains its caller. Revocation does not cancel that work o
 ### Auth memory
 
 The host answers the auth facts of a repeated caller from its memory, so they cost no Postgres round-trip.
-The [memory](../../crates/platform/runtime/src/auth_cache.rs) is the local replica of the NATS KV bucket `wamn-auth` on the scheduler NATS.
+The [memory](../../crates/platform/runtime/src/auth_cache.rs) is the local replica of the NATS KV bucket `wamn-auth` on the one NATS.
 The key `<env_key>.<principal>` holds the grants of a principal and whether the tenant has its user row.
 The key `<env_key>.environment` holds the environment status.
 One read of `platform."user"`, `platform.user_role` and `platform.permission` answers the permission check and the user-row check of the invocation bind.

@@ -551,6 +551,7 @@ async fn runtime(
         )
         .await?;
     }
+    changed |= remove_event_nats(target).await?;
     changed |= apply_file(
         target,
         document,
@@ -567,14 +568,20 @@ async fn runtime(
         "120s",
     )
     .await?;
-    for (namespace, name) in [
-        ("platform", "wasmcloud-nats-tls"),
-        ("platform", "wasmcloud-operator-tls"),
-        ("hosts", "wasmcloud-runtime-tls"),
-        ("hosts", "wasmcloud-data-tls"),
-    ] {
+    ready(
+        target,
+        step,
+        "cert-manager",
+        "certificate",
+        "wasmcloud-ca",
+        "120s",
+    )
+    .await?;
+    changed |= reissue_stale_leaves(target).await?;
+    for (namespace, name) in CHART_SECRETS {
         ready(target, step, namespace, "certificate", name, "120s").await?;
     }
+    changed |= keep_chart_secrets(target).await?;
     changed |= nats(target, document, repository, step).await?;
     let values = operator_values(repository, document)?;
     let values_path = work_directory.join("values-operator.yaml");
@@ -587,6 +594,175 @@ async fn runtime(
         "deploy/platform/runtime-operator-events-rbac.example.yaml",
     )
     .await?;
+    Ok(changed)
+}
+
+/// The Secrets that the operator chart mounts by name. cert-manager owns them
+/// (docs/plan/alignment.md R3).
+const CHART_SECRETS: [(&str, &str); 4] = [
+    ("platform", "wasmcloud-nats-tls"),
+    ("platform", "wasmcloud-operator-tls"),
+    ("hosts", "wasmcloud-runtime-tls"),
+    ("hosts", "wasmcloud-data-tls"),
+];
+
+/// The event NATS of an install from before One NATS, in namespace platform.
+/// Its streams go with its volume; no event data carries over.
+const EVENT_NATS: [(&str, &str); 6] = [
+    ("statefulset", "evt-nats"),
+    ("service", "evt-nats"),
+    ("service", "evt-nats-headless"),
+    ("configmap", "evt-nats-config"),
+    ("secret", "evt-nats-authorization"),
+    ("persistentvolumeclaim", "data-evt-nats-0"),
+];
+
+/// Delete the event NATS of an older install, and every per-environment
+/// password Secret `evt-nats-<env_key>-<role>`.
+async fn remove_event_nats(target: &Target) -> anyhow::Result<bool> {
+    let mut changed = false;
+    for (kind, name) in EVENT_NATS {
+        let found: Option<Value> =
+            kubectl::get(&target.kubeconfig, &target.context, "platform", kind, name).await?;
+        if found.is_some() {
+            kubectl::kubectl(
+                &target.kubeconfig,
+                &target.context,
+                "platform",
+                &["delete", kind, name, "--wait=true"],
+                None,
+            )
+            .await?;
+            changed = true;
+        }
+    }
+    for namespace in ["platform", "hosts"] {
+        let names = kubectl::kubectl(
+            &target.kubeconfig,
+            &target.context,
+            namespace,
+            &["get", "secret", "-o", "name"],
+            None,
+        )
+        .await?;
+        for name in names
+            .lines()
+            .filter(|name| name.starts_with("secret/evt-nats-"))
+        {
+            kubectl::kubectl(
+                &target.kubeconfig,
+                &target.context,
+                namespace,
+                &["delete", name],
+                None,
+            )
+            .await?;
+            changed = true;
+        }
+    }
+    Ok(changed)
+}
+
+/// Delete each Secret of a certificate of the ClusterIssuer wasmcloud-ca
+/// whose CA is not the current one, so that cert-manager issues it again. An
+/// install from before One NATS has leaves of the chart's CA, and a
+/// Certificate whose spec did not change keeps them.
+async fn reissue_stale_leaves(target: &Target) -> anyhow::Result<bool> {
+    let ca: Value = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "cert-manager",
+        "secret",
+        "wasmcloud-ca",
+    )
+    .await?
+    .context("missing Secret cert-manager/wasmcloud-ca")?;
+    let current = ca["data"]["tls.crt"]
+        .as_str()
+        .context("the CA Secret has no tls.crt")?;
+    let certificates: Value = serde_json::from_str(
+        &kubectl::kubectl(
+            &target.kubeconfig,
+            &target.context,
+            "cert-manager",
+            &["get", "certificates.cert-manager.io", "-A", "-o", "json"],
+            None,
+        )
+        .await?,
+    )?;
+    let mut changed = false;
+    for certificate in certificates["items"].as_array().into_iter().flatten() {
+        if certificate["spec"]["issuerRef"]["name"] != "wasmcloud-ca"
+            || certificate["spec"]["issuerRef"]["kind"] != "ClusterIssuer"
+        {
+            continue;
+        }
+        let namespace = certificate["metadata"]["namespace"]
+            .as_str()
+            .context("certificate namespace")?;
+        let name = certificate["spec"]["secretName"]
+            .as_str()
+            .context("certificate secretName")?;
+        let secret: Option<Value> = kubectl::get(
+            &target.kubeconfig,
+            &target.context,
+            namespace,
+            "secret",
+            name,
+        )
+        .await?;
+        if let Some(secret) = secret
+            && secret["data"]["ca.crt"].as_str() != Some(current)
+        {
+            kubectl::kubectl(
+                &target.kubeconfig,
+                &target.context,
+                namespace,
+                &["delete", "secret", name],
+                None,
+            )
+            .await?;
+            changed = true;
+        }
+    }
+    Ok(changed)
+}
+
+/// Keep the chart Secrets that cert-manager now issues: an operator release
+/// from before One NATS generated them, and its upgrade with
+/// `generate: false` would delete them.
+async fn keep_chart_secrets(target: &Target) -> anyhow::Result<bool> {
+    let mut changed = false;
+    for (namespace, name) in CHART_SECRETS {
+        let secret: Option<Value> = kubectl::get(
+            &target.kubeconfig,
+            &target.context,
+            namespace,
+            "secret",
+            name,
+        )
+        .await?;
+        if secret.is_some_and(|secret| {
+            secret["metadata"]["annotations"]["meta.helm.sh/release-name"].is_string()
+                && secret["metadata"]["annotations"]["helm.sh/resource-policy"] != "keep"
+        }) {
+            kubectl::kubectl(
+                &target.kubeconfig,
+                &target.context,
+                namespace,
+                &[
+                    "annotate",
+                    "secret",
+                    name,
+                    "helm.sh/resource-policy=keep",
+                    "--overwrite",
+                ],
+                None,
+            )
+            .await?;
+            changed = true;
+        }
+    }
     Ok(changed)
 }
 

@@ -85,9 +85,9 @@ It requires these inputs even when the upload does not use their database or bro
 | `WAMN_NATS_TLS_CA`, `WAMN_NATS_TLS_CERT`, `WAMN_NATS_TLS_KEY` | Required paths for the broker CA, client certificate, and key |
 | `WAMN_NATS_TLS_SERVER_NAME` | Optional broker TLS server name |
 
-[AuthNats::from_env](../../crates/identity/platform/src/auth_changes.rs) defines the broker inputs.
+[PlatformNats::from_env](../../crates/identity/platform/src/nats.rs) defines the broker inputs.
 `Platform::from_env` also parses the optional database, identity, and event configuration used by environment commands.
-If `WAMN_EVENT_NATS_URL` is set, it also requires `WAMN_EVENT_NATS_USERNAME` and `WAMN_EVENT_NATS_PASSWORD_FILE`.
+If `WAMN_NATS_URL` is set, the event configuration uses the same NATS connection.
 
 1. Load the environment configuration above with the intended cluster context and release namespace.
 2. Make sure that the package artifacts include the web files from [wamn build](building.md#wamn-build).
