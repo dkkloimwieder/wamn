@@ -83,12 +83,12 @@ impl Drop for ClusterGuard {
 
 const STEP_TITLES: [&str; 12] = [
     "4.3 cert-manager and the edge certificate",
-    "4.4 Namespaces, runtime operator and internal CA",
+    "4.4 Namespaces, internal CA, NATS and runtime operator",
     "4.4.1 Collector",
     "4.5 PostgreSQL",
     "4.6 Packages and platform build",
     "4.7 System database, org and identity issuer",
-    "4.8 Event NATS",
+    "4.8 Environment NATS users",
     "4.9 Platform install inputs",
     "4.11 First apply",
     "4.12 Identity and session key",
@@ -2032,7 +2032,6 @@ async fn secret_versions(kubeconfig: &Path, context: &str) -> anyhow::Result<Vec
         ("platform", "wamn-pg-superuser"),
         ("platform", "wamn-nats-authorization"),
         ("hosts", "wamn-nats-test--receiving--dev"),
-        ("hosts", "wamn-nats-test--receiving--dev-materializer"),
         ("identity", "wamn-session-role-reader-test--receiving--dev"),
         ("identity", "identity-resend"),
         ("identity", "wamn-identity-db"),

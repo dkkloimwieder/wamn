@@ -812,6 +812,37 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     // (docs/plan/alignment.md R1-R5). The users are the ones platform apply
     // writes, for every environment the checks apply.
     integration::install_one_nats(run, repository, &KIND_ENVIRONMENTS).await?;
+    // The OAuth key that platform apply makes for a local provider
+    // (crates/control/lib/src/platform/oauth.rs ensure_key). The hosts of
+    // every release mount it.
+    let mut key = [0_u8; 32];
+    ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut key)
+        .map_err(|_| anyhow::anyhow!("OAuth key entropy unavailable"))?;
+    let key_file = run.work.join("oauth-key");
+    {
+        use std::io::Write as _;
+        use std::os::unix::fs::OpenOptionsExt as _;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&key_file)?
+            .write_all(&key)?;
+    }
+    run.run(
+        "kubectl",
+        &[
+            "-n",
+            NAMESPACE,
+            "create",
+            "secret",
+            "generic",
+            "wamn-oauth",
+            &format!("--from-file=key={}", key_file.display()),
+        ],
+    )
+    .await?;
+    std::fs::remove_file(&key_file)?;
     run.run(
         "helm",
         &[
