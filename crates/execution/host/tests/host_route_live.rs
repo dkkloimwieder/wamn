@@ -717,8 +717,8 @@ async fn number_counter_set_is_granted_per_role() -> anyhow::Result<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
 -> anyhow::Result<()> {
-    let mut postgres = wamn_test_postgres::start(&[])?;
-    let test_database = postgres.create_database("control_route")?;
+    let _lock = wamn_test_postgres::lock();
+    let test_database = wamn_control_provision::test_database::system();
     let admin_url = test_database.url();
     let admin = connect(admin_url).await?;
     let database: String = admin
@@ -730,10 +730,49 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
         .as_str()
         .expect("fixture principal")
         .to_owned();
-    session_fixture::install_authority(&admin, PROJECT, "dev", &audience, &[&principal]).await?;
+    admin
+        .batch_execute(
+            &wamn_control_provision::test_database::seed_org_project_env_sql(ORG, PROJECT, "dev"),
+        )
+        .await?;
     admin
         .execute(
-            "INSERT INTO identity.project_roles VALUES ($1::text::uuid, $2, $3, 'project-admin')",
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string()],
+        )
+        .await?;
+    admin
+        .execute(
+            "INSERT INTO identity.principals(id,type,subject,email,display_name) \
+             VALUES($1::text::uuid,'user','control-route@example.test','control-route@example.test','Control route fixture')",
+            &[&principal],
+        )
+        .await?;
+    admin
+        .execute(
+            "INSERT INTO identity.org_memberships(principal_id,org,status) VALUES($1::text::uuid,$2,'active')",
+            &[&principal, &ORG],
+        )
+        .await?;
+    admin
+        .execute(
+            "INSERT INTO identity.project_env_memberships(principal_id,org,project,env) \
+             VALUES($1::text::uuid,$2,$3,'dev')",
+            &[&principal, &ORG, &PROJECT],
+        )
+        .await?;
+    admin
+        .execute(
+            "INSERT INTO identity.password_logins(id,principal_id,issuer,audience,authenticated_at,expires_at,renewal_expires_at) \
+             VALUES($1::text::uuid,$1::text::uuid,$2,$3,now(),now()+interval '8 hours',now()+interval '30 minutes')",
+            &[&principal, &session_fixture::ISSUER, &audience],
+        )
+        .await?;
+    admin
+        .execute(
+            "INSERT INTO identity.project_roles(principal_id,org,project,role) VALUES ($1::text::uuid, $2, $3, 'project-admin')",
             &[&principal, &ORG, &PROJECT],
         )
         .await?;
@@ -866,14 +905,19 @@ async fn control_mine_admits_only_a_current_project_admin_or_org_admin_session()
     // An org-admin is admitted and holds every project of the org.
     admin
         .execute(
-            "INSERT INTO identity.org_roles VALUES ($1::text::uuid, $2, 'org-admin')",
+            "INSERT INTO identity.org_roles(principal_id,org,role) VALUES ($1::text::uuid, $2, 'org-admin')",
             &[&principal, &ORG],
         )
         .await?;
     admin
+        .batch_execute(
+            "INSERT INTO registry.orgs(id,placement_type) VALUES('otherorg','dedicated')",
+        )
+        .await?;
+    admin
         .execute(
-            "INSERT INTO registry.projects VALUES ($1, 'shop'), ($1, $2), ('otherorg', 'mail')",
-            &[&ORG, &PROJECT],
+            "INSERT INTO registry.projects(org,id) VALUES ($1, 'shop'), ('otherorg', 'mail')",
+            &[&ORG],
         )
         .await?;
     let caller = routing

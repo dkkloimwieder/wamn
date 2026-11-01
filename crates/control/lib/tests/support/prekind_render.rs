@@ -60,6 +60,9 @@ fn fixture_secrets(document: &EnvironmentDocument, event_secret: Value) -> Vec<V
         &["config.json", "ca.crt"],
         NAMESPACE,
     ));
+    let mut oauth = prerequisite("wamn-oauth", &["key"], NAMESPACE);
+    oauth["stringData"]["key"] = "o".repeat(32).into();
+    secrets.push(oauth);
     secrets.push(event_secret);
     secrets
 }
