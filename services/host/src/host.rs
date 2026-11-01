@@ -1546,10 +1546,14 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         oci_cache_dir: args.oci_cache_dir.clone(),
         oci_ca_paths: args.oci_ca_paths.clone(),
     };
-    let jetstream = Arc::new(
-        WamnJetstream::new(WamnJetstreamConfig::from_env().with_nats(data_nats_client.clone()))
-            .with_release(application.cloned()),
-    );
+    // A control host has no event streams, so its event plugin gets no
+    // connection and activation does nothing.
+    let mut jetstream_config = WamnJetstreamConfig::from_env();
+    if !args.control {
+        jetstream_config = jetstream_config.with_nats(data_nats_client.clone());
+    }
+    let jetstream =
+        Arc::new(WamnJetstream::new(jetstream_config).with_release(application.cloned()));
     jetstream
         .activate_events()
         .await
