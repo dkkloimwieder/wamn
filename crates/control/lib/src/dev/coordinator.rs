@@ -577,16 +577,15 @@ impl ProductionDevStageRunner {
                 continue;
             }
             let output_root = wamn_schema_generator::build::default_output_root(&package.root);
-            wamn_schema_generator::build::build_components(
-                &wamn_schema_generator::build::BuildRequest::new(
-                    &package.root,
-                    &output_root,
-                    self.config.target_database_url(),
-                ),
-                &package.manifest.package.id,
-            )
-            .await
-            .map_err(|source| ProductionDevStageError::owner("build components", source))?;
+            let mut request = wamn_schema_generator::build::BuildRequest::new(
+                &package.root,
+                &output_root,
+                self.config.target_database_url(),
+            );
+            request.allow_stale_base_pins = true;
+            wamn_schema_generator::build::build_components(&request, &package.manifest.package.id)
+                .await
+                .map_err(|source| ProductionDevStageError::owner("build components", source))?;
             self.pending_builds.remove(&package.manifest.package.id);
         }
         Ok(())

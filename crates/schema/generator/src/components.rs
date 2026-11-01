@@ -106,7 +106,7 @@ pub async fn build_components(request: &BuildRequest, package: &str) -> Result<B
             build_record::read_current(&root, &compiler_output)?;
         }
     }
-    let bases = base_components(package_root, &request.output_root, &manifest)?;
+    let bases = base_components(request, &manifest)?;
     let repository = workspace.join("..");
     let rustflags = guest_rustflags(&repository).await?;
     let virtualization: Virtualization = read_json(&repository.join(VIRTUALIZATION))?;
@@ -436,16 +436,15 @@ async fn run_tool(mut command: Command, partial: &Path, output: &Path, what: &st
     fs::rename(partial, output).with_context(|| format!("write {}", output.display()))
 }
 
-/// Resolve the built base components and check their bytes against the pins.
+/// Resolve built base components and enforce authored pins unless the dev request permits drift.
 pub(crate) fn base_components(
-    package_root: &Path,
-    output_root: &Path,
+    request: &BuildRequest,
     manifest: &PackageManifest,
 ) -> Result<Vec<PathBuf>> {
     let mut bases = Vec::new();
     for dependency in manifest.base_dependencies.values() {
-        let base_output = package_output(output_root, &dependency.package);
-        let base_root = crate::output::dependency_root(package_root, &dependency.package);
+        let base_output = package_output(&request.output_root, &dependency.package);
+        let base_root = crate::output::dependency_root(&request.package_root, &dependency.package);
         let base_build_record =
             build_record::read_current(&base_root, &base_output).with_context(|| {
                 format!(
@@ -471,7 +470,7 @@ pub(crate) fn base_components(
             );
         };
         let (file, digest) = component_file(&base_output, &base_build_record, base_component)?;
-        if digest != dependency.digest {
+        if digest != dependency.digest && !request.allow_stale_base_pins {
             return Err(GenerateError::for_object(
                 GenerateErrorType::InvalidComponent,
                 format!(
@@ -638,6 +637,109 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).expect("create the scratch directory");
         Scratch(root)
+    }
+
+    fn moved_base_pin(name: &str) -> (Scratch, BuildRequest, PackageManifest, PathBuf) {
+        let scratch = scratch(name);
+        let base = scratch.0.join("base");
+        let output_root = scratch.0.join("target/wamn");
+        let output = package_output(&output_root, "base");
+        fs::create_dir_all(&base).unwrap();
+        fs::create_dir_all(output.join(COMPONENTS)).unwrap();
+        let mut manifest = serde_json::json!({
+            "package": {"id": "base", "version": "1.0.0"},
+            "required_platform_policy_contract": {"id": "policy", "state": "satisfied"},
+            "models": {}, "connections": {},
+            "components": {"base": {"connections": []}}
+        });
+        fs::write(
+            output.join(COMPILED_MANIFEST_NAME),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        let bytes = wat::parse_str(
+            r#"(component (instance $base) (export "test:base/op@1.0.0" (instance $base)))"#,
+        )
+        .unwrap();
+        let file = output.join("components/base.wasm");
+        fs::write(&file, &bytes).unwrap();
+        let built = BuildRecord {
+            schema: build_record::BUILD_RECORD_SCHEMA.to_owned(),
+            package: build_record::BuildPackage {
+                id: "base".into(),
+                version: "1.0.0".into(),
+            },
+            inputs: build_record::inputs(&base).unwrap(),
+            dependencies: Vec::new(),
+            generator: build_record::generator(),
+            outputs: build_record::BuildOutputs {
+                manifest: sha256(&fs::read(output.join(COMPILED_MANIFEST_NAME)).unwrap()),
+                files: BTreeMap::new(),
+                components: vec![BuildComponent {
+                    name: "base".into(),
+                    path: "components/base.wasm".into(),
+                    sha256: sha256(&bytes),
+                }],
+                web: None,
+            },
+        };
+        fs::write(output.join(BUILD_RECORD_FILE), built.to_bytes()).unwrap();
+        manifest["package"]["id"] = "overlay".into();
+        manifest["components"] = serde_json::json!({"overlay": {"connections": []}});
+        manifest["base_dependencies"] = serde_json::json!({"base": {
+            "package": "base", "version": "1.0.0", "digest": sha256(b"old base"),
+            "operations": []
+        }});
+        let manifest =
+            PackageManifest::from_slice(&serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let request = BuildRequest::new(&scratch.0.join("overlay"), &output_root, "");
+        (scratch, request, manifest, file)
+    }
+
+    #[test]
+    fn a_default_request_refuses_a_moved_base_pin() {
+        let (_scratch, request, manifest, file) = moved_base_pin("default-pin");
+        let error = base_components(&request, &manifest).unwrap_err();
+        let refusal = error.downcast_ref::<GenerateError>().unwrap();
+        assert_eq!(refusal.error_type(), GenerateErrorType::InvalidComponent);
+        assert_eq!(refusal.object(), Some("base"));
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "InvalidComponent: package overlay pins base base to {}, but its built component digest is {}",
+                manifest.base_dependencies["base"].digest,
+                sha256(&fs::read(file).unwrap())
+            )
+        );
+    }
+
+    #[test]
+    fn a_dev_request_composes_over_the_built_base_after_its_pin_moves() {
+        let (_scratch, mut request, manifest, file) = moved_base_pin("dev-pin");
+        request.allow_stale_base_pins = true;
+        let bases = base_components(&request, &manifest).unwrap();
+        let overlay =
+            wat::parse_str(r#"(component (import "test:base/op@1.0.0" (instance)))"#).unwrap();
+        let composed = wamn_component_composer::compose(
+            overlay,
+            bases.iter().map(|path| fs::read(path).unwrap()).collect(),
+        )
+        .expect("compose over the built base");
+        let built_base = fs::read(&file).unwrap();
+        assert!(
+            composed
+                .windows(built_base.len())
+                .any(|bytes| bytes == built_base),
+            "the composed component embeds the built base bytes"
+        );
+
+        fs::write(&file, b"changed after the build record").unwrap();
+        let error = base_components(&request, &manifest).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("differs from its build.json entry")
+        );
     }
 
     #[tokio::test]

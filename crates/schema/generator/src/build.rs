@@ -62,6 +62,9 @@ pub struct BuildRequest {
     pub(crate) package_root: PathBuf,
     pub(crate) output_root: PathBuf,
     database_url: String,
+    /// Allow dev composition with a built base that differs from its authored pin.
+    /// Publication builds must leave this false.
+    pub allow_stale_base_pins: bool,
 }
 
 impl BuildRequest {
@@ -78,6 +81,7 @@ impl BuildRequest {
             package_root: package_root.to_owned(),
             output_root: output_root.to_owned(),
             database_url: database_url.to_owned(),
+            allow_stale_base_pins: false,
         }
     }
 }
@@ -180,7 +184,10 @@ pub fn current_build(package_root: &Path, output_root: &Path) -> Result<Option<B
             }) {
                 continue;
             }
-            crate::components::base_components(package_root, output_root, &manifest)?;
+            crate::components::base_components(
+                &BuildRequest::new(package_root, output_root, ""),
+                &manifest,
+            )?;
         }
         return Ok(Some(build_record));
     }

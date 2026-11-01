@@ -6604,6 +6604,7 @@ dependencies = [
  "tokio-postgres",
  "url",
  "wamn-catalog",
+ "wamn-component-composer",
  "wamn-event-wire",
  "wamn-execution-contract",
  "wamn-fixture-package",
@@ -6611,6 +6612,7 @@ dependencies = [
  "wamn-record-history",
  "wamn-schema-introspection",
  "wamn-test-postgres",
+ "wat",
  "wit-parser 0.254.2",
 ]
 

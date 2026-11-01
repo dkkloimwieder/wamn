@@ -35,6 +35,8 @@ hex.workspace = true
 sha2.workspace = true
 
 [dev-dependencies]
+wamn-component-composer = { workspace = true }
+wat = "=1.254.2"
 wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-fixture-package = { workspace = true }
 proptest.workspace = true
