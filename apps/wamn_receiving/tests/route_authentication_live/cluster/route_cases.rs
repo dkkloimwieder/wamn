@@ -13,7 +13,7 @@ use super::{
 };
 
 const AUTH_NATS_NAMESPACE: &str = "wamn-system";
-const AUTH_NATS_SERVER_NAME: &str = "nats.wamn-system.svc.cluster.local";
+const AUTH_NATS_SERVER_NAME: &str = "wamn-nats.wamn-system.svc.cluster.local";
 
 #[tokio::test]
 #[ignore = "requires: docker, kind, kubectl, helm"]
@@ -88,7 +88,7 @@ async fn auth_nats(cluster: &ReceivingCluster) -> anyhow::Result<Value> {
         namespace,
         "expose",
         "service",
-        "nats",
+        "wamn-nats",
         "--type=NodePort",
         "--port=4222",
         "--name",
@@ -106,7 +106,7 @@ async fn auth_nats(cluster: &ReceivingCluster) -> anyhow::Result<Value> {
     let secret = auth_nats_tls(cluster).await?;
     let mut connection = json!({
         "url":format!("nats://{address}:{port}"),
-        // The operator chart's server certificate includes this Service name.
+        // The one NATS server certificate includes this Service name.
         "server_name":AUTH_NATS_SERVER_NAME,
     });
     for (field, key) in [("ca", "ca.crt"), ("cert", "tls.crt"), ("key", "tls.key")] {

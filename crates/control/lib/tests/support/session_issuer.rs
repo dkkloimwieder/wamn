@@ -63,20 +63,18 @@ pub async fn deploy(
     task.abort();
     published?;
 
-    // The operator already owns this disposable cluster's CA. cert-manager
-    // keeps the serving key in a Secret; hosts receive only its public CA.
+    // The ClusterIssuer wasmcloud-ca signs for this disposable cluster.
+    // cert-manager keeps the serving key in a Secret; hosts receive only its
+    // public CA.
     let certificate = run.work.join("integration-session-certificate.json");
     std::fs::write(
         &certificate,
         serde_json::to_vec(&json!({
             "apiVersion":"v1", "kind":"List", "items":[
-                {"apiVersion":"cert-manager.io/v1", "kind":"Issuer",
-                 "metadata":{"name":name,"namespace":NAMESPACE},
-                 "spec":{"ca":{"secretName":"wasmcloud-ca"}}},
                 {"apiVersion":"cert-manager.io/v1", "kind":"Certificate",
                  "metadata":{"name":name,"namespace":NAMESPACE},
                  "spec":{"secretName":name,"dnsNames":[hostname],
-                    "issuerRef":{"name":name,"kind":"Issuer"}}}
+                    "issuerRef":{"name":"wasmcloud-ca","kind":"ClusterIssuer"}}}
             ]
         }))?,
     )?;
