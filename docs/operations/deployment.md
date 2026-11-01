@@ -513,32 +513,10 @@ Packages with no SQL need no application schema.
 The full schema files install the `catalog.package_upgrade_qualifications` carrier.
 The [platform migration lists](#platform-schema-upgrades) stay empty until development is stable.
 Keep the exact predecessor release available for recovery.
-`upgrade-environment` reads installed package artifacts from the environment's `registry` value plus `/packages`.
-It reads the application map from the sibling `.k` environment document for publication.
-It uses the same login as component publication. Immutable package tags identify each package ID and version.
-The operator pushes the artifacts of older installed versions once from their attested commits before an upgrade.
-The package stage calls `push-package` for each newly installed version before application, with the run's commit and component index. It pushes the components under the `registry` value plus `/components` and the package artifact under `/packages`.
-An existing package tag with different bytes refuses before application.
-The verb fetches each predecessor by its recorded digest and compares its frozen manifest, migrations, and SQL with installed and serving facts.
-It does not rebuild predecessor SQL with the current generator.
-
-The package stage qualifies the complete successor set before application.
-It takes the predecessor release from the `--predecessor-release <DIGEST>` input, the manifest digest of the release the environment serves.
-Qualification refuses the digest unless `catalog.releases` holds it and its package versions equal the installed versions.
-An upgrade of an installed package without this input refuses.
-An additive base upgrade and all affected overlay successors apply in one transaction, with the base first.
-A retry requires the saved qualification to match the exact environment, complete package roots, and selected base component bytes.
-The verb refuses multiple independent base transitions in one run.
-Prepare the complete candidate root set, including generated artifacts. Ordinary release qualification must support the environment's candidate shape.
-
 Run qualification on a machine authorized to hold copied production data, with PostgreSQL 18 tools and enough temporary storage.
 The command owns its temporary PostgreSQL server and private dump directory and removes them after use.
 It copies application data, preserves required ownership, and reconstructs effective privileges without copying cluster login-role secrets.
 Keep database credentials outside committed files. Retain the qualification result through application and resolve any reported cleanup failure.
-
-### Upgrade order
-
-Run `wamn-ctl upgrade-environment` as [Google Cloud operations](gcp.md#56-upgrade-an-environment) shows.
 
 ### Upgrade failures
 

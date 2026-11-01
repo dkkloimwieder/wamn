@@ -235,27 +235,6 @@ pub async fn apply(platform: &Platform, file: &Path) -> anyhow::Result<Analysis>
     .await
 }
 
-/// `apply` of the environment's own document with `digest` as its release: the
-/// document that `show` synthesizes from the authorities, under the lifecycle
-/// lock. `upgrade-environment` deploys the release it published this way
-/// (docs/architecture/overview.md#environment-lifecycle).
-///
-/// # Errors
-///
-/// When the lock is held, the authorities cannot be read, or `apply` fails.
-pub async fn apply_release(
-    platform: &Platform,
-    triple: &wamn_control_registry::Triple,
-    digest: &str,
-) -> anyhow::Result<Analysis> {
-    LifecycleLock::hold(&platform.system_database_url, triple, async |_| {
-        let mut document = show::show(platform, triple).await?;
-        document.release = document::DeclaredRelease::Digest(digest.to_owned());
-        apply_locked(platform, &document, None).await
-    })
-    .await
-}
-
 /// Steps 2 to 9 of §10.1 under a lifecycle lock the caller holds: analyse,
 /// ensure the substrate, expand (row, policy projection, connections,
 /// packages, the package stage), write the release chart and wait for

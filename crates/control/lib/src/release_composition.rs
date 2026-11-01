@@ -2,9 +2,8 @@
 //! the package manifests and the `build.json` of each package, whose
 //! `outputs.components` names the bytes `wamn build` compiled.
 //!
-//! The dev loop and `wamn-ctl upgrade-environment` both call this derivation
-//! (owner ruling of 2026-10-02 on `wamn-m511.5`). No second file lists the
-//! components of a release.
+//! The dev loop calls this derivation. No second file lists the components
+//! of a release.
 
 use std::error::Error;
 use std::fmt;

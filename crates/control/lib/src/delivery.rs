@@ -14,7 +14,6 @@ use crate::release_chart::{ImageSet, QualificationImages};
 pub mod environment;
 pub mod qualification;
 pub mod qualification_artifact;
-pub mod run_record;
 pub mod sqlx;
 
 /// The release inputs that a qualification fixture provisions and publishes.

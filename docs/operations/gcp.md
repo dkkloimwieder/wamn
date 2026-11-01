@@ -1370,15 +1370,6 @@ Send one recovery mail to an enrolled address to prove delivery. Then the owner 
 $CARGO_TARGET_DIR/debug/wamn-ctl env delete dkk/receiving/dev
 ```
 
-### 5.6 Upgrade an environment
-
-`wamn-ctl upgrade-environment` takes one installed environment to the bytes of one commit. An upgrade of an installed package also needs `--predecessor-release <digest>`, the release that the environment serves. The qualify stage starts kind clusters on this machine:
-
-```bash
-. $HOME/.cache/wamn-install/platform.sh
-$CARGO_TARGET_DIR/debug/wamn-ctl upgrade-environment --org dkk --project receiving --env dev --commit <40-hex commit>
-```
-
 ### 5.7 CDC slot lost
 
 If a CDC reader is down while the WAL passes `max_slot_wal_keep_size` (4 GB), Postgres invalidates its slot. The reader stays running and stopped, and logs `CDC_CAPTURE_GAP` once. Look at the slots:

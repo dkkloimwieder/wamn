@@ -40,8 +40,6 @@ enum Command {
     /// Qualify one published release, by its digest, on the release chart's
     /// platform image set, and push the qualification beside the release.
     QualifyRelease(delivery_verbs::QualifyReleaseArgs),
-    /// Take one installed environment to the bytes of one commit.
-    UpgradeEnvironment(delivery_verbs::UpgradeEnvironmentArgs),
     /// Install the control store into an empty system database and record its platform domain
     ProvisionSystem(provisioning_verbs::ProvisionSystemArgs),
     /// Render a dedicated org's CNPG Cluster set (one per recovery domain, sized by env policy) + record it in the T1 registry (wamn-q3n.6 / D18)
@@ -138,7 +136,6 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::BuildPlatform(args) => delivery_verbs::build_platform(args).await,
         Command::QualifyRelease(args) => delivery_verbs::qualify(args).await,
-        Command::UpgradeEnvironment(args) => delivery_verbs::upgrade_environment(args).await,
         Command::ProvisionSystem(args) => provisioning_verbs::provision_system(args).await,
         Command::ProvisionOrg(args) => provisioning_verbs::provision_org(args).await,
         Command::ProvisionProjectEnv(args) => provisioning_verbs::provision(args).await,
@@ -299,36 +296,6 @@ mod tests {
             panic!("expected qualify-upgrade");
         };
         assert_eq!(args.predecessor_release, PREDECESSOR);
-    }
-
-    /// `upgrade-environment` takes `--predecessor-release` as an optional
-    /// digest; the package stage refuses an installed upgrade without it.
-    #[test]
-    fn upgrade_environment_takes_an_optional_predecessor_release() {
-        let commit = "a".repeat(40);
-        let values = [
-            "wamn-ctl",
-            "upgrade-environment",
-            "--org",
-            "acme",
-            "--project",
-            "plant",
-            "--env",
-            "dev",
-            "--commit",
-            commit.as_str(),
-        ];
-        let Command::UpgradeEnvironment(args) = Cli::try_parse_from(values).unwrap().command else {
-            panic!("expected upgrade-environment");
-        };
-        assert_eq!(args.predecessor_release, None);
-        let with = values
-            .into_iter()
-            .chain(["--predecessor-release", PREDECESSOR]);
-        let Command::UpgradeEnvironment(args) = Cli::try_parse_from(with).unwrap().command else {
-            panic!("expected upgrade-environment");
-        };
-        assert_eq!(args.predecessor_release.as_deref(), Some(PREDECESSOR));
     }
 
     #[test]

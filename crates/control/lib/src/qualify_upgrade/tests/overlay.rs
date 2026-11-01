@@ -485,66 +485,6 @@ async fn atomic_overlay_successor_retains_rows_constraints_and_rollback() {
             .all(|outcome| !outcome.changed && outcome.migrations_applied == 0)
     );
     assert_eq!(state(&mut fixture.base.source).await, reconciled);
-    // Exercise the environment stage's production retry against the retained database.
-    let packages = fixture_roots(&[
-        fixture.base.root.join("candidate"),
-        fixture.candidate.clone(),
-    ]);
-    let base_version = PackageManifest::from_slice(
-        &fs::read(wamn_schema_generator::package_manifest_path(
-            &packages[0].path,
-        ))
-        .unwrap(),
-    )
-    .unwrap()
-    .package
-    .version;
-    let artifacts = vec![crate::release_composition::SelectedComponentArtifact {
-        package_id: "platform_fixture".into(),
-        package_version: base_version.into(),
-        component: "fixture".into(),
-        path: fixture.component.clone(),
-        digest: wamn_engine::component_admission::component_digest(
-            &fs::read(&fixture.component).unwrap(),
-        )
-        .into(),
-    }];
-    let environment_retry = |packages, artifacts| {
-        crate::upgrade_environment::apply_environment_package_qualification(
-            apply_request(
-                fixture.base.source_database.url(),
-                &fixture.base.root.join("candidate"),
-            ),
-            ENVIRONMENT,
-            packages,
-            artifacts,
-            &result.result,
-        )
-    };
-    let replay = environment_retry(&packages, &artifacts).await.unwrap();
-    assert_eq!(replay.len(), 2);
-    assert!(
-        replay
-            .iter()
-            .all(|outcome| !outcome.changed && outcome.migrations_applied == 0)
-    );
-    let error = environment_retry(&packages[..1], &artifacts)
-        .await
-        .unwrap_err();
-    assert!(
-        format!("{error:#}").contains("complete successor root set"),
-        "{error:#}"
-    );
-    let mut changed_artifacts = artifacts.clone();
-    changed_artifacts[0].digest = format!("sha256:{}", "f".repeat(64)).into();
-    let error = environment_retry(&packages, &changed_artifacts)
-        .await
-        .unwrap_err();
-    assert!(
-        format!("{error:#}").contains("qualified overlay pin"),
-        "{error:#}"
-    );
-    assert_eq!(state(&mut fixture.base.source).await, reconciled);
     let tx = fixture.base.source.transaction().await.unwrap();
     tx.batch_execute("SELECT set_config('app.user_id', '00000000-0000-4000-8000-0000000000f1', true), set_config('app.operation', 'admin:constraint-proof', true)").await.unwrap();
     let duplicate = tx
