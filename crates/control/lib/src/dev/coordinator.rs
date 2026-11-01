@@ -413,14 +413,9 @@ impl ProductionDevStageRunner {
             let outcome = Box::pin(apply_package::apply_local_package(
                 ApplyPackageRequest {
                     changes: wamn_platform_identity::auth_changes::AuthChanges::new(
-                        async_nats::connect(self.config.scheduler_nats_url())
-                            .await
-                            .map_err(|source| {
-                                ProductionDevStageError::owner(
-                                    "connect auth changes",
-                                    source.into(),
-                                )
-                            })?,
+                        self.config.nats().connect().await.map_err(|source| {
+                            ProductionDevStageError::owner("connect auth changes", source)
+                        })?,
                     ),
                     package: apply_package::PackageRoot {
                         path: package.root,
@@ -774,11 +769,9 @@ impl ProductionDevStageRunner {
             &self.config.activation_identity().environment,
             apply,
             &wamn_platform_identity::auth_changes::AuthChanges::new(
-                async_nats::connect(self.config.scheduler_nats_url())
-                    .await
-                    .map_err(|source| {
-                        ProductionDevStageError::owner("connect auth changes", source.into())
-                    })?,
+                self.config.nats().connect().await.map_err(|source| {
+                    ProductionDevStageError::owner("connect auth changes", source)
+                })?,
             ),
         )
         .await
@@ -1679,11 +1672,9 @@ async fn prepare_local_bindings(
         environment,
     )
     .await?;
-    wamn_platform_identity::auth_changes::AuthChanges::new(
-        async_nats::connect(config.scheduler_nats_url()).await?,
-    )
-    .publish(drops)
-    .await;
+    wamn_platform_identity::auth_changes::AuthChanges::new(config.nats().connect().await?)
+        .publish(drops)
+        .await;
 
     let mut prepared = Vec::new();
     for admission in admissions {
@@ -1890,7 +1881,7 @@ async fn resolve_local_bindings(
             .await?;
             tx.commit().await?;
             wamn_platform_identity::connection_changes::ConnectionChanges::new(
-                async_nats::connect(config.scheduler_nats_url()).await?,
+                config.nats().connect().await?,
             )
             .publish(drops)
             .await;

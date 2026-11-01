@@ -308,8 +308,8 @@ impl From<anyhow::Error> for NativeBackendError {
 }
 
 impl NativeActivationBackend {
-    async fn connect(url: &str) -> Result<Self, DevActivationError> {
-        let client = timeout(SCHEDULER_CONNECT_TIMEOUT, async_nats::connect(url))
+    async fn connect(config: &DevConfig) -> Result<Self, DevActivationError> {
+        let client = timeout(SCHEDULER_CONNECT_TIMEOUT, config.nats().connect())
             .await
             .map_err(|source| {
                 DevActivationError::with_source(
@@ -324,7 +324,7 @@ impl NativeActivationBackend {
                     DevActivationErrorType::SchedulerUnavailable,
                     "connect-scheduler",
                     "scheduler refused the NATS connection",
-                    source,
+                    NativeBackendError(source),
                 )
             })?;
         Ok(Self {
@@ -807,7 +807,7 @@ pub async fn activate(
 ) -> Result<DevActivation, DevActivationError> {
     validate_request(&request)?;
     staged_http_reference(&request)?;
-    let backend = NativeActivationBackend::connect(request.config.scheduler_nats_url()).await?;
+    let backend = NativeActivationBackend::connect(request.config).await?;
     let active = activate_backend(request, backend).await?;
     Ok(DevActivation { active })
 }
