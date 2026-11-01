@@ -1,7 +1,7 @@
 //! Apply refusals against project integrations and environment connections.
 
 use serde_json::json;
-use wamn_control::environment::{bindings, document::EnvironmentDocument};
+use wamn_control::environment::{analyse, bindings, document::EnvironmentDocument};
 use wamn_platform_identity::{auth_changes::AuthDrops, connections::administration};
 use wamn_schema_generator::PackageManifest;
 
@@ -526,6 +526,124 @@ async fn apply_refuses_a_read_requirement_for_a_write_interface() {
             .len(),
         1
     );
+}
+
+#[tokio::test]
+async fn apply_requires_one_explicit_replica_for_exclusive_cloud_bindings() {
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_control_provision::test_database::system();
+    let mut client = connect(database.url()).await;
+    seed(&mut client).await;
+    let tx = client.transaction().await.unwrap();
+    tx.batch_execute("SET LOCAL ROLE wamn_control")
+        .await
+        .unwrap();
+    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+        wamn_control_provision::PlatformComponent::Provisioning,
+    ))
+    .await
+    .unwrap();
+    let store = wamn_test_infrastructure::credentials::LocalCredentials::create().unwrap();
+    wamn_test_infrastructure::credentials::define(
+        &tx,
+        "acme",
+        &json!({"project":"one","env":"dev","name":"meter",
+            "integration_type":"modbus","auth_type":"none",
+            "parameters":{"authority":"192.168.1.2:502"}}),
+        &store,
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    // A cloud target's name does not determine its type.
+    client
+        .batch_execute("UPDATE registry.target SET name='remote' WHERE name='cloud'")
+        .await
+        .unwrap();
+    let mut doc = document();
+    doc.target = "remote".into();
+    client
+        .batch_execute("SET ROLE wamn_db_owner")
+        .await
+        .unwrap();
+    let shared = bindings::analyse(&client, &doc, &[package("http")])
+        .await
+        .unwrap();
+    client.batch_execute("SET ROLE wamn_system").await.unwrap();
+    assert!(
+        analyse::replica_refusals(&client, &doc, &shared, None)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    doc.integrations = std::collections::BTreeMap::from([(
+        "meter".into(),
+        wamn_control::environment::document::Integration { version: 1 },
+    )]);
+    doc.applications
+        .get_mut("app")
+        .unwrap()
+        .connections
+        .insert("upstream".into(), "meter".into());
+    client
+        .batch_execute("SET ROLE wamn_db_owner")
+        .await
+        .unwrap();
+    let exclusive = bindings::analyse(&client, &doc, &[package("modbus")])
+        .await
+        .unwrap();
+    assert!(exclusive[0].exclusive);
+    client.batch_execute("SET ROLE wamn_system").await.unwrap();
+    let directory = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
+    let group = directory.path().join("host-group.yaml");
+    for yaml in ["replicas: 2\n", "{}\n", "replicas: '1'\n"] {
+        std::fs::write(&group, yaml).unwrap();
+        assert_eq!(
+            analyse::replica_refusals(&client, &doc, &exclusive, Some(&group))
+                .await
+                .unwrap(),
+            [
+                "connection meter is exclusive on a cloud target: WAMN_RELEASE_HOST_GROUP must name replicas: 1"
+            ],
+            "{yaml}"
+        );
+    }
+    assert_eq!(
+        analyse::replica_refusals(&client, &doc, &exclusive, None)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    std::fs::write(&group, "replicas: 1\n").unwrap();
+    assert!(
+        analyse::replica_refusals(&client, &doc, &exclusive, Some(&group))
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    client
+        .batch_execute("UPDATE registry.target SET name='cloud', type='local' WHERE name='remote'")
+        .await
+        .unwrap();
+    doc.target = "cloud".into();
+    client
+        .batch_execute("SET ROLE wamn_db_owner")
+        .await
+        .unwrap();
+    let local = bindings::analyse(&client, &doc, &[package("modbus")])
+        .await
+        .unwrap();
+    client.batch_execute("SET ROLE wamn_system").await.unwrap();
+    std::fs::write(&group, "replicas: 2\n").unwrap();
+    for path in [Some(group.as_path()), None] {
+        assert!(
+            analyse::replica_refusals(&client, &doc, &local, path)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
 }
 
 #[tokio::test]

@@ -146,6 +146,12 @@ The platform inputs come from environment variables of the verb, not from flags 
 6. Drain: Wait until the live set is exactly the declared release. Name each stranded run and stop.
 7. Contract: Remove the bindings of releases outside the live set. Disable instances that the document no longer names. Apply a declared floor.
 
+During analysis, apply reads each bound connection's type and the target type from the registry.
+For an exclusive connection on a cloud target, the body from `WAMN_RELEASE_HOST_GROUP` must name `replicas: 1`.
+Apply refuses another count or a missing key and names the connection.
+It never uses the chart default for this requirement.
+Local targets are exempt.
+
 The package stage runs in the project database before any Kubernetes write.
 It applies the pending platform migrations and installs each new package from its verified artifact.
 It applies the stage of each successor, writes the release cache row, and reconciles data access.

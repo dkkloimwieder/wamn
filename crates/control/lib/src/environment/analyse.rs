@@ -171,6 +171,8 @@ pub async fn analyse(
         .batch_execute("SET ROLE wamn_db_owner")
         .await?;
     let bindings = super::bindings::analyse(&binding_system, document, &packages).await?;
+    let replica_refusals =
+        replica_refusals(&system, document, &bindings, platform.host_group.as_deref()).await?;
     let connections = bindings
         .iter()
         .filter_map(|binding| {
@@ -200,6 +202,7 @@ pub async fn analyse(
     };
     let actor = actor();
     let mut refusals = refusals(document, &authorities);
+    refusals.extend(replica_refusals);
     if refusals.is_empty() {
         refusals = sequence_refusals(&document.applications, &packages);
     }
@@ -212,6 +215,53 @@ pub async fn analyse(
         actor,
         plan,
         packages,
+    })
+}
+
+/// Refuse cloud exclusive bindings unless the supplied host group names one replica.
+///
+/// # Errors
+///
+/// When the target or the host group body cannot be read.
+pub async fn replica_refusals(
+    system: &(impl tokio_postgres::GenericClient + Sync),
+    document: &EnvironmentDocument,
+    bindings: &[super::bindings::Binding],
+    path: Option<&std::path::Path>,
+) -> anyhow::Result<Vec<String>> {
+    if !bindings.iter().any(|binding| binding.exclusive) {
+        return Ok(Vec::new());
+    }
+    let cloud: bool = system
+        .query_one(
+            "SELECT type = 'cloud' FROM registry.target WHERE name = $1",
+            &[&document.target],
+        )
+        .await
+        .context("read the environment target type")?
+        .get(0);
+    if !cloud {
+        return Ok(Vec::new());
+    }
+    let group = super::write::host_group(path, &document.org, &document.project, &document.env)?;
+    let replicas = group.get("replicas").and_then(serde_yaml::Value::as_u64);
+    Ok(bindings
+        .iter()
+        .filter(|binding| binding.exclusive)
+        .filter_map(|binding| {
+            let connection =
+                &document.applications[&binding.application].connections[&binding.alias];
+            replica_refusal(connection, replicas)
+        })
+        .collect())
+}
+
+fn replica_refusal(connection: &str, replicas: Option<u64>) -> Option<String> {
+    (replicas != Some(1)).then(|| {
+        format!(
+            "connection {connection} is exclusive on a cloud target: \
+             WAMN_RELEASE_HOST_GROUP must name replicas: 1"
+        )
     })
 }
 
@@ -1032,6 +1082,20 @@ fn plan(document: &EnvironmentDocument, authorities: &Authorities) -> Vec<String
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn an_exclusive_cloud_connection_requires_one_explicit_replica() {
+        for replicas in [None, Some(0), Some(2)] {
+            assert_eq!(
+                replica_refusal("meter", replicas).as_deref(),
+                Some(
+                    "connection meter is exclusive on a cloud target: \
+                     WAMN_RELEASE_HOST_GROUP must name replicas: 1"
+                )
+            );
+        }
+        assert!(replica_refusal("meter", Some(1)).is_none());
+    }
 
     fn lineage(pairs: &[(&str, Option<&str>)]) -> BTreeMap<String, Option<String>> {
         pairs

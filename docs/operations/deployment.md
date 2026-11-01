@@ -147,6 +147,11 @@ Publication refuses an interface that the component does not export.
 Host types use an empty list and enforce the declared mode at run time.
 Environment apply refuses a read requirement that imports a declared write interface.
 
+For an exclusive cloud binding, set `replicas: 1` in the body from `WAMN_RELEASE_HOST_GROUP`.
+Apply refuses another count or a missing key and names the connection.
+The chart default does not satisfy this requirement.
+Local targets are exempt.
+
 ## Deployment ordering
 
 Build and exercise the exact selected source and artifacts before publication.
