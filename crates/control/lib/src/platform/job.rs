@@ -96,30 +96,20 @@ pub struct JobRequest {
     pub refresh: bool,
 }
 
-/// Add the existing auth NATS inputs, copied under `/inputs` or mounted in place.
+/// Add the existing auth NATS inputs, copied under `/inputs`.
 pub(super) fn auth_nats_inputs(
     request: &mut JobRequest,
-    copied: Option<&super::install::SecretData>,
+    secret: &super::install::SecretData,
 ) -> anyhow::Result<()> {
-    let directory = if let Some(secret) = copied {
-        for key in ["ca.crt", "tls.crt", "tls.key"] {
-            request
-                .files
-                .insert(key.into(), super::install::secret_text(secret, key)?);
-        }
-        request.environment.insert(
-            "WAMN_NATS_TLS_SERVER_NAME".into(),
-            "wamn-nats.platform.svc.cluster.local".into(),
-        );
-        "/inputs"
-    } else {
-        request.secret_mounts.push(SecretMount {
-            name: "wamn-provisioning-nats".into(),
-            path: "/etc/wamn/auth-nats".into(),
-            keys: ["ca.crt", "tls.crt", "tls.key"].map(str::to_owned).into(),
-        });
-        "/etc/wamn/auth-nats"
-    };
+    for key in ["ca.crt", "tls.crt", "tls.key"] {
+        request
+            .files
+            .insert(key.into(), super::install::secret_text(secret, key)?);
+    }
+    request.environment.insert(
+        "WAMN_NATS_TLS_SERVER_NAME".into(),
+        "wamn-nats.platform.svc.cluster.local".into(),
+    );
     request.environment.insert(
         "WAMN_NATS_URL".into(),
         "nats://wamn-nats.platform.svc.cluster.local:4222".into(),
@@ -131,7 +121,7 @@ pub(super) fn auth_nats_inputs(
     ] {
         request
             .environment
-            .insert(variable.into(), format!("{directory}/{key}"));
+            .insert(variable.into(), format!("/inputs/{key}"));
     }
     Ok(())
 }
@@ -1121,7 +1111,7 @@ pub fn install_job_requests(
         ),
         (
             "web upload",
-            web::request(&environment, "test-web", image, registry)?,
+            web::request(&environment, "test-web", image, registry, &auth)?,
             vec![],
         ),
         (
@@ -1367,7 +1357,7 @@ mod tests {
             "tls.key": STANDARD.encode("private-mounted-key")
         }}))
         .unwrap();
-        auth_nats_inputs(&mut request, Some(&auth)).unwrap();
+        auth_nats_inputs(&mut request, &auth).unwrap();
         let job = serde_json::to_value(render(&request, "platform", &[])).unwrap();
         assert!(!job.to_string().contains("private-mounted-key"));
         assert!(!format!("{request:?}").contains("private-mounted-key"));

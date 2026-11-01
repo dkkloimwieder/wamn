@@ -8,9 +8,11 @@ use serde_json::json;
 use wamn_package_artifact::PackageRegistry;
 
 use crate::environment::document::{DeclaredRelease, EnvironmentDocument};
+use crate::kubectl;
 use crate::release_chart::Target;
 
 use super::document::ClusterDocument;
+use super::install::SecretData;
 use super::job::{self, Access, JobRequest, PolicyRule, SecretMount};
 
 pub(super) async fn apply(
@@ -36,11 +38,23 @@ pub(super) async fn apply(
         }
         let started = Instant::now();
         progress(&format!("4.19 Web upload {coordinate}: starting"))?;
+        // The Job runs in the hosts namespace, so it copies the ctl NATS
+        // client like the package and environment Jobs.
+        let auth: SecretData = kubectl::get(
+            &target.kubeconfig,
+            &target.context,
+            "platform",
+            "secret",
+            "wamn-ctl-nats",
+        )
+        .await?
+        .context("missing Secret platform/wamn-ctl-nats")?;
         let mut request = request(
             &environment,
             &document.buckets.web,
             &super::install::runner_image(directory)?,
             registry,
+            &auth,
         )?;
         super::environments::chart_files(
             &directory.join("release-chart"),
@@ -75,6 +89,7 @@ pub(super) fn request(
     bucket: &str,
     image: &str,
     registry: &PackageRegistry,
+    auth: &SecretData,
 ) -> anyhow::Result<JobRequest> {
     let DeclaredRelease::Digest(digest) = &environment.release else {
         anyhow::bail!("web upload requires a declared release");
@@ -114,7 +129,7 @@ pub(super) fn request(
         }],
         ..JobRequest::default()
     };
-    job::auth_nats_inputs(&mut request, None)?;
+    job::auth_nats_inputs(&mut request, auth)?;
     super::packages::registry_inputs(&mut request, registry)?;
     request.environment.insert(
         "WAMN_PACKAGE_ARTIFACT_BASE".into(),
@@ -341,11 +356,16 @@ mod tests {
             oci_ca_paths: vec![],
         };
         std::fs::write(&registry.registry_auth_file, "{}").unwrap();
+        let auth = serde_json::from_value(json!({"data": {
+            "ca.crt": "Y2E=", "tls.crt": "Y2VydA==", "tls.key": "a2V5"
+        }}))
+        .unwrap();
         let request = request(
             &environment,
             "test-web",
             "registry/runner@sha256:abc",
             &registry,
+            &auth,
         )
         .unwrap();
         std::fs::remove_dir_all(directory).unwrap();

@@ -96,10 +96,10 @@ pub(super) async fn apply(
         &target.context,
         "platform",
         "secret",
-        "wamn-ctl-auth-nats",
+        "wamn-ctl-nats",
     )
     .await?
-    .context("missing Secret platform/wamn-ctl-auth-nats")?;
+    .context("missing Secret platform/wamn-ctl-nats")?;
     let request = request(document, &super::install::runner_image(directory)?, &auth)?;
     job::run(
         target,
@@ -149,6 +149,6 @@ pub(super) fn request(
         }],
         ..JobRequest::default()
     };
-    job::auth_nats_inputs(&mut request, Some(auth))?;
+    job::auth_nats_inputs(&mut request, auth)?;
     Ok(request)
 }

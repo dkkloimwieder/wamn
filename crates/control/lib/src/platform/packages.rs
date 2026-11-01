@@ -281,7 +281,7 @@ pub(super) fn package_request(
         "WAMN_COMPONENT_ARTIFACT_BASE".into(),
         artifact_base(registry, "components")?,
     );
-    job::auth_nats_inputs(&mut request, Some(auth))?;
+    job::auth_nats_inputs(&mut request, auth)?;
     Ok(request)
 }
 

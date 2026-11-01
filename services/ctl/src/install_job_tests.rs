@@ -96,32 +96,20 @@ fn install_jobs_supply_required_environment() {
                 request.environment["WAMN_NATS_URL"],
                 "nats://wamn-nats.platform.svc.cluster.local:4222"
             );
-            let mounted = verb == "web upload";
             for (variable, key) in [
                 ("WAMN_NATS_TLS_CA", "ca.crt"),
                 ("WAMN_NATS_TLS_CERT", "tls.crt"),
                 ("WAMN_NATS_TLS_KEY", "tls.key"),
             ] {
-                let directory = if mounted {
-                    "/etc/wamn/auth-nats"
-                } else {
-                    "/inputs"
-                };
-                assert_eq!(request.environment[variable], format!("{directory}/{key}"));
-                if !mounted {
-                    assert!(request.files.contains_key(key));
-                }
+                assert_eq!(request.environment[variable], format!("/inputs/{key}"));
+                assert!(request.files.contains_key(key));
             }
             assert_eq!(
                 request
                     .environment
                     .get("WAMN_NATS_TLS_SERVER_NAME")
                     .map(String::as_str),
-                if mounted {
-                    None
-                } else {
-                    Some("wamn-nats.platform.svc.cluster.local")
-                }
+                Some("wamn-nats.platform.svc.cluster.local")
             );
         }
         if verb == "provision-org" {

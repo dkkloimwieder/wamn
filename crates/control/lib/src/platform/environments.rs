@@ -552,7 +552,7 @@ pub(super) fn request(
         permissions: permissions(),
         ..JobRequest::default()
     };
-    job::auth_nats_inputs(&mut request, Some(auth))?;
+    job::auth_nats_inputs(&mut request, auth)?;
     Ok(request)
 }
 
