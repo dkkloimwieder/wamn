@@ -146,7 +146,8 @@ async fn install_project_database(client: &Client, url: &str) {
         .batch_execute(
             "DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_run CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_authority CASCADE",
+             DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
+             DROP SCHEMA IF EXISTS wamn_history CASCADE",
         )
         .await
         .expect("remove same-qualified control portable schemas before project install");

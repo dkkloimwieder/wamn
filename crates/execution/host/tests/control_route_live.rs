@@ -1570,11 +1570,11 @@ async fn assert_definer_grantees(client: &Client) -> anyhow::Result<()> {
         ),
         (
             "registry.resolve_environment_connection(text, text, text, text, text, integer)",
-            &["wamn_db_owner"],
+            &["wamn_apply", "wamn_db_owner"],
         ),
         (
             "registry.connection_projection(text, text, text)",
-            &["wamn_control", "wamn_db_owner"],
+            &["wamn_apply", "wamn_control", "wamn_db_owner"],
         ),
         (
             "registry.publish_integration(text, integer, text, jsonb, text, text[], text[])",
@@ -1879,12 +1879,20 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
             &json!({"org":ORG,"project":"billing","env":"dev","target":"cloud","release":"none","route_host":"billing.example","policy":"dev","applications":{}}),
         )?,
     )?;
-    let billing_url = std::fs::read_to_string(logins.join(
-        wamn_control_provision::control_administration_key("billing", "dev"),
-    ))?;
+    // The projection runs as the database owner, as env apply runs it.
+    let mut billing_url = url::Url::parse(database.url())?;
+    billing_url.set_path(
+        url::Url::parse(
+            std::fs::read_to_string(logins.join(
+                wamn_control_provision::control_administration_key("billing", "dev"),
+            ))?
+            .trim(),
+        )?
+        .path(),
+    );
     let _ = wamn_control::environment::bindings::project_authority(
         database.url(),
-        billing_url.trim(),
+        billing_url.as_str(),
         &document,
     )
     .await?;
@@ -1894,7 +1902,7 @@ async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> 
         .get(0);
     let _ = wamn_control::environment::bindings::project_authority(
         database.url(),
-        billing_url.trim(),
+        billing_url.as_str(),
         &document,
     )
     .await?;
