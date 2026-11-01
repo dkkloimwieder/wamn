@@ -34,7 +34,7 @@ Not run: `registry_image_archive -- --ignored`, whose test changed in Issue 4. I
 
 ## Deleted beyond the brief
 
-`deploy/sql/corrections/wamn-a04x-wms-0007.sql`, `backfill_generation_passwords_sql`, `wamn_run.effect_attempt_dispatches`, `docs/plan/package-upgrade.md`.
+`deploy/sql/corrections/wamn-a04x-wms-0007.sql` (owner retired 2026-11-01), `backfill_generation_passwords_sql`, `wamn_run.effect_attempt_dispatches`, `docs/plan/package-upgrade.md`.
 
 ## Scope
 
@@ -46,7 +46,19 @@ The explicit out-of-scope list was the hard stop, and named deletions were in sc
 
 ## Part 2
 
-- The eleven kept files of Issue 4, listed on wamn-n9s9x.4.
+- The eleven kept files of Issue 4:
+  - part 2: `deploy/gcp/flow-http.yaml`, written by `test-support/infrastructure/examples/workload_files.rs:53,129`.
+  - part 2: `deploy/gcp/wms-flow-http.yaml`, written by `workload_files.rs:65,129`.
+  - part 2: `deploy/gcp/materializer.yaml`, written by `workload_files.rs:54,130`.
+  - part 2: `deploy/gcp/wms-materializer.yaml`, written by `workload_files.rs:66,130`.
+  - part 2: `deploy/gcp/values-host-base.yaml`, written by `test-support/infrastructure/examples/host_values_files.rs:134`.
+  - part 2: `deploy/gcp/values-host.yaml`, written by `host_values_files.rs:138`.
+  - part 2: `deploy/gcp/letsencrypt.yaml`, read by `crates/control/lib/src/platform/install.rs:509`.
+  - part 2: `deploy/platform/values-host-default.yaml`, read by `host_values_files.rs:152`, `test-support/infrastructure/rendering/tests.rs:33` and `test-support/infrastructure/secrets.rs:506`.
+  - part 2: `deploy/platform/values-host-wms-pat.yaml`, read by `host_values_files.rs:86,154` and `apps/wamn_wms/tests/cluster/application.rs:191`.
+  - part 2: `deploy/platform/values-host-receiving-pat.yaml`, read by `host_values_files.rs:76,154` and `apps/wamn_receiving/tests/route_authentication_live/cluster.rs:578`.
+  - part 2: `deploy/infra/cnpg-cluster.yaml`, read by `test-support/infrastructure/delivery_cluster.rs:438` and `crates/control/lib/tests/environment_apply_kind.rs:846`.
+- G2-1 adds a lock-under-queued-prune case that does not use a version bump.
 - `test-support/harness/src/case_release.rs:704` writes `floors`, which blocks the Rust field, the KCL declaration and the fixture blocks.
 - `test-support/fixture-package/src/lib.rs:79,83,93` blocks removal of fixture upgrade support and `predecessor_version`.
 - `delivery/environment.rs` ENVIRONMENTS, path and read lost their production caller.
