@@ -282,7 +282,7 @@ pub async fn enable_cdc_project_env(
 /// and exclusion maps, then the replication role's grants. Package apply owns
 /// the map rows. Apply the role SQL to the cluster before this bundle.
 /// Every statement is idempotent (safe to apply again).
-fn cdc_sql_bundle(schemas: &[String], cdc_name: &str, db_name: &str) -> String {
+pub(crate) fn cdc_sql_bundle(schemas: &[String], cdc_name: &str, db_name: &str) -> String {
     let mut bundle = sql::create_failover_slot_sql(cdc_name);
     if schemas.is_empty() {
         writeln!(
@@ -311,8 +311,7 @@ fn cdc_sql_bundle(schemas: &[String], cdc_name: &str, db_name: &str) -> String {
 /// (idempotent + refreshing: recording it again leaves one row). The caller
 /// records it last, once the role SQL, the CDC SQL, the publication and the
 /// Secret are in place, so a registration names a reader that can start.
-/// Connects as superuser and `SET ROLE wamn_system` (the registry owner), then
-/// runs the pure `wamn-control-registry` builder. The publication and slot
+/// The supplied credential holds the event-reader registration grants. The capture declarations
 /// share `cdc_name`, and `schemas` is the set that the publication covers;
 /// the stream and the Secret are named from the coordinate.
 ///
@@ -340,10 +339,6 @@ pub async fn record_event_reader(
         .context("system db connect")?;
     let conn_task = tokio::spawn(conn);
     let result = async {
-        client
-            .batch_execute("SET ROLE wamn_system")
-            .await
-            .context("SET ROLE wamn_system")?;
         client
             .execute(
                 wamn_control_registry::sql::upsert_event_reader_sql(),

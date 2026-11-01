@@ -761,7 +761,7 @@ pub async fn exercise(
     std::fs::write(&file, document.to_kcl())?;
     // Platform install provisions with release=none before it renders the
     // session audience from the environment's allocated instance suffix.
-    environment::apply(&platform, &file).await?;
+    environment::apply(&platform, &file, &crate::ensure_admin_url(&platform)).await?;
     // Bind only after the connection-free bootstrap. The release below
     // supplies the upstream declaration for the first bound apply.
     super::org_bindings::bind(

@@ -30,7 +30,7 @@ pub mod status;
 pub mod write;
 
 #[cfg(test)]
-mod system_sql_tests;
+mod admin_sql_tests;
 
 use std::path::{Path, PathBuf};
 
@@ -48,7 +48,7 @@ const DEFAULT_NAMESPACE: &str = "wamn-system";
 /// The platform inputs of the lifecycle verbs.
 #[derive(Debug, Clone)]
 pub struct Platform {
-    /// A URL of the system database whose login may `SET ROLE wamn_system`.
+    /// The system database URL selected for this verb.
     pub system_database_url: String,
     /// The cluster, its context and the operator release's namespace (R6).
     pub target: release_chart::Target,
@@ -103,6 +103,15 @@ impl Platform {
     ///
     /// When a required variable is unset, or the kubeconfig has no current context.
     pub fn from_env() -> anyhow::Result<Self> {
+        Self::from_database_env("WAMN_CONTROL_DATABASE_URL")
+    }
+
+    /// Read the restricted environment apply inputs.
+    pub fn apply_from_env() -> anyhow::Result<Self> {
+        Self::from_database_env("WAMN_APPLY_DATABASE_URL")
+    }
+
+    fn from_database_env(database_variable: &str) -> anyhow::Result<Self> {
         let variable = |name: &str| {
             std::env::var(name).with_context(|| format!("set {name} for wamn-ctl env"))
         };
@@ -114,7 +123,7 @@ impl Platform {
         let namespace = std::env::var("WAMN_RELEASE_NAMESPACE")
             .unwrap_or_else(|_| DEFAULT_NAMESPACE.to_owned());
         Ok(Self {
-            system_database_url: variable("WAMN_CONTROL_DATABASE_URL")?,
+            system_database_url: variable(database_variable)?,
             chart: PathBuf::from(variable("WAMN_RELEASE_CHART")?),
             release_artifact_base: variable("WAMN_RELEASE_ARTIFACT_BASE")?,
             registry_auth_file: PathBuf::from(variable("WAMN_REGISTRY_AUTH_FILE")?),
@@ -224,12 +233,12 @@ pub async fn dry_run(platform: &Platform, file: &Path) -> anyhow::Result<Analysi
 ///
 /// When the lock is held, the document is refused, or a step fails. The error
 /// names the step.
-pub async fn apply(platform: &Platform, file: &Path) -> anyhow::Result<Analysis> {
+pub async fn apply(platform: &Platform, file: &Path, admin_url: &str) -> anyhow::Result<Analysis> {
     let document = EnvironmentDocument::compile(file)?;
     LifecycleLock::hold(
         &platform.system_database_url,
         &document.triple(),
-        async |_| apply_locked(platform, &document, None).await,
+        async |_| apply_locked(platform, &document, None, admin_url).await,
     )
     .await
 }
@@ -250,10 +259,11 @@ pub(crate) async fn apply_locked(
     platform: &Platform,
     document: &EnvironmentDocument,
     reason: Option<&str>,
+    admin_url: &str,
 ) -> anyhow::Result<Analysis> {
     crate::schema_baseline::compare_system(&platform.system_database_url).await?;
     let mut analysis = analyse::analyse(platform, document).await?;
-    ensure::ensure(platform, document, &analysis)
+    ensure::ensure(platform, document, &analysis, admin_url)
         .await
         .context("step 4, ensure the substrate")?;
     let clients = expand::expand(platform, document, &analysis)

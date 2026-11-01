@@ -17,7 +17,7 @@ use anyhow::{Context as _, bail};
 use serde_json::Value;
 
 use super::Platform;
-use super::analyse::{Analysis, connect, live_set, read_pods};
+use super::analyse::{Analysis, live_set, read_pods};
 use super::document::EnvironmentDocument;
 
 /// How often the verb reads the live set.
@@ -142,7 +142,7 @@ pub async fn stranded(
     live: &BTreeMap<String, usize>,
 ) -> anyhow::Result<Vec<Stranded>> {
     let live: Vec<String> = live.keys().cloned().collect();
-    let mut client = connect(project_url).await?;
+    let mut client = super::analyse::connect_project(project_url).await?;
     let transaction = client
         .transaction()
         .await

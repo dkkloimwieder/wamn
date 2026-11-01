@@ -134,6 +134,11 @@ It names the coordinate, the release digest or `none`, the route host, the polic
 A second verb on the same coordinate refuses while the lock is held.
 `--dry-run` and `show` take no lock.
 The platform inputs come from environment variables of the verb, not from flags or document fields.
+Apply reads `WAMN_APPLY_DATABASE_URL`, which authenticates as `wamn_apply`.
+Only its ensure phase opens `WAMN_SYSTEM_ADMIN_URL` for role creation and grant repair.
+Registry and identity data reads and writes use the restricted apply connection, including those inside ensure.
+Project work uses the granted `wamn_db_owner` role.
+Provisioning writes the apply URL to the `platform/wamn-apply` Secret.
 
 `apply` runs these steps:
 

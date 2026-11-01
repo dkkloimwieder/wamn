@@ -195,14 +195,13 @@ pub async fn materialize_application_principals(
         .map(|package| (package.package.id.as_str(), package))
         .collect();
     let mut system = connect(system_url).await?;
-    system.batch_execute("SET ROLE wamn_system").await?;
     let domain: Option<String> = system
         .query_one("SELECT platform_domain FROM registry.meta", &[])
         .await?
         .get(0);
     let domain =
         domain.context("platform-domain-unset: application principals need the platform domain")?;
-    let mut project = connect(project_url).await?;
+    let mut project = super::analyse::connect_project(project_url).await?;
     let transaction = project.transaction().await?;
     transaction
         .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
@@ -307,8 +306,7 @@ pub fn sequence_defaults<'a>(
 /// `project_url` does not have yet, and return how many were created. A row
 /// that exists keeps its pattern, so an edited pattern survives every apply.
 ///
-/// The write narrows the apply login to `wamn_administration`, the authority
-/// of the control host's configuration writes; it binds `wamn:provisioning`
+/// The project owner writes the defaults and binds `wamn:provisioning`
 /// as the actor and operation.
 ///
 /// # Errors
@@ -321,7 +319,7 @@ pub async fn create_number_sequences(
     if defaults.is_empty() {
         return Ok(0);
     }
-    let mut project = connect(project_url).await?;
+    let mut project = super::analyse::connect_project(project_url).await?;
     let transaction = project.transaction().await?;
     transaction
         .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
@@ -329,13 +327,6 @@ pub async fn create_number_sequences(
         ))
         .await
         .context("bind wamn:provisioning as the actor and operation")?;
-    transaction
-        .batch_execute(&format!(
-            "SET LOCAL ROLE \"{}\"",
-            wamn_control_provision::ADMINISTRATION_ROLE
-        ))
-        .await
-        .context("narrow the apply login to the administration authority")?;
     let created =
         wamn_platform_identity::configuration::create_default_sequences(&transaction, defaults)
             .await?;
@@ -379,10 +370,6 @@ pub(super) async fn installed(
     document: &EnvironmentDocument,
 ) -> anyhow::Result<BTreeMap<String, Installed>> {
     let system = connect(&platform.system_database_url).await?;
-    system
-        .batch_execute("SET ROLE wamn_system")
-        .await
-        .context("SET ROLE wamn_system")?;
     let row = analyse::read_row(&system, document)
         .await?
         .context("the environment row is missing after step 4")?;
@@ -436,7 +423,7 @@ pub async fn write_release(
         "release manifest {digest} hashes to {}",
         manifest.digest().as_str()
     );
-    let mut client = connect(project_url).await?;
+    let mut client = super::analyse::connect_project(project_url).await?;
     let transaction = client
         .transaction()
         .await

@@ -36,10 +36,6 @@ pub async fn show(platform: &Platform, triple: &Triple) -> anyhow::Result<Enviro
         floors: BTreeMap::new(),
     };
     let system = connect(&platform.system_database_url).await?;
-    system
-        .batch_execute("SET ROLE wamn_system")
-        .await
-        .context("SET ROLE wamn_system")?;
     let row = read_row(&system, &document)
         .await?
         .with_context(|| format!("environment {triple} has no row"))?;
@@ -58,7 +54,7 @@ pub async fn show(platform: &Platform, triple: &Triple) -> anyhow::Result<Enviro
     }
     if let DeclaredRelease::Digest(digest) = &document.release {
         let url = super::ensure::project_url(platform, &document.triple()).await?;
-        let project = connect(&url).await?;
+        let project = super::analyse::connect_project(&url).await?;
         let env_key = wamn_control_provision::project_env_key(
             &document.org,
             &document.project,

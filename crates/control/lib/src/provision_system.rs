@@ -5,7 +5,7 @@
 //! CloudNativePG, the `initdb` bootstrap of the cluster creates both. The
 //! verb connects as the superuser, installs [`CONTROL_BOOTSTRAP_SQL`] as
 //! `wamn_system`, closes the PUBLIC floors, creates the login
-//! `wamn_provisioner` of the provisioning worker, and writes
+//! `wamn_provisioner` of the provisioning worker and `wamn_apply`, and writes
 //! `registry.meta.platform_domain`. It refuses a database that already has
 //! the schema `registry`, so a second run changes nothing.
 //!
@@ -134,6 +134,52 @@ pub async fn install_control_store(admin: &Client) -> anyhow::Result<()> {
         .batch_execute(&wamn_control_provision::provisioner::ensure_provisioner_role_sql())
         .await
         .context("create the provisioning worker's login")?;
+    admin
+        .batch_execute(wamn_control_provision::apply::ensure_apply_role_sql())
+        .await?;
+    admin
+        .batch_execute(wamn_control_provision::apply::APPLY_GRANTS_SQL)
+        .await?;
+    Ok(())
+}
+
+/// Write the restricted apply credential after system provisioning.
+pub async fn emit_apply_credential(
+    system_url: &str,
+    host: &str,
+    port: u16,
+    path: &std::path::Path,
+) -> anyhow::Result<()> {
+    ensure_secret_path(path, "--emit-apply-secret")?;
+    let mut bytes = [0u8; 32];
+    SystemRandom::new()
+        .fill(&mut bytes)
+        .map_err(|_| anyhow::anyhow!("generate apply credential"))?;
+    let password = hex::encode(bytes);
+    let (admin, connection) = tokio_postgres::connect(system_url, NoTls).await?;
+    let task = tokio::spawn(connection);
+    admin
+        .batch_execute(&wamn_control_provision::apply::apply_password_sql(
+            &password,
+        ))
+        .await?;
+    let mut url = Url::parse(system_url)?;
+    url.set_username(wamn_control_provision::apply::APPLY_ROLE)
+        .map_err(|()| anyhow::anyhow!("encode apply user"))?;
+    url.set_password(Some(&password))
+        .map_err(|()| anyhow::anyhow!("encode apply password"))?;
+    url.set_host(Some(host))?;
+    url.set_port(Some(port))
+        .map_err(|()| anyhow::anyhow!("encode apply port"))?;
+    let secret =
+        wamn_control_provision::render_control_administration_secret_manifest("apply", "platform");
+    let mut secret = secret;
+    secret["metadata"]["name"] = "wamn-apply".into();
+    secret["metadata"]["labels"] = json!({"app.kubernetes.io/name": "wamn-apply"});
+    secret["stringData"] = json!({"url": url.as_str()});
+    write_secret_json(path, &secret)?;
+    drop(admin);
+    task.await??;
     Ok(())
 }
 

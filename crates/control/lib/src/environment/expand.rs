@@ -35,10 +35,6 @@ pub async fn expand(
     let env_key =
         wamn_control_provision::project_env_key(&document.org, &document.project, &document.env);
     let mut system = connect(&platform.system_database_url).await?;
-    system
-        .batch_execute("SET ROLE wamn_system")
-        .await
-        .context("SET ROLE wamn_system")?;
     let tx = crate::provision_project_env::provisioning_transaction(&mut system).await?;
     tx.execute(
         UPDATE_ROW_SQL,
@@ -52,7 +48,6 @@ pub async fn expand(
     )
     .await
     .context("write the policy name and the route host")?;
-    tx.batch_execute("SET LOCAL ROLE wamn_db_owner").await?;
     let bindings = super::bindings::analyse(&tx, document, &analysis.packages).await?;
     tx.commit().await?;
     drop(system);
@@ -70,7 +65,7 @@ pub async fn expand(
         true,
     )
     .await?;
-    let mut project = connect(&project_url).await?;
+    let mut project = super::analyse::connect_project(&project_url).await?;
     crate::reconcile_run_plane::converge_environment_policy(
         &mut project,
         &BareSchemaName::new(RUN_SCHEMA.to_owned())?,

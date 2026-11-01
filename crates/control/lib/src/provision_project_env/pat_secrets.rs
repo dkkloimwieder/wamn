@@ -88,10 +88,6 @@ pub(super) async fn issue_pat_secrets(
         .context("system db connect for PAT issuance")?;
     let connection_task = tokio::spawn(connection);
     let result = async {
-        client
-            .batch_execute("SET ROLE wamn_system")
-            .await
-            .context("SET ROLE wamn_system for PAT issuance")?;
         let mut issued = Vec::new();
         if let Some(path) = management_author_path {
             issued.push(
@@ -233,7 +229,6 @@ pub async fn mint_management_author_pat(
         .context("system db connect for PAT issuance")?;
     let connection_task = tokio::spawn(connection);
     let result = async {
-        client.batch_execute("SET ROLE wamn_system").await?;
         let (_, pat) =
             mint_pat(&mut client, &pat_client, triple, MANAGEMENT_AUTHOR, changes).await?;
         Ok(pat)
@@ -302,10 +297,6 @@ pub async fn revoke_provisioning_pat(
         .context("system db connect for PAT revocation")?;
     let connection_task = tokio::spawn(connection);
     let result = async {
-        client
-            .batch_execute("SET ROLE wamn_system")
-            .await
-            .context("SET ROLE wamn_system for PAT revocation")?;
         let transaction = provisioning_transaction(&mut client).await?;
         let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
         revoke_pat(&transaction, prefix, &mut drops)

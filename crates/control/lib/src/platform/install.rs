@@ -324,8 +324,16 @@ pub(super) fn provisioning_jobs(document: &ClusterDocument, image: &str) -> [Job
     [
         (
             "platform-system",
-            vec!["provision-system", "--platform-domain", domain],
-            false,
+            vec![
+                "provision-system",
+                "--platform-domain",
+                domain,
+                "--emit-apply-secret",
+                "/out/secret.json",
+                "--db-host",
+                DATABASE_HOST,
+            ],
+            true,
         ),
         (
             "platform-org",
@@ -1346,7 +1354,15 @@ mod tests {
             assert!(jobs.iter().all(|job| !job.calls_kubernetes && job.image == "registry/runner:1@sha256:abc"));
             assert_eq!(
                 jobs[0].arguments,
-                ["provision-system", "--platform-domain", "example.com"]
+                [
+                    "provision-system",
+                    "--platform-domain",
+                    "example.com",
+                    "--emit-apply-secret",
+                    "/out/secret.json",
+                    "--db-host",
+                    DATABASE_HOST
+                ]
             );
             assert_eq!(
                 jobs[1].arguments,
@@ -1378,7 +1394,7 @@ mod tests {
                     DATABASE_HOST
                 ]
             );
-            assert!(!jobs[0].emits_secret && !jobs[1].emits_secret && jobs[2].emits_secret);
+            assert!(jobs[0].emits_secret && !jobs[1].emits_secret && jobs[2].emits_secret);
         }
     }
 

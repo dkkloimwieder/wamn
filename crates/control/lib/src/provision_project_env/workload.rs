@@ -434,6 +434,18 @@ async fn converge_stable_workload_memberships(
 pub async fn run_workload_action(
     args: &WorkloadActionRequest,
 ) -> anyhow::Result<WorkloadActionOutcome> {
+    let admin_url = args
+        .system_database_url
+        .as_deref()
+        .context("system database URL is required")?;
+    run_workload_action_with_admin(args, admin_url).await
+}
+
+/// Prepare credentials with separate system data and administration connections.
+pub(crate) async fn run_workload_action_with_admin(
+    args: &WorkloadActionRequest,
+    admin_url: &str,
+) -> anyhow::Result<WorkloadActionOutcome> {
     let WorkloadGenerationAction {
         family,
         verb,
@@ -500,12 +512,12 @@ pub async fn run_workload_action(
             args.target_admin_database_url.is_none(),
             "--target-admin-database-url is not a {label} input: this family addresses the control database"
         );
-        let config = named_database_config(system_url, &format!("{label} admin"))?;
+        let config = named_database_config(admin_url, &format!("{label} admin"))?;
         let database = config
             .get_dbname()
             .expect("named_database_config requires a database name")
             .to_string();
-        (system_url, database, config, None)
+        (admin_url, database, config, None)
     } else {
         let instance = read_project_env_instance(system_url, &triple).await?;
         let database = project_env_database_name(org, project, environment, &instance);
@@ -862,7 +874,8 @@ where
         },
     ) = (lifecycle.control_env_key, lifecycle.scope)
     {
-        let mapped: Option<String> = transaction
+        let mapping = super::provisioning_transaction(&mut passwords.client).await?;
+        let mapped: Option<String> = mapping
             .query_opt(
                 sql::upsert_control_author_env_key_mapping_sql(),
                 &[&role, &env_key, &org, &project, &environment],
@@ -874,6 +887,7 @@ where
             mapped.as_deref() == Some(env_key),
             "control-author login identity already maps to a different tenant"
         );
+        mapping.commit().await?;
     }
     if let Err(error) = transaction.commit().await {
         // The role never received the password, so its fingerprint goes too.

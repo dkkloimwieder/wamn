@@ -177,6 +177,19 @@ async fn auth_drops_mint_pat_records_the_committed_project_role_drop() {
     let bootstrap = crate::dev::pat_issuer::start(url.as_str(), &root)
         .await
         .unwrap();
+    client.batch_execute("RESET ROLE").await.unwrap();
+    client
+        .batch_execute(wamn_control_provision::apply::ensure_apply_role_sql())
+        .await
+        .unwrap();
+    client
+        .batch_execute(wamn_control_provision::apply::APPLY_GRANTS_SQL)
+        .await
+        .unwrap();
+    client
+        .batch_execute("SET SESSION AUTHORIZATION wamn_apply")
+        .await
+        .unwrap();
     let pat_client = PatClient::new(&bootstrap.args).unwrap();
     let (actual, issued) = mint_pat(
         &mut client,

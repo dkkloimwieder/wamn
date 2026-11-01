@@ -503,3 +503,12 @@ Set `--component-reclaim-window-seconds` or `WAMN_COMPONENT_RECLAIM_WINDOW_SECON
 The native pool uses `maxConcurrency = 1`, no retained minimum, and a 1,000-call instance limit.
 Pool overflow uses fresh stores and remains subject to the existing admission and memory limits.
 Restart the host to change trust or pool configuration. The replacement process creates new pools.
+
+### Environment apply credentials
+
+For initial installation, set `WAMN_SYSTEM_ADMIN_URL` to the system administrator URL.
+Run `wamn-ctl provision-system --platform-domain DOMAIN --emit-apply-secret PATH --db-host HOST` to write the restricted apply Secret.
+The platform install Job supplies these arguments.
+Set `WAMN_APPLY_DATABASE_URL` from the Secret URL before `wamn-ctl env apply`.
+Set `WAMN_SYSTEM_ADMIN_URL` for its ensure phase.
+The other apply phases use the restricted credential.

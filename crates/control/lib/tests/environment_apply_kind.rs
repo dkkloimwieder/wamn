@@ -1085,6 +1085,17 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     let system_url = format!("postgresql://postgres:{password}@127.0.0.1:{port}/wamn_system");
     let (system, system_task) = connect(&system_url).await?;
     reset_control_store(system.as_ref()).await?;
+    system
+        .batch_execute(wamn_control_provision::apply::ensure_apply_role_sql())
+        .await?;
+    system
+        .batch_execute(wamn_control_provision::apply::APPLY_GRANTS_SQL)
+        .await?;
+    system
+        .batch_execute(&wamn_control_provision::apply::apply_password_sql(
+            &password,
+        ))
+        .await?;
     provision_org(ProvisionOrgRequest {
         org: ORG.to_owned(),
         template: Template::trials(),
@@ -1283,7 +1294,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     run.kept.registry_address.clone_from(&local);
     run.kept.release_digest.clone_from(&digest);
     run.kept.image_set = Some(set.clone());
-    let platform = check_platform(run, system_url.clone(), chart, events);
+    let platform = check_platform(run, &system_url, chart, events);
     let mut context = CheckContext {
         repository: repository.to_owned(),
         platform: platform.clone(),
@@ -2104,7 +2115,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     let mut events_platform = platform.clone();
     events_platform.host_group = Some(rollback_host_group(&work));
     let rolled =
-        Box::pin(environment::rollback::rollback(&events_platform, &dev_triple, "kind check")).await?;
+        Box::pin(environment::rollback::rollback(&events_platform, &dev_triple, "rollback probe", &ensure_admin_url(&events_platform))).await?;
     let after_rollback = run.live_digests(&name).await?;
     let shown_after = environment::show::show(&platform, &dev_triple).await?;
     let history = run
@@ -2149,6 +2160,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
             &platform,
             &qa_triple,
             "kind check",
+            &ensure_admin_url(&platform),
         ))
         .await;
         let qa_after = run.revisions(&qa_name).await?;
@@ -2470,7 +2482,8 @@ async fn apply_with_diagnostics(
 ) -> anyhow::Result<()> {
     let file = work.join(format!("{name}.k"));
     std::fs::write(&file, document.to_kcl())?;
-    let mut applying = Box::pin(environment::apply(platform, &file));
+    let admin = ensure_admin_url(platform);
+    let mut applying = Box::pin(environment::apply(platform, &file, &admin));
     let mut crash_logs = serde_json::Map::new();
     loop {
         tokio::select! {
@@ -3139,17 +3152,25 @@ async fn database_forward(run: &Run) -> anyhow::Result<(String, u16, Child)> {
     Ok((password, port, forward))
 }
 
+fn ensure_admin_url(platform: &Platform) -> String {
+    let mut url = url::Url::parse(&platform.system_database_url).unwrap();
+    url.set_username("postgres").unwrap();
+    url.to_string()
+}
+
 fn check_platform(
     run: &Run,
-    system_url: String,
+    system_url: &str,
     chart: PathBuf,
     events: wamn_platform_identity::nats::PlatformNats,
 ) -> Platform {
+    let mut apply_url = url::Url::parse(system_url).unwrap();
+    apply_url.set_username("wamn_apply").unwrap();
     let work = &run.kept.secret_work;
     let local = &run.kept.registry_address;
     Platform {
         auth_nats: None,
-        system_database_url: system_url,
+        system_database_url: apply_url.to_string(),
         target: Target {
             kubeconfig: run.kept.kubeconfig.clone(),
             context: format!("kind-{}", run.cluster),
@@ -3458,7 +3479,7 @@ async fn rerun(
     }
     run.kept.image_set = Some(images.clone());
     let chart = stamp(source, &images, None, &run.work.join("chart"))?;
-    let platform = check_platform(run, system_url, chart, events);
+    let platform = check_platform(run, &system_url, chart, events);
     let registry = PackageRegistry {
         artifact_base: format!("{local}/wamn/packages"),
         registry_auth_file: platform.registry_auth_file.clone(),

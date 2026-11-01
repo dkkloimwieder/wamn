@@ -376,10 +376,6 @@ async fn read_env_key_identity_source(
         .context("connect to the system registry for tenant identity")?;
     let connection_task = tokio::spawn(connection);
     let read = async {
-        client
-            .batch_execute("SET ROLE wamn_system")
-            .await
-            .context("assume the system registry owner")?;
         let platform_domain: Option<String> = client
             .query_one("SELECT platform_domain FROM registry.meta", &[])
             .await
@@ -628,8 +624,18 @@ async fn converge_env_key_identity(
         .context("open the tenant identity transaction")?;
     let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
     if !app_schema_present {
+        let owner: String = transaction
+            .query_one(
+                "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()",
+                &[],
+            )
+            .await?
+            .get(0);
         transaction
-            .batch_execute(APP_SCHEMA_SQL)
+            .batch_execute(&format!(
+                "SET LOCAL ROLE {}; {APP_SCHEMA_SQL} RESET ROLE;",
+                wamn_pg_core::quote_ident(&owner)
+            ))
             .await
             .context("install deploy/sql/app-schema.sql")?;
         crate::schema_baseline::record_project(&transaction)
@@ -866,17 +872,41 @@ pub async fn reconcile(
     let plan = plan_run_plane(schema, &obs);
     if apply {
         ensure_runtime_roles(client).await?;
+        let owner: String = client
+            .query_one(
+                "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()",
+                &[],
+            )
+            .await?
+            .get(0);
+        client
+            .batch_execute(&format!("SET ROLE {}", wamn_pg_core::quote_ident(&owner)))
+            .await?;
         for action in &plan.actions {
             client
                 .batch_execute(&action.sql)
                 .await
                 .with_context(|| format!("apply {:?} {}", action.kind, action.target))?;
         }
+        client.batch_execute("RESET ROLE").await?;
     }
     Ok(plan)
 }
 
 async fn ensure_runtime_roles(client: &tokio_postgres::Client) -> anyhow::Result<()> {
+    for family in [
+        wamn_control_provision::WorkloadRoleFamily::Retention,
+        wamn_control_provision::WorkloadRoleFamily::AuditRetention,
+    ] {
+        client
+            .batch_execute(&wamn_control_provision::sql::ensure_workload_acl_role_sql(
+                family,
+            ))
+            .await?;
+    }
+    client
+        .batch_execute(&wamn_control_provision::sql::ensure_platform_group_role_sql())
+        .await?;
     client
         .batch_execute(&wamn_control_provision::sql::ensure_app_acl_role_sql())
         .await

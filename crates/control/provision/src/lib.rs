@@ -48,6 +48,7 @@
 //! pure tests do NOT cover; the live half is the throwaway-PG gates over the
 //! real prepared-statement path (SR12b).
 
+pub mod apply;
 pub mod audit_retention;
 #[cfg(feature = "ops")]
 pub mod backup;

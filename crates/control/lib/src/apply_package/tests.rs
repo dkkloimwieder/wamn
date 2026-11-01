@@ -186,7 +186,10 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop() {
             "apply-drops--fixture--dev",
             "principal",
             ticket,
-            PrincipalGrants::default(),
+            PrincipalGrants {
+                user: Some(false),
+                ..PrincipalGrants::default()
+            },
         )
         .await;
     assert!(

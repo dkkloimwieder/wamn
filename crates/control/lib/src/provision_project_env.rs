@@ -97,7 +97,7 @@ mod grants;
 mod output;
 mod pat_secrets;
 mod registry;
-mod workload;
+pub(crate) mod workload;
 
 use database::{
     connect_config, exact_project_database_config, named_database_config, workload_config,

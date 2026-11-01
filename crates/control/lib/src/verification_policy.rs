@@ -115,10 +115,6 @@ pub(crate) async fn read_authoritative_environment_policy(
         .context("connect to the authoritative environment-policy store")?;
     let connection_task = tokio::spawn(connection);
     let loaded = async {
-        source
-            .batch_execute("SET ROLE wamn_system")
-            .await
-            .context("assume the environment-policy owner")?;
         let policy = if require_durability_column {
             crate::env_policies::read_env_policy(&source, source_policy_org, environment).await?
         } else {

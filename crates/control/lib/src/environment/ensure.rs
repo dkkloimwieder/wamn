@@ -28,13 +28,13 @@ use wamn_control_provision::host_credentials::{
 use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily};
 use wamn_control_registry::Triple;
 
+use super::Platform;
 use super::analyse::{Analysis, connect};
 use super::document::EnvironmentDocument;
-use super::{EventBroker, Platform};
 use crate::provision_project_env::{
     ProvisionProjectEnvRequest, WorkloadActionRequest, WorkloadActionVerb,
     WorkloadGenerationAction, provision_project_env, provisioning_transaction,
-    read_project_env_instance, resolve_cluster, run_workload_action,
+    read_project_env_instance, resolve_cluster,
 };
 
 /// The run-plane schema of every environment.
@@ -52,7 +52,9 @@ pub async fn ensure(
     platform: &Platform,
     document: &EnvironmentDocument,
     analysis: &Analysis,
+    admin_url: &str,
 ) -> anyhow::Result<()> {
+    let admin = connect(admin_url).await?;
     let triple = document.triple();
     // The row's policy until step 5 writes the declared one; a first apply
     // creates the row with the declared policy.
@@ -98,7 +100,8 @@ pub async fn ensure(
     .await
     .context("record the environment and render its database")?;
     ensure_credential_access(platform, document).await?;
-    admin_sql(platform, &outcome.role_sql)
+    admin
+        .batch_execute(&outcome.role_sql)
         .await
         .context("ensure the database roles")?;
     kubectl(
@@ -110,7 +113,8 @@ pub async fn ensure(
     .await
     .context("apply the Database CR")?;
     wait_applied(platform, "database", &outcome.database).await?;
-    admin_sql(platform, &outcome.privilege_sql)
+    admin
+        .batch_execute(&outcome.privilege_sql)
         .await
         .context("ensure the database privilege floor")?;
     private.apply_and_shred(platform, &database_secret).await?;
@@ -121,10 +125,39 @@ pub async fn ensure(
     // The run plane: the run schema the credentials are granted on.
     let project_url = project_url(platform, &triple).await?;
     crate::schema_baseline::compare_project_if_installed(&project_url).await?;
+    let mut project_admin = url::Url::parse(admin_url)?;
+    project_admin.set_path(url::Url::parse(&project_url)?.path());
+    let project_admin = project_admin.to_string();
+    connect(&project_admin)
+        .await?
+        .batch_execute(&wamn_control_provision::sql::install_platform_extensions_sql())
+        .await?;
+    admin
+        .batch_execute(&wamn_control_provision::sql::ensure_platform_group_role_sql())
+        .await?;
+    admin.batch_execute(&format!(
+        "GRANT CONNECT ON DATABASE {} TO wamn_apply; GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE;",
+        wamn_pg_core::quote_ident(url::Url::parse(&project_url)?.path().trim_start_matches('/')),
+    )).await?;
+    for package in &analysis.packages {
+        admin
+            .batch_execute(&wamn_control_provision::sql::ensure_package_owner_role_sql(
+                &package.package.id,
+            ))
+            .await?;
+        admin
+            .batch_execute(&format!(
+                "GRANT {} TO wamn_db_owner WITH ADMIN FALSE, INHERIT TRUE, SET TRUE",
+                wamn_pg_core::quote_ident(&wamn_control_provision::package_owner_role(
+                    &package.package.id
+                ))
+            ))
+            .await?;
+    }
     crate::reconcile_run_plane::reconcile_run_plane(
         crate::reconcile_run_plane::ReconcileRunPlaneRequest {
             system_database_url: platform.system_database_url.clone(),
-            admin_database_url: project_url.clone(),
+            admin_database_url: project_admin.clone(),
             org: document.org.clone(),
             project: document.project.clone(),
             env: document.env.clone(),
@@ -153,9 +186,9 @@ pub async fn ensure(
             document,
             &private,
             &cluster,
-            &project_url,
+            &project_admin,
         );
-        run_workload_action(&request)
+        crate::provision_project_env::workload::run_workload_action_with_admin(&request, admin_url)
             .await
             .with_context(|| format!("prepare generation a of {}", credential.family.label()))?;
         private
@@ -176,10 +209,6 @@ pub async fn ensure(
 
     // The rows of the current org and project administrators.
     let mut client = connect(&platform.system_database_url).await?;
-    client
-        .batch_execute("SET ROLE wamn_system")
-        .await
-        .context("SET ROLE wamn_system")?;
     let transaction = provisioning_transaction(&mut client).await?;
     wamn_platform_identity::org::materialize_admin_grants(
         &transaction,
@@ -204,6 +233,14 @@ pub async fn ensure(
         .await
         .context("commit the administrator rows")?;
     platform.auth_changes().await?.publish(drops).await;
+    prepare_cdc(
+        platform,
+        document,
+        &analysis.packages,
+        &admin,
+        &project_admin,
+    )
+    .await?;
     Ok(())
 }
 
@@ -237,6 +274,134 @@ fn credential_request(
         control_administration_patch: (credential.family == WorkloadRoleFamily::Administration)
             .then(|| private.path("control-administration-patch.json")),
     }
+}
+
+/// Prepare replication authority before the admin connection leaves ensure.
+async fn prepare_cdc(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    manifests: &[wamn_schema_generator::PackageManifest],
+    admin: &tokio_postgres::Client,
+    project_admin_url: &str,
+) -> anyhow::Result<()> {
+    if !manifests.iter().any(|manifest| {
+        !manifest.models.is_empty()
+            && document
+                .applications
+                .values()
+                .any(|application| application.packages.contains(&manifest.package.id))
+    }) {
+        return Ok(());
+    }
+    let schemas = manifests
+        .iter()
+        .filter(|manifest| {
+            document
+                .applications
+                .values()
+                .any(|application| application.packages.contains(&manifest.package.id))
+        })
+        .flat_map(|manifest| manifest.models.values().map(|model| model.schema.clone()))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let project_admin = connect(project_admin_url).await?;
+    let instance =
+        read_project_env_instance(&platform.system_database_url, &document.triple()).await?;
+    let role = wamn_control_provision::cdc_object_name(
+        &document.org,
+        &document.project,
+        &document.env,
+        &instance,
+    );
+    if cdc_in_place(&project_admin, &role, &schemas).await? {
+        return Ok(());
+    }
+    let namespace = platform.target.namespace.as_str();
+    let secret_name = wamn_control_provision::project_env_cdc_secret_name(
+        &document.org,
+        &document.project,
+        &document.env,
+    );
+    let replication_password = match crate::kubectl::get::<serde_json::Value>(
+        &platform.target.kubeconfig,
+        &platform.target.context,
+        namespace,
+        "secret",
+        &secret_name,
+    )
+    .await?
+    {
+        Some(secret) => {
+            let encoded = secret["data"]["url"]
+                .as_str()
+                .context("the CDC Secret has no URL")?;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .context("decode the CDC credential")?;
+            let url = std::str::from_utf8(&bytes).context("decode the CDC URL")?;
+            let config: tokio_postgres::Config = url.parse().context("parse the CDC URL")?;
+            String::from_utf8(
+                config
+                    .get_password()
+                    .context("the CDC URL has no password")?
+                    .to_vec(),
+            )
+            .context("decode the replication password")?
+        }
+        None => random_password()?,
+    };
+    admin
+        .batch_execute(&wamn_control_provision::sql::ensure_replication_role_sql(
+            &role,
+            &replication_password,
+        ))
+        .await?;
+    project_admin
+        .batch_execute(&wamn_control_provision::sql::create_failover_slot_sql(
+            &role,
+        ))
+        .await?;
+    let cluster = resolve_cluster(
+        &platform.system_database_url,
+        &document.org,
+        &document.policy,
+    )
+    .await?;
+    let database = wamn_control_provision::project_env_database_name(
+        &document.org,
+        &document.project,
+        &document.env,
+        &instance,
+    );
+    let mut url = url::Url::parse(&platform.system_database_url)?;
+    url.set_username(&role)
+        .map_err(|()| anyhow::anyhow!("encode replication user"))?;
+    url.set_password(Some(&replication_password))
+        .map_err(|()| anyhow::anyhow!("encode replication password"))?;
+    url.set_host(Some(
+        platform
+            .database_host
+            .as_deref()
+            .unwrap_or(&format!("{cluster}-rw")),
+    ))?;
+    url.set_port(Some(platform.database_port))
+        .map_err(|()| anyhow::anyhow!("encode replication port"))?;
+    url.set_path(&database);
+    let secret = wamn_control_provision::render_project_env_cdc_secret_manifest(
+        &document.triple(),
+        &instance,
+        namespace,
+        url.as_str(),
+    );
+    kubectl(
+        platform,
+        namespace,
+        &["apply", "-f", "-"],
+        Some(&serde_json::to_vec(&secret)?),
+    )
+    .await?;
+    Ok(())
 }
 
 /// Ensure capture of every model in the environment's installed applications.
@@ -276,7 +441,7 @@ pub(super) async fn ensure_cdc(
         &document.env,
         &instance,
     );
-    let project = connect(&project_url(platform, &triple).await?).await?;
+    let project = super::analyse::connect_project(&project_url(platform, &triple).await?).await?;
     let mut full = project
         .query(
             wamn_schema_control::select_replica_identity_sql(),
@@ -360,8 +525,7 @@ async fn ensure_streams(
     .await
 }
 
-/// Enable CDC of `schemas`: the source stream, the replication role, the CDC
-/// SQL on `project`, the `Publication` CR and the replication Secret.
+/// Apply capture declarations after the packages exist in the project database.
 async fn enable_cdc(
     platform: &Platform,
     document: &EnvironmentDocument,
@@ -370,134 +534,50 @@ async fn enable_cdc(
     project: &tokio_postgres::Client,
     instance: &str,
 ) -> anyhow::Result<()> {
-    let triple = document.triple();
-    let EventBroker {
-        nats,
-        stream_replicas,
-        dup_window_secs,
-    } = platform.events.clone().context(
+    platform.events.as_ref().context(
         "the environment captures application models and has no event broker; \
          set WAMN_NATS_URL and its WAMN_NATS_TLS_* certificate",
     )?;
-    let consumers = wamn_control_provision::events::entity_consumers(
-        &triple,
-        manifests.iter().filter(|manifest| {
-            document
-                .applications
-                .values()
-                .any(|application| application.packages.contains(&manifest.package.id))
-        }),
-    )
-    .iter()
-    .map(serde_json::to_string)
-    .collect::<Result<Vec<_>, _>>()?;
-    let namespace = platform.target.namespace.as_str();
-    // A schema-set change must preserve the credential held by the running reader.
-    let secret_name = wamn_control_provision::project_env_cdc_secret_name(
+    ensure_streams(platform, document, manifests).await?;
+    let cluster = resolve_cluster(
+        &platform.system_database_url,
         &document.org,
-        &document.project,
-        &document.env,
-    );
-    let replication_password = match crate::kubectl::get::<serde_json::Value>(
-        &platform.target.kubeconfig,
-        &platform.target.context,
-        namespace,
-        "secret",
-        &secret_name,
+        &document.policy,
     )
-    .await?
-    {
-        Some(secret) => {
-            let encoded = secret["data"]["url"]
-                .as_str()
-                .context("the CDC Secret has no URL")?;
-            let bytes = base64::engine::general_purpose::STANDARD
-                .decode(encoded)
-                .context("decode the CDC credential")?;
-            let url = std::str::from_utf8(&bytes).context("decode the CDC URL")?;
-            let config: tokio_postgres::Config = url.parse().context("parse the CDC URL")?;
-            String::from_utf8(
-                config
-                    .get_password()
-                    .context("the CDC URL has no password")?
-                    .to_vec(),
-            )
-            .context("decode the replication password")?
-        }
-        None => random_password()?,
-    };
-    let outcome = crate::enable_cdc_project_env::enable_cdc_project_env(
-        &crate::enable_cdc_project_env::EnableCdcProjectEnvRequest {
-            org: document.org.clone(),
-            project: document.project.clone(),
-            env: document.env.clone(),
-            schemas: schemas.to_vec(),
-            system_database_url: Some(platform.system_database_url.clone()),
-            cluster: None,
-            replication_password,
-            db_host: platform.database_host.clone(),
-            db_port: platform.database_port,
-            namespace: namespace.to_owned(),
-            cluster_namespace: platform.database_namespace.clone(),
-            secret_namespace: Some(namespace.to_owned()),
-            stream: None,
-            nats,
-            stream_replicas,
-            dup_window_secs,
-            consumer_config: consumers,
-            emit_role_sql: None,
-            emit_cdc_sql: None,
-            emit_publication: None,
-            emit_secret: None,
-        },
-    )
-    .await
-    .context("enable CDC")?;
-    admin_sql(platform, &outcome.role_sql)
-        .await
-        .context("run the replication role SQL")?;
-    project
-        .batch_execute(&outcome.cdc_sql)
-        .await
-        .context("run the CDC SQL")?;
-    kubectl(
-        platform,
-        namespace,
-        &["apply", "-f", "-"],
-        Some(&serde_json::to_vec(&outcome.secret)?),
-    )
-    .await
-    .context("apply the replication Secret")?;
-    // The publication is the observation of [`cdc_in_place`], so it is the
-    // last write.
-    kubectl(
-        platform,
-        &platform.database_namespace,
-        &["apply", "-f", "-"],
-        Some(&serde_json::to_vec(&outcome.publication)?),
-    )
-    .await
-    .context("apply the Publication CR")?;
+    .await?;
     let database = wamn_control_provision::project_env_database_name(
         &document.org,
         &document.project,
         &document.env,
         instance,
     );
+    let capture = wamn_control_provision::cdc_object_name(
+        &document.org,
+        &document.project,
+        &document.env,
+        instance,
+    );
+    project
+        .batch_execute(&crate::enable_cdc_project_env::cdc_sql_bundle(
+            schemas, &capture, &database,
+        ))
+        .await?;
+    let publication = wamn_control_provision::database::render_project_env_publication(
+        &document.triple(),
+        instance,
+        &cluster,
+        &platform.database_namespace,
+        &capture,
+        schemas,
+    );
+    kubectl(
+        platform,
+        &platform.database_namespace,
+        &["apply", "-f", "-"],
+        Some(&serde_json::to_vec(&publication)?),
+    )
+    .await?;
     wait_applied(platform, "publication", &database).await
-}
-
-/// Run role and privilege SQL on a fresh connection of the operator's admin
-/// login to the system database. `CREATE ROLE` and the grants need that
-/// login, which a connection that ran `SET ROLE wamn_system` for the registry
-/// has given up, so no role or privilege statement shares a registry
-/// connection.
-async fn admin_sql(platform: &Platform, sql: &str) -> anyhow::Result<()> {
-    connect(&platform.system_database_url)
-        .await?
-        .batch_execute(sql)
-        .await
-        .map_err(anyhow::Error::from)
 }
 
 /// Whether the environment's CDC is in place, judged by what it observes: the

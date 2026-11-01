@@ -39,7 +39,12 @@ pub async fn bind(
             document.env
         ));
         std::fs::write(&path, empty.to_kcl())?;
-        let result = Box::pin(environment::apply(platform, &path)).await;
+        let result = Box::pin(environment::apply(
+            platform,
+            &path,
+            &crate::ensure_admin_url(platform),
+        ))
+        .await;
         std::fs::remove_file(path)?;
         result?;
     }

@@ -43,7 +43,8 @@ pub struct ApplyArgs {
 pub(crate) const ENV_APPLY_INSTALL_ENV: crate::install_job_tests::Environment =
     crate::install_job_tests::Environment {
         required: &[
-            "WAMN_CONTROL_DATABASE_URL",
+            "WAMN_APPLY_DATABASE_URL",
+            "WAMN_SYSTEM_ADMIN_URL",
             "WAMN_RELEASE_CHART",
             "WAMN_RELEASE_ARTIFACT_BASE",
             "WAMN_REGISTRY_AUTH_FILE",
@@ -73,6 +74,22 @@ pub(crate) const ENV_APPLY_INSTALL_ENV: crate::install_job_tests::Environment =
             "WAMN_EVENT_STREAM_REPLICAS",
             "WAMN_EVENT_DUP_WINDOW_SECS",
         ],
+    };
+
+#[cfg(test)]
+pub(crate) const ENV_CONNECTIONS_INSTALL_ENV: crate::install_job_tests::Environment =
+    crate::install_job_tests::Environment {
+        required: &[
+            "WAMN_CONTROL_DATABASE_URL",
+            "WAMN_RELEASE_CHART",
+            "WAMN_RELEASE_ARTIFACT_BASE",
+            "WAMN_REGISTRY_AUTH_FILE",
+            "WAMN_AUTH_NATS_URL",
+            "WAMN_AUTH_NATS_TLS_CA",
+            "WAMN_AUTH_NATS_TLS_CERT",
+            "WAMN_AUTH_NATS_TLS_KEY",
+        ],
+        optional: ENV_APPLY_INSTALL_ENV.optional,
     };
 
 #[derive(Debug, Args)]
@@ -111,13 +128,22 @@ pub struct ShowArgs {
 }
 
 pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
-    let platform = Platform::from_env()?;
+    let platform = match &command {
+        EnvCommand::Apply(_) | EnvCommand::Rollback(_) => Platform::apply_from_env()?,
+        _ => Platform::from_env()?,
+    };
     match command {
         EnvCommand::Apply(args) => {
             let analysis = if args.dry_run {
                 environment::dry_run(&platform, &args.file).await?
             } else {
-                environment::apply(&platform, &args.file).await?
+                environment::apply(
+                    &platform,
+                    &args.file,
+                    &std::env::var("WAMN_SYSTEM_ADMIN_URL")
+                        .context("set WAMN_SYSTEM_ADMIN_URL for ensure")?,
+                )
+                .await?
             };
             for line in &analysis.plan {
                 println!("{line}");
@@ -136,8 +162,14 @@ pub async fn run(command: EnvCommand) -> anyhow::Result<()> {
         }
         EnvCommand::Rollback(args) => {
             let triple = parse_coordinate(&args.coordinate)?;
-            let analysis =
-                environment::rollback::rollback(&platform, &triple, &args.reason).await?;
+            let analysis = environment::rollback::rollback(
+                &platform,
+                &triple,
+                &args.reason,
+                &std::env::var("WAMN_SYSTEM_ADMIN_URL")
+                    .context("set WAMN_SYSTEM_ADMIN_URL for ensure")?,
+            )
+            .await?;
             for line in &analysis.plan {
                 println!("{line}");
             }

@@ -1135,7 +1135,7 @@ pub fn install_job_requests(
         requests.push((
             "env apply",
             environments::request(&document, &environment, image, initial, &auth)?,
-            vec!["WAMN_CONTROL_DATABASE_URL"],
+            vec!["WAMN_APPLY_DATABASE_URL", "WAMN_SYSTEM_ADMIN_URL"],
         ));
     }
     Ok(requests

@@ -30,8 +30,23 @@ pub(super) async fn apply(
     )
     .await?
     .context("missing Secret platform/wamn-pg-superuser")?;
-    let mut admin = administrator(&secret)?;
-    admin.environment = "WAMN_CONTROL_DATABASE_URL".into();
+    let admin = administrator(&secret)?;
+    let apply_secret: SecretData = kubectl::get(
+        &target.kubeconfig,
+        &target.context,
+        "platform",
+        "secret",
+        "wamn-apply",
+    )
+    .await?
+    .context("missing apply credential")?;
+    let apply = super::job::JobSecret {
+        name: "wamn-env-apply".into(),
+        key: "url".into(),
+        value: secret_text(&apply_secret, "url")?,
+        environment: "WAMN_APPLY_DATABASE_URL".into(),
+    };
+    let secrets = [admin, apply];
     let auth: SecretData = kubectl::get(
         &target.kubeconfig,
         &target.context,
@@ -77,7 +92,7 @@ pub(super) async fn apply(
             directory,
             &request,
             &json!({"environment": environment}),
-            std::slice::from_ref(&admin),
+            &secrets,
         )
         .await;
         match result {

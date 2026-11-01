@@ -281,8 +281,7 @@ pub async fn project_authority(
 ) -> anyhow::Result<wamn_platform_identity::auth_changes::AuthDrops> {
     let mut system = super::analyse::connect(system_url).await?;
     let source = system.transaction().await?;
-    source.batch_execute("SET LOCAL ROLE wamn_db_owner").await?;
-    let mut project = super::analyse::connect(project_url).await?;
+    let mut project = super::analyse::connect_project(project_url).await?;
     let target = project.transaction().await?;
     target
         .batch_execute(&wamn_control_provision::bind_platform_principal_sql(

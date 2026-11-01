@@ -117,10 +117,6 @@ pub async fn analyse(
     let release_name =
         release_chart::release_name(&document.org, &document.project, &document.env)?;
     let system = connect(&platform.system_database_url).await?;
-    system
-        .batch_execute("SET ROLE wamn_system")
-        .await
-        .context("SET ROLE wamn_system")?;
     let policy = read_policy(&system, &document.org, &document.policy).await?;
     let row = read_row(&system, document).await?;
     let project = match &row {
@@ -138,9 +134,6 @@ pub async fn analyse(
         None => Vec::new(),
     };
     let binding_system = connect(&platform.system_database_url).await?;
-    binding_system
-        .batch_execute("SET ROLE wamn_db_owner")
-        .await?;
     let bindings = super::bindings::analyse(&binding_system, document, &packages).await?;
     let replica_refusals =
         replica_refusals(&system, document, &bindings, platform.host_group.as_deref()).await?;
@@ -286,6 +279,21 @@ pub(crate) async fn connect(url: &str) -> anyhow::Result<Client> {
     Ok(client)
 }
 
+pub(crate) async fn connect_project(url: &str) -> anyhow::Result<Client> {
+    let client = connect(url).await?;
+    let owner: String = client
+        .query_one(
+            "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()",
+            &[],
+        )
+        .await?
+        .get(0);
+    client
+        .batch_execute(&format!("SET ROLE {}", wamn_pg_core::quote_ident(&owner)))
+        .await?;
+    Ok(client)
+}
+
 pub(crate) async fn read_policy(system: &Client, org: &str, name: &str) -> anyhow::Result<Policy> {
     let row = system
         .query_opt(
@@ -346,7 +354,7 @@ pub(crate) async fn read_project(
     document: &EnvironmentDocument,
     row: &EnvironmentRow,
 ) -> anyhow::Result<Option<ProjectState>> {
-    let Ok(mut client) = connect(&project_url(platform, document, row)?).await else {
+    let Ok(mut client) = connect_project(&project_url(platform, document, row)?).await else {
         return Ok(None);
     };
     let env_key =

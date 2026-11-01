@@ -477,7 +477,12 @@ pub async fn exercise(
         .clear();
     let bootstrap_path = run.work.join("files-bootstrap.k");
     std::fs::write(&bootstrap_path, bootstrap.to_kcl())?;
-    environment::apply(platform, &bootstrap_path).await?;
+    environment::apply(
+        platform,
+        &bootstrap_path,
+        &crate::ensure_admin_url(platform),
+    )
+    .await?;
     let mut connection: Value =
         serde_json::from_slice(&std::fs::read(source.join("connection.json"))?)?;
     connection["parameters"]["cdn_host"] =

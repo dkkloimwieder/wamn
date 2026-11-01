@@ -52,8 +52,12 @@ pub struct ProvisionSystemArgs {
     #[arg(long, requires = "emit_secret")]
     pub emit_provisioner_sql: Option<PathBuf>,
 
+    /// Write the restricted apply credential after installation.
+    #[arg(long, requires = "db_host", conflicts_with = "emit_secret")]
+    pub emit_apply_secret: Option<PathBuf>,
+
     /// Host the URL in the emitted Secret names.
-    #[arg(long, requires = "emit_secret")]
+    #[arg(long)]
     pub db_host: Option<String>,
 
     /// Port the URL in the emitted Secret names.
@@ -69,29 +73,40 @@ pub(crate) const PROVISION_SYSTEM_INSTALL_ENV: crate::install_job_tests::Environ
         optional: &[],
     };
 
-/// Install the control store into an empty system database, once. With the
-/// emit flags, write only the provisioner's Secret manifest and role statement.
+/// Install the control store into an empty system database.
+/// With `--emit-secret`, write only the provisioning credential and role statement.
 pub async fn provision_system(args: ProvisionSystemArgs) -> anyhow::Result<()> {
-    if let (Some(emit_secret), Some(emit_provisioner_sql), Some(db_host)) =
-        (args.emit_secret, args.emit_provisioner_sql, args.db_host)
-    {
+    if let (Some(emit_secret), Some(emit_provisioner_sql), Some(db_host)) = (
+        args.emit_secret,
+        args.emit_provisioner_sql,
+        args.db_host.as_ref(),
+    ) {
         provision_system::emit_provisioner_credential(&EmitProvisionerRequest {
             system_database_url: args.system_url,
             emit_secret,
             emit_provisioner_sql,
-            db_host,
+            db_host: db_host.clone(),
             db_port: args.db_port,
         })?;
         println!("provision-system: provisioner Secret and role statement written");
         return Ok(());
     }
     provision_system::provision_system(&ProvisionSystemRequest {
-        system_database_url: args.system_url,
+        system_database_url: args.system_url.clone(),
         platform_domain: args
             .platform_domain
             .context("--platform-domain is required")?,
     })
     .await?;
+    if let Some(path) = args.emit_apply_secret {
+        provision_system::emit_apply_credential(
+            &args.system_url,
+            args.db_host.as_deref().context("--db-host is required")?,
+            args.db_port,
+            &path,
+        )
+        .await?;
+    }
     println!("provision-system: control store installed");
     Ok(())
 }

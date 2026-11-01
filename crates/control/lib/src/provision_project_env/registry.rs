@@ -52,7 +52,7 @@ pub(super) fn mint_instance_suffix() -> anyhow::Result<String> {
 /// Derive the target cluster from the org's placement and the named policy.
 /// The `env` argument names a policy, which can differ from the environment slug.
 /// A pooled org uses its pool. A dedicated org uses the policy's recovery domain
-/// through [`cluster_of`]. Connect as the `wamn_system` owner (`SET ROLE`).
+/// through [`cluster_of`]. The caller supplies a registry reader credential.
 pub async fn resolve_cluster(system_url: &str, org: &str, env: &str) -> anyhow::Result<String> {
     let (client, conn) = tokio_postgres::connect(system_url, NoTls)
         .await
@@ -64,17 +64,12 @@ pub async fn resolve_cluster(system_url: &str, org: &str, env: &str) -> anyhow::
     result
 }
 
-/// [`resolve_cluster`] on an open system-database connection. It leaves the
-/// session as `wamn_system`.
+/// Resolve placement through the supplied system database connection.
 pub(crate) async fn resolve_cluster_on(
     client: &tokio_postgres::Client,
     org: &str,
     env: &str,
 ) -> anyhow::Result<String> {
-    client
-        .batch_execute("SET ROLE wamn_system")
-        .await
-        .context("SET ROLE wamn_system")?;
     let row = client
         .query_opt(
             wamn_control_registry::sql::select_org_placement_sql(),
@@ -122,10 +117,6 @@ pub async fn read_project_env_instance(
         .context("system db connect")?;
     let conn_task = tokio::spawn(conn);
     let result = async {
-        client
-            .batch_execute("SET ROLE wamn_system")
-            .await
-            .context("SET ROLE wamn_system")?;
         let env = triple.env.as_str();
         let row = client
             .query_opt(
@@ -154,10 +145,6 @@ pub async fn read_project_env_policy(system_url: &str, triple: &Triple) -> anyho
         .context("system db connect")?;
     let conn_task = tokio::spawn(conn);
     let result = async {
-        client
-            .batch_execute("SET ROLE wamn_system")
-            .await
-            .context("SET ROLE wamn_system")?;
         let env = triple.env.as_str();
         client
             .query_opt(
@@ -177,8 +164,7 @@ pub async fn read_project_env_policy(system_url: &str, triple: &Triple) -> anyho
 }
 
 /// Record the project and the provisioned project-env in the registry (idempotent).
-/// Connects as superuser and `SET ROLE wamn_system` (the registry owner — the
-/// wamn-q3n.3 apply pattern), then runs the pure `wamn-control-registry` builders.
+/// The supplied credential holds the grants used by the registry builders.
 ///
 /// Returns the environment's STORED instance suffix, which is `minted` only on a
 /// first provision — see [`do_record_project_env`]. The tenant derives from
@@ -232,10 +218,6 @@ pub(super) async fn do_record_project_env(
     disposable: Option<bool>,
     changes: &wamn_platform_identity::auth_changes::AuthChanges,
 ) -> anyhow::Result<String> {
-    client
-        .batch_execute("SET ROLE wamn_system")
-        .await
-        .context("SET ROLE wamn_system")?;
     let transaction = super::provisioning_transaction(client).await?;
     transaction
         .execute(

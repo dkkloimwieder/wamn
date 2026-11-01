@@ -31,6 +31,7 @@ pub async fn rollback(
     platform: &Platform,
     triple: &Triple,
     reason: &str,
+    admin_url: &str,
 ) -> anyhow::Result<Analysis> {
     ensure!(!reason.trim().is_empty(), "--reason is empty");
     LifecycleLock::hold(&platform.system_database_url, triple, async |_| {
@@ -40,7 +41,7 @@ pub async fn rollback(
         };
         let mut document = super::show::show(platform, triple).await?;
         document.release = DeclaredRelease::Digest(previous);
-        super::apply_locked(platform, &document, Some(reason)).await
+        super::apply_locked(platform, &document, Some(reason), admin_url).await
     })
     .await
 }
