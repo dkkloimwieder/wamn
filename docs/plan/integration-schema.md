@@ -427,7 +427,7 @@ Disable and delete:
 Integration rules for the platform and application upgrade paths:
 
 - **Application upgrade:** apply's compatibility step checks that each named version is published and served, each component's imports are compatible with it, and required fields have values. Expand re-syncs the projection, validates existing connections against the new versions and writes the new release's rows; contract removes the old release's rows.
-- **The host serves versions N and N-1 of every host type.** A platform upgrade drops N-1 only when no live release uses it; otherwise it refuses and names the releases. A retained rollback release that needs a dropped version stops being a rollback target, and the upgrade says which.
+- **The host serves versions N and N-1 of every host type.** A platform upgrade drops N-1 only when no live release uses it; otherwise it refuses and names the releases. A retained rollback release that needs a dropped version stops being a rollback target, and the upgrade says which. Built when the first host-type version 2 is published; until then every host type has one version and apply's published-and-served check is the whole rule.
 - **wasm and native versions are never deleted automatically.** A retained `environment.k` in git may name any of them; pruning is a manual platform action.
 - A new version appears in the catalog only; nothing moves until a document changes a version. Not now: `version = "latest-compatible"`.
 - A rollback target whose version a platform upgrade dropped, or whose parameters no longer validate, is refused at apply.
@@ -446,7 +446,7 @@ Plaintext secrets never sit in Postgres. A credential row holds a reference (`st
 
 | Secret | Where |
 | --- | --- |
-| Static secret (API key, password, service-account JSON, OAuth client secret) | Kubernetes Secret first (kind and GKE, local parity), one Secret per env with one key per credential id, readable only by that env's host ServiceAccount (Role resourceNames); GCP Secret Manager next (native versions); file on local targets |
+| Static secret (API key, password, service-account JSON, OAuth client secret) | Kubernetes Secret first (kind and GKE, local parity), one Secret per env with one key per credential id, readable only by that env's host ServiceAccount (Role resourceNames); GCP Secret Manager later, if a target cannot run application-layer encryption; file on local targets |
 | OAuth tokens (every OAuth type) | `identity.oauth_token`, AES-256-GCM, envelope key in Cloud KMS (local: key file) |
 
 - Old secret material is never read again, because configuration is never rolled back: it is destroyed asynchronously 5 minutes after a rotation becomes active. The credential row stays as audit metadata.
@@ -519,7 +519,7 @@ Each is checked by the named test type: SQL (a statement against a fresh schema)
 | 20 | Delete refuses anything referenced (binding, `release_connection`, `platform.file`, connection of an integration, integration or record of an external system). | unit, one refusal per reference |
 | 21 | `platform.file.connection_id` references only store types with runtime type host. | SQL or unit: a file row on another type → refused |
 | 22 | Names never change. | SQL: UPDATE of `name` on `external_system`, `integration` → refused |
-| 23 | A platform upgrade never drops a host-type version a live release uses. | unit: refused, naming the releases |
+| 23 | A platform upgrade never drops a host-type version a live release uses. | deferred until a second host-type version exists |
 
 ## Assumptions
 
