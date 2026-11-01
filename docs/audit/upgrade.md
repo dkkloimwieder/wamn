@@ -17,9 +17,9 @@ Evidence: `crates/control/provision/src/schema_migrations.rs:3`, `crates/control
 
 Problem: The full SQL files define the intended schema, while each installed database holds its actual layout. `registry.meta.schema_version = '0.1'` identifies the registry format, not the precise installed DDL. Both migration lists are empty, and `upgrade-schema` returns success without examining the database. `postgres-init.sql` builds test fixtures and supplies no production upgrade path.
 
-Rejected (owner review 2026-10-31, see README). Standing rule for this part: during development the schema is one baseline, the full SQL files. Real migrations return when development is stable. No-cruft applies: machinery that serves only the deferred path is deleted now, not kept empty.
+Rejected (owner review 2026-10-31, see README). Standing rule for this part: during development the schema is one baseline, the full SQL files. Real migrations return when development is stable. No-cruft applies: machinery that serves only the deferred path is deleted now, not kept empty, until development is stable, and migrations return then with a smaller design.
 
-Deletes (inverted): the full-schema installation path stays. Delete the migration machinery instead: `crates/control/provision/src/schema_migrations.rs` (both empty lists), `crates/control/lib/src/upgrade_schema.rs` and the `upgrade-schema` verb in `services/ctl/src/provisioning_verbs.rs`, `record_fresh_install` and its three callers, the migration record table `platform.schema_migrations` in `deploy/sql/app-schema-migrations.sql`, and their tests. The reviewer named `system-schema.sql` for the record table. The table is in `app-schema-migrations.sql`, which `schema_migrations.rs` includes.
+Deletes (inverted): the full-schema installation path stays. Delete the migration machinery instead, until development is stable, and migrations return then with a smaller design: `crates/control/provision/src/schema_migrations.rs` (both empty lists), `crates/control/lib/src/upgrade_schema.rs` and the `upgrade-schema` verb in `services/ctl/src/provisioning_verbs.rs`, `record_fresh_install` and its three callers, the migration record table `platform.schema_migrations` in `deploy/sql/app-schema-migrations.sql`, and their tests. The reviewer named `system-schema.sql` for the record table. The table is in `app-schema-migrations.sql`, which `schema_migrations.rs` includes.
 
 Risk: Fresh installation must still produce the full schema, grants and seed data. The existing installation tests prove that after the deletion.
 
@@ -39,6 +39,8 @@ Deletes: The installed-environment replay of first apply with `release = none` a
 Risk: An image change against a database with the same hash must keep the serving release installed while requests continue. An image change against a database with a different hash must refuse with the message above.
 
 Owner review 2026-10-31 against origin/main 64dcf04: commit 8a3b3cc (wamn-zeg0z) is on main.
+
+Owner review 2026-10-31 (developer-experience walk): the application baseline file is `migrations/0001_initial.sql`, and the baseline hash covers the `migrations/` directory. Migrations are deferred, not removed: the machinery is deleted until development is stable, and migrations return then with a smaller design.
 
 ## Finding C1-3: Project migrations run after queries that already require the new schema
 
@@ -102,7 +104,7 @@ All three questions were answered on 2026-10-31. No installed database requires 
 
 The lifecycle has one advertised deployment owner but three production orchestration paths. The largest risks are an implicit uninstall during `platform apply` and package mutations outside the environment lock.
 
-Owner ruling 2026-10-31: one baseline covers application packages as well as the platform schema. Migrations are a future problem, because current greenfield work is high churn and replacement. A package's SQL is one baseline. A package schema change during development is a new release and a reset of that application's tables. There is no in-place package upgrade. The package-upgrade machinery is deleted under that ruling, about 9,000 lines in `crates/control/lib`: `crates/control/lib/src/package_upgrade.rs` and `package_upgrade/` (lineage, accepted evidence, progress), the expand, backfill and contract stages of `apply_package/` (`stage.rs`, `backfill.rs`, `migration_policy.rs`, `abandon.rs`), `qualify_upgrade/` and the `qualify-upgrade` verb, `environment/contract.rs`, the tables `catalog.package_upgrade_qualifications`, `catalog.package_upgrade_stages` and `catalog.package_floors` in `deploy/sql/catalog-schema.sql`, their tests, and `migrations/0002+` under each application (nine files), collapsed to one `0001` per package or the generator's full SQL.
+Owner ruling 2026-10-31: one baseline covers application packages as well as the platform schema. Migrations are a future problem, because current greenfield work is high churn and replacement. A package's SQL is one baseline. A package schema change during development is a new release and a reset of that application's tables. There is no in-place package upgrade. The package-upgrade machinery is deleted under that ruling until development is stable, and migrations return then with a smaller design, about 9,000 lines in `crates/control/lib`: `crates/control/lib/src/package_upgrade.rs` and `package_upgrade/` (lineage, accepted evidence, progress), the expand, backfill and contract stages of `apply_package/` (`stage.rs`, `backfill.rs`, `migration_policy.rs`, `abandon.rs`), `qualify_upgrade/` and the `qualify-upgrade` verb, `environment/contract.rs`, the tables `catalog.package_upgrade_qualifications`, `catalog.package_upgrade_stages` and `catalog.package_floors` in `deploy/sql/catalog-schema.sql`, their tests, and `migrations/0002+` under each application (nine files), collapsed to one `0001` per package or the generator's full SQL.
 
 Source reviewed at `8c831349d3116aac27d9ca6f59a499da1c87efc7`. No files changed. No builds or tests ran. Test cases named below are proposed validation. Shared measurements report 80,688 source lines in `wamn-control` and 1,033 duplicated lines within that crate (measurements.md section 2 and section 7). The overlap below concerns behavior, beyond text duplication.
 
@@ -308,7 +310,7 @@ Deletes: Move definitions from `deploy/sql/system-schema.sql`, `app-schema.sql`,
 
 Risk: Missing grants, policies, or initialization order can break a fresh installation. Compare fresh installation with predecessor-to-target migration, including effective privileges under actual service roles. Retain the atomicity assertion in `qualify_upgrade/tests/overlay.rs:753`, which requires a second package failure to preserve the original state.
 
-Rejected (owner review 2026-10-31, see README): migration machinery. The schema is one baseline during development and a reset is free. The machinery itself is deleted under the inverted C1-1 Deletes.
+Rejected (owner review 2026-10-31, see README): migration machinery. The schema is one baseline during development and a reset is free. The machinery itself is deleted under the inverted C1-1 Deletes until development is stable, and migrations return then with a smaller design.
 
 ## Finding C3-3: Multiple upgrade drivers own ordering, locking, and recovery
 

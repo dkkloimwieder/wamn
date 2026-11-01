@@ -101,6 +101,8 @@ Risk: Assembly changes can omit exports or combine Cargo features differently. E
 
 Owner review 2026-10-31: keep, Group 4 Do, as the template item. `wamn new application` emits no Rust, and a pure CRUD package builds from the generated component crate. Question 1 is answered: yes.
 
+Owner review 2026-10-31 (developer-experience walk): the template's baseline file is `migrations/0001_initial.sql`, as in F3-1.
+
 ## Finding F1-4: Acme reauthors the contract of its pinned base operation
 
 Severity: medium  
@@ -212,6 +214,8 @@ Risk: Accepting stale output at publication remains unacceptable. The saved-edit
 Owner review 2026-10-31: keep, Group 2 Do, as written. Fix before any stack rework.
 
 Owner review 2026-10-31: README Group 2 row N1 renames the build record (`BuildReceipt` to `BuildRecord`, `receipt.rs` to `build_record.rs`) in the same files and lands with this row. "receipt" names only a physical goods receipt in an application.
+
+Owner review 2026-10-31 (developer-experience walk): the receipt-split item of the developer-experience track plan is no finding against source. `receipt.rs::inputs` hashes `apps/Cargo.lock` (the guest workspace lock), three guest-side trees, the guest WIT paths and the generator identity, so a host-only crate change does not invalidate packages. The real rebuild cost is B1-1 (Group 2).
 
 ## Finding F2-2: Watch mode ignores application Rust and web edits
 
@@ -452,12 +456,12 @@ Proposal: Make this the complete author path:
 ```bash
 wamn new application hello_app
 cd hello_app
-$EDITOR wamn.k schema.sql
+$EDITOR wamn.k migrations/0001_initial.sql
 wamn dev
 wamn deploy acme/hello/dev
 ```
 
-`wamn new application hello_app` generates `wamn.k`, one SQL baseline file (`schema.sql`), `.gitignore`, and a short README linking the platform quickstart. `wamn new` has three names, application, service and overlay `--base`, and no flags. The starter declares a greeting model and its create, read, update, and delete operations.
+`wamn new application hello_app` generates `wamn.k`, one SQL baseline file (`migrations/0001_initial.sql`), `.gitignore`, and a short README linking the platform quickstart. `wamn new` has three names, application, service and overlay `--base`, and no flags. The starter declares a greeting model and its create, read, update, and delete operations.
 
 The editor step changes the schema, declared operations, labels, and visible fields. SQL owns database types. Generation derives operation contracts from the installed baseline.
 
@@ -472,6 +476,8 @@ Deletes: Remove mandatory authored Cargo crates, WIT path lists, generated-code 
 Risk: Standalone builds can change component interfaces or artifact identity. A proposed `hello_app_from_empty_directory` test must build and invoke every starter operation without the platform checkout.
 
 Owner review 2026-10-31: keep, Group 4 Do, in the templates priority. Generated Cargo manifests and wrappers stay build output. The `hello_app_from_empty_directory` test stands.
+
+Owner review 2026-10-31 (developer-experience walk): the baseline file is `migrations/0001_initial.sql`, not `schema.sql`. The baseline hash covers the `migrations/` directory. Migrations are deferred, not removed, and return with a smaller design when development is stable.
 
 ## Finding F3-2: `wamn dev` must own its local services and first-run setup
 
@@ -504,6 +510,8 @@ Evidence: `apps/wamn_receiving/web/README.md:8` assigns requests, selectors, val
 Problem: Generated descriptions provide presentation data, but authors still connect them to requests and screens. The shared shell reduces duplication without removing the per-application web project. The existing platform UI entry does not automatically render arbitrary application models.
 
 Owned by the ui-split work with F1-8, the owner's developer-experience priority 1 (owner review 2026-10-31). The shell as an SDK dependency and the generated default screens are decided there. The audit files nothing separate. The evidence above is the pointer.
+
+Owner review 2026-10-31 (developer-experience walk): the generated default screens' bundle lives in the web artifact of Track 1 (ui split), not in the package artifact.
 
 ## Finding F3-4: Platform tests and operational instructions remain application responsibilities
 
@@ -554,17 +562,13 @@ Evidence: `docs/operations/deployment.md:119` requires an initial environment ap
 
 Problem: Deployment exposes the author to environment bootstrapping, publication, qualification, digest transfer, and static-file delivery. Successful runtime deployment also leaves a separate browser delivery step. Authors must coordinate these stages correctly.
 
-Proposal: Implement `wamn deploy <org/project/env>` as orchestration over the existing control libraries. Build the current package, establish the target environment, publish exact package artifacts, publish and qualify the release, upload its web files, and apply its digest.
+Proposal (rewritten by the owner, 2026-10-31): publish, qualify, apply, dry-run and rollback are control routes executed as a Job on the runner image, never in the control host. The control host holds no cluster credential. `wamn deploy <org/project/env>` and the platform UI are clients of those routes. The right to call them is an ordinary operation grant held by an authored role. No operator-only verb exists for the same action.  
+Deletes: Author-maintained deployment scripts, manual digest transfers, the separate web-upload step from the default path, and every operator-only verb that duplicates one of the routes.  
+Risk: Retries can select different bytes or expose an API before its browser files exist. The `deploy_hello_exact_release` test covers first deployment and unchanged retry only. Preserve immutable package tags and the environment lifecycle lock.
 
-Generate the application mapping for the single-application default. Keep administrator-owned infrastructure and policy outside the application source. Print the release digest, qualification evidence, and application URL. Report the failed stage and retained artifacts when deployment stops.
+Owner review 2026-10-31: the qualification-failure, upload-failure and rollback tests are dropped. Web upload resumes a partial upload on main (5f59695).
 
-Deletes: Remove author-maintained deployment scripts, manual digest transfers, and a separate web-upload step from the default path. Keep lower-level operator verbs for administration and recovery.
-
-Risk: Retries can select different bytes or expose an API before its browser files exist. A proposed `deploy_hello_exact_release` test covers first deployment and unchanged retry only. Preserve immutable package tags and the environment lifecycle lock.
-
-Owner review 2026-10-31: keep, Group 1 Do, sequenced after deployment D3-1, because platform apply consumes an immutable bundle. `wamn deploy <org/project/env>` is orchestration over the existing verbs and nothing more. It is the deployment-ergonomics priority: a client submits without an operator. The qualification-failure, upload-failure and rollback tests are dropped.
-
-Owner review 2026-10-31 against origin/main 64dcf04: web upload resumes a partial upload on main (5f59695). The proposal stands.
+Owner review 2026-10-31 (developer-experience walk): rewritten as above, one deploy path. F3-6 leaves Group 1 Do and is a dependency of developer-experience Track 2 (routes). It lands after Group 1.
 
 ## Finding F3-7: The ten-minute target lacks a matching acceptance test
 

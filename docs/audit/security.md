@@ -293,15 +293,17 @@ Effort: S
 Area: `crates/catalog/package-artifact`, `crates/platform/engine`  
 Evidence: `crates/catalog/package-artifact/src/lib.rs:5`, `crates/control/lib/src/publish_release.rs:1621`, `crates/catalog/model/src/component_facts.rs:460`, `crates/platform/engine/src/operation/native_workload.rs:254`, `crates/platform/engine/src/engine.rs:654`  
 Problem: Package existence is treated as proof that publication admission ran. Publication accepts descriptor claims, while runtime loading checks the component digest without rederiving its imports. A registry writer can therefore supply matching hashes and false admission facts. If that component reaches execution, the default socket policy permits undeclared connections.  
-Proposal: The runtime refuses `wasi:sockets` for application components regardless of what the descriptor says. The fork implements `wasi:sockets` unconditionally, which is the recorded egress bypass.  
+Proposal (final, owner 2026-10-31): The host links application components against their declared world and nothing else. An undeclared import fails at instantiation, which `release.qualify` exercises. No descriptor comparison and no `wasmparser` check. The fork implements `wasi:sockets` unconditionally, which is the recorded egress bypass.  
 Deletes: The unconditional `wasi:sockets` implementation for application components.  
-Risk: Packages with stale or invented descriptors refuse. A crafted package test must hide a socket import in its descriptor and prove refusal before execution.
+Risk: Packages with undeclared imports refuse. A crafted package test must hide a socket import and prove refusal at instantiation.
 
 Owner addendum 2026-10-31: [alignment](../plan/alignment.md) W1 to W3 change what admission matches (package family `0.2` and a build-derived ceiling). Admission work must not re-pin exact versions.
 
 Owner review 2026-10-31: split. The rejected half is deriving admission facts from bytes at publication and comparing descriptors. Registry write access is the trusted boundary, and publication relies on OCI and WIT. Question 1 is answered: yes. The kept half is the runtime socket refusal above, Group 3 Do, small. It is independent of W1 to W3 and does not wait.
 
 Owner review 2026-10-31 against origin/main 64dcf04: WASI version match closed on main (wamn-cqbb0; `component-policy` carries `WASI_FAMILY` and a build-derived `WASI_CEILING`). The runtime `wasi:sockets` refusal waits on nothing.
+
+Owner review 2026-10-31 (developer-experience walk): final. The host links application components against their declared world and nothing else, and an undeclared import fails at instantiation, which `release.qualify` exercises. No descriptor comparison, no `wasmparser` check. Group 3 Do, small, unchanged.
 
 ## Finding E3-2: The native lockfile contains reported security vulnerabilities
 
