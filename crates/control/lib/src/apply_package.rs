@@ -149,6 +149,13 @@ pub(crate) struct PreparedPackage {
 /// Validate one package directory before opening an application transaction.
 pub(crate) fn prepare_package(root: &PackageRoot) -> anyhow::Result<PreparedPackage> {
     let directory = read_package_root(root)?;
+    prepare_directory(root, directory)
+}
+
+fn prepare_directory(
+    root: &PackageRoot,
+    directory: PackageDirectory,
+) -> anyhow::Result<PreparedPackage> {
     let presented = plan_package_migrations(&directory, None)
         .context("validate package directory before database work")?;
     let manifest = PackageManifest::from_slice(&directory.manifest_bytes)
@@ -200,7 +207,14 @@ async fn apply_request(
             .any(|part| part.is_empty()),
         "org, project and environment must not be empty"
     );
-    let mut package = prepare_package(&request.package)?;
+    let mut package = if local_environment.is_some() {
+        prepare_directory(
+            &request.package,
+            package_version::read_source_package_directory(&request.package.path)?,
+        )?
+    } else {
+        prepare_package(&request.package)?
+    };
     package
         .component_source
         .clone_from(&request.component_source);

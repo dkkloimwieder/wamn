@@ -1,6 +1,43 @@
 use std::path::{Path, PathBuf};
 
-use super::read_package_directory;
+use super::{read_package_directory, read_source_package_directory};
+
+#[test]
+fn local_source_preparation_reads_migrations_without_build_output() {
+    let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
+    let root = scratch.path().join("source_package");
+    std::fs::create_dir_all(root.join("migrations")).unwrap();
+    std::fs::write(
+        root.join("wamn.k"),
+        r#"import manifest
+manifest.Package {
+    package = {id = "source_package", version = "1.0.0"}
+    required_platform_policy_contract = {id = "source_data_access", state = "satisfied"}
+    models = {
+        item = manifest.Model("item", "source_data") {
+            table = "item"
+            owner = "source_package"
+            audit_log = {columns = ["created_at"]}
+            operations: {get: {result = "one"}}
+        }
+    }
+    components = {source = {connections = ["postgres"]}}
+}
+"#,
+    )
+    .unwrap();
+    std::fs::write(root.join("migrations/0001_initial.sql"), b"SELECT 1;\n").unwrap();
+
+    let directory = read_source_package_directory(&root).unwrap();
+    let manifest =
+        wamn_schema_generator::PackageManifest::from_slice(&directory.manifest_bytes).unwrap();
+    assert_eq!(manifest.package.id, "source_package");
+    assert_eq!(directory.artifact_digest, None);
+    assert_eq!(directory.migrations.len(), 1);
+    assert_eq!(directory.migrations[0].bytes, b"SELECT 1;\n");
+    assert!(!wamn_schema_generator::output_root(&root).exists());
+    assert!(read_package_directory(&root).is_err());
+}
 
 const FILES: [(&str, &str); 3] = [
     (

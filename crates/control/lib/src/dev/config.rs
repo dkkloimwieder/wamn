@@ -519,6 +519,18 @@ impl ResolvedDevPackages {
     pub fn ignored_package_source_count(&self) -> usize {
         self.ignored_package_sources.len()
     }
+
+    /// Read the manifests that generation produced for the selected packages.
+    pub(super) fn read_compiled_manifests(&mut self) -> Result<(), DevPackageError> {
+        for package in &mut self.base_packages {
+            package.manifest =
+                read_manifest_file(&wamn_schema_generator::package_manifest_path(&package.root))?;
+        }
+        self.overlay_manifest = read_manifest_file(&wamn_schema_generator::package_manifest_path(
+            &self.overlay_root,
+        ))?;
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1284,8 +1296,17 @@ pub fn resolve_dev_packages(
 }
 
 pub(super) fn read_package_manifest(root: &Path) -> Result<PackageManifest, DevPackageError> {
+    if wamn_schema_generator::is_authored(root) {
+        let path = root.join(wamn_schema_generator::AUTHORED_MANIFEST);
+        let bytes = wamn_schema_generator::compile_manifest(root).map_err(|source| {
+            DevPackageError::manifest(DevPackageErrorType::ManifestInvalid, path.clone(), source)
+        })?;
+        return PackageManifest::from_slice(&bytes).map_err(|source| {
+            DevPackageError::manifest(DevPackageErrorType::ManifestInvalid, path, source)
+        });
+    }
+    // JSON in a build output directory still consumes an artifact.
     let path = wamn_schema_generator::package_manifest_path(root);
-    // A hand-written source manifest does not consume package build output.
     if path.parent() == Some(wamn_schema_generator::output_root(root).as_path()) {
         wamn_schema_generator::build_record::check_current(root).map_err(|source| {
             DevPackageError::manifest(
@@ -1295,18 +1316,23 @@ pub(super) fn read_package_manifest(root: &Path) -> Result<PackageManifest, DevP
             )
         })?;
     }
-    wamn_schema_generator::write_compiled_manifest(root).map_err(|source| {
+    read_manifest_file(&path)
+}
+
+fn read_manifest_file(path: &Path) -> Result<PackageManifest, DevPackageError> {
+    let bytes = fs::read(path).map_err(|source| {
         DevPackageError::manifest(
-            DevPackageErrorType::ManifestInvalid,
-            root.join(wamn_schema_generator::AUTHORED_MANIFEST),
+            DevPackageErrorType::ManifestRead,
+            path.to_path_buf(),
             source,
         )
     })?;
-    let bytes = fs::read(&path).map_err(|source| {
-        DevPackageError::manifest(DevPackageErrorType::ManifestRead, path.clone(), source)
-    })?;
     PackageManifest::from_slice(&bytes).map_err(|source| {
-        DevPackageError::manifest(DevPackageErrorType::ManifestInvalid, path, source)
+        DevPackageError::manifest(
+            DevPackageErrorType::ManifestInvalid,
+            path.to_path_buf(),
+            source,
+        )
     })
 }
 
@@ -1933,6 +1959,78 @@ pub(crate) mod tests {
         .expect_err("the platform domain must be a domain name");
         assert_eq!(error.error_type(), DevConfigErrorType::InvalidValue);
         assert_eq!(error.key(), PLATFORM_DOMAIN);
+    }
+
+    #[test]
+    fn source_resolution_accepts_absent_and_stale_build_records() {
+        use wamn_schema_generator::build_record;
+
+        let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
+        let root = scratch.path().join("source_package");
+        fs::create_dir(&root).unwrap();
+        let authored = r#"import manifest
+manifest.Package {
+    package = {id = "source_package", version = "1.0.0"}
+    required_platform_policy_contract = {id = "source_data_access", state = "satisfied"}
+    models = {
+        item = manifest.Model("item", "source_data") {
+            table = "item"
+            owner = "source_package"
+            audit_log = {columns = ["created_at"]}
+            operations: {get: {result = "one"}}
+        }
+    }
+    components = {source = {connections = ["postgres"]}}
+}
+"#;
+        fs::write(root.join("wamn.k"), authored).unwrap();
+        let addresses = ["127.0.0.1:41000".parse().unwrap(); ENDPOINT_COUNT];
+        let config =
+            parse_config(&serde_json::to_vec(&complete_document(&addresses)).unwrap()).unwrap();
+        let output = wamn_schema_generator::output_root(&root);
+
+        let resolved = resolve_dev_packages(&config, &root).unwrap();
+        assert_eq!(resolved.overlay_manifest().package.version, "1.0.0");
+        assert!(!output.exists(), "source resolution writes no build output");
+
+        let built: build_record::BuildRecord = serde_json::from_value(json!({
+            "schema": build_record::BUILD_RECORD_SCHEMA,
+            "package": {"id": "source_package", "version": "1.0.0"},
+            "inputs": {"digest": build_record::input_digest(&root).unwrap(), "files": {}},
+            "dependencies": [],
+            "generator": {"id": "generator", "toolchain": "toolchain", "sqlx": "0.9.0"},
+            "outputs": {"manifest": "sha256:fixture", "files": {}, "components": [], "web": null}
+        }))
+        .unwrap();
+        fs::create_dir_all(&output).unwrap();
+        fs::write(
+            output.join(build_record::BUILD_RECORD_FILE),
+            built.to_bytes(),
+        )
+        .unwrap();
+        fs::write(output.join("wamn.json"), b"previous compiled output").unwrap();
+        fs::write(root.join("wamn.k"), authored.replace("1.0.0", "1.0.1")).unwrap();
+        fs::create_dir(root.join("migrations")).unwrap();
+        fs::write(root.join("migrations/0001_initial.sql"), "SELECT 1;\n").unwrap();
+        let stale = build_record::check_current(&root).unwrap_err();
+        assert!(stale.to_string().contains("is stale"), "{stale:#}");
+
+        let resolved = resolve_dev_packages(&config, &root).unwrap();
+        assert_eq!(resolved.overlay_manifest().package.version, "1.0.1");
+        assert_eq!(
+            fs::read(output.join("wamn.json")).unwrap(),
+            b"previous compiled output"
+        );
+        assert_eq!(
+            fs::read(output.join(build_record::BUILD_RECORD_FILE)).unwrap(),
+            built.to_bytes()
+        );
+        let error = crate::component_admission::load_package_statement_facts(
+            &root,
+            resolved.overlay_manifest(),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("is stale"), "{error}");
     }
 
     #[test]

@@ -12,8 +12,9 @@ use wamn_schema_control::{
 use wamn_schema_generator::PackageManifest;
 
 use super::definition_ownership::SELECT_RELATION_PRESENT_SQL;
+use super::package_version::read_source_package_directory;
 use super::roles::{reset_host_role, set_package_owner_role};
-use super::{CLAIM_ENV_KEY_SQL, load_applied_package, read_package_directory};
+use super::{CLAIM_ENV_KEY_SQL, load_applied_package};
 
 /// The release seal trigger compares this setting with the full database comment.
 const LIFT_RELEASE_SEAL_SQL: &str =
@@ -146,7 +147,7 @@ async fn package_recreate_reason(
     env_key: &str,
     root: &Path,
 ) -> anyhow::Result<Option<String>> {
-    let directory = read_package_directory(root)?;
+    let directory = read_source_package_directory(root)?;
     let manifest = PackageManifest::from_slice(&directory.manifest_bytes)
         .context("parse strict package manifest for the local target check")?;
     let package = &manifest.package;

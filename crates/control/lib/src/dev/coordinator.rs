@@ -555,6 +555,13 @@ impl ProductionDevStageRunner {
 
     async fn build(&mut self) -> Result<(), ProductionDevStageError> {
         self.clear_after(DevStage::Build);
+        self.packages
+            .as_mut()
+            .expect("Generate resolved the package closure")
+            .read_compiled_manifests()
+            .map_err(|source| {
+                ProductionDevStageError::owner("read generated package manifests", source.into())
+            })?;
         // Step 7 of `wamn build` for each package, bases first: an overlay
         // composes with the components its bases recorded.
         for package in self.package_inputs()? {
