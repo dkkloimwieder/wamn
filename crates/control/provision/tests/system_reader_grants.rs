@@ -488,7 +488,6 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
             "relation|identity|oauth_token|SELECT|false".to_owned(),
             "relation|identity|oauth_token|UPDATE|false".to_owned(),
             "routine|registry|lock_oauth_connection|EXECUTE|false".to_owned(),
-            "routine|registry|read_connection_credential|EXECUTE|false".to_owned(),
             "routine|registry|read_connection_fact|EXECUTE|false".to_owned(),
             "routine|registry|read_connection_generation|EXECUTE|false".to_owned(),
             "routine|registry|read_connection_secret|EXECUTE|false".to_owned(),

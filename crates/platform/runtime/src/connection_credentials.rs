@@ -83,40 +83,8 @@ impl ConnectionCredentials {
             .as_deref()
             .context("connection credentials unavailable")?;
         let handle = format!("org:{org}:{name}@{generation}");
-        self.handle(&handle)?;
+        self.connection_name(&handle)?;
         Ok(handle)
-    }
-
-    async fn connection(
-        &self,
-        project: &str,
-        name: &str,
-    ) -> anyhow::Result<Option<tokio_postgres::Row>> {
-        let client = self
-            .database
-            .as_ref()
-            .context("connection credentials unavailable")?;
-        let org = self
-            .org
-            .as_deref()
-            .context("credential reader has no org")?;
-        client.query_opt(
-            "SELECT store, ref, version, principal_id, external_system, auth_type, parameters FROM registry.read_connection_credential($1,$2,$3)",
-            &[&org, &project, &name],
-        ).await.context("read connection credential authority")
-    }
-
-    /// Read the active generation through the environment credential store.
-    pub async fn read_connection(
-        &self,
-        project: &str,
-        handle: &str,
-    ) -> anyhow::Result<Option<String>> {
-        let (name, _) = self.handle(handle)?;
-        let Some(row) = self.connection(project, name).await? else {
-            return Ok(None);
-        };
-        self.material(&row).await
     }
 
     async fn material(&self, row: &tokio_postgres::Row) -> anyhow::Result<Option<String>> {
@@ -135,38 +103,7 @@ impl ConnectionCredentials {
         ))
     }
 
-    /// Resolve a connection principal through the same authority as its credential.
-    pub async fn inbound_principal(
-        &self,
-        project: &str,
-        handle: &str,
-    ) -> anyhow::Result<Option<String>> {
-        let (name, _) = self.handle(handle)?;
-        Ok(self
-            .connection(project, name)
-            .await?
-            .and_then(|row| row.get(3)))
-    }
-
-    /// Resolve an inbound service principal by its connection identity.
-    pub async fn principal_for_connection(
-        &self,
-        project: &str,
-        connection: uuid::Uuid,
-    ) -> anyhow::Result<Option<String>> {
-        let client = self
-            .database
-            .as_ref()
-            .context("connection credentials unavailable")?;
-        let org = self
-            .org
-            .as_deref()
-            .context("credential reader has no org")?;
-        Ok(client.query_opt("SELECT principal_id FROM registry.read_connection_credential($1,$2,NULL,$3::text::uuid)",
-            &[&org, &project, &connection.to_string()]).await?.and_then(|row| row.get(0)))
-    }
-
-    fn handle<'a>(&self, handle: &'a str) -> anyhow::Result<(&'a str, Option<i64>)> {
+    pub(crate) fn connection_name<'a>(&self, handle: &'a str) -> anyhow::Result<&'a str> {
         let (org, name) =
             wamn_catalog::parse_org_credential_handle(handle).map_err(anyhow::Error::msg)?;
         let configured_org = self
@@ -174,11 +111,7 @@ impl ConnectionCredentials {
             .as_deref()
             .context("connection credentials unavailable")?;
         anyhow::ensure!(configured_org == org, "credential org mismatch");
-        let generation = handle
-            .rsplit_once('@')
-            .map(|(_, value)| value.parse())
-            .transpose()?;
-        Ok((name, generation))
+        Ok(name)
     }
 }
 
@@ -199,7 +132,7 @@ impl ConnectionCredentials {
         Ok((client, org))
     }
 
-    /// The active generation, effective status, credential and lease coordinates of one
+    /// The active generation, status, credential, principal and lease coordinates of one
     /// connection of the environment.
     pub(crate) async fn connection_fact(
         &self,
@@ -210,7 +143,7 @@ impl ConnectionCredentials {
         let (client, org) = self.reader()?;
         let row = client
             .query_opt(
-                "SELECT active_generation, active, credential_id, exclusive, target_id, resource_key, target_type FROM registry.read_connection_fact($1,$2,$3,$4)",
+                "SELECT active_generation, active, credential_id, exclusive, target_id, resource_key, target_type, service_principal_id FROM registry.read_connection_fact($1,$2,$3,$4)",
                 &[&org, &project, &environment, id],
             )
             .await
@@ -227,6 +160,7 @@ impl ConnectionCredentials {
             target_id: row.get(4),
             resource_key: row.get(5),
             target_type: row.get(6),
+            service_principal_id: row.get(7),
         }))
     }
 
@@ -241,7 +175,7 @@ impl ConnectionCredentials {
         let (client, org) = self.reader()?;
         let row = client
             .query_opt(
-                "SELECT name, integration_type, runtime_type, auth_type, external_system, principal_id, parameters FROM registry.read_connection_generation($1,$2,$3,$4,$5)",
+                "SELECT name, integration_type, runtime_type, auth_type, external_system, parameters FROM registry.read_connection_generation($1,$2,$3,$4,$5)",
                 &[&org, &project, &environment, id, &generation],
             )
             .await
@@ -252,8 +186,7 @@ impl ConnectionCredentials {
             runtime_type: row.get(2),
             auth_type: row.get(3),
             external_system: row.get(4),
-            principal_id: row.get(5),
-            parameters: row.get(6),
+            parameters: row.get(5),
         }))
     }
 
@@ -327,7 +260,6 @@ pub struct ConnectionGeneration {
     pub runtime_type: String,
     pub auth_type: String,
     pub external_system: Option<String>,
-    pub principal_id: String,
     pub parameters: serde_json::Value,
 }
 
@@ -354,9 +286,15 @@ mod tests {
         fixture.put("erp", "other", &["project-b"]).await;
         fixture.put("erp", "current", &["project-a"]).await;
         let reader = fixture.reader("project-a").await;
+        let id = reader.env_connections("project-a", "dev").await.unwrap()["erp"];
+        let fact = reader
+            .connection_fact("project-a", "dev", &id)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(
             reader
-                .read_connection("project-a", "org:acme:erp@2")
+                .credential_secret("project-a", "dev", &fact.credential_id.unwrap())
                 .await
                 .unwrap()
                 .as_deref(),
@@ -364,34 +302,24 @@ mod tests {
         );
         assert!(
             reader
-                .read_connection("project-b", "org:acme:erp")
+                .env_connections("project-b", "dev")
                 .await
                 .unwrap()
-                .is_none()
+                .is_empty()
         );
-        assert!(
-            reader
-                .read_connection("project-a", "org:other:erp")
-                .await
-                .is_err()
-        );
-        assert!(
-            reader
-                .read_connection("project-a", "project:project-a:erp")
-                .await
-                .is_err()
-        );
-        let row = fixture.admin.query_one("SELECT id::text,service_principal_id::text FROM registry.connection WHERE project='project-a'", &[]).await.unwrap();
-        let id: String = row.get(0);
-        let principal: String = row.get(1);
-        assert_eq!(
-            reader
-                .principal_for_connection("project-a", id.parse().unwrap())
-                .await
-                .unwrap()
-                .as_deref(),
-            Some(principal.as_str())
-        );
+        assert_eq!(reader.connection_name("org:acme:erp@2").unwrap(), "erp");
+        assert!(reader.connection_name("org:other:erp").is_err());
+        assert!(reader.connection_name("project:project-a:erp").is_err());
+        let principal: uuid::Uuid = fixture
+            .admin
+            .query_one(
+                "SELECT service_principal_id FROM registry.connection WHERE id=$1",
+                &[&id],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        assert_eq!(fact.service_principal_id, principal);
         assert!(
             reader
                 .database
@@ -402,19 +330,14 @@ mod tests {
                 .is_err()
         );
         fixture.admin.batch_execute("SET ROLE wamn_system; UPDATE registry.integration SET status='disabled' WHERE project='project-a'; RESET ROLE").await.unwrap();
-        assert!(
+        assert_eq!(
             reader
-                .read_connection("project-a", "org:acme:erp")
+                .connection_fact("project-a", "dev", &id)
                 .await
                 .unwrap()
-                .is_none()
-        );
-        assert!(
-            reader
-                .principal_for_connection("project-a", id.parse().unwrap())
-                .await
                 .unwrap()
-                .is_none()
+                .status,
+            crate::connection_memory::ConnectionStatus::Disabled
         );
     }
 
@@ -556,7 +479,7 @@ mod tests {
     async fn an_absent_reader_is_unavailable() {
         assert!(
             ConnectionCredentials::empty()
-                .read_connection("project-a", "org:acme:erp")
+                .connection_fact("project-a", "dev", &uuid::Uuid::new_v4())
                 .await
                 .is_err()
         );

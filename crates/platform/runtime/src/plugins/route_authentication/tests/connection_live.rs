@@ -81,7 +81,15 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     let postgres = Arc::new(WamnPostgres::with_provider(Arc::new(
         StaticCredentialProvider::new(sources, None),
     )));
-    let credentials = Arc::new(fixture.reader("host-project").await);
+    let facts = Arc::new(crate::connection_facts::ConnectionFacts::new(
+        Arc::new(crate::connection_memory::ConnectionMemory::default()),
+        wamn_platform_identity::connection_changes::ConnectionChanges::default(),
+        Arc::new(fixture.reader("host-project").await),
+        Arc::clone(&postgres),
+        "acme--host-project--dev",
+        "host-project",
+        "dev",
+    ));
     let authority = connect(fixture.database.url()).await;
     let authority = Arc::new(authority);
     let authentication = Arc::new(
@@ -101,7 +109,7 @@ async fn external_signature_uses_the_service_principal_and_only_admin_granted_ro
     .with_authenticator(Arc::new(
         PlatformRouteAuthenticator::default()
             .with_authentication(Arc::clone(&authentication))
-            .with_signature_authentication(credentials, "host-project"),
+            .with_signature_authentication(facts, "host-project"),
     ));
     let signature = super::signature::signed(super::signature::BODY);
     let headers = [("X-Signature", signature.as_str())];

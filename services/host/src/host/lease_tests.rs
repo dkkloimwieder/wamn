@@ -78,6 +78,7 @@ async fn sigterm_drains_calls_then_hands_the_lease_to_a_ready_host() -> anyhow::
         active_generation: 1,
         status: ConnectionStatus::Active,
         credential_id: None,
+        service_principal_id: "00000000-0000-4000-8000-000000000003".parse()?,
         exclusive: true,
         target_id: target,
         resource_key: Some("tcp:device:502".into()),

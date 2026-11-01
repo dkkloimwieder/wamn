@@ -640,7 +640,6 @@ fn connection_reader_requires_exact_grants_with_the_oauth_rows() {
     }
     for routine in [
         "lock_oauth_connection",
-        "read_connection_credential",
         "read_file_connection",
         "read_connection_fact",
         "read_connection_generation",

@@ -1541,10 +1541,6 @@ async fn assert_definer_grantees(client: &Client) -> anyhow::Result<()> {
             &["wamn_app"],
         ),
         (
-            "registry.read_connection_credential(text, text, text, uuid)",
-            &["wamn_conn_reader"],
-        ),
-        (
             "registry.read_file_connection(text, text, text, uuid)",
             &["wamn_conn_reader"],
         ),

@@ -1571,7 +1571,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // The host always installs its authenticator, even an empty one, so a
     // protected route refuses the same way on every host.
     let authenticator = PlatformRouteAuthenticator::default()
-        .with_signature_authentication(Arc::clone(&credentials), args.project.clone());
+        .with_signature_authentication(Arc::clone(&facts), args.project.clone());
     let authenticator = match (&route_auth_scope, &identity_reader) {
         (Some((org, subject)), Some(identity_reader)) => {
             authenticator.with_authentication(Arc::new(

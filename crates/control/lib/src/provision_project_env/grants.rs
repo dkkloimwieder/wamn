@@ -971,12 +971,6 @@ pub(super) fn verify_connection_reader_grants(
         ("relation", "identity", "oauth_authorization", "UPDATE"),
         ("relation", "identity", "oauth_authorization", "DELETE"),
         ("routine", "registry", "lock_oauth_connection", "EXECUTE"),
-        (
-            "routine",
-            "registry",
-            "read_connection_credential",
-            "EXECUTE",
-        ),
         ("routine", "registry", "read_file_connection", "EXECUTE"),
         ("routine", "registry", "read_connection_fact", "EXECUTE"),
         (

@@ -26,7 +26,8 @@ use wamn_platform_identity::{PreparedIdentityReads, PrincipalType};
 use wamn_project_state::ADMIN_ROLE;
 use wamn_session::verifier::SessionVerifier;
 
-use crate::connection_credentials::ConnectionCredentials;
+use crate::connection_facts::ConnectionFacts;
+use crate::connection_memory::ConnectionStatus;
 use crate::session_keys::IssuerKeys;
 
 /// The user row of one active service or user principal, each role it
@@ -243,7 +244,7 @@ impl SessionRouteAuthentication {
 pub struct PlatformRouteAuthenticator {
     authentication: Option<Arc<RouteAuthentication>>,
     session_authentication: Option<Arc<SessionRouteAuthentication>>,
-    signature_authentication: Option<(Arc<ConnectionCredentials>, Box<str>)>,
+    signature_authentication: Option<(Arc<ConnectionFacts>, Box<str>)>,
 }
 
 impl PlatformRouteAuthenticator {
@@ -251,10 +252,10 @@ impl PlatformRouteAuthenticator {
     #[must_use]
     pub fn with_signature_authentication(
         mut self,
-        credentials: Arc<ConnectionCredentials>,
+        facts: Arc<ConnectionFacts>,
         project: impl Into<Box<str>>,
     ) -> Self {
-        self.signature_authentication = Some((credentials, project.into()));
+        self.signature_authentication = Some((facts, project.into()));
         self
     }
 
@@ -264,7 +265,7 @@ impl PlatformRouteAuthenticator {
         credential: &str,
         headers: &[Header],
         body: &[u8],
-    ) -> Result<(), AuthRejection> {
+    ) -> Result<uuid::Uuid, AuthRejection> {
         let mut values = headers
             .iter()
             .filter(|value| value.name.eq_ignore_ascii_case(header));
@@ -284,17 +285,35 @@ impl PlatformRouteAuthenticator {
             return Err(signature_unauthorized());
         }
         let signature = hex::decode(signature).map_err(|_| signature_unauthorized())?;
-        let (credentials, project) = self
+        let (facts, _) = self
             .signature_authentication
             .as_ref()
             .ok_or_else(signature_unauthorized)?;
-        let secret = credentials
-            .read_connection(project, credential)
+        let name = facts
+            .reader()
+            .connection_name(credential)
+            .map_err(|_| signature_unauthorized())?;
+        let connections = facts
+            .env_connections()
+            .await
+            .map_err(|_| signature_unauthorized())?;
+        let connection = connections
+            .connections
+            .get(name)
+            .ok_or_else(signature_unauthorized)?;
+        let fact = facts
+            .connection(connection)
             .await
             .map_err(|_| signature_unauthorized())?
+            .filter(|fact| fact.status == ConnectionStatus::Active)
             .ok_or_else(signature_unauthorized)?;
+        let credential = fact.credential_id.ok_or_else(signature_unauthorized)?;
+        let secret = facts
+            .secret(&credential)
+            .await
+            .map_err(|_| signature_unauthorized())?;
         let secret: SignatureSecret =
-            serde_json::from_str(&secret).map_err(|_| signature_unauthorized())?;
+            serde_json::from_str(secret.expose()).map_err(|_| signature_unauthorized())?;
         if secret.hmac.algorithm != "sha256" {
             return Err(signature_unauthorized());
         }
@@ -302,7 +321,8 @@ impl PlatformRouteAuthenticator {
             .map_err(|_| signature_unauthorized())?;
         mac.update(body);
         mac.verify_slice(&signature)
-            .map_err(|_| signature_unauthorized())
+            .map_err(|_| signature_unauthorized())?;
+        Ok(fact.service_principal_id)
     }
 
     /// Enable PAT authentication with host-selected database authorities.
@@ -431,17 +451,14 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
         request: AuthenticationRequest<'_>,
     ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
         if let AttachmentAuthPolicy::Signature { header, credential } = request.policy {
-            self.authenticate_signature(header, credential, request.headers, request.body)
+            let principal = self
+                .authenticate_signature(header, credential, request.headers, request.body)
                 .await?;
-            let (credentials, project) = self
+            let (_, project) = self
                 .signature_authentication
                 .as_ref()
                 .ok_or_else(signature_unauthorized)?;
-            let id = credentials
-                .inbound_principal(project, credential)
-                .await
-                .map_err(|_| signature_unauthorized())?
-                .ok_or_else(signature_unauthorized)?;
+            let id = principal.to_string();
             let principal = id
                 .parse::<wamn_platform_identity::PrincipalId>()
                 .map_err(|_| signature_unauthorized())?;
@@ -534,15 +551,18 @@ impl RouteAuthenticator for PlatformRouteAuthenticator {
                         .strip_prefix("connection-")
                         .and_then(|id| id.parse::<uuid::Uuid>().ok())
                         .ok_or_else(unauthorized)?;
-                    let (credentials, project) = self
+                    let (facts, _) = self
                         .signature_authentication
                         .as_ref()
                         .ok_or_else(unauthorized)?;
-                    let active = credentials
-                        .principal_for_connection(project, connection)
+                    let active = facts
+                        .connection(&connection)
                         .await
                         .map_err(|_| authentication_unavailable())?;
-                    if active.as_deref() != Some(principal.id().as_str()) {
+                    if !active.is_some_and(|fact| {
+                        fact.status == ConnectionStatus::Active
+                            && fact.service_principal_id.to_string() == principal.id().as_str()
+                    }) {
                         return Err(unauthorized());
                     }
                 }

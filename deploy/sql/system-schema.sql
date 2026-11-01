@@ -1572,32 +1572,6 @@ DO $control_surface$ BEGIN
   END IF;
 END $control_surface$;
 
--- Session identity fixes the environment. Caller claims never supply authority.
-CREATE FUNCTION registry.read_connection_credential(org_id text, project_id text, connection_name text, requested_connection uuid DEFAULT NULL)
-RETURNS TABLE(store text, ref text, version text, principal_id text, external_system text, auth_type text, parameters jsonb)
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
-#variable_conflict use_variable
-BEGIN
- RETURN QUERY
- SELECT k.store, k.ref, k.version, c.service_principal_id::text, i.external_system_id::text, i.auth_type, g.parameters
- FROM wamn_authority.author_login_tenants login
- JOIN registry.connection c ON (c.org,c.project,c.env) = (login.org_id,login.project_id,login.environment)
- JOIN registry.integration i ON i.id = c.integration_id AND i.status = 'active'
- JOIN identity.principals p ON p.id = c.service_principal_id AND p.status = 'active'
- JOIN registry.connection_generation g ON g.connection_id = c.id AND g.generation = c.active_generation
- LEFT JOIN identity.credential k ON k.id = g.credential_id AND k.connection_id = c.id
- WHERE login.login_identity = session_user AND login.org_id = org_id AND login.project_id = project_id
-   AND ((requested_connection IS NULL AND i.name = connection_name)
-        OR (connection_name IS NULL AND c.id = requested_connection)) AND c.status = 'active';
-END $$;
-ALTER FUNCTION registry.read_connection_credential(text,text,text,uuid) OWNER TO wamn_system;
-REVOKE ALL ON FUNCTION registry.read_connection_credential(text,text,text,uuid) FROM PUBLIC;
-DO $$ BEGIN
- IF to_regrole('wamn_conn_reader') IS NOT NULL THEN
-   GRANT EXECUTE ON FUNCTION registry.read_connection_credential(text,text,text,uuid) TO wamn_conn_reader;
- END IF;
-END $$;
-
 CREATE FUNCTION registry.retired_connection_credential(org_id text)
 RETURNS TABLE(store text, ref text, version text)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
@@ -1710,13 +1684,13 @@ GRANT EXECUTE ON FUNCTION registry.resolve_environment_connection(text,text,text
 -- read returns rows that never change under their keys.
 CREATE FUNCTION registry.read_connection_fact(org_id text, project_id text, environment text, requested_connection uuid)
 RETURNS TABLE(active_generation bigint, active boolean, credential_id uuid,
- exclusive boolean, target_id uuid, resource_key text, target_type text)
+ exclusive boolean, target_id uuid, resource_key text, target_type text, service_principal_id uuid)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
 #variable_conflict use_variable
 BEGIN
  RETURN QUERY
  SELECT c.active_generation, c.status='active' AND i.status='active' AND p.status='active', g.credential_id,
-   t.exclusive, c.target_id, c.resource_key, target.type
+   t.exclusive, c.target_id, c.resource_key, target.type, c.service_principal_id
  FROM wamn_authority.author_login_tenants login
  JOIN registry.connection c ON (c.org,c.project,c.env)=(login.org_id,login.project_id,login.environment)
  JOIN registry.integration i ON i.id=c.integration_id
@@ -1747,13 +1721,13 @@ ALTER FUNCTION registry.lock_oauth_connection(text,text,text,uuid) OWNER TO wamn
 REVOKE ALL ON FUNCTION registry.lock_oauth_connection(text,text,text,uuid) FROM PUBLIC;
 
 CREATE FUNCTION registry.read_connection_generation(org_id text, project_id text, environment text, requested_connection uuid, requested_generation bigint)
-RETURNS TABLE(name text, integration_type text, runtime_type text, auth_type text, external_system text, principal_id text, parameters jsonb)
+RETURNS TABLE(name text, integration_type text, runtime_type text, auth_type text, external_system text, parameters jsonb)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
 #variable_conflict use_variable
 BEGIN
  RETURN QUERY
  SELECT i.name, c.integration_type, t.runtime_type, i.auth_type, i.external_system_id::text,
-        c.service_principal_id::text, g.parameters
+        g.parameters
  FROM wamn_authority.author_login_tenants login
  JOIN registry.connection c ON (c.org,c.project,c.env)=(login.org_id,login.project_id,login.environment)
  JOIN registry.integration i ON i.id=c.integration_id

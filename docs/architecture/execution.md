@@ -700,7 +700,8 @@ The host answers the connection facts of a call from its memory, so a repeated c
 The [memory](../../crates/platform/runtime/src/connection_memory.rs) is the local replica of the NATS KV bucket `wamn-connection` on the NATS of the auth memory.
 It follows the rules of the [auth memory](#auth-memory): the revision rule of a put, the watch, the 60 second limit and the broken watch.
 The [shared replica](../../crates/platform/runtime/src/kv_memory.rs) holds these rules for both memories.
-The key `<env_key>.connection.<connection id>` holds the active generation, effective status, credential id, exclusivity, target id, resource key, and target type.
+The key `<env_key>.connection.<connection id>` holds the active generation, effective status, credential id, and service principal id.
+It also holds exclusivity, target id, resource key, and target type.
 The effective status is active only when the integration and the connection are both active.
 The key `<env_key>.release.<manifest digest hex>` holds the map of a release from (component digest, package, name) to (connection, version).
 The key carries the hex part of the digest only, because a key token holds no `:`.
@@ -711,6 +712,9 @@ Immutable rows stay in the host under their own ids and never enter the bucket.
 These rows are the parameters of a generation, the artifact and exports of a version, and the secret of a credential.
 A secret never leaves the host.
 A rotation makes a new credential id, so the delete of the connection key is enough to reach the new secret.
+Inbound signature authentication resolves the credential name through the environment map.
+The active connection fact supplies the credential id and service principal.
+The host resolves the secret under that credential id.
 
 The [engine](../../crates/platform/engine/src/integration.rs) compiles the component of a wasm or native version once per component digest and keeps it in host memory.
 The [dispatch](../../crates/platform/runtime/src/integrations.rs) links an instance per (connection id, generation, credential id) from that compiled component.

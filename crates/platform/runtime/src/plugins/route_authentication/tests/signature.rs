@@ -16,6 +16,8 @@ pub(super) fn signed(body: &[u8]) -> String {
 struct Fixture {
     credentials: crate::connection_credentials::test_util::Fixture,
     database: wamn_test_postgres::Database,
+    memory: Arc<crate::connection_memory::ConnectionMemory>,
+    changes: wamn_platform_identity::connection_changes::ConnectionChanges,
 }
 
 impl Fixture {
@@ -32,6 +34,8 @@ impl Fixture {
         Self {
             credentials,
             database,
+            memory: Arc::new(crate::connection_memory::ConnectionMemory::default()),
+            changes: wamn_platform_identity::connection_changes::ConnectionChanges::default(),
         }
     }
 
@@ -81,6 +85,15 @@ impl Fixture {
                 .await
                 .unwrap();
         tokio::spawn(driver);
+        let facts = Arc::new(crate::connection_facts::ConnectionFacts::new(
+            Arc::clone(&self.memory),
+            self.changes.clone(),
+            Arc::new(self.credentials.reader(project).await),
+            Arc::clone(&postgres),
+            &format!("acme--{project}--dev"),
+            project,
+            "dev",
+        ));
         let authentication = Arc::new(
             RouteAuthentication::new(Arc::new(identity), postgres, "acme", project, "unused")
                 .await
@@ -89,10 +102,7 @@ impl Fixture {
         Arc::new(
             PlatformRouteAuthenticator::default()
                 .with_authentication(authentication)
-                .with_signature_authentication(
-                    Arc::new(self.credentials.reader(project).await),
-                    project,
-                ),
+                .with_signature_authentication(facts, project),
         )
     }
 
@@ -305,18 +315,125 @@ async fn missing_credentials_wrong_project_and_bad_secret_shapes_refuse() {
         routing_policy(
             json!({"modes":["signature"],"header":"x-signature","credential":"org:acme:unknown"}),
         )
-        .with_authenticator(Arc::new(
-            PlatformRouteAuthenticator::default().with_signature_authentication(
-                Arc::new(fixture.credentials.reader("host-project").await),
-                "host-project",
-            ),
-        )),
+        .with_authenticator(
+            fixture
+                .authenticator(
+                    r#"{"hmac":{"algorithm":"sha256","secret":"test-secret"}}"#,
+                    "host-project",
+                )
+                .await,
+        ),
     ] {
         let (response, delivered) = request(routing, headers(signed(BODY))).await;
         assert_eq!(response.status, 401);
         assert!(response.body.is_empty());
         assert!(delivered.is_empty());
     }
+}
+
+#[tokio::test]
+#[ignore = "requires: PostgreSQL 18, WAMN_NATIVE_C_NATS_BIN"]
+async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete() {
+    use crate::auth_cache::test_util::{nats, until};
+    use crate::connection_memory::replicate;
+    use wamn_platform_identity::auth_changes::AuthDrops;
+    use wamn_platform_identity::connection_changes::ConnectionDrops;
+    use wamn_platform_identity::connections::administration;
+
+    const ENV_KEY: &str = "acme--host-project--dev";
+    wamn_test_postgres::require_prerequisites(&["WAMN_NATIVE_C_NATS_BIN"]);
+    let _lock = wamn_test_postgres::lock();
+    let (_server, client) = nats().await;
+    let mut fixture = Fixture::new().await;
+    fixture.changes = replicate(&client, Some(ENV_KEY), Arc::clone(&fixture.memory));
+    until("the connection watch runs", || fixture.memory.watched()).await;
+    let routing = fixture.valid_plugin().await;
+    let signature = signed(BODY);
+    let headers = [("X-Signature", signature.as_str())];
+    let caller = routing
+        .authenticate_request_for_test("orders", &headers, BODY)
+        .await
+        .unwrap()
+        .unwrap();
+    let connection = fixture
+        .credentials
+        .admin
+        .query_one(
+            "SELECT id FROM registry.connection WHERE project='host-project'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let old = fixture.memory.connection(ENV_KEY, &connection).unwrap();
+    assert_eq!(old.service_principal_id.to_string(), caller.principal_id());
+
+    // A repeated request needs neither Postgres connection reads nor the store.
+    fixture.credentials.admin.batch_execute(
+        "REVOKE EXECUTE ON FUNCTION registry.read_env_connections(text,text,text), registry.read_connection_fact(text,text,text,uuid), registry.read_connection_secret(text,text,text,uuid) FROM wamn_conn_reader",
+    ).await.unwrap();
+    let repeated = routing
+        .authenticate_request_for_test("orders", &headers, BODY)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(repeated.principal_id(), caller.principal_id());
+    fixture.credentials.admin.batch_execute(
+        "GRANT EXECUTE ON FUNCTION registry.read_env_connections(text,text,text), registry.read_connection_fact(text,text,text,uuid), registry.read_connection_secret(text,text,text,uuid) TO wamn_conn_reader",
+    ).await.unwrap();
+
+    let tx = fixture.credentials.admin.transaction().await.unwrap();
+    tx.batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+        wamn_control_provision::PlatformComponent::Provisioning,
+    ))
+    .await
+    .unwrap();
+    tx.batch_execute("SET LOCAL ROLE wamn_control")
+        .await
+        .unwrap();
+    let mut drops = ConnectionDrops::default();
+    administration::execute_with_store(
+        &tx,
+        "acme",
+        "connection.set_credential",
+        &json!({
+            "project":"host-project", "env":"dev", "name":"webhook",
+            "credential":json!({"hmac":{"algorithm":"sha256","secret":"new-secret"}}).to_string(),
+        })
+        .to_string(),
+        &mut AuthDrops::default(),
+        &mut drops,
+        Some(fixture.credentials.store.as_ref()),
+    )
+    .await
+    .unwrap();
+    tx.commit().await.unwrap();
+    assert!(!drops.is_empty());
+    fixture.changes.publish(drops).await;
+    until("the host sees the committed delete", || {
+        fixture.memory.connection(ENV_KEY, &connection).is_err()
+    })
+    .await;
+    assert_eq!(
+        routing
+            .authenticate_request_for_test("orders", &headers, BODY)
+            .await
+            .unwrap_err(),
+        (401, String::new())
+    );
+    let new = fixture.memory.connection(ENV_KEY, &connection).unwrap();
+    assert_eq!(new.active_generation, old.active_generation + 1);
+    assert_ne!(new.credential_id, old.credential_id);
+    assert_eq!(new.service_principal_id, old.service_principal_id);
+    let mut mac = Hmac::<Sha256>::new_from_slice(b"new-secret").unwrap();
+    mac.update(BODY);
+    let signature = format!("sha256={}", hex::encode(mac.finalize().into_bytes()));
+    let caller = routing
+        .authenticate_request_for_test("orders", &[("X-Signature", &signature)], BODY)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(caller.principal_id(), new.service_principal_id.to_string());
 }
 
 #[tokio::test]

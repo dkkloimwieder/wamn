@@ -5,7 +5,7 @@
 //! replica of the NATS KV bucket [`BUCKET`] on the NATS of the auth memory,
 //! under the rules of [`crate::kv_memory`]. The key
 //! `<env_key>.connection.<connection id>` holds the active generation, the
-//! effective status, credential id and lease coordinates of a connection. The key
+//! effective status, credential id, service principal id and lease coordinates of a connection. The key
 //! `<env_key>.release.<manifest digest hex>` holds the connection map of a
 //! release. The key `<env_key>.connections` holds the map from integration
 //! name to connection id of the environment. Every writer of a fact deletes its key after the commit
@@ -47,6 +47,7 @@ pub struct ConnectionFact {
     pub status: ConnectionStatus,
     /// The credential of the active generation, when it has one.
     pub credential_id: Option<uuid::Uuid>,
+    pub service_principal_id: uuid::Uuid,
     pub exclusive: bool,
     pub target_id: uuid::Uuid,
     pub resource_key: Option<String>,
@@ -307,6 +308,7 @@ mod tests {
             active_generation: generation,
             status: ConnectionStatus::Active,
             credential_id: Some(uuid::Uuid::new_v4()),
+            service_principal_id: uuid::Uuid::new_v4(),
             exclusive: false,
             target_id: uuid::Uuid::new_v4(),
             resource_key: None,
