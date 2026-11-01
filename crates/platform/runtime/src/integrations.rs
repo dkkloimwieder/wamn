@@ -122,7 +122,7 @@ impl ConnectionDispatch for ComponentReads {
             .facts
             .generation(&id, fact.active_generation)
             .await?;
-        if !matches!(generation.runtime_type.as_str(), "wasm" | "native") {
+        if generation.runtime_type != "wasm" {
             return Ok(None);
         }
         let version = resources
