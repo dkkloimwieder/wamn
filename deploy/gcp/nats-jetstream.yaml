@@ -123,6 +123,11 @@ spec:
             - name: authorization
               mountPath: /etc/nats-authorization
               readOnly: true
+            # The reloader watches every file that the configuration names,
+            # the TLS files included, and exits when one is missing.
+            - name: tls
+              mountPath: /etc/nats-tls
+              readOnly: true
             - name: pid
               mountPath: /var/run/nats
           resources:
