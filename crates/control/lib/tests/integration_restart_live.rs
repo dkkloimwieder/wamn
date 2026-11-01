@@ -44,6 +44,9 @@ use wash_runtime::{
 #[path = "support/local_registry.rs"]
 mod local_registry;
 
+#[path = "support/exclusive_resources.rs"]
+mod exclusive_resources;
+
 mod node {
     wash_runtime::wasmtime::component::bindgen!({
         path: "../../execution/workflow/router/wit", world: "node", wasmtime_crate: wash_runtime::wasmtime,
@@ -100,6 +103,12 @@ fn fixture(root: &Path) -> anyhow::Result<()> {
 }
 
 async fn simulator() -> anyhow::Result<(String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>)> {
+    simulator_with_gate(None).await
+}
+
+async fn simulator_with_gate(
+    gate: Option<Arc<tokio::sync::Semaphore>>,
+) -> anyhow::Result<(String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>)> {
     // Select a private interface without sending a datagram.
     let route = tokio::net::UdpSocket::bind("0.0.0.0:0").await?;
     route.connect("10.255.255.254:9").await?;
@@ -112,6 +121,7 @@ async fn simulator() -> anyhow::Result<(String, Arc<AtomicUsize>, tokio::task::J
         loop {
             let (mut stream, _) = listener.accept().await.unwrap();
             let number = accepts.fetch_add(1, Ordering::SeqCst);
+            let gate = gate.clone();
             tokio::spawn(async move {
                 if number == 0 {
                     tokio::time::sleep(Duration::from_millis(20)).await;
@@ -119,6 +129,9 @@ async fn simulator() -> anyhow::Result<(String, Arc<AtomicUsize>, tokio::task::J
                 let mut frame = [0; 12];
                 stream.read_exact(&mut frame).await.unwrap();
                 assert_eq!(&frame[2..6], &[0, 0, 0, 6]);
+                if let Some(gate) = gate {
+                    gate.acquire().await.unwrap().forget();
+                }
                 if frame[7] == 6 {
                     assert_eq!(&frame[6..], &[17, 6, 0, 7, 0xbe, 0xef]);
                     stream.write_all(&frame).await.unwrap();
@@ -384,7 +397,16 @@ async fn apply(
     let canonical = loaded_release(document)?.manifest().canonical_bytes();
     tx.execute("INSERT INTO catalog.releases(env_key,manifest_digest,canonical_bytes) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",&[&env_key,&digest,&canonical]).await?;
     for (package, digest) in members {
-        tx.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,'registers',$4,'read') ON CONFLICT DO NOTHING",&[&env_key,&digest,&package,&"wamn:modbus/read@1.0.0"]).await?;
+        let manifest = packages
+            .iter()
+            .find(|manifest| manifest.package.id == package)
+            .context("connection fixture package missing")?;
+        let requirement = &manifest.connections["registers"];
+        let mode = match requirement.mode {
+            wamn_schema_generator::ConnectionMode::Read => "read",
+            wamn_schema_generator::ConnectionMode::Write => "write",
+        };
+        tx.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,'registers',$4,$5) ON CONFLICT DO NOTHING",&[&env_key,&digest,&package,&requirement.interface,&mode]).await?;
     }
     bindings::write(
         &tx,
@@ -400,7 +422,7 @@ async fn apply(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires: docker, PostgreSQL 18, wasm32-wasip2"]
+#[ignore = "requires: docker, PostgreSQL 18, NATS, wasm32-wasip2"]
 async fn published_modbus_versions_link_before_the_next_call() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&["docker"]);
     let _lock = wamn_test_postgres::lock();
@@ -525,10 +547,13 @@ async fn published_modbus_versions_link_before_the_next_call() -> anyhow::Result
             ),
         )?,
     );
+    let leases = Arc::new(wamn_runtime::resource_lease::ResourceLeases::new(Some(
+        reader_url.as_str(),
+    ))?);
     let facts = Arc::new(ConnectionFacts::new(
-        Arc::new(ConnectionMemory::default()),
+        Arc::new(ConnectionMemory::default().with_resource_leases(Arc::clone(&leases))),
         wamn_platform_identity::connection_changes::ConnectionChanges::default(),
-        credentials,
+        Arc::clone(&credentials),
         Arc::clone(&postgres),
         "acme--one--dev",
         "one",
@@ -540,7 +565,7 @@ async fn published_modbus_versions_link_before_the_next_call() -> anyhow::Result
             &release,
             &postgres,
             "one",
-            configuration,
+            configuration.clone(),
             RegistryCredentialSource::Fixed(read_registry_credentials(&auth, &registry.address)?),
         )
         .await?,
@@ -771,6 +796,7 @@ async fn published_modbus_versions_link_before_the_next_call() -> anyhow::Result
     )?;
     simulator_task.abort();
     observer_task.abort();
+    leases.shutdown().await;
     database.execute(&[&format!(
         "RESET ROLE; DROP OWNED BY {login}; DROP ROLE {login};"
     )])?;

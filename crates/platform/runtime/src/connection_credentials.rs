@@ -199,7 +199,7 @@ impl ConnectionCredentials {
         Ok((client, org))
     }
 
-    /// The active generation, effective status and credential of one
+    /// The active generation, effective status, credential and lease coordinates of one
     /// connection of the environment.
     pub(crate) async fn connection_fact(
         &self,
@@ -210,7 +210,7 @@ impl ConnectionCredentials {
         let (client, org) = self.reader()?;
         let row = client
             .query_opt(
-                "SELECT active_generation, active, credential_id FROM registry.read_connection_fact($1,$2,$3,$4)",
+                "SELECT active_generation, active, credential_id, exclusive, target_id, resource_key, target_type FROM registry.read_connection_fact($1,$2,$3,$4)",
                 &[&org, &project, &environment, id],
             )
             .await
@@ -223,6 +223,10 @@ impl ConnectionCredentials {
                 crate::connection_memory::ConnectionStatus::Disabled
             },
             credential_id: row.get(2),
+            exclusive: row.get(3),
+            target_id: row.get(4),
+            resource_key: row.get(5),
+            target_type: row.get(6),
         }))
     }
 

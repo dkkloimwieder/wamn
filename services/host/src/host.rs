@@ -1251,7 +1251,12 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         _ => (ConnectionCredentials::empty(), None),
     };
     let credentials = Arc::new(credentials);
-    let memory = Arc::new(ConnectionMemory::default());
+    let resource_leases = Arc::new(
+        wamn_runtime::resource_lease::ResourceLeases::new(args.connection_store_url.as_deref())
+            .context("configure resource lease session")?,
+    );
+    let memory =
+        Arc::new(ConnectionMemory::default().with_resource_leases(Arc::clone(&resource_leases)));
     let changes = connection_memory::replicate(
         &scheduler_nats_client,
         application.map(|release| release.scope().env_key.as_str()),
@@ -1931,6 +1936,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     };
     let cleanup_host = Arc::clone(&native_host);
     let native_cleanup = async move {
+        resource_leases.shutdown().await;
         let control_result = control.shutdown().await;
         let host_result = cleanup_host.stop().await;
         control_result?;
@@ -2563,6 +2569,10 @@ fn normalize_explicit_ingress_stop(
         result => result,
     }
 }
+
+#[cfg(test)]
+#[path = "host/lease_tests.rs"]
+mod lease_tests;
 
 #[cfg(test)]
 mod tests {

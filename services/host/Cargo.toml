@@ -43,6 +43,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 url = { workspace = true }
 
 [dev-dependencies]
+wamn-runtime = { workspace = true, features = ["test-util"] }
 opentelemetry_sdk = { workspace = true, features = ["trace", "testing"] }
 tracing-opentelemetry = { workspace = true }
 wamn-catalog = { workspace = true, features = ["test-util"] }

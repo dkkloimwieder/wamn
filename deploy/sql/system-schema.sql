@@ -1709,15 +1709,19 @@ GRANT EXECUTE ON FUNCTION registry.resolve_environment_connection(text,text,text
 -- The reader login fixes the environment. The fact is mutable; every other
 -- read returns rows that never change under their keys.
 CREATE FUNCTION registry.read_connection_fact(org_id text, project_id text, environment text, requested_connection uuid)
-RETURNS TABLE(active_generation bigint, active boolean, credential_id uuid)
+RETURNS TABLE(active_generation bigint, active boolean, credential_id uuid,
+ exclusive boolean, target_id uuid, resource_key text, target_type text)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
 #variable_conflict use_variable
 BEGIN
  RETURN QUERY
- SELECT c.active_generation, c.status='active' AND i.status='active' AND p.status='active', g.credential_id
+ SELECT c.active_generation, c.status='active' AND i.status='active' AND p.status='active', g.credential_id,
+   t.exclusive, c.target_id, c.resource_key, target.type
  FROM wamn_authority.author_login_tenants login
  JOIN registry.connection c ON (c.org,c.project,c.env)=(login.org_id,login.project_id,login.environment)
  JOIN registry.integration i ON i.id=c.integration_id
+ JOIN registry.integration_type t ON t.code=c.integration_type
+ JOIN registry.target target ON target.id=c.target_id
  JOIN identity.principals p ON p.id=c.service_principal_id
  JOIN registry.connection_generation g ON (g.connection_id,g.generation)=(c.id,c.active_generation)
  WHERE login.login_identity=session_user AND login.org_id=org_id AND login.project_id=project_id

@@ -119,6 +119,19 @@ You can also run the test through Cargo in its package:
 cargo test --locked --offline -p <package> <test> -- --ignored --test-threads=1
 ```
 
+Exclusive resource tests use private PostgreSQL databases and the prebuilt NATS server at `WAMN_NATIVE_C_NATS_BIN`.
+The typed call test also needs Docker, the `registry:2` image, and the generated `modbus_reader` component.
+It tests replacement connection Y after disabling X, plus two hosts sharing X for the 30-second refusal.
+The rollout test drives two host owners in one process through the host shutdown function and a real SIGTERM.
+It serves the native `/readyz` endpoint while the second host waits for its lease.
+Run these tests with the build environment in [building](building.md):
+
+```bash
+cargo test --locked --offline -p wamn-runtime resource_lease::tests -- --ignored --test-threads=1
+cargo test --locked --offline -p wamn-control --test integration_restart_live -- --ignored --test-threads=1
+cargo test --locked --offline -p wamn-host --bin wamn-host host::lease_tests::sigterm_drains_calls_then_hands_the_lease_to_a_ready_host -- --ignored --exact --test-threads=1
+```
+
 The following commands select individual test targets:
 
 ```bash

@@ -700,7 +700,7 @@ The host answers the connection facts of a call from its memory, so a repeated c
 The [memory](../../crates/platform/runtime/src/connection_memory.rs) is the local replica of the NATS KV bucket `wamn-connection` on the NATS of the auth memory.
 It follows the rules of the [auth memory](#auth-memory): the revision rule of a put, the watch, the 60 second limit and the broken watch.
 The [shared replica](../../crates/platform/runtime/src/kv_memory.rs) holds these rules for both memories.
-The key `<env_key>.connection.<connection id>` holds the active generation, the effective status and the credential id of a connection.
+The key `<env_key>.connection.<connection id>` holds the active generation, effective status, credential id, exclusivity, target id, resource key, and target type.
 The effective status is active only when the integration and the connection are both active.
 The key `<env_key>.release.<manifest digest hex>` holds the map of a release from (component digest, package, name) to (connection, version).
 The key carries the hex part of the digest only, because a key token holds no `:`.
@@ -717,6 +717,20 @@ The [dispatch](../../crates/platform/runtime/src/integrations.rs) links an insta
 Typed integration imports use labels, the connection names that code declares.
 The host resolves each label by its component digest, package, and name.
 HTTP and blobstore select a declared connection name at run time.
+
+An exclusive connection acquires a resource lease, a lock held by its host, before its first call.
+The host shares one dedicated system database session across its cloud leases.
+The session uses `WAMN_CONNECTION_STORE_URL` and opens on the first exclusive cloud call.
+Its key is `hashtextextended('resource:' || target_id || ':' || resource_key, 0)`.
+Local targets use an in-process map with the same resource string.
+
+The host serializes calls from every component bound to the connection.
+A call waits up to 30 seconds for a lease, then returns its interface's `unavailable` error.
+If the session drops, the host refuses calls until it reacquires the leases that its connections still need.
+Readiness never waits for a resource lease.
+
+A connection key delete stops new calls and releases its lease after the current call finishes.
+During shutdown, the host stops the queue, drains exclusive calls, and closes the lease session before native cleanup.
 
 Published versions record which exported interfaces permit writes in `write_interfaces`.
 Environment apply refuses a read declaration that imports one of those interfaces.

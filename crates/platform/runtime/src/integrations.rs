@@ -1,4 +1,4 @@
-//! Resolve wasm connection calls through the connection memory.
+//! Resolve integration calls through the connection memory.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -59,6 +59,46 @@ struct ComponentReads {
 
 #[async_trait::async_trait]
 impl ConnectionDispatch for ComponentReads {
+    async fn call(
+        &self,
+        name: &str,
+        interface: &str,
+        function: &str,
+        parameters: &[wasmtime::component::Val],
+    ) -> anyhow::Result<Option<anyhow::Result<Vec<wasmtime::component::Val>>>> {
+        if !self.names.contains(name) {
+            return Ok(None);
+        }
+        let release = self
+            .resources
+            .facts
+            .release(&self.resources.manifest_digest)
+            .await?;
+        let Some(binding) = release.binding(&self.component, &self.package, name) else {
+            return Ok(None);
+        };
+        let guard = match self
+            .resources
+            .facts
+            .exclusive_call(binding.connection_id)
+            .await
+        {
+            Ok(guard) => guard,
+            Err(error) => {
+                tracing::warn!(connection = %binding.connection_id, %error, "connection unavailable");
+                return Ok(None);
+            }
+        };
+        let Some(instance) = self.resolve(name).await? else {
+            return Ok(None);
+        };
+        let values = instance.call(interface, function, parameters).await;
+        if guard.as_ref().is_some_and(|guard| !guard.held()) {
+            return Ok(None);
+        }
+        Ok(Some(values))
+    }
+
     async fn resolve(&self, name: &str) -> anyhow::Result<Option<Arc<Integration>>> {
         if !self.names.contains(name) {
             return Ok(None);
@@ -82,7 +122,7 @@ impl ConnectionDispatch for ComponentReads {
             .facts
             .generation(&id, fact.active_generation)
             .await?;
-        if generation.runtime_type != "wasm" {
+        if !matches!(generation.runtime_type.as_str(), "wasm" | "native") {
             return Ok(None);
         }
         let version = resources
@@ -301,6 +341,22 @@ struct ComponentImports {
 
 #[async_trait::async_trait]
 impl ConnectionDispatch for ComponentImports {
+    async fn call(
+        &self,
+        name: &str,
+        interface: &str,
+        function: &str,
+        parameters: &[wasmtime::component::Val],
+    ) -> anyhow::Result<Option<anyhow::Result<Vec<wasmtime::component::Val>>>> {
+        // Keep the existing refusal when composed owners bind a label differently.
+        if self.resolve(name).await?.is_none() {
+            return Ok(None);
+        }
+        self.routes[name][0]
+            .call(name, interface, function, parameters)
+            .await
+    }
+
     async fn resolve(&self, name: &str) -> anyhow::Result<Option<Arc<Integration>>> {
         let Some(imports) = self.routes.get(name) else {
             return Ok(None);

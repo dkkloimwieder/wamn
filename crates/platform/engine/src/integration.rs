@@ -460,6 +460,20 @@ impl PreparedIntegration {
 #[async_trait::async_trait]
 pub trait ConnectionDispatch: std::fmt::Debug + Send + Sync {
     async fn resolve(&self, name: &str) -> anyhow::Result<Option<Arc<Integration>>>;
+
+    /// Dispatch a call, or return no value while the connection is unavailable.
+    async fn call(
+        &self,
+        name: &str,
+        interface: &str,
+        function: &str,
+        parameters: &[Val],
+    ) -> anyhow::Result<Option<anyhow::Result<Vec<Val>>>> {
+        match self.resolve(name).await? {
+            Some(instance) => Ok(Some(instance.call(interface, function, parameters).await)),
+            None => Ok(None),
+        }
+    }
 }
 
 /// Routes named imports through the current connection facts.
@@ -482,6 +496,18 @@ impl IntegrationImports {
 
     pub async fn resolve(&self, name: &str) -> anyhow::Result<Option<Arc<Integration>>> {
         self.dispatch.resolve(name).await
+    }
+
+    pub async fn call(
+        &self,
+        name: &str,
+        interface: &str,
+        function: &str,
+        parameters: &[Val],
+    ) -> anyhow::Result<Option<anyhow::Result<Vec<Val>>>> {
+        self.dispatch
+            .call(name, interface, function, parameters)
+            .await
     }
 
     pub fn interfaces(&self) -> impl Iterator<Item = &str> {
@@ -548,12 +574,14 @@ impl IntegrationImports {
                             let interface = interface.clone();
                             let name = name.clone();
                             Box::new(async move {
-                                let instance =
-                                    dispatch.resolve(&label).await.and_then(|instance| {
-                                        instance.with_context(|| format!("unbound: {label}"))
+                                let values = dispatch
+                                    .call(&label, &interface, &name, parameters)
+                                    .await
+                                    .and_then(|values| {
+                                        values.with_context(|| format!("unavailable: {label}"))
                                     });
-                                let instance = match instance {
-                                    Ok(instance) => instance,
+                                let values = match values {
+                                    Ok(values) => values,
                                     Err(error) => {
                                         if unavailable {
                                             tracing::warn!(
@@ -571,12 +599,9 @@ impl IntegrationImports {
                                         )));
                                     }
                                 };
-                                let values = instance
-                                    .call(&interface, &name, parameters)
-                                    .await
-                                    .map_err(|error| {
-                                        wash_runtime::wasmtime::Error::msg(format!("{error:#}"))
-                                    })?;
+                                let values = values.map_err(|error| {
+                                    wash_runtime::wasmtime::Error::msg(format!("{error:#}"))
+                                })?;
                                 if values.len() != results.len() {
                                     return Err(wash_runtime::wasmtime::Error::msg(
                                         "integration result count mismatch",
