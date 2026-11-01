@@ -201,7 +201,7 @@ async fn execute(
     )
     .await?;
     jobs::inspect_image(resources).await?;
-    deployment::install(resources, &broker, &source, &server).await?;
+    deployment::install(resources, &broker, &source).await?;
     workload::hosts_ready(&workload::HostsReadyInput {
         lifecycle: &resources.lifecycle,
         cluster: CLUSTER,

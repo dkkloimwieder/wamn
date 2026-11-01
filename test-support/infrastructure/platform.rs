@@ -203,13 +203,16 @@ async fn install_nats(
     work: &Path,
     nats: &[serde_json::Value],
 ) -> anyhow::Result<()> {
-    checked(kubectl(kubeconfig, context).args(["create", "namespace", SYSTEM_NAMESPACE])).await?;
-    let (certificates, server): (Vec<_>, Vec<_>) = nats.iter().partition(|object| {
+    let namespace = serde_json::json!({
+        "apiVersion": "v1", "kind": "Namespace", "metadata": {"name": SYSTEM_NAMESPACE}
+    });
+    let (mut certificates, server): (Vec<_>, Vec<_>) = nats.iter().partition(|object| {
         matches!(
             object["kind"].as_str(),
             Some("ClusterIssuer" | "Certificate")
         )
     });
+    certificates.insert(0, &namespace);
     for (name, objects) in [("certificates", certificates), ("server", server)] {
         let file = work.join(format!("one-nats-{name}.json"));
         write_private(

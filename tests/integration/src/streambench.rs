@@ -61,7 +61,7 @@ pub enum Mode {
 
 #[derive(Debug, Args)]
 pub struct StreamBenchArgs {
-    /// Data-plane NATS URL (deploy/infra/nats-jetstream.yaml Service `evt-nats`).
+    /// Data-plane NATS URL (deploy/gcp/nats-jetstream.yaml Service `wamn-nats`).
     #[arg(long, default_value = "nats://localhost:4222")]
     pub nats_url: String,
 
@@ -643,7 +643,7 @@ async fn stepdown_phase(
 }
 
 /// The second half of the physical node-loss runbook: after `kubectl delete pod
-/// evt-nats-<n>`, show the stream + all messages are still there, R3 config is
+/// wamn-nats-<n>`, show the stream + all messages are still there, R3 config is
 /// intact, a leader is serving, and a fresh consumer can still drain everything.
 async fn heal_phase(
     js: &async_nats::jetstream::Context,

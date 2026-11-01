@@ -51,8 +51,8 @@ const ENVIRONMENT: &str = "dev";
 const OVERLAY_ORG: &str = "acme";
 const NAMESPACE: &str = "hosts";
 const COMPONENT_BASE: &str = "us-central1-docker.pkg.dev/wamn-dev/wamn/components";
-const EVENT_NATS: &str = "nats://evt-nats.platform.svc.cluster.local:4222";
-const CONTROL_NATS: &str = "nats://nats.platform.svc.cluster.local:4222";
+const EVENT_NATS: &str = "nats://wamn-nats.platform.svc.cluster.local:4222";
+const CONTROL_NATS: &str = "nats://wamn-nats.platform.svc.cluster.local:4222";
 const ISSUER: &str = "https://identity.identity.svc.cluster.local";
 /// The ConfigMap that names the `wamn` credential helper for the registry.
 const REGISTRY_HELPER: &str = "wamn-registry-helper";

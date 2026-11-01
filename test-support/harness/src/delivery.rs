@@ -719,7 +719,7 @@ mod tests {
     #[test]
     fn the_host_group_keeps_only_the_platform_part() {
         let mut group: Yaml = serde_yaml::from_str(
-            "{env: [{name: WAMN_EVT_NATS_USERNAME, valueFrom: {secretKeyRef: {name: wamn-event-nats}}}], \
+            "{env: [{name: WAMN_EVT_ORG, valueFrom: {secretKeyRef: {name: wamn-event-nats}}}], \
               volumes: [{name: event-nats, secret: {secretName: wamn-event-nats}}]}",
         )
         .unwrap();

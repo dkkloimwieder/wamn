@@ -44,7 +44,6 @@ pub(super) async fn install(
     resources: &Resources,
     broker: &EventBroker,
     source: &stream::Config,
-    server: &str,
 ) -> anyhow::Result<()> {
     checked(kubectl(resources).args(["create", "namespace", NAMESPACE])).await?;
     let operator = resources.work.join("operator-values.yaml");
@@ -101,7 +100,7 @@ pub(super) async fn install(
             .repository
             .join("deploy/platform/values-host-default.yaml"),
     )?)?;
-    let rendered = host_values(base, &resources.host_image, server)?;
+    let rendered = host_values(base, &resources.host_image)?;
     let values = resources.work.join("host-values.yaml");
     write_private(&values, &serde_json::to_vec(&rendered)?)?;
     super::resources::recorded(
@@ -126,7 +125,7 @@ pub(super) async fn install(
     .await?;
     Ok(())
 }
-fn host_values(mut base: Value, image: &str, server: &str) -> anyhow::Result<Value> {
+fn host_values(mut base: Value, image: &str) -> anyhow::Result<Value> {
     let (repository, tag) = image
         .rsplit_once(':')
         .context("RC image has its explicit tag")?;
@@ -149,18 +148,7 @@ fn host_values(mut base: Value, image: &str, server: &str) -> anyhow::Result<Val
         .as_object_mut()
         .context("host group is an object")?
         .remove("extraArgs");
-    let env = group["env"]
-        .as_array_mut()
-        .context("host base declares environment entries")?;
-    let mut urls = env
-        .iter_mut()
-        .filter(|entry| entry["name"] == "WAMN_EVT_NATS_URL");
-    let entry = urls.next().context("host base declares its event URL")?;
-    entry["value"] = json!(server);
-    ensure!(
-        urls.next().is_none(),
-        "host base declares only one event URL"
-    );
+    // The base names the one NATS for both connections (docs/plan/alignment.md R2).
     Ok(base)
 }
 
@@ -190,12 +178,7 @@ mod tests {
             "../../../../deploy/platform/values-host-default.yaml"
         ))
         .unwrap();
-        let actual = host_values(
-            base.clone(),
-            "wamn-host:rc-test-debug",
-            "nats://127.0.0.2:4222",
-        )
-        .unwrap();
+        let actual = host_values(base.clone(), "wamn-host:rc-test-debug").unwrap();
         assert_eq!(
             actual["runtime"]["hostGroups"][0]["volumes"],
             base["runtime"]["hostGroups"][0]["volumes"]
@@ -211,9 +194,7 @@ mod tests {
             .unwrap();
         assert_eq!(old.len(), new.len());
         for (a, b) in old.iter().zip(new) {
-            if a["name"] != "WAMN_EVT_NATS_URL" {
-                assert_eq!(a, b);
-            }
+            assert_eq!(a, b);
         }
     }
 }

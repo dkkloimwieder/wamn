@@ -2,7 +2,7 @@
 //! record (wamn-l5i9.10, D19 v3 §4).
 //!
 //! The in-cluster gate script provisions CDC, runs the REAL `wamn-host
-//! event-reader` process against wamn-pg + evt-nats, drives psql writes and
+//! event-reader` process against wamn-pg + the one NATS, drives psql writes and
 //! the kill/sever drills — then calls this mode to check what LANDED: exactly
 //! the expected insert ids, in commit order, one message each (`Nats-Msg-Id`
 //! dedupe held across restarts/redelivery), every envelope well-formed per
@@ -80,7 +80,7 @@ pub struct ReaderBenchArgs {
     pub wait_secs: u64,
 
     /// Delete the stream after the asserts pass — the gate's zero-residue
-    /// teardown (the standing evt-nats keeps no gate streams behind).
+    /// teardown (the standing NATS keeps no gate streams behind).
     #[arg(long, default_value_t = false)]
     pub delete_stream: bool,
 }

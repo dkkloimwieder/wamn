@@ -1,9 +1,8 @@
 //! Write the event NATS files of one deployed environment.
 //!
 //! The users come from `event_broker::prepare`, the same derivation the
-//! cluster tests use. docs/operations/gcp.md section 3 runs this program and
-//! turns its files into the Secrets `evt-nats-authorization`,
-//! `wamn-event-nats` and `wamn-materializer-nats`.
+//! cluster tests use. The bench runs this program and starts a local NATS
+//! from its files.
 //!
 //! cargo run -p wamn-test-infrastructure --example event_broker_files -- \
 //!   <work> <server> <org> <project> <env> <env_key> <replicas> [<wamn.json>...]

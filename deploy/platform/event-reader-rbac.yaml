@@ -6,7 +6,7 @@
 #
 # ZERO GRANTS BY DESIGN: the reader never talks to the Kubernetes API — its
 # whole surface is the per-env replication connection (WAMN_CDC_URL), the
-# system DB (WAMN_SYSTEM_URL), and evt-nats. No Role/RoleBinding exists for
+# system DB (WAMN_SYSTEM_URL), and the one NATS. No Role/RoleBinding exists for
 # this ServiceAccount, and pods must set automountServiceAccountToken: false
 # The named account exists so the reader runs as a
 # distinct auditable identity rather than `default`, and so a future grant

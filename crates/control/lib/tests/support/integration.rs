@@ -104,10 +104,8 @@ pub async fn install_one_nats(
     repository: &Path,
     environments: &[&str],
 ) -> anyhow::Result<()> {
-    run.run("kubectl", &["create", "namespace", NAMESPACE])
-        .await?;
     let objects = wamn_control::platform::manifests::one_nats(repository, NAMESPACE)?;
-    let (certificates, server): (Vec<_>, Vec<_>) = objects.into_iter().partition(|object| {
+    let (mut certificates, server): (Vec<_>, Vec<_>) = objects.into_iter().partition(|object| {
         matches!(
             object["kind"].as_str(),
             Some("ClusterIssuer" | "Certificate")
@@ -118,6 +116,11 @@ pub async fn install_one_nats(
         .map(|env| wamn_control_registry::Triple::new(ORG, PROJECT, *env))
         .collect::<Vec<_>>();
     let users = wamn_control::platform::single_namespace_nats(NAMESPACE, ORG, &scopes)?;
+    // The namespace may exist already, so it is applied with the certificates.
+    certificates.insert(
+        0,
+        json!({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": NAMESPACE}}),
+    );
     for (name, objects) in [("certificates", certificates), ("users", users)] {
         let file = run.work.join(format!("one-nats-{name}.json"));
         std::fs::write(
