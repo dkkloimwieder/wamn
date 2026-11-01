@@ -146,8 +146,6 @@ Use `tools/repo-lint dry-run` to see its exact commands without executing them.
 `tools/repo-lint run` runs the source guard, formatting, and Clippy across all three workspaces, and then the repository policy lints of the `repo-policy` binary.
 It reports each command and returns a nonzero status if any command fails.
 The full schema files own fresh platform installations.
-The system and project migration lists stay empty until development is stable.
-The upgrade no-op test keeps coverage of `upgrade-schema` on current databases.
 
 Before integration, the train runs `cargo run -p wamn-submodule-check -- main` with Git history and initialized submodules.
 Changed pins require a commit subject that names the submodule path or its last segment and says `bump` or `pin`, plus `revert` when the pin does not descend from main.

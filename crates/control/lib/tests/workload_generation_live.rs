@@ -510,37 +510,6 @@ async fn prepare_rotate_retire_and_abort_preserve_family_authority() {
                 direct_acl_set(target, &role_a).await,
                 BTreeSet::from([format!("database:{0}:{0}:CONNECT", fixture.database)])
             );
-            fixture
-                .catalog
-                .execute(sql::forget_generation_password_sql(), &[&role_a])
-                .await
-                .unwrap();
-            fixture
-                .catalog
-                .batch_execute(&sql::backfill_generation_passwords_sql())
-                .await
-                .unwrap();
-            let recorded: Vec<String> = fixture
-                .catalog
-                .query(
-                    "SELECT role FROM registry.generation_passwords ORDER BY role",
-                    &[],
-                )
-                .await
-                .unwrap()
-                .into_iter()
-                .map(|row| row.get(0))
-                .collect();
-            let mut expected = vec![
-                generation_role(
-                    WorkloadRoleFamily::App,
-                    &fixture.database,
-                    CredentialGeneration::B,
-                ),
-                role_a.clone(),
-            ];
-            expected.sort();
-            assert_eq!(recorded, expected);
             assert_eq!(direct_acl_set(target, acl).await, expected_stable_acl());
             drop(login(&url_a, &role_a).await);
             await_zero_sessions(target, &role_a).await;

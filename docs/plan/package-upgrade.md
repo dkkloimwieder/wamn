@@ -12,7 +12,7 @@ See [package upgrade behavior](../architecture/data-access.md#schema-and-definit
 - Ordinary release qualification still runs against the exact final release candidate after production package application and release publication.
 - One deployment writer per environment. Existing lifecycle verbs keep their ownership. `qualify-upgrade` is a new read-only database-transition proof verb; it does not qualify a release, cannot satisfy `publish-qualified-release`, and does not replace a mutation or deployment verb. This does not create the second **release-qualification** path forbidden by `docs/history/release-qualification.md`.
 - An upgrade starts only from a **converged environment**: the selected release head is the release actually serving the environment. A prior failed deployment that left head and workload divergent is resolved before any production package migration starts. The environment-specific check compares the selected manifest digest with the release digest carried by the serving workload; Epic 1's wamn-dev proof reads the running host Deployment's release arguments rather than assuming a successful prior rollout.
-- The project database must already carry the platform schema needed by the upgrade implementation, including the durable upgrade-qualification carrier. That carrier lands through the normal platform `upgrade-schema` path before application-package upgrade is attempted.
+- The project database must already carry the platform schema needed by the upgrade implementation, including the durable upgrade-qualification carrier. The full schema files install that table.
 - Greenfield: changed package content records a new digest under the same package version (docs/plan/platform-config.md ruling 22).
 - No runtime upgrade mode is introduced. Upgrade is the ordinary release path preceded by qualification and followed by the environment's existing host deployment procedure.
 
@@ -134,7 +134,7 @@ Prerequisites on the run day:
 
 - Ordinary `qualify-release` can reproduce the exact WMS wamn-dev candidate.
 - The selected digest matches the running host Deployment's `--release-manifest-digest` value for the WMS predecessor.
-- The project database carries `catalog.package_upgrade_qualifications` through `upgrade-schema`.
+- The full schema files install `catalog.package_upgrade_qualifications`.
 
 The WMS candidate adds nullable `wms.location.description text`, with no default or new business invariant.
 
@@ -179,7 +179,7 @@ Receiving plus `client_acme_receiving` is deliberately not the Epic-1 acceptance
 6. Issue 3 uses unit/live-PostgreSQL tests only; the real wamn-dev deployment proof is Issue 5.
 7. The final environment run waits until `wamn-ld93.33` closes and its release-qualification path is merged, verified, reviewed, and accepted on `main`. Package-upgrade does not create a second release-qualification path.
 8. An upgrade begins only from a converged selected-and-serving predecessor release.
-9. Durable upgrade evidence is platform schema and reaches existing project databases through the normal numbered `upgrade-schema` migration path.
+9. The full schema files install the platform tables for durable upgrade evidence.
 10. Epic 1 ends after the WMS forward upgrade, predecessor rollback, and re-forward deployment are recorded. Epic 2 does not open automatically; the owner reviews Epic 1 first and only then scopes its Beads issues.
 11. Epic 1 requires predecessor statements to pass against the candidate schema under both predecessor and candidate grants. Exceptions, including nullable additions that temporarily break whole-row reads, belong to Epic 3.
 12. Each SQL-bearing upgraded package keeps one actual serving `wamn.schema`. Qualification observes the workload and plans both versions with that exact `search_path`. Application repeats the observation before mutation. Packages with no SQL are exempt. Schema relocation or multiple-schema support requires a future persisted deployment fact outside Epic 1.

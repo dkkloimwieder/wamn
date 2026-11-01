@@ -140,7 +140,6 @@ async fn a_fresh_install_grants_the_application_role_invariant_one() {
 
 #[tokio::test]
 async fn integration_and_target_seeds_live_only_in_the_system_database() {
-    use wamn_control_provision::schema_migrations::MigrationTarget;
     let mut server = wamn_test_postgres::start(&[]).unwrap();
     let database = server.create_database("wamn_system").unwrap();
     let admin = connect(database.url()).await;
@@ -153,9 +152,6 @@ async fn integration_and_target_seeds_live_only_in_the_system_database() {
         .unwrap();
     admin
         .batch_execute(wamn_control_provision::SYSTEM_SCHEMA_SQL)
-        .await
-        .unwrap();
-    wamn_control::upgrade_schema::record_fresh_install(&admin, MigrationTarget::System)
         .await
         .unwrap();
     let expected = vec![

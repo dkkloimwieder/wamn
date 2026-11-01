@@ -67,7 +67,7 @@ pub mod platform_principals;
 pub mod provisioner;
 #[cfg(feature = "ops")]
 pub mod recovery;
-pub mod schema_migrations;
+pub mod schema_baseline;
 pub mod secret;
 pub mod session_role_reader;
 pub mod session_target;
@@ -148,7 +148,7 @@ pub use workload_role::{
 pub const SYSTEM_SCHEMA_SQL: &str = concat!(
     include_str!("../../../../deploy/sql/record-history.sql"),
     include_str!("../../../../deploy/sql/system-schema.sql"),
-    include_str!("../../../../deploy/sql/system-schema-migrations.sql"),
+    include_str!("../../../../deploy/sql/system-schema-baseline.sql"),
 );
 
 /// Dormant portable-store extension, applied after [`SYSTEM_SCHEMA_SQL`].
@@ -173,5 +173,5 @@ pub const CONTROL_BOOTSTRAP_SQL: [&str; 2] = [SYSTEM_SCHEMA_SQL, CONTROL_PORTABL
 /// (`wamn-0h0g.9.15`).
 pub const APP_SCHEMA_SQL: &str = concat!(
     include_str!("../../../../deploy/sql/app-schema.sql"),
-    include_str!("../../../../deploy/sql/app-schema-migrations.sql"),
+    include_str!("../../../../deploy/sql/app-schema-baseline.sql"),
 );

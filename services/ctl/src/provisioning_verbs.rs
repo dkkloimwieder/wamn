@@ -602,38 +602,6 @@ pub struct CloseCaptureGapArgs {
     pub system_database_url: String,
 }
 
-/// Arguments of `upgrade-schema` (docs/history/schema-upgrade.md).
-#[derive(Debug, Args)]
-pub struct UpgradeSchemaArgs {
-    /// Superuser Postgres URL to the T1 system DB (`wamn_system`). Alone, it
-    /// names the database to upgrade. With `--admin-database-url`, the verb
-    /// reads `registry.project_envs` through it.
-    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL", hide_env_values = true)]
-    pub system_database_url: String,
-
-    /// Superuser Postgres URL to one project-environment database. With it,
-    /// the verb upgrades that database.
-    #[arg(long, env = "WAMN_PG_ADMIN_URL", hide_env_values = true)]
-    pub admin_database_url: Option<String>,
-
-    /// First run on a database installed before its record table: the last
-    /// file that the database already holds. The verb records the files up to
-    /// it without running them. Refused once the record table has a row.
-    #[arg(long)]
-    pub baseline: Option<i32>,
-
-    /// Apply the pending files. Without it, the verb prints them and changes nothing.
-    #[arg(long)]
-    pub confirm: bool,
-
-    /// Also write the one statement that records a password fingerprint for
-    /// every generation prepared before system migration 0009. The operator
-    /// applies it once by hand, as a superuser, connected to the system
-    /// database (`docs/operations/gcp.md` §7).
-    #[arg(long, value_name = "PATH")]
-    pub emit_fingerprint_sql: Option<PathBuf>,
-}
-
 /// TLS credentials and the identity service endpoint for operator PAT issuance.
 #[derive(Clone, Default, Args)]
 pub struct PatIssuerArgs {
@@ -966,26 +934,6 @@ pub async fn recover_capture_gap(args: RecoverCaptureGapArgs) -> anyhow::Result<
         start_lsn.as_deref().unwrap_or("null"),
     );
     Ok(())
-}
-
-/// Upgrade one installed database. The library prints each file.
-pub async fn upgrade_schema(args: UpgradeSchemaArgs) -> anyhow::Result<()> {
-    if let Some(path) = &args.emit_fingerprint_sql {
-        std::fs::write(
-            path,
-            wamn_control_provision::sql::backfill_generation_passwords_sql(),
-        )
-        .with_context(|| format!("write {}", path.display()))?;
-    }
-    wamn_control::upgrade_schema::upgrade_schema(
-        &wamn_control::upgrade_schema::UpgradeSchemaRequest {
-            system_database_url: args.system_database_url,
-            admin_database_url: args.admin_database_url,
-            baseline: args.baseline,
-            confirm: args.confirm,
-        },
-    )
-    .await
 }
 
 /// Close the newest capture gap of one reader and print it.

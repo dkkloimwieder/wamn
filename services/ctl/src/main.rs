@@ -75,8 +75,6 @@ enum Command {
     RecoverCaptureGap(provisioning_verbs::RecoverCaptureGapArgs),
     /// Set resync_at on the newest capture gap of a CDC reader, which lets it resume (wamn-59z6)
     CloseCaptureGap(provisioning_verbs::CloseCaptureGapArgs),
-    /// Apply the pending platform schema migrations to one installed database (wamn-o8b9)
-    UpgradeSchema(provisioning_verbs::UpgradeSchemaArgs),
     /// Apply one exact package-owned migration stream to a project database.
     ApplyPackage(package_verbs::ApplyPackageArgs),
     /// Push one authored package as a registry artifact and record its digest (wamn-zua8.3)
@@ -152,7 +150,6 @@ async fn main() -> anyhow::Result<()> {
         Command::EnableCdcProjectEnv(args) => provisioning_verbs::enable_cdc(args).await,
         Command::RecoverCaptureGap(args) => provisioning_verbs::recover_capture_gap(args).await,
         Command::CloseCaptureGap(args) => provisioning_verbs::close_capture_gap(args).await,
-        Command::UpgradeSchema(args) => provisioning_verbs::upgrade_schema(args).await,
         Command::ApplyPackage(args) => package_verbs::apply(args).await,
         Command::PushPackage(args) => package_verbs::push(args).await,
         Command::QualifyUpgrade(args) => package_verbs::qualify_upgrade(args).await,

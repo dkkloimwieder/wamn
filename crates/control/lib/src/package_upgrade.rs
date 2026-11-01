@@ -227,12 +227,16 @@ async fn read_accepted(
     package: &str,
     version: &str,
 ) -> anyhow::Result<Option<AcceptedUpgrade>> {
-    let Some(row) = tx.query_opt(
-        "SELECT canonical_bytes, result_sha256, predecessor_manifest_digest \
+    let Some(row) = tx
+        .query_opt(
+            "SELECT canonical_bytes, result_sha256, predecessor_manifest_digest \
          FROM catalog.package_upgrade_qualifications \
          WHERE env_key = $1 AND package_id = $2 AND candidate_package_version = $3",
-        &[&env_key, &package, &version],
-    ).await.context("read accepted upgrade evidence; install its platform carrier with upgrade-schema first")? else {
+            &[&env_key, &package, &version],
+        )
+        .await
+        .context("read accepted upgrade evidence; install the current full schema first")?
+    else {
         return Ok(None);
     };
     let bytes: Vec<u8> = row.get(0);

@@ -935,7 +935,7 @@ Event fields and workload claims use `env_key`. Credential hashes frame that nam
 The management variable is `WAMN_MANAGEMENT_ENV_KEY`, and `flow-http.json` carries `wamn.env_key`.
 The event subject keeps its separate organization, project, and short environment tokens.
 Auth invalidation keys still include the environment key, so equal principal IDs in separate environments keep separate cached grants and status.
-`wamn_app` holds `USAGE` on `platform`, `SELECT` on `user`, `role`, `user_role`, `permission`, `environment` and the seven platform configuration tables, `EXECUTE` on `platform.bump_counter`, `platform.assign_counter` and `platform.set_counter`, and the write log grants. It holds nothing else in `platform`: no grant on `api_key`, on a history table, or on `schema_migrations`.
+`wamn_app` holds `USAGE` on `platform`, `SELECT` on `user`, `role`, `user_role`, `permission`, `environment` and the seven platform configuration tables, `EXECUTE` on `platform.bump_counter`, `platform.assign_counter` and `platform.set_counter`, and the write log grants. It holds nothing else in `platform`: no grant on `api_key` or on a history table.
 `platform.bump_counter(sequence, counter, key)` is `SECURITY DEFINER`. It inserts the counter row at 1 when the row is absent, returns the value, and increments it, under the row lock. It checks no tenant and reads no claim. It refuses an id that is not a sequence with `undefined_object`. The `wamn:postgres` plugin decides which sequences a caller reaches: it takes the application from host state and resolves the sequence id by that application and the sequence name. Component admission parses each statement a package declares with PostgreSQL's grammar (`pg_query`). It refuses a statement that names a counter function, writes a `platform.*` relation, or holds a `DO` block, a function body, a SQL `EXECUTE`, `SET`, `RESET`, `set_config`, `pg_logical_emit_message`, `query_to_xml*`, `cursor_to_xml*` or a `U&` escape (`crates/control/lib/src/component_admission/declared_sql.rs`). Publish checks the pushed descriptors again. Application guests run only declared statements, so only the plugin calls these functions. The host also runs a text guard (`reject_claim_mutation`) on every statement it runs: on declared statements, which covers a release admitted before the parsed check, and on the raw `wamn:postgres/client` interface, which only platform components import.
 `platform.assign_counter(sequence, counter, key)` is `SECURITY DEFINER` and checks the sequence id in the same way. It gives a `per=` counter one value for each key: under a transaction advisory lock on the key, it returns the value of the key row, or takes the next value of the `''` allocator row and inserts the key row with it. It refuses the `''` key with `invalid_parameter_value`.
 `platform.set_counter(sequence, counter, key, value)` is `SECURITY DEFINER` and checks the sequence id in the same way. It is the write of the `number_counter.set` host route: under the row lock, it inserts the counter row with the value or sets the value of the row. It refuses a value below 1 with `invalid_parameter_value`.
@@ -1042,9 +1042,6 @@ If an object delete fails after the row deletion commits, the host logs the obje
 Collector follow-up belongs to `wamn-2wdsf.4`.
 
 The full schema files own the platform schemas and build fresh installations.
-The system and project migration lists stay empty until development is stable.
-The migration record tables and `upgrade-schema` remain available for real migrations that start at 0001.
-The verb makes no changes to a current database.
 
 ### System database
 

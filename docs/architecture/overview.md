@@ -64,9 +64,8 @@ Rust decides package registration and wiring activation from stored facts within
 PostgreSQL enforces uniqueness, row isolation, immutable records, release sealing, and required locks.
 Package registration retains its lineage lock, exact retry behavior, and first timestamp.
 A fresh install creates the platform schema, including the control database, from the full schema files.
-The system and project migration lists stay empty until development is stable.
-`wamn-ctl upgrade-schema` keeps its record tables and makes no changes to a current database.
-Real migrations can then start at 0001.
+Installation records a digest of the full schema SQL. Apply refuses a changed or missing digest and requires a database reset.
+Migrations are deferred until development is stable and return then with a smaller design.
 
 The provisioning owner locks and compares environment identity before refreshing its `env_key` projection.
 That refresh clears the instance claim even when the suffix stays unchanged.
@@ -153,7 +152,7 @@ It never uses the chart default for this requirement.
 Local targets are exempt.
 
 The package stage runs in the project database before any Kubernetes write.
-It applies the pending platform migrations and installs each new package from its verified artifact.
+It compares the installed schema digest with this binary and installs each new package from its verified artifact.
 It applies the stage of each successor, writes the release cache row, and reconciles data access.
 It also creates the number sequence row of each package default that the environment lacks.
 With `release = none`, `apply` uninstalls the release chart instead of writing it.

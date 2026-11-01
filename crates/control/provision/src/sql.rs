@@ -23,7 +23,7 @@ pub use database::{
 
 #[doc(inline)]
 pub use credentials::{
-    backfill_generation_passwords_sql, ensure_control_author_acl_role_sql,
+    ensure_control_author_acl_role_sql,
     ensure_workload_acl_role_sql, forget_generation_password_sql, generation_password_recorded_sql,
     normalize_workload_generation_membership_sql, prepare_control_author_generation_sql,
     prepare_workload_generation_sql, record_generation_password_sql,

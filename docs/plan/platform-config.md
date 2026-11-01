@@ -2,7 +2,7 @@
 
 ## Mechanism
 
-One mechanism for everything the platform provides to an application: the platform owns schema `platform` in each project database (today's `app_system`, renamed), the control host writes it, the application reads it. The application role has `SELECT` on the listed tables (the tables below, plus roles, permissions and `environment`), `EXECUTE` on `platform.bump_counter`, `platform.assign_counter` and `platform.set_counter`, and no other grant; `platform.write_log`, the engine's claim record, keeps its existing grants. No history table and no `schema_migrations` is readable. Platform routes that change platform rows (`file.put`, `set_counter`, settings) are operations in the application's ACL, granted per role like any other.
+One mechanism for everything the platform provides to an application: the platform owns schema `platform` in each project database (today's `app_system`, renamed), the control host writes it, the application reads it. The application role has `SELECT` on the listed tables (the tables below, plus roles, permissions and `environment`), `EXECUTE` on `platform.bump_counter`, `platform.assign_counter` and `platform.set_counter`, and no other grant; `platform.write_log`, the engine's claim record, keeps its existing grants. No history table is readable. Platform routes that change platform rows (`file.put`, `set_counter`, settings) are operations in the application's ACL, granted per role like any other.
 
 Each section carries the dependency it waits on, so it can be ruled and filed as that dependency lands.
 
@@ -291,7 +291,7 @@ Each rule has one check that runs in the platform test set.
 
 | invariant | check |
 | --- | --- |
-| application role: `SELECT` on the listed tables (plus `role`, `user_role`, `permission` and `environment`), `EXECUTE` on `bump_counter`, `assign_counter` and `set_counter`, and `platform.write_log`, the engine's claim record, keeps its existing grants, nothing else; no history table or `schema_migrations` grant; no `credential`, `target` or `target_application` table exists in an application database | query `information_schema.role_table_grants` and `routine_privileges` per database; any other row fails; `information_schema.tables` shows none of the three |
+| application role: `SELECT` on the listed tables (plus `role`, `user_role`, `permission` and `environment`), `EXECUTE` on `bump_counter`, `assign_counter` and `set_counter`, and `platform.write_log`, the engine's claim record, keeps its existing grants, nothing else; no history table grant; no `credential`, `target` or `target_application` table exists in an application database | query `information_schema.role_table_grants` and `routine_privileges` per database; any other row fails; `information_schema.tables` shows none of the three |
 | no manifest model names a `platform.*` table | build refusal; fixture with such a model is refused |
 | no write statement, command claim or history trigger targets a declared relation | build refusal; fixture with an `UPDATE platform.user` is refused |
 | a set below a live number is caught by the model's `UQ` | records to 17; set 10 → allowed; the insert that renders 10 is refused by the `UQ`; `set_counter` reads no application table |

@@ -26,7 +26,6 @@ use serde_json::json;
 use tokio_postgres::{Client, NoTls};
 use url::Url;
 use wamn_control_provision::provisioner::{PROVISIONER_ROLE, provisioner_statement_sql};
-use wamn_control_provision::schema_migrations::MigrationTarget;
 
 use crate::provision_project_env::{
     ensure_distinct_secret_paths, ensure_secret_path, write_secret_json,
@@ -113,9 +112,9 @@ pub async fn install_control_store(admin: &Client) -> anyhow::Result<()> {
             .await
             .context("install the control store")?;
     }
-    crate::upgrade_schema::record_fresh_install(admin, MigrationTarget::System)
+    crate::schema_baseline::record_system(admin)
         .await
-        .context("record the system migrations that the full schema holds")?;
+        .context("record the system schema baseline")?;
     admin
         .batch_execute("RESET ROLE")
         .await

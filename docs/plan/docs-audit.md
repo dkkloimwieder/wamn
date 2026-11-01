@@ -36,7 +36,6 @@ An agent who reads docs/architecture does not learn about these items.
 - The release chart and `env apply`, rollback and delete: platform-deploy.md §9.2 and §10-§12. deployment.md:5, :171, :537 and gcp.md:427, :1157 cite the plan.
 - Org membership, the admin hierarchy, revocation and scoped deactivation: platform-ui.md §2.7-§2.11.
 - The edge SQLite intent store (3d56f2a05). execution.md:251 links to the frozen history page.
-- `wamn-ctl upgrade-schema` (upgrade_schema.rs). overview.md:66 says schema installation targets fresh databases only.
 - The `workflow` service user (project-state/src/lib.rs:214-222). naming.md:63-73 does not list it.
 
 ## 3. High findings by area

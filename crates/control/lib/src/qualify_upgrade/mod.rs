@@ -286,7 +286,7 @@ async fn copy_predecessor(
         .get(0);
     ensure!(
         carrier_installed,
-        "upgrade-schema must install the package qualification carrier before qualification"
+        "the current full schema must be installed before qualification"
     );
     let predecessor_packages = read_current_packages(&tx, &request.env_key()).await?;
     let manifest_digest = request.predecessor_release.clone();

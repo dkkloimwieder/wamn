@@ -252,6 +252,7 @@ pub(crate) async fn apply_locked(
     document: &EnvironmentDocument,
     reason: Option<&str>,
 ) -> anyhow::Result<Analysis> {
+    crate::schema_baseline::compare_system(&platform.system_database_url).await?;
     let mut analysis = analyse::analyse(platform, document, false).await?;
     ensure::ensure(platform, document, &analysis)
         .await

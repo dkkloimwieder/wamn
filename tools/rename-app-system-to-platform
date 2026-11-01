@@ -6,7 +6,7 @@ reference: SQL, Rust and other source, tests, fixtures and live docs. It
 replaces APP_SYSTEM with PLATFORM, app-system with platform and app_system
 with platform. It is idempotent, so a lane that rebases its own new code over
 the rename runs it again, then cargo fmt. History stays as it is: see
-EXCLUDED and KEEP.
+EXCLUDED.
 
 usage: tools/rename-app-system-to-platform [run|dry-run]
 """
@@ -23,15 +23,9 @@ REPLACEMENTS = (
     ("app_system", "platform"),
 )
 
-# A line that carries this marker names the old schema on purpose (the
-# upgrade path of a database installed before the rename), and stays.
-KEEP = "rename-app-system: keep"
-
 # Paths that stay byte-identical: a path equal to an entry, or under an entry
 # that ends with "/".
 EXCLUDED = (
-    # Applied one-off corrections.
-    "deploy/sql/corrections/",
     # History documents.
     "docs/history/",
     # The plan that describes the rename.
@@ -55,8 +49,6 @@ def excluded(path):
 def rename(text):
     lines = text.splitlines(keepends=True)
     for index, line in enumerate(lines):
-        if KEEP in line:
-            continue
         for old, new in REPLACEMENTS:
             line = line.replace(old, new)
         lines[index] = line

@@ -495,13 +495,6 @@ async fn converge_env_key_identity(
 ) -> anyhow::Result<EnvKeyIdentityOutcome> {
     anyhow::ensure!(!env_key.is_empty(), "tenant must not be empty");
     let mut outcome = EnvKeyIdentityOutcome::default();
-    // The retired rename cannot move a legacy schema to the current name.
-    // Refuse before installing a second platform schema beside it.
-    anyhow::ensure!(
-        !crate::upgrade_schema::holds_legacy_project_schema(&*client).await?,
-        "legacy-project-schema: this database holds the platform schema under its name \
-         from a legacy installation; install the current full schema first"
-    );
     let app_schema_present: bool = client
         .query_one("SELECT to_regclass('platform.\"user\"') IS NOT NULL", &[])
         .await
@@ -641,12 +634,9 @@ async fn converge_env_key_identity(
             .batch_execute(APP_SCHEMA_SQL)
             .await
             .context("install deploy/sql/app-schema.sql")?;
-        crate::upgrade_schema::record_fresh_install(
-            &transaction,
-            wamn_control_provision::schema_migrations::MigrationTarget::Project,
-        )
-        .await
-        .context("record the project migrations that the full schema holds")?;
+        crate::schema_baseline::record_project(&transaction)
+            .await
+            .context("record the project schema baseline")?;
     }
     // Every write below stamps `wamn:provisioning`, and its own row stamps
     // itself, because the bind comes first and lasts for this transaction.

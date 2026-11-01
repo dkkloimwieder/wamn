@@ -120,6 +120,7 @@ pub async fn ensure(
 
     // The run plane: the run schema the credentials are granted on.
     let project_url = project_url(platform, &triple).await?;
+    crate::schema_baseline::compare_project_if_installed(&project_url).await?;
     crate::reconcile_run_plane::reconcile_run_plane(
         crate::reconcile_run_plane::ReconcileRunPlaneRequest {
             system_database_url: platform.system_database_url.clone(),
@@ -134,13 +135,6 @@ pub async fn ensure(
     )
     .await
     .context("reconcile the run plane")?;
-
-    crate::upgrade_schema::upgrade_schema(&super::stage::schema_request(
-        &platform.system_database_url,
-        &project_url,
-    ))
-    .await
-    .context("apply the pending project migrations before connections")?;
 
     // Generation a of each credential, only where its Secret is absent.
     for credential in HOST_CREDENTIALS {

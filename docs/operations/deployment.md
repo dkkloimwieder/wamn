@@ -136,7 +136,7 @@ A secret-only `set-credential` retains the refresh token and forces refresh with
 
 The control host writes credential values through the environment store.
 Postgres keeps their references and display hints.
-The baseline schema owns fresh installations, and the migration lists stay empty.
+The baseline schema owns fresh installations.
 [Integration and connection schema](../plan/integration-schema.md) defines administration, bindings, and version selection.
 
 ### Integration write interfaces
@@ -468,9 +468,6 @@ Use the environment's identity Deployment and require its readiness before issui
 ## Platform schema upgrades
 
 The full schema files under `deploy/sql/` own each platform schema and build fresh installations.
-The system and project migration lists stay empty until development is stable.
-`wamn-ctl upgrade-schema` makes no changes to a current database.
-The migration record tables and the verb remain available so real migrations can start again at 0001.
 Application package migrations retain their own streams.
 
 ## Package upgrades
@@ -511,7 +508,6 @@ A schema change makes predecessor SQL fail to plan and refuses qualification.
 Packages with no SQL need no application schema.
 
 The full schema files install the `catalog.package_upgrade_qualifications` carrier.
-The [platform migration lists](#platform-schema-upgrades) stay empty until development is stable.
 Keep the exact predecessor release available for recovery.
 Run qualification on a machine authorized to hold copied production data, with PostgreSQL 18 tools and enough temporary storage.
 The command owns its temporary PostgreSQL server and private dump directory and removes them after use.

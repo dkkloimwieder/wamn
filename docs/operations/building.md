@@ -22,8 +22,7 @@ Cargo writes its output to `CARGO_TARGET_DIR`, so commands in this repository us
 `wamn build` still writes package output to `apps/target/wamn`.
 
 Platform installations use the full schema files under `deploy/sql/`.
-These files own each schema. The system and project migration lists stay empty until development is stable.
-The migration record tables and `upgrade-schema` remain available for real migrations that start at 0001.
+These files own each schema.
 
 ## Compile cache
 
