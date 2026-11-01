@@ -599,7 +599,7 @@ cd "$SOURCE"
 cargo build --locked --offline \
   -p wamn-ctl -p wamn-host -p wamn-identity -p wamn-cdc-reader \
   -p wamn-test-infrastructure -p wamn-receiving-tests --bins --example delivery_timings
-cargo build --locked --offline --manifest-path apps/Cargo.toml \
+RUSTFLAGS="$(tools/guest-rustflags)" cargo build --locked --offline --release --manifest-path apps/Cargo.toml \
   --target wasm32-wasip2 -p http-route
 RUSTFLAGS="$(tools/guest-rustflags)" cargo build --locked --offline --release \
   --manifest-path apps/Cargo.toml --target wasm32-wasip2 -p materializer
@@ -615,7 +615,7 @@ Run the exact case through the owned fixture:
 
 ```bash
 WAMN_LOCAL_DEV_EDIT_ROOT="$SOURCE" \
-WAMN_DEV_ENV_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/debug/http_route.wasm" \
+WAMN_DEV_ENV_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/release/http_route.wasm" \
   "$CARGO_TARGET_DIR/debug/examples/delivery_timings" \
   "$SOURCE" "$CARGO_TARGET_DIR" "$WAMN_LOCAL_RESULTS" -- \
   "$WAMN_LOCAL_TEST_BINARY" \

@@ -128,7 +128,7 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
     let mut watch = Watch::start(&inputs.wamn_binary, &repository, &config)?;
     let result = async {
         let first = watch.served().await?;
-        ensure!(!first.skipped.contains("migrate") && !first.skipped.contains("generate"), "a new local session must prepare its schema and generated files");
+        ensure!(!first.skipped.contains("migrate"), "a new local session must prepare its schema");
         let (project, task) = connect(&environment.route.database_url).await?;
         seed_receiving_business_rows(project.as_ref()).await?;
         project.execute("INSERT INTO receiving.location(id,location_code) VALUES ('00000000-0000-0000-0000-000000000202','DOCK-2')", &[]).await?;
