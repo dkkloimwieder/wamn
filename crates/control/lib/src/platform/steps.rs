@@ -195,7 +195,7 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
         InstallStep {
             number: "4.8", title: "Environment NATS users",
             runs: Runner::Verb("Kubernetes API"),
-            inputs: vec![("environments", environments.into()), ("environment keys", env_keys.into()), ("NATS", "nats://wamn-nats.platform.svc.cluster.local:4222".into()), ("NATS authorization", "platform/wamn-nats-authorization".into()), ("users per tenant", "provisioning, publisher, observer, runtime, materializer".into())],
+            inputs: vec![("environments", environments.into()), ("environment keys", env_keys.into()), ("NATS", "nats://wamn-nats.platform.svc.cluster.local:4222".into()), ("NATS authorization", "platform/wamn-nats-authorization".into()), ("users", "one certificate user per environment, wamn-env-<org>--<project>--<env>; the control host user wamn-control-<org>".into())],
             owner_inputs: vec![],
         },
         InstallStep {

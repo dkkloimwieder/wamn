@@ -920,6 +920,8 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
         identity.host_group.clone(),
         "--scheduler-nats-url".to_owned(),
         request.config.scheduler_nats_url().to_owned(),
+        "--data-nats-url".to_owned(),
+        request.config.scheduler_nats_url().to_owned(),
         "--host-name".to_owned(),
         identity.host_name.clone(),
         "--runner".to_owned(),
@@ -951,6 +953,20 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
         "--drain-bound-seconds".to_owned(),
         HOST_SHUTDOWN_TIMEOUT.as_secs().to_string(),
     ];
+    // One NATS and one development certificate for both connections
+    // (docs/plan/alignment.md R2, R5).
+    for plane in ["scheduler", "data"] {
+        for (flag, path) in [
+            ("ca", request.config.nats_tls_ca()),
+            ("cert", request.config.nats_tls_cert()),
+            ("key", request.config.nats_tls_key()),
+        ] {
+            args.extend([
+                format!("--{plane}-nats-tls-{flag}"),
+                path.display().to_string(),
+            ]);
+        }
+    }
     for (field, flag) in [
         ("drainDelaySeconds", "--drain-delay"),
         ("natsConnectTimeoutSeconds", "--nats-connect-timeout"),
@@ -995,22 +1011,6 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
         (
             "WAMN_ADMINISTRATION_PG_URL".to_owned(),
             request.config.administration_database_url().to_owned(),
-        ),
-        (
-            "WAMN_EVT_NATS_URL".to_owned(),
-            request.config.event_nats_url().to_owned(),
-        ),
-        (
-            "WAMN_EVT_NATS_USERNAME".to_owned(),
-            request.config.event_nats_username().to_owned(),
-        ),
-        (
-            "WAMN_EVT_NATS_PASSWORD_FILE".to_owned(),
-            request
-                .config
-                .event_nats_password_file()
-                .display()
-                .to_string(),
         ),
         (
             "WAMN_EVT_STREAM_REPLICAS".to_owned(),
@@ -1892,9 +1892,9 @@ mod tests {
             "event_materializer_database_url": "postgresql://materializer:materializer-secret@127.0.0.1:41008/target",
             "administration_database_url": "postgresql://administration:administration-secret@127.0.0.1:41013/target",
             "scheduler_nats_url": "nats://127.0.0.1:41009",
-            "event_nats_url": "nats://127.0.0.1:41010",
-            "event_nats_username": "dev_runtime",
-            "event_nats_password_file": "/run/secrets/event-nats-password",
+            "nats_tls_ca": "/run/wamn-dev/nats/ca.crt",
+            "nats_tls_cert": "/run/wamn-dev/nats/client.crt",
+            "nats_tls_key": "/run/wamn-dev/nats/client.key",
             "stream_replicas": 1,
             "dup_window_secs": 120,
             "otel_exporter_otlp_endpoint": "http://127.0.0.1:41016",
@@ -2281,9 +2281,6 @@ mod tests {
             "WAMN_HTTP_ADMITTER_PG_URL", // Local databases use disposable credentials and endpoints.
             "WAMN_EVENT_MATERIALIZER_PG_URL", // Local databases use disposable credentials and endpoints.
             "WAMN_ADMINISTRATION_PG_URL", // Local databases use disposable credentials and endpoints.
-            "WAMN_EVT_NATS_URL",          // Local events use a disposable broker endpoint.
-            "WAMN_EVT_NATS_USERNAME",     // Local events use disposable broker credentials.
-            "WAMN_EVT_NATS_PASSWORD_FILE", // Local event credentials use a private file.
             "WAMN_MAT_NATS_BINDING_FILE", // Local materializer credentials use a private file.
             "WAMN_CONNECTION_STORE_URL",  // Local credentials use the database reader.
             "WAMN_OAUTH_ENCRYPTION",      // Local hosts share a file key.
@@ -2673,6 +2670,8 @@ mod tests {
             "wamn-dev-fixture",
             "--scheduler-nats-url",
             "nats://127.0.0.1:41009",
+            "--data-nats-url",
+            "nats://127.0.0.1:41009",
             "--host-name",
             "wamn-dev-fixture-1",
             "--runner",
@@ -2699,6 +2698,18 @@ mod tests {
             "inventory",
             "--drain-bound-seconds",
             "70",
+            "--scheduler-nats-tls-ca",
+            "/run/wamn-dev/nats/ca.crt",
+            "--scheduler-nats-tls-cert",
+            "/run/wamn-dev/nats/client.crt",
+            "--scheduler-nats-tls-key",
+            "/run/wamn-dev/nats/client.key",
+            "--data-nats-tls-ca",
+            "/run/wamn-dev/nats/ca.crt",
+            "--data-nats-tls-cert",
+            "/run/wamn-dev/nats/client.crt",
+            "--data-nats-tls-key",
+            "/run/wamn-dev/nats/client.key",
             "--drain-delay",
             "5s",
             "--nats-connect-timeout",
@@ -2742,18 +2753,6 @@ mod tests {
                     "WAMN_ADMINISTRATION_PG_URL".to_owned(),
                     "postgresql://administration:administration-secret@127.0.0.1:41013/target"
                         .to_owned(),
-                ),
-                (
-                    "WAMN_EVT_NATS_URL".to_owned(),
-                    "nats://127.0.0.1:41010".to_owned(),
-                ),
-                (
-                    "WAMN_EVT_NATS_USERNAME".to_owned(),
-                    "dev_runtime".to_owned()
-                ),
-                (
-                    "WAMN_EVT_NATS_PASSWORD_FILE".to_owned(),
-                    "/run/secrets/event-nats-password".to_owned()
                 ),
                 ("WAMN_EVT_STREAM_REPLICAS".to_owned(), "1".to_owned()),
                 ("WAMN_EVT_DUP_WINDOW_SECS".to_owned(), "120".to_owned()),

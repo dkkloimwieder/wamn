@@ -34,26 +34,20 @@ pub struct DevUpArgs {
     #[arg(long, env = "WAMN_DEV_ENV_ROOT")]
     root: PathBuf,
 
+    /// The one local NATS: scheduler, events and memories.
     #[arg(long, env = "WAMN_DEV_ENV_NATS_URL")]
     nats_url: String,
 
-    /// Event broker endpoint, separate from the scheduler endpoint.
-    #[arg(long, env = "WAMN_EVT_NATS_URL")]
-    event_nats_url: String,
+    /// The CA of the local NATS server.
+    #[arg(long, env = "WAMN_DEV_ENV_NATS_TLS_CA")]
+    nats_tls_ca: PathBuf,
 
-    /// Runtime credential for publication.
-    #[arg(long, env = "WAMN_EVT_NATS_USERNAME")]
-    event_nats_username: String,
+    /// The one client certificate of the development environment.
+    #[arg(long, env = "WAMN_DEV_ENV_NATS_TLS_CERT")]
+    nats_tls_cert: PathBuf,
 
-    #[arg(long, env = "WAMN_EVT_NATS_PASSWORD_FILE")]
-    event_nats_password_file: PathBuf,
-
-    /// Credential that creates the declared event streams.
-    #[arg(long, env = "WAMN_DEV_ENV_EVENT_PROVISIONING_USERNAME")]
-    event_provisioning_username: String,
-
-    #[arg(long, env = "WAMN_DEV_ENV_EVENT_PROVISIONING_PASSWORD_FILE")]
-    event_provisioning_password_file: PathBuf,
+    #[arg(long, env = "WAMN_DEV_ENV_NATS_TLS_KEY")]
+    nats_tls_key: PathBuf,
 
     /// Declared NATS stream copies, separate from workload instances.
     #[arg(long, env = "WAMN_EVT_STREAM_REPLICAS")]
@@ -84,23 +78,9 @@ pub struct DevUpArgs {
     #[arg(long, env = "WAMN_DEV_ENV_CDC_READER_BIN")]
     cdc_reader_binary: PathBuf,
 
-    /// Event-broker credential the CDC reader publishes change events with.
-    #[arg(long, env = "WAMN_DEV_ENV_EVENT_PUBLISHER_USERNAME")]
-    event_publisher_username: String,
-
-    #[arg(long, env = "WAMN_DEV_ENV_EVENT_PUBLISHER_PASSWORD_FILE")]
-    event_publisher_password_file: PathBuf,
-
     /// Built platform materializer the loop runs beside the release.
     #[arg(long, env = "WAMN_DEV_ENV_MATERIALIZER_COMPONENT")]
     materializer_component: PathBuf,
-
-    /// Event-broker credential the materializer consumes change events with.
-    #[arg(long, env = "WAMN_DEV_ENV_EVENT_MATERIALIZER_USERNAME")]
-    event_materializer_username: String,
-
-    #[arg(long, env = "WAMN_DEV_ENV_EVENT_MATERIALIZER_PASSWORD_FILE")]
-    event_materializer_password_file: PathBuf,
 
     /// The built `wamn-host` the loop supervises.
     #[arg(long, env = "WAMN_DEV_ENV_HOST_BIN")]
@@ -125,12 +105,13 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
     let config = provision_environment(DevUpRequest {
         system_database_url: args.system_database_url,
         root: args.root,
-        nats_url: args.nats_url,
-        event_nats_url: args.event_nats_url,
-        event_nats_username: args.event_nats_username,
-        event_nats_password_file: args.event_nats_password_file,
-        event_provisioning_username: args.event_provisioning_username,
-        event_provisioning_password_file: args.event_provisioning_password_file,
+        nats: wamn_platform_identity::nats::PlatformNats {
+            nats_url: args.nats_url,
+            nats_tls_ca: args.nats_tls_ca,
+            nats_tls_cert: args.nats_tls_cert,
+            nats_tls_key: args.nats_tls_key,
+            nats_tls_server_name: None,
+        },
         stream_replicas: args.stream_replicas,
         dup_window_secs: args.dup_window_secs,
         otel_exporter_otlp_endpoint: args.otel_exporter_otlp_endpoint,
@@ -142,11 +123,7 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
         platform_ui: args.platform_ui,
         packages: args.packages,
         cdc_reader_binary: args.cdc_reader_binary,
-        event_publisher_username: args.event_publisher_username,
-        event_publisher_password_file: args.event_publisher_password_file,
         materializer_component: args.materializer_component,
-        event_materializer_username: args.event_materializer_username,
-        event_materializer_password_file: args.event_materializer_password_file,
     })
     .await?;
 

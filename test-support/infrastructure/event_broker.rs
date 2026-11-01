@@ -8,16 +8,13 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
 use async_nats::jetstream::{consumer::pull, stream};
-use ring::rand::{SecureRandom as _, SystemRandom};
 use serde::Serialize;
 use wamn_control_registry::Triple;
 
-/// A username and its private password file, without the password in memory.
-#[derive(Debug)]
-pub struct Credentials {
-    pub username: String,
-    pub password_file: PathBuf,
-}
+use crate::nats_tls::{Authority, ClientCertificate, DEVELOPMENT_USER};
+
+/// A user and its client certificate (docs/plan/alignment.md R4).
+pub type Credentials = ClientCertificate;
 
 /// The broker files and separate credentials for one test environment.
 #[derive(Debug)]
@@ -29,11 +26,15 @@ pub struct EventBroker {
     pub publisher: Credentials,
     pub materializer: Credentials,
     pub observer: Credentials,
+    /// The full-permission development certificate of `wamn dev` and the
+    /// processes a test starts.
+    pub development: Credentials,
 }
 
 #[derive(Serialize)]
 struct BrokerConfiguration {
     http: &'static str,
+    tls: serde_json::Value,
     authorization: Authorization,
 }
 
@@ -45,8 +46,8 @@ struct Authorization {
 #[derive(Serialize)]
 struct Account {
     user: String,
-    password: String,
-    permissions: Permissions,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    permissions: Option<Permissions>,
 }
 
 #[derive(Serialize)]
@@ -61,7 +62,42 @@ struct Subjects {
 }
 
 /// Write the broker configuration before the caller starts its owned container.
+/// The broker has its own CA.
 pub fn prepare(
+    work: &Path,
+    scope: &Triple,
+    env_key: &str,
+    source: &stream::Config,
+    advisory: &stream::Config,
+    consumers: &[pull::Config],
+) -> anyhow::Result<EventBroker> {
+    prepare_with(None, work, scope, env_key, source, advisory, consumers)
+}
+
+/// [`prepare`] with the CA of `authority`, for brokers of several
+/// environments on one server.
+pub fn prepare_in(
+    authority: &Authority,
+    work: &Path,
+    scope: &Triple,
+    env_key: &str,
+    source: &stream::Config,
+    advisory: &stream::Config,
+    consumers: &[pull::Config],
+) -> anyhow::Result<EventBroker> {
+    prepare_with(
+        Some(authority),
+        work,
+        scope,
+        env_key,
+        source,
+        advisory,
+        consumers,
+    )
+}
+
+fn prepare_with(
+    authority: Option<&Authority>,
     work: &Path,
     scope: &Triple,
     env_key: &str,
@@ -142,29 +178,65 @@ pub fn prepare(
         .mode(0o700)
         .create(&directory)
         .context("create private event broker directory")?;
+    let own;
+    let authority = if let Some(authority) = authority {
+        authority
+    } else {
+        own = Authority::new(&directory)?;
+        &own
+    };
     let mut users = Vec::new();
     let provisioning = credentials(
+        authority,
         &directory,
         "provisioning",
         &source.name,
         provisioning,
         &mut users,
     )?;
-    let runtime = credentials(&directory, "runtime", &source.name, runtime, &mut users)?;
-    let publisher = credentials(&directory, "publisher", &source.name, publisher, &mut users)?;
+    let runtime = credentials(
+        authority,
+        &directory,
+        "runtime",
+        &source.name,
+        runtime,
+        &mut users,
+    )?;
+    let publisher = credentials(
+        authority,
+        &directory,
+        "publisher",
+        &source.name,
+        publisher,
+        &mut users,
+    )?;
     let materializer = credentials(
+        authority,
         &directory,
         "materializer",
         &source.name,
         materializer,
         &mut users,
     )?;
-    let observer = credentials(&directory, "observer", &source.name, observer, &mut users)?;
+    let observer = credentials(
+        authority,
+        &directory,
+        "observer",
+        &source.name,
+        observer,
+        &mut users,
+    )?;
+    let development = authority.client(DEVELOPMENT_USER)?;
+    users.push(Account {
+        user: DEVELOPMENT_USER.into(),
+        permissions: None,
+    });
     let configuration = directory.join("nats.conf");
     write_private(
         &configuration,
         &serde_json::to_vec(&BrokerConfiguration {
             http: "127.0.0.1:8222",
+            tls: authority.server_tls(),
             authorization: Authorization { users },
         })?,
     )?;
@@ -176,6 +248,7 @@ pub fn prepare(
         publisher,
         materializer,
         observer,
+        development,
     })
 }
 
@@ -183,18 +256,21 @@ pub fn prepare(
 /// process that attaches to the same environment.
 pub fn load(work: &Path) -> anyhow::Result<EventBroker> {
     let directory = work.join("event-nats");
-    let role = |name: &str| -> anyhow::Result<Credentials> {
-        let username = std::fs::read_to_string(directory.join(format!("{name}-username")))
-            .with_context(|| format!("read the {name} broker username"))?;
-        let password_file = directory.join(format!("{name}-password"));
-        ensure!(
-            password_file.is_file(),
-            "the {name} broker password file is missing"
-        );
+    let user = |user: String| -> anyhow::Result<Credentials> {
+        let cert = directory.join(format!("client-{user}.crt"));
+        ensure!(cert.is_file(), "the {user} broker certificate is missing");
         Ok(Credentials {
-            username,
-            password_file,
+            ca: directory.join("ca.crt"),
+            key: directory.join(format!("client-{user}.key")),
+            cert,
+            user,
         })
+    };
+    let role = |name: &str| -> anyhow::Result<Credentials> {
+        user(
+            std::fs::read_to_string(directory.join(format!("{name}-username")))
+                .with_context(|| format!("read the {name} broker username"))?,
+        )
     };
     Ok(EventBroker {
         configuration: directory.join("nats.conf"),
@@ -204,6 +280,7 @@ pub fn load(work: &Path) -> anyhow::Result<EventBroker> {
         publisher: role("publisher")?,
         materializer: role("materializer")?,
         observer: role("observer")?,
+        development: user(DEVELOPMENT_USER.into())?,
     })
 }
 
@@ -215,6 +292,7 @@ fn subject_token(value: &str) -> bool {
 }
 
 fn credentials(
+    authority: &Authority,
     directory: &Path,
     role: &str,
     stream: &str,
@@ -222,13 +300,6 @@ fn credentials(
     users: &mut Vec<Account>,
 ) -> anyhow::Result<Credentials> {
     let username = format!("{role}_{stream}");
-    let mut random = [0u8; 32];
-    SystemRandom::new()
-        .fill(&mut random)
-        .map_err(|_| anyhow::anyhow!("generate broker password"))?;
-    let password = hex::encode(random);
-    let password_file = directory.join(format!("{role}-password"));
-    write_private(&password_file, password.as_bytes())?;
     write_private(
         &directory.join(format!("{role}-username")),
         username.as_bytes(),
@@ -236,16 +307,12 @@ fn credentials(
     let subscribe = vec![format!("_INBOX_{username}.>")];
     users.push(Account {
         user: username.clone(),
-        password,
-        permissions: Permissions {
+        permissions: Some(Permissions {
             publish: Subjects { allow: publish },
             subscribe: Subjects { allow: subscribe },
-        },
+        }),
     });
-    Ok(Credentials {
-        username,
-        password_file,
-    })
+    authority.client(&username)
 }
 
 fn write_private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
@@ -264,13 +331,12 @@ pub fn write_binding(
     server: &str,
     source: &stream::Config,
 ) -> anyhow::Result<()> {
-    let password = std::fs::read_to_string(&broker.materializer.password_file)
-        .context("read materializer password file")?;
     let binding = serde_json::json!({
         "servers": server,
-        "username": broker.materializer.username,
-        "password": password,
-        "inbox-prefix": format!("_INBOX_{}", broker.materializer.username),
+        "tls-ca": broker.materializer.ca,
+        "tls-cert": broker.materializer.cert,
+        "tls-key": broker.materializer.key,
+        "inbox-prefix": format!("_INBOX_{}", broker.materializer.user),
         "stream-allow": source.name,
         "subject-allow": source.subjects.join(","),
         "subscription-capacity-bytes": "4194304",
@@ -285,11 +351,7 @@ pub async fn connect(
     credentials: &Credentials,
     server: &str,
 ) -> anyhow::Result<async_nats::Client> {
-    let password =
-        std::fs::read_to_string(&credentials.password_file).context("read broker password file")?;
-    async_nats::ConnectOptions::new()
-        .user_and_password(credentials.username.clone(), password)
-        .custom_inbox_prefix(format!("_INBOX_{}", credentials.username))
+    credentials
         .connect(server)
         .await
         .context("connect scoped event broker client")
@@ -332,7 +394,7 @@ mod tests {
     }
 
     #[test]
-    fn private_files_keep_passwords_out_of_debug_and_bind_the_inspected_server() {
+    fn private_files_bind_the_inspected_server_with_the_materializer_certificate() {
         let root = directory();
         let (scope, source, advisory, consumer) = declarations();
         let broker = prepare(
@@ -362,9 +424,11 @@ mod tests {
         }
         let binding: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&broker.binding).unwrap()).unwrap();
-        let password = std::fs::read_to_string(&broker.materializer.password_file).unwrap();
-        assert_eq!(binding["password"], password);
-        assert!(!format!("{broker:?}").contains(&password));
+        assert_eq!(
+            binding["tls-cert"],
+            serde_json::json!(broker.materializer.cert)
+        );
+        assert!(binding.get("password").is_none());
         assert_eq!(binding["servers"], "nats://172.20.0.9:4222");
         assert_eq!(binding["stream-allow"], source.name);
         assert_eq!(binding["subject-allow"], source.subjects[0]);
@@ -388,10 +452,18 @@ mod tests {
         let configuration: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&broker.configuration).unwrap()).unwrap();
         assert_eq!(configuration["http"], "127.0.0.1:8222");
-        let mut passwords = BTreeSet::new();
-        for user in configuration["authorization"]["users"].as_array().unwrap() {
-            assert!(passwords.insert(user["password"].as_str().unwrap()));
-            let provisioning = user["user"] == broker.provisioning.username;
+        assert_eq!(configuration["tls"]["verify_and_map"], true);
+        let users = configuration["authorization"]["users"].as_array().unwrap();
+        // R4: no user has a password. The development user has every permission.
+        assert!(users.iter().all(|user| user.get("password").is_none()));
+        let mut names = BTreeSet::new();
+        for user in users {
+            assert!(names.insert(user["user"].as_str().unwrap()));
+            if user["user"] == crate::nats_tls::DEVELOPMENT_USER {
+                assert!(user.get("permissions").is_none());
+                continue;
+            }
+            let provisioning = user["user"] == broker.provisioning.user.as_str();
             let mut manages = false;
             for subject in user["permissions"]["publish"]["allow"].as_array().unwrap() {
                 let subject = subject.as_str().unwrap();
@@ -415,7 +487,7 @@ mod tests {
             );
             assert_eq!(subscriptions.len(), 1);
         }
-        assert_eq!(passwords.len(), 5);
+        assert_eq!(names.len(), 6);
     }
 
     #[test]

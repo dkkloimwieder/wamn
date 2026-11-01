@@ -520,6 +520,15 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
     values.insert("roles".into(), Value::Sequence(roles));
     values.insert("audit".into(), mapping([("actor", input.actor.clone())]));
     values.insert("runtime-operator".into(), Value::Mapping(operator));
+    // The host's data connection is the environment's NATS user
+    // (docs/plan/alignment.md R5).
+    let env_key = wamn_control_registry::project_env_key(&input.org, &input.project, &input.env);
+    let mut global = Mapping::new();
+    global.insert(
+        "certificates".into(),
+        mapping([("dataCertSecretName", format!("wamn-nats-{env_key}"))]),
+    );
+    values.insert("global".into(), Value::Mapping(global));
     Ok(Value::Mapping(values))
 }
 

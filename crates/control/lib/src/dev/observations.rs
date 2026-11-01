@@ -355,7 +355,7 @@ mod tests {
     use super::*;
 
     fn reader(path: std::path::PathBuf) -> TraceReader {
-        let addresses = ["127.0.0.1:41000".parse().unwrap(); 11];
+        let addresses = ["127.0.0.1:41000".parse().unwrap(); 10];
         let config = super::super::config::parse_config(
             &serde_json::to_vec(&super::super::config::tests::complete_document(&addresses))
                 .unwrap(),

@@ -53,10 +53,13 @@ impl DevJourneyInputs {
                     bindings: None,
                 },
                 host_binary: required_journey_path("WAMN_RECEIVING_DEV_HOST_BIN")?,
-                nats_url: required_journey("WAMN_RECEIVING_DEV_NATS_URL")?,
-                event_nats_url: required_journey("WAMN_EVT_NATS_URL")?,
-                event_nats_username: required_journey("WAMN_EVT_NATS_USERNAME")?,
-                event_nats_password_file: required_journey_path("WAMN_EVT_NATS_PASSWORD_FILE")?,
+                nats: wamn_platform_identity::nats::PlatformNats {
+                    nats_url: required_journey("WAMN_RECEIVING_DEV_NATS_URL")?,
+                    nats_tls_ca: required_journey_path("WAMN_DEV_ENV_NATS_TLS_CA")?,
+                    nats_tls_cert: required_journey_path("WAMN_DEV_ENV_NATS_TLS_CERT")?,
+                    nats_tls_key: required_journey_path("WAMN_DEV_ENV_NATS_TLS_KEY")?,
+                    nats_tls_server_name: None,
+                },
                 stream_replicas: required_journey("WAMN_EVT_STREAM_REPLICAS")?.parse()
                     .context("the dev test requires its declared NATS stream replica count")?,
                 dup_window_secs: required_journey("WAMN_EVT_DUP_WINDOW_SECS")?.parse()
@@ -72,12 +75,6 @@ impl DevJourneyInputs {
                         .context("resolve the base package root")?,
                 ],
                 cdc_reader: None,
-                event_materializer_username: required_journey(
-                    "WAMN_DEV_ENV_EVENT_MATERIALIZER_USERNAME",
-                )?,
-                event_materializer_password_file: required_journey_path(
-                    "WAMN_DEV_ENV_EVENT_MATERIALIZER_PASSWORD_FILE",
-                )?,
             },
         };
         anyhow::ensure!(
@@ -374,7 +371,7 @@ pub(super) async fn current_database_acl(
 }
 
 #[tokio::test]
-#[ignore = "requires: test-util identity binary, RESEND_API_KEY, RESEND_FROM, WAMN_RECEIVING_DEV_BIN, WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, WAMN_DEV_ENV_MATERIALIZER_COMPONENT, WAMN_DEV_ENV_EVENT_MATERIALIZER_USERNAME, WAMN_DEV_ENV_EVENT_MATERIALIZER_PASSWORD_FILE, WAMN_RECEIVING_DEV_HOST_BIN, WAMN_RECEIVING_DEV_NATS_URL, WAMN_EVT_NATS_URL, WAMN_EVT_NATS_USERNAME, WAMN_EVT_NATS_PASSWORD_FILE, WAMN_EVT_STREAM_REPLICAS, WAMN_EVT_DUP_WINDOW_SECS, WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, WAMN_ROUTE_HOST, WAMN_DEV_ENV_EVENT_PROVISIONING_USERNAME, WAMN_DEV_ENV_EVENT_PROVISIONING_PASSWORD_FILE, cargo-sqlx, jq"]
+#[ignore = "requires: test-util identity binary, RESEND_API_KEY, RESEND_FROM, WAMN_RECEIVING_DEV_BIN, WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, WAMN_DEV_ENV_MATERIALIZER_COMPONENT, WAMN_RECEIVING_DEV_HOST_BIN, WAMN_RECEIVING_DEV_NATS_URL, WAMN_DEV_ENV_NATS_TLS_CA, WAMN_DEV_ENV_NATS_TLS_CERT, WAMN_DEV_ENV_NATS_TLS_KEY, WAMN_EVT_STREAM_REPLICAS, WAMN_EVT_DUP_WINDOW_SECS, WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, WAMN_ROUTE_HOST, cargo-sqlx, jq"]
 async fn product_dev_command_owns_the_clean_ten_stage_output_and_cleanup() -> anyhow::Result<()> {
     wamn_test_postgres::require_prerequisites(&[
         "RESEND_API_KEY",
@@ -382,19 +379,15 @@ async fn product_dev_command_owns_the_clean_ten_stage_output_and_cleanup() -> an
         "WAMN_RECEIVING_DEV_BIN",
         "WAMN_DEV_ENV_FLOW_HTTP_COMPONENT",
         "WAMN_DEV_ENV_MATERIALIZER_COMPONENT",
-        "WAMN_DEV_ENV_EVENT_MATERIALIZER_USERNAME",
-        "WAMN_DEV_ENV_EVENT_MATERIALIZER_PASSWORD_FILE",
         "WAMN_RECEIVING_DEV_HOST_BIN",
         "WAMN_RECEIVING_DEV_NATS_URL",
-        "WAMN_EVT_NATS_URL",
-        "WAMN_EVT_NATS_USERNAME",
-        "WAMN_EVT_NATS_PASSWORD_FILE",
+        "WAMN_DEV_ENV_NATS_TLS_CA",
+        "WAMN_DEV_ENV_NATS_TLS_CERT",
+        "WAMN_DEV_ENV_NATS_TLS_KEY",
         "WAMN_EVT_STREAM_REPLICAS",
         "WAMN_EVT_DUP_WINDOW_SECS",
         "WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT",
         "WAMN_ROUTE_HOST",
-        "WAMN_DEV_ENV_EVENT_PROVISIONING_USERNAME",
-        "WAMN_DEV_ENV_EVENT_PROVISIONING_PASSWORD_FILE",
         "cargo-sqlx",
         "jq",
     ]);
@@ -402,15 +395,7 @@ async fn product_dev_command_owns_the_clean_ten_stage_output_and_cleanup() -> an
     let mut server = wamn_test_infrastructure::postgres::start(&[])?;
     let system_url = server.create_database("wamn_system")?.url().to_owned();
     let mut inputs = DevJourneyInputs::required()?;
-    let credentials = wamn_test_infrastructure::event_broker::Credentials {
-        username: required_journey("WAMN_DEV_ENV_EVENT_PROVISIONING_USERNAME")?,
-        password_file: required_journey_path("WAMN_DEV_ENV_EVENT_PROVISIONING_PASSWORD_FILE")?,
-    };
-    let provisioning = wamn_test_infrastructure::event_broker::connect(
-        &credentials,
-        &inputs.environment.event_nats_url,
-    )
-    .await?;
+    let provisioning = inputs.environment.nats.connect().await?;
     assert_dev_command(&system_url, &mut inputs, &provisioning).await
 }
 

@@ -284,8 +284,8 @@ async fn main() -> anyhow::Result<()> {
     private(
         &directory.join("compose.json"),
         &serde_json::to_vec(&json!({"services":{"delivery-events":{
-            "image":"nats:2.10-alpine","command":["--config=/etc/nats/nats.conf","--jetstream","--store_dir=/data"],
-            "ports":["127.0.0.1::4222"],"volumes":[{"type":"bind","source":broker.configuration,"target":"/etc/nats/nats.conf","read_only":true}],
+            "image":"nats:2.10-alpine","command":[format!("--config={}", broker.configuration.display()),"--jetstream","--store_dir=/data"],
+            "ports":["127.0.0.1::4222"],"volumes":[{"type":"bind","source":directory.join("event-nats"),"target":directory.join("event-nats"),"read_only":true}],
             "healthcheck":{"test":["CMD-SHELL","wget -qO- http://127.0.0.1:8222/healthz | grep -q ok"],"interval":"1s","timeout":"2s","retries":60}
         }}}))?,
     )?;
@@ -296,11 +296,7 @@ async fn main() -> anyhow::Result<()> {
             .is_empty(),
         "timing project already owns containers"
     );
-    let mut services = vec![
-        "receiving-dev-nats",
-        "receiving-dev-collector",
-        "delivery-events",
-    ];
+    let mut services = vec!["receiving-dev-collector", "delivery-events"];
     if wms {
         services.push("receiving-dev-minio");
     }
@@ -311,7 +307,6 @@ async fn main() -> anyhow::Result<()> {
             .args(&services),
     )
     .await?;
-    let scheduler = compose.port("receiving-dev-nats", "4222").await?;
     let events = compose.port("delivery-events", "4222").await?;
     let otlp = compose.port("receiving-dev-collector", "4317").await?;
     tokio::time::timeout(Duration::from_secs(60), async {
@@ -351,41 +346,24 @@ async fn main() -> anyhow::Result<()> {
             target.join("debug/wamn-cdc-reader").display().to_string(),
         ),
         (
-            "WAMN_DEV_ENV_EVENT_PUBLISHER_USERNAME",
-            broker.publisher.username.clone(),
+            "WAMN_DEV_ENV_NATS_TLS_CA",
+            broker.development.ca.display().to_string(),
         ),
         (
-            "WAMN_DEV_ENV_EVENT_PUBLISHER_PASSWORD_FILE",
-            broker.publisher.password_file.display().to_string(),
+            "WAMN_DEV_ENV_NATS_TLS_CERT",
+            broker.development.cert.display().to_string(),
         ),
         (
-            "WAMN_DEV_ENV_EVENT_MATERIALIZER_USERNAME",
-            broker.materializer.username.clone(),
-        ),
-        (
-            "WAMN_DEV_ENV_EVENT_MATERIALIZER_PASSWORD_FILE",
-            broker.materializer.password_file.display().to_string(),
+            "WAMN_DEV_ENV_NATS_TLS_KEY",
+            broker.development.key.display().to_string(),
         ),
         ("WAMN_DEV_ENV_ROOT", root.display().to_string()),
         (
             "WAMN_IDENTITY_BINARY",
             target.join("debug/wamn-identity").display().to_string(),
         ),
-        ("WAMN_RECEIVING_DEV_NATS_URL", format!("nats://{scheduler}")),
-        ("WAMN_EVT_NATS_URL", event_url),
-        ("WAMN_EVT_NATS_USERNAME", broker.runtime.username),
-        (
-            "WAMN_EVT_NATS_PASSWORD_FILE",
-            broker.runtime.password_file.display().to_string(),
-        ),
-        (
-            "WAMN_DEV_ENV_EVENT_PROVISIONING_USERNAME",
-            broker.provisioning.username,
-        ),
-        (
-            "WAMN_DEV_ENV_EVENT_PROVISIONING_PASSWORD_FILE",
-            broker.provisioning.password_file.display().to_string(),
-        ),
+        // One NATS: the scheduler, the events and the memories.
+        ("WAMN_RECEIVING_DEV_NATS_URL", event_url),
         ("WAMN_EVT_STREAM_REPLICAS", "1".to_owned()),
         ("WAMN_EVT_DUP_WINDOW_SECS", "120".to_owned()),
         (

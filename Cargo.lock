@@ -6674,6 +6674,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "hex",
+ "rcgen",
  "reqwest",
  "ring",
  "rustix 1.1.5",

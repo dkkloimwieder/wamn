@@ -611,7 +611,7 @@ async fn event_authorship_requires_a_captured_application_model() {
 
 /// The supplied broker credential needs stream management and event publication.
 #[tokio::test]
-#[ignore = "requires: WAMN_EVENT_NATS_URL, WAMN_EVENT_NATS_USERNAME, WAMN_EVENT_NATS_PASSWORD_FILE"]
+#[ignore = "requires: WAMN_NATS_URL, WAMN_NATS_TLS_CA, WAMN_NATS_TLS_CERT, WAMN_NATS_TLS_KEY"]
 async fn event_enable_records_stream_tail_and_requires_admin() {
     use std::time::Duration;
     use wamn_control::environment::EventBroker;
@@ -665,25 +665,12 @@ async fn event_enable_records_stream_tail_and_requires_admin() {
         .grant(&wamn_project_state::workflow_user_id().to_string(), "admin")
         .await;
     let events = EventBroker {
-        nats_url: std::env::var("WAMN_EVENT_NATS_URL").unwrap(),
-        nats_username: std::env::var("WAMN_EVENT_NATS_USERNAME").unwrap(),
-        nats_password_file: std::env::var_os("WAMN_EVENT_NATS_PASSWORD_FILE")
-            .unwrap()
-            .into(),
+        nats: wamn_platform_identity::nats::PlatformNats::from_env().unwrap(),
         stream_replicas: 1,
         dup_window_secs: 120,
     };
     let scope = triple();
-    let broker = async_nats::jetstream::new(
-        wamn_control::event_streams::connection_options(
-            &events.nats_username,
-            &events.nats_password_file,
-        )
-        .unwrap()
-        .connect(&events.nats_url)
-        .await
-        .unwrap(),
-    );
+    let broker = async_nats::jetstream::new(events.nats.connect().await.unwrap());
     let config = source_stream_config(&scope, 1, Duration::from_secs(120));
     let name = config.name.clone();
     let mut stream = broker.create_stream(config).await.unwrap();

@@ -7,11 +7,6 @@
 # none of them. WAMN_SESSION_INSTANCE_SUFFIX is the instance suffix that the first
 # apply recorded; write it again after a new first apply.
 replicas: 1
-# The operator release and its control NATS run in namespace platform, not in
-# the release namespace hosts, so the host group names the scheduler and data
-# NATS (the subchart's default is nats.<release namespace>).
-schedulerNatsUrl: nats://nats.platform.svc.cluster.local:4222
-dataNatsUrl: nats://nats.platform.svc.cluster.local:4222
 env:
 - name: WAMN_OAUTH_ENCRYPTION
   value: '{"provider":"gcp","project":"wamn-dev","region":"us-central1"}'
@@ -27,16 +22,6 @@ env:
   value: /etc/wamn/registry
 - name: WAMN_COMPONENT_ARTIFACT_BASE
   value: us-central1-docker.pkg.dev/wamn-dev/wamn/components
-- name: WAMN_EVT_NATS_URL
-  value: nats://evt-nats.platform.svc.cluster.local:4222
-- name: WAMN_EVT_NATS_USERNAME
-  valueFrom:
-    secretKeyRef:
-      name: wamn-event-nats-wms
-      key: username
-      optional: false
-- name: WAMN_EVT_NATS_PASSWORD_FILE
-  value: /etc/wamn/event-nats/password
 - name: WAMN_MAT_NATS_BINDING_FILE
   value: /etc/wamn/materializer-nats/binding.json
 - name: WAMN_EVT_ORG
@@ -60,13 +45,6 @@ env:
 - name: WAMN_SESSION_JWKS_CA
   value: /etc/identity-ca/ca.crt
 volumes:
-- name: event-nats
-  secret:
-    secretName: wamn-event-nats-wms
-    optional: false
-    items:
-    - key: password
-      path: password
 - name: materializer-nats
   secret:
     secretName: wamn-materializer-nats-wms
@@ -99,9 +77,6 @@ resources:
   guestMemoryMode: count
   maxConcurrentStarts: 1
 volumeMounts:
-- name: event-nats
-  mountPath: /etc/wamn/event-nats
-  readOnly: true
 - name: materializer-nats
   mountPath: /etc/wamn/materializer-nats
   readOnly: true

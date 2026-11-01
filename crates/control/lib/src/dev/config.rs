@@ -38,9 +38,9 @@ const HTTP_ADMITTER_DATABASE_URL: &str = "http_admitter_database_url";
 const EVENT_MATERIALIZER_DATABASE_URL: &str = "event_materializer_database_url";
 const ADMINISTRATION_DATABASE_URL: &str = "administration_database_url";
 const SCHEDULER_NATS_URL: &str = "scheduler_nats_url";
-const EVENT_NATS_URL: &str = "event_nats_url";
-const EVENT_NATS_USERNAME: &str = "event_nats_username";
-const EVENT_NATS_PASSWORD_FILE: &str = "event_nats_password_file";
+const NATS_TLS_CA: &str = "nats_tls_ca";
+const NATS_TLS_CERT: &str = "nats_tls_cert";
+const NATS_TLS_KEY: &str = "nats_tls_key";
 const STREAM_REPLICAS: &str = "stream_replicas";
 const DUP_WINDOW_SECS: &str = "dup_window_secs";
 const OTEL_EXPORTER_OTLP_ENDPOINT: &str = "otel_exporter_otlp_endpoint";
@@ -91,9 +91,6 @@ pub struct CdcReader {
     pub system_database_url: String,
     /// The replication credential, the `url` of the rendered CDC Secret.
     pub cdc_url: String,
-    /// The event-broker credential that publishes the change events.
-    pub nats_username: String,
-    pub nats_password_file: PathBuf,
     /// The CDC SQL of `enable-cdc-project-env`, applied to every new target.
     pub cdc_sql_file: PathBuf,
 }
@@ -105,8 +102,6 @@ impl fmt::Debug for CdcReader {
             .field("binary", &self.binary)
             .field("system_database_url", &"[REDACTED]")
             .field("cdc_url", &"[REDACTED]")
-            .field("nats_username", &self.nats_username)
-            .field("nats_password_file", &self.nats_password_file)
             .field("cdc_sql_file", &self.cdc_sql_file)
             .finish()
     }
@@ -142,9 +137,9 @@ struct DevConfigDocument {
     event_materializer_database_url: String,
     administration_database_url: String,
     scheduler_nats_url: String,
-    event_nats_url: String,
-    event_nats_username: String,
-    event_nats_password_file: PathBuf,
+    nats_tls_ca: PathBuf,
+    nats_tls_cert: PathBuf,
+    nats_tls_key: PathBuf,
     stream_replicas: usize,
     dup_window_secs: u64,
     otel_exporter_otlp_endpoint: String,
@@ -569,9 +564,9 @@ pub struct DevConfig {
     event_materializer_database_url: Box<str>,
     administration_database_url: Box<str>,
     scheduler_nats_url: Box<str>,
-    event_nats_url: Box<str>,
-    event_nats_username: Box<str>,
-    event_nats_password_file: PathBuf,
+    nats_tls_ca: PathBuf,
+    nats_tls_cert: PathBuf,
+    nats_tls_key: PathBuf,
     stream_replicas: usize,
     dup_window_secs: u64,
     otel_exporter_otlp_endpoint: Box<str>,
@@ -631,9 +626,9 @@ impl fmt::Debug for DevConfig {
                 SCHEDULER_NATS_URL,
                 &self.sanitized_endpoint(SCHEDULER_NATS_URL),
             )
-            .field(EVENT_NATS_URL, &self.sanitized_endpoint(EVENT_NATS_URL))
-            .field(EVENT_NATS_USERNAME, &self.event_nats_username)
-            .field(EVENT_NATS_PASSWORD_FILE, &self.event_nats_password_file)
+            .field(NATS_TLS_CA, &self.nats_tls_ca)
+            .field(NATS_TLS_CERT, &self.nats_tls_cert)
+            .field(NATS_TLS_KEY, &self.nats_tls_key)
             .field(STREAM_REPLICAS, &self.stream_replicas)
             .field(DUP_WINDOW_SECS, &self.dup_window_secs)
             .field(
@@ -750,24 +745,36 @@ impl DevConfig {
         &self.administration_database_url
     }
 
-    /// Scheduler NATS endpoint used by the native workload API.
+    /// The one NATS endpoint: the scheduler, the events and the memories
+    /// (docs/plan/alignment.md R1, R2).
     pub fn scheduler_nats_url(&self) -> &str {
         &self.scheduler_nats_url
     }
 
-    /// Event-plane NATS endpoint passed to the local serving host.
-    pub fn event_nats_url(&self) -> &str {
-        &self.event_nats_url
+    /// The CA of the local NATS server.
+    pub fn nats_tls_ca(&self) -> &Path {
+        &self.nats_tls_ca
     }
 
-    /// Event username of local publication.
-    pub fn event_nats_username(&self) -> &str {
-        &self.event_nats_username
+    /// The one client certificate of the development environment.
+    pub fn nats_tls_cert(&self) -> &Path {
+        &self.nats_tls_cert
     }
 
-    /// Private event password file passed to the local serving host.
-    pub fn event_nats_password_file(&self) -> &Path {
-        &self.event_nats_password_file
+    /// The key of the client certificate.
+    pub fn nats_tls_key(&self) -> &Path {
+        &self.nats_tls_key
+    }
+
+    /// The certificate connection of the platform processes.
+    pub fn nats(&self) -> wamn_platform_identity::nats::PlatformNats {
+        wamn_platform_identity::nats::PlatformNats {
+            nats_url: self.scheduler_nats_url.to_string(),
+            nats_tls_ca: self.nats_tls_ca.clone(),
+            nats_tls_cert: self.nats_tls_cert.clone(),
+            nats_tls_key: self.nats_tls_key.clone(),
+            nats_tls_server_name: None,
+        }
     }
 
     /// Declared NATS stream copies, separate from workload instances.
@@ -891,9 +898,9 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         event_materializer_database_url,
         administration_database_url,
         scheduler_nats_url,
-        event_nats_url,
-        event_nats_username,
-        event_nats_password_file,
+        nats_tls_ca,
+        nats_tls_cert,
+        nats_tls_key,
         stream_replicas,
         dup_window_secs,
         otel_exporter_otlp_endpoint,
@@ -933,20 +940,21 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     let administration_database_url =
         nonempty_string(administration_database_url, ADMINISTRATION_DATABASE_URL)?;
     let scheduler_nats_url = nonempty_string(scheduler_nats_url, SCHEDULER_NATS_URL)?;
-    let event_nats_url = nonempty_string(event_nats_url, EVENT_NATS_URL)?;
-    let event_nats_username = nonempty_string(event_nats_username, EVENT_NATS_USERNAME)?;
-    if !event_nats_username
-        .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-    {
-        return Err(DevConfigError::new(
-            DevConfigErrorType::InvalidValue,
-            EVENT_NATS_USERNAME,
-            "event username must be one broker token",
-        ));
-    }
-    let event_nats_password_file =
-        nonempty_path(event_nats_password_file, EVENT_NATS_PASSWORD_FILE)?;
+    let certificate_path = |path, key| {
+        let path = nonempty_path(path, key)?;
+        if path.is_absolute() {
+            Ok(path)
+        } else {
+            Err(DevConfigError::new(
+                DevConfigErrorType::InvalidValue,
+                key,
+                "the NATS certificate paths must be absolute",
+            ))
+        }
+    };
+    let nats_tls_ca = certificate_path(nats_tls_ca, NATS_TLS_CA)?;
+    let nats_tls_cert = certificate_path(nats_tls_cert, NATS_TLS_CERT)?;
+    let nats_tls_key = certificate_path(nats_tls_key, NATS_TLS_KEY)?;
     if !(1..=5).contains(&stream_replicas) {
         return Err(DevConfigError::new(
             DevConfigErrorType::InvalidValue,
@@ -1033,19 +1041,11 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         ));
     }
     if let Some(reader) = &cdc_reader {
-        let paths = [
-            &reader.binary,
-            &reader.nats_password_file,
-            &reader.cdc_sql_file,
-        ];
+        let paths = [&reader.binary, &reader.cdc_sql_file];
         if paths.iter().any(|path| !path.is_absolute())
-            || [
-                &reader.system_database_url,
-                &reader.cdc_url,
-                &reader.nats_username,
-            ]
-            .iter()
-            .any(|value| value.is_empty())
+            || [&reader.system_database_url, &reader.cdc_url]
+                .iter()
+                .any(|value| value.is_empty())
         {
             return Err(DevConfigError::new(
                 DevConfigErrorType::InvalidValue,
@@ -1098,7 +1098,6 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         4222,
         false,
     )?;
-    let event_probe = url_probe(EVENT_NATS_URL, &event_nats_url, &["nats"], 4222, false)?;
     let otel_exporter_probe = url_probe(
         OTEL_EXPORTER_OTLP_ENDPOINT,
         &otel_exporter_otlp_endpoint,
@@ -1116,7 +1115,6 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         event_materializer_probe,
         administration_probe,
         scheduler_probe,
-        event_probe,
         otel_exporter_probe,
     ];
 
@@ -1157,9 +1155,9 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         event_materializer_database_url,
         administration_database_url,
         scheduler_nats_url,
-        event_nats_url,
-        event_nats_username,
-        event_nats_password_file,
+        nats_tls_ca,
+        nats_tls_cert,
+        nats_tls_key,
         stream_replicas,
         dup_window_secs,
         otel_exporter_otlp_endpoint,
@@ -1686,7 +1684,7 @@ pub(crate) mod tests {
     use serde_json::json;
     use tokio::net::TcpListener;
 
-    const ENDPOINT_COUNT: usize = 11;
+    const ENDPOINT_COUNT: usize = 10;
     const DEV_CONFIG_SCHEMA_PATH: &str = "schema/wamn-dev.schema.json";
     /// The overlay manifest of the platform fixture application.
     fn overlay_manifest() -> Vec<u8> {
@@ -1737,14 +1735,14 @@ pub(crate) mod tests {
             (EXECUTOR_PLATFORM_DATABASE_URL): format!("postgresql://platform:platform-secret@{}/target", addresses[4]),
             (HTTP_ADMITTER_DATABASE_URL): format!("postgresql://admitter:admitter-secret@{}/target", addresses[5]),
             (EVENT_MATERIALIZER_DATABASE_URL): format!("postgresql://materializer:materializer-secret@{}/target", addresses[6]),
-            (ADMINISTRATION_DATABASE_URL): format!("postgresql://administration:administration-secret@{}/target", addresses[10]),
+            (ADMINISTRATION_DATABASE_URL): format!("postgresql://administration:administration-secret@{}/target", addresses[9]),
             (SCHEDULER_NATS_URL): format!("nats://{}", addresses[7]),
-            (EVENT_NATS_URL): format!("nats://{}", addresses[8]),
-            (EVENT_NATS_USERNAME): "dev_runtime",
-            (EVENT_NATS_PASSWORD_FILE): "/run/secrets/event-nats-password",
+            (NATS_TLS_CA): "/run/wamn-dev/nats/ca.crt",
+            (NATS_TLS_CERT): "/run/wamn-dev/nats/client.crt",
+            (NATS_TLS_KEY): "/run/wamn-dev/nats/client.key",
             (STREAM_REPLICAS): 1,
             (DUP_WINDOW_SECS): 120,
-            (OTEL_EXPORTER_OTLP_ENDPOINT): format!("http://{}", addresses[9]),
+            (OTEL_EXPORTER_OTLP_ENDPOINT): format!("http://{}", addresses[8]),
             (GATE_BEARER_TOKEN): "gate-super-secret",
             (ROUTE_HOST): "fixture.localhost",
             (PLATFORM_DOMAIN): "example.invalid",
@@ -1782,7 +1780,10 @@ pub(crate) mod tests {
         let addresses = ["127.0.0.1:41000".parse().expect("test address"); ENDPOINT_COUNT];
         let document = complete_document(&addresses);
         let parsed = parse_config(&serde_json::to_vec(&document).unwrap()).unwrap();
-        assert_eq!(parsed.event_nats_username(), "dev_runtime");
+        assert_eq!(
+            parsed.nats().nats_tls_cert,
+            Path::new("/run/wamn-dev/nats/client.crt")
+        );
         assert_eq!(parsed.stream_replicas(), 1);
         assert_eq!(parsed.dup_window_secs(), 120);
         let mut long_window = document.clone();
@@ -1790,8 +1791,8 @@ pub(crate) mod tests {
         let parsed = parse_config(&serde_json::to_vec(&long_window).unwrap()).unwrap();
         assert_eq!(parsed.dup_window_secs(), u64::from(u32::MAX) + 1);
         for (key, value) in [
-            (EVENT_NATS_USERNAME, json!("bad.user")),
-            (EVENT_NATS_PASSWORD_FILE, json!("")),
+            (NATS_TLS_CERT, json!("relative/client.crt")),
+            (NATS_TLS_KEY, json!("")),
             (STREAM_REPLICAS, json!(0)),
             (STREAM_REPLICAS, json!(6)),
             (DUP_WINDOW_SECS, json!(0)),
@@ -1803,8 +1804,9 @@ pub(crate) mod tests {
             assert_eq!(error.error_type(), DevConfigErrorType::InvalidValue);
         }
         for key in [
-            EVENT_NATS_USERNAME,
-            EVENT_NATS_PASSWORD_FILE,
+            NATS_TLS_CA,
+            NATS_TLS_CERT,
+            NATS_TLS_KEY,
             STREAM_REPLICAS,
             DUP_WINDOW_SECS,
         ] {
@@ -1912,7 +1914,7 @@ pub(crate) mod tests {
         assert_eq!(config.platform_domain(), "example.invalid");
         assert_eq!(
             config.otel_exporter_otlp_endpoint(),
-            format!("http://{}", addresses[9])
+            format!("http://{}", addresses[8])
         );
 
         for key in [PLATFORM_DOMAIN, HOST_BINARY, WASMTIME_CACHE_DIR] {

@@ -735,12 +735,6 @@ mod enable_cdc {
             "billing",
             "--env",
             "dev",
-            "--nats-url",
-            "nats://127.0.0.1:4222",
-            "--nats-username",
-            "test_provision",
-            "--nats-password-file",
-            "/test/private/event-password",
             "--stream-replicas",
             "1",
             "--dup-window-secs",
@@ -762,7 +756,7 @@ mod enable_cdc {
     }
 
     #[test]
-    fn cdc_command_accepts_explicit_broker_and_native_consumer_declarations() {
+    fn cdc_command_accepts_native_consumer_declarations() {
         let consumer = wamn_control_provision::events::materializer_consumer_config(
             "mat_t_pkg_r1",
             "evt.acme.billing.dev.invoice.>",
@@ -780,12 +774,6 @@ mod enable_cdc {
             "dev",
             "--replication-password",
             "test-password",
-            "--nats-url",
-            "nats://127.0.0.1:4222",
-            "--nats-username",
-            "test_provision",
-            "--nats-password-file",
-            "/test/private/event-password",
             "--stream-replicas",
             "1",
             "--dup-window-secs",

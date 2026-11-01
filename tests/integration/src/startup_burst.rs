@@ -468,15 +468,11 @@ pub async fn assert_startup(
         inputs.max_concurrent_starts > 0,
         "native start limit must be nonzero"
     );
-    ensure!(
-        inputs.scheduler_nats_url != inputs.nats_url,
-        "the startup test requires separate scheduler and event brokers"
-    );
     let mut result = json!({"source":inputs.source,"test_id":inputs.test_id,
         "native_start_limit":inputs.max_concurrent_starts,"profile":"release",
         "manifest_digest":inputs.manifest_digest,"verdict":"fail",
         "cache_scope":"Fresh host/empty private caches; native HTTP digest is first loaded by cold herd; replicas share native compile deduplication.",
-        "control_scope":"Native washlet RPC on the owned chart scheduler Service, with a unique test host/group and exact host heartbeat filtering; event NATS is separate.",
+        "control_scope":"Native washlet RPC on the owned chart scheduler Service, with a unique test host/group and exact host heartbeat filtering; events use the data connection.",
         "phase_attribution":"Whole native starts and observed progress only. Retired private Wasm/non-Wasm phase attribution unavailable.",
         "cache_precondition":"Both private OCI and Wasmtime cache directories were created empty. Release preload may compile release callables before readiness; the HTTP shell is not one of those callables.",
         "cold":{"starts":[],"observations":[]},"warm":{"starts":[],"observations":[]}});
@@ -570,7 +566,14 @@ pub async fn assert_startup(
         .env("WAMN_SESSION_ISSUER", &inputs.session_issuer)
         .env("WAMN_SESSION_INSTANCE_SUFFIX", &inputs.session_instance)
         .env("WAMN_SESSION_JWKS_CA", &inputs.session_ca)
-        .env("WAMN_EVT_NATS_URL", &inputs.nats_url)
+        .arg("--data-nats-url")
+        .arg(&inputs.nats_url)
+        .arg("--data-nats-tls-ca")
+        .arg(&credentials.ca)
+        .arg("--data-nats-tls-cert")
+        .arg(&credentials.cert)
+        .arg("--data-nats-tls-key")
+        .arg(&credentials.key)
         .env("OTEL_EXPORTER_OTLP_ENDPOINT", &inputs.otlp_endpoint)
         .env("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
         .env(
@@ -590,8 +593,6 @@ pub async fn assert_startup(
         .stderr(Stdio::from(raw_log))
         .kill_on_drop(true);
     command
-        .env("WAMN_EVT_NATS_USERNAME", &credentials.username)
-        .env("WAMN_EVT_NATS_PASSWORD_FILE", &credentials.password_file)
         .env("WAMN_EVT_ORG", &scope.org)
         .env("WAMN_EVT_PROJECT", &scope.project)
         .env("WAMN_EVT_ENV", scope.env.as_str())

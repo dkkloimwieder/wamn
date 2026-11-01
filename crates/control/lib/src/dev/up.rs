@@ -12,12 +12,8 @@ use std::path::PathBuf;
 pub struct DevUpRequest {
     pub system_database_url: String,
     pub root: PathBuf,
-    pub nats_url: String,
-    pub event_nats_url: String,
-    pub event_nats_username: String,
-    pub event_nats_password_file: PathBuf,
-    pub event_provisioning_username: String,
-    pub event_provisioning_password_file: PathBuf,
+    /// The one local NATS and the development certificate.
+    pub nats: wamn_platform_identity::nats::PlatformNats,
     pub stream_replicas: usize,
     pub dup_window_secs: u64,
     pub otel_exporter_otlp_endpoint: String,
@@ -31,14 +27,8 @@ pub struct DevUpRequest {
     pub packages: Vec<PathBuf>,
     /// The built `wamn-cdc-reader` the loop runs beside the host.
     pub cdc_reader_binary: PathBuf,
-    /// The event-broker credential the reader publishes change events with.
-    pub event_publisher_username: String,
-    pub event_publisher_password_file: PathBuf,
     /// The built platform materializer the loop runs beside the release.
     pub materializer_component: PathBuf,
-    /// The event-broker credential the materializer consumes with.
-    pub event_materializer_username: String,
-    pub event_materializer_password_file: PathBuf,
 }
 
 /// Provision the environment and return the configuration file.
@@ -90,10 +80,7 @@ pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<Pat
     let mut inputs = DevEnvironmentInputs {
         local_artifacts,
         host_binary: args.host_binary.clone(),
-        nats_url: args.nats_url.clone(),
-        event_nats_url: args.event_nats_url.clone(),
-        event_nats_username: args.event_nats_username.clone(),
-        event_nats_password_file: args.event_nats_password_file.clone(),
+        nats: args.nats.clone(),
         stream_replicas: args.stream_replicas,
         dup_window_secs: args.dup_window_secs,
         otel_exporter_otlp_endpoint: args.otel_exporter_otlp_endpoint.clone(),
@@ -101,8 +88,6 @@ pub async fn provision_environment(mut args: DevUpRequest) -> anyhow::Result<Pat
         platform_domain: args.platform_domain.clone(),
         package_sources,
         cdc_reader: None,
-        event_materializer_username: args.event_materializer_username.clone(),
-        event_materializer_password_file: args.event_materializer_password_file.clone(),
     };
 
     let (admin, admin_task) = connect(&args.system_database_url).await?;
@@ -214,9 +199,7 @@ async fn enable_cdc(
             cluster_namespace: "wamn-system".to_owned(),
             secret_namespace: None,
             stream: None,
-            nats_url: inputs.event_nats_url.clone(),
-            nats_username: args.event_provisioning_username.clone(),
-            nats_password_file: args.event_provisioning_password_file.clone(),
+            nats: inputs.nats.clone(),
             stream_replicas: inputs.stream_replicas,
             dup_window_secs: inputs.dup_window_secs,
             consumer_config,
@@ -293,11 +276,6 @@ async fn enable_cdc(
             .context("resolve the CDC reader binary")?,
         system_database_url: crate::provision_project_env::secret_value(&reader_secret, "url")?,
         cdc_url,
-        nats_username: args.event_publisher_username.clone(),
-        nats_password_file: args
-            .event_publisher_password_file
-            .canonicalize()
-            .context("resolve the event publisher password file")?,
         cdc_sql_file,
     })
 }

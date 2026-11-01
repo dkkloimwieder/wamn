@@ -523,18 +523,6 @@ pub struct EnableCdcProjectEnvArgs {
     #[arg(long)]
     pub stream: Option<String>,
 
-    /// Event broker managed by this environment's provisioning credential.
-    #[arg(long, env = "WAMN_EVT_NATS_URL")]
-    pub nats_url: String,
-
-    /// Provisioning username. Runtime uses a separate restricted credential.
-    #[arg(long, env = "WAMN_EVT_NATS_USERNAME")]
-    pub nats_username: String,
-
-    /// Private file containing the provisioning password.
-    #[arg(long, env = "WAMN_EVT_NATS_PASSWORD_FILE")]
-    pub nats_password_file: PathBuf,
-
     /// NATS stream copies, separate from workload instances.
     #[arg(long, env = "WAMN_EVT_STREAM_REPLICAS")]
     pub stream_replicas: usize,
@@ -593,18 +581,6 @@ pub struct RecoverCaptureGapArgs {
     /// Superuser connection to the project database, which holds the slot.
     #[arg(long, env = "WAMN_PG_ADMIN_URL")]
     pub admin_database_url: String,
-
-    /// Event broker of the environment.
-    #[arg(long, env = "WAMN_EVT_NATS_URL")]
-    pub nats_url: String,
-
-    /// Observer username of the environment. Reading the stream is its job.
-    #[arg(long, env = "WAMN_EVT_NATS_USERNAME")]
-    pub nats_username: String,
-
-    /// Private file containing the observer password.
-    #[arg(long, env = "WAMN_EVT_NATS_PASSWORD_FILE")]
-    pub nats_password_file: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -981,9 +957,7 @@ pub async fn recover_capture_gap(args: RecoverCaptureGapArgs) -> anyhow::Result<
         env: args.env,
         system_database_url: args.system_database_url,
         admin_database_url: args.admin_database_url,
-        nats_url: args.nats_url,
-        nats_username: args.nats_username,
-        nats_password_file: args.nats_password_file,
+        nats: wamn_platform_identity::nats::PlatformNats::from_env()?,
     })
     .await?;
     println!(
@@ -1050,9 +1024,7 @@ pub async fn enable_cdc(args: EnableCdcProjectEnvArgs) -> anyhow::Result<()> {
         cluster_namespace: args.cluster_namespace,
         secret_namespace: args.secret_namespace,
         stream: args.stream,
-        nats_url: args.nats_url,
-        nats_username: args.nats_username,
-        nats_password_file: args.nats_password_file,
+        nats: wamn_platform_identity::nats::PlatformNats::from_env()?,
         stream_replicas: args.stream_replicas,
         dup_window_secs: args.dup_window_secs,
         consumer_config: args.consumer_config,

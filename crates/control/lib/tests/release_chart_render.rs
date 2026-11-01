@@ -356,14 +356,21 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
         ));
     }
 
-    // A2, render half: the host mounts the operator release's TLS Secrets.
+    // R5: the scheduler connection keeps the runtime certificate, and the
+    // data connection is the environment's NATS user.
     let secrets: BTreeSet<&str> = pod["spec"]["volumes"]
         .as_sequence()
         .expect("volumes")
         .iter()
         .filter_map(|volume| volume["secret"]["secretName"].as_str())
         .collect();
-    assert!(secrets.contains("wasmcloud-runtime-tls") && secrets.contains("wasmcloud-data-tls"));
+    assert!(secrets.contains("wasmcloud-runtime-tls"));
+    assert!(
+        secrets
+            .iter()
+            .any(|secret| secret.starts_with("wamn-nats-acme--wms--"))
+    );
+    assert!(!secrets.contains("wasmcloud-data-tls"));
 
     // Platform services use the chart set; HTTP uses the release's entry.
     let set = image_set(&chart).await.expect("the stamped image set");

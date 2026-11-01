@@ -14,8 +14,6 @@
 //! skips them. The read uses the observer credential, because reading a stream
 //! is the observer's job.
 
-use std::path::PathBuf;
-
 use anyhow::{Context as _, bail, ensure};
 use async_nats::header::NATS_MESSAGE_ID;
 use async_nats::jetstream::stream::RawMessageErrorKind;
@@ -49,14 +47,8 @@ pub struct RecoverCaptureGapRequest {
     /// Superuser URL of the project-env database, which holds the slot.
     pub admin_database_url: String,
 
-    /// Event broker of the environment.
-    pub nats_url: String,
-
-    /// Observer username of the environment.
-    pub nats_username: String,
-
-    /// Private file that holds the observer password.
-    pub nats_password_file: PathBuf,
+    /// The NATS of the event streams, with the client certificate.
+    pub nats: wamn_platform_identity::nats::PlatformNats,
 }
 
 /// Inputs of one capture gap close.
@@ -98,8 +90,6 @@ pub async fn recover_capture_gap(
     validate_project_env_cdc(&args.org, &args.project, &args.env)
         .map_err(|e| anyhow::anyhow!("cdc names: {e}"))?;
     let triple = Triple::new(&args.org, &args.project, args.env.as_str());
-    let broker_options =
-        crate::event_streams::connection_options(&args.nats_username, &args.nats_password_file)?;
     let instance =
         crate::provision_project_env::read_project_env_instance(&args.system_database_url, &triple)
             .await?;
@@ -166,8 +156,8 @@ pub async fn recover_capture_gap(
     };
 
     let broker = async_nats::jetstream::new(
-        broker_options
-            .connect(&args.nats_url)
+        args.nats
+            .connect()
             .await
             .context("connect the event observer credential")?,
     );

@@ -78,7 +78,6 @@ fn env_key(environment: &EnvironmentDocument) -> String {
 fn deployment(environment: &EnvironmentDocument, image: &str) -> Value {
     let env_key = env_key(environment);
     let name = format!("cdc-reader-{env_key}");
-    let publisher = format!("evt-nats-{env_key}-publisher");
     json!({
         "apiVersion": "apps/v1", "kind": "Deployment",
         "metadata": {"name": name, "namespace": "hosts"},
@@ -105,18 +104,15 @@ fn deployment(environment: &EnvironmentDocument, image: &str) -> Value {
                             {"name": "WAMN_SYSTEM_URL", "valueFrom": {"secretKeyRef": {
                                 "name": format!("wamn-registry-reader-{env_key}"), "key": "url"
                             }}},
-                            {"name": "WAMN_EVT_NATS_URL", "value": "nats://evt-nats.platform.svc.cluster.local:4222"},
-                            {"name": "WAMN_EVT_NATS_USERNAME", "valueFrom": {"secretKeyRef": {
-                                "name": publisher, "key": "username"
-                            }}},
-                            {"name": "WAMN_EVT_NATS_PASSWORD_FILE", "value": "/etc/evt-nats/password"}
+                            {"name": "WAMN_NATS_URL", "value": "nats://wamn-nats.platform.svc.cluster.local:4222"},
+                            {"name": "WAMN_NATS_TLS_CA", "value": "/etc/wamn/nats/ca.crt"},
+                            {"name": "WAMN_NATS_TLS_CERT", "value": "/etc/wamn/nats/tls.crt"},
+                            {"name": "WAMN_NATS_TLS_KEY", "value": "/etc/wamn/nats/tls.key"}
                         ],
-                        "volumeMounts": [{"name": "publisher", "mountPath": "/etc/evt-nats", "readOnly": true}],
+                        "volumeMounts": [{"name": "nats", "mountPath": "/etc/wamn/nats", "readOnly": true}],
                         "resources": {"requests": {"cpu": "50m", "memory": "64Mi"}}
                     }],
-                    "volumes": [{"name": "publisher", "secret": {
-                        "secretName": publisher, "items": [{"key": "password", "path": "password"}]
-                    }}]
+                    "volumes": [{"name": "nats", "secret": {"secretName": "wamn-cdc-reader-nats"}}]
                 }
             }
         }
@@ -150,7 +146,7 @@ mod tests {
             );
             assert_eq!(
                 pod["volumes"][0]["secret"]["secretName"],
-                format!("evt-nats-test--{project}--dev-publisher")
+                "wamn-cdc-reader-nats"
             );
             assert_eq!(desired["spec"]["strategy"]["type"], "Recreate");
             let mut live = desired.clone();

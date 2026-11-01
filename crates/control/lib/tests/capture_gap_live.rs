@@ -233,9 +233,7 @@ async fn recover_and_close_record_each_capture_gap() {
         env: ENV.to_owned(),
         system_database_url: system_url.clone(),
         admin_database_url: admin.to_owned(),
-        nats_url: nats_url.clone(),
-        nats_username: "observer".to_owned(),
-        nats_password_file: password_file.clone(),
+        nats: wamn_platform_identity::nats::PlatformNats::from_env().unwrap(),
     };
     let close = CloseCaptureGapRequest {
         org: ORG.to_owned(),

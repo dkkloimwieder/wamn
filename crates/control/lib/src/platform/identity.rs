@@ -251,8 +251,8 @@ fn values(document: &ClusterDocument, image: &str, targets: Vec<String>) -> anyh
         resend_from: document.resend_from.clone(),
         invite_url: format!("https://{}", document.route_hosts.control),
         auth_nats: PlatformNats {
-            url: "nats://nats.platform.svc.cluster.local:4222",
-            tls_secret: "wasmcloud-runtime-tls",
+            url: "nats://wamn-nats.platform.svc.cluster.local:4222",
+            tls_secret: "wamn-identity-nats",
         },
         session_target_secrets: targets,
     })

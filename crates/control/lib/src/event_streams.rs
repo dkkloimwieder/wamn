@@ -12,34 +12,15 @@ use wamn_control_provision::events::{
 };
 use wamn_control_registry::Triple;
 
-/// Read a private event password and select its native reply prefix.
-pub fn connection_options(
-    username: &str,
-    password_file: &std::path::Path,
-) -> anyhow::Result<async_nats::ConnectOptions> {
-    ensure!(
-        !username.is_empty()
-            && username
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')),
-        "event-broker username must be one nonempty broker token"
-    );
-    let password =
-        std::fs::read_to_string(password_file).context("read the event-broker password file")?;
-    ensure!(!password.is_empty(), "event-broker password file is empty");
-    Ok(async_nats::ConnectOptions::new()
-        .user_and_password(username.to_owned(), password)
-        .custom_inbox_prefix(format!("_INBOX_{username}")))
-}
-
 /// Read the publication-order boundary from stream info without changing broker state.
 pub async fn last_published_sequence(
     events: &crate::environment::EventBroker,
     scope: &Triple,
 ) -> anyhow::Result<u64> {
     let broker = async_nats::jetstream::new(
-        connection_options(&events.nats_username, &events.nats_password_file)?
-            .connect(&events.nats_url)
+        events
+            .nats
+            .connect()
             .await
             .context("connect to the environment event broker")?,
     );

@@ -333,17 +333,15 @@ async fn delete_locked(
         .is_some();
     if reader {
         let broker = platform.events.as_ref().context(
-            "the environment captures events; set WAMN_EVENT_NATS_URL, \
-             WAMN_EVENT_NATS_USERNAME and WAMN_EVENT_NATS_PASSWORD_FILE to delete its streams",
+            "the environment captures events; set WAMN_NATS_URL and its WAMN_NATS_TLS_* \
+             certificate to delete its streams",
         )?;
         let broker = jetstream::new(
-            crate::event_streams::connection_options(
-                &broker.nats_username,
-                &broker.nats_password_file,
-            )?
-            .connect(&broker.nats_url)
-            .await
-            .context("connect the event provisioning credential")?,
+            broker
+                .nats
+                .connect()
+                .await
+                .context("connect the event provisioning credential")?,
         );
         let source = event_stream_name(org, project, env);
         for stream in [delivery_advisory_stream(&source), source] {

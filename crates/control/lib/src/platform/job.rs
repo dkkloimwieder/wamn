@@ -109,12 +109,12 @@ pub(super) fn auth_nats_inputs(
         }
         request.environment.insert(
             "WAMN_NATS_TLS_SERVER_NAME".into(),
-            "nats.platform.svc.cluster.local".into(),
+            "wamn-nats.platform.svc.cluster.local".into(),
         );
         "/inputs"
     } else {
         request.secret_mounts.push(SecretMount {
-            name: "wasmcloud-runtime-tls".into(),
+            name: "wamn-provisioning-nats".into(),
             path: "/etc/wamn/auth-nats".into(),
             keys: ["ca.crt", "tls.crt", "tls.key"].map(str::to_owned).into(),
         });
@@ -122,7 +122,7 @@ pub(super) fn auth_nats_inputs(
     };
     request.environment.insert(
         "WAMN_NATS_URL".into(),
-        "nats://nats.platform.svc.cluster.local:4222".into(),
+        "nats://wamn-nats.platform.svc.cluster.local:4222".into(),
     );
     for (variable, key) in [
         ("WAMN_NATS_TLS_CA", "ca.crt"),

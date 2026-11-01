@@ -608,9 +608,7 @@ pub async fn exercise(
     event_broker::write_binding(&broker, &server, &source)?;
     let mut platform = platform.clone();
     platform.events = Some(environment::EventBroker {
-        nats_url: server.clone(),
-        nats_username: broker.provisioning.username.clone(),
-        nats_password_file: broker.provisioning.password_file.clone(),
+        nats: broker.provisioning.platform_nats(&server),
         stream_replicas: 1,
         dup_window_secs: 120,
     });
@@ -859,9 +857,7 @@ pub async fn exercise(
         "rest_item_pushed"
     })?;
     let events = environment::EventBroker {
-        nats_url: server.clone(),
-        nats_username: broker.provisioning.username.clone(),
-        nats_password_file: broker.provisioning.password_file.clone(),
+        nats: broker.provisioning.platform_nats(&server),
         stream_replicas: source.num_replicas,
         dup_window_secs: source.duplicate_window.as_secs(),
     };
@@ -1104,7 +1100,9 @@ async fn event_host_group(
     std::fs::write(
         &secret,
         serde_json::to_vec(&event_secret(
-            &std::fs::read_to_string(&broker.runtime.password_file)?,
+            &std::fs::read_to_string(&broker.runtime.ca)?,
+            &std::fs::read_to_string(&broker.runtime.cert)?,
+            &std::fs::read_to_string(&broker.runtime.key)?,
             &std::fs::read_to_string(&broker.binding)?,
         ))?,
     )?;
@@ -1113,16 +1111,16 @@ async fn event_host_group(
     let group: Value = serde_yaml::from_slice(&std::fs::read(
         platform.host_group.as_ref().context("host group")?,
     )?)?;
-    let group = event_host_values(group, &broker.runtime.username, server, issuer, suffix)?;
+    let group = event_host_values(group, server, issuer, suffix)?;
     let file = run.work.join("integration-host-group.yaml");
     std::fs::write(&file, serde_yaml::to_string(&group)?)?;
     Ok(file)
 }
 
-pub(super) fn event_secret(password: &str, binding: &str) -> Value {
+pub(super) fn event_secret(ca: &str, cert: &str, key: &str, binding: &str) -> Value {
     json!({
         "apiVersion":"v1", "kind":"Secret", "metadata":{"name":"integration-events","namespace":NAMESPACE},
-        "stringData":{"password":password, "binding.json":binding}
+        "stringData":{"ca.crt":ca, "tls.crt":cert, "tls.key":key, "binding.json":binding}
     })
 }
 
@@ -1154,8 +1152,7 @@ pub(super) fn fixture_document(connector: &str) -> EnvironmentDocument {
 
 pub(super) fn event_host_values(
     mut group: Value,
-    username: &str,
-    server: &str,
+    _server: &str,
     issuer: &str,
     suffix: &str,
 ) -> anyhow::Result<Value> {
@@ -1167,12 +1164,6 @@ pub(super) fn event_host_values(
                 ("WAMN_SESSION_ISSUER", issuer),
                 ("WAMN_SESSION_JWKS_CA", "/integration-session/ca.crt"),
                 ("WAMN_SESSION_INSTANCE_SUFFIX", suffix),
-                ("WAMN_EVT_NATS_URL", server),
-                ("WAMN_EVT_NATS_USERNAME", username),
-                (
-                    "WAMN_EVT_NATS_PASSWORD_FILE",
-                    "/integration-events/password",
-                ),
                 (
                     "WAMN_MAT_NATS_BINDING_FILE",
                     "/integration-events/binding.json",
@@ -1249,12 +1240,10 @@ async fn start_reader(
     let child = Command::new(binary(repository, "wamn-cdc-reader"))
         .env("WAMN_SYSTEM_URL", &urls[0])
         .env("WAMN_CDC_URL", &urls[1])
-        .env("WAMN_EVT_NATS_URL", server)
-        .env("WAMN_EVT_NATS_USERNAME", &broker.publisher.username)
-        .env(
-            "WAMN_EVT_NATS_PASSWORD_FILE",
-            &broker.publisher.password_file,
-        )
+        .env("WAMN_NATS_URL", server)
+        .env("WAMN_NATS_TLS_CA", &broker.publisher.ca)
+        .env("WAMN_NATS_TLS_CERT", &broker.publisher.cert)
+        .env("WAMN_NATS_TLS_KEY", &broker.publisher.key)
         .args([
             "--org",
             ORG,
@@ -1334,7 +1323,7 @@ async fn assert_schema_triggers_inner(
         .await?;
     }
     let jetstream = async_nats::jetstream::new(
-        event_broker::connect(&broker.observer, &events.nats_url).await?,
+        event_broker::connect(&broker.observer, &events.nats.nats_url).await?,
     );
     let mut stream = jetstream
         .get_stream(wamn_control_provision::event_stream_name(

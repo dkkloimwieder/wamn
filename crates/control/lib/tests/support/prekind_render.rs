@@ -116,7 +116,6 @@ fn prekind_environment_renders() -> anyhow::Result<()> {
         let document = integration::fixture_document(connector);
         let group = integration::event_host_values(
             base.clone(),
-            "runtime",
             "nats://events:4222",
             "https://integration-session",
             "render",
@@ -135,7 +134,7 @@ fn prekind_environment_renders() -> anyhow::Result<()> {
         )?;
         let release = manifest(&wamn_execution_contract::canonical_json_bytes(&release))?;
         let values = render_values(&document, &release, &path, 70)?;
-        let event_secret = integration::event_secret("render", "{}");
+        let event_secret = integration::event_secret("render", "render", "render", "{}");
         assert_complete(
             &template(&values, NAMESPACE)?,
             &fixture_secrets(&document, event_secret),

@@ -27,7 +27,7 @@ const POSTGRES_LABEL: &str = "role=postgres";
 /// Resize every pool of `project_file` in one `gcloud` call for each pool.
 ///
 /// After a wake, it waits for pod `wamn-pg-1` to be Ready (900 s) and for
-/// statefulset `evt-nats` to roll out (600 s). `progress` receives one line
+/// statefulset `wamn-nats` to roll out (600 s). `progress` receives one line
 /// for each pool and each wait.
 ///
 /// # Errors
@@ -71,14 +71,14 @@ pub async fn resize(
                 &[
                     "rollout",
                     "status",
-                    "statefulset/evt-nats",
+                    "statefulset/wamn-nats",
                     "--timeout=600s",
                 ],
                 None,
             )
             .await?;
             progress(&format!(
-                "statefulset evt-nats: rolled out {:.1}s",
+                "statefulset wamn-nats: rolled out {:.1}s",
                 started.elapsed().as_secs_f64()
             ))?;
         }

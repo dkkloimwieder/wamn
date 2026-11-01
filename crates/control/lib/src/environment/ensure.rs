@@ -350,13 +350,11 @@ async fn ensure_streams(
         }),
     );
     let broker = async_nats::jetstream::new(
-        crate::event_streams::connection_options(
-            &events.nats_username,
-            &events.nats_password_file,
-        )?
-        .connect(&events.nats_url)
-        .await
-        .context("connect the event provisioning credential")?,
+        events
+            .nats
+            .connect()
+            .await
+            .context("connect the event provisioning credential")?,
     );
     crate::event_streams::provision(
         &broker,
@@ -380,14 +378,12 @@ async fn enable_cdc(
 ) -> anyhow::Result<()> {
     let triple = document.triple();
     let EventBroker {
-        nats_url,
-        nats_username,
-        nats_password_file,
+        nats,
         stream_replicas,
         dup_window_secs,
     } = platform.events.clone().context(
         "the environment captures application models and has no event broker; \
-         set WAMN_EVENT_NATS_URL, WAMN_EVENT_NATS_USERNAME and WAMN_EVENT_NATS_PASSWORD_FILE",
+         set WAMN_NATS_URL and its WAMN_NATS_TLS_* certificate",
     )?;
     let consumers = wamn_control_provision::events::entity_consumers(
         &triple,
@@ -451,9 +447,7 @@ async fn enable_cdc(
             cluster_namespace: platform.database_namespace.clone(),
             secret_namespace: Some(namespace.to_owned()),
             stream: None,
-            nats_url,
-            nats_username,
-            nats_password_file,
+            nats,
             stream_replicas,
             dup_window_secs,
             consumer_config: consumers,

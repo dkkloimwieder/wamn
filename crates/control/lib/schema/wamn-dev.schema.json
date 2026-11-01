@@ -18,13 +18,6 @@
           "description": "The replication credential, the `url` of the rendered CDC Secret.",
           "type": "string"
         },
-        "nats_password_file": {
-          "type": "string"
-        },
-        "nats_username": {
-          "description": "The event-broker credential that publishes the change events.",
-          "type": "string"
-        },
         "system_database_url": {
           "description": "The registry-reader generation that reads the registration.",
           "type": "string"
@@ -34,8 +27,6 @@
         "binary",
         "cdc_sql_file",
         "cdc_url",
-        "nats_password_file",
-        "nats_username",
         "system_database_url"
       ],
       "type": "object"
@@ -125,15 +116,6 @@
     "event_materializer_database_url": {
       "type": "string"
     },
-    "event_nats_password_file": {
-      "type": "string"
-    },
-    "event_nats_url": {
-      "type": "string"
-    },
-    "event_nats_username": {
-      "type": "string"
-    },
     "executor_platform_database_url": {
       "type": "string"
     },
@@ -163,6 +145,15 @@
     },
     "materializer_nats_binding_file": {
       "description": "The materializer's events binding in the environment's private root, as the cluster mounts its Secret.",
+      "type": "string"
+    },
+    "nats_tls_ca": {
+      "type": "string"
+    },
+    "nats_tls_cert": {
+      "type": "string"
+    },
+    "nats_tls_key": {
       "type": "string"
     },
     "org": {
@@ -236,9 +227,6 @@
     "dup_window_secs",
     "environment",
     "event_materializer_database_url",
-    "event_nats_password_file",
-    "event_nats_url",
-    "event_nats_username",
     "executor_platform_database_url",
     "gate_bearer_token",
     "guest_database_url",
@@ -249,6 +237,9 @@
     "identity_database_url",
     "local_artifacts",
     "materializer_nats_binding_file",
+    "nats_tls_ca",
+    "nats_tls_cert",
+    "nats_tls_key",
     "org",
     "otel_exporter_otlp_endpoint",
     "package_sources",

@@ -1,6 +1,5 @@
 //! Read retained broker advisories and report whether their source payloads exist.
 
-use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::time::Duration;
 
@@ -16,14 +15,8 @@ use wamn_event_wire::{DeliveryAdvisory, delivery_advisory_stream};
 /// Inputs of one read of the retained delivery advisories of one consumer.
 #[derive(Debug)]
 pub struct EventAdvisoriesRequest {
-    /// Event-plane NATS with the retained advisory stream.
-    pub nats_url: String,
-
-    /// Event-broker username; requires its password file.
-    pub nats_username: Option<String>,
-
-    /// File containing the event-broker password; requires its username.
-    pub nats_password_file: Option<PathBuf>,
+    /// The NATS of the retained advisory stream, with the client certificate.
+    pub nats: wamn_platform_identity::nats::PlatformNats,
 
     /// Exact source stream from the broker advisory.
     pub stream: String,
@@ -92,33 +85,6 @@ async fn source_payload(
     }
 }
 
-fn event_nats_options(
-    username: Option<&str>,
-    password_file: Option<&Path>,
-) -> anyhow::Result<async_nats::ConnectOptions> {
-    match (username, password_file) {
-        (None, None) => Ok(async_nats::ConnectOptions::new()),
-        (Some(username), Some(path)) => {
-            if username.is_empty()
-                || !username
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-            {
-                bail!("event-broker username must be one nonempty broker token");
-            }
-            let password =
-                std::fs::read_to_string(path).context("read the event-broker password file")?;
-            if password.is_empty() {
-                bail!("event-broker password file is empty");
-            }
-            Ok(async_nats::ConnectOptions::new()
-                .user_and_password(username.to_owned(), password)
-                .custom_inbox_prefix(format!("_INBOX_{username}")))
-        }
-        _ => bail!("event broker requires both username and password file"),
-    }
-}
-
 /// Read the retained delivery advisories of one consumer, newest sequence last,
 /// each with the source payload it names.
 pub async fn read_retained_advisories(
@@ -127,13 +93,11 @@ pub async fn read_retained_advisories(
     if request.limit == 0 || !broker_token(&request.stream) || !broker_token(&request.consumer) {
         bail!("the limit must be positive, and the stream and consumer must be exact broker names");
     }
-    let client = event_nats_options(
-        request.nats_username.as_deref(),
-        request.nats_password_file.as_deref(),
-    )?
-    .connect(&request.nats_url)
-    .await
-    .context("connect to event-plane NATS")?;
+    let client = request
+        .nats
+        .connect()
+        .await
+        .context("connect to event-plane NATS")?;
     let jetstream = async_nats::jetstream::new(client);
     let stream = jetstream
         .get_stream(delivery_advisory_stream(&request.stream))
@@ -223,35 +187,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn event_broker_credentials_refuse_partial_invalid_and_unreadable_inputs() {
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system clock")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "wamn-advisories-nats-{}-{nonce}",
-            std::process::id()
-        ));
-        assert!(event_nats_options(None, None).is_ok());
-        for (username, password_file) in [
-            (Some("publisher_dev"), None),
-            (None, Some(path.as_path())),
-            (Some("publisher_dev"), Some(path.as_path())),
-            (Some(""), Some(path.as_path())),
-            (Some("publisher.*"), Some(path.as_path())),
-            (Some("publisher>"), Some(path.as_path())),
-            (Some("publisher dev"), Some(path.as_path())),
-        ] {
-            assert!(event_nats_options(username, password_file).is_err());
-        }
-        std::fs::write(&path, []).expect("write empty password file");
-        assert!(event_nats_options(Some("publisher_dev"), Some(&path)).is_err());
-        std::fs::write(&path, format!("{nonce}\n")).expect("write private password file");
-        assert!(event_nats_options(Some("publisher_dev"), Some(&path)).is_ok());
-        std::fs::remove_file(path).expect("remove private password file");
-    }
-
-    #[test]
     fn changed_stream_and_consumer_declarations_refuse_without_a_broker() {
         use async_nats::jetstream::consumer::IntoConsumerConfig as _;
         use wamn_control_provision::events::{consumer_config_matches, stream_config_matches};
@@ -329,7 +264,10 @@ mod tests {
                     tokens.next().is_none()
                 })
         };
-        for user in users {
+        for user in users
+            .iter()
+            .filter(|user| user.get("permissions").is_some())
+        {
             let role = user["user"].as_str().unwrap().split('_').next().unwrap();
             for (subject, permitted) in [
                 (
@@ -532,21 +470,19 @@ mod tests {
         tokio::sync::mpsc::UnboundedReceiver<async_nats::ServerError>,
     )> {
         let (errors, received) = tokio::sync::mpsc::unbounded_channel();
-        let client = crate::event_streams::connection_options(
-            &credentials.username,
-            &credentials.password_file,
-        )?
-        .request_timeout(Some(Duration::from_millis(500)))
-        .event_callback(move |event| {
-            let errors = errors.clone();
-            async move {
-                if let async_nats::Event::ServerError(error) = event {
-                    let _ = errors.send(error);
+        let client = credentials
+            .options()
+            .request_timeout(Some(Duration::from_millis(500)))
+            .event_callback(move |event| {
+                let errors = errors.clone();
+                async move {
+                    if let async_nats::Event::ServerError(error) = event {
+                        let _ = errors.send(error);
+                    }
                 }
-            }
-        })
-        .connect(server)
-        .await?;
+            })
+            .connect(server)
+            .await?;
         Ok((client, received))
     }
 
@@ -590,20 +526,18 @@ mod tests {
             .await?
             .sequence;
         let (closed, mut closure) = tokio::sync::mpsc::unbounded_channel();
-        let first_client = crate::event_streams::connection_options(
-            &credentials.username,
-            &credentials.password_file,
-        )?
-        .event_callback(move |event| {
-            let closed = closed.clone();
-            async move {
-                if matches!(event, async_nats::Event::Closed) {
-                    let _ = closed.send(());
+        let first_client = credentials
+            .options()
+            .event_callback(move |event| {
+                let closed = closed.clone();
+                async move {
+                    if matches!(event, async_nats::Event::Closed) {
+                        let _ = closed.send(());
+                    }
                 }
-            }
-        })
-        .connect(server)
-        .await?;
+            })
+            .connect(server)
+            .await?;
         let first_context = async_nats::jetstream::new(first_client.clone());
         let first_stream = first_context.get_stream(source_name).await?;
         let first_consumer = first_stream
@@ -1359,7 +1293,7 @@ mod tests {
 
         wamn_test_postgres::require_prerequisites(&["WAMN_NATIVE_C_NATS_BIN"]);
         let binary = std::env::var_os("WAMN_NATIVE_C_NATS_BIN")
-            .map(PathBuf::from)
+            .map(std::path::PathBuf::from)
             .context("set WAMN_NATIVE_C_NATS_BIN to the owned nats-server executable")?;
         ensure!(binary.is_file(), "NATS executable is absent");
         let binary = binary
@@ -1379,7 +1313,11 @@ mod tests {
         ];
         let mut brokers = Vec::new();
         let mut declarations = Vec::new();
-        let mut users = Vec::new();
+        // One server, one CA, and one full-permission development user.
+        let authority = wamn_test_infrastructure::nats_tls::Authority::new(root.path())?;
+        let mut users = vec![wamn_test_infrastructure::nats_tls::full_permission_user(
+            wamn_test_infrastructure::nats_tls::DEVELOPMENT_USER,
+        )];
         for (index, scope) in scopes.iter().enumerate() {
             let directory = root.path().join(index.to_string());
             std::fs::DirBuilder::new().mode(0o700).create(&directory)?;
@@ -1412,7 +1350,8 @@ mod tests {
                     ));
                 }
             }
-            let broker = event_broker::prepare(
+            let broker = event_broker::prepare_in(
+                &authority,
                 &directory,
                 scope,
                 "route-tenant",
@@ -1422,10 +1361,12 @@ mod tests {
             )?;
             let mut configuration: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(&broker.configuration)?)?;
-            users.append(
+            users.extend(
                 configuration["authorization"]["users"]
                     .as_array_mut()
-                    .context("native broker configuration omitted its users")?,
+                    .context("native broker configuration omitted its users")?
+                    .drain(..)
+                    .filter(|user| user.get("permissions").is_some()),
             );
             declarations.push((source, advisory, consumer, consumers));
             brokers.push(broker);
@@ -1439,6 +1380,7 @@ mod tests {
         serde_json::to_writer(
             configuration,
             &serde_json::json!({
+                "tls": authority.server_tls(),
                 "authorization": { "users": users }
             }),
         )?;

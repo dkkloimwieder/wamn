@@ -104,14 +104,8 @@ pub struct EnableCdcProjectEnvRequest {
     /// Exact environment source stream. Must match the declared coordinates.
     pub stream: Option<String>,
 
-    /// Event broker managed by this environment's provisioning credential.
-    pub nats_url: String,
-
-    /// Provisioning username. Runtime uses a separate restricted credential.
-    pub nats_username: String,
-
-    /// Private file containing the provisioning password.
-    pub nats_password_file: PathBuf,
+    /// The NATS of the event streams, with the provisioning certificate.
+    pub nats: wamn_platform_identity::nats::PlatformNats,
 
     /// NATS stream copies, separate from workload instances.
     pub stream_replicas: usize,
@@ -197,9 +191,6 @@ pub async fn enable_cdc_project_env(
         duplicate_window,
         &consumers,
     )?;
-    let broker_options =
-        crate::event_streams::connection_options(&args.nats_username, &args.nats_password_file)?;
-
     let system_url = args
         .system_database_url
         .as_deref()
@@ -233,8 +224,8 @@ pub async fn enable_cdc_project_env(
     );
 
     let broker = async_nats::jetstream::new(
-        broker_options
-            .connect(&args.nats_url)
+        args.nats
+            .connect()
             .await
             .context("connect the event provisioning credential")?,
     );

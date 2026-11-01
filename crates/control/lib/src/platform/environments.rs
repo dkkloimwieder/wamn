@@ -9,7 +9,7 @@ use crate::environment::document::DeclaredRelease;
 use crate::{kubectl, release_chart::Target};
 
 use super::document::ClusterDocument;
-use super::install::{DATABASE_HOST, SecretData, administrator, runner_image, secret_text};
+use super::install::{DATABASE_HOST, SecretData, administrator, runner_image};
 use super::job::{self, Access, JobRequest, PolicyRule};
 
 pub(super) async fn apply(
@@ -335,23 +335,13 @@ pub fn render_host_group(
         if let Some(value) = replacement {
             variable["value"] = value.into();
         }
-        if variable["name"] == "WAMN_EVT_NATS_USERNAME" {
-            variable["valueFrom"]["secretKeyRef"]["name"] =
-                format!("evt-nats-{env_key}-runtime").into();
-        }
     }
     for volume in group["volumes"]
         .as_array_mut()
         .context("host group has no volumes")?
     {
-        match volume["name"].as_str().unwrap_or_default() {
-            "event-nats" => {
-                volume["secret"]["secretName"] = format!("evt-nats-{env_key}-runtime").into();
-            }
-            "materializer-nats" => {
-                volume["secret"]["secretName"] = format!("evt-nats-{env_key}-materializer").into();
-            }
-            _ => {}
+        if volume["name"] == "materializer-nats" {
+            volume["secret"]["secretName"] = format!("wamn-nats-{env_key}-materializer").into();
         }
     }
     Ok(group)
@@ -380,35 +370,6 @@ async fn release_inputs(
         super::packages::artifact_base(registry, "components")?,
     );
     chart_files(&directory.join("release-chart"), Path::new(""), request)?;
-    let env_key = wamn_control_registry::project_env_key(
-        &environment.org,
-        &environment.project,
-        &environment.env,
-    );
-    let secret: SecretData = kubectl::get(
-        &target.kubeconfig,
-        &target.context,
-        "platform",
-        "secret",
-        &format!("evt-nats-{env_key}-provisioning"),
-    )
-    .await?
-    .context("missing event provisioning Secret")?;
-    request.environment.insert(
-        "WAMN_EVENT_NATS_URL".into(),
-        "nats://evt-nats.platform.svc.cluster.local:4222".into(),
-    );
-    request
-        .files
-        .insert("event-password".into(), secret_text(&secret, "password")?);
-    request.environment.insert(
-        "WAMN_EVENT_NATS_USERNAME".into(),
-        secret_text(&secret, "username")?,
-    );
-    request.environment.insert(
-        "WAMN_EVENT_NATS_PASSWORD_FILE".into(),
-        "/inputs/event-password".into(),
-    );
     let path = cluster_directory.join(format!("host-group-{}.yaml", environment.project));
     let secrets = super::packages::credentials(target, environment).await?;
     let database = url::Url::parse(&secrets[1].value)

@@ -252,7 +252,7 @@ async fn fanout_is_atomic_idempotent_and_records_the_history_actor() {
 }
 /// One durable consumes the entity message, even when two rows match it.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_EVENT_NATS_URL, WAMN_EVENT_NATS_USERNAME, WAMN_EVENT_NATS_PASSWORD_FILE"]
+#[ignore = "requires: WAMN_NATS_URL, WAMN_NATS_TLS_CA, WAMN_NATS_TLS_CERT, WAMN_NATS_TLS_KEY"]
 async fn one_entity_message_fans_out_once_and_acknowledges_once() {
     use futures_util::StreamExt as _;
     let _lock = wamn_test_postgres::lock();
@@ -271,14 +271,11 @@ async fn one_entity_message_fans_out_once_and_acknowledges_once() {
     event(&fixture, "first", 0, Some("reader")).await;
     event(&fixture, "second", 0, Some("reader")).await;
     let broker = async_nats::jetstream::new(
-        wamn_control::event_streams::connection_options(
-            &std::env::var("WAMN_EVENT_NATS_USERNAME").unwrap(),
-            &std::path::PathBuf::from(std::env::var_os("WAMN_EVENT_NATS_PASSWORD_FILE").unwrap()),
-        )
-        .unwrap()
-        .connect(std::env::var("WAMN_EVENT_NATS_URL").unwrap())
-        .await
-        .unwrap(),
+        wamn_platform_identity::nats::PlatformNats::from_env()
+            .unwrap()
+            .connect()
+            .await
+            .unwrap(),
     );
     let name = format!(
         "fanout_{}",

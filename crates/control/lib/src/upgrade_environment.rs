@@ -38,7 +38,7 @@ const WORKLOAD_GUESTS: [(&str, &str); 2] = [
     ("http_route.wasm", "flow-http"),
     ("materializer.wasm", "materializer"),
 ];
-const BROKER_POD: &str = "evt-nats-0";
+const BROKER_POD: &str = "wamn-nats-0";
 const COMMAND_TIMEOUT: Duration = Duration::from_hours(3);
 
 #[derive(Clone, Debug)]

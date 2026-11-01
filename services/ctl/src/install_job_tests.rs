@@ -94,7 +94,7 @@ fn install_jobs_supply_required_environment() {
         if request.environment.contains_key("WAMN_NATS_URL") {
             assert_eq!(
                 request.environment["WAMN_NATS_URL"],
-                "nats://nats.platform.svc.cluster.local:4222"
+                "nats://wamn-nats.platform.svc.cluster.local:4222"
             );
             let mounted = verb == "web upload";
             for (variable, key) in [
@@ -120,7 +120,7 @@ fn install_jobs_supply_required_environment() {
                 if mounted {
                     None
                 } else {
-                    Some("nats.platform.svc.cluster.local")
+                    Some("wamn-nats.platform.svc.cluster.local")
                 }
             );
         }

@@ -48,10 +48,8 @@ use wamn_control_registry::Template;
 pub struct DevEnvironmentInputs {
     pub local_artifacts: super::config::LocalArtifacts,
     pub host_binary: PathBuf,
-    pub nats_url: String,
-    pub event_nats_url: String,
-    pub event_nats_username: String,
-    pub event_nats_password_file: PathBuf,
+    /// The one local NATS and the development certificate.
+    pub nats: wamn_platform_identity::nats::PlatformNats,
     pub stream_replicas: usize,
     pub dup_window_secs: u64,
     pub otel_exporter_otlp_endpoint: String,
@@ -61,17 +59,14 @@ pub struct DevEnvironmentInputs {
     pub package_sources: Vec<PathBuf>,
     /// The CDC reader that `wamn dev up` enabled.
     pub cdc_reader: Option<super::config::CdcReader>,
-    /// The event-broker credential the platform materializer consumes with.
-    pub event_materializer_username: String,
-    pub event_materializer_password_file: PathBuf,
 }
 
 /// The materializer's events binding inside the private root.
 const MATERIALIZER_NATS_BINDING_FILE: &str = "materializer-nats.json";
 
 /// Write the materializer's events binding in the shape that the cluster
-/// mounts from its Secret: the server, the credential, its private inbox, and
-/// the environment's source stream and subjects.
+/// mounts from its Secret: the server, the certificate, and the environment's
+/// source stream and subjects.
 fn write_materializer_binding(
     root: &Path,
     inputs: &DevEnvironmentInputs,
@@ -80,8 +75,6 @@ fn write_materializer_binding(
     use std::io::Write as _;
     use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
 
-    let password = std::fs::read_to_string(&inputs.event_materializer_password_file)
-        .context("read the event materializer password file")?;
     let source = wamn_control_provision::events::source_stream_config(
         &wamn_control_registry::Triple::new(
             &identity.org,
@@ -92,10 +85,10 @@ fn write_materializer_binding(
         Duration::from_secs(inputs.dup_window_secs),
     );
     let binding = serde_json::json!({
-        "servers": inputs.event_nats_url,
-        "username": inputs.event_materializer_username,
-        "password": password,
-        "inbox-prefix": format!("_INBOX_{}", inputs.event_materializer_username),
+        "servers": inputs.nats.nats_url,
+        "tls-ca": inputs.nats.nats_tls_ca,
+        "tls-cert": inputs.nats.nats_tls_cert,
+        "tls-key": inputs.nats.nats_tls_key,
         "stream-allow": source.name,
         "subject-allow": source.subjects.join(","),
         "subscription-capacity-bytes": "4194304",
@@ -1099,10 +1092,10 @@ pub fn write_dev_config(
         "http_admitter_database_url": credentials.http_admitter.as_str(),
         "event_materializer_database_url": credentials.event_materializer.as_str(),
         "administration_database_url": credentials.administration.as_str(),
-        "scheduler_nats_url": inputs.nats_url.as_str(),
-        "event_nats_url": inputs.event_nats_url.as_str(),
-        "event_nats_username": inputs.event_nats_username.as_str(),
-        "event_nats_password_file": &inputs.event_nats_password_file,
+        "scheduler_nats_url": inputs.nats.nats_url.as_str(),
+        "nats_tls_ca": &inputs.nats.nats_tls_ca,
+        "nats_tls_cert": &inputs.nats.nats_tls_cert,
+        "nats_tls_key": &inputs.nats.nats_tls_key,
         "stream_replicas": inputs.stream_replicas,
         "dup_window_secs": inputs.dup_window_secs,
         "otel_exporter_otlp_endpoint": inputs.otel_exporter_otlp_endpoint.as_str(),

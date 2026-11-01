@@ -75,7 +75,8 @@ pub(super) async fn install(
         (
             "event-nats.json",
             json!({"apiVersion":"v1","kind":"Secret","type":"Opaque","metadata":{"name":"wamn-event-nats","namespace":NAMESPACE},"stringData":{
-                "username":broker.runtime.username,"password":fs::read_to_string(&broker.runtime.password_file)?,"org":"rc","project":"app","environment":"dev",
+                "ca.crt":fs::read_to_string(&broker.runtime.ca)?,"tls.crt":fs::read_to_string(&broker.runtime.cert)?,
+                "tls.key":fs::read_to_string(&broker.runtime.key)?,"org":"rc","project":"app","environment":"dev",
                 "stream_replicas":source.num_replicas.to_string(),"dup_window_secs":source.duplicate_window.as_secs().to_string(),
             }}),
         ),

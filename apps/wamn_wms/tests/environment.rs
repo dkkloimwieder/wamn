@@ -947,9 +947,7 @@ pub async fn configure_cdc(
         cluster_namespace: "platform".into(),
         secret_namespace: Some(inputs.host_secret_namespace.clone()),
         stream: None,
-        nats_url: nats_url.to_owned(),
-        nats_username: provisioning.username.clone(),
-        nats_password_file: provisioning.password_file.clone(),
+        nats: provisioning.platform_nats(nats_url),
         stream_replicas: source.num_replicas,
         dup_window_secs: source.duplicate_window.as_secs(),
         consumer_config: consumers
@@ -970,9 +968,7 @@ pub async fn configure_cdc(
         inputs,
         route,
         &wamn_control::environment::EventBroker {
-            nats_url: nats_url.to_owned(),
-            nats_username: provisioning.username.clone(),
-            nats_password_file: provisioning.password_file.clone(),
+            nats: provisioning.platform_nats(nats_url),
             stream_replicas: source.num_replicas,
             dup_window_secs: source.duplicate_window.as_secs(),
         },

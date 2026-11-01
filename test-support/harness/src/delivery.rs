@@ -488,16 +488,20 @@ fn variables(platform: &Platform) -> Vec<(&'static str, Option<OsString>)> {
         ("WAMN_IDENTITY_CLIENT_KEY", None),
         ("WAMN_IDENTITY_SERVER_CA", None),
         (
-            "WAMN_EVENT_NATS_URL",
-            events.and_then(|events| text(&events.nats_url)),
+            "WAMN_NATS_URL",
+            events.and_then(|events| text(&events.nats.nats_url)),
         ),
         (
-            "WAMN_EVENT_NATS_USERNAME",
-            events.and_then(|events| text(&events.nats_username)),
+            "WAMN_NATS_TLS_CA",
+            events.and_then(|events| path(&events.nats.nats_tls_ca)),
         ),
         (
-            "WAMN_EVENT_NATS_PASSWORD_FILE",
-            events.and_then(|events| path(&events.nats_password_file)),
+            "WAMN_NATS_TLS_CERT",
+            events.and_then(|events| path(&events.nats.nats_tls_cert)),
+        ),
+        (
+            "WAMN_NATS_TLS_KEY",
+            events.and_then(|events| path(&events.nats.nats_tls_key)),
         ),
         (
             "WAMN_EVENT_STREAM_REPLICAS",

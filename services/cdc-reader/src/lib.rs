@@ -74,7 +74,7 @@
 //!   an undeclared relation is a typed publication refusal.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Duration, Instant};
@@ -131,21 +131,22 @@ pub struct EventReaderArgs {
     #[arg(long, env = "WAMN_CDC_URL")]
     pub cdc_url: String,
 
-    /// Data-plane NATS (JetStream) the events publish to.
-    #[arg(
-        long,
-        env = "WAMN_EVT_NATS_URL",
-        default_value = "nats://evt-nats.wamn-system:4222"
-    )]
+    /// The NATS (JetStream) the events publish to (docs/plan/alignment.md R8).
+    #[arg(long, env = "WAMN_NATS_URL")]
     pub nats_url: String,
 
-    /// Event-broker username; requires its password file.
-    #[arg(long, env = "WAMN_EVT_NATS_USERNAME", requires = "nats_password_file")]
-    pub nats_username: Option<String>,
+    /// The CA of the NATS server.
+    #[arg(long, env = "WAMN_NATS_TLS_CA", requires_all = ["nats_tls_cert", "nats_tls_key"])]
+    pub nats_tls_ca: Option<PathBuf>,
 
-    /// File containing the event-broker password; requires its username.
-    #[arg(long, env = "WAMN_EVT_NATS_PASSWORD_FILE", requires = "nats_username")]
-    pub nats_password_file: Option<PathBuf>,
+    /// The reader's client certificate, which the server maps to its user
+    /// (docs/plan/alignment.md R4).
+    #[arg(long, env = "WAMN_NATS_TLS_CERT", requires_all = ["nats_tls_ca", "nats_tls_key"])]
+    pub nats_tls_cert: Option<PathBuf>,
+
+    /// The key of the client certificate.
+    #[arg(long, env = "WAMN_NATS_TLS_KEY", requires_all = ["nats_tls_ca", "nats_tls_cert"])]
+    pub nats_tls_key: Option<PathBuf>,
 
     /// sslmode appended to both the walsender and the preflight connection.
     #[arg(long, default_value = "disable")]
@@ -1069,30 +1070,16 @@ pub async fn run(args: EventReaderArgs) -> anyhow::Result<()> {
     run_with_shutdown(args, shutdown).await
 }
 
-fn event_nats_options(
-    username: Option<&str>,
-    password_file: Option<&Path>,
-) -> anyhow::Result<async_nats::ConnectOptions> {
-    match (username, password_file) {
-        (None, None) => Ok(async_nats::ConnectOptions::new()),
-        (Some(username), Some(path)) => {
-            if username.is_empty()
-                || !username
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-            {
-                bail!("event-broker username must be one nonempty broker token");
-            }
-            let password =
-                std::fs::read_to_string(path).context("read the event-broker password file")?;
-            if password.is_empty() {
-                bail!("event-broker password file is empty");
-            }
-            Ok(async_nats::ConnectOptions::new()
-                .user_and_password(username.to_owned(), password)
-                .custom_inbox_prefix(format!("_INBOX_{username}")))
-        }
-        _ => bail!("event broker requires both username and password file"),
+/// The NATS options of the reader: its client certificate when the arguments
+/// name one.
+fn event_nats_options(args: &EventReaderArgs) -> async_nats::ConnectOptions {
+    let options = async_nats::ConnectOptions::new();
+    match (&args.nats_tls_ca, &args.nats_tls_cert, &args.nats_tls_key) {
+        (Some(ca), Some(cert), Some(key)) => options
+            .require_tls(true)
+            .add_root_certificates(ca.clone())
+            .add_client_certificate(cert.clone(), key.clone()),
+        _ => options,
     }
 }
 
@@ -1103,10 +1090,7 @@ pub async fn run_with_shutdown(
     shutdown: ReaderShutdown,
 ) -> anyhow::Result<()> {
     let token = shutdown.token;
-    let nats_options = event_nats_options(
-        args.nats_username.as_deref(),
-        args.nats_password_file.as_deref(),
-    )?;
+    let nats_options = event_nats_options(&args);
     let mut reg = read_registration(&args).await?;
     check_registration(&args, &reg)?;
     tracing::info!(
@@ -2212,33 +2196,6 @@ mod tests {
     }
 
     #[test]
-    fn event_broker_credentials_refuse_partial_invalid_and_unreadable_inputs() {
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system clock")
-            .as_nanos();
-        let path =
-            std::env::temp_dir().join(format!("wamn-reader-nats-{}-{nonce}", std::process::id()));
-        assert!(event_nats_options(None, None).is_ok());
-        for (username, password_file) in [
-            (Some("publisher_dev"), None),
-            (None, Some(path.as_path())),
-            (Some("publisher_dev"), Some(path.as_path())),
-            (Some(""), Some(path.as_path())),
-            (Some("publisher.*"), Some(path.as_path())),
-            (Some("publisher>"), Some(path.as_path())),
-            (Some("publisher dev"), Some(path.as_path())),
-        ] {
-            assert!(event_nats_options(username, password_file).is_err());
-        }
-        std::fs::write(&path, []).expect("write empty password file");
-        assert!(event_nats_options(Some("publisher_dev"), Some(&path)).is_err());
-        std::fs::write(&path, format!("{nonce}\n")).expect("write private password file");
-        assert!(event_nats_options(Some("publisher_dev"), Some(&path)).is_ok());
-        std::fs::remove_file(path).expect("remove private password file");
-    }
-
-    #[test]
     fn walsender_url_appends_replication_database() {
         assert_eq!(
             walsender_url("postgres://u:p@h:5432/db", "disable").unwrap(),
@@ -2314,8 +2271,9 @@ mod tests {
             system_database_url: String::new(),
             cdc_url: "postgres://cdc:pw@db.invalid:5432/project".into(),
             nats_url: "nats://nats.invalid:4222".into(),
-            nats_username: None,
-            nats_password_file: None,
+            nats_tls_ca: None,
+            nats_tls_cert: None,
+            nats_tls_key: None,
             sslmode: "disable".into(),
             stream_replicas: 1,
             dup_window_secs: 120,

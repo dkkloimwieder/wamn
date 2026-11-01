@@ -653,7 +653,9 @@ async fn broker(
 }
 
 /// Apply the one NATS with its authorization file. The first apply writes the
-/// platform users, and step 4.8 adds the environments.
+/// platform users, and step 4.8 adds the environments. A changed file reaches
+/// the server through its config reloader, never a restart
+/// (docs/plan/alignment.md R10).
 async fn nats(
     target: &Target,
     document: &ClusterDocument,
@@ -661,7 +663,7 @@ async fn nats(
     step: &InstallStep,
 ) -> anyhow::Result<bool> {
     let mut changed = false;
-    let mut authorization: Option<Value> = kubectl::get(
+    let authorization: Option<Value> = kubectl::get(
         &target.kubeconfig,
         &target.context,
         "platform",
@@ -676,16 +678,9 @@ async fn nats(
             "data": {"authorization.conf": STANDARD.encode(super::broker::initial_authorization())}
         });
         kubectl::apply(&target.kubeconfig, &target.context, "platform", &secret).await?;
-        authorization = Some(secret);
         changed = true;
     }
-    let authorization = authorization.context("missing Secret platform/wamn-nats-authorization")?;
-    for mut object in objects(repository, "deploy/gcp/nats-jetstream.yaml", document)? {
-        if object["kind"] == "StatefulSet" {
-            object["spec"]["template"]["metadata"]["annotations"] = json!({
-                "wamn.dev/nats-authorization": job::input_digest(&authorization["data"])
-            });
-        }
+    for object in objects(repository, "deploy/gcp/nats-jetstream.yaml", document)? {
         changed |= apply_object(target, &object).await?;
     }
     rollout(target, step, "platform", "statefulset/wamn-nats", "300s").await?;

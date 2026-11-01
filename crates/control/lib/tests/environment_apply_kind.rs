@@ -1231,18 +1231,20 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         serde_yaml::to_string(&fixture_host_group(&local))?,
     )?;
     let event_config = work.join("apply-event-nats.json");
-    let event_password = work.join("apply-event-password");
+    let event_directory = work.join("apply-event-nats");
+    std::fs::create_dir_all(&event_directory)?;
+    let authority = wamn_test_infrastructure::nats_tls::Authority::new(&event_directory)?;
+    let event_credentials =
+        authority.client(wamn_test_infrastructure::nats_tls::DEVELOPMENT_USER)?;
     std::fs::write(
         &event_config,
-        serde_json::to_vec(
-            &json!({"authorization":{"users":[{"user":USER,"password":PASSWORD}]}}),
-        )?,
+        serde_json::to_vec(&json!({
+            "tls": authority.server_tls(),
+            "authorization": {"users": [wamn_test_infrastructure::nats_tls::full_permission_user(
+                wamn_test_infrastructure::nats_tls::DEVELOPMENT_USER
+            )]}
+        }))?,
     )?;
-    std::fs::write(&event_password, PASSWORD)?;
-    let event_credentials = wamn_test_infrastructure::event_broker::Credentials {
-        username: USER.into(),
-        password_file: event_password.clone(),
-    };
     let event_server =
         integration::start_broker(run, &event_config, &event_credentials, "apply-events").await?;
     run.kept.registry_address.clone_from(&local);
@@ -3171,9 +3173,13 @@ fn check_platform(run: &Run, system_url: String, chart: PathBuf) -> Platform {
         host_group: Some(work.join("host-group.yaml")),
         pat_issuer: PatIssuerConfig::default(),
         events: Some(environment::EventBroker {
-            nats_url: run.kept.event_server.clone(),
-            nats_username: USER.into(),
-            nats_password_file: work.join("apply-event-password"),
+            nats: wamn_test_infrastructure::event_broker::Credentials {
+                user: wamn_test_infrastructure::nats_tls::DEVELOPMENT_USER.into(),
+                ca: work.join("apply-event-nats/ca.crt"),
+                cert: work.join("apply-event-nats/client-wamn-dev.crt"),
+                key: work.join("apply-event-nats/client-wamn-dev.key"),
+            }
+            .platform_nats(&run.kept.event_server),
             stream_replicas: 1,
             dup_window_secs: 120,
         }),
@@ -3346,7 +3352,7 @@ async fn apply_platform_document(
     let group = serde_yaml::from_slice(&std::fs::read(
         platform.host_group.as_ref().context("host group")?,
     )?)?;
-    let server = &platform.events.as_ref().context("events")?.nats_url;
+    let server = &platform.events.as_ref().context("events")?.nats.nats_url;
     let (group, secret) = event_overlay(document, group, server)?;
     let file = run.work.join(format!("{}-events.json", document.env));
     std::fs::write(&file, serde_json::to_vec(&secret)?)?;

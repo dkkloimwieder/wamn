@@ -88,9 +88,8 @@ pub struct Platform {
 /// The event broker inputs of CDC (`enable-cdc-project-env`).
 #[derive(Debug, Clone)]
 pub struct EventBroker {
-    pub nats_url: String,
-    pub nats_username: String,
-    pub nats_password_file: PathBuf,
+    /// The NATS connection with the client certificate (docs/plan/alignment.md R4).
+    pub nats: wamn_platform_identity::nats::PlatformNats,
     pub stream_replicas: usize,
     pub dup_window_secs: u64,
 }
@@ -314,16 +313,10 @@ pub(crate) async fn apply_locked(
 
 /// Read event broker inputs for both deployed and local workflow verbs.
 pub fn event_broker_from_env() -> anyhow::Result<Option<EventBroker>> {
-    Ok(match std::env::var("WAMN_EVENT_NATS_URL") {
-        Err(_) => None,
-        Ok(nats_url) => Some(EventBroker {
-            nats_url,
-            nats_username: std::env::var("WAMN_EVENT_NATS_USERNAME")
-                .context("set WAMN_EVENT_NATS_USERNAME")?,
-            nats_password_file: PathBuf::from(
-                std::env::var("WAMN_EVENT_NATS_PASSWORD_FILE")
-                    .context("set WAMN_EVENT_NATS_PASSWORD_FILE")?,
-            ),
+    Ok(match std::env::var_os("WAMN_NATS_URL") {
+        None => None,
+        Some(_) => Some(EventBroker {
+            nats: wamn_platform_identity::nats::PlatformNats::from_env()?,
             stream_replicas: std::env::var("WAMN_EVENT_STREAM_REPLICAS")
                 .ok()
                 .map(|count| count.parse().context("WAMN_EVENT_STREAM_REPLICAS"))

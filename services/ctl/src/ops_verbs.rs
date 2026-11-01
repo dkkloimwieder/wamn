@@ -16,18 +16,6 @@ use wamn_control::prune_run_history::{PruneRunHistoryRequest, prune_terminal_run
 /// Retained broker advisory reporting arguments.
 #[derive(Debug, Args)]
 pub struct EventAdvisoriesArgs {
-    /// Event-plane NATS with the retained advisory stream.
-    #[arg(long, env = "WAMN_EVT_NATS_URL")]
-    pub nats_url: String,
-
-    /// Event-broker username; requires its password file.
-    #[arg(long, env = "WAMN_EVT_NATS_USERNAME", requires = "nats_password_file")]
-    pub nats_username: Option<String>,
-
-    /// File containing the event-broker password; requires its username.
-    #[arg(long, env = "WAMN_EVT_NATS_PASSWORD_FILE", requires = "nats_username")]
-    pub nats_password_file: Option<PathBuf>,
-
     /// Exact source stream from the broker advisory.
     #[arg(long)]
     pub stream: String,
@@ -42,12 +30,10 @@ pub struct EventAdvisoriesArgs {
 }
 
 /// Read the retained broker advisories of one consumer and print one JSON
-/// record per line.
+/// record per line. The NATS connection comes from `WAMN_NATS_*`.
 pub async fn event_advisories(args: EventAdvisoriesArgs) -> anyhow::Result<()> {
     let records = read_retained_advisories(EventAdvisoriesRequest {
-        nats_url: args.nats_url,
-        nats_username: args.nats_username,
-        nats_password_file: args.nats_password_file,
+        nats: wamn_platform_identity::nats::PlatformNats::from_env()?,
         stream: args.stream,
         consumer: args.consumer,
         limit: args.limit,

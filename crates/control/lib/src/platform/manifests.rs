@@ -370,6 +370,11 @@ mod tests {
                 .as_str()
                 .unwrap();
             assert!(nats.contains("verify_and_map: true"));
+            // R10: a reloader signals the server, and no digest restarts it.
+            let pod = &server["spec"]["template"];
+            assert!(pod["metadata"].get("annotations").is_none());
+            assert_eq!(pod["spec"]["shareProcessNamespace"], true);
+            assert_eq!(pod["spec"]["containers"][0]["name"], "reloader");
             assert_eq!(
                 server["spec"]["volumeClaimTemplates"][0]["spec"]["storageClassName"],
                 "standard"

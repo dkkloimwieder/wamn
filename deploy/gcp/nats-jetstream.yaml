@@ -21,6 +21,8 @@ data:
   nats.conf: |
     server_name: $POD_NAME
     listen: 0.0.0.0:4222
+    # The config reloader signals this process (docs/plan/alignment.md R10).
+    pid_file: /var/run/nats/nats.pid
     http: 127.0.0.1:8222
     # Preserve the default 1 MiB event ceiling explicitly for bounded native pulls.
     max_payload: 1048576
@@ -98,7 +100,34 @@ spec:
         app.kubernetes.io/component: nats
     spec:
       terminationGracePeriodSeconds: 45
+      # The reloader signals the server process (docs/plan/alignment.md R10).
+      shareProcessNamespace: true
       containers:
+        # A changed authorization Secret reaches the server by a reload, never
+        # a restart. The kubelet updates the mounted file, and the reloader
+        # sends SIGHUP.
+        - name: reloader
+          image: natsio/nats-server-config-reloader:0.16.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - nats-server-config-reloader
+            - -pid
+            - /var/run/nats/nats.pid
+            - -config
+            - /etc/nats-config/nats.conf
+            - -config
+            - /etc/nats-authorization/authorization.conf
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nats-config
+            - name: authorization
+              mountPath: /etc/nats-authorization
+              readOnly: true
+            - name: pid
+              mountPath: /var/run/nats
+          resources:
+            requests: { cpu: "10m", memory: "16Mi" }
+            limits: { memory: "64Mi" }
         - name: nats
           image: nats:2.10-alpine
           imagePullPolicy: IfNotPresent
@@ -123,6 +152,8 @@ spec:
             - name: tls
               mountPath: /etc/nats-tls
               readOnly: true
+            - name: pid
+              mountPath: /var/run/nats
             - name: data
               mountPath: /data
           # Only local administration can read unauthenticated broker metadata.
@@ -160,6 +191,8 @@ spec:
           secret:
             secretName: wasmcloud-nats-tls
             optional: false
+        - name: pid
+          emptyDir: {}
   volumeClaimTemplates:
     - metadata:
         name: data
