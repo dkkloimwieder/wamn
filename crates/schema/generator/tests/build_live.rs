@@ -13,7 +13,7 @@ use sha2::{Digest as _, Sha256};
 use wamn_schema_generator::build::{
     BuildRequest, build_components, build_package, generate_package, package_output,
 };
-use wamn_schema_generator::receipt;
+use wamn_schema_generator::build_record;
 use wamn_schema_generator::{GenerateError, GenerateErrorType, PackageManifest};
 
 /// A test-owned copy of the fixture and its overlay, side by side.
@@ -114,10 +114,10 @@ fn statement<'a>(manifest: &'a Value, operation: &str, name: &str) -> &'a Value 
 }
 
 /// R10(2) and R10(3): the copy holds no generated verifier, so pass one
-/// describes without one; two builds give the same bytes and receipts; the
+/// describes without one; two builds give the same bytes and build records; the
 /// manifest is canonical and hashed once; an overlay records its base.
 #[tokio::test(flavor = "current_thread")]
-async fn stale_and_clean_builds_give_identical_outputs_and_receipts() {
+async fn stale_and_clean_builds_give_identical_outputs_and_build_records() {
     let workspace = Workspace::new("identical");
     workspace.edit_manifest(
         "manifest.Package {",
@@ -152,7 +152,7 @@ async fn stale_and_clean_builds_give_identical_outputs_and_receipts() {
         .join("client-ts/components/obsolete.tsx");
     fs::create_dir_all(stale.parent().unwrap()).expect("create stale client output");
     fs::write(&stale, b"obsolete").expect("write an obsolete component");
-    let receipt_first = build_package(&BuildRequest::new(
+    let build_record_first = build_package(&BuildRequest::new(
         &workspace.package(),
         &first,
         database.url(),
@@ -160,7 +160,7 @@ async fn stale_and_clean_builds_give_identical_outputs_and_receipts() {
     .await
     .expect("build the fixture");
     fs::remove_dir_all(&previous).expect("remove the previous build output");
-    let receipt_second = build_package(&BuildRequest::new(
+    let build_record_second = build_package(&BuildRequest::new(
         &workspace.package(),
         &second,
         database.url(),
@@ -188,8 +188,11 @@ async fn stale_and_clean_builds_give_identical_outputs_and_receipts() {
         std::str::from_utf8(&files[Path::new("client-ts/components/widget.ts")]).unwrap();
     assert!(bindings.contains("export async function archive("));
     assert!(components.contains("export const WidgetArchiveForm ="));
-    assert_eq!(receipt_first, receipt_second);
-    assert_eq!(receipt_first, receipt::read(&output_first).unwrap());
+    assert_eq!(build_record_first, build_record_second);
+    assert_eq!(
+        build_record_first,
+        build_record::read(&output_first).unwrap()
+    );
     assert!(
         files.keys().any(|path| path.starts_with("native-verifier")),
         "pass two generated no verifier"
@@ -203,7 +206,7 @@ async fn stale_and_clean_builds_give_identical_outputs_and_receipts() {
         &wamn_execution_contract::canonical_json_bytes(&value),
         "wamn.json is not canonical"
     );
-    let digest = receipt_first.outputs.manifest.clone();
+    let digest = build_record_first.outputs.manifest.clone();
     let data_access: Value =
         serde_json::from_slice(&files[Path::new("platform-policy/data-access.json")]).unwrap();
     assert_eq!(
@@ -212,13 +215,13 @@ async fn stale_and_clean_builds_give_identical_outputs_and_receipts() {
         "the data-access overlay carries no package identity"
     );
     assert_eq!(
-        receipt_first.outputs.files.len(),
+        build_record_first.outputs.files.len(),
         files.len() - 1,
-        "the receipt lists every output but itself"
+        "the build record lists every output but itself"
     );
     assert_eq!(
-        receipt_first.inputs.digest,
-        receipt::input_digest(&workspace.package()).unwrap()
+        build_record_first.inputs.digest,
+        build_record::input_digest(&workspace.package()).unwrap()
     );
 
     let overlay = build_package(&BuildRequest::new(
@@ -714,13 +717,17 @@ async fn a_stale_base_component_pin_refuses_fresh_and_current_builds() {
         let digest = format!("sha256:{}", hex::encode(Sha256::digest(bytes)));
         fs::create_dir_all(output.join("components")).unwrap();
         fs::write(output.join(&path), bytes).unwrap();
-        let mut built = receipt::read(output).unwrap();
-        built.outputs.components = vec![receipt::ReceiptComponent {
+        let mut built = build_record::read(output).unwrap();
+        built.outputs.components = vec![build_record::BuildComponent {
             name,
             path,
             sha256: digest.clone(),
         }];
-        fs::write(output.join(receipt::RECEIPT_FILE), built.to_bytes()).unwrap();
+        fs::write(
+            output.join(build_record::BUILD_RECORD_FILE),
+            built.to_bytes(),
+        )
+        .unwrap();
         digest
     };
     let pin = record_component(&base_output, b"\0asm\x0d\0\x01\0");
@@ -748,7 +755,7 @@ async fn a_stale_base_component_pin_refuses_fresh_and_current_builds() {
 
     let built_digest = record_component(&base_output, b"\0asm\x0d\0\x01\0\0\x02\x01x");
     assert_eq!(
-        receipt::read(&base_output).unwrap().outputs.manifest,
+        build_record::read(&base_output).unwrap().outputs.manifest,
         base.outputs.manifest
     );
     let before = snapshot(&output);
@@ -792,7 +799,7 @@ async fn an_overlay_is_composed_with_the_bytes_of_its_base() {
     let _ = fs::remove_dir_all(&output_root);
     for package in ["wamn_receiving", "client_acme_receiving"] {
         let source = package_output(&built, package);
-        receipt::read_current(&apps.join(package), &source)
+        build_record::read_current(&apps.join(package), &source)
             .expect("read the current package build");
         for (path, bytes) in snapshot(&source) {
             let target = package_output(&output_root, package).join(path);
@@ -802,7 +809,7 @@ async fn an_overlay_is_composed_with_the_bytes_of_its_base() {
     }
     let request = BuildRequest::new(&apps.join("client_acme_receiving"), &output_root, "");
 
-    let receipt = build_components(&request, "client_acme_receiving")
+    let build_record = build_components(&request, "client_acme_receiving")
         .await
         .expect("compose Acme over Receiving");
 
@@ -818,7 +825,7 @@ async fn an_overlay_is_composed_with_the_bytes_of_its_base() {
         "the composed component embeds the base bytes"
     );
     assert!(
-        receipt
+        build_record
             .outputs
             .components
             .iter()
@@ -868,7 +875,7 @@ async fn nested_base_paths_preserve_outputs_and_supply_migrations() {
 
 /// Owner declarations survive compilation at a caller-selected output root.
 #[tokio::test(flavor = "current_thread")]
-async fn overlay_builds_inherit_owner_fields_from_receipted_manifests() {
+async fn overlay_builds_inherit_owner_fields_from_manifests_with_build_records() {
     use wamn_schema_generator::build::generate_package;
 
     let workspace = Workspace::new("inherited-fields");
@@ -912,7 +919,7 @@ async fn overlay_builds_inherit_owner_fields_from_receipted_manifests() {
     assert!(
         error
             .to_string()
-            .contains("manifest differs from its build receipt"),
+            .contains("manifest differs from its build record"),
         "{error:#}"
     );
 }

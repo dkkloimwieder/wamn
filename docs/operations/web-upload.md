@@ -54,7 +54,7 @@ wamn web upload --platform-ui --org dkk --bucket gs://example-web/clients
 ```
 
 The uploader requires the chart version to equal the version in `deploy/platform/release/Chart.yaml`, which it reads at run time.
-It also requires the local file digest to match `PlatformBuildReceipt.platform_ui` before it writes any object.
+It also requires the local file digest to match `PlatformBuildRecord.platform_ui` before it writes any object.
 [platform_ui_source](../../crates/control/lib/src/web_upload.rs) applies these rules.
 [platform_ui_digest](../../crates/control/lib/src/platform_build.rs) includes each relative file path and file digest, and requires `index.html`.
 
@@ -132,7 +132,7 @@ The [CLI](../../services/ctl/src/web.rs) and [upload implementation](../../crate
 | `set WAMN_RELEASE_CHART to the stamped platform chart` | Set the variable before a platform upload. |
 | ``read <path>; run `wamn-ctl build-platform` `` | The platform build record is absent or unreadable. Use the matching stamped chart. |
 | `the stamped chart version <version> differs from platform <version>` | Use a stamped chart that matches `deploy/platform/release/Chart.yaml`. |
-| `the platform UI build <path> differs from the platform build receipt <path>` | Restore the matching local build before upload. |
+| `the platform UI build <path> differs from the platform build record <path>` | Restore the matching local build before upload. |
 | `set <variable> for wamn-ctl env` | Supply the required environment configuration for a package upload. |
 | `coordinate <value> is not org/project/env` | Pass exactly three slash-separated parts. The coordinate also must pass the platform naming rules. |
 | `--release must be sha256: and 64 lowercase hexadecimal digits` | Pass the full manifest digest. |

@@ -67,7 +67,7 @@ fn declared_consumers(scope: &Triple, manifests: &[String]) -> anyhow::Result<Ve
         .iter()
         .map(|path| {
             if let Some(root) = wamn_schema_generator::manifest_package_root(Path::new(path)) {
-                wamn_schema_generator::receipt::check_current(root)?;
+                wamn_schema_generator::build_record::check_current(root)?;
             }
             Ok(wamn_schema_generator::PackageManifest::from_slice(
                 &fs::read(path).with_context(|| format!("read {path}"))?,

@@ -200,7 +200,7 @@ pub async fn publish_declarations(
     database_url: &str,
 ) -> anyhow::Result<()> {
     use serde_json::json;
-    use wamn_schema_generator::receipt::{RECEIPT_FILE, ReceiptComponent};
+    use wamn_schema_generator::build_record::{BUILD_RECORD_FILE, BuildComponent};
     for (name, connections) in [
         (
             "label_fixture",
@@ -299,7 +299,7 @@ manifest.Package {{
                 serde_json::to_vec(&graph)?,
             )?;
         }
-        let mut receipt = Box::pin(wamn_schema_generator::build::build_package(
+        let mut build_record = Box::pin(wamn_schema_generator::build::build_package(
             &wamn_schema_generator::build::BuildRequest::new(
                 &package,
                 &root.join("target/wamn"),
@@ -332,7 +332,7 @@ manifest.Package {{
             .encode()?;
         std::fs::create_dir_all(output.join("components"))?;
         std::fs::write(output.join("components/fixture.wasm"), &bytes)?;
-        receipt.outputs.components = vec![ReceiptComponent {
+        build_record.outputs.components = vec![BuildComponent {
             name: "fixture".into(),
             path: "components/fixture.wasm".into(),
             sha256: wamn_engine::component_admission::component_digest(&bytes),
@@ -366,13 +366,13 @@ manifest.Package {{
                 )?;
             }
             let bytes = std::fs::read(output.join(&path))?;
-            receipt.outputs.components.push(ReceiptComponent {
+            build_record.outputs.components.push(BuildComponent {
                 name: (*palette).into(),
                 path,
                 sha256: wamn_engine::component_admission::component_digest(&bytes),
             });
         }
-        std::fs::write(output.join(RECEIPT_FILE), receipt.to_bytes())?;
+        std::fs::write(output.join(BUILD_RECORD_FILE), build_record.to_bytes())?;
         Box::pin(wamn_control::package_artifact::push_package(
             &wamn_control::package_artifact::PushPackageRequest {
                 package,

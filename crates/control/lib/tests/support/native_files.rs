@@ -167,7 +167,7 @@ async fn build_fixture(
 )> {
     use wamn_schema_generator::{
         build::{BuildRequest, build_package},
-        receipt::{RECEIPT_FILE, ReceiptComponent},
+        build_record::{BUILD_RECORD_FILE, BuildComponent},
     };
     let source = repository.join("crates/control/lib/tests/support/file_package");
     let package = run.work.join("file-package/file_fixture");
@@ -224,7 +224,7 @@ async fn build_fixture(
             "edges":[]
         }))?,
     )?;
-    let mut receipt = Box::pin(build_package(&BuildRequest::new(
+    let mut build_record = Box::pin(build_package(&BuildRequest::new(
         &package,
         &run.work.join("file-package/target/wamn"),
         database_url,
@@ -271,13 +271,13 @@ async fn build_fixture(
     for (name, bytes) in components {
         let path = format!("components/{name}.wasm");
         std::fs::write(output.join(&path), &bytes)?;
-        receipt.outputs.components.push(ReceiptComponent {
+        build_record.outputs.components.push(BuildComponent {
             name: name.into(),
             path,
             sha256: wamn_engine::component_admission::component_digest(&bytes),
         });
     }
-    std::fs::write(output.join(RECEIPT_FILE), receipt.to_bytes())?;
+    std::fs::write(output.join(BUILD_RECORD_FILE), build_record.to_bytes())?;
     let scope = wamn_catalog::ComponentPackageScope::new(
         wamn_control_registry::project_env_key(ORG, PROJECT, "files"),
         "file_fixture",

@@ -173,9 +173,9 @@ impl<'a> PackageFiles<'a> {
     ///
     /// # Errors
     ///
-    /// When workspace output has no current build receipt.
+    /// When workspace output has no current build record.
     pub fn open(root: &'a Path) -> Result<Self, RouteSchemaError> {
-        crate::receipt::check_current(root).map_err(|error| RouteSchemaError {
+        crate::build_record::check_current(root).map_err(|error| RouteSchemaError {
             source: Some(error.into()),
             ..RouteSchemaError::new(RouteSchemaErrorType::Read, &root.display().to_string(), "")
         })?;

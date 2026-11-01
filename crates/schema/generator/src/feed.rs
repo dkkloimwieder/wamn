@@ -795,7 +795,7 @@ mod tests {
     }
 
     #[test]
-    fn printed_receipt_records_aliases_and_index_warnings() {
+    fn printed_build_record_records_aliases_and_index_warnings() {
         let catalog = catalog(RECEIPT);
         let source = derive_sql(
             &catalog,

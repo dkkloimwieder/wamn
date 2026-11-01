@@ -72,7 +72,7 @@ async fn the_receiving_build_records_its_components_and_virtualizes_every_record
         .await
         .expect("wamn build of Receiving");
     let output = package_output(&output_root, "wamn_receiving");
-    let receipt: Value =
+    let build_record: Value =
         serde_json::from_slice(&fs::read(output.join("build.json")).expect("read build.json"))
             .expect("parse build.json");
     let manifest: Value =
@@ -91,7 +91,7 @@ async fn the_receiving_build_records_its_components_and_virtualizes_every_record
         .filter(|name| !owned.contains(name))
         .collect::<BTreeSet<_>>();
 
-    let recorded = receipt["outputs"]["components"]
+    let recorded = build_record["outputs"]["components"]
         .as_array()
         .expect("build.json records its components");
     let names = recorded

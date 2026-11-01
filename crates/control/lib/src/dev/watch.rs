@@ -215,7 +215,7 @@ impl PackageRoot {
                 source,
             )
         })?;
-        wamn_schema_generator::receipt::check_current(&root).map_err(|source| {
+        wamn_schema_generator::build_record::check_current(&root).map_err(|source| {
             FilesystemInvalidationError {
                 source: Some(source.into()),
                 ..FilesystemInvalidationError::new(
@@ -249,7 +249,7 @@ impl PackageRoot {
     }
 
     fn refresh_authored_inputs(&mut self) {
-        if wamn_schema_generator::receipt::check_current(&self.root).is_err() {
+        if wamn_schema_generator::build_record::check_current(&self.root).is_err() {
             return;
         }
         let manifest_path = wamn_schema_generator::package_manifest_path(&self.root);

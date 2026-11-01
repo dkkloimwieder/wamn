@@ -12,25 +12,25 @@ use wamn_schema_generator::{
     COMPILED_MANIFEST, compile_manifest, package_manifest_path, write_compiled_manifest,
 };
 
-fn write_receipt(root: &Path) {
-    use wamn_schema_generator::receipt;
-    let built = receipt::BuildReceipt {
-        schema: receipt::RECEIPT_SCHEMA.to_owned(),
-        package: receipt::ReceiptPackage {
+fn write_build_record(root: &Path) {
+    use wamn_schema_generator::build_record;
+    let built = build_record::BuildRecord {
+        schema: build_record::BUILD_RECORD_SCHEMA.to_owned(),
+        package: build_record::BuildPackage {
             id: "fixture".into(),
             version: "1.0.0".into(),
         },
-        inputs: receipt::ReceiptInputs {
-            digest: receipt::input_digest(root).unwrap(),
+        inputs: build_record::BuildInputs {
+            digest: build_record::input_digest(root).unwrap(),
             files: std::collections::BTreeMap::new(),
         },
         dependencies: Vec::new(),
-        generator: receipt::ReceiptGenerator {
+        generator: build_record::BuildGenerator {
             id: "generator".into(),
             toolchain: "toolchain".into(),
             sqlx: "0.9.0".into(),
         },
-        outputs: receipt::ReceiptOutputs {
+        outputs: build_record::BuildOutputs {
             manifest: "sha256:fixture".into(),
             files: std::collections::BTreeMap::new(),
             components: Vec::new(),
@@ -38,7 +38,7 @@ fn write_receipt(root: &Path) {
         },
     };
     std::fs::write(
-        wamn_schema_generator::output_root(root).join(receipt::RECEIPT_FILE),
+        wamn_schema_generator::output_root(root).join(build_record::BUILD_RECORD_FILE),
         built.to_bytes(),
     )
     .unwrap();
@@ -481,7 +481,7 @@ fn an_edited_wamn_k_refuses_the_compiled_file_until_a_build() {
     let written: Value =
         serde_json::from_slice(&std::fs::read(&compiled).expect("read")).expect("JSON");
     assert_eq!(written, package.compile());
-    write_receipt(package.root());
+    write_build_record(package.root());
 
     std::fs::write(
         package.root().join("wamn.k"),
@@ -514,7 +514,7 @@ fn a_current_compiled_file_keeps_its_derived_relations_and_an_edit_refuses() {
     assert_ne!(derived, authored);
     std::fs::create_dir_all(path.parent().expect("generated/")).expect("create generated/");
     std::fs::write(&path, &derived).expect("write generated/wamn.json");
-    write_receipt(package.root());
+    write_build_record(package.root());
     write_compiled_manifest(package.root()).expect("keep generated/wamn.json");
     assert_eq!(
         std::fs::read_to_string(&path).expect("read generated/wamn.json"),

@@ -17,7 +17,7 @@ use anyhow::Context as _;
 ///
 /// When the tree cannot be read.
 pub fn fixture_artifact_digest(root: &Path) -> anyhow::Result<String> {
-    wamn_schema_generator::receipt::check_current(root)?;
+    wamn_schema_generator::build_record::check_current(root)?;
     let mut context = ring::digest::Context::new(&ring::digest::SHA256);
     let mut frame = |bytes: &[u8]| {
         context.update(&u64::try_from(bytes.len()).unwrap_or(u64::MAX).to_be_bytes());
@@ -52,8 +52,8 @@ pub fn fixture_artifact_digest(root: &Path) -> anyhow::Result<String> {
 }
 
 /// Record output that a test writes, without compiling a guest.
-pub fn write_receipt(root: &Path) {
-    use wamn_schema_generator::receipt;
+pub fn write_build_record(root: &Path) {
+    use wamn_schema_generator::build_record;
 
     let manifest_path = wamn_schema_generator::package_manifest_path(root);
     let manifest_bytes = std::fs::read(manifest_path).unwrap();
@@ -61,9 +61,9 @@ pub fn write_receipt(root: &Path) {
     let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes).unwrap();
     let output = wamn_schema_generator::output_root(root);
     std::fs::create_dir_all(&output).unwrap();
-    let receipt = receipt::BuildReceipt {
-        schema: receipt::RECEIPT_SCHEMA.to_owned(),
-        package: receipt::ReceiptPackage {
+    let build_record = build_record::BuildRecord {
+        schema: build_record::BUILD_RECORD_SCHEMA.to_owned(),
+        package: build_record::BuildPackage {
             id: manifest["package"]["id"]
                 .as_str()
                 .expect("fixture package id")
@@ -73,17 +73,17 @@ pub fn write_receipt(root: &Path) {
                 .expect("fixture package version")
                 .to_owned(),
         },
-        inputs: receipt::ReceiptInputs {
-            digest: receipt::input_digest(root).unwrap(),
+        inputs: build_record::BuildInputs {
+            digest: build_record::input_digest(root).unwrap(),
             files: std::collections::BTreeMap::new(),
         },
         dependencies: Vec::new(),
-        generator: receipt::ReceiptGenerator {
+        generator: build_record::BuildGenerator {
             id: "test".into(),
             toolchain: "test".into(),
             sqlx: "0.9.0".into(),
         },
-        outputs: receipt::ReceiptOutputs {
+        outputs: build_record::BuildOutputs {
             manifest: format!(
                 "sha256:{}",
                 hex::encode(ring::digest::digest(&ring::digest::SHA256, &manifest_bytes))
@@ -93,13 +93,17 @@ pub fn write_receipt(root: &Path) {
             web: None,
         },
     };
-    std::fs::write(output.join(receipt::RECEIPT_FILE), receipt.to_bytes()).unwrap();
+    std::fs::write(
+        output.join(build_record::BUILD_RECORD_FILE),
+        build_record.to_bytes(),
+    )
+    .unwrap();
 }
 
 #[cfg(test)]
 mod tests {
     #[test]
-    fn a_fixture_receipt_matches_its_tree_and_refuses_a_later_edit() {
+    fn a_fixture_build_record_matches_its_tree_and_refuses_a_later_edit() {
         let scratch = crate::scratch::ScratchRoot::create().unwrap();
         let package = scratch.path().join("package");
         std::fs::create_dir_all(&package).unwrap();
@@ -108,10 +112,10 @@ mod tests {
             r#"{"package":{"id":"fixture","version":"1.0.0"}}"#,
         )
         .unwrap();
-        super::write_receipt(&package);
-        wamn_schema_generator::receipt::check_current(&package).unwrap();
+        super::write_build_record(&package);
+        wamn_schema_generator::build_record::check_current(&package).unwrap();
         std::fs::write(package.join("statement.sql"), "SELECT 1").unwrap();
-        let error = wamn_schema_generator::receipt::check_current(&package).unwrap_err();
+        let error = wamn_schema_generator::build_record::check_current(&package).unwrap_err();
         assert!(error.to_string().contains("is stale"), "{error:#}");
     }
 }

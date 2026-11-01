@@ -46,7 +46,7 @@ pub struct UploadArgs {
     /// and Application Default Credentials do.
     #[arg(long, required_unless_present = "platform_ui")]
     pub bucket: Option<String>,
-    /// Upload apps/platform_ui/dist using WAMN_RELEASE_CHART's build receipt.
+    /// Upload apps/platform_ui/dist using WAMN_RELEASE_CHART's build record.
     #[arg(long, requires = "org")]
     pub platform_ui: bool,
     /// The org written to the platform UI config.json.

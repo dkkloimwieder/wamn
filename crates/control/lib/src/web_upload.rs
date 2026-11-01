@@ -151,14 +151,14 @@ pub(crate) fn platform_ui_source(
     chart: &Path,
 ) -> anyhow::Result<(PathBuf, String)> {
     use crate::platform_build::{
-        PlatformBuildReceipt, RECEIPT_FILE, platform_ui_digest, platform_ui_dist,
+        BUILD_RECORD_FILE, PlatformBuildRecord, platform_ui_digest, platform_ui_dist,
     };
-    let receipt_path = chart.join(RECEIPT_FILE);
-    let receipt: PlatformBuildReceipt =
-        serde_json::from_slice(&std::fs::read(&receipt_path).with_context(|| {
+    let build_record_path = chart.join(BUILD_RECORD_FILE);
+    let build_record: PlatformBuildRecord =
+        serde_json::from_slice(&std::fs::read(&build_record_path).with_context(|| {
             format!(
                 "read {}; run `wamn-ctl build-platform`",
-                receipt_path.display()
+                build_record_path.display()
             )
         })?)?;
     let version = crate::release_chart::chart_version(chart)?;
@@ -170,10 +170,10 @@ pub(crate) fn platform_ui_source(
     );
     let dist = platform_ui_dist(repository);
     ensure!(
-        platform_ui_digest(&dist)? == receipt.platform_ui,
-        "the platform UI build {} differs from the platform build receipt {}",
+        platform_ui_digest(&dist)? == build_record.platform_ui,
+        "the platform UI build {} differs from the platform build record {}",
         dist.display(),
-        receipt_path.display()
+        build_record_path.display()
     );
     Ok((dist, format!("platform-ui/{version}")))
 }
@@ -551,9 +551,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn platform_ui_upload_uses_the_receipt_and_a_version_prefix_with_org_only() {
+    async fn platform_ui_upload_uses_the_build_record_and_a_version_prefix_with_org_only() {
         use crate::platform_build::{
-            PlatformBuildReceipt, RECEIPT_FILE, platform_ui_digest, platform_ui_dist,
+            BUILD_RECORD_FILE, PlatformBuildRecord, platform_ui_digest, platform_ui_dist,
         };
         let repository =
             std::env::temp_dir().join(format!("wamn-platform-upload-{}", std::process::id()));
@@ -568,8 +568,8 @@ mod tests {
         std::fs::create_dir_all(&platform).unwrap();
         std::fs::write(platform.join("Chart.yaml"), "version: 0.1.7").unwrap();
         std::fs::write(
-            chart.join(RECEIPT_FILE),
-            serde_json::to_vec(&PlatformBuildReceipt {
+            chart.join(BUILD_RECORD_FILE),
+            serde_json::to_vec(&PlatformBuildRecord {
                 platform_ui: platform_ui_digest(&dist).unwrap(),
             })
             .unwrap(),
@@ -599,9 +599,9 @@ mod tests {
             super::platform_ui_source(&repository, &chart)
                 .unwrap_err()
                 .to_string()
-                .contains("differs from the platform build receipt")
+                .contains("differs from the platform build record")
         );
-        std::fs::remove_file(chart.join(RECEIPT_FILE)).unwrap();
+        std::fs::remove_file(chart.join(BUILD_RECORD_FILE)).unwrap();
         assert!(
             super::platform_ui_source(&repository, &chart)
                 .unwrap_err()

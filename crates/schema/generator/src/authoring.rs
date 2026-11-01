@@ -139,7 +139,7 @@ pub(crate) fn compile_authored_manifest(package_root: &Path) -> Result<Vec<u8>> 
 /// Generation writes the same file with the members it derives, such as each
 /// custom operation's relations, and a file whose other members equal the
 /// compile is left as it is. A package without `wamn.k` is left unchanged.
-/// Existing workspace output must have a current build receipt before it is read.
+/// Existing workspace output must have a current build record before it is read.
 ///
 /// # Errors
 ///
@@ -155,7 +155,7 @@ pub fn write_compiled_manifest(package_root: &Path) -> Result<()> {
     // writes the file in canonical JSON, and the compile is indented.
     let compiled: Value = serde_json::from_slice(&bytes).context("parse the compiled manifest")?;
     if path.is_file() {
-        crate::receipt::check_current(package_root)?;
+        crate::build_record::check_current(package_root)?;
     }
     let current = fs::read(&path)
         .ok()

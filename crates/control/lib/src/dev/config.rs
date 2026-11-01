@@ -1287,10 +1287,10 @@ pub(super) fn read_package_manifest(root: &Path) -> Result<PackageManifest, DevP
     let path = wamn_schema_generator::package_manifest_path(root);
     // A hand-written source manifest does not consume package build output.
     if path.parent() == Some(wamn_schema_generator::output_root(root).as_path()) {
-        wamn_schema_generator::receipt::check_current(root).map_err(|source| {
+        wamn_schema_generator::build_record::check_current(root).map_err(|source| {
             DevPackageError::manifest(
                 DevPackageErrorType::ManifestInvalid,
-                root.join(wamn_schema_generator::receipt::RECEIPT_FILE),
+                root.join(wamn_schema_generator::build_record::BUILD_RECORD_FILE),
                 source,
             )
         })?;
@@ -1685,7 +1685,7 @@ pub(crate) mod tests {
     const DEV_CONFIG_SCHEMA_PATH: &str = "schema/wamn-dev.schema.json";
     /// The overlay manifest of the platform fixture application.
     fn overlay_manifest() -> Vec<u8> {
-        wamn_schema_generator::receipt::check_current(&wamn_fixture_package::overlay_root())
+        wamn_schema_generator::build_record::check_current(&wamn_fixture_package::overlay_root())
             .unwrap_or_else(|error| panic!("{error:#}"));
         wamn_fixture_package::overlay_manifest_bytes()
     }

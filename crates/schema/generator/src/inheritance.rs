@@ -7,7 +7,7 @@ use anyhow::{Context as _, Result, ensure};
 
 use crate::{GenerateError, GenerateErrorType, PackageManifest};
 
-/// Read the same base builds that component composition uses. The receipt
+/// Read the same base builds that component composition uses. The build record
 /// records each manifest’s digest. Release resolution checks the package
 /// artifact pin.
 pub(crate) fn load_base_manifests(
@@ -20,7 +20,7 @@ pub(crate) fn load_base_manifests(
         .values()
         .map(|dependency| {
             let output = crate::build::package_output(output_root, &dependency.package);
-            let receipt = crate::receipt::read_current(
+            let build_record = crate::build_record::read_current(
                 &crate::output::dependency_root(package_root, &dependency.package),
                 &output,
             )
@@ -28,16 +28,16 @@ pub(crate) fn load_base_manifests(
             let bytes = fs::read(output.join(crate::authoring::COMPILED_MANIFEST_NAME))
                 .with_context(|| format!("read the manifest of base {}", dependency.package))?;
             ensure!(
-                crate::generate::sha256(&bytes) == receipt.outputs.manifest,
-                "base {} manifest differs from its build receipt",
+                crate::generate::sha256(&bytes) == build_record.outputs.manifest,
+                "base {} manifest differs from its build record",
                 dependency.package
             );
             let base = PackageManifest::from_slice(&bytes)?;
             ensure!(
                 base.package.id == dependency.package
                     && base.package.version == dependency.version
-                    && receipt.package.id == base.package.id
-                    && receipt.package.version == base.package.version,
+                    && build_record.package.id == base.package.id
+                    && build_record.package.version == base.package.version,
                 "base {} build does not match version {}",
                 dependency.package,
                 dependency.version

@@ -23,7 +23,7 @@ pub(super) fn read_package_manifests(
     let mut contracts = BTreeMap::new();
     for path in paths {
         if let Some(root) = wamn_schema_generator::manifest_package_root(path) {
-            wamn_schema_generator::receipt::check_current(root).map_err(|error| {
+            wamn_schema_generator::build_record::check_current(root).map_err(|error| {
                 PublishManifestError {
                     source: Some(error.into()),
                     ..PublishManifestError::new(
@@ -171,12 +171,14 @@ fn read_operation_contracts(root: &Path) -> Result<Vec<PackageContract>, Publish
             error,
         )
     };
-    wamn_schema_generator::receipt::check_current(root).map_err(|error| PublishManifestError {
-        source: Some(error.into()),
-        ..PublishManifestError::new(
-            PublishManifestErrorType::PackageManifest,
-            format!("read current package build {}", root.display()),
-        )
+    wamn_schema_generator::build_record::check_current(root).map_err(|error| {
+        PublishManifestError {
+            source: Some(error.into()),
+            ..PublishManifestError::new(
+                PublishManifestErrorType::PackageManifest,
+                format!("read current package build {}", root.display()),
+            )
+        }
     })?;
     let contracts = wamn_schema_generator::output_root(root).join("contracts");
     let models = match std::fs::read_dir(&contracts) {

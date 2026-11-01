@@ -38,7 +38,7 @@ pub async fn run(args: BuildArgs) -> anyhow::Result<()> {
             .output_root
             .clone()
             .unwrap_or_else(|| default_output_root(package));
-        let receipt = build_package(&BuildRequest::new(
+        let build_record = build_package(&BuildRequest::new(
             package,
             &output_root,
             &args.database_url,
@@ -46,10 +46,10 @@ pub async fn run(args: BuildArgs) -> anyhow::Result<()> {
         .await?;
         println!(
             "{} {} {} {}",
-            receipt.package.id,
-            receipt.package.version,
-            receipt.outputs.manifest,
-            package_output(&output_root, &receipt.package.id).display()
+            build_record.package.id,
+            build_record.package.version,
+            build_record.outputs.manifest,
+            package_output(&output_root, &build_record.package.id).display()
         );
         if args.record_digest {
             let line = wamn_control::package_artifact::record_package_digest(package)?;

@@ -36,7 +36,7 @@ fn package_owners(
     let mut owners = BTreeMap::new();
     for path in package_manifests {
         if let Some(root) = wamn_schema_generator::manifest_package_root(path) {
-            wamn_schema_generator::receipt::check_current(root).map_err(|error| {
+            wamn_schema_generator::build_record::check_current(root).map_err(|error| {
                 PublishManifestError {
                     source: Some(error.into()),
                     ..PublishManifestError::new(

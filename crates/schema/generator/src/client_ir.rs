@@ -660,8 +660,8 @@ impl ClientContractIr {
             .parent()
             .filter(|output| crate::output::is_build_output(output))
         {
-            crate::receipt::source_root(output)
-                .and_then(|source| crate::receipt::read_current(&source, output))
+            crate::build_record::source_root(output)
+                .and_then(|source| crate::build_record::read_current(&source, output))
                 .map_err(|error| {
                     ClientIrError::new(
                         ClientIrErrorType::UnreadableProjection,

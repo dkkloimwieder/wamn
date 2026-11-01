@@ -458,7 +458,7 @@ fn load_package_statements(
     manifest: &wamn_schema_generator::PackageManifest,
     component: Option<&AdmittedComponent>,
 ) -> Result<BTreeMap<String, BTreeMap<String, ComponentSqlStatement>>, ComponentProjectionError> {
-    wamn_schema_generator::receipt::check_current(package_root).map_err(|error| {
+    wamn_schema_generator::build_record::check_current(package_root).map_err(|error| {
         ComponentProjectionError::new(
             ComponentProjectionErrorType::StatementContractInvalid,
             format!("{error:#}"),
@@ -1305,7 +1305,7 @@ mod tests {
         roots.sort();
         let mut statements = 0;
         for root in &roots {
-            wamn_schema_generator::receipt::check_current(root).unwrap();
+            wamn_schema_generator::build_record::check_current(root).unwrap();
             let manifest_path = wamn_schema_generator::package_manifest_path(root);
             let bytes = std::fs::read(&manifest_path).unwrap_or_else(|error| {
                 panic!(

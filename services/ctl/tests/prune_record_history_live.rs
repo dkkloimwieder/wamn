@@ -153,7 +153,7 @@ fn write_package(root: &Path) {
     .expect("write the fixture manifest");
     std::fs::write(root.join("migrations/0001_initial.sql"), migration)
         .expect("write the fixture migration");
-    wamn_test_infrastructure::fixture_digest::write_receipt(root);
+    wamn_test_infrastructure::fixture_digest::write_build_record(root);
 }
 
 /// Apply the fixture package through the apply-package library.

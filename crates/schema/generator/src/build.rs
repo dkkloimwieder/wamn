@@ -28,6 +28,10 @@ use wamn_schema_introspection::ir::CatalogIr;
 use wamn_schema_introspection::postgres::authored_object_name;
 
 use crate::authoring::{COMPILED_MANIFEST_NAME, compile_authored_manifest, is_authored};
+use crate::build_record::{
+    BUILD_RECORD_FILE, BUILD_RECORD_SCHEMA, BuildDependency, BuildOutputs, BuildPackage,
+    BuildRecord,
+};
 pub use crate::components::{build_components, build_guest};
 use crate::data_access::application_schemas;
 use crate::describe::{DescribedStatement, column_type, describe_statements};
@@ -35,9 +39,6 @@ use crate::generate::sha256;
 use crate::materialize::{
     classify_statements, client_bindings, existing_files, expected_files, generate_from_manifest,
     introspect_with_manifest, load_authored_sql, statement_corpus_from_manifest, write_files,
-};
-use crate::receipt::{
-    BuildReceipt, RECEIPT_FILE, RECEIPT_SCHEMA, ReceiptDependency, ReceiptOutputs, ReceiptPackage,
 };
 use crate::{AuthoredSql, CrudAction, PackageManifest, ResultClass, canonical_operation_identity};
 
@@ -94,59 +95,59 @@ pub fn package_output(output_root: &Path, package: &str) -> PathBuf {
     output_root.join(package)
 }
 
-/// Build one package and return its receipt, which is also written to
+/// Build one package and return its build record, which is also written to
 /// `build.json` in the package's build output directory: [`generate_package`],
 /// then [`build_components`].
 ///
 /// # Errors
 ///
 /// When [`generate_package`] or [`build_components`] refuses.
-pub async fn build_package(request: &BuildRequest) -> Result<BuildReceipt> {
-    if let Some(receipt) = current_build(request)? {
+pub async fn build_package(request: &BuildRequest) -> Result<BuildRecord> {
+    if let Some(build_record) = current_build(request)? {
         crate::materialize::materialize_client_consumers(
             &request.package_root,
-            &receipt.package.id,
-            &package_output(&request.output_root, &receipt.package.id).join("client-ts"),
+            &build_record.package.id,
+            &package_output(&request.output_root, &build_record.package.id).join("client-ts"),
         )?;
-        eprintln!("{} is current", receipt.package.id);
-        return Ok(receipt);
+        eprintln!("{} is current", build_record.package.id);
+        return Ok(build_record);
     }
-    let receipt = generate_package(request).await?;
-    build_components(request, &receipt.package.id).await
+    let build_record = generate_package(request).await?;
+    build_components(request, &build_record.package.id).await
 }
 
 /// Find the matching inputs without compiling KCL or writing temporary files.
-fn current_build(request: &BuildRequest) -> Result<Option<BuildReceipt>> {
+fn current_build(request: &BuildRequest) -> Result<Option<BuildRecord>> {
     let directories = match fs::read_dir(&request.output_root) {
         Ok(directories) => directories,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error).context("read the package build output root"),
     };
-    let digest = crate::receipt::input_digest(&request.package_root)?;
+    let digest = crate::build_record::input_digest(&request.package_root)?;
     for directory in directories {
         let output = directory?.path();
-        let Ok(receipt) = crate::receipt::read(&output) else {
+        let Ok(build_record) = crate::build_record::read(&output) else {
             continue;
         };
-        if receipt.inputs.digest != digest
-            // A receipt written before the web build must not make an unfinished build current.
+        if build_record.inputs.digest != digest
+            // A build record written before the web build must not make an unfinished build current.
             || (request.package_root.join("web/package.json").is_file()
-                && receipt.outputs.web.is_none())
-            || !receipt
+                && build_record.outputs.web.is_none())
+            || !build_record
                 .outputs
                 .files
                 .keys()
                 .all(|path| output.join(path).is_file())
-            || !receipt
+            || !build_record
                 .outputs
                 .components
                 .iter()
                 .all(|component| output.join(&component.path).is_file())
-            || receipt.outputs.web.as_ref().is_some_and(|digest| {
+            || build_record.outputs.web.as_ref().is_some_and(|digest| {
                 web_digest(&output.join(WEB_OUTPUT)).as_ref().ok() != Some(digest)
             })
-            || !receipt.dependencies.iter().all(|dependency| {
-                crate::receipt::read_current(
+            || !build_record.dependencies.iter().all(|dependency| {
+                crate::build_record::read_current(
                     &crate::output::dependency_root(&request.package_root, &dependency.id),
                     &package_output(&request.output_root, &dependency.id),
                 )
@@ -158,7 +159,7 @@ fn current_build(request: &BuildRequest) -> Result<Option<BuildReceipt>> {
         {
             continue;
         }
-        // Generation writes a receipt before component compilation. Do not
+        // Generation writes a build record before component compilation. Do not
         // accept that intermediate result after a failed component build.
         if crate::output::package_workspace(&request.package_root)
             .join("Cargo.toml")
@@ -167,7 +168,7 @@ fn current_build(request: &BuildRequest) -> Result<Option<BuildReceipt>> {
             let manifest =
                 PackageManifest::from_slice(&fs::read(output.join(COMPILED_MANIFEST_NAME))?)?;
             if !manifest.components.keys().all(|name| {
-                receipt
+                build_record
                     .outputs
                     .components
                     .iter()
@@ -181,24 +182,24 @@ fn current_build(request: &BuildRequest) -> Result<Option<BuildReceipt>> {
                 &manifest,
             )?;
         }
-        return Ok(Some(receipt));
+        return Ok(Some(build_record));
     }
     Ok(None)
 }
 
 /// Every step of [`build_package`] except the component build (step 7): the
-/// receipt it writes records no component.
+/// build record it writes records no component.
 ///
 /// # Errors
 ///
 /// When the manifest does not compile, when a base package has no current
-/// receipt, when the verification database cannot be created or migrated, when
+/// build record, when the verification database cannot be created or migrated, when
 /// a statement does not describe or a declared statement type is wider than
 /// the described one, when generation refuses, or when the output cannot be
 /// written.
-pub async fn generate_package(request: &BuildRequest) -> Result<BuildReceipt> {
+pub async fn generate_package(request: &BuildRequest) -> Result<BuildRecord> {
     let package_root = request.package_root.as_path();
-    let inputs = crate::receipt::inputs(package_root)?;
+    let inputs = crate::build_record::inputs(package_root)?;
     let mut authored: Value = serde_json::from_slice(&authored_manifest(package_root)?)
         .context("parse the authored manifest")?;
     let provisional =
@@ -222,28 +223,30 @@ pub async fn generate_package(request: &BuildRequest) -> Result<BuildReceipt> {
 
     let package_output = package_output(&request.output_root, &provisional.package.id);
     let outputs = write_outputs(&package_output, &canonical, &files)?;
-    let mut receipt = BuildReceipt {
-        schema: RECEIPT_SCHEMA.to_owned(),
-        package: ReceiptPackage {
+    let mut build_record = BuildRecord {
+        schema: BUILD_RECORD_SCHEMA.to_owned(),
+        package: BuildPackage {
             id: provisional.package.id.clone(),
             version: provisional.package.version.clone(),
         },
         inputs,
         dependencies,
-        generator: crate::receipt::generator(),
+        generator: crate::build_record::generator(),
         outputs,
     };
-    let path = package_output.join(RECEIPT_FILE);
-    // Client copying and the web build read generated output, so its receipt must exist first.
-    fs::write(&path, receipt.to_bytes()).with_context(|| format!("write {}", path.display()))?;
+    let path = package_output.join(BUILD_RECORD_FILE);
+    // Client copying and the web build read generated output, so its build record must exist first.
+    fs::write(&path, build_record.to_bytes())
+        .with_context(|| format!("write {}", path.display()))?;
     crate::materialize::materialize_client_consumers(
         package_root,
         &provisional.package.id,
         &package_output.join("client-ts"),
     )?;
-    receipt.outputs.web = build_web(package_root, &package_output).await?;
-    fs::write(&path, receipt.to_bytes()).with_context(|| format!("write {}", path.display()))?;
-    Ok(receipt)
+    build_record.outputs.web = build_web(package_root, &package_output).await?;
+    fs::write(&path, build_record.to_bytes())
+        .with_context(|| format!("write {}", path.display()))?;
+    Ok(build_record)
 }
 
 /// The two passes against the migrated verification database: the canonical
@@ -475,17 +478,17 @@ fn authored_manifest(package_root: &Path) -> Result<Vec<u8>> {
     }
 }
 
-/// The base packages of an overlay, from the receipts of their builds.
+/// The base packages of an overlay, from the build records of their builds.
 fn dependencies(
     package_root: &Path,
     output_root: &Path,
     manifest: &PackageManifest,
-) -> Result<Vec<ReceiptDependency>> {
+) -> Result<Vec<BuildDependency>> {
     manifest
         .base_dependencies
         .values()
         .map(|dependency| {
-            let base = crate::receipt::read_current(
+            let base = crate::build_record::read_current(
                 &crate::output::dependency_root(package_root, &dependency.package),
                 &package_output(output_root, &dependency.package),
             )
@@ -498,7 +501,7 @@ fn dependencies(
                 dependency.package,
                 dependency.version
             );
-            Ok(ReceiptDependency {
+            Ok(BuildDependency {
                 id: base.package.id,
                 version: base.package.version,
                 digest: base.outputs.manifest,
@@ -883,13 +886,13 @@ async fn execute_on_server(server_url: &str, sql: &str) -> Result<()> {
 
 /// Write the build output: every generated file, the canonical `wamn.json`,
 /// and nothing else except the SQLx metadata. A file whose bytes are unchanged
-/// keeps its modification time. The receipt goes first, so an interrupted
+/// keeps its modification time. The build record goes first, so an interrupted
 /// build leaves none.
 fn write_outputs(
     package_output: &Path,
     canonical: &[u8],
     files: &BTreeMap<PathBuf, Vec<u8>>,
-) -> Result<ReceiptOutputs> {
+) -> Result<BuildOutputs> {
     let mut outputs = files
         .iter()
         .map(|(path, bytes)| (path.clone(), bytes.as_slice()))
@@ -905,7 +908,7 @@ fn write_outputs(
             .to_owned();
         digests.insert(key, sha256(bytes));
     }
-    Ok(ReceiptOutputs {
+    Ok(BuildOutputs {
         manifest: sha256(canonical),
         files: digests,
         components: Vec::new(),
@@ -1091,8 +1094,8 @@ mod tests {
             .expect("rebuild the changed input");
         assert_ne!(first.inputs.digest, rebuilt.inputs.digest);
         assert_ne!(
-            before[Path::new(RECEIPT_FILE)],
-            snapshot()[Path::new(RECEIPT_FILE)]
+            before[Path::new(BUILD_RECORD_FILE)],
+            snapshot()[Path::new(BUILD_RECORD_FILE)]
         );
         fs::remove_file(output.join(COMPILED_MANIFEST_NAME)).unwrap();
         build_package(&request)
@@ -1101,9 +1104,9 @@ mod tests {
         assert!(output.join(COMPILED_MANIFEST_NAME).is_file());
         fs::create_dir(package.join("web")).unwrap();
         fs::write(package.join("web/package.json"), "{}").unwrap();
-        let mut unfinished = crate::receipt::read(&output).unwrap();
-        unfinished.inputs.digest = crate::receipt::input_digest(&package).unwrap();
-        fs::write(output.join(RECEIPT_FILE), unfinished.to_bytes()).unwrap();
+        let mut unfinished = crate::build_record::read(&output).unwrap();
+        unfinished.inputs.digest = crate::build_record::input_digest(&package).unwrap();
+        fs::write(output.join(BUILD_RECORD_FILE), unfinished.to_bytes()).unwrap();
         assert!(current_build(&request).unwrap().is_none());
         fs::remove_dir_all(root).unwrap();
     }

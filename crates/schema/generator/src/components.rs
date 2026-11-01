@@ -31,8 +31,8 @@ use tokio::process::Command;
 
 use crate::authoring::COMPILED_MANIFEST_NAME;
 use crate::build::{BuildRequest, package_output};
+use crate::build_record::{self, BUILD_RECORD_FILE, BuildComponent, BuildRecord};
 use crate::generate::sha256;
-use crate::receipt::{self, BuildReceipt, RECEIPT_FILE, ReceiptComponent};
 use crate::{GenerateError, GenerateErrorType, PackageManifest};
 
 /// Where the components lie in a package's build output.
@@ -82,10 +82,10 @@ struct Built {
 /// When the package has no current build output, when a guest does not build,
 /// carries a local path or differs from its pin, when virtualization or
 /// composition fails, or when the output cannot be written.
-pub async fn build_components(request: &BuildRequest, package: &str) -> Result<BuildReceipt> {
+pub async fn build_components(request: &BuildRequest, package: &str) -> Result<BuildRecord> {
     let package_root = request.package_root.as_path();
     let output = package_output(&request.output_root, package);
-    let mut receipt = receipt::read_current(package_root, &output)?;
+    let mut build_record = build_record::read_current(package_root, &output)?;
     let manifest = PackageManifest::from_slice(
         &fs::read(output.join(COMPILED_MANIFEST_NAME))
             .context("read the built wamn.json; run wamn build first")?,
@@ -93,17 +93,17 @@ pub async fn build_components(request: &BuildRequest, package: &str) -> Result<B
     .context("parse the built wamn.json")?;
     let workspace = crate::output::package_workspace(package_root);
     if !workspace.join("Cargo.toml").is_file() {
-        return Ok(receipt);
+        return Ok(build_record);
     }
     let compiler_output = crate::output_root(package_root);
     if compiler_output != output {
-        receipt::read_current(package_root, &compiler_output)?;
+        build_record::read_current(package_root, &compiler_output)?;
     }
     for dependency in manifest.base_dependencies.values() {
         let root = crate::output::dependency_root(package_root, &dependency.package);
         let compiler_output = crate::output_root(&root);
         if compiler_output != package_output(&request.output_root, &dependency.package) {
-            receipt::read_current(&root, &compiler_output)?;
+            build_record::read_current(&root, &compiler_output)?;
         }
     }
     let bases = base_components(package_root, &request.output_root, &manifest)?;
@@ -171,17 +171,18 @@ pub async fn build_components(request: &BuildRequest, package: &str) -> Result<B
         let path = format!("{COMPONENTS}/{name}.wasm");
         let target = output.join(&path);
         fs::write(&target, &bytes).with_context(|| format!("write {}", target.display()))?;
-        components.push(ReceiptComponent {
+        components.push(BuildComponent {
             name,
             path,
             sha256: sha256(&bytes),
         });
     }
     components.sort_by(|left, right| left.name.cmp(&right.name));
-    receipt.outputs.components = components;
-    let path = output.join(RECEIPT_FILE);
-    fs::write(&path, receipt.to_bytes()).with_context(|| format!("write {}", path.display()))?;
-    Ok(receipt)
+    build_record.outputs.components = components;
+    let path = output.join(BUILD_RECORD_FILE);
+    fs::write(&path, build_record.to_bytes())
+        .with_context(|| format!("write {}", path.display()))?;
+    Ok(build_record)
 }
 
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
@@ -445,17 +446,18 @@ pub(crate) fn base_components(
     for dependency in manifest.base_dependencies.values() {
         let base_output = package_output(output_root, &dependency.package);
         let base_root = crate::output::dependency_root(package_root, &dependency.package);
-        let base_receipt = receipt::read_current(&base_root, &base_output).with_context(|| {
-            format!(
-                "read the build of base {}; build it first",
-                dependency.package
-            )
-        })?;
+        let base_build_record =
+            build_record::read_current(&base_root, &base_output).with_context(|| {
+                format!(
+                    "read the build of base {}; build it first",
+                    dependency.package
+                )
+            })?;
         ensure!(
-            base_receipt.package.version == dependency.version,
+            base_build_record.package.version == dependency.version,
             "base {} is built at {}, not {}",
             dependency.package,
-            base_receipt.package.version,
+            base_build_record.package.version,
             dependency.version
         );
         let base_manifest = PackageManifest::from_slice(
@@ -468,7 +470,7 @@ pub(crate) fn base_components(
                 dependency.package
             );
         };
-        let (file, digest) = component_file(&base_output, &base_receipt, base_component)?;
+        let (file, digest) = component_file(&base_output, &base_build_record, base_component)?;
         if digest != dependency.digest {
             return Err(GenerateError::for_object(
                 GenerateErrorType::InvalidComponent,
@@ -517,8 +519,12 @@ async fn compose(
 
 /// The file of the component `name` that a base's `build.json` records,
 /// checked against its digest.
-fn component_file(output: &Path, receipt: &BuildReceipt, name: &str) -> Result<(PathBuf, String)> {
-    let entry = receipt
+fn component_file(
+    output: &Path,
+    build_record: &BuildRecord,
+    name: &str,
+) -> Result<(PathBuf, String)> {
+    let entry = build_record
         .outputs
         .components
         .iter()
@@ -526,7 +532,7 @@ fn component_file(output: &Path, receipt: &BuildReceipt, name: &str) -> Result<(
         .with_context(|| {
             format!(
                 "the build of {} records no component {name}",
-                receipt.package.id
+                build_record.package.id
             )
         })?;
     let path = output.join(&entry.path);
@@ -536,7 +542,7 @@ fn component_file(output: &Path, receipt: &BuildReceipt, name: &str) -> Result<(
         digest == entry.sha256,
         "{} differs from its build.json entry; build {} again",
         path.display(),
-        receipt.package.id
+        build_record.package.id
     );
     Ok((path, digest))
 }
@@ -655,26 +661,30 @@ mod tests {
         }"#,
         )
         .unwrap();
-        let mut built = BuildReceipt {
-            schema: receipt::RECEIPT_SCHEMA.to_owned(),
-            package: receipt::ReceiptPackage {
+        let mut built = BuildRecord {
+            schema: build_record::BUILD_RECORD_SCHEMA.to_owned(),
+            package: build_record::BuildPackage {
                 id: "package".into(),
                 version: "1.0.0".into(),
             },
-            inputs: receipt::inputs(&package).unwrap(),
+            inputs: build_record::inputs(&package).unwrap(),
             dependencies: Vec::new(),
-            generator: receipt::generator(),
-            outputs: receipt::ReceiptOutputs {
+            generator: build_record::generator(),
+            outputs: build_record::BuildOutputs {
                 manifest: "sha256:manifest".into(),
                 files: BTreeMap::new(),
                 components: Vec::new(),
                 web: None,
             },
         };
-        fs::write(output.join(receipt::RECEIPT_FILE), built.to_bytes()).unwrap();
+        fs::write(
+            output.join(build_record::BUILD_RECORD_FILE),
+            built.to_bytes(),
+        )
+        .unwrap();
         built.inputs.digest = "sha256:old".into();
         fs::write(
-            compiler_output.join(receipt::RECEIPT_FILE),
+            compiler_output.join(build_record::BUILD_RECORD_FILE),
             built.to_bytes(),
         )
         .unwrap();

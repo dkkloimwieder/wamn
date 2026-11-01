@@ -152,7 +152,7 @@ struct DescriptorFile {
 /// descriptor layers, which differs from the pushed digest, and an unpacked
 /// artifact packs to the digest it was pushed under.
 pub fn pack_package(root: &Path) -> anyhow::Result<PackedPackage> {
-    wamn_schema_generator::receipt::check_current(root)?;
+    wamn_schema_generator::build_record::check_current(root)?;
     let descriptors = descriptor_files(root)?
         .into_iter()
         .map(|(descriptor, bytes)| DescriptorFile {
@@ -218,13 +218,13 @@ pub(crate) async fn connection_components(
         return Ok(result);
     }
     let output = wamn_schema_generator::output_root(root);
-    let receipt = wamn_schema_generator::receipt::read(&output)?;
+    let build_record = wamn_schema_generator::build_record::read(&output)?;
     let scope = ComponentPackageScope::new(
         ADMISSION_ENV_KEY,
         &manifest.package.id,
         &manifest.package.version,
     )?;
-    source_components(root, manifest, &receipt)?
+    source_components(root, manifest, &build_record)?
         .into_iter()
         .map(|source| {
             let document = match source.template {
@@ -610,7 +610,7 @@ struct SourceComponent {
 
 /// The components that `manifest` owns or a wiring of `publication/wirings/`
 /// names, sorted by name, with their entries in `outputs.components` of the
-/// package's `build.json`. A missing receipt, a receipt whose `inputs.digest`
+/// package's `build.json`. A missing build record, a build record whose `inputs.digest`
 /// differs from the tree, a name without an entry, a palette component without
 /// exactly one platform declaration, and a palette component with two store
 /// aliases refuse. The bytes of each entry are checked against its digest when
@@ -618,7 +618,7 @@ struct SourceComponent {
 fn source_components(
     root: &Path,
     manifest: &PackageManifest,
-    receipt: &wamn_schema_generator::receipt::BuildReceipt,
+    build_record: &wamn_schema_generator::build_record::BuildRecord,
 ) -> anyhow::Result<Vec<SourceComponent>> {
     let wired = wiring_components(root)?;
     let mut templates = BTreeMap::new();
@@ -654,7 +654,7 @@ fn source_components(
     templates
         .into_iter()
         .map(|(name, template)| {
-            let entry = receipt
+            let entry = build_record
                 .outputs
                 .components
                 .iter()
@@ -843,7 +843,7 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
         "{} has no {AUTHORED_MANIFEST}; push-package takes an authored package",
         root.display()
     );
-    let receipt = wamn_schema_generator::receipt::read_current(
+    let build_record = wamn_schema_generator::build_record::read_current(
         root,
         &wamn_schema_generator::output_root(root),
     )?;
@@ -875,7 +875,7 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
     let mut publication = BTreeMap::new();
     let mut descriptors = Vec::new();
     let mut components = Vec::new();
-    for source in source_components(root, &manifest, &receipt)? {
+    for source in source_components(root, &manifest, &build_record)? {
         let (document, platform_packages) = match &source.template {
             ComponentTemplate::Owned(template) => (
                 render_declaration_document(template, ADMISSION_ENV_KEY)?,
@@ -1343,48 +1343,52 @@ mod tests {
 
     /// The `build.json` of the package at `root`, current for its tree, with
     /// the components `receiving` and `blob-put` in its build output.
-    fn write_receipt(root: &Path) {
-        use wamn_schema_generator::receipt;
+    fn write_build_record(root: &Path) {
+        use wamn_schema_generator::build_record;
         let output = wamn_schema_generator::output_root(root);
         let components = ["blob-put", "receiving"]
             .map(|name| {
                 let path = format!("components/{name}.wasm");
                 write(&output, &path, name.as_bytes());
-                receipt::ReceiptComponent {
+                build_record::BuildComponent {
                     name: name.to_owned(),
                     path,
                     sha256: sha256_digest(name.as_bytes()),
                 }
             })
             .to_vec();
-        let receipt = receipt::BuildReceipt {
-            schema: receipt::RECEIPT_SCHEMA.to_owned(),
-            package: receipt::ReceiptPackage {
+        let build_record = build_record::BuildRecord {
+            schema: build_record::BUILD_RECORD_SCHEMA.to_owned(),
+            package: build_record::BuildPackage {
                 id: "wamn_receiving".to_owned(),
                 version: "2.1.0".to_owned(),
             },
-            inputs: receipt::ReceiptInputs {
-                digest: receipt::input_digest(root).unwrap(),
+            inputs: build_record::BuildInputs {
+                digest: build_record::input_digest(root).unwrap(),
                 files: BTreeMap::new(),
             },
             dependencies: Vec::new(),
-            generator: receipt::ReceiptGenerator {
+            generator: build_record::BuildGenerator {
                 id: "generator".to_owned(),
                 toolchain: "toolchain".to_owned(),
                 sqlx: "0.9.0".to_owned(),
             },
-            outputs: receipt::ReceiptOutputs {
+            outputs: build_record::BuildOutputs {
                 manifest: sha256_digest(b"manifest"),
                 files: BTreeMap::new(),
                 components,
                 web: None,
             },
         };
-        write(&output, receipt::RECEIPT_FILE, &receipt.to_bytes());
+        write(
+            &output,
+            build_record::BUILD_RECORD_FILE,
+            &build_record.to_bytes(),
+        );
     }
 
     fn receiving_manifest() -> Vec<u8> {
-        wamn_schema_generator::receipt::check_current(
+        wamn_schema_generator::build_record::check_current(
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving"),
         )
         .unwrap();
@@ -1434,7 +1438,7 @@ mod tests {
         write(&root, "web/dist/stale.html", b"left out\n");
         write(&root, "web/src/main.ts", b"left out\n");
         write(&root, "generated/client/left-out.ts", b"left out\n");
-        write_receipt(&root);
+        write_build_record(&root);
         root
     }
 
@@ -1610,15 +1614,15 @@ mod tests {
         root: &Path,
         manifest: &PackageManifest,
     ) -> anyhow::Result<Vec<SourceComponent>> {
-        let receipt = wamn_schema_generator::receipt::read_current(
+        let build_record = wamn_schema_generator::build_record::read_current(
             root,
             &wamn_schema_generator::output_root(root),
         )?;
-        source_components(root, manifest, &receipt)
+        source_components(root, manifest, &build_record)
     }
 
     #[test]
-    fn the_build_refuses_a_stale_receipt_or_a_missing_component() {
+    fn the_build_refuses_a_stale_build_record_or_a_missing_component() {
         let root = package_tree("index");
         let manifest = manifest(&root);
 
@@ -1652,7 +1656,7 @@ mod tests {
             "publication/wirings/shape.json",
             b"{\"nodes\": {\"a\": {\"component\": \"jsonata\"}}}\n",
         );
-        write_receipt(&root);
+        write_build_record(&root);
         let error = format!(
             "{:#}",
             current_source_components(&root, &manifest).unwrap_err()
@@ -1664,7 +1668,7 @@ mod tests {
             "publication/wirings/shape.json",
             b"{\"nodes\": {\"a\": {\"component\": \"label-render\"}}}\n",
         );
-        write_receipt(&root);
+        write_build_record(&root);
         let error = format!(
             "{:#}",
             current_source_components(&root, &manifest).unwrap_err()
@@ -1687,7 +1691,7 @@ mod tests {
         std::fs::remove_file(root.join("publication/wirings/shape.json")).unwrap();
         std::fs::remove_file(
             wamn_schema_generator::output_root(&root)
-                .join(wamn_schema_generator::receipt::RECEIPT_FILE),
+                .join(wamn_schema_generator::build_record::BUILD_RECORD_FILE),
         )
         .unwrap();
         let error = format!(
@@ -1706,7 +1710,7 @@ mod tests {
             "publication/wirings/other.json",
             b"{\"nodes\": {\"a\": {\"component\": \"blob-put\", \"params\": {\"store_alias\": \"archive\"}}}}\n",
         );
-        write_receipt(&root);
+        write_build_record(&root);
         let error = format!(
             "{:#}",
             current_source_components(&root, &manifest(&root)).unwrap_err()

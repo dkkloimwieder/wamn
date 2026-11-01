@@ -541,7 +541,7 @@ fn private_file(path: &Path) -> anyhow::Result<()> {
 }
 
 pub(crate) fn package_coordinate() -> anyhow::Result<PackageCoordinate> {
-    wamn_schema_generator::receipt::check_current(&package_root())?;
+    wamn_schema_generator::build_record::check_current(&package_root())?;
     let manifest = read_json(&wamn_schema_generator::package_manifest_path(
         &package_root(),
     ))?;
@@ -828,7 +828,7 @@ pub fn package_manifest() -> anyhow::Result<wamn_schema_generator::PackageManife
 
 /// The manifest of the package at `root`.
 pub fn package_manifest_at(root: &Path) -> anyhow::Result<wamn_schema_generator::PackageManifest> {
-    wamn_schema_generator::receipt::check_current(root)?;
+    wamn_schema_generator::build_record::check_current(root)?;
     let path = wamn_schema_generator::package_manifest_path(root);
     wamn_schema_generator::PackageManifest::from_slice(
         &fs::read(&path).with_context(|| format!("read {}", path.display()))?,

@@ -500,10 +500,10 @@ impl ProductionDevStageRunner {
         // an overlay's build reads the build.json of each of its bases. Every
         // build describes its statements against its own fresh database on the
         // target's server. The Build stage compiles the components.
-        let mut receipts = BTreeMap::new();
+        let mut build_records = BTreeMap::new();
         for package in self.package_inputs()? {
             let output_root = wamn_schema_generator::build::default_output_root(&package.root);
-            let receipt = wamn_schema_generator::build::generate_package(
+            let build_record = wamn_schema_generator::build::generate_package(
                 &wamn_schema_generator::build::BuildRequest::new(
                     &package.root,
                     &output_root,
@@ -512,7 +512,7 @@ impl ProductionDevStageRunner {
             )
             .await
             .map_err(|source| ProductionDevStageError::owner("build package", source))?;
-            receipts.insert(package.manifest.package.id.clone(), receipt);
+            build_records.insert(package.manifest.package.id.clone(), build_record);
         }
         let selected = self.package_inputs()?;
         if selected
@@ -533,7 +533,7 @@ impl ProductionDevStageRunner {
         for package in selected {
             let package_id = &package.manifest.package.id;
             if crate::delivery::sqlx::requires_verifier(&package.manifest) {
-                let current = SqlxMetadataInputs::of(&receipts[package_id]);
+                let current = SqlxMetadataInputs::of(&build_records[package_id]);
                 if sqlx_metadata_is_current(self.sqlx_metadata_inputs.get(package_id), &current) {
                     self.sqlx_metadata_inputs
                         .insert(package_id.clone(), Some(current));
@@ -1246,7 +1246,7 @@ fn build_inputs(packages: &[PackageInput]) -> Result<Vec<String>, ProductionDevS
     packages
         .iter()
         .map(|package| {
-            wamn_schema_generator::receipt::input_digest(&package.root)
+            wamn_schema_generator::build_record::input_digest(&package.root)
                 .map_err(|source| ProductionDevStageError::owner("read the build inputs", source))
         })
         .collect()
@@ -1257,8 +1257,10 @@ fn build_inputs(packages: &[PackageInput]) -> Result<Vec<String>, ProductionDevS
 fn builds_are_current(packages: &[PackageInput], inputs: &[String]) -> bool {
     packages.len() == inputs.len()
         && packages.iter().zip(inputs).all(|(package, inputs)| {
-            wamn_schema_generator::receipt::read(&wamn_schema_generator::output_root(&package.root))
-                .is_ok_and(|receipt| receipt.inputs.digest == *inputs)
+            wamn_schema_generator::build_record::read(&wamn_schema_generator::output_root(
+                &package.root,
+            ))
+            .is_ok_and(|build_record| build_record.inputs.digest == *inputs)
         })
 }
 
@@ -1271,14 +1273,14 @@ fn builds_are_current(packages: &[PackageInput], inputs: &[String]) -> bool {
 #[derive(Debug, PartialEq, Eq)]
 struct SqlxMetadataInputs {
     inputs: String,
-    dependencies: Vec<wamn_schema_generator::receipt::ReceiptDependency>,
+    dependencies: Vec<wamn_schema_generator::build_record::BuildDependency>,
 }
 
 impl SqlxMetadataInputs {
-    fn of(receipt: &wamn_schema_generator::receipt::BuildReceipt) -> Self {
+    fn of(build_record: &wamn_schema_generator::build_record::BuildRecord) -> Self {
         Self {
-            inputs: receipt.inputs.digest.clone(),
-            dependencies: receipt.dependencies.clone(),
+            inputs: build_record.inputs.digest.clone(),
+            dependencies: build_record.dependencies.clone(),
         }
     }
 }
@@ -2110,8 +2112,8 @@ mod tests {
 
     #[test]
     fn sqlx_preparation_is_keyed_on_the_build_input_digest() {
-        let receipt = |inputs: &str, base: &str| {
-            let receipt: wamn_schema_generator::receipt::BuildReceipt =
+        let build_record = |inputs: &str, base: &str| {
+            let build_record: wamn_schema_generator::build_record::BuildRecord =
                 serde_json::from_value(serde_json::json!({
                     "schema": "wamn.build/v1",
                     "package": {"id": "demo", "version": "1.0.0"},
@@ -2121,29 +2123,38 @@ mod tests {
                     "outputs": {"manifest": "m", "files": {}, "components": [], "web": null},
                 }))
                 .unwrap();
-            SqlxMetadataInputs::of(&receipt)
+            SqlxMetadataInputs::of(&build_record)
         };
-        let prepared = receipt("sha256:a", "sha256:base");
+        let prepared = build_record("sha256:a", "sha256:base");
         assert!(
             !sqlx_metadata_is_current(None, &prepared),
             "a new session prepares once"
         );
         assert!(
-            sqlx_metadata_is_current(Some(&Some(prepared)), &receipt("sha256:a", "sha256:base")),
+            sqlx_metadata_is_current(
+                Some(&Some(prepared)),
+                &build_record("sha256:a", "sha256:base")
+            ),
             "an unchanged build input digest keeps the prepared SQLx metadata"
         );
-        let prepared = receipt("sha256:a", "sha256:base");
+        let prepared = build_record("sha256:a", "sha256:base");
         assert!(
-            !sqlx_metadata_is_current(Some(&Some(prepared)), &receipt("sha256:b", "sha256:base")),
+            !sqlx_metadata_is_current(
+                Some(&Some(prepared)),
+                &build_record("sha256:b", "sha256:base")
+            ),
             "a changed build input digest prepares"
         );
-        let prepared = receipt("sha256:a", "sha256:base");
+        let prepared = build_record("sha256:a", "sha256:base");
         assert!(
-            !sqlx_metadata_is_current(Some(&Some(prepared)), &receipt("sha256:a", "sha256:other")),
+            !sqlx_metadata_is_current(
+                Some(&Some(prepared)),
+                &build_record("sha256:a", "sha256:other")
+            ),
             "a changed base package prepares"
         );
         assert!(
-            !sqlx_metadata_is_current(Some(&None), &receipt("sha256:a", "sha256:base")),
+            !sqlx_metadata_is_current(Some(&None), &build_record("sha256:a", "sha256:base")),
             "an unfinished preparation runs again"
         );
     }
@@ -2342,7 +2353,7 @@ mod tests {
 
     #[test]
     fn each_package_selects_the_component_its_build_records() {
-        use wamn_schema_generator::receipt;
+        use wamn_schema_generator::build_record;
         let directory = std::env::temp_dir().join(format!(
             "wamn-dev-selection-{}-{}",
             std::process::id(),
@@ -2360,26 +2371,26 @@ mod tests {
             fs::create_dir_all(output.join("components")).expect("create fixture output");
             let path = format!("components/{component}.wasm");
             fs::write(output.join(&path), component).expect("write fixture component");
-            let built = receipt::BuildReceipt {
-                schema: receipt::RECEIPT_SCHEMA.to_owned(),
-                package: receipt::ReceiptPackage {
+            let built = build_record::BuildRecord {
+                schema: build_record::BUILD_RECORD_SCHEMA.to_owned(),
+                package: build_record::BuildPackage {
                     id: id.to_owned(),
                     version: version.to_owned(),
                 },
-                inputs: receipt::ReceiptInputs {
+                inputs: build_record::BuildInputs {
                     digest: "sha256:inputs".to_owned(),
                     files: BTreeMap::new(),
                 },
                 dependencies: Vec::new(),
-                generator: receipt::ReceiptGenerator {
+                generator: build_record::BuildGenerator {
                     id: "generator".to_owned(),
                     toolchain: "toolchain".to_owned(),
                     sqlx: "0.9.0".to_owned(),
                 },
-                outputs: receipt::ReceiptOutputs {
+                outputs: build_record::BuildOutputs {
                     manifest: "sha256:manifest".to_owned(),
                     files: BTreeMap::new(),
-                    components: vec![receipt::ReceiptComponent {
+                    components: vec![build_record::BuildComponent {
                         name: component.to_owned(),
                         path,
                         sha256: wamn_engine::component_admission::component_digest(
@@ -2389,8 +2400,11 @@ mod tests {
                     web: None,
                 },
             };
-            fs::write(output.join(receipt::RECEIPT_FILE), built.to_bytes())
-                .expect("write fixture receipt");
+            fs::write(
+                output.join(build_record::BUILD_RECORD_FILE),
+                built.to_bytes(),
+            )
+            .expect("write fixture build record");
             input
         });
         let selected = select_component_artifacts(&packages).expect("select both artifacts");

@@ -193,7 +193,7 @@ fn platform_ui_inputs(
     directory: &Path,
 ) -> anyhow::Result<JobRequest> {
     let mut request = platform_ui_request(document, image);
-    for name in ["Chart.yaml", crate::platform_build::RECEIPT_FILE] {
+    for name in ["Chart.yaml", crate::platform_build::BUILD_RECORD_FILE] {
         request.binary_files.insert(
             format!("chart/{name}"),
             std::fs::read(directory.join("release-chart").join(name))?,
@@ -244,7 +244,7 @@ mod tests {
     #[test]
     fn the_platform_ui_job_carries_every_file_the_upload_reads() {
         use crate::platform_build::{
-            PlatformBuildReceipt, RECEIPT_FILE, platform_ui_digest, platform_ui_dist,
+            BUILD_RECORD_FILE, PlatformBuildRecord, platform_ui_digest, platform_ui_dist,
         };
         let work =
             std::env::temp_dir().join(format!("wamn-platform-ui-job-{}", std::process::id()));
@@ -262,8 +262,8 @@ mod tests {
         std::fs::create_dir_all(&chart).unwrap();
         std::fs::write(chart.join("Chart.yaml"), "version: 0.1.7").unwrap();
         std::fs::write(
-            chart.join(RECEIPT_FILE),
-            serde_json::to_vec(&PlatformBuildReceipt {
+            chart.join(BUILD_RECORD_FILE),
+            serde_json::to_vec(&PlatformBuildRecord {
                 platform_ui: platform_ui_digest(&dist).unwrap(),
             })
             .unwrap(),

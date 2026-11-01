@@ -18,6 +18,8 @@
 mod authoring;
 /// `wamn build`: the two-pass package build (docs/plan/platform-deploy.md §7.1).
 pub mod build;
+/// `build.json`, the build record of one package build.
+pub mod build_record;
 pub mod client_component;
 mod client_fields;
 pub mod client_ir;
@@ -42,8 +44,6 @@ pub mod operation_reference;
 mod output;
 mod package_catalog;
 pub mod profile;
-/// `build.json`, the content receipt of one package build.
-pub mod receipt;
 pub mod route_schema;
 mod rustfmt;
 mod sql;

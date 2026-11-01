@@ -461,7 +461,7 @@ fn stage_package_root(source: &Path, name: &str) -> (PathBuf, String) {
         .expect("copy one package migration");
     }
 
-    wamn_schema_generator::receipt::check_current(source)
+    wamn_schema_generator::build_record::check_current(source)
         .unwrap_or_else(|error| panic!("{error:#}"));
     let manifest_bytes = std::fs::read(wamn_schema_generator::package_manifest_path(source))
         .expect("read package manifest");
@@ -469,7 +469,7 @@ fn stage_package_root(source: &Path, name: &str) -> (PathBuf, String) {
 
     std::fs::copy(overlay_evidence_path(source), overlay_evidence_path(&root))
         .expect("copy staged evidence");
-    wamn_test_infrastructure::fixture_digest::write_receipt(&root);
+    wamn_test_infrastructure::fixture_digest::write_build_record(&root);
     let staged = manifest_digest(&root);
     (root, staged)
 }
@@ -560,7 +560,7 @@ async fn moved_bytes_under_an_applied_version_are_refused() {
         .insert("predecessor_version".to_owned(), serde_json::json!("0.9.0"));
     let moved_bytes = wamn_execution_contract::canonical_json_bytes(&moved);
     std::fs::write(released.join("wamn.json"), &moved_bytes).expect("move the manifest bytes");
-    wamn_test_infrastructure::fixture_digest::write_receipt(&released);
+    wamn_test_infrastructure::fixture_digest::write_build_record(&released);
     assert_ne!(
         manifest_digest(&released),
         released_digest,
@@ -862,7 +862,7 @@ fn change_manifest_bytes(root: &Path) -> String {
     let mut bytes = std::fs::read(&path).expect("read the staged manifest");
     bytes.push(b'\n');
     std::fs::write(&path, &bytes).expect("write the changed manifest");
-    wamn_test_infrastructure::fixture_digest::write_receipt(root);
+    wamn_test_infrastructure::fixture_digest::write_build_record(root);
     manifest_digest(root)
 }
 

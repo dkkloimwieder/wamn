@@ -289,8 +289,8 @@ done
 ```
 
 The HTTP route guest needs release mode because composition requires its committed SHA-256 digest.
-The package builder fixes the device guest to release mode and records its virtualized bytes in the build receipt.
-It writes the device component and receipt under `apps/target/wamn/edge_device` in this checkout.
+The package builder fixes the device guest to release mode and records its virtualized bytes in the build record.
+It writes the device component and build record under `apps/target/wamn/edge_device` in this checkout.
 The native programs, materializer, and three HTTP workflow guests use debug mode.
 The `wamn-control` library tests need `apps/target/wamn/platform_fixture_overlay/wamn.json` from the initial checkout preparation.
 If that file is absent, use the database runner above to build `apps/platform_fixture` and `apps/platform_fixture_overlay`, in that order.

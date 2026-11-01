@@ -16,7 +16,7 @@ fn owners(package_id: &str) -> OperationOwners {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../apps")
         .join(package_id);
-    wamn_schema_generator::receipt::check_current(&root)
+    wamn_schema_generator::build_record::check_current(&root)
         .unwrap_or_else(|error| panic!("{error:#}"));
     let path = package_manifest_path(&root);
     let bytes =

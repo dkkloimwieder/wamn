@@ -68,27 +68,27 @@ impl Drop for Stage {
 /// The content of the platform UI produced by one platform build.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct PlatformBuildReceipt {
+pub struct PlatformBuildRecord {
     /// SHA-256 of the canonical map of relative file paths to file digests.
     pub platform_ui: String,
 }
 
 /// The platform build record beside the stamped chart's defaults.
-pub const RECEIPT_FILE: &str = "platform-build.json";
+pub const BUILD_RECORD_FILE: &str = "platform-build.json";
 
 /// The local static bundle, independent of package build output.
 pub fn platform_ui_dist(repository: &Path) -> PathBuf {
     repository.join("apps/platform_ui/dist")
 }
 
-fn ui_receipt(repository: &Path) -> anyhow::Result<PlatformBuildReceipt> {
+fn ui_build_record(repository: &Path) -> anyhow::Result<PlatformBuildRecord> {
     let dist = platform_ui_dist(repository);
     ensure!(
         dist.is_dir(),
         "the platform UI build {} is absent; run `pnpm --filter @wamn/platform-ui build`",
         dist.display()
     );
-    Ok(PlatformBuildReceipt {
+    Ok(PlatformBuildRecord {
         platform_ui: platform_ui_digest(&dist)?,
     })
 }
@@ -222,8 +222,8 @@ fn check_package_outputs(repository: &Path) -> anyhow::Result<()> {
                 .file_name()
                 .is_none_or(|name| name != wamn_catalog::host_route_package())
         {
-            let source = wamn_schema_generator::receipt::source_root(&output)?;
-            wamn_schema_generator::receipt::read_current(&source, &output)?;
+            let source = wamn_schema_generator::build_record::source_root(&output)?;
+            wamn_schema_generator::build_record::read_current(&source, &output)?;
         }
     }
     Ok(())
@@ -269,16 +269,16 @@ pub async fn build_platform(request: &BuildPlatformRequest) -> anyhow::Result<Pa
     let pushed = build_then_push(request, &roles, output, &mut components).await;
     let _ = std::fs::remove_dir_all(&roles);
     let pushed = pushed?;
-    stamp_chart(request, pushed, &ui_receipt(&request.repository)?)
+    stamp_chart(request, pushed, &ui_build_record(&request.repository)?)
 }
 
 /// Stamp the registry's images and role components of `request.version` into
 /// a copy of the release chart at `request.out`. It builds and pushes
 /// nothing; when any of the seven is missing, it refuses and names them.
 pub async fn stamp_only(request: &BuildPlatformRequest) -> anyhow::Result<PathBuf> {
-    let receipt = ui_receipt(&request.repository)?;
+    let build_record = ui_build_record(&request.repository)?;
     let insecure = loopback(&request.registry);
-    stamp_from_registry(request, &receipt, output, async |reference: &str| {
+    stamp_from_registry(request, &build_record, output, async |reference: &str| {
         let parsed = reference.parse()?;
         let (_, digest) = registry_pull::retry(
             &parsed,
@@ -307,7 +307,7 @@ pub async fn stamp_only(request: &BuildPlatformRequest) -> anyhow::Result<PathBu
 /// which returns the manifest digest. Then stamp them.
 async fn stamp_from_registry(
     request: &BuildPlatformRequest,
-    receipt: &PlatformBuildReceipt,
+    build_record: &PlatformBuildRecord,
     mut run: impl AsyncFnMut(&mut Command) -> anyhow::Result<String>,
     mut pull: impl AsyncFnMut(&str) -> anyhow::Result<String>,
 ) -> anyhow::Result<PathBuf> {
@@ -360,7 +360,7 @@ async fn stamp_from_registry(
     stamp_chart(
         request,
         ([host, runner, gates, identity, edge], (http, materializer)),
-        receipt,
+        build_record,
     )
 }
 
@@ -380,7 +380,7 @@ fn manifest_digest(json: &str) -> anyhow::Result<String> {
 fn stamp_chart(
     request: &BuildPlatformRequest,
     ([host, runner, gates, identity, edge], (http, materializer)): ([String; 5], (String, String)),
-    receipt: &PlatformBuildReceipt,
+    build_record: &PlatformBuildRecord,
 ) -> anyhow::Result<PathBuf> {
     let _stage = start_stage("stamp");
     let chart = stamp(
@@ -406,8 +406,8 @@ fn stamp_chart(
     defaults["platform"]["edge"]["image"] = edge.into();
     std::fs::write(path, serde_yaml::to_string(&defaults)?)?;
     std::fs::write(
-        chart.join(RECEIPT_FILE),
-        canonical_json_bytes(&serde_json::to_value(receipt)?),
+        chart.join(BUILD_RECORD_FILE),
+        canonical_json_bytes(&serde_json::to_value(build_record)?),
     )?;
     Ok(chart)
 }
@@ -1822,29 +1822,29 @@ mod tests {
     }
 
     #[test]
-    fn the_receipt_digest_covers_paths_and_bytes_of_the_ui() {
+    fn the_build_record_digest_covers_paths_and_bytes_of_the_ui() {
         let dist =
             std::env::temp_dir().join(format!("wamn-platform-ui-digest-{}", std::process::id()));
         std::fs::create_dir_all(dist.join("assets")).unwrap();
         std::fs::write(dist.join("index.html"), b"index").unwrap();
         std::fs::write(dist.join("assets/app.js"), b"app").unwrap();
-        let receipt = PlatformBuildReceipt {
+        let build_record = PlatformBuildRecord {
             platform_ui: platform_ui_digest(&dist).unwrap(),
         };
         assert_eq!(
-            receipt.platform_ui,
+            build_record.platform_ui,
             "sha256:5a8575268118ba787b9258f2e2277418d1139a5cc0ba08f3c7bf5e6b0fd04e45"
         );
-        let bytes = serde_json::to_vec(&receipt).unwrap();
+        let bytes = serde_json::to_vec(&build_record).unwrap();
         assert_eq!(
-            serde_json::from_slice::<PlatformBuildReceipt>(&bytes).unwrap(),
-            receipt
+            serde_json::from_slice::<PlatformBuildRecord>(&bytes).unwrap(),
+            build_record
         );
         std::fs::rename(dist.join("assets/app.js"), dist.join("assets/new.js")).unwrap();
-        assert_ne!(platform_ui_digest(&dist).unwrap(), receipt.platform_ui);
+        assert_ne!(platform_ui_digest(&dist).unwrap(), build_record.platform_ui);
         std::fs::rename(dist.join("assets/new.js"), dist.join("assets/app.js")).unwrap();
         std::fs::write(dist.join("assets/app.js"), b"changed").unwrap();
-        assert_ne!(platform_ui_digest(&dist).unwrap(), receipt.platform_ui);
+        assert_ne!(platform_ui_digest(&dist).unwrap(), build_record.platform_ui);
         std::fs::remove_file(dist.join("index.html")).unwrap();
         assert!(platform_ui_digest(&dist).is_err());
         std::fs::remove_dir_all(dist).unwrap();
@@ -2291,7 +2291,7 @@ mod tests {
                 version: VERSION.into(),
                 out: out.to_owned(),
             },
-            &PlatformBuildReceipt {
+            &PlatformBuildRecord {
                 platform_ui: digest.clone(),
             },
             async |command: &mut Command| {
@@ -2318,9 +2318,12 @@ mod tests {
     async fn stamp_only_stamps_the_seven_registry_digests_and_builds_nothing() {
         let out = std::env::temp_dir().join(format!("wamn-stamp-only-{}", std::process::id()));
         let (stamped, calls) = stamp_recorded("\0", &out).await;
-        let receipt: PlatformBuildReceipt =
-            serde_json::from_slice(&std::fs::read(out.join(RECEIPT_FILE)).unwrap()).unwrap();
-        assert_eq!(receipt.platform_ui, format!("sha256:{}", "a".repeat(64)));
+        let build_record: PlatformBuildRecord =
+            serde_json::from_slice(&std::fs::read(out.join(BUILD_RECORD_FILE)).unwrap()).unwrap();
+        assert_eq!(
+            build_record.platform_ui,
+            format!("sha256:{}", "a".repeat(64))
+        );
         let values = stamped
             .and_then(|chart| Ok(std::fs::read_to_string(chart.join("values.yaml"))?))
             .map(|text| serde_yaml::from_str::<serde_yaml::Value>(&text));

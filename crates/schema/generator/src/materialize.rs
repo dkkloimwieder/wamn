@@ -732,7 +732,7 @@ pub fn materialize_host_route_client(output_root: &Path) -> Result<()> {
         &output.join("control"),
         wamn_catalog::HostRouteSet::Control,
     )?;
-    // `wamn build` does not make these clients, so they have no build receipt.
+    // `wamn build` does not make these clients, so they have no build record.
     copy_to_consumers(output_root, "wamn_control", &output.join("client-ts"))?;
     copy_to_consumers(
         output_root,
@@ -811,7 +811,7 @@ pub fn materialize_client_consumers(package_root: &Path, app: &str, source: &Pat
     if let Some(output) = source.parent()
         && crate::output::is_build_output(output)
     {
-        crate::receipt::read_current(package_root, output)?;
+        crate::build_record::read_current(package_root, output)?;
     }
     copy_to_consumers(package_root, app, source)
 }
@@ -1248,7 +1248,7 @@ mod tests {
         fs::create_dir_all(output.join("client-ts/components")).expect("create stale output");
         fs::write(output.join("client-ts/components/obsolete.tsx"), b"stale")
             .expect("write an obsolete component");
-        fs::write(output.join("build.json"), b"stale").expect("write an obsolete receipt");
+        fs::write(output.join("build.json"), b"stale").expect("write an obsolete build record");
         materialize_package_from_catalog(&catalog(), &stale.root).expect("replace stale output");
         materialize_package_from_catalog(&catalog(), &clean.root).expect("generate clean output");
         assert_eq!(stale.generated_snapshot(), clean.generated_snapshot());

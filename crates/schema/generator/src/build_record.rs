@@ -1,7 +1,7 @@
-//! `build.json`, the content receipt of one package build
+//! `build.json`, the build record of one package build
 //! (docs/plan/platform-deploy.md §7.1 step 9, §7.2).
 //!
-//! The receipt names the build's inputs, the exact dependency packages, the
+//! The build record names the build's inputs, the exact dependency packages, the
 //! generator and toolchain identity, and the digest of every output. Its bytes
 //! are canonical JSON (RFC 8785). Schema `wamn.build/v1` is frozen: a change of
 //! shape is a new schema name.
@@ -20,10 +20,10 @@ use wamn_execution_contract::canonical_json_bytes;
 use crate::generate::sha256;
 use crate::materialize::{GENERATOR_ID, TOOLCHAIN_ID};
 
-/// The receipt's file name in a package's build output directory.
-pub const RECEIPT_FILE: &str = "build.json";
-/// The one receipt schema this generator writes and reads.
-pub const RECEIPT_SCHEMA: &str = "wamn.build/v1";
+/// The build record's file name in a package's build output directory.
+pub const BUILD_RECORD_FILE: &str = "build.json";
+/// The one build record schema this generator writes and reads.
+pub const BUILD_RECORD_SCHEMA: &str = "wamn.build/v1";
 /// The build-time digest of generator source, KCL templates, and embedded SQL.
 pub const GENERATOR_FINGERPRINT: &str = env!("WAMN_GENERATOR_FINGERPRINT");
 /// The SQLx version whose describe path derives statement types.
@@ -49,21 +49,21 @@ const PLATFORM_INPUTS: &[&str] = &[
 /// One package build: `build.json`, schema `wamn.build/v1`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct BuildReceipt {
-    /// Always [`RECEIPT_SCHEMA`].
+pub struct BuildRecord {
+    /// Always [`BUILD_RECORD_SCHEMA`].
     pub schema: String,
-    pub package: ReceiptPackage,
-    pub inputs: ReceiptInputs,
+    pub package: BuildPackage,
+    pub inputs: BuildInputs,
     /// The exact base packages, in the order of their dependency names.
-    pub dependencies: Vec<ReceiptDependency>,
-    pub generator: ReceiptGenerator,
-    pub outputs: ReceiptOutputs,
+    pub dependencies: Vec<BuildDependency>,
+    pub generator: BuildGenerator,
+    pub outputs: BuildOutputs,
 }
 
 /// The package that was built.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ReceiptPackage {
+pub struct BuildPackage {
     pub id: String,
     pub version: String,
 }
@@ -71,7 +71,7 @@ pub struct ReceiptPackage {
 /// The build's inputs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ReceiptInputs {
+pub struct BuildInputs {
     /// The digest of [`input_digest`]: the files, generator identity, and fingerprint.
     pub digest: String,
     /// The `sha256:` digest of each input file, by its path relative to the
@@ -82,7 +82,7 @@ pub struct ReceiptInputs {
 /// One base package of an overlay.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ReceiptDependency {
+pub struct BuildDependency {
     pub id: String,
     pub version: String,
     /// The digest of the base's canonical `wamn.json`, until a package
@@ -93,7 +93,7 @@ pub struct ReceiptDependency {
 /// The generator and toolchain identity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ReceiptGenerator {
+pub struct BuildGenerator {
     pub id: String,
     pub toolchain: String,
     pub sqlx: String,
@@ -102,14 +102,14 @@ pub struct ReceiptGenerator {
 /// The build's outputs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ReceiptOutputs {
+pub struct BuildOutputs {
     /// The digest of the canonical `wamn.json`, hashed once.
     pub manifest: String,
     /// The `sha256:` digest of each output file, by its path relative to the
     /// package's build output directory. `build.json` is not one of them.
     pub files: BTreeMap<String, String>,
     /// The package's components. Empty until the build compiles them.
-    pub components: Vec<ReceiptComponent>,
+    pub components: Vec<BuildComponent>,
     /// The digest of the web client build (§7.1 step 8): the canonical JSON
     /// of each built file's `sha256:` digest by its path below `web/`, or
     /// `null` for a package without a web client.
@@ -119,54 +119,52 @@ pub struct ReceiptOutputs {
 /// One built component.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ReceiptComponent {
+pub struct BuildComponent {
     pub name: String,
     pub path: String,
     pub sha256: String,
 }
 
-impl BuildReceipt {
-    /// The receipt's canonical bytes.
+impl BuildRecord {
+    /// The build record's canonical bytes.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
-        canonical_json_bytes(
-            &serde_json::to_value(self).expect("a build receipt always serializes"),
-        )
+        canonical_json_bytes(&serde_json::to_value(self).expect("a build record always serializes"))
     }
 }
 
 /// The generator identity this build writes.
-pub(crate) fn generator() -> ReceiptGenerator {
-    ReceiptGenerator {
+pub(crate) fn generator() -> BuildGenerator {
+    BuildGenerator {
         id: GENERATOR_ID.to_owned(),
         toolchain: TOOLCHAIN_ID.to_owned(),
         sqlx: SQLX_VERSION.to_owned(),
     }
 }
 
-/// Read the receipt in a package's build output directory.
+/// Read the build record in a package's build output directory.
 ///
 /// # Errors
 ///
-/// When the file is missing, is not a `wamn.build/v1` receipt, or is not in
+/// When the file is missing, is not a `wamn.build/v1` build record, or is not in
 /// canonical form.
-pub fn read(package_output: &Path) -> Result<BuildReceipt> {
-    let path = package_output.join(RECEIPT_FILE);
+pub fn read(package_output: &Path) -> Result<BuildRecord> {
+    let path = package_output.join(BUILD_RECORD_FILE);
     let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
-    let receipt: BuildReceipt = serde_json::from_slice(&bytes)
-        .with_context(|| format!("{} is not a build receipt", path.display()))?;
+    let build_record: BuildRecord = serde_json::from_slice(&bytes)
+        .with_context(|| format!("{} is not a build record", path.display()))?;
     ensure!(
-        receipt.schema == RECEIPT_SCHEMA,
-        "{} has schema {}, not {RECEIPT_SCHEMA}",
+        build_record.schema == BUILD_RECORD_SCHEMA,
+        "{} has schema {}, not {BUILD_RECORD_SCHEMA}",
         path.display(),
-        receipt.schema
+        build_record.schema
     );
     ensure!(
-        receipt.to_bytes() == bytes,
+        build_record.to_bytes() == bytes,
         "{} is not canonical JSON",
         path.display()
     );
-    Ok(receipt)
+    Ok(build_record)
 }
 
 /// Read a build whose inputs still match its package tree.
@@ -174,9 +172,9 @@ pub fn read(package_output: &Path) -> Result<BuildReceipt> {
 ///
 /// # Errors
 ///
-/// When the build receipt is missing or invalid, or the package inputs differ.
-pub fn read_current(package_root: &Path, output_dir: &Path) -> Result<BuildReceipt> {
-    let receipt = read(output_dir).with_context(|| {
+/// When the build record is missing or invalid, or the package inputs differ.
+pub fn read_current(package_root: &Path, output_dir: &Path) -> Result<BuildRecord> {
+    let build_record = read(output_dir).with_context(|| {
         format!(
             "read the build of {}; run wamn build first",
             package_root.display()
@@ -184,22 +182,22 @@ pub fn read_current(package_root: &Path, output_dir: &Path) -> Result<BuildRecei
     })?;
     let inputs = input_digest(package_root)?;
     ensure!(
-        receipt.inputs.digest == inputs,
+        build_record.inputs.digest == inputs,
         "the build of {} is stale: build.json records inputs {}, and the tree is {inputs}; run wamn build again",
         package_root.display(),
-        receipt.inputs.digest
+        build_record.inputs.digest
     );
-    Ok(receipt)
+    Ok(build_record)
 }
 
-/// Refuse workspace build output without a receipt that matches its package source.
+/// Refuse workspace build output without a build record that matches its package source.
 ///
 /// Unpacked artifacts and local fixtures keep their own `generated` directory.
 /// They do not consume workspace build output.
 ///
 /// # Errors
 ///
-/// When workspace output has no current build receipt.
+/// When workspace output has no current build record.
 pub fn check_current(package_root: &Path) -> Result<()> {
     let output = crate::output_root(package_root);
     if crate::output::is_build_output(&output) {
@@ -252,7 +250,7 @@ pub fn input_digest(package_root: &Path) -> Result<String> {
 /// the enclosing Cargo workspace when there is one, every file of each
 /// [`PLATFORM_INPUTS`] tree that exists, the existing WIT paths bound by guests
 /// in the enclosing workspace, and the generator identity and fingerprint.
-pub(crate) fn inputs(package_root: &Path) -> Result<ReceiptInputs> {
+pub(crate) fn inputs(package_root: &Path) -> Result<BuildInputs> {
     let mut files = BTreeMap::new();
     insert_tree(&mut files, package_root, Path::new(""))?;
     // A platform file is keyed by its path relative to the package root, so
@@ -276,12 +274,12 @@ pub(crate) fn inputs(package_root: &Path) -> Result<ReceiptInputs> {
         files.insert(WORKSPACE_LOCK.to_owned(), sha256(&bytes));
     }
     let digest = digest_inputs(&files, &generator(), GENERATOR_FINGERPRINT);
-    Ok(ReceiptInputs { digest, files })
+    Ok(BuildInputs { digest, files })
 }
 
 fn digest_inputs(
     files: &BTreeMap<String, String>,
-    generator: &ReceiptGenerator,
+    generator: &BuildGenerator,
     fingerprint: &str,
 ) -> String {
     sha256(&canonical_json_bytes(&serde_json::json!({
@@ -326,7 +324,7 @@ fn insert_guest_wit(
             for path in binding_paths(&binding)
                 .with_context(|| format!("read WIT paths in {}", source.display()))?
             {
-                // Generated contracts are outputs, tracked through base receipts.
+                // Generated contracts are outputs, tracked through base build records.
                 if Path::new(&path).components().any(|component| {
                     EXCLUDED_DIRECTORIES
                         .iter()
@@ -511,7 +509,7 @@ mod tests {
     }
 
     #[test]
-    fn read_current_requires_matching_inputs_and_a_receipt() {
+    fn read_current_requires_matching_inputs_and_a_build_record() {
         let scratch = scratch("current");
         let package = scratch.0.join("apps/package");
         let output = crate::output_root(&package);
@@ -520,31 +518,31 @@ mod tests {
         fs::write(package.join("wamn.k"), "original").unwrap();
         let missing = read_current(&package, &output).unwrap_err();
         assert!(format!("{missing:#}").contains("build.json"));
-        let receipt = BuildReceipt {
-            schema: RECEIPT_SCHEMA.to_owned(),
-            package: ReceiptPackage {
+        let build_record = BuildRecord {
+            schema: BUILD_RECORD_SCHEMA.to_owned(),
+            package: BuildPackage {
                 id: "package".to_owned(),
                 version: "1.0.0".to_owned(),
             },
             inputs: inputs(&package).unwrap(),
             dependencies: Vec::new(),
             generator: generator(),
-            outputs: ReceiptOutputs {
+            outputs: BuildOutputs {
                 manifest: sha256(b"manifest"),
                 files: BTreeMap::new(),
                 components: Vec::new(),
                 web: None,
             },
         };
-        fs::write(output.join(RECEIPT_FILE), receipt.to_bytes()).unwrap();
-        assert_eq!(read_current(&package, &output).unwrap(), receipt);
+        fs::write(output.join(BUILD_RECORD_FILE), build_record.to_bytes()).unwrap();
+        assert_eq!(read_current(&package, &output).unwrap(), build_record);
         check_current(&package).unwrap();
         check_current(&output).unwrap();
         fs::write(package.join("wamn.k"), "edited").unwrap();
         let error = read_current(&package, &output).unwrap_err().to_string();
         for detail in [
             package.to_str().unwrap(),
-            &receipt.inputs.digest,
+            &build_record.inputs.digest,
             &input_digest(&package).unwrap(),
             "wamn build",
         ] {
@@ -577,7 +575,7 @@ mod tests {
 
     fn scratch(name: &str) -> Scratch {
         let root = std::env::temp_dir().join(format!(
-            "wamn-schema-generator-receipt-{}-{name}",
+            "wamn-schema-generator-build-record-{}-{name}",
             std::process::id()
         ));
         if root.exists() {
@@ -811,40 +809,40 @@ mod tests {
     }
 
     #[test]
-    fn read_refuses_a_receipt_that_is_not_canonical() {
+    fn read_refuses_a_build_record_that_is_not_canonical() {
         let scratch = scratch("read");
-        let receipt = BuildReceipt {
-            schema: RECEIPT_SCHEMA.to_owned(),
-            package: ReceiptPackage {
+        let build_record = BuildRecord {
+            schema: BUILD_RECORD_SCHEMA.to_owned(),
+            package: BuildPackage {
                 id: "p".to_owned(),
                 version: "1.0.0".to_owned(),
             },
-            inputs: ReceiptInputs {
+            inputs: BuildInputs {
                 digest: sha256(b"i"),
                 files: BTreeMap::new(),
             },
             dependencies: Vec::new(),
             generator: generator(),
-            outputs: ReceiptOutputs {
+            outputs: BuildOutputs {
                 manifest: sha256(b"m"),
                 files: BTreeMap::new(),
                 components: Vec::new(),
                 web: None,
             },
         };
-        let bytes = receipt.to_bytes();
+        let bytes = build_record.to_bytes();
         assert!(
             String::from_utf8(bytes.clone())
                 .unwrap()
                 .contains(r#""web":null"#)
         );
-        fs::write(scratch.0.join(RECEIPT_FILE), &bytes).unwrap();
-        assert_eq!(read(&scratch.0).unwrap(), receipt);
+        fs::write(scratch.0.join(BUILD_RECORD_FILE), &bytes).unwrap();
+        assert_eq!(read(&scratch.0).unwrap(), build_record);
 
-        let mut pretty = serde_json::to_vec_pretty(&receipt).unwrap();
+        let mut pretty = serde_json::to_vec_pretty(&build_record).unwrap();
         pretty.push(b'\n');
-        fs::write(scratch.0.join(RECEIPT_FILE), pretty).unwrap();
-        let error = read(&scratch.0).expect_err("a pretty receipt was read");
+        fs::write(scratch.0.join(BUILD_RECORD_FILE), pretty).unwrap();
+        let error = read(&scratch.0).expect_err("a pretty build record was read");
         assert!(error.to_string().contains("not canonical"), "{error:#}");
     }
 }

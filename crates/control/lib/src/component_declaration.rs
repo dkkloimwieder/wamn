@@ -119,7 +119,7 @@ pub fn authored_base_digests(
     let manifest = wamn_schema_generator::package_manifest_path(package_root);
     // A hand-written source manifest does not consume package build output.
     if manifest.parent() == Some(wamn_schema_generator::output_root(package_root).as_path()) {
-        wamn_schema_generator::receipt::check_current(package_root).map_err(|source| {
+        wamn_schema_generator::build_record::check_current(package_root).map_err(|source| {
             ComponentDeclarationError {
                 type_: ComponentDeclarationErrorType::Read,
                 path: package_root.to_owned(),

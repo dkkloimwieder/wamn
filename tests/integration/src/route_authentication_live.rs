@@ -208,7 +208,7 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
             package.join("migrations").join(entry.file_name()),
         )?;
     }
-    wamn_test_infrastructure::fixture_digest::write_receipt(&package);
+    wamn_test_infrastructure::fixture_digest::write_build_record(&package);
     let args = || ApplyPackageRequest {
         component_source: wamn_control::apply_package::component_source_from_env(None).unwrap(),
         changes: wamn_platform_identity::auth_changes::AuthChanges::default(),

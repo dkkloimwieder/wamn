@@ -712,41 +712,45 @@ pub(super) mod tests {
             );
             write(&format!("{directory}/src/lib.rs"), source);
         }
-        write_package_receipt(&repository);
+        write_package_build_record(&repository);
         let root = metadata(&repository, ROOT);
         let apps = metadata(&repository, APPS);
         (repository, root, apps)
     }
 
-    fn write_package_receipt(repository: &Path) {
-        use wamn_schema_generator::receipt;
+    fn write_package_build_record(repository: &Path) {
+        use wamn_schema_generator::build_record;
         let root = repository.join("apps/wamn_wms");
         let output = wamn_schema_generator::output_root(&root);
         std::fs::create_dir_all(&output).unwrap();
-        let built = receipt::BuildReceipt {
-            schema: receipt::RECEIPT_SCHEMA.to_owned(),
-            package: receipt::ReceiptPackage {
+        let built = build_record::BuildRecord {
+            schema: build_record::BUILD_RECORD_SCHEMA.to_owned(),
+            package: build_record::BuildPackage {
                 id: "wamn_wms".into(),
                 version: "0.1.0".into(),
             },
-            inputs: receipt::ReceiptInputs {
-                digest: receipt::input_digest(&root).unwrap(),
+            inputs: build_record::BuildInputs {
+                digest: build_record::input_digest(&root).unwrap(),
                 files: BTreeMap::new(),
             },
             dependencies: Vec::new(),
-            generator: receipt::ReceiptGenerator {
+            generator: build_record::BuildGenerator {
                 id: "generator".into(),
                 toolchain: "toolchain".into(),
                 sqlx: "0.9.0".into(),
             },
-            outputs: receipt::ReceiptOutputs {
+            outputs: build_record::BuildOutputs {
                 manifest: "sha256:fixture".into(),
                 files: BTreeMap::new(),
                 components: Vec::new(),
                 web: None,
             },
         };
-        std::fs::write(output.join(receipt::RECEIPT_FILE), built.to_bytes()).unwrap();
+        std::fs::write(
+            output.join(build_record::BUILD_RECORD_FILE),
+            built.to_bytes(),
+        )
+        .unwrap();
     }
 
     /// The input hash of every target of `repository`.
