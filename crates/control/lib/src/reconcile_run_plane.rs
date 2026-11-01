@@ -893,7 +893,7 @@ pub async fn reconcile(
     Ok(plan)
 }
 
-async fn ensure_runtime_roles(client: &tokio_postgres::Client) -> anyhow::Result<()> {
+pub(crate) async fn ensure_runtime_roles(client: &tokio_postgres::Client) -> anyhow::Result<()> {
     for family in [
         wamn_control_provision::WorkloadRoleFamily::Retention,
         wamn_control_provision::WorkloadRoleFamily::AuditRetention,

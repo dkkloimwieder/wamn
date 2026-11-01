@@ -645,6 +645,22 @@ pub async fn install_journey_platform_floor(
 ) -> anyhow::Result<()> {
     let platform_principals =
         platform_principals_sql(platform_domain).context("render the platform principal rows")?;
+    // The run-plane reconcile runs as the database owner, so the owner also
+    // owns what this floor installs. The owner cannot create roles, so the
+    // roles that the catalog names exist first.
+    reconcile_run_plane::ensure_runtime_roles(project).await?;
+    let owner: String = project
+        .query_one(
+            "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()",
+            &[],
+        )
+        .await
+        .context("read the project database owner")?
+        .get(0);
+    project
+        .batch_execute(&format!("SET ROLE {}", Identifier::new(&owner)?.quoted()))
+        .await
+        .context("assume the project database owner")?;
     project
         .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
         .await
@@ -657,7 +673,11 @@ pub async fn install_journey_platform_floor(
     project
         .batch_execute(&platform_principals)
         .await
-        .context("create the platform principal rows")
+        .context("create the platform principal rows")?;
+    project
+        .batch_execute("RESET ROLE")
+        .await
+        .context("leave the project database owner")
 }
 
 /// Give the operator service of one environment the `admin` role, as an
