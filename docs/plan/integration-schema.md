@@ -140,6 +140,7 @@ CREATE TABLE identity.oauth_token (                    -- host-only; every OAuth
 );
 -- authorization code: no row = not authorized; calls refused until connection.authorize completes
 -- client credentials (secret or JWT): no row = no token yet; the first call fetches one
+-- a failed first fetch writes a failing row with no token and expires_at '-infinity', so the 30 s retry rule applies from the first attempt
 -- every fetch and refresh: FOR NO KEY UPDATE on the registry.connection row (it always exists), re-read this row,
 -- call the provider only if the token is missing or due; connection.write and set_credential lock the same row
 -- with a new generation, in the same transaction:
