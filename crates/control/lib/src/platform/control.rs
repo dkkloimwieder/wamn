@@ -214,6 +214,10 @@ pub(crate) fn host_values(org: &str) -> Value {
                 "limits": {"memory": "4Gi", "cpu": "2"}}
         }]
     }}});
+    // The control host's data connection is its org's NATS user, which covers
+    // every environment of the org (docs/plan/alignment.md R7).
+    values["global"] =
+        json!({"certificates": {"dataCertSecretName": format!("wamn-nats-control-{org}")}});
     super::oauth::host_group(
         &mut values["runtime-operator"]["runtime"]["hostGroups"][0],
         &json!({"provider":"local"}),
@@ -402,6 +406,10 @@ mod tests {
         let group = &values["runtime-operator"]["runtime"]["hostGroups"][0];
         assert_eq!(group["name"], "c-acme");
         assert_eq!(group["extraArgs"], json!(["--control", "--org=acme"]));
+        assert_eq!(
+            values["global"]["certificates"]["dataCertSecretName"],
+            "wamn-nats-control-acme"
+        );
         let variables = group["env"].as_array().unwrap();
         assert!(
             variables
