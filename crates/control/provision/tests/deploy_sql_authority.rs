@@ -27,6 +27,7 @@
 //! The cases share one PostgreSQL server and hold its process lock.
 //! Each case rebuilds cluster-wide roles and owns a fresh `wamn` database.
 
+use std::fmt::Write as _;
 use std::process::Command;
 
 use wamn_control_provision::CredentialGeneration;
@@ -2584,10 +2585,25 @@ fn image_columns(image: &str) -> Vec<(String, String)> {
 /// insert, two updates, and a delete of a widget, and reads the history. The
 /// fold then shows the row at each retained position.
 #[test]
-#[ignore = "wamn-8vsfz"]
 fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
     wamn_schema_generator::build_record::check_current(&wamn_fixture_package::package_root())
         .unwrap_or_else(|error| panic!("{error:#}"));
+    let manifest =
+        wamn_schema_generator::PackageManifest::from_slice(&wamn_fixture_package::manifest_bytes())
+            .expect("parse fixture manifest");
+    let mut history_tables = String::new();
+    for model in manifest
+        .models
+        .values()
+        .filter(|model| model.owner == manifest.package.id && model.log_retention().is_some())
+    {
+        writeln!(
+            history_tables,
+            "SELECT wamn_history.create_history_table('{}', '{}', false);",
+            model.schema, model.table
+        )
+        .expect("append history table creation");
+    }
     let (_database, admin) = shared_server();
     let (db_url, guest) = record_history_fixture(&admin);
     apply(
@@ -2599,10 +2615,7 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
              {migrations}\n\
              CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON inventory.widget\n\
                  FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at');\n\
-             SELECT wamn_history.create_history_table('inventory', 'counter', false);\n\
-             SELECT wamn_history.create_history_table('inventory', 'widget', false);\n\
-             SELECT wamn_history.create_history_table('inventory', 'widget_tag', false);\n\
-             SELECT wamn_history.create_history_table('inventory', 'counter', false);\n\
+             {history_tables}\n\
              CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE \
                  ON inventory.widget\n\
                  FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('P30D');\n\
@@ -2628,7 +2641,7 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
         None,
         "SELECT c.relname || ':' || string_agg(a.attname, ',' ORDER BY a.attnum) \
            FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid \
-          WHERE c.relnamespace = 'inventory'::regnamespace AND c.relkind = 'r' \
+          WHERE c.relnamespace = 'inventory'::regnamespace AND c.relkind IN ('r', 'v') \
             AND a.attnum > 0 AND NOT a.attisdropped \
           GROUP BY c.relname ORDER BY c.relname",
     )

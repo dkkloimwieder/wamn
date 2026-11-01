@@ -20,7 +20,6 @@ fn basic(password: &str) -> String {
 }
 
 #[tokio::test]
-#[ignore = "requires: PostgreSQL 18"]
 async fn a_401_after_a_write_retries_once_with_the_new_basic_credential() {
     let _lock = wamn_test_postgres::lock();
     for second in [200, 401] {
@@ -46,7 +45,6 @@ async fn a_401_after_a_write_retries_once_with_the_new_basic_credential() {
 }
 
 #[tokio::test]
-#[ignore = "requires: PostgreSQL 18"]
 async fn a_401_without_a_change_returns_the_first_response_after_one_send() {
     let _lock = wamn_test_postgres::lock();
     let mut fixture = Fixture::start(Vec::new(), vec![401, 200]).await;

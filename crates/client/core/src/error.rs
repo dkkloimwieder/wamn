@@ -71,22 +71,27 @@ impl ClientError {
     /// Build from one envelope request element's error member.
     #[must_use]
     pub fn from_request_element_error(error: &serde_json::Value) -> Self {
-        let literal = error
-            .get("code")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("internal_error");
+        let Some(literal) = error.get("code").and_then(serde_json::Value::as_str) else {
+            return Self::MalformedResponse {
+                detail: "request element error requires a string code".to_owned(),
+            };
+        };
         let detail = error
             .get("detail")
             .cloned()
             .unwrap_or(serde_json::Value::Null);
         match literal {
-            "permission_denied" => Self::PermissionDenied {
-                operation: detail
-                    .get("operation")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-            },
+            "permission_denied" => {
+                let Some(operation) = detail.get("operation").and_then(serde_json::Value::as_str)
+                else {
+                    return Self::MalformedResponse {
+                        detail: "permission_denied requires a string operation".to_owned(),
+                    };
+                };
+                Self::PermissionDenied {
+                    operation: operation.to_owned(),
+                }
+            }
             "concurrency_conflict" => {
                 // A revision is a JSON number when the application declares an
                 // int32 revision, and a JSON string when it declares an int64.
@@ -94,18 +99,23 @@ impl ClientError {
                 // and this reader states the same rule.
                 let revision = |name: &str| {
                     let value = detail.get(name);
-                    value
-                        .and_then(serde_json::Value::as_i64)
-                        .or_else(|| {
-                            value
-                                .and_then(serde_json::Value::as_str)
-                                .and_then(|text| text.parse::<i64>().ok())
-                        })
-                        .unwrap_or_default()
+                    value.and_then(serde_json::Value::as_i64).or_else(|| {
+                        value
+                            .and_then(serde_json::Value::as_str)
+                            .and_then(|text| text.parse::<i64>().ok())
+                    })
+                };
+                let (Some(expected_row_version), Some(observed_row_version)) = (
+                    revision("expected_row_version"),
+                    revision("observed_row_version"),
+                ) else {
+                    return Self::MalformedResponse {
+                        detail: "concurrency_conflict requires two int64 revisions".to_owned(),
+                    };
                 };
                 Self::ConcurrencyConflict {
-                    expected_row_version: revision("expected_row_version"),
-                    observed_row_version: revision("observed_row_version"),
+                    expected_row_version,
+                    observed_row_version,
                 }
             }
             other => Self::Operation {
@@ -136,10 +146,15 @@ impl ClientError {
                 }
             }
             403 => {
-                let body = serde_json::from_str::<serde_json::Value>(body).unwrap_or_default();
-                Self::PermissionDenied {
-                    operation: body["operation"].as_str().unwrap_or_default().to_owned(),
-                }
+                let operation = serde_json::from_str::<serde_json::Value>(body)
+                    .ok()
+                    .and_then(|body| body["operation"].as_str().map(str::to_owned));
+                let Some(operation) = operation else {
+                    return Self::MalformedResponse {
+                        detail: "status 403 requires a string operation".to_owned(),
+                    };
+                };
+                Self::PermissionDenied { operation }
             }
             other => Self::Transport {
                 detail: format!("status {other}"),
@@ -203,7 +218,13 @@ impl ItemOutcome {
     /// [`ClientError`] built from the request element's declared error contract.
     pub fn into_result(self) -> Result<serde_json::Value, ClientError> {
         match (self.value, self.error) {
-            (_, Some(error)) => Err(ClientError::from_request_element_error(&error)),
+            (Some(_), Some(_)) => Err(ClientError::MalformedResponse {
+                detail: format!(
+                    "request element {:?} carried both value and error",
+                    self.request_id
+                ),
+            }),
+            (None, Some(error)) => Err(ClientError::from_request_element_error(&error)),
             (Some(value), None) => Ok(value),
             (None, None) => Err(ClientError::MalformedResponse {
                 detail: format!(
@@ -263,17 +284,71 @@ mod tests {
                 }
             );
         }
-        assert_eq!(
-            ClientError::from_request_element_error(&json!({
-                "code": "concurrency_conflict",
-                "detail": { "expected_row_version": "four", "observed_row_version": null },
-            })),
-            ClientError::ConcurrencyConflict {
-                expected_row_version: 0,
-                observed_row_version: 0,
-            },
-            "a detail that states no number states nothing"
-        );
+    }
+
+    #[test]
+    fn malformed_error_members_are_refused() {
+        for error in [
+            json!({}),
+            json!({"code": null}),
+            json!({"code": 42}),
+            json!({"code": "permission_denied"}),
+            json!({"code": "permission_denied", "detail": {"operation": null}}),
+            json!({"code": "permission_denied", "detail": {"operation": 42}}),
+        ] {
+            assert!(
+                matches!(
+                    ClientError::from_request_element_error(&error),
+                    ClientError::MalformedResponse { .. }
+                ),
+                "accepted {error}"
+            );
+        }
+        for field in ["expected_row_version", "observed_row_version"] {
+            for invalid in [
+                json!(null),
+                json!("four"),
+                json!(1.5),
+                json!(u64::MAX),
+                json!("9223372036854775808"),
+            ] {
+                let mut error = json!({
+                    "code": "concurrency_conflict",
+                    "detail": {"expected_row_version": 4, "observed_row_version": 7},
+                });
+                error["detail"][field] = invalid;
+                assert!(
+                    matches!(
+                        ClientError::from_request_element_error(&error),
+                        ClientError::MalformedResponse { .. }
+                    ),
+                    "accepted {error}"
+                );
+                error["detail"].as_object_mut().unwrap().remove(field);
+                assert!(
+                    matches!(
+                        ClientError::from_request_element_error(&error),
+                        ClientError::MalformedResponse { .. }
+                    ),
+                    "accepted {error}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_403_without_an_operation_is_malformed() {
+        for body in [
+            "not JSON",
+            "{}",
+            r#"{"operation":null}"#,
+            r#"{"operation":42}"#,
+        ] {
+            assert!(matches!(
+                ClientError::from_status(403, body),
+                ClientError::MalformedResponse { .. }
+            ));
+        }
     }
 
     /// EXIT GATE: 401 is indistinguishable, 403 names the token's shortfall.
@@ -320,6 +395,33 @@ mod tests {
             }
             other => panic!("expected an operation error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_permission_refusal_names_its_operation() {
+        assert_eq!(
+            ClientError::from_request_element_error(&json!({
+                "code": "permission_denied",
+                "detail": {"operation": "widget.update"},
+            })),
+            ClientError::PermissionDenied {
+                operation: "widget.update".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn a_request_element_with_both_value_and_error_is_malformed() {
+        let outcome: ItemOutcome = serde_json::from_value(json!({
+            "request_id": "r1",
+            "value": {"id": "widget"},
+            "error": {"code": "invalid_input"},
+        }))
+        .unwrap();
+        assert!(matches!(
+            outcome.into_result(),
+            Err(ClientError::MalformedResponse { .. })
+        ));
     }
 
     /// A request element carrying neither value nor error is malformed, not empty —

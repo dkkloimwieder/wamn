@@ -165,31 +165,52 @@ mod tests {
         wamn_fixture_package::manifest_bytes()
     }
 
+    fn owned_manifest() -> serde_json::Value {
+        let mut operations = serde_json::Map::new();
+        for (name, visibility, errors) in [
+            (
+                "widget.publish",
+                "public",
+                vec!["permission_denied", "internal_error"],
+            ),
+            (
+                "widget.archive",
+                "public",
+                vec!["permission_denied", "internal_error"],
+            ),
+            ("widget.prepare", "private", vec!["internal_error"]),
+        ] {
+            let mut operation = serde_json::json!({
+                "type": "command",
+                "visibility": visibility,
+                "idempotent_by": "stateless",
+                "input": {"fields": [{"path": "value.note", "type": "text", "nullable": false}]},
+                "result": {"class": "one", "fields": [{"path": "note", "type": "text", "nullable": false}]},
+                "errors": errors,
+            });
+            if visibility == "public" {
+                operation["permission"] = serde_json::json!(name);
+            }
+            operations.insert(name.to_owned(), operation);
+        }
+        serde_json::json!({
+            "package": {"id": "grant_fixture", "version": "1.0.0"},
+            "required_platform_policy_contract": {"id": "grant_access", "state": "unsatisfied"},
+            "models": {},
+            "custom_operations": operations,
+            "connections": {},
+            "components": {"data": {"connections": []}},
+        })
+    }
+
     #[test]
-    #[ignore = "wamn-e1zd9"]
-    fn fixture_manifest_yields_the_nineteen_canonical_operation_grants() {
+    fn public_operations_receive_only_their_canonical_grants() {
+        let bytes = serde_json::to_vec(&owned_manifest()).expect("serialize owned manifest");
         assert_eq!(
-            operation_grant_tokens(&fixture_manifest()).expect("parse strict fixture manifest"),
+            operation_grant_tokens(&bytes).expect("parse owned manifest"),
             [
-                "platform-fixture:counter/create@2.1.0",
-                "platform-fixture:counter/delete@2.1.0",
-                "platform-fixture:counter/get@2.1.0",
-                "platform-fixture:counter/query@2.1.0",
-                "platform-fixture:counter/update@2.1.0",
-                "platform-fixture:number/issue@2.1.0",
-                "platform-fixture:numbered-label/create@2.1.0",
-                "platform-fixture:widget-maker/get@2.1.0",
-                "platform-fixture:widget-maker/list@2.1.0",
-                "platform-fixture:widget-maker/query@2.1.0",
-                "platform-fixture:widget-tag/update@2.1.0",
-                "platform-fixture:widget/archive@2.1.0",
-                "platform-fixture:widget/create@2.1.0",
-                "platform-fixture:widget/delete@2.1.0",
-                "platform-fixture:widget/get@2.1.0",
-                "platform-fixture:widget/list@2.1.0",
-                "platform-fixture:widget/query@2.1.0",
-                "platform-fixture:widget/record-batch@2.1.0",
-                "platform-fixture:widget/update@2.1.0",
+                "grant-fixture:widget/archive@1.0.0",
+                "grant-fixture:widget/publish@1.0.0",
             ]
             .map(str::to_owned)
             .into_iter()
@@ -198,33 +219,23 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "wamn-slf04"]
     fn private_custom_operations_never_become_role_grants() {
-        let mut manifest: serde_json::Value =
-            serde_json::from_slice(&fixture_manifest()).expect("fixture is JSON");
-        let operation = &mut manifest["custom_operations"]["widget.record_batch"];
+        let mut manifest = owned_manifest();
+        let operation = &mut manifest["custom_operations"]["widget.publish"];
         operation["visibility"] = serde_json::json!("private");
         operation
             .as_object_mut()
             .expect("operation is an object")
             .remove("permission");
-        operation["errors"]
-            .as_array_mut()
-            .expect("operation errors are an array")
-            .retain(|error| error != "permission_denied");
-        operation["error_details"]
-            .as_object_mut()
-            .expect("operation error details are an object")
-            .remove("permission_denied");
+        operation["errors"] = serde_json::json!(["internal_error"]);
         let bytes = serde_json::to_vec(&manifest).expect("serialize private operation fixture");
-
-        let grants = operation_grant_tokens(&bytes).expect("private operation remains valid");
-        assert!(
-            !grants
-                .iter()
-                .any(|grant| grant == "platform-fixture:widget/record-batch@2.1.0")
+        assert_eq!(
+            operation_grant_tokens(&bytes).expect("private operation remains valid"),
+            ["grant-fixture:widget/archive@1.0.0"]
+                .map(str::to_owned)
+                .into_iter()
+                .collect()
         );
-        assert_eq!(grants.len(), 18);
     }
 
     #[test]

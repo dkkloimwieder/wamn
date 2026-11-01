@@ -7,7 +7,7 @@
 //! execute through a dedicated non-superuser role that owns only the fixture
 //! schema.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use tokio_postgres::{Client, Config, NoTls};
@@ -16,7 +16,7 @@ use wamn_record_history::AUDIT_RETENTION_ROLE;
 
 use wamn_schema_introspection::ir::{
     ColumnDefault, ColumnGeneration, Exclusion, ExclusionAccessMethod, ExclusionElement,
-    ExclusionKey, IdentityMode,
+    ExclusionKey, IdentityMode, Table,
 };
 use wamn_schema_introspection::migration_policy::{
     validate_migration_bytes_for_schemas, validate_migration_file,
@@ -424,11 +424,6 @@ async fn assert_base_ir(client: &Client, admin: &Client) {
         ir_tables, server_tables,
         "IR preserves every configured table"
     );
-    assert_eq!(
-        server_tables.len(),
-        4,
-        "the fixture migration created four tables"
-    );
     assert!(
         first
             .tables()
@@ -451,26 +446,30 @@ async fn assert_base_ir(client: &Client, admin: &Client) {
     );
 
     let constraint_indexes = client
-        .query_one(
-            "SELECT count(*) \
+        .query(
+            "SELECT backing.relname::text \
                FROM pg_catalog.pg_constraint AS constraint_row \
                JOIN pg_catalog.pg_class AS relation ON relation.oid = constraint_row.conrelid \
+               JOIN pg_catalog.pg_class AS backing ON backing.oid = constraint_row.conindid \
                JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
-              WHERE namespace.nspname = $1 AND constraint_row.conindid <> 0",
+              WHERE namespace.nspname = $1",
             &[&APPLICATION_SCHEMA],
         )
         .await
-        .expect("count constraint-backed indexes")
-        .get::<_, i64>(0);
+        .expect("read constraint-backed indexes")
+        .iter()
+        .map(|row| row.get::<_, String>(0))
+        .collect::<BTreeSet<_>>();
     assert!(
-        constraint_indexes > 0,
+        !constraint_indexes.is_empty(),
         "server reports constraint-backed indexes"
     );
     assert!(
         first
             .tables()
             .iter()
-            .all(|table| table.indexes().is_empty()),
+            .flat_map(Table::indexes)
+            .all(|index| !constraint_indexes.contains(index.name())),
         "constraint-backed indexes normalize into constraints, not ordinary indexes"
     );
 }
@@ -1369,7 +1368,6 @@ async fn run_gate(admin_config: Config, fixture: Fixture) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "wamn-fr2lg"]
 async fn the_fixture_migration_round_trips_and_refuses_unsupported_server_objects() {
     // record-history.sql creates the cluster-wide wamn_db_owner role.
     let _serialized = wamn_test_postgres::lock();

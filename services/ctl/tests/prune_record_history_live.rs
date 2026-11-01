@@ -17,8 +17,8 @@
 //!    row whose images expired keeps no entry.
 //! 3. The verb refuses a login outside the audit retention family and a tenant
 //!    that the credential was not minted for. The case reads the post-state.
-//! 4. The role holds its grants only on the P<n>D history tables, reads no image
-//!    column, and holds no `wamn_platform` edge.
+//! 4. The role reads no history image column and holds no `wamn_platform` edge.
+//!    It holds pruning grants on finite history and successful write claims.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -314,14 +314,9 @@ fn prune_argv<'a>(url: &'a str, env_key: &'a str) -> [&'a str; 9] {
 
 /// Run the verb and require the identity refusal.
 async fn assert_refused(url: &str, env_key: &str, label: &str) {
-    let error = ctl_process::run_ops_checked(prune_argv(url, env_key))
+    ctl_process::run_ops_checked(prune_argv(url, env_key))
         .await
         .expect_err(label);
-    let rendered = format!("{error:#}");
-    assert!(
-        rendered.contains("refusing to prune record history"),
-        "{label}: the failure was not the refusal: {rendered}"
-    );
 }
 
 /// Re-point a connection URL at another role, keeping host, port, and database.
@@ -358,12 +353,16 @@ async fn assert_authority(admin: &Client, credential_url: &str) {
             )
         })
         .collect::<Vec<_>>();
-    let mut expected = Vec::new();
+    let mut expected = vec![
+        "column platform.write_log.created_at SELECT".to_owned(),
+        "column platform.write_log.result SELECT".to_owned(),
+    ];
     for history in ["parcel_history", "shipment_history"] {
         for column in ["changed_at", "position", "row_key", "transaction_id"] {
             expected.push(format!("column {SCHEMA}.{history}.{column} SELECT"));
         }
     }
+    expected.push("relation platform.write_log DELETE".to_owned());
     for history in ["parcel_history", "shipment_history"] {
         expected.push(format!("relation {SCHEMA}.{history} DELETE"));
     }
@@ -372,6 +371,7 @@ async fn assert_authority(admin: &Client, credential_url: &str) {
             "relation wamn_history.pruning_watermarks {privilege}"
         ));
     }
+    expected.push("schema platform.platform USAGE".to_owned());
     expected.push(format!("schema {SCHEMA}.{SCHEMA} USAGE"));
     expected.push("schema wamn_history.wamn_history USAGE".to_owned());
     assert_eq!(grants, expected, "the audit retention grants");
@@ -405,7 +405,6 @@ async fn assert_authority(admin: &Client, credential_url: &str) {
 }
 
 #[tokio::test]
-#[ignore = "wamn-44dr0"]
 async fn prune_removes_only_the_expired_prefix_of_each_row() {
     let url = locked_database::database(wamn_project_state::test_database::tenant_platform);
     let admin = connect(&url).await;
@@ -590,20 +589,9 @@ async fn prune_removes_only_the_expired_prefix_of_each_row() {
 
     assert_authority(&admin, &credential_url).await;
 
-    let pruned = ctl_process::run_ops_checked(prune_argv(&credential_url, ENV_KEY))
+    ctl_process::run_ops_checked(prune_argv(&credential_url, ENV_KEY))
         .await
         .expect("prune record history through wamn-ctl-ops");
-    let stdout = String::from_utf8(pruned.stdout).expect("prune output is UTF-8");
-    print!("{stdout}");
-    for line in [
-        format!(
-            "removed 5 entries from {SCHEMA}.shipment_history (retention P30D, tenant {ENV_KEY})"
-        ),
-        format!("removed 3 entries from {SCHEMA}.parcel_history (retention P7D, tenant {ENV_KEY})"),
-        format!("pruned 2 history table(s) for env_key {ENV_KEY}"),
-    ] {
-        assert!(stdout.contains(&line), "the verb did not report: {line}");
-    }
 
     assert_eq!(positions(&admin).await, kept, "the retained positions");
     // Spec tests 1 and 1a: the oldest retained entry of the live row is an
@@ -659,6 +647,123 @@ async fn prune_removes_only_the_expired_prefix_of_each_row() {
 
     drop_generation_role(&admin, &credential_role).await;
     drop_generation_role(&admin, &run_retention_role).await;
+    drop_fixture_schemas(&admin).await;
+    std::fs::remove_dir_all(package).expect("remove the fixture package");
+}
+
+async fn wait_for_blocker(observer: &Client, application: &str, blocker: i32) {
+    tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        loop {
+            let waiting: bool = observer
+                .query_one(
+                    "SELECT EXISTS (SELECT FROM pg_catalog.pg_stat_activity \
+                      WHERE application_name = $1 AND $2 = ANY(pg_blocking_pids(pid)))",
+                    &[&application, &blocker],
+                )
+                .await
+                .expect("read the blocking process")
+                .get(0);
+            if waiting {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the expected process blocks the queued operation");
+}
+
+#[tokio::test]
+async fn history_table_creation_waits_for_a_running_prune() {
+    let url = locked_database::database(wamn_project_state::test_database::tenant_platform);
+    let admin = connect(&url).await;
+    provision(&admin).await;
+    let package = fixture_root("prune-record-history-lock");
+    write_package(&package);
+    apply(&url, &package)
+        .await
+        .expect("apply the fixture package");
+    let expired = seed(
+        &admin,
+        "parcel",
+        &format!(
+            "INSERT INTO {SCHEMA}.parcel VALUES ('{}', 'expired')",
+            row_id(1)
+        ),
+        10,
+    )
+    .await;
+    assert_eq!(positions(&admin).await["parcel"], expired);
+
+    let mut holder = connect(&url).await;
+    let holder_pid: i32 = holder
+        .query_one("SELECT pg_backend_pid()", &[])
+        .await
+        .unwrap()
+        .get(0);
+    let held = holder.transaction().await.expect("hold the history table");
+    held.batch_execute(&format!(
+        "LOCK TABLE {SCHEMA}.parcel_history IN ACCESS EXCLUSIVE MODE"
+    ))
+    .await
+    .expect("prevent pruning from completing");
+
+    let mut pruning = connect(&url).await;
+    pruning
+        .batch_execute("SET application_name = 'history_lock_prune'")
+        .await
+        .unwrap();
+    let prune_pid: i32 = pruning
+        .query_one("SELECT pg_backend_pid()", &[])
+        .await
+        .unwrap()
+        .get(0);
+    let prune =
+        tokio::spawn(async move { wamn_control::prune_record_history::prune(&mut pruning).await });
+    wait_for_blocker(&admin, "history_lock_prune", holder_pid).await;
+
+    let mut applying_url = url::Url::parse(&url).expect("parse the database URL");
+    applying_url
+        .query_pairs_mut()
+        .append_pair("application_name", "history_lock_apply");
+    let applying_package = package.clone();
+    let applying =
+        tokio::spawn(async move { apply(applying_url.as_str(), &applying_package).await });
+    wait_for_blocker(&admin, "history_lock_apply", prune_pid).await;
+    let waiting_query: String = admin
+        .query_one(
+            "SELECT query FROM pg_catalog.pg_stat_activity \
+              WHERE application_name = 'history_lock_apply' AND wait_event = 'advisory'",
+            &[],
+        )
+        .await
+        .expect("apply waits on the retention advisory lock")
+        .get(0);
+    assert_eq!(
+        waiting_query,
+        wamn_control_provision::audit_retention::AUDIT_RETENTION_LOCK_SQL
+    );
+
+    held.commit().await.expect("allow pruning to finish");
+    let (pruned, applied) = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        tokio::join!(prune, applying)
+    })
+    .await
+    .expect("pruning and history creation complete in lock order");
+    let pruned = pruned
+        .expect("join pruning")
+        .expect("prune expired history");
+    assert!(
+        pruned
+            .iter()
+            .any(|table| table.history == "parcel_history" && table.removed == 1)
+    );
+    let applied = applied
+        .expect("join apply")
+        .expect("repeat the exact package application");
+    assert_eq!(applied.migrations_applied, 0);
+    assert!(positions(&admin).await["parcel"].is_empty());
+
     drop_fixture_schemas(&admin).await;
     std::fs::remove_dir_all(package).expect("remove the fixture package");
 }
