@@ -32,7 +32,7 @@ pub(crate) const SQLX_VERSION: &str = "0.9.0";
 /// Directories of a package tree that are never build inputs: build output and
 /// installed dependencies. `generated` is the old in-tree build output, which
 /// left git at 2f7271361; a checkout from before then can still hold it.
-const EXCLUDED_DIRECTORIES: &[&str] = &["target", "node_modules", "generated"];
+const EXCLUDED_DIRECTORIES: &[&str] = &["target", "node_modules", "generated", "dist"];
 /// The lock file of the enclosing Cargo workspace, relative to the package root.
 const WORKSPACE_LOCK: &str = "../Cargo.lock";
 /// The platform trees that a package's components link, relative to the
@@ -448,6 +448,20 @@ fn insert_tree(files: &mut BTreeMap<String, String>, root: &Path, prefix: &Path)
     Ok(())
 }
 
+/// Whether a path belongs to the source tree, excluding generated output and dependencies.
+///
+/// The path can name a new or deleted file or directory.
+#[must_use]
+pub fn is_input_path(root: &Path, path: &Path) -> bool {
+    path.strip_prefix(root).is_ok_and(|relative| {
+        relative.components().all(|component| {
+            !EXCLUDED_DIRECTORIES
+                .iter()
+                .any(|excluded| component.as_os_str() == *excluded)
+        })
+    })
+}
+
 /// The input files below `package_root`, sorted, as paths relative to it.
 fn input_files(package_root: &Path) -> Result<Vec<PathBuf>> {
     let mut pending = vec![PathBuf::new()];
@@ -460,16 +474,14 @@ fn input_files(package_root: &Path) -> Result<Vec<PathBuf>> {
             let entry = entry
                 .with_context(|| format!("enumerate input directory {}", directory.display()))?;
             let path = relative.join(entry.file_name());
+            if !is_input_path(package_root, &entry.path()) {
+                continue;
+            }
             let file_type = entry
                 .file_type()
                 .with_context(|| format!("inspect input {}", entry.path().display()))?;
             if file_type.is_dir() {
-                let excluded = EXCLUDED_DIRECTORIES
-                    .iter()
-                    .any(|name| entry.file_name() == *name);
-                if !excluded {
-                    pending.push(path);
-                }
+                pending.push(path);
             } else {
                 ensure!(
                     file_type.is_file(),
@@ -593,6 +605,7 @@ mod tests {
             ("wamn.k", "a"),
             ("command/move/lock.sql", "b"),
             ("web/src/main.ts", "c"),
+            ("web/dist/index.html", "d"),
             ("web/node_modules/x/index.js", "e"),
             ("target/wamn/out", "f"),
             ("generated/wamn.json", "g"),
@@ -616,6 +629,7 @@ mod tests {
         assert_eq!(input_digest(&package).unwrap(), inputs.digest);
 
         fs::write(package.join("generated/wamn.json"), "changed").unwrap();
+        fs::write(package.join("web/dist/index.html"), "changed").unwrap();
         assert_eq!(input_digest(&package).unwrap(), inputs.digest);
         fs::write(package.join("wamn.k"), "changed").unwrap();
         assert_ne!(input_digest(&package).unwrap(), inputs.digest);

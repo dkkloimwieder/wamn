@@ -21,7 +21,7 @@ use rustix::fs::inotify::{self, CreateFlags, ReadFlags, WatchFlags};
 use tokio::io::AsyncWriteExt as _;
 use tokio::io::unix::AsyncFd;
 use tokio::process::Command;
-use wamn_schema_generator::PackageManifest;
+use wamn_schema_generator::build_record::is_input_path;
 
 pub use crate::git_source::{GitSourceError, GitSourceErrorType, GitSourceSnapshot};
 
@@ -202,7 +202,6 @@ impl Error for FilesystemInvalidationError {
 #[derive(Debug)]
 struct PackageRoot {
     root: PathBuf,
-    authored_inputs: BTreeSet<PathBuf>,
 }
 
 impl PackageRoot {
@@ -225,97 +224,16 @@ impl PackageRoot {
                 )
             }
         })?;
-        let manifest_path = wamn_schema_generator::package_manifest_path(&root);
-        let manifest_bytes = fs::read(&manifest_path).map_err(|source| {
-            FilesystemInvalidationError::with_source(
-                FilesystemInvalidationErrorType::PackageRoot,
-                &manifest_path,
-                "cannot read package manifest",
-                source,
-            )
-        })?;
-        let manifest = PackageManifest::from_slice(&manifest_bytes).map_err(|source| {
-            FilesystemInvalidationError::with_source(
-                FilesystemInvalidationErrorType::PackageRoot,
-                &manifest_path,
-                "cannot parse package manifest",
-                source,
-            )
-        })?;
-        Ok(Self {
-            authored_inputs: authored_inputs(&root, &manifest),
-            root,
-        })
-    }
-
-    fn refresh_authored_inputs(&mut self) {
-        if wamn_schema_generator::build_record::check_current(&self.root).is_err() {
-            return;
-        }
-        let manifest_path = wamn_schema_generator::package_manifest_path(&self.root);
-        let Ok(bytes) = fs::read(manifest_path) else {
-            return;
-        };
-        let Ok(manifest) = PackageManifest::from_slice(&bytes) else {
-            return;
-        };
-        self.authored_inputs = authored_inputs(&self.root, &manifest);
+        Ok(Self { root })
     }
 
     fn is_input(&self, path: &Path) -> bool {
-        let Ok(relative) = path.strip_prefix(&self.root) else {
-            return false;
-        };
-        relative.as_os_str().is_empty()
-            || relative == Path::new("wamn.json")
-            || relative == Path::new(wamn_schema_generator::AUTHORED_MANIFEST)
-            || relative.starts_with("migrations")
-            || self.authored_inputs.contains(path)
-            || relative.starts_with("publication/components")
-            || relative.starts_with("publication/wirings")
-            || relative == Path::new("publication/attachments.json")
+        is_input_path(&self.root, path)
     }
 
     fn owns_generated(&self, path: &Path) -> bool {
         path.starts_with(wamn_schema_generator::output_root(&self.root))
     }
-}
-
-fn authored_inputs(root: &Path, manifest: &PackageManifest) -> BTreeSet<PathBuf> {
-    let mut paths = manifest
-        .models
-        .values()
-        .flat_map(|model| model.operations.values())
-        .filter_map(|operation| operation.authored_sql.as_ref())
-        .flat_map(|authored| {
-            std::iter::once(authored.default.as_str()).chain(
-                authored
-                    .variants
-                    .iter()
-                    .map(|variant| variant.path.as_str()),
-            )
-        })
-        .filter(|path| is_authored_input(path))
-        .map(|path| root.join(path))
-        .collect::<BTreeSet<_>>();
-    paths.extend(
-        manifest
-            .custom_operations
-            .values()
-            .flat_map(|operation| operation.statements.values())
-            .filter(|statement| is_authored_input(&statement.path))
-            .map(|statement| root.join(&statement.path)),
-    );
-    paths
-}
-
-fn is_authored_input(path: impl AsRef<Path>) -> bool {
-    let path = path.as_ref();
-    (path.starts_with("query") || path.starts_with("command"))
-        && path.extension().is_some_and(|extension| extension == "sql")
-        && path
-            .components()
-            .all(|component| matches!(component, Component::Normal(_)))
 }
 
 #[derive(Debug)]
@@ -414,16 +332,8 @@ impl WatchRoots {
             || self
                 .component_build_roots
                 .iter()
-                .any(|root| path == root || path.starts_with(root))
+                .any(|root| is_input_path(root, path))
             || self.exact_file_or_parent(path)
-    }
-
-    fn refresh_manifest(&mut self, path: &Path) {
-        for package in &mut self.packages {
-            if path == wamn_schema_generator::package_manifest_path(&package.root) {
-                package.refresh_authored_inputs();
-            }
-        }
     }
 
     fn watched_roots(&self) -> impl Iterator<Item = &Path> {
@@ -561,15 +471,11 @@ impl FilesystemInvalidationSource {
         Ok(())
     }
 
-    /// Register `root` and every directory beneath it that Git does not ignore.
+    /// Register source directories that the build owns and Git does not ignore.
     ///
-    /// The ignore rules are the filter because the loop's own outputs are
-    /// exactly what they cover: the Build stage writes into
-    /// `apps/target/`, which lies inside a component build root, so a
-    /// watch that descended there invalidated on its own artifacts and reran
-    /// forever with no edit at all (wamn-10yt.55). Ignored bytes are already
-    /// not source by this module's other definition — [`GitSource::snapshot`]
-    /// reads `--ignored=no` — so one rule now decides both questions.
+    /// Generated output must remain unwatched, including output below an
+    /// overlapping component root, to prevent rebuilds from their own writes
+    /// (wamn-10yt.55).
     async fn add_tree(&mut self, root: &Path) -> Result<(), FilesystemInvalidationError> {
         let mut pending = self.retain_watchable(vec![root.to_owned()]).await?;
         while let Some(directory) = pending.pop() {
@@ -580,7 +486,7 @@ impl FilesystemInvalidationSource {
         Ok(())
     }
 
-    /// Drop the ignored candidates, remembering each as permanently unwatched.
+    /// Drop generated output and remember ignored directories as unwatched.
     async fn retain_watchable(
         &mut self,
         candidates: Vec<PathBuf>,
@@ -600,7 +506,7 @@ impl FilesystemInvalidationSource {
         }
         Ok(candidates
             .into_iter()
-            .filter(|candidate| !ignored.contains(candidate))
+            .filter(|candidate| !ignored.contains(candidate) && self.roots.is_input(candidate))
             .collect())
     }
 
@@ -688,7 +594,6 @@ impl FilesystemInvalidationSource {
                     self.add_exact_file_parents()?;
                 }
             }
-            self.roots.refresh_manifest(path);
         }
 
         for (index, change) in changes.into_iter().enumerate() {
@@ -875,11 +780,7 @@ mod tests {
                 .expect("create wiring declarations root");
             fs::create_dir_all(self.package().join("migrations")).expect("create migrations root");
             fs::create_dir_all(self.component().join("src")).expect("create component source root");
-            fs::write(
-                self.package().join("wamn.json"),
-                crate::test_support::fixture_manifest(),
-            )
-            .expect("write package manifest");
+            fs::write(self.package().join("wamn.json"), "{}").expect("write package manifest");
             fs::write(self.package().join("query/widget_list.sql"), "SELECT 1")
                 .expect("write authored SQL");
             fs::write(self.component().join("src/lib.rs"), "pub fn value() {}")
@@ -927,7 +828,7 @@ mod tests {
     }
 
     #[test]
-    fn package_inputs_are_relevant_and_other_package_files_are_not() {
+    fn package_source_paths_follow_build_inputs() {
         let repository = TempRepository::new();
         repository.write_fixture();
         let package = PackageRoot::read(&repository.package()).expect("read package watch root");
@@ -941,15 +842,76 @@ mod tests {
             "publication/components/fixture.json.in",
             "publication/wirings/widget_get.json",
             "publication/attachments.json",
+            "component/src/lib.rs",
+            "data/src/lib.rs",
+            "web/src/main.ts",
+            "query/not-declared.sql",
+            "README.md",
         ] {
             assert!(package.is_input(&root.join(input)), "{input} is an input");
         }
-        for other in ["query/not-declared.sql", "generated/wamn.rs", "README.md"] {
+        for other in [
+            "generated/wamn.rs",
+            "target/debug/component.wasm",
+            "web/dist/index.html",
+            "web/node_modules/module/index.js",
+            "web/src/generated/client.ts",
+        ] {
             assert!(
                 !package.is_input(&root.join(other)),
                 "{other} is not an input"
             );
         }
+        assert!(!package.is_input(
+            &wamn_schema_generator::output_root(&root).join("components/application.wasm")
+        ));
+    }
+
+    #[tokio::test]
+    async fn application_source_edits_rerun_without_additional_component_roots() {
+        let repository = TempRepository::new();
+        repository.write_fixture();
+        let root = repository.package();
+        let inputs = ["component/src/lib.rs", "data/src/lib.rs", "web/src/main.ts"];
+        for input in inputs {
+            let path = root.join(input);
+            fs::create_dir_all(path.parent().unwrap())
+                .expect("create application source directory");
+            fs::write(path, "source").expect("write application source");
+        }
+        let outputs = [
+            "generated/components/application.wasm",
+            "web/dist/index.html",
+            "web/node_modules/module/index.js",
+        ];
+        for output in outputs {
+            let path = root.join(output);
+            fs::create_dir_all(path.parent().unwrap())
+                .expect("create application output directory");
+            fs::write(path, "output").expect("write application output");
+        }
+        let git = GitSource::discover(&repository.root)
+            .await
+            .expect("discover application repository");
+        let mut source = FilesystemInvalidationSource::new([root.clone()], [], git)
+            .await
+            .expect("watch application inputs");
+        for input in inputs {
+            fs::write(root.join(input), "edited").expect("edit application source");
+            assert!(
+                has_rerun(&next_batch(&mut source).await, DevStage::Migrate),
+                "{input} must start a rebuild"
+            );
+        }
+        for output in outputs {
+            fs::write(root.join(output), "rebuilt").expect("rewrite application output");
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(500), source.next())
+                .await
+                .is_err(),
+            "generated application output must remain unwatched"
+        );
     }
 
     #[tokio::test]
@@ -1320,15 +1282,11 @@ mod tests {
 
         fs::write(repository.package().join("generated/wamn.rs"), "generated")
             .expect("write generated output");
-        let first = tokio::time::timeout(Duration::from_secs(2), source.next())
-            .await
-            .expect("generated event arrived")
-            .expect("read generated event")
-            .expect("source remains open");
         assert!(
-            collect_batch(first, &mut source)
-                .iter()
-                .all(|event| *event == DevInvalidation::Ignore)
+            tokio::time::timeout(Duration::from_millis(500), source.next())
+                .await
+                .is_err(),
+            "generated output must remain unwatched"
         );
 
         // The loop writes SQLx metadata into the build output during
@@ -1336,15 +1294,11 @@ mod tests {
         let metadata = wamn_schema_generator::output_root(&repository.package()).join(".sqlx");
         fs::create_dir_all(&metadata).expect("create SQLx metadata root");
         fs::write(metadata.join("query.json"), "{\"x\":1}").expect("write SQLx metadata");
-        let first = tokio::time::timeout(Duration::from_secs(2), source.next())
-            .await
-            .expect("SQLx metadata event arrived")
-            .expect("read SQLx metadata event")
-            .expect("source remains open");
         assert!(
-            collect_batch(first, &mut source)
-                .iter()
-                .all(|event| *event == DevInvalidation::Ignore)
+            tokio::time::timeout(Duration::from_millis(500), source.next())
+                .await
+                .is_err(),
+            "SQLx output must remain unwatched"
         );
 
         fs::write(
