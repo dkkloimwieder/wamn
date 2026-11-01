@@ -129,9 +129,9 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 # Choose distinct free loopback ports before publishing each explicit mapping.
-read -r pg_port scheduler_port event_port otlp_port < <(python3 - <<'PY'
+read -r pg_port event_port otlp_port < <(python3 - <<'PY'
 import socket
-sockets = [socket.socket() for _ in range(4)]
+sockets = [socket.socket() for _ in range(3)]
 for sock in sockets:
     sock.bind(("127.0.0.1", 0))
 print(*(sock.getsockname()[1] for sock in sockets))
@@ -275,11 +275,15 @@ amount, unit = re.fullmatch(r"([0-9]+)(Ki|Mi|Gi)", memory).groups()
 print(int(amount) * {"Ki": 1024, "Mi": 1024**2, "Gi": 1024**3}[unit])
 CONFIGURATION
 )
-start_container --name "$prefix-scheduler" -p "127.0.0.1:$scheduler_port:4222" \
-  nats:2.10-alpine --jetstream --store_dir=/data --http_port=8222
+# One NATS (docs/plan/alignment.md R1): the scheduler, the events and the
+# memories, with TLS and the certificates that event_broker_files made.
 start_container --name "$prefix-events" --memory "$event_memory" -p "127.0.0.1:$event_port:4222" \
+  --tmpfs /var/run/nats \
   --mount "type=bind,src=$work/events.conf,dst=/etc/nats-config/nats.conf,readonly" \
   --mount "type=bind,src=$work/event-nats/authorization.conf,dst=/etc/nats-authorization/authorization.conf,readonly" \
+  --mount "type=bind,src=$work/event-nats/ca.crt,dst=/etc/nats-tls/ca.crt,readonly" \
+  --mount "type=bind,src=$work/event-nats/server.crt,dst=/etc/nats-tls/tls.crt,readonly" \
+  --mount "type=bind,src=$work/event-nats/server.key,dst=/etc/nats-tls/tls.key,readonly" \
   nats:2.10-alpine --config=/etc/nats-config/nats.conf
 start_container --name "$prefix-collector" \
   --user "$(id -u):$(id -g)" \
@@ -291,7 +295,6 @@ ready=false
 for ((attempt=0; attempt<60; attempt++)); do
   if docker exec "$prefix-postgres" sh -c \
       'test "$(cat /proc/1/comm)" = postgres && pg_isready -h 127.0.0.1 -U postgres -d wamn_system' >/dev/null 2>&1 \
-    && docker exec "$prefix-scheduler" wget -qO- http://127.0.0.1:8222/healthz >/dev/null 2>&1 \
     && docker exec "$prefix-events" wget -qO- http://127.0.0.1:8222/healthz >/dev/null 2>&1 \
     && (echo >"/dev/tcp/127.0.0.1/$otlp_port") 2>/dev/null; then
     ready=true
@@ -321,12 +324,9 @@ PY
 chmod +x "$work/host"
 "$bin/wamn" dev up --package "$repository/apps/wamn_receiving" \
   --system-database-url "postgresql://postgres:probe@127.0.0.1:$pg_port/wamn_system" \
-  --root "$root" --nats-url "nats://127.0.0.1:$scheduler_port" \
-  --event-nats-url "nats://127.0.0.1:$event_port" \
-  --event-nats-username "$(<"$work/event-nats/runtime-username")" --event-nats-password-file "$work/event-nats/runtime-password" \
-  --event-provisioning-username "$(<"$work/event-nats/provisioning-username")" --event-provisioning-password-file "$work/event-nats/provisioning-password" \
-  --event-publisher-username "$(<"$work/event-nats/publisher-username")" --event-publisher-password-file "$work/event-nats/publisher-password" \
-  --event-materializer-username "$(<"$work/event-nats/materializer-username")" --event-materializer-password-file "$work/event-nats/materializer-password" \
+  --root "$root" --nats-url "nats://127.0.0.1:$event_port" \
+  --nats-tls-ca "$work/event-nats/ca.crt" \
+  --nats-tls-cert "$work/event-nats/client-wamn-dev.crt" --nats-tls-key "$work/event-nats/client-wamn-dev.key" \
   --stream-replicas 1 --dup-window-secs 120 \
   --otel-exporter-otlp-endpoint "http://127.0.0.1:$otlp_port" \
   --route-host receiving.localhost --platform-domain example.invalid \
