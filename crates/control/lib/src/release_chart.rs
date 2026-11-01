@@ -877,7 +877,10 @@ mod tests {
         assert!(values.get("releaseLabel").is_none());
         let runtime = &values["runtime-operator"]["runtime"];
         assert_eq!(runtime["terminationGracePeriodSeconds"].as_u64(), Some(300));
-        assert_eq!(runtime["serviceAccount"]["name"], "wamn-host-acme-wms-prod");
+        assert_eq!(
+            runtime["serviceAccount"]["name"],
+            "wamn-host-acme--wms--prod"
+        );
         assert_eq!(runtime["serviceAccount"]["create"], false);
         assert_eq!(runtime["automountServiceAccountToken"], true);
         assert_eq!(

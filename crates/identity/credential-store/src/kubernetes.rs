@@ -19,12 +19,18 @@ pub struct KubernetesStore {
 
 /// The Secret name fixed when the environment is provisioned.
 pub fn secret_name(org: &str, project: &str, env: &str) -> String {
-    format!("wamn-credential-{org}-{project}-{env}")
+    format!(
+        "wamn-credential-{}",
+        wamn_control_registry::project_env_key(org, project, env)
+    )
 }
 
 /// The account used by every host in the environment release.
 pub fn service_account_name(org: &str, project: &str, env: &str) -> String {
-    format!("wamn-host-{org}-{project}-{env}")
+    format!(
+        "wamn-host-{}",
+        wamn_control_registry::project_env_key(org, project, env)
+    )
 }
 
 impl KubernetesStore {
@@ -269,7 +275,7 @@ mod tests {
         ]);
         let stored = store.put(id, b"value").await.unwrap();
         assert_eq!(stored.store, "k8s");
-        assert_eq!(stored.reference, "wamn-credential-acme-orders-dev");
+        assert_eq!(stored.reference, "wamn-credential-acme--orders--dev");
         assert_eq!(stored.version, id.to_string());
         assert_eq!(
             store.get(&stored.reference, &stored.version).await.unwrap(),
@@ -306,7 +312,7 @@ mod tests {
         let requests = requests.lock().unwrap();
         for index in [1, 3] {
             assert!(requests[index].0.starts_with(
-                "PUT /api/v1/namespaces/hosts/secrets/wamn-credential-acme-orders-dev "
+                "PUT /api/v1/namespaces/hosts/secrets/wamn-credential-acme--orders--dev "
             ));
         }
         assert_eq!(requests[1].1["metadata"]["resourceVersion"], "1");

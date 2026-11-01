@@ -202,8 +202,11 @@ fn credential_secret(
 
 #[test]
 fn scheduled_credentials_stay_within_the_environment_secret_grant() {
+    use wamn_credential_store::kubernetes::{secret_name, service_account_name};
+
+    let source_secret = secret_name(ORG, PROJECT, "http");
     let values = json!({"items":[{
-        "metadata":{"name":"wamn-credential-acme-orders-http","namespace":NAMESPACE},
+        "metadata":{"name":source_secret,"namespace":NAMESPACE},
         "stringData":{
             "00000000-0000-4000-8000-000000000001":r#"{"username":"fixture","password":"fixture-password"}"#,
             "00000000-0000-4000-8000-000000000002":json!({"private_key":NETSUITE_PRIVATE_KEY}).to_string(),
@@ -216,13 +219,13 @@ fn scheduled_credentials_stay_within_the_environment_secret_grant() {
     ] {
         references.insert(
             name.into(),
-            json!({"store":"k8s","reference":"wamn-credential-acme-orders-http","version":version}),
+            json!({"store":"k8s","reference":source_secret,"version":version}),
         );
     }
     let secret = credential_secret("integration", &values, &mut references).unwrap();
     let grants = wamn_control::environment::ensure::credential_access(
-        "wamn-host-acme-orders-integration",
-        "wamn-credential-acme-orders-integration",
+        &service_account_name(ORG, PROJECT, "integration"),
+        &secret_name(ORG, PROJECT, "integration"),
     );
     assert_eq!(secret["metadata"]["namespace"], NAMESPACE);
     for (name, reference) in &references {

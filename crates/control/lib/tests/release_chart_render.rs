@@ -330,7 +330,7 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
     // Provisioning owns the environment account and its Secret grant.
     assert_eq!(
         pod["spec"]["serviceAccountName"].as_str(),
-        Some("wamn-host-acme-wms-prod")
+        Some("wamn-host-acme--wms--prod")
     );
     assert_eq!(
         pod["spec"]["automountServiceAccountToken"],

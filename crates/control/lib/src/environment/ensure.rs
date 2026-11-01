@@ -945,26 +945,44 @@ mod credential_access_tests {
     use super::*;
 
     #[test]
-    fn the_environment_account_reads_only_its_one_secret() {
-        let objects = credential_access(
-            "wamn-host-acme-orders-dev",
-            "wamn-credential-acme-orders-dev",
-        );
+    fn colliding_coordinates_read_only_their_own_secret() {
+        use wamn_credential_store::kubernetes::{secret_name, service_account_name};
+
+        let coordinates = [("a", "b-c", "d"), ("a", "b", "c-d")];
+        let accounts =
+            coordinates.map(|(org, project, env)| service_account_name(org, project, env));
+        let secrets = coordinates.map(|(org, project, env)| secret_name(org, project, env));
+        assert_eq!(accounts, ["wamn-host-a--b-c--d", "wamn-host-a--b--c-d"]);
         assert_eq!(
-            objects[0].1["metadata"]["name"],
-            "wamn-host-acme-orders-dev"
+            secrets,
+            ["wamn-credential-a--b-c--d", "wamn-credential-a--b--c-d"]
         );
-        assert_eq!(
-            objects[1].1["rules"],
-            serde_json::json!([{"apiGroups":[""],"resources":["secrets"],"resourceNames":["wamn-credential-acme-orders-dev"],"verbs":["get"]}])
-        );
-        assert_eq!(
-            objects[2].1["roleRef"]["name"],
-            objects[0].1["metadata"]["name"]
-        );
-        assert_eq!(
-            objects[2].1["subjects"][0]["name"],
-            objects[0].1["metadata"]["name"]
-        );
+        assert_ne!(accounts[0], accounts[1]);
+        assert_ne!(secrets[0], secrets[1]);
+
+        for index in 0..2 {
+            let account = &accounts[index];
+            let secret = &secrets[index];
+            let objects = credential_access(account, secret);
+            for (_, object) in &objects {
+                assert_eq!(object["metadata"]["name"], *account);
+            }
+            assert_eq!(
+                objects[1].1["rules"],
+                serde_json::json!([{"apiGroups":[""],"resources":["secrets"],"resourceNames":[secret],"verbs":["get"]}])
+            );
+            assert!(
+                !objects[1].1["rules"][0]["resourceNames"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&serde_json::json!(secrets[1 - index]))
+            );
+            assert_eq!(
+                objects[2].1["roleRef"]["name"],
+                objects[1].1["metadata"]["name"]
+            );
+            assert_eq!(objects[2].1["subjects"].as_array().unwrap().len(), 1);
+            assert_eq!(objects[2].1["subjects"][0]["name"], *account);
+        }
     }
 }

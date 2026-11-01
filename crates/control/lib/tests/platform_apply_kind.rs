@@ -618,7 +618,7 @@ cluster.Cluster {{
         );
     }
     let result = async {
-        let name = format!("wamn-credential-{}-wms-dev", document.org);
+        let name = wamn_credential_store::kubernetes::secret_name(&document.org, "wms", "dev");
         ensure!(
             kubectl::get::<Value>(&kubeconfig, &context, "hosts", "secret", &name)
                 .await?

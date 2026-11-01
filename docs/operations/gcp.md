@@ -35,7 +35,7 @@ The owner supplies these inputs. The install stops at the first step that reads 
      --role roles/secretmanager.secretAccessor
    ```
 
-4. The Workload Identity grants of the namespace `hosts`. Each environment host runs as its own Kubernetes service account `hosts/wamn-host-<org>-<project>-<env>`, and the platform Jobs run as `hosts/wamn-host`. No account carries an `iam.gke.io` annotation. The grants name the namespace, so every account in `hosts` reads the registry and the labels bucket. A teardown keeps these grants, because they are IAM. If a grant is missing, the owner runs:
+4. The Workload Identity grants of the namespace `hosts`. Each environment host runs as its own Kubernetes service account `hosts/wamn-host-<org>--<project>--<env>`, and the platform Jobs run as `hosts/wamn-host`. No account carries an `iam.gke.io` annotation. The grants name the namespace, so every account in `hosts` reads the registry and the labels bucket. A teardown keeps these grants, because they are IAM. If a grant is missing, the owner runs:
 
    ```bash
    NUMBER=$(gcloud projects describe wamn-dev --format 'value(projectNumber)')
