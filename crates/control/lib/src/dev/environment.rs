@@ -646,7 +646,7 @@ pub async fn install_journey_platform_floor(
     let platform_principals =
         platform_principals_sql(platform_domain).context("render the platform principal rows")?;
     // The run-plane reconcile runs as the database owner, so the owner also
-    // owns what this floor installs. The owner cannot create roles, so the
+    // owns what this function installs. The owner cannot create roles, so the
     // roles that the catalog names exist first.
     reconcile_run_plane::ensure_runtime_roles(project).await?;
     let owner: String = project
