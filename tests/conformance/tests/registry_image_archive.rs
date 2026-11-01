@@ -1,9 +1,9 @@
-//! `case_release::image_archive` and `tools/journey-image-cache` in kind,
+//! Test `case_release::image_archive` in kind,
 //! against a private registry that requires a login
 //! (docs/history/upgrade-environment.md §4.4).
 //!
-//! The cache tool builds and relabels an image, which the test pushes to the
-//! registry. The case harness fetches it and a guest by digest with the
+//! The test builds an image and pushes it to the registry.
+//! The case fetches it and a guest by digest with the
 //! registry's pull credential. Each kind node imports the image archive. CRI
 //! must report the tag and the pinned digest, and no node may hold the
 //! credential.
@@ -325,7 +325,7 @@ fn kind_nodes_import_the_pinned_digest_and_hold_no_credential() {
     fs::write(&login, format!("user = \"{USER}:{password}\"\n")).expect("write curl login");
     fs::set_permissions(&login, fs::Permissions::from_mode(0o600)).expect("set login mode");
 
-    // The cache tool builds the image by its content and relabels it for the run.
+    // Build the private image that the import assertions require.
     let head = succeed(
         Command::new("git")
             .arg("-C")
@@ -344,23 +344,20 @@ fn kind_nodes_import_the_pinned_digest_and_hold_no_credential() {
     .expect("write Dockerfile");
     fs::write(context.join("marker"), &nonce).expect("write marker");
     let name = format!("registry-archive-{nonce}");
-    let built = succeed(
-        Command::new(root.join("tools/journey-image-cache"))
-            .env("XDG_CACHE_HOME", work.join("cache"))
-            .arg("ensure-context")
-            .arg(&context)
-            .args([&name, &head, "run", &owned.cluster, "debug"]),
-        None,
-    )
-    .trim()
-    .to_owned();
-    owned.images.push(built.clone());
-    let relabeled = format!("wamn-{name}:run");
-    owned.images.push(relabeled.clone());
     let repository = format!("wamn-{name}");
     let tagged = format!("{host}/{repository}:run");
     succeed(
-        Command::new("docker").args(["tag", &relabeled, &tagged]),
+        Command::new("docker")
+            .args([
+                "build",
+                "--platform=linux/amd64",
+                "--provenance=false",
+                "--label",
+                &format!("wamn.dev/source-head={head}"),
+                "--tag",
+                &tagged,
+            ])
+            .arg(&context),
         None,
     );
     owned.images.push(tagged.clone());
@@ -554,7 +551,7 @@ fn kind_nodes_import_the_pinned_digest_and_hold_no_credential() {
         assert_eq!(
             report["info"]["imageSpec"]["config"]["Labels"]["wamn.dev/source-head"],
             json!(head),
-            "the image on {node} lost the label of the cache tool"
+            "the image on {node} lost its source label"
         );
 
         // grep exits 1 when no file holds the password or the encoded login.

@@ -131,14 +131,14 @@ runtime:
       # default pool connects as its prepared App-generation LOGIN for guest SQL.
       # The stable `wamn_app` role only carries inherited grants and is NOLOGIN.
       #
-      # A Secret REFERENCE, never inline plaintext (R8b, wamn-sysdb.yaml:8-11 —
+      # A Secret REFERENCE, never inline plaintext (R8b,
       # actual credential material lives in K8s Secrets). The chart passes each
       # `hostGroups[].env` entry through verbatim
       # (templates/runtime/deployment.yaml `{{- with .env }}{{ toYaml . }}` at
       # the pinned upstream rev), so `valueFrom` needs no chart change.
       # `wamn-host-db` is host-tier config with this release's lifecycle —
-      # deliberately NOT the runner's per-project `wamn-runner-db`; see
-      # deploy/platform/host-db.example.yaml. APPLY THE SECRET BEFORE THIS
+      # deliberately NOT the runner's per-project `wamn-runner-db`.
+      # APPLY THE SECRET BEFORE THIS
       # RELEASE: a missing secretKeyRef leaves every host Pod unstartable.
       env:
         - name: WAMN_PG_URL
@@ -197,9 +197,7 @@ runtime:
       #   * the host binary must accept `--oci-ca-path`, or every host Pod
       #     crashloops on an unknown argument. DONE — services/host/src/host.rs
       #     gained it in the commit immediately before this one;
-      #   * deploy/platform/registry.yaml must serve TLS from the same
-      #     `wasmcloud-ca`. DONE — apply that file before this one, or every
-      #     pull fails verification.
+      #   * The registry must serve TLS from the same `wasmcloud-ca`.
       ociCaPaths:
         - "/runtime-cert/ca.crt"
       resources:

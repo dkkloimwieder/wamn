@@ -18,7 +18,7 @@ The chart's default is one NATS for scheduler and data plane, and it supports an
 
 | Off the chart's path today | Where | The chart's path |
 | --- | --- | --- |
-| Two NATS: the chart's bundled one (ephemeral storage, scheduler only) and wamn's `evt-nats` (durable JetStream) | `deploy/infra/values-wamn.yaml`, `deploy/infra/nats-jetstream.yaml` | One NATS; scheduler and data URL default to the same server |
+| Two NATS: the chart's bundled one (ephemeral storage, scheduler only) and wamn's `evt-nats` (durable JetStream) | `deploy/infra/values-wamn.yaml`, `deploy/gcp/nats-jetstream.yaml` | One NATS; scheduler and data URL default to the same server |
 | The host's data-plane URL is ignored; events use `WAMN_EVT_NATS_URL` | `services/host/src/host.rs::HostArgs::data_nats_url`, `crates/platform/runtime/src/plugins/wamn_jetstream.rs` | `--data-nats-url` is the host's NATS for workload messaging |
 | The materializer's `wasmcloud:nats` binding `events` comes from a host flag file | `services/host/src/host.rs::materializer_nats_bindings`, `--materializer-nats-binding-file` | Host group `plugins` entry `wasmcloud-nats` with `bindings`, grants and `secretFrom` |
 | The auth memory bucket sits on the scheduler NATS | `crates/platform/runtime/src/auth_cache.rs`, `crates/identity/platform/src/auth_changes.rs` | No upstream equivalent; it belongs on the data plane |

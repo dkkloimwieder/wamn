@@ -618,18 +618,6 @@ DOCKER_CONFIG=$W/docker $CARGO_TARGET_DIR/debug/wamn-ctl build-platform --stamp-
   --registry us-central1-docker.pkg.dev/wamn-dev/wamn --out "$W/reinstall-chart"
 ```
 
-Three files in `deploy/gcp` pin images of the chart. Write the new runner and identity images into them:
-
-```bash
-W=$HOME/.cache/wamn-install
-RUNNER=$(grep -o 'us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-runner:[^ ]*' $W/release-chart/values.yaml)
-IDENTITY=$(grep -o 'us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-identity:[^ ]*' $W/release-chart/values.yaml)
-sed -i "s#image: us-central1-docker.pkg.dev/wamn-dev/wamn/wamn-runner:.*#image: $RUNNER#" \
-  deploy/gcp/operator/mint-pat.yaml deploy/gcp/operator/invite.yaml
-sed -i "s/^  tag: .*/  tag: ${IDENTITY##*@sha256:}/" deploy/gcp/values-identity.yaml
-git diff --stat
-```
-
 ### 4.7 System database, org and identity issuer
 
 `provision-system` installs the control store. `provision-org --admin` records the org `dkk` and creates its first admin user. `provision-identity-issuer` prepares the login of identity, which the whole platform shares:
@@ -804,7 +792,8 @@ git diff deploy/gcp/host-group-*.yaml
 `platform apply` runs this step. It writes the Resend Secret from the Secret Manager secret of section 1.
 The following commands describe the manual procedure.
 
-Prepare the session target of each environment in namespace `identity`. [values-identity.yaml](../../deploy/gcp/values-identity.yaml) names both Secrets:
+Prepare the session target of each environment in namespace `identity`.
+The [identity installer](../../crates/control/lib/src/platform/identity.rs) derives both Secret names:
 
 ```bash
 . $HOME/.cache/wamn-install/platform.sh
@@ -828,10 +817,10 @@ kubectl -n identity get secret identity-resend -o jsonpath='{.data.api-key}' | b
 kubectl -n identity get secret identity-resend -o jsonpath='{.data.api-key}' | base64 -d | tr -dc '[:space:]' | wc -c
 ```
 
-Install identity from the file values only, with no `--set`. Then publish a session key, and activate it with the `kid` that `publish` prints:
+After `platform apply` installs identity, publish a session key.
+Activate it with the `kid` that `publish` prints:
 
 ```bash
-helm install identity deploy/platform/identity -n identity -f deploy/gcp/values-identity.yaml
 kubectl -n identity rollout status deploy/identity --timeout=300s
 kubectl -n identity exec deploy/identity -- wamn-identity publish
 kubectl -n identity exec deploy/identity -- wamn-identity activate --kid <kid>
@@ -915,88 +904,7 @@ RELEASE_receiving=$($CARGO_TARGET_DIR/debug/wamn-ctl publish-release --database-
 echo "$RELEASE_receiving" > $W/release-receiving
 ```
 
-The WMS release has the wiring `inventory_move_and_label`. The authoring gate must pass the wiring before `author-wiring` records it. The gate runs on this machine, so its database logins name the port-forward. Prepare the gate logins into a private directory `G`, and do not apply them:
-
-```bash
-. $HOME/.cache/wamn-install/platform.sh
-mkdir -m 700 $G
-(umask 077; $CARGO_TARGET_DIR/debug/wamn-ctl provision-project-env --org dkk --project wms --env dev \
-  --namespace hosts --target-admin-database-url "$(db_url wms)" --db-host 127.0.0.1 --db-port 15432 \
-  --prepare-management-admitter-generation a --emit-management-admitter-secret $G/management-admitter.json)
-(umask 077; $CARGO_TARGET_DIR/debug/wamn-ctl provision-project-env --org dkk --project wms --env dev \
-  --namespace hosts --db-host 127.0.0.1 --db-port 15432 \
-  --prepare-control-author-generation a --emit-control-author-secret $G/control-author.json)
-(umask 077; kubectl -n hosts get secret wamn-identity-reader-dkk--wms--dev -o jsonpath='{.data.url}' | base64 -d \
-  | sed 's#@wamn-pg-rw.platform.svc.cluster.local:5432/#@127.0.0.1:15432/#' > $G/identity-reader.url)
-```
-
-`control-author` addresses the control database, so it takes no `--target-admin-database-url`.
-
-Mint the management-author PAT of WMS in the cluster. The Job [mint-pat.yaml](../../deploy/gcp/operator/mint-pat.yaml) runs in namespace `identity` with the mounted operator certificate, so the certificate never reaches this machine. Fill a private copy of the manifest, apply it and remove it:
-
-```bash
-. $HOME/.cache/wamn-install/platform.sh
-(umask 077; sed -e 's/__ORG__/dkk/' -e 's/__PROJECT__/wms/' -e 's/__ENV__/dev/' -e 's/__ENV_KEY__/dkk--wms--dev/' \
-  -e 's/__NAMESPACE__/hosts/' -e 's/__PAT_FLAG__/--emit-management-author-pat-secret/' \
-  deploy/gcp/operator/mint-pat.yaml > $G/mint-pat.yaml)
-kubectl apply -f $G/mint-pat.yaml
-rm $G/mint-pat.yaml
-```
-
-The pod waits for the Secret `wamn-system-admin`, the superuser URL of `wamn_system`. Make it with an owner reference to the Job, so that Kubernetes deletes it with the Job. Use `kubectl create`, because `kubectl apply` copies the data into an annotation. The pod keeps the PAT file for at most 300 seconds, so read it at once:
-
-```bash
-. $HOME/.cache/wamn-install/platform.sh
-JOB_UID=$(kubectl -n identity get job mint-pat -o jsonpath='{.metadata.uid}')
-printf 'postgresql://postgres:%s@wamn-pg-rw.platform.svc.cluster.local:5432/wamn_system' "$PW" |
-  kubectl -n identity create secret generic wamn-system-admin --from-file=url=/dev/stdin --dry-run=client -o json |
-  jq --arg uid "$JOB_UID" '.metadata.ownerReferences = [{apiVersion: "batch/v1", kind: "Job", name: "mint-pat", uid: $uid}]' |
-  kubectl create -f -
-for i in $(seq 150); do kubectl -n identity exec job/mint-pat -- test -e /out/pat.json 2>/dev/null && break; sleep 2; done
-(umask 077; kubectl -n identity exec job/mint-pat -- sh -c 'cat /out/pat.json && rm /out/pat.json' > $G/management-author-pat.json)
-kubectl -n identity wait --for=condition=complete job/mint-pat --timeout=60s
-kubectl -n identity logs job/mint-pat
-kubectl -n identity delete job mint-pat
-```
-
-Run the gate on this machine, and post the gate request with the PAT as a bearer token. The PAT goes to `curl` as a header file, never on the command line. The `pkill` pattern starts with `^`. Without it, the pattern also matches the shell that runs this block, and `pkill` stops that shell:
-
-```bash
-. $HOME/.cache/wamn-install/platform.sh
-WAMN_SYSTEM_URL="$(cat $G/identity-reader.url)" WAMN_CONTROL_AUTHORING_PG_URL="$(url $G/control-author.json)" \
-WAMN_MANAGEMENT_ADMISSION_PG_URL="$(url $G/management-admitter.json)" WAMN_MANAGEMENT_ORG=dkk \
-WAMN_MANAGEMENT_PROJECT=wms WAMN_MANAGEMENT_ENVIRONMENT=dev WAMN_MANAGEMENT_ENV_KEY=dkk--wms--dev \
-  setsid $CARGO_TARGET_DIR/debug/wamn-scenario-worker serve --bind 127.0.0.1:18090 > $G/gate.log 2>&1 < /dev/null &
-cargo run --locked -p wamn-test-infrastructure --example gate_request -- wamn_wms 2.1.4 wms dev \
-  apps/wamn_wms/publication/wirings/inventory_move_and_label.json > $G/gate-request.json
-for i in $(seq 30); do curl -s -o /dev/null http://127.0.0.1:18090/ && break; sleep 1; done
-(umask 077; python3 -c 'import json,sys;print("Authorization: Bearer "+json.load(open(sys.argv[1]))["stringData"]["token"])' \
-  $G/management-author-pat.json > $G/auth-header)
-curl -sS -H @$G/auth-header -H 'content-type: application/json' --data-binary @$G/gate-request.json \
-  http://127.0.0.1:18090/authoring > $G/gate-reply.json
-rm -f $G/auth-header
-pkill -f 'wamn-scenario-worker serve --bind 127.0.0.1:18090'
-python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));print(json.dumps(d.get("body",d).get("outcome",d))[:600])' $G/gate-reply.json
-```
-
-The outcome has `status` `completed`. Record the wiring and publish WMS:
-
-```bash
-. $HOME/.cache/wamn-install/platform.sh
-registry_token
-$CARGO_TARGET_DIR/debug/wamn-ctl author-wiring --database-url "$(db_url wms)" --control-database-url "$WAMN_SYSTEM_ADMIN_URL" \
-  --org dkk --project wms --environment dev --package-id wamn_wms --package-version 2.1.4 \
-  --wiring-document apps/wamn_wms/publication/wirings/inventory_move_and_label.json \
-  --artifact-base $WAMN_PACKAGE_ARTIFACT_BASE --registry-auth-file $WAMN_REGISTRY_AUTH_FILE
-RELEASE_wms=$($CARGO_TARGET_DIR/debug/wamn-ctl publish-release --database-url "$(db_url wms)" \
-  deploy/gcp/environments/dkk--wms--dev.k \
-  --control-database-url "$WAMN_SYSTEM_ADMIN_URL"  \
-  --verified-publisher-principal wamn-management-author-dkk--wms--dev \
-  --run-schema wamn_run --package wamn_wms@2.1.4 --wiring "wamn_wms@2.1.4::inventory_move_and_label=2" \
-  --artifact-base $WAMN_PACKAGE_ARTIFACT_BASE --registry-auth-file $WAMN_REGISTRY_AUTH_FILE)
-echo "$RELEASE_wms" > $W/release-wms
-shred -u $G/management-author-pat.json
-```
+The [publication owner](../../crates/control/lib/src/platform/job.rs) prepares and publishes wired WMS releases through `platform apply`.
 
 ### 4.15 Qualification
 

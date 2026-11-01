@@ -9,10 +9,10 @@ use std::path::Path;
 use super::Problems;
 
 /// The manifests, below `deploy/`, that define the cluster of the system
-/// database: the T1 cluster of kind, and the one cluster of the Google Cloud
-/// test deployment, which holds the system database and every tenant database
+/// database: the Google Cloud cluster that holds the system database
+/// and every environment database
 /// (`docs/history/gcp-deployment.md`).
-const ALLOWLIST: &[&str] = &["platform/wamn-sysdb.yaml", "gcp/cnpg-cluster.yaml"];
+const ALLOWLIST: &[&str] = &["gcp/cnpg-cluster.yaml"];
 
 /// The fewest manifests a real `deploy/` tree holds. A lower count means the
 /// walk went vacuous (the pre-tiering flat `read_dir` bug class).
@@ -55,12 +55,7 @@ pub(super) fn check(root: &Path, problems: &mut Problems) {
                     continue;
                 }
             };
-            // Comments are stripped first, because the invariant is about the
-            // REQUEST PATH and a comment is not one. Naming `wamn-sysdb.yaml`
-            // as the R8b precedent while documenting a Secret reference is
-            // exactly the prose a credential-hygiene change should carry, and
-            // tripping on it pushes the next author toward the ALLOWLIST --
-            // which is the one edit that genuinely weakens this lint.
+            // Comments do not declare database access.
             let rendered = body
                 .lines()
                 .map(|line| line.split_once('#').map_or(line, |(rendered, _)| rendered))
@@ -101,9 +96,9 @@ mod tests {
             )
             .expect("write a clean manifest");
         }
-        std::fs::create_dir_all(root.join("deploy/platform")).expect("create the platform tree");
+        std::fs::create_dir_all(root.join("deploy/gcp")).expect("create the platform tree");
         std::fs::write(
-            root.join("deploy/platform/wamn-sysdb.yaml"),
+            root.join("deploy/gcp/cnpg-cluster.yaml"),
             "name: wamn-sysdb\n",
         )
         .expect("write the allowed cluster definition");

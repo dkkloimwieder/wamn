@@ -12,8 +12,7 @@
 //! and nothing else anywhere in the cluster, so the credential this verb mounts
 //! can express this statement and no other. The `run_queue` row goes with the run
 //! through its `ON DELETE CASCADE`, which needs no privilege of its own.
-//! Idempotent and safe to repeat on a cadence
-//! (`deploy/platform/run-retention.example.yaml`).
+//! Repeated calls are safe.
 //!
 //! The verb checks the tenant identity. `--tenant` used to be a free argument
 //! that reached the statement as an `app.env_key` GUC, which fails in two

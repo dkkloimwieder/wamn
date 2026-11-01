@@ -1,7 +1,6 @@
 # wamn images (SR1 pattern: one build, one final stage per artifact; SR9 split).
 #   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target host       -t wamn-host:dev       .  # HTTP + durable queue host
 #   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target ctl        -t wamn-ctl:dev        .  # one-shot verbs
-#   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target scenario-worker -t wamn-scenario-worker:dev . # authoring management
 #   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target cdc-reader -t wamn-cdc-reader:dev .  # CDC event reader
 #   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target identity   -t wamn-identity:dev   .  # identity authority and JWKS
 #   docker build --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath .)" | sha256sum | cut -c1-16)" --target gates      -t wamn-gates:dev      .  # gates: FROM host + suite + fixtures
@@ -178,13 +177,6 @@ ADD --chmod=0755 --checksum=sha256:629d3f410e09bf49b64ae7079f7f0bda1191efed311f7
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-ctl"]
 
-# ---- scenario-worker image: authoring management service -------------------
-FROM debian:trixie-slim AS scenario-worker
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=build-native /native-output/wamn-scenario-worker /usr/local/bin/wamn-scenario-worker
-ENV HOME=/tmp
-ENTRYPOINT ["/usr/local/bin/wamn-scenario-worker"]
-
 # ---- cdc-reader image: the CDC event reader service (SR9) -------------------
 FROM debian:trixie-slim AS cdc-reader
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
@@ -302,10 +294,3 @@ COPY tools /build/tools
 # The box runs no container; export the file with --output (header above).
 FROM scratch AS edge
 COPY --from=build-edge /native-output/wamn-edge /wamn-edge
-
-FROM toolchain AS cranelift-dev
-# Opt-in native debug shell only. No shipping stage inherits this toolchain.
-RUN rustup toolchain install nightly --profile minimal \
- && rustup component add rustc-codegen-cranelift-preview --toolchain nightly
-COPY --chmod=0755 tools/cargo-cranelift /usr/local/bin/cargo-cranelift
-WORKDIR /workspace

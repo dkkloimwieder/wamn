@@ -90,7 +90,7 @@ An agent who reads docs/architecture does not learn about these items.
 - Stale facts in architecture. wfe pin (execution.md:920), extensions (data-access.md:64 omits pg_stat_statements), the manual run caller (execution.md:395-399, :447), "authored in wamn.json" (four places, it is wamn.k), the Receiving version example, and links into frozen history (overview.md:120, apps/edge_*/README.md:1, operations/edge.md:85, deployment.md:289).
 - Stale facts in other plans. Pins and paths in cdc-reader-slot, component-pull and nats-outage. Counts in environment-teardown. Gone paths in generated-operations, table-adv-data, table-adv-ui and request-round-trips. Write log scope in write-log.md:115, :127. The CDN path in web-deployment.md:154-158.
 - Broken links. delivery.md:8, application-tests.md:8, deployment.md:320, execution.md:67, and three links in apps/wamn_receiving/web/README.md:33, :44, :63 with one `../` too many.
-- Archive links. data-access.md:270, components.md:54, platform-ui.md:62, :90 and deploy/gcp/operator/mint-pat.yaml:1 link into plans that are archive candidates.
+- Archive links. data-access.md:270, components.md:54, platform-ui.md:62, :90 link into plans that are archive candidates.
 
 ## 5. Plan status, one line per plan
 

@@ -3,7 +3,7 @@
 -- projects, and the provisioned (org, project, env) databases.
 --
 -- This is the schema that fills the EMPTY wamn_system DB the T1 cluster
--- (deploy/platform/wamn-sysdb.yaml, wamn-q3n.2) bootstraps: registry-model → registry
+-- (deploy/gcp/cnpg-cluster.yaml) bootstraps: registry-model → registry
 -- tables. Project databases independently install the package/effective-release
 -- catalog from deploy/sql/catalog-schema.sql.
 --

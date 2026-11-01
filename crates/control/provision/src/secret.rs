@@ -402,36 +402,9 @@ mod tests {
         assert_eq!(secret["stringData"]["url"], url);
     }
 
-    /// The scope the scenario-worker Deployment serves, read from its own
-    /// `serve` arguments rather than restated here.
-    fn scenario_worker_triple(deployment: &str) -> Triple {
-        let arg = |flag: &str| {
-            deployment
-                .lines()
-                .find_map(|line| line.trim().strip_prefix("- ")?.strip_prefix(flag))
-                .unwrap_or_else(|| panic!("scenario-worker states {flag}"))
-                .to_owned()
-        };
-        Triple::new(arg("--org="), arg("--project="), arg("--environment="))
-    }
-
-    /// `wamn-0h0g.8.5.3` landed the consuming half — a `secretKeyRef` in
-    /// `deploy/platform/scenario-worker.yaml` — before anything minted the
-    /// Secret, and measured that pointing that reference at a wrong name killed
-    /// no test. `tests/conformance`'s workload scanner filters to kind
-    /// `WorkloadDeployment` and scenario-worker is a plain `Deployment`, so it is
-    /// invisible there.
-    ///
-    /// This is the equality that closes it, and it is not a source scan: the
-    /// Deployment's `secretKeyRef` name and key are compared against the
-    /// **renderer's own output** for the same scope, so drifting either half
-    /// fails here.
     #[test]
-    fn management_admitter_secret_is_mount_exact_with_the_scenario_worker_deployment() {
-        const SCENARIO_WORKER: &str =
-            include_str!("../../../../deploy/platform/scenario-worker.yaml");
-
-        let triple = scenario_worker_triple(SCENARIO_WORKER);
+    fn management_admitter_secret_has_scoped_credentials() {
+        let triple = Triple::new("acme", "receiving", "dev");
         let url = "postgres://wamn_mgmt_admitter_scope_a:pw@acme-dev-rw:5432/\
                    wamn-db-acme--widgets--dev--k3m9x2p7";
         let secret = render_management_admitter_secret_manifest(&triple, "wamn-system", url);
@@ -454,48 +427,11 @@ mod tests {
         assert_eq!(data.len(), 1);
         let key = data.keys().next().expect("the Secret carries one key");
         assert_eq!(data[key], url);
-        let name = secret["metadata"]["name"]
-            .as_str()
-            .expect("the Secret is named");
-
-        // The consuming env entry, read out of the Deployment rather than
-        // restated: `valueFrom.secretKeyRef.{name,key}` must be exactly what the
-        // renderer produced for this triple.
-        let reference: Vec<String> = SCENARIO_WORKER
-            .split("- name: WAMN_MANAGEMENT_ADMISSION_PG_URL")
-            .nth(1)
-            .expect("scenario-worker consumes WAMN_MANAGEMENT_ADMISSION_PG_URL")
-            .lines()
-            .skip(1)
-            .take(4)
-            .map(|line| line.trim().to_string())
-            .collect();
-        assert_eq!(
-            reference,
-            [
-                "valueFrom:".to_string(),
-                "secretKeyRef:".to_string(),
-                format!("name: {name}"),
-                format!("key: {key}"),
-            ]
-        );
     }
 
-    /// THE CONSUMER-WIRING GUARD for the identity read (`wamn-0h0g.12.67`).
-    ///
-    /// The mount-exact shape above, applied to the credential that mattered
-    /// most: `WAMN_SYSTEM_URL` named `wamn-system-db`, which authenticates as
-    /// `wamn_system` — the owner of `identity.pats` and `identity.project_roles`
-    /// under no row-level security. Re-pointing the reference back at that
-    /// Secret, or at either of the other two this pod already mounts, fails
-    /// here, because the name is compared against the RENDERER'S OWN output for
-    /// this scope rather than restated.
     #[test]
-    fn identity_reader_secret_is_mount_exact_with_the_scenario_worker_deployment() {
-        const SCENARIO_WORKER: &str =
-            include_str!("../../../../deploy/platform/scenario-worker.yaml");
-
-        let triple = scenario_worker_triple(SCENARIO_WORKER);
+    fn identity_reader_secret_has_separate_scoped_credentials() {
+        let triple = Triple::new("acme", "receiving", "dev");
         let url = "postgres://wamn_identity_reader_scope_a:pw@wamn-sysdb-rw:5432/wamn_system";
         let secret = render_workload_secret_manifest(
             WorkloadRoleFamily::IdentityReader,
@@ -526,31 +462,6 @@ mod tests {
         }
         // …and it is never the wide owner credential it replaced.
         assert_ne!(name, "wamn-system-db");
-
-        let reference: Vec<String> = SCENARIO_WORKER
-            .split("- name: WAMN_SYSTEM_URL")
-            .nth(1)
-            .expect("scenario-worker consumes WAMN_SYSTEM_URL")
-            .lines()
-            .skip(1)
-            .take(4)
-            .map(|line| line.trim().to_string())
-            .collect();
-        assert_eq!(
-            reference,
-            [
-                "valueFrom:".to_string(),
-                "secretKeyRef:".to_string(),
-                format!("name: {name}"),
-                format!("key: {key}"),
-            ]
-        );
-        // The wide owner credential must be gone from the MOUNTS, not merely
-        // unmentioned: the header still names it to say what was replaced.
-        assert!(
-            !SCENARIO_WORKER.contains("name: wamn-system-db"),
-            "the deployment still mounts the unconfined wamn_system owner credential"
-        );
     }
 
     #[test]

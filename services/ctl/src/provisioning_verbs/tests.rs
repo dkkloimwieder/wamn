@@ -428,8 +428,7 @@ fn provisioning_summary_contains_no_database_credentials() {
 ///
 /// The modes that provision nothing reach neither [`compose_url`] nor
 /// [`role_sql`], so the parser must not demand a database `Secret` they would
-/// immediately discard — which is what forced `deploy/mvp/bootstrap.sh`'s
-/// generation and revoke call sites to invent one.
+/// immediately discard.
 ///
 /// Deliberately built without [`parse_args`]'s extras, which would supply the
 /// Secret and leave every assertion here vacuous.

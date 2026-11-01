@@ -20,8 +20,7 @@
 //! than the cutoff goes only when no earlier entry of its row is at or after the
 //! cutoff. So the verb removes a prefix of the history of a row, never an
 //! interior entry. It advances the pruning watermark in the same transaction.
-//! The daily schedule
-//! (`deploy/platform/audit-retention.example.yaml`) sets the retention precision.
+//! The daily schedule sets the retention precision.
 //! The final transaction also expires successful write-log claims after 30 days.
 //! Claims with a null result remain, regardless of age.
 

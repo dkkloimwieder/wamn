@@ -8,13 +8,10 @@
 # `provision-project-env` then creates a trials org's databases on this pool.
 # CONVERSION = promotion to a dedicated T2 pair (the tier-move, wamn-q3n.13).
 #
-# Stands up ALONGSIDE the guardrailed deploy/platform/postgres.yaml pod — the legacy S2–S6
-# gates keep running against that; the wamn-q3n provisioning gates target this
-# cluster. Pinned operator: deploy/infra/cnpg-operator.yaml
+# Pinned operator: deploy/infra/cnpg-operator.yaml
 # (CNPG 1.29.2). SHARED-CLUSTER GUARDRAIL: this file is doc-of-intent — the live
 # `wamn-pg` Cluster is never re-applied/recreated (provisioning adds Databases to
-# it additively). Retiring the legacy postgres.yaml gate pod is a separate concern
-# (wamn-689).
+# it additively).
 #
 # Cross-tenant isolation = per-project-env database + per-generation CONNECT
 # (PUBLIC and the cluster-global stable `wamn_app` role revoked) + RLS within.

@@ -1273,8 +1273,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     );
     // wamn-0h0g.22.8.3: the host NAMES its own credential sources here rather
     // than letting the config layer pick one up implicitly. deploy/platform
-    // injects WAMN_PG_URL via secretKeyRef (values-host-default.yaml ->
-    // host-db.example.yaml), so the environment is the transport; reading it at
+    // injects WAMN_PG_URL via secretKeyRef (values-host-default.yaml),
+    // so the environment is the transport; reading it at
     // composition is what makes it the explicit source instead of a fallback.
     // A PAT-only host without guest SQL can instead name just CallableHttp below;
     // no base URL is borrowed for that authority.

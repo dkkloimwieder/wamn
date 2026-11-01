@@ -50,7 +50,7 @@ const RETIRED_IMAGE_MARKERS: [&str; 4] = ["wamn-gates", "node-host", "serve-node
 /// Externally supplied Secrets and ConfigMaps with their provisioning owner.
 /// Mounted names must be declared by a platform manifest or allowed here.
 /// A Certificate declares its `spec.secretName` output, which cert-manager writes.
-const EXTERNAL_PREREQUISITES: [(&str, &str); 7] = [
+const EXTERNAL_PREREQUISITES: [(&str, &str); 8] = [
     // The host Pod's runtime and data certificates, which cert-manager issues
     // from deploy/infra/nats-certificates.yaml (docs/plan/alignment.md R4).
     (
@@ -69,18 +69,17 @@ const EXTERNAL_PREREQUISITES: [(&str, &str); 7] = [
         EDGE_IDENTITY_CA,
         "the CA of the identity serving certificate, which the edge checks",
     ),
-    // READ by registry.yaml's namespaced CA Issuer (`spec.ca.secretName`) and
-    // minted by the runtime-operator Helm release, not by anything here. The
-    // chart hard-codes a 365-day CA and nothing renews it (wamn-ob2f).
     (
-        "wasmcloud-ca",
-        "runtime-operator Helm release (Secret in wamn-system)",
+        "wamn-host-db",
+        "deployment operator; App-generation URL from provision-project-env --emit-guest-secret",
     ),
-    // Generated at bootstrap from deploy/sql/postgres-init.sql; the command is
-    // in the postgres.yaml header.
     (
-        "pg-init",
-        "kubectl create configmap pg-init --from-file=deploy/sql/postgres-init.sql",
+        "wamn-registry-pull",
+        "deployment secret manager; registry credentials for the host",
+    ),
+    (
+        "wamn-identity-db",
+        "provision-identity-issuer; identity database credential",
     ),
     (
         "wamn-object-store-credentials-acme--wms--dev",
@@ -88,17 +87,16 @@ const EXTERNAL_PREREQUISITES: [(&str, &str); 7] = [
     ),
 ];
 
-/// Per-project-environment Secret name PREFIXES the scenario worker mounts.
+/// Per-project-environment Secret name PREFIXES the host groups mount.
 ///
 /// These carry an `<org>--<project>--<env>` suffix, so they cannot be listed as
 /// literals without pinning the demo triple into the test. What a prefix is
 /// allowed to absorb is [`absorbed_by_a_prerequisite_prefix`], not
 /// `starts_with`.
-const EXTERNAL_PREREQUISITE_PREFIXES: [&str; 8] = [
+const EXTERNAL_PREREQUISITE_PREFIXES: [&str; 6] = [
     // `wamn-a40n.2` adds the administration credential beside the other
     // `provision-project-env` outputs the host mounts.
     "wamn-administration-",
-    "wamn-authoring-",
     // `wamn-vzbx0.2` adds the connection-reader credential beside the identity reader.
     "wamn-conn-reader-",
     // `values-host-receiving-pat.yaml` mounts all four `provision-project-env`
@@ -109,7 +107,6 @@ const EXTERNAL_PREREQUISITE_PREFIXES: [&str; 8] = [
     "wamn-executor-platform-",
     "wamn-http-admitter-",
     "wamn-identity-reader-",
-    "wamn-mgmt-admitter-",
 ];
 
 /// Whether an [`EXTERNAL_PREREQUISITE_PREFIXES`] row accounts for `name`.
@@ -767,33 +764,6 @@ fn only_identity_receives_issuer_credentials_and_other_consumers_keep_their_clas
         environment_secret_bindings(&source, HOST_VALUES_FILE),
         expected,
         "{HOST_VALUES_FILE} credential classes changed"
-    );
-    let gate = read(&root, "scenario-worker.yaml");
-    let expected = [
-        (
-            "WAMN_SYSTEM_URL",
-            "wamn-identity-reader-acme--receiving--dev",
-        ),
-        (
-            "WAMN_CONTROL_AUTHORING_PG_URL",
-            "wamn-authoring-acme--receiving--dev",
-        ),
-        (
-            "WAMN_MANAGEMENT_ADMISSION_PG_URL",
-            "wamn-mgmt-admitter-acme--receiving--dev",
-        ),
-    ]
-    .into_iter()
-    .map(|(name, secret)| (name.to_owned(), (secret.to_owned(), "url".to_owned())))
-    .collect();
-    assert_eq!(
-        environment_secret_bindings(&gate, "scenario-worker.yaml"),
-        expected,
-        "the authoring Gate must retain its three existing database authorities"
-    );
-    assert_eq!(
-        images(&gate),
-        BTreeSet::from(["wamn-scenario-worker:dev".to_owned()])
     );
     assert_eq!(
         environment_secret_bindings(&read(&root, "identity"), "identity"),

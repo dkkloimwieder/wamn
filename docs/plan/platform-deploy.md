@@ -532,7 +532,7 @@ Each epic lands as a platform change plus the two applications and the overlay r
 
 Runbook acceptance: two greenfield installs by a fresh agent, 2026-10-14, 4 and 5 doc fixes, both green (wamn-u0tmx).
 
-Left open and not scheduled: `provision-project-env` stays outside `env apply` (R21), because the session-target Secret goes to identity's namespace, which no `env apply` input names, the gate logins are local port-forward files, and the mint-pat Job, `deploy/mvp/bootstrap.sh`, `tools/identity-jwks-journey-run` and three live tests call it (`wamn-7yse3`, reason on `wamn-r3qqf.3`).
+Left open and not scheduled: `provision-project-env` stays outside `env apply` (R21), because the session-target Secret goes to identity's namespace, which no `env apply` input names, the gate logins are local port-forward files, and the mint-pat Job, `tools/identity-jwks-journey-run` and three live tests call it (`wamn-7yse3`, reason on `wamn-r3qqf.3`).
 
 ### 17.3 Deferred: option B
 

@@ -31,7 +31,6 @@ Measured on `main` at `91a6ffca9` on 2026-09-30.
 | Hosts-file shortcut | Sections 3.16 and 4.5 of `docs/operations/gcp.md` add `127.0.0.1 identity.identity.svc.cluster.local` to `/etc/hosts` and forward `svc/identity 8443:443`. They copy `operator-dkk` into mode 0600 files. Then they run `target/debug/wamn-ctl` on the owner's machine with `--pat-issuer https://identity.identity.svc.cluster.local:8443`. |
 | `ctl` stage | `Dockerfile:169-174`: `debian:trixie-slim`, `wamn-ctl` and `wamn-ctl-ops` from `build-ctl`, no `pg_dump`. No tool builds it. `tests/conformance/src/repo_policy/docker_provenance.rs:135, 184` checks its contents. Three examples in `deploy/platform` name `wamn-ctl:dev`. |
 | `gates` stage | `Dockerfile:198-219`: `FROM host`, with `wamn-gates`, `wamn-ctl`, `wamn-ctl-ops`, `wamn-cdc-reader` and five bench components. The gates cases run `wamn-ctl` and `wamn-cdc-reader` inside it through their executable boundary. `tools/identity-jwks-journey-run` runs `wamn-ctl` in a sleeping Pod of this image and reads its files back with `kubectl exec cat` (lines 235-259). |
-| Cache identity | `tools/journey-image-cache:80-93` leaves the test-only paths out of the identity for `host` and `identity` only. `ctl`, `gates` and `cdc-reader` hash the whole copied tree, so a test edit gives them a new identity. |
 | Jobs that run `wamn-ctl` | Only the three examples in `deploy/platform`. They take their arguments in `args`, their credentials by `secretKeyRef`, mount no token, and are read with `kubectl logs`. `deploy/gcp` has none. |
 
 The superuser URL of `wamn_system` exists only on the owner's machine, built from the Secret `wamn-pg-superuser` in namespace `platform` (`docs/history/gcp-install-history.md` section 3.6).
@@ -40,18 +39,13 @@ The superuser URL of `wamn_system` exists only on the owner's machine, built fro
 
 ### 4.1 The image
 
-The operator image is the `ctl` stage, published as `wamn-ctl:src-<identity>` in `us-central1-docker.pkg.dev/wamn-dev/wamn`. `tools/journey-image-cache` gives `ctl` the identity rule of `host` and `identity`, and `tests/conformance/tests/journey_image_cache.rs` covers it. A commit that changes only test files then keeps the operator image.
+The [platform build owner](../../crates/control/lib/src/platform_build.rs) publishes the operator image.
 
 The `gates` stage keeps its contents, because its cases run `wamn-ctl` inside it. It keeps the full identity, and it is the only image that a test edit builds again. The build time of `gates` after a test edit is not measured here. Issue 1 measures it.
 
 ### 4.2 The Jobs
 
-Two manifests under `deploy/gcp/operator/`, both in namespace `identity`, where `operator-dkk` and `identity-tls` live:
-
-- `invite.yaml` runs `wamn-ctl invite` with the email, the display name, the org and the grant flags. It also needs the superuser URL of `wamn_system`, from the Secret `wamn-system-admin` of section 4.3.
-- `mint-pat.yaml` runs `wamn-ctl provision-project-env` with the PAT flags of section 3.16.
-
-Each Job has `backoffLimit: 0`, `restartPolicy: Never`, `ttlSecondsAfterFinished` and `automountServiceAccountToken: false`. It mounts `tls.crt` and `tls.key` of `operator-dkk` and `ca.crt` of `identity-tls` read-only at mode 0400, and sets `WAMN_PAT_ISSUER=https://identity.identity.svc.cluster.local`.
+The [platform publication owner](../../crates/control/lib/src/platform/job.rs) creates the Jobs.
 
 ### 4.3 Arguments and output
 
@@ -71,9 +65,6 @@ It goes. Sections 3.16 and 4.5 of `gcp.md` become the Job runs of section 4.3. T
 
 One branch. Each issue lands with its tests.
 
-1. The image. `ctl` gets the host identity rule in `tools/journey-image-cache` and its test. Measure the `gates` rebuild after a test-only commit, before and after.
-2. The Jobs. `deploy/gcp/operator/invite.yaml` and `mint-pat.yaml`, and sections 3.16 and 4.5 of `gcp.md` rewritten for them.
-3. The run on wamn-dev. Build and push `wamn-ctl:src-<identity>` and pin it in both manifests. Run one PAT mint for the Receiving bench operator `wamn-operator-dkk--receiving--dev`, then revoke its previous PAT. No invitation runs, because nothing is created for a test.
 4. Closeout. Close `wamn-n5d1` and `wamn-lo7z` with the commits and the runs.
 
 ## 6. Out of scope

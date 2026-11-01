@@ -158,7 +158,7 @@ fn embedded_components_come_from_the_locked_builder(
     // service images carry native binaries only. Gates embed test fixtures,
     // and the roles stage exports the platform role components (53e4214c2).
     // `stage` reports a stage name that disappears.
-    for image_stage in ["host", "identity", "ctl", "scenario-worker", "cdc-reader"] {
+    for image_stage in ["host", "identity", "ctl", "cdc-reader"] {
         if let Some(contents) = stage(dockerfile, image_stage, problems) {
             let contents = if image_stage == "ctl" {
                 problems.require(contents.contains(ctl_route), || {
@@ -281,7 +281,6 @@ fn native_images_share_one_build_stage(dockerfile: &str, problems: &mut Problems
     for (image_stage, outputs) in [
         ("host", &["wamn-host", "docker-credential-wamn"][..]),
         ("identity", &["wamn-identity"][..]),
-        ("scenario-worker", &["wamn-scenario-worker"][..]),
         (
             "ctl",
             &["wamn-ctl", "wamn-ctl-ops", "wamn-scenario-worker"][..],

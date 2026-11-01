@@ -782,7 +782,6 @@ The generation database creates the history tables before `EXPLAIN` and SQLx pre
 A declared `"P<n>D"` retention is a minimum keep window.
 It promises nothing about removal time, backups, holds, or erasure.
 The retention task removes an expired entry on its next daily run, so its schedule sets the retention precision.
-[`audit-retention.example.yaml`](../../deploy/platform/audit-retention.example.yaml) is an example daily CronJob.
 
 The [`prune-record-history`](../../crates/control/lib/src/prune_record_history.rs) verb of `wamn-ctl-ops` runs the task.
 It connects as a scoped generation of the tenant-scoped audit retention family, whose stable role is `wamn_audit_retention`.

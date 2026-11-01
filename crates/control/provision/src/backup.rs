@@ -12,8 +12,7 @@
 //! (`EnvPolicy::wal_retention`) is the PITR-SLA knob — a **per-env policy** lever
 //! under D18 (cjv.21: sizing is policy-driven, not a closed tier), and the
 //! **base-backup cadence** is `EnvPolicy::backup_cadence` (empty = no scheduled
-//! backup). Backup objects use the shared object store (MinIO,
-//! deploy/infra/minio.yaml).
+//! backup). Backup objects use the shared object store (MinIO).
 //!
 //! **Pure** (SR3 / house rule 1): K8s manifest renderers (`serde_json::Value` —
 //! `kubectl apply -f` accepts JSON, following the [`crate::org`] precedent)
@@ -31,10 +30,10 @@ pub const BACKUP_PLUGIN_NAME: &str = "barman-cloud.cloudnative-pg.io";
 /// The object-store bucket WAL + base backups are written under.
 pub const WAL_BUCKET: &str = "wamn-backups";
 /// The shared object-store credentials `Secret` (keys `ACCESS_KEY_ID` /
-/// `ACCESS_SECRET_KEY`), created by deploy/infra/minio.yaml. The ObjectStore's
+/// `ACCESS_SECRET_KEY`). The ObjectStore's
 /// `s3Credentials` reference it.
 pub const OBJECT_STORE_SECRET: &str = "wamn-object-store";
-/// The in-cluster MinIO S3 endpoint (the deploy/infra/minio.yaml `Service`).
+/// The MinIO S3 endpoint in the cluster.
 pub const MINIO_ENDPOINT: &str = "http://minio.wamn-system.svc:9000";
 
 /// The `ObjectStore` CR name for a cluster: `<cluster>-store`.
