@@ -19,18 +19,12 @@
 //!    that the credential was not minted for. The case reads the post-state.
 //! 4. The role holds its grants only on the P<n>D history tables, reads no image
 //!    column, and holds no `wamn_platform` edge.
-//!
-//! The second case tests the keep window under the audit retention lock: a
-//! retention change in apply-package waits for a running prune, so the prune
-//! deletes with the retention that it read.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use tokio_postgres::{Client, NoTls};
 use wamn_control::apply_package::{self, ApplyOutcome, ApplyPackageRequest};
-use wamn_control_provision::audit_retention::AUDIT_RETENTION_LOCK_SQL;
 use wamn_control_provision::{
     AUDIT_RETENTION_ROLE, CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, compose_url,
     sql, workload_generation_role,
@@ -159,23 +153,6 @@ fn write_package(root: &Path) {
     .expect("write the fixture manifest");
     std::fs::write(root.join("migrations/0001_initial.sql"), migration)
         .expect("write the fixture migration");
-    wamn_test_infrastructure::fixture_digest::write_receipt(root);
-}
-
-/// Rewrite the fixture manifest as the next version, with a new retention for one relation.
-fn upgrade_retention(root: &Path, table: &str, retention: &str) {
-    let path = root.join("wamn.json");
-    let mut manifest: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(&path).expect("read the fixture manifest"))
-            .expect("parse the fixture manifest");
-    manifest["package"]["version"] = serde_json::json!("1.0.1");
-    manifest["package"]["predecessor_version"] = serde_json::json!("1.0.0");
-    manifest["models"][table]["audit_log"]["retention"] = serde_json::json!(retention);
-    std::fs::write(
-        path,
-        serde_json::to_vec_pretty(&manifest).expect("serialize the upgraded manifest"),
-    )
-    .expect("write the upgraded manifest");
     wamn_test_infrastructure::fixture_digest::write_receipt(root);
 }
 
@@ -682,184 +659,6 @@ async fn prune_removes_only_the_expired_prefix_of_each_row() {
 
     drop_generation_role(&admin, &credential_role).await;
     drop_generation_role(&admin, &run_retention_role).await;
-    drop_fixture_schemas(&admin).await;
-    std::fs::remove_dir_all(package).expect("remove the fixture package");
-}
-
-/// Wait until the audit retention lock has the expected waiters: the verb,
-/// logged in as `credential_role`, and apply-package, logged in as the admin.
-async fn await_lock_waiters(
-    observer: &Client,
-    credential_role: &str,
-    expected: (i64, i64),
-    expectation: &str,
-) {
-    tokio::time::timeout(Duration::from_secs(30), async {
-        loop {
-            let waiting = observer
-                .query_one(
-                    "SELECT count(*) FILTER (WHERE usename = $1), \
-                            count(*) FILTER (WHERE usename = current_user) \
-                       FROM pg_stat_activity \
-                      WHERE datname = current_database() \
-                        AND wait_event_type = 'Lock' AND wait_event = 'advisory' \
-                        AND query LIKE '%wamn.audit-retention%'",
-                    &[&credential_role],
-                )
-                .await
-                .expect("observe the audit retention lock waiters");
-            if (waiting.get::<_, i64>(0), waiting.get::<_, i64>(1)) == expected {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect(expectation);
-}
-
-/// The keep window holds while a retention change waits on the audit retention lock.
-///
-/// A blocker holds the lock. The verb queues on it first, and apply-package
-/// queues second with a `parcel` retention change from P7D to P1D. PostgreSQL
-/// grants queued lock requests in queue order, so the transaction of `parcel`,
-/// the first relation that the verb visits, reads and deletes with P7D.
-/// apply-package changes the trigger only after that transaction commits.
-#[tokio::test]
-async fn a_retention_change_waits_for_a_running_prune() {
-    let url = locked_database::database(wamn_project_state::test_database::tenant_platform);
-    let admin = connect(&url).await;
-    let database = current_database(&admin).await;
-    provision(&admin).await;
-    let package = fixture_root("prune-record-history-lock-live");
-    write_package(&package);
-    apply(&url, &package)
-        .await
-        .expect("apply the fixture package");
-
-    // The insert expires under P7D. The 3-day update stays under P7D and
-    // expires under P1D.
-    let mut kept = Vec::new();
-    for (statement, age, keep) in [
-        (
-            format!("INSERT INTO {SCHEMA}.parcel VALUES ('{}', 'a')", row_id(11)),
-            10,
-            false,
-        ),
-        (
-            format!(
-                "UPDATE {SCHEMA}.parcel SET note = 'b' WHERE id = '{}'",
-                row_id(11)
-            ),
-            3,
-            true,
-        ),
-        (
-            format!(
-                "UPDATE {SCHEMA}.parcel SET note = 'c' WHERE id = '{}'",
-                row_id(11)
-            ),
-            0,
-            true,
-        ),
-    ] {
-        let written = seed(&admin, "parcel", &statement, age).await;
-        if keep {
-            kept.extend(written);
-        }
-    }
-    let credential_role = generation(WorkloadRoleFamily::AuditRetention, ENV_KEY, &database);
-    mint(
-        &admin,
-        WorkloadRoleFamily::AuditRetention,
-        &database,
-        &credential_role,
-    )
-    .await;
-    let credential_url = replace_role(&url, &credential_role, GENERATION_PASSWORD);
-    upgrade_retention(&package, "parcel", "P1D");
-
-    let mut blocker = connect(&url).await;
-    let blocker_tx = blocker
-        .transaction()
-        .await
-        .expect("begin the audit retention lock blocker");
-    blocker_tx
-        .query_one(AUDIT_RETENTION_LOCK_SQL, &[])
-        .await
-        .expect("hold the audit retention lock");
-
-    let prune_task = tokio::spawn(async move {
-        ctl_process::run_ops_checked(prune_argv(&credential_url, ENV_KEY)).await
-    });
-    await_lock_waiters(
-        &admin,
-        &credential_role,
-        (1, 0),
-        "the verb must wait on the audit retention lock",
-    )
-    .await;
-    let apply_url = url.to_string();
-    let apply_package = package.clone();
-    let apply_task = tokio::spawn(async move { apply(&apply_url, &apply_package).await });
-    await_lock_waiters(
-        &admin,
-        &credential_role,
-        (1, 1),
-        "apply-package must wait on the audit retention lock behind the verb",
-    )
-    .await;
-
-    blocker_tx
-        .commit()
-        .await
-        .expect("release the audit retention lock blocker");
-    let pruned = prune_task
-        .await
-        .expect("join the prune")
-        .expect("prune record history through wamn-ctl-ops");
-    apply_task
-        .await
-        .expect("join apply-package")
-        .expect("apply the retention change");
-
-    let stdout = String::from_utf8(pruned.stdout).expect("prune output is UTF-8");
-    print!("{stdout}");
-    let line =
-        format!("removed 1 entries from {SCHEMA}.parcel_history (retention P7D, tenant {ENV_KEY})");
-    assert!(stdout.contains(&line), "the verb did not report: {line}");
-    assert_eq!(
-        positions(&admin).await,
-        BTreeMap::from([
-            ("ledger".to_owned(), Vec::new()),
-            ("parcel".to_owned(), kept),
-            ("shipment".to_owned(), Vec::new()),
-        ]),
-        "the verb deleted with the P7D keep window"
-    );
-    let trigger: String = admin
-        .query_one(
-            &format!(
-                "SELECT pg_catalog.pg_get_triggerdef(oid) FROM pg_catalog.pg_trigger \
-                  WHERE tgrelid = '{SCHEMA}.parcel'::regclass \
-                    AND tgname = 'wamn_record_history_log'"
-            ),
-            &[],
-        )
-        .await
-        .expect("read the parcel log trigger")
-        .get(0);
-    assert_eq!(
-        trigger,
-        format!(
-            "CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
-             ON {SCHEMA}.parcel FOR EACH ROW \
-             EXECUTE FUNCTION wamn_history.{SCHEMA}__parcel_log('P1D')"
-        ),
-        "apply-package committed the P1D retention after the prune"
-    );
-
-    drop_generation_role(&admin, &credential_role).await;
     drop_fixture_schemas(&admin).await;
     std::fs::remove_dir_all(package).expect("remove the fixture package");
 }

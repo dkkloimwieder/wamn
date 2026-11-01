@@ -387,8 +387,8 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
           WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%current_tenant_key%'",
     );
     assert_eq!(
-        governed, "21",
-        "the sweep must cover exactly the 21 governed relations: IS1.5 replaces four \
+        governed, "15",
+        "the sweep must cover exactly the 15 governed relations: IS1.5 replaces four \
          catalog connection tables with connection_requirement, release_connection and \
          connection_binding; C3.1 removes role, \
          user_role, permission, api_key, environment, role_history, user_role_history, \
