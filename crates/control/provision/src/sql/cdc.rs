@@ -176,14 +176,20 @@ pub fn grant_replication_access_sql(database: &str, role: &str, schema: &str) ->
 /// The decode-time map of explicitly declared package mechanism relations that
 /// must not enter the event plane. OID keys preserve the disposition for WAL
 /// written before a rename or replacement; rows are therefore never deleted.
+/// The schema owner owns the map, including when an administrator creates it.
 pub fn ensure_cdc_exclusion_map_sql(schema: &str) -> String {
     format!(
         "CREATE TABLE IF NOT EXISTS {schema}.wamn_cdc_exclusions ( \
            relation_oid oid PRIMARY KEY, \
            package_id text NOT NULL, \
            relation_id text NOT NULL, \
-           table_name text NOT NULL)",
+           table_name text NOT NULL); \
+         DO $map_owner$ BEGIN \
+           EXECUTE format('ALTER TABLE %I.wamn_cdc_exclusions OWNER TO %I', {schema_lit}, \
+             (SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = {schema_lit})); \
+         END $map_owner$;",
         schema = quote_ident(schema),
+        schema_lit = quote_literal(schema),
     )
 }
 
@@ -214,14 +220,20 @@ pub fn upsert_cdc_exclusion_map_sql(schema: &str) -> String {
 /// rows are upsert-only (a dropped entity's row keeps old-WAL decode
 /// resolvable). No RLS: it holds no tenant data, and the CDC role's decode
 /// stream sees every row of every table anyway.
+/// The schema owner owns the map, including when an administrator creates it.
 pub fn ensure_entity_map_sql(schema: &str) -> String {
     format!(
         "CREATE TABLE IF NOT EXISTS {schema}.wamn_entities ( \
            relation_oid oid PRIMARY KEY, \
            package_id text NOT NULL, \
            entity_id text NOT NULL, \
-           table_name text NOT NULL)",
+           table_name text NOT NULL); \
+         DO $map_owner$ BEGIN \
+           EXECUTE format('ALTER TABLE %I.wamn_entities OWNER TO %I', {schema_lit}, \
+             (SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = {schema_lit})); \
+         END $map_owner$;",
         schema = quote_ident(schema),
+        schema_lit = quote_literal(schema),
     )
 }
 
