@@ -9,7 +9,7 @@ use crate::environment::document::DeclaredRelease;
 use crate::{kubectl, release_chart::Target};
 
 use super::document::ClusterDocument;
-use super::install::{DATABASE_HOST, SecretData, administrator, runner_image};
+use super::install::{DATABASE_HOST, SecretData, administrator, runner_image, secret_text};
 use super::job::{self, Access, JobRequest, PolicyRule};
 
 pub(super) async fn apply(
