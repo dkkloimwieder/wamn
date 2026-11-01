@@ -1439,13 +1439,14 @@ impl DevStageRunner for ProductionDevStageRunner {
                     }),
                 Some(instance) => Some((instance.clone(), None)),
             };
+            let mut stop_before_migrate = kept.is_none();
             let kept = match kept {
                 Some(kept) => {
                     let roots = packages
                         .iter()
                         .map(|package| package.root.clone())
                         .collect::<Vec<_>>();
-                    let reason = apply_package::local_target_recreate_reason(
+                    let changes = apply_package::local_target_changes(
                         self.config.target_database_url(),
                         &self.config.activation_identity().env_key(),
                         &roots,
@@ -1454,14 +1455,17 @@ impl DevStageRunner for ProductionDevStageRunner {
                     .map_err(|source| {
                         ProductionDevStageError::owner("check the kept local target", source)
                     })?;
-                    if let Some(reason) = &reason {
+                    stop_before_migrate = changes.requires_stop();
+                    if let Some(reason) = &changes.recreate_reason {
                         tracing::info!(%reason, "recreate development target");
                     }
-                    reason.is_none().then_some(kept)
+                    changes.recreate_reason.is_none().then_some(kept)
                 }
                 None => None,
             };
-            self.shutdown().await?;
+            if stop_before_migrate {
+                self.shutdown().await?;
+            }
             self.migrated_inputs = None;
             self.generated_inputs = None;
             self.acl_inputs = None;

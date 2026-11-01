@@ -248,7 +248,8 @@ In a package that authors `wamn.k`, the watcher takes `wamn.k` as the manifest i
 A missing `build.json`, or one that records other inputs, prevents reuse.
 Receiving and Acme use the shared SQLx CLI 0.9.0 commands and their existing verifier targets.
 
-When the build inputs change, the loop stops the host before it applies them.
+The loop stops the host before it recreates the target or applies any pending migration file.
+Other changes keep the host running until activation.
 
 Every change keeps the target database and the rows it holds, except the changes below.
 The loop applies a kept change, for example a migration file appended after the last applied migration, to the kept target and reads its catalogs again.
@@ -266,8 +267,8 @@ Nothing deletes them one at a time, and the immutability trigger stays unconditi
 The control store reset of `wamn dev up` is the retention step, outside the recreate path.
 A disposable projection made by hand with `wamn-ctl provision-project-env --disposable` against a durable control store has no such bound.
 
-For code and compatible SQL changes, the previous application remains available during candidate preparation.
-Build, Gate, and binding failures keep that application running.
+For changes without target recreation or pending migrations, the previous application remains available during candidate preparation.
+A failure during preparation keeps that application running.
 A failed stage prints its top context first and every cause under it.
 The printed line names the refusal that stopped the stage.
 The loop replaces the host only after the candidate passes preparation.

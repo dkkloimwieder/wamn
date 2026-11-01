@@ -84,15 +84,40 @@ pub fn applied_migration_drift(
     directory: &PackageDirectory,
     applied: &AppliedPackage,
 ) -> anyhow::Result<Option<String>> {
+    Ok(migration_changes(directory, Some(applied))?.recreate_reason)
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct LocalTargetChanges {
+    pub(crate) recreate_reason: Option<String>,
+    pending_migrations: bool,
+}
+
+impl LocalTargetChanges {
+    pub(crate) fn requires_stop(&self) -> bool {
+        self.recreate_reason.is_some() || self.pending_migrations
+    }
+}
+
+fn migration_changes(
+    directory: &PackageDirectory,
+    applied: Option<&AppliedPackage>,
+) -> anyhow::Result<LocalTargetChanges> {
     let presented = plan_package_migrations(directory, None)?;
-    let accepted = AppliedPackage {
+    let accepted = applied.map(|applied| AppliedPackage {
         artifact_digest: presented.artifact_digest,
         ..applied.clone()
-    };
-    match plan_package_migrations(directory, Some(&accepted)) {
-        Ok(_) => Ok(None),
+    });
+    match plan_package_migrations(directory, accepted.as_ref()) {
+        Ok(plan) => Ok(LocalTargetChanges {
+            recreate_reason: None,
+            pending_migrations: !plan.pending.is_empty(),
+        }),
         Err(error) if error.error_type() == PackageMigrationErrorType::MigrationDrift => {
-            Ok(Some(error.to_string()))
+            Ok(LocalTargetChanges {
+                recreate_reason: Some(error.to_string()),
+                pending_migrations: false,
+            })
         }
         Err(error) => Err(error.into()),
     }
@@ -108,6 +133,17 @@ pub async fn local_target_recreate_reason(
     env_key: &str,
     packages: &[PathBuf],
 ) -> anyhow::Result<Option<String>> {
+    Ok(local_target_changes(database_url, env_key, packages)
+        .await?
+        .recreate_reason)
+}
+
+/// Read recreation and pending migration facts before a local candidate changes the database.
+pub(crate) async fn local_target_changes(
+    database_url: &str,
+    env_key: &str,
+    packages: &[PathBuf],
+) -> anyhow::Result<LocalTargetChanges> {
     let (mut client, connection) = tokio_postgres::connect(database_url, NoTls)
         .await
         .context("connect to the local target")?;
@@ -124,17 +160,19 @@ pub async fn local_target_recreate_reason(
         tx.query_one(CLAIM_ENV_KEY_SQL, &[&env_key])
             .await
             .context("claim package tenant")?;
-        let mut reason = None;
+        let mut changes = LocalTargetChanges::default();
         for root in packages {
-            reason = package_recreate_reason(&tx, env_key, root).await?;
-            if reason.is_some() {
+            let package_changes = package_target_changes(&tx, env_key, root).await?;
+            changes.pending_migrations |= package_changes.pending_migrations;
+            changes.recreate_reason = package_changes.recreate_reason;
+            if changes.recreate_reason.is_some() {
                 break;
             }
         }
         tx.rollback()
             .await
             .context("finish the local target check")?;
-        Ok(reason)
+        Ok(changes)
     }
     .await;
     drop(client);
@@ -142,19 +180,19 @@ pub async fn local_target_recreate_reason(
     result
 }
 
-async fn package_recreate_reason(
+async fn package_target_changes(
     tx: &Transaction<'_>,
     env_key: &str,
     root: &Path,
-) -> anyhow::Result<Option<String>> {
+) -> anyhow::Result<LocalTargetChanges> {
     let directory = read_source_package_directory(root)?;
     let manifest = PackageManifest::from_slice(&directory.manifest_bytes)
         .context("parse strict package manifest for the local target check")?;
     let package = &manifest.package;
-    if let Some(applied) = load_applied_package(tx, env_key, &package.id, &package.version).await?
-        && let Some(drift) = applied_migration_drift(&directory, &applied)?
-    {
-        return Ok(Some(drift));
+    let applied = load_applied_package(tx, env_key, &package.id, &package.version).await?;
+    let mut changes = migration_changes(&directory, applied.as_ref())?;
+    if changes.recreate_reason.is_some() {
+        return Ok(changes);
     }
     for model in manifest
         .models
@@ -184,11 +222,92 @@ async fn package_recreate_reason(
             .get::<_, bool>(0);
         reset_host_role(tx).await?;
         if holds_rows {
-            return Ok(Some(format!(
+            changes.recreate_reason = Some(format!(
                 "history table {}.{history} holds rows, and its model no longer keeps a log",
                 model.schema
-            )));
+            ));
+            break;
         }
     }
-    Ok(None)
+    Ok(changes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wamn_schema_control::{MigrationSource, RecordedMigration};
+
+    fn installed_package() -> (PackageDirectory, AppliedPackage) {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/support/dev_package");
+        let directory = super::super::read_package_directory(&root).unwrap();
+        let plan = plan_package_migrations(&directory, None).unwrap();
+        let applied = AppliedPackage {
+            coordinate: plan.coordinate,
+            predecessor_version: plan.predecessor_version,
+            artifact_digest: plan.artifact_digest,
+            migrations: plan
+                .pending
+                .into_iter()
+                .map(|migration| RecordedMigration {
+                    ordinal: migration.ordinal,
+                    relative_path: migration.relative_path,
+                    sha256: migration.sha256,
+                })
+                .collect(),
+        };
+        (directory, applied)
+    }
+
+    #[test]
+    fn source_and_manifest_changes_without_pending_migrations_keep_the_host() {
+        let (mut directory, applied) = installed_package();
+        assert!(
+            !migration_changes(&directory, Some(&applied))
+                .unwrap()
+                .requires_stop()
+        );
+
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&directory.manifest_bytes).unwrap();
+        manifest["models"]["location"]["server_owned_fields"] =
+            serde_json::json!(["location_code"]);
+        directory.manifest_bytes = serde_json::to_vec(&manifest).unwrap();
+        assert!(
+            !migration_changes(&directory, Some(&applied))
+                .unwrap()
+                .requires_stop()
+        );
+    }
+
+    #[test]
+    fn a_pending_migration_stops_the_host_and_keeps_the_target() {
+        let (mut directory, applied) = installed_package();
+        directory.migrations.push(MigrationSource {
+            relative_path: "migrations/0002_location_note.sql".to_owned(),
+            bytes: b"ALTER TABLE platform_fixture.location ADD COLUMN note text;".to_vec(),
+        });
+        let changes = migration_changes(&directory, Some(&applied)).unwrap();
+        assert!(changes.requires_stop());
+        assert!(changes.recreate_reason.is_none());
+    }
+
+    #[test]
+    fn an_edited_applied_migration_stops_the_host_and_recreates_the_target() {
+        let (mut directory, applied) = installed_package();
+        directory.migrations[0]
+            .bytes
+            .extend_from_slice(b"\n-- changed\n");
+        let changes = migration_changes(&directory, Some(&applied)).unwrap();
+        assert!(changes.requires_stop());
+        assert!(changes.recreate_reason.is_some());
+    }
+
+    #[test]
+    fn target_recreation_stops_the_host_without_pending_migrations() {
+        let changes = LocalTargetChanges {
+            recreate_reason: Some("a removed history table holds rows".to_owned()),
+            pending_migrations: false,
+        };
+        assert!(changes.requires_stop());
+    }
 }

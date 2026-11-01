@@ -40,7 +40,7 @@ pub use error::{
     RELATION_NOT_CLIENT_EXTENSIBLE_REFUSAL,
 };
 pub use local_target::{applied_migration_drift, local_target_recreate_reason};
-pub(crate) use local_target::{manifest_digest, record_manifest};
+pub(crate) use local_target::{local_target_changes, manifest_digest, record_manifest};
 pub use package_version::{
     LOCK_PACKAGE_SQL, PackageRoot, SELECT_CURRENT_PACKAGE_VERSION_SQL, load_applied_package,
     read_package_directory, read_package_root, register_package,

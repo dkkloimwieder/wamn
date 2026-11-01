@@ -21,6 +21,7 @@ use super::{DEV_COMMAND_TIMEOUT, DevJourneyInputs, current_database_acl};
 const CODE: &str = "apps/wamn_receiving/component/src/reads.rs";
 const SQL: &str = "apps/wamn_receiving/query/location.sql";
 const MANIFEST: &str = "apps/wamn_receiving/wamn.k";
+const DECLARATION: &str = "apps/wamn_receiving/publication/components/receiving.json.in";
 const MIGRATIONS: &str = "apps/wamn_receiving/migrations";
 const APPENDED: &str = "apps/wamn_receiving/migrations/0002_location_note.sql";
 const APPENDED_SQL: &[u8] = b"ALTER TABLE receiving.location ADD COLUMN note text;\n";
@@ -159,16 +160,38 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
 
         let valid_sql = fs::read(repository.join(SQL))?;
         fs::write(repository.join(SQL), b"SELECT invalid_delivery_sql FROM receiving.location;\n")?;
-        watch.refused_generation().await?;
+        watch.refused_stage("generate").await?;
         sql.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
         require_revision(&environment.route.database_url).await?;
         fs::write(repository.join(SQL), valid_sql)?;
         let repaired = watch.served().await?;
         repaired.retained(&sql, &["migrate", "introspect"])?;
+        repaired.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
+
+        let valid_code = fs::read(repository.join(CODE))?;
+        let mut invalid_code = valid_code.clone();
+        invalid_code.extend_from_slice(b"\ncompile_error!(\"invalid candidate Rust\");\n");
+        fs::write(repository.join(CODE), invalid_code)?;
+        watch.refused_stage("build").await?;
+        repaired.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
+        require_revision(&environment.route.database_url).await?;
+        fs::write(repository.join(CODE), valid_code)?;
+        let compiled = watch.served().await?;
+        compiled.retained(&repaired, &[])?;
+        compiled.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
+
+        original.replace(DECLARATION, "\"package-id\": \"wamn_receiving\"", "\"package-id\": \"refused_candidate\"")?;
+        watch.refused_stage("admit").await?;
+        compiled.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
+        require_revision(&environment.route.database_url).await?;
+        original.replace(DECLARATION, "\"package-id\": \"refused_candidate\"", "\"package-id\": \"wamn_receiving\"")?;
+        let admitted = watch.served().await?;
+        admitted.retained(&compiled, &[])?;
+        admitted.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
 
         fs::write(repository.join(APPENDED), APPENDED_SQL)?;
         let appended = watch.served().await?;
-        appended.retained(&repaired, &[])?;
+        appended.retained(&admitted, &[])?;
         ensure!(!appended.skipped.contains("migrate"), "an appended migration must reach the kept target");
         ensure!(location_note(&environment.route.database_url).await?, "the kept target lacks the appended column");
         appended.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
@@ -507,21 +530,27 @@ impl Watch {
         .context("the local watch did not serve its candidate within the product bound")?
     }
 
-    async fn refused_generation(&mut self) -> anyhow::Result<()> {
+    async fn refused_stage(&mut self, stage: &str) -> anyhow::Result<()> {
         tokio::time::timeout(DEV_COMMAND_TIMEOUT, async {
             loop {
                 let (stderr, line) = self.line().await?;
                 ensure!(
                     !line.starts_with("run served: "),
-                    "invalid SQL reached activation"
+                    "a refused candidate reached activation"
                 );
-                if stderr && line.contains("dev-stage-failed at generate") {
+                if stderr && line.contains("dev-stage-failed") {
+                    ensure!(
+                        line.contains(&format!("dev-stage-failed at {stage}:")),
+                        "the candidate failed before the expected {stage} refusal: {line}"
+                    );
                     return Ok(());
                 }
             }
         })
         .await
-        .context("the local watch did not refuse invalid SQL within the product bound")?
+        .with_context(|| {
+            format!("the local watch did not refuse at {stage} within the product bound")
+        })?
     }
 
     pub(super) async fn stop(&mut self) -> anyhow::Result<()> {
@@ -596,7 +625,7 @@ impl SavedSource {
     fn capture(repository: &Path) -> anyhow::Result<Self> {
         let mut files = BTreeMap::new();
         let mut directories = BTreeMap::new();
-        for relative in [CODE, SQL, MANIFEST] {
+        for relative in [CODE, SQL, MANIFEST, DECLARATION] {
             capture_file(repository, &repository.join(relative), &mut files)?;
         }
         let mut outputs = Vec::new();
