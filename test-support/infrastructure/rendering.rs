@@ -231,6 +231,22 @@ pub fn render_host_values(
         .context("host base runtime.image is missing")?
         .tag
         .clone_from(&input.host_tag);
+    // The host's data connection is the environment's NATS user
+    // (docs/plan/alignment.md R5).
+    let env_key = wamn_control_registry::project_env_key(
+        &input.event.org,
+        &input.event.project,
+        &input.event.environment,
+    );
+    base.extra
+        .get_mut("global")
+        .and_then(|global| global.get_mut("certificates"))
+        .and_then(Value::as_mapping_mut)
+        .context("host base global.certificates is missing")?
+        .insert(
+            "dataCertSecretName".into(),
+            format!("wamn-nats-{env_key}").into(),
+        );
     let base_group = one_mut(&mut base.runtime.host_groups, "host base hostGroups")?;
     base_group.namespace.clone_from(&input.namespace);
     base_group.replicas = input.replicas;
@@ -304,7 +320,6 @@ pub fn render_host_values(
             "WAMN_COMPONENT_ARTIFACT_BASE",
             input.component_artifact_base.as_str(),
         ),
-        ("WAMN_EVT_NATS_URL", input.nats_url.as_str()),
         ("WAMN_EVT_STREAM_REPLICAS", stream_replicas.as_str()),
         ("WAMN_EVT_DUP_WINDOW_SECS", dup_window_secs.as_str()),
         ("WAMN_EVT_ORG", input.event.org.as_str()),

@@ -430,8 +430,6 @@ mod tests {
         - { name: WAMN_WASMTIME_CACHE_DIR, value: /tmp/wamn-wasmtime-cache }
         - name: WAMN_COMPONENT_ARTIFACT_BASE
           value: registry.wamn-system.svc.cluster.local:5000/wamn/components
-        - name: WAMN_EVT_NATS_URL
-          value: nats://evt-nats.wamn-system.svc.cluster.local:4222
         - { name: WAMN_EVT_ORG, value: example }
         - { name: WAMN_EVT_PROJECT, value: fixture }
         - { name: WAMN_EVT_ENV, value: dev }

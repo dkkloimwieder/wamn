@@ -757,16 +757,10 @@ fn only_identity_receives_issuer_credentials_and_other_consumers_keep_their_clas
     assert_eq!(issuer_url_consumers, ["identity"]);
     assert_eq!(identity_image_consumers, ["identity"]);
     let source = read(&root, HOST_VALUES_FILE);
-    let mut expected = BTreeMap::from([
-        (
-            "WAMN_PG_URL".to_owned(),
-            ("wamn-host-db".to_owned(), "url".to_owned()),
-        ),
-        (
-            "WAMN_EVT_NATS_USERNAME".to_owned(),
-            ("wamn-event-nats".to_owned(), "username".to_owned()),
-        ),
-    ]);
+    let mut expected = BTreeMap::from([(
+        "WAMN_PG_URL".to_owned(),
+        ("wamn-host-db".to_owned(), "url".to_owned()),
+    )]);
     for (variable, key) in [
         ("WAMN_EVT_ORG", "org"),
         ("WAMN_EVT_PROJECT", "project"),

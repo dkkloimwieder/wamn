@@ -91,15 +91,6 @@ const HOST_TEMPLATE: &str = r#"runtime:
         - { name: DOCKER_CONFIG, value: /etc/wamn/registry }
         - name: WAMN_COMPONENT_ARTIFACT_BASE
           value: registry.wamn-system.svc.cluster.local:5000/wamn/components
-        - name: WAMN_EVT_NATS_URL
-          value: nats://evt-nats.wamn-system.svc.cluster.local:4222
-        - name: WAMN_EVT_NATS_USERNAME
-          valueFrom:
-            secretKeyRef:
-              name: wamn-event-nats
-              key: username
-              optional: false
-        - { name: WAMN_EVT_NATS_PASSWORD_FILE, value: /etc/wamn/event-nats/password }
         - { name: WAMN_MAT_NATS_BINDING_FILE, value: /etc/wamn/materializer-nats/binding.json }
         - { name: WAMN_EVT_ORG, value: __ORG__ }
         - { name: WAMN_EVT_PROJECT, value: __PROJECT__ }
@@ -134,13 +125,6 @@ const HOST_TEMPLATE: &str = r#"runtime:
               key: url
               optional: false
       volumes:
-        - name: event-nats
-          secret:
-            secretName: wamn-event-nats
-            optional: false
-            items:
-              - key: password
-                path: password
         - name: materializer-nats
           secret:
             secretName: wamn-materializer-nats
@@ -157,9 +141,6 @@ const HOST_TEMPLATE: &str = r#"runtime:
                 path: config.json
 __CREDENTIALS_VOLUME__
       volumeMounts:
-        - name: event-nats
-          mountPath: /etc/wamn/event-nats
-          readOnly: true
         - name: materializer-nats
           mountPath: /etc/wamn/materializer-nats
           readOnly: true
@@ -296,7 +277,6 @@ fn host_values_keep_both_applications_separate_and_preserve_credentials() {
                 "WAMN_COMPONENT_ARTIFACT_BASE",
                 input.component_artifact_base.as_str(),
             ),
-            ("WAMN_EVT_NATS_URL", input.nats_url.as_str()),
             ("WAMN_EVT_STREAM_REPLICAS", "1"),
             ("WAMN_EVT_DUP_WINDOW_SECS", "120"),
             ("WAMN_EVT_ORG", ORG),
@@ -308,10 +288,6 @@ fn host_values_keep_both_applications_separate_and_preserve_credentials() {
             (
                 "OTEL_EXPORTER_OTLP_ENDPOINT",
                 "http://otel-collector.wamn-system.svc.cluster.local:4317",
-            ),
-            (
-                "WAMN_EVT_NATS_PASSWORD_FILE",
-                "/etc/wamn/event-nats/password",
             ),
             (
                 "WAMN_MAT_NATS_BINDING_FILE",
@@ -340,7 +316,7 @@ fn host_values_keep_both_applications_separate_and_preserve_credentials() {
                 1
             );
         }
-        for name in ["event-nats", "materializer-nats", "registry-pull"] {
+        for name in ["materializer-nats", "registry-pull"] {
             let rendered = group
                 .volumes
                 .iter()
@@ -353,27 +329,13 @@ fn host_values_keep_both_applications_separate_and_preserve_credentials() {
                 .unwrap();
             assert_eq!(rendered.secret, before.secret, "{name}");
         }
-        let event_user = group
-            .env
-            .iter()
-            .find(|entry| entry.name == "WAMN_EVT_NATS_USERNAME")
-            .unwrap();
-        assert_eq!(
-            event_user.value_from.as_ref().unwrap().secret_key_ref.name,
-            "wamn-event-nats"
-        );
-        assert_eq!(
-            event_user.value_from.as_ref().unwrap().secret_key_ref.key,
-            "username"
-        );
-        assert_eq!(
-            event_user
-                .value_from
-                .as_ref()
-                .unwrap()
-                .secret_key_ref
-                .optional,
-            Some(false)
+        // R5: no event password user; the data connection is the
+        // environment's certificate.
+        assert!(
+            group
+                .env
+                .iter()
+                .all(|entry| !entry.name.starts_with("WAMN_EVT_NATS"))
         );
         if let Some(name) = &input.object_store_secret_name {
             let volume = group
@@ -423,7 +385,6 @@ fn host_values_refuse_missing_and_duplicate_owned_fields() {
     for name in [
         "WAMN_PG_URL",
         "WAMN_COMPONENT_ARTIFACT_BASE",
-        "WAMN_EVT_NATS_URL",
         "WAMN_EVT_ORG",
         "WAMN_EVT_PROJECT",
         "WAMN_EVT_ENV",
