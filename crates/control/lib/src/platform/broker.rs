@@ -417,6 +417,10 @@ fn control_user(org: &str) -> (Account, Value) {
     for bucket in ["wamn-auth", "wamn-connection"] {
         publish.extend(memory_subjects(bucket, "*"));
         publish.push(format!("$KV.{bucket}.>"));
+        // The control host watches the whole bucket, with the filter `>`.
+        publish.push(format!(
+            "$JS.API.CONSUMER.CREATE.KV_{bucket}.*.$KV.{bucket}.>"
+        ));
     }
     publish.sort();
     publish.dedup();
@@ -554,6 +558,95 @@ mod tests {
                     &format!("$JS.API.CONSUMER.MSG.NEXT.{stream}.mat")
                 ))
         );
+    }
+
+    /// The control host and an environment host open their auth memory
+    /// watches as their own users on a real server (docs/plan/alignment.md
+    /// R5, R7, A7). Each user gets a password here in place of its
+    /// certificate, and the permissions are the rendered ones.
+    #[tokio::test]
+    #[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
+    async fn the_control_and_environment_users_open_their_memory_watches() {
+        let binary = std::env::var_os("WAMN_NATIVE_C_NATS_BIN")
+            .expect("set WAMN_NATIVE_C_NATS_BIN to a nats-server executable");
+        let directory = std::env::temp_dir().join(format!("wamn-broker-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let mut authorization = Authorization { users: Vec::new() };
+        render(&document("one").triple(), &mut authorization);
+        authorization.users.push(control_user("test").0);
+        authorization.users.push(Account {
+            user: "admin".into(),
+            password: None,
+            permissions: Permissions {
+                publish: Subjects {
+                    allow: vec![">".into()],
+                    deny: Vec::new(),
+                },
+                subscribe: Subjects {
+                    allow: vec![">".into()],
+                    deny: Vec::new(),
+                },
+            },
+        });
+        for user in &mut authorization.users {
+            user.password = Some("p".into());
+        }
+        let configuration = directory.join("nats.conf");
+        std::fs::write(
+            &configuration,
+            format!(
+                "listen: \"127.0.0.1:{port}\"\njetstream {{ store_dir: {:?} }}\nauthorization: {}\n",
+                directory.join("store"),
+                json!(authorization)
+            ),
+        )
+        .unwrap();
+        let mut server = std::process::Command::new(binary)
+            .arg("-c")
+            .arg(&configuration)
+            .spawn()
+            .unwrap();
+        let url = format!("nats://127.0.0.1:{port}");
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let admin = loop {
+            match async_nats::ConnectOptions::with_user_and_password("admin".into(), "p".into())
+                .connect(url.clone())
+                .await
+            {
+                Ok(client) => break client,
+                Err(error) => assert!(std::time::Instant::now() < deadline, "{error}"),
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        };
+        wamn_platform_identity::kv_memory::create_buckets(&admin)
+            .await
+            .unwrap();
+        let env_key = wamn_control_registry::project_env_key("test", "one", "dev");
+        for (user, scope) in [
+            (
+                wamn_control_registry::environment_nats_user(&env_key),
+                Some(env_key.as_str()),
+            ),
+            (wamn_control_registry::control_nats_user("test"), None),
+        ] {
+            eprintln!("{user} opens its auth memory watch");
+            let client =
+                async_nats::ConnectOptions::with_user_and_password(user.clone(), "p".into())
+                    .custom_inbox_prefix(format!("_INBOX_{user}"))
+                    .connect(url.clone())
+                    .await
+                    .unwrap();
+            let cache = std::sync::Arc::new(wamn_runtime::auth_cache::AuthCache::default());
+            wamn_runtime::auth_cache::test_util::watched(&client, scope, cache).await;
+        }
+        let _ = server.kill();
+        let _ = server.wait();
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     /// Whether the NATS subject `pattern` matches `subject`.
