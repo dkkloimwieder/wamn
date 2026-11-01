@@ -23,7 +23,7 @@ use wamn_control::publish_release::{PublishReleaseRequest, assemble_local_releas
 use wamn_control::release_chart::ImageSet;
 use wamn_control::user_role::grant_role_on;
 use wamn_control::workflow_lifecycle::{WorkflowVersion, disable_workflow, enable_workflow};
-use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
+use wamn_control_provision::events::source_stream_config;
 use wamn_control_provision::workload_role::WorkloadRoleFamily;
 use wamn_platform_identity::auth_changes::AuthChanges;
 use wamn_platform_identity::nats::PlatformNats;
@@ -92,27 +92,127 @@ async fn connect_owned(
 
 /// Publish fixture role changes on the scheduler NATS that the hosts watch.
 pub async fn auth_changes(run: &Run) -> anyhow::Result<(AuthChanges, Child)> {
+    let (connection, forward) = nats_forward(run, "wamn-ctl-nats").await?;
+    Ok((AuthChanges::connect(&connection).await?, forward))
+}
+
+/// Install the CA, the certificates and the one NATS in the test namespace,
+/// with the users that platform apply writes for `environments` of
+/// ORG/PROJECT (docs/plan/alignment.md R1-R5).
+pub async fn install_one_nats(
+    run: &Run,
+    repository: &Path,
+    environments: &[&str],
+) -> anyhow::Result<()> {
+    run.run("kubectl", &["create", "namespace", NAMESPACE])
+        .await?;
+    let objects = wamn_control::platform::manifests::one_nats(repository, NAMESPACE)?;
+    let (certificates, server): (Vec<_>, Vec<_>) = objects.into_iter().partition(|object| {
+        matches!(
+            object["kind"].as_str(),
+            Some("ClusterIssuer" | "Certificate")
+        )
+    });
+    let documents = environments
+        .iter()
+        .map(|env| {
+            let mut document = fixture_document("rest_connector");
+            (*env).clone_into(&mut document.env);
+            document
+        })
+        .collect::<Vec<_>>();
+    let users = wamn_control::platform::single_namespace_nats(NAMESPACE, ORG, &documents)?;
+    for (name, objects) in [("certificates", certificates), ("users", users)] {
+        let file = run.work.join(format!("one-nats-{name}.json"));
+        std::fs::write(
+            &file,
+            serde_json::to_vec(&json!({"apiVersion": "v1", "kind": "List", "items": objects}))?,
+        )?;
+        run.run("kubectl", &["apply", "-f", &file.to_string_lossy()])
+            .await?;
+        if name == "certificates" {
+            run.run(
+                "kubectl",
+                &[
+                    "wait",
+                    "--for=condition=Ready",
+                    "clusterissuer/wasmcloud-ca",
+                    "--timeout=120s",
+                ],
+            )
+            .await?;
+        }
+    }
+    run.run(
+        "kubectl",
+        &[
+            "-n",
+            NAMESPACE,
+            "wait",
+            "--for=condition=Ready",
+            "certificate",
+            "--all",
+            "--timeout=180s",
+        ],
+    )
+    .await?;
+    let file = run.work.join("one-nats-server.json");
+    std::fs::write(
+        &file,
+        serde_json::to_vec(&json!({"apiVersion": "v1", "kind": "List", "items": server}))?,
+    )?;
+    run.run("kubectl", &["apply", "-f", &file.to_string_lossy()])
+        .await?;
+    run.run(
+        "kubectl",
+        &[
+            "-n",
+            NAMESPACE,
+            "rollout",
+            "status",
+            "statefulset/wamn-nats",
+            "--timeout=300s",
+        ],
+    )
+    .await?;
+    Ok(())
+}
+
+/// The certificate of the Secret `name` in the test namespace, as files of
+/// this run.
+async fn certificate(
+    run: &Run,
+    name: &str,
+    user: &str,
+) -> anyhow::Result<event_broker::Credentials> {
     let secret = run
         .json(
             "kubectl",
-            &[
-                "-n",
-                NAMESPACE,
-                "get",
-                "secret",
-                "wasmcloud-runtime-tls",
-                "-o",
-                "json",
-            ],
+            &["-n", NAMESPACE, "get", "secret", name, "-o", "json"],
         )
         .await?;
-    let files = ["ca.crt", "tls.crt", "tls.key"].map(|key| run.work.join(format!("auth-{key}")));
-    for (key, file) in ["ca.crt", "tls.crt", "tls.key"].into_iter().zip(&files) {
+    let mut files = Vec::new();
+    for key in ["ca.crt", "tls.crt", "tls.key"] {
+        let file = run.work.join(format!("{name}-{key}"));
         std::fs::write(
-            file,
-            STANDARD.decode(secret["data"][key].as_str().context("auth certificate")?)?,
+            &file,
+            STANDARD.decode(secret["data"][key].as_str().context("certificate key")?)?,
         )?;
+        files.push(file);
     }
+    let [ca, cert, key] =
+        <[PathBuf; 3]>::try_from(files).map_err(|_| anyhow::anyhow!("three files"))?;
+    Ok(event_broker::Credentials {
+        user: user.to_owned(),
+        ca,
+        cert,
+        key,
+    })
+}
+
+/// Forward the one NATS to a local port. The server certificate names
+/// 127.0.0.1 for this.
+fn forward(run: &Run) -> anyhow::Result<(String, Child)> {
     let port = std::net::TcpListener::bind("127.0.0.1:0")?
         .local_addr()?
         .port();
@@ -122,33 +222,65 @@ pub async fn auth_changes(run: &Run) -> anyhow::Result<(AuthChanges, Child)> {
             "-n",
             NAMESPACE,
             "port-forward",
-            "svc/nats",
+            "svc/wamn-nats",
             &format!("{port}:4222"),
         ])
         .kill_on_drop(true)
         .spawn()
-        .context("forward the scheduler NATS for fixture role changes")?;
-    let connection = PlatformNats {
-        nats_url: format!("nats://127.0.0.1:{port}"),
-        nats_tls_ca: files[0].clone(),
-        nats_tls_cert: files[1].clone(),
-        nats_tls_key: files[2].clone(),
-        nats_tls_server_name: Some(format!("nats.{NAMESPACE}.svc.cluster.local")),
-    };
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let auth = loop {
-        match AuthChanges::connect(&connection).await {
-            Ok(auth) => break Ok(auth),
+        .context("forward the one NATS")?;
+    Ok((format!("nats://127.0.0.1:{port}"), forward))
+}
+
+/// The connection of the platform client whose certificate is the Secret
+/// `name`, through a port forward that the caller keeps.
+pub async fn nats_forward(run: &Run, name: &str) -> anyhow::Result<(PlatformNats, Child)> {
+    let user = name.trim_end_matches("-nats");
+    let certificate = certificate(run, name, user).await?;
+    let (url, forward) = forward(run)?;
+    let connection = certificate.platform_nats(&url);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match connection.connect().await {
+            Ok(_) => break,
             Err(_) if Instant::now() < deadline => {
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                tokio::time::sleep(Duration::from_millis(200)).await;
             }
-            Err(error) => break Err(error),
+            Err(error) => return Err(error),
         }
-    };
-    for file in files {
-        std::fs::remove_file(file)?;
     }
-    Ok((auth?, forward))
+    Ok((connection, forward))
+}
+
+/// The platform users the integration check acts as: the provisioning Jobs,
+/// the CDC reader and wamn-ctl, through one forward.
+pub(super) struct ClusterBroker {
+    pub(super) provisioning: event_broker::Credentials,
+    pub(super) publisher: event_broker::Credentials,
+    pub(super) observer: event_broker::Credentials,
+    pub(super) server: String,
+    _forward: Child,
+}
+
+async fn cluster_broker(run: &Run) -> anyhow::Result<ClusterBroker> {
+    let (server, forward) = forward(run)?;
+    let broker = ClusterBroker {
+        provisioning: certificate(run, "wamn-provisioning-nats", "wamn-provisioning").await?,
+        publisher: certificate(run, "wamn-cdc-reader-nats", "wamn-cdc-reader").await?,
+        observer: certificate(run, "wamn-ctl-nats", "wamn-ctl").await?,
+        server,
+        _forward: forward,
+    };
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match event_broker::connect(&broker.provisioning, &broker.server).await {
+            Ok(_) => break,
+            Err(_) if Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(broker)
 }
 
 /// Admit a manual fixture run through the application host route.
@@ -575,37 +707,8 @@ pub async fn exercise(
         })
         .collect::<anyhow::Result<_>>()?;
     let source = source_stream_config(&scope, 1, Duration::from_secs(120));
-    let consumers = wamn_control_provision::events::entity_consumers(&scope, &manifests);
-    // Each connector run gets its own broker directory, because the broker
-    // refuses an existing one.
-    let active = run
-        .run("docker", &["ps", "-a", "--format", "{{.Names}}"])
-        .await?
-        .lines()
-        .any(|name| name == format!("{}-events", run.cluster));
-    let broker = if run.reuse && active {
-        event_broker::load(
-            run.kept
-                .brokers
-                .get("events")
-                .context("the kept event broker files")?,
-        )?
-    } else {
-        let broker_work = run.work.join(connector);
-        std::fs::create_dir(&broker_work)?;
-        let broker = event_broker::prepare(
-            &broker_work,
-            &scope,
-            &env_key,
-            &source,
-            &advisory_stream_config(&scope, 1),
-            &consumers,
-        )?;
-        run.kept.brokers.insert("events".into(), broker_work);
-        broker
-    };
-    let server = start_broker(run, &broker.configuration, &broker.provisioning, "events").await?;
-    event_broker::write_binding(&broker, &server, &source)?;
+    let broker = cluster_broker(run).await?;
+    let server = broker.server.clone();
     let mut platform = platform.clone();
     platform.events = Some(environment::EventBroker {
         nats: broker.provisioning.platform_nats(&server),
@@ -688,8 +791,16 @@ pub async fn exercise(
     } else {
         super::session_issuer::deploy(run, repository, &platform).await?
     };
-    platform.host_group =
-        Some(event_host_group(run, &platform, &broker, &server, &issuer, &suffix).await?);
+    platform.host_group = Some(
+        event_host_group(
+            run,
+            &platform,
+            &fixture_document(connector),
+            &issuer,
+            &suffix,
+        )
+        .await?,
+    );
     let mut project_url = url::Url::parse(admin_url)?;
     project_url.set_path(&format!(
         "/{}",
@@ -1031,79 +1142,25 @@ async fn publish(
         .canonical_bytes)
 }
 
-pub(super) async fn start_broker(
-    run: &Run,
-    configuration: &Path,
-    credentials: &event_broker::Credentials,
-    suffix: &str,
-) -> anyhow::Result<String> {
-    let name = format!("{}-{suffix}", run.cluster);
-    let exists = run.reuse
-        && run
-            .run("docker", &["ps", "-a", "--format", "{{.Names}}"])
-            .await?
-            .lines()
-            .any(|container| container == name);
-    if !exists {
-        run.run(
-            "docker",
-            &[
-                "run",
-                "--detach",
-                "--name",
-                &name,
-                "--network",
-                "kind",
-                "--volume",
-                &format!("{}:/fixture/nats.conf:ro", configuration.display()),
-                "nats:2.10-alpine",
-                "--jetstream",
-                "--store_dir",
-                "/data",
-                "--config",
-                "/fixture/nats.conf",
-            ],
-        )
-        .await?;
-    }
-    let ip = run
-        .run(
-            "docker",
-            &[
-                "inspect",
-                "--format",
-                "{{(index .NetworkSettings.Networks \"kind\").IPAddress}}",
-                &name,
-            ],
-        )
-        .await?;
-    let server = format!("nats://{}:4222", ip.trim());
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        match event_broker::connect(credentials, &server).await {
-            Ok(_) => return Ok(server),
-            Err(_) if Instant::now() < deadline => tokio::time::sleep(Duration::from_secs(1)).await,
-            Err(error) => return Err(error),
-        }
-    }
-}
-
 async fn event_host_group(
     run: &Run,
     platform: &Platform,
-    broker: &event_broker::EventBroker,
-    server: &str,
+    document: &EnvironmentDocument,
     issuer: &str,
     suffix: &str,
 ) -> anyhow::Result<PathBuf> {
+    let binding = wamn_control::platform::render_event_secrets(document)?
+        .into_iter()
+        .find(|object| object["kind"] == "Secret")
+        .context("the environment has no materializer binding")?;
+    let binding = wamn_control::platform::manifests::in_namespace(binding, NAMESPACE)?;
     let secret = run.work.join("integration-events.json");
     std::fs::write(
         &secret,
         serde_json::to_vec(&event_secret(
-            &std::fs::read_to_string(&broker.runtime.ca)?,
-            &std::fs::read_to_string(&broker.runtime.cert)?,
-            &std::fs::read_to_string(&broker.runtime.key)?,
-            &std::fs::read_to_string(&broker.binding)?,
+            binding["data"]["binding.json"]
+                .as_str()
+                .context("the binding Secret has no binding.json")?,
         ))?,
     )?;
     run.run("kubectl", &["apply", "-f", &secret.to_string_lossy()])
@@ -1111,16 +1168,18 @@ async fn event_host_group(
     let group: Value = serde_yaml::from_slice(&std::fs::read(
         platform.host_group.as_ref().context("host group")?,
     )?)?;
-    let group = event_host_values(group, server, issuer, suffix)?;
+    let group = event_host_values(group, issuer, suffix)?;
     let file = run.work.join("integration-host-group.yaml");
     std::fs::write(&file, serde_yaml::to_string(&group)?)?;
     Ok(file)
 }
 
-pub(super) fn event_secret(ca: &str, cert: &str, key: &str, binding: &str) -> Value {
+/// The materializer binding of the integration environment, from its
+/// base64 `binding.json`.
+pub(super) fn event_secret(binding: &str) -> Value {
     json!({
         "apiVersion":"v1", "kind":"Secret", "metadata":{"name":"integration-events","namespace":NAMESPACE},
-        "stringData":{"ca.crt":ca, "tls.crt":cert, "tls.key":key, "binding.json":binding}
+        "data":{"binding.json":binding}
     })
 }
 
@@ -1152,7 +1211,6 @@ pub(super) fn fixture_document(connector: &str) -> EnvironmentDocument {
 
 pub(super) fn event_host_values(
     mut group: Value,
-    _server: &str,
     issuer: &str,
     suffix: &str,
 ) -> anyhow::Result<Value> {
@@ -1213,7 +1271,7 @@ async fn secret_value(run: &Run, name: &str, key: &str) -> anyhow::Result<Vec<u8
 async fn start_reader(
     run: &Run,
     repository: &Path,
-    broker: &event_broker::EventBroker,
+    broker: &ClusterBroker,
     server: &str,
     admin_url: &str,
 ) -> anyhow::Result<Child> {
@@ -1274,7 +1332,7 @@ async fn assert_schema_triggers(
     project: &tokio_postgres::Client,
     workflows: &WorkflowEnvironment<'_>,
     events: &environment::EventBroker,
-    broker: &event_broker::EventBroker,
+    broker: &ClusterBroker,
     reader: &mut Child,
 ) -> anyhow::Result<()> {
     let work = run.work.clone();
@@ -1292,7 +1350,7 @@ async fn assert_schema_triggers_inner(
     project: &tokio_postgres::Client,
     workflows: &WorkflowEnvironment<'_>,
     events: &environment::EventBroker,
-    broker: &event_broker::EventBroker,
+    broker: &ClusterBroker,
     reader: &mut Child,
 ) -> anyhow::Result<()> {
     let triggers = [

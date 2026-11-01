@@ -59,6 +59,10 @@ spec:
     - wamn-nats.platform.svc
     - wamn-nats.platform
     - wamn-nats
+  # A port-forward reaches the server as 127.0.0.1: wamn-ctl from an operator
+  # machine, and the kind tests.
+  ipAddresses:
+    - 127.0.0.1
   usages:
     - server auth
     - digital signature

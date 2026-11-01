@@ -179,6 +179,10 @@ mod platform_images;
 mod session_issuer;
 
 const NAMESPACE: &str = "wamn-system";
+/// The one NATS of the test cluster.
+const NATS_URL: &str = "nats://wamn-nats.wamn-system.svc.cluster.local:4222";
+/// Every environment the checks apply, which the NATS users cover.
+const KIND_ENVIRONMENTS: [&str; 6] = ["dev", "http", "qa", "broken", "files", "integration"];
 const OPERATOR_CHART: &str = "oci://ghcr.io/wasmcloud/charts/runtime-operator";
 /// The pin of tests/conformance/tests/chart_seam_governance.rs.
 const OPERATOR_VERSION: &str = "2.11.0";
@@ -216,7 +220,6 @@ struct Kept {
     role_inputs: BTreeMap<String, String>,
     image_set: Option<ImageSet>,
     registry_address: String,
-    event_server: String,
     release_digest: String,
     releases: BTreeMap<String, Vec<u8>>,
     file_setup_error: Option<String>,
@@ -253,6 +256,7 @@ struct CheckContext {
     digest: String,
     show_expected: Option<(usize, Option<i64>)>,
     _forward: Child,
+    _nats_forward: Child,
 }
 
 type CheckFuture<'a> = Pin<Box<dyn Future<Output = anyhow::Result<()>> + 'a>>;
@@ -804,6 +808,10 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         )
         .await?;
     }
+    // The CA, the certificates and the one NATS, before the operator
+    // (docs/plan/alignment.md R1-R5). The users are the ones platform apply
+    // writes, for every environment the checks apply.
+    integration::install_one_nats(run, repository, &KIND_ENVIRONMENTS).await?;
     run.run(
         "helm",
         &[
@@ -820,6 +828,10 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
             &repository
                 .join("deploy/infra/values-wamn.yaml")
                 .to_string_lossy(),
+            "--set",
+            &format!("global.nats.schedulerUrl={NATS_URL}"),
+            "--set",
+            &format!("global.nats.dataUrl={NATS_URL}"),
             "--wait",
             "--timeout",
             "5m",
@@ -1230,28 +1242,11 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         work.join("host-group.yaml"),
         serde_yaml::to_string(&fixture_host_group(&local))?,
     )?;
-    let event_config = work.join("apply-event-nats.json");
-    let event_directory = work.join("apply-event-nats");
-    std::fs::create_dir_all(&event_directory)?;
-    let authority = wamn_test_infrastructure::nats_tls::Authority::new(&event_directory)?;
-    let event_credentials =
-        authority.client(wamn_test_infrastructure::nats_tls::DEVELOPMENT_USER)?;
-    std::fs::write(
-        &event_config,
-        serde_json::to_vec(&json!({
-            "tls": authority.server_tls(),
-            "authorization": {"users": [wamn_test_infrastructure::nats_tls::full_permission_user(
-                wamn_test_infrastructure::nats_tls::DEVELOPMENT_USER
-            )]}
-        }))?,
-    )?;
-    let event_server =
-        integration::start_broker(run, &event_config, &event_credentials, "apply-events").await?;
+    let (events, nats_forward) = integration::nats_forward(run, "wamn-provisioning-nats").await?;
     run.kept.registry_address.clone_from(&local);
-    run.kept.event_server.clone_from(&event_server);
     run.kept.release_digest.clone_from(&digest);
     run.kept.image_set = Some(set.clone());
-    let platform = check_platform(run, system_url.clone(), chart);
+    let platform = check_platform(run, system_url.clone(), chart, events);
     let mut context = CheckContext {
         repository: repository.to_owned(),
         platform: platform.clone(),
@@ -1261,6 +1256,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         digest: digest.clone(),
         show_expected: None,
         _forward: forward,
+        _nats_forward: nats_forward,
     };
     // Prepare the file package while a full run can build it. Its check reports
     // a preparation error at the same point as before.
@@ -1295,7 +1291,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         let group = serde_yaml::from_slice(&std::fs::read(
             platform.host_group.as_ref().context("host group")?,
         )?)?;
-        let (group, secret_document) = event_overlay(document, group, &event_server)?;
+        let (group, secret_document) = event_overlay(document, group)?;
         let secret = work.join(format!("{}-events.json", document.env));
         std::fs::write(&secret, serde_json::to_vec(&secret_document)?)?;
         wamn_control::kubectl::kubectl(
@@ -2357,6 +2353,8 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
 fn fixture_host_group(local: &str) -> Value {
     json!({
         "replicas": 1,
+        "schedulerNatsUrl": NATS_URL,
+        "dataNatsUrl": NATS_URL,
         "http": {"enabled": true, "port": 80},
         "env": [
             {"name": "WAMN_REGISTRY_AUTH_FILE", "value": "/apply-registry/config.json"},
@@ -2404,36 +2402,27 @@ fn fixture_document(env: &str, route_host: &str, digest: &str) -> EnvironmentDoc
     }
 }
 
+/// The materializer binding of `document`, which the NATS setup rendered for
+/// the environment's user, and the host group that mounts it. The host's data
+/// connection is the environment's certificate (docs/plan/alignment.md R5).
 fn event_overlay(
     document: &EnvironmentDocument,
     mut group: Value,
-    event_server: &str,
 ) -> anyhow::Result<(Value, Value)> {
-    let secret_name = format!(
-        "apply-events-{}--{}--{}",
-        document.org, document.project, document.env
-    );
-    let source = wamn_control_provision::events::source_stream_config(
-        &document.triple(),
-        1,
-        Duration::from_secs(120),
-    );
-    let secret = json!({
-        "apiVersion":"v1", "kind":"Secret", "metadata":{"name":secret_name,"namespace":NAMESPACE},
-        "stringData":{"password":PASSWORD,"binding.json":json!({
-            "servers":event_server,"username":USER,"password":PASSWORD,"inbox-prefix":format!("_INBOX_{USER}"),
-            "stream-allow":source.name,"subject-allow":source.subjects.join(","),
-            "subscription-capacity-bytes":"4194304","subscription-capacity":"64","max-in-flight":"64"
-        }).to_string()}
-    });
+    let secret = wamn_control::platform::render_event_secrets(document)?
+        .into_iter()
+        .find(|object| object["kind"] == "Secret")
+        .context("the environment has no materializer binding")?;
+    let secret = wamn_control::platform::manifests::in_namespace(secret, NAMESPACE)?;
+    let secret_name = secret["metadata"]["name"]
+        .as_str()
+        .context("the binding Secret has no name")?
+        .to_owned();
     group["env"]
         .as_array_mut()
         .context("host environment")?
         .extend(
             [
-                ("WAMN_EVT_NATS_URL", event_server),
-                ("WAMN_EVT_NATS_USERNAME", USER),
-                ("WAMN_EVT_NATS_PASSWORD_FILE", "/apply-events/password"),
                 ("WAMN_MAT_NATS_BINDING_FILE", "/apply-events/binding.json"),
                 ("WAMN_EVT_ORG", document.org.as_str()),
                 ("WAMN_EVT_PROJECT", document.project.as_str()),
@@ -3150,7 +3139,12 @@ async fn database_forward(run: &Run) -> anyhow::Result<(String, u16, Child)> {
     Ok((password, port, forward))
 }
 
-fn check_platform(run: &Run, system_url: String, chart: PathBuf) -> Platform {
+fn check_platform(
+    run: &Run,
+    system_url: String,
+    chart: PathBuf,
+    events: wamn_platform_identity::nats::PlatformNats,
+) -> Platform {
     let work = &run.kept.secret_work;
     let local = &run.kept.registry_address;
     Platform {
@@ -3173,13 +3167,7 @@ fn check_platform(run: &Run, system_url: String, chart: PathBuf) -> Platform {
         host_group: Some(work.join("host-group.yaml")),
         pat_issuer: PatIssuerConfig::default(),
         events: Some(environment::EventBroker {
-            nats: wamn_test_infrastructure::event_broker::Credentials {
-                user: wamn_test_infrastructure::nats_tls::DEVELOPMENT_USER.into(),
-                ca: work.join("apply-event-nats/ca.crt"),
-                cert: work.join("apply-event-nats/client-wamn-dev.crt"),
-                key: work.join("apply-event-nats/client-wamn-dev.key"),
-            }
-            .platform_nats(&run.kept.event_server),
+            nats: events,
             stream_replicas: 1,
             dup_window_secs: 120,
         }),
@@ -3352,8 +3340,7 @@ async fn apply_platform_document(
     let group = serde_yaml::from_slice(&std::fs::read(
         platform.host_group.as_ref().context("host group")?,
     )?)?;
-    let server = &platform.events.as_ref().context("events")?.nats.nats_url;
-    let (group, secret) = event_overlay(document, group, server)?;
+    let (group, secret) = event_overlay(document, group)?;
     let file = run.work.join(format!("{}-events.json", document.env));
     std::fs::write(&file, serde_json::to_vec(&secret)?)?;
     run.run("kubectl", &["apply", "-f", &file.to_string_lossy()])
@@ -3455,18 +3442,7 @@ async fn rerun(
     let (password, port, forward) = database_forward(run).await?;
     let admin_url = format!("postgresql://postgres:{password}@127.0.0.1:{port}/postgres");
     let system_url = format!("postgresql://postgres:{password}@127.0.0.1:{port}/wamn_system");
-    let event_address = run
-        .run(
-            "docker",
-            &[
-                "inspect",
-                "--format",
-                "{{(index .NetworkSettings.Networks \"kind\").IPAddress}}",
-                &format!("{}-apply-events", run.cluster),
-            ],
-        )
-        .await?;
-    run.kept.event_server = format!("nats://{}:4222", event_address.trim());
+    let (events, nats_forward) = integration::nats_forward(run, "wamn-provisioning-nats").await?;
     let local = run.kept.registry_address.clone();
     let images = prepare_images(run, source, &local).await?;
     http_connection::prepare_image(run, repository).await?;
@@ -3486,7 +3462,7 @@ async fn rerun(
     }
     run.kept.image_set = Some(images.clone());
     let chart = stamp(source, &images, None, &run.work.join("chart"))?;
-    let platform = check_platform(run, system_url, chart);
+    let platform = check_platform(run, system_url, chart, events);
     let registry = PackageRegistry {
         artifact_base: format!("{local}/wamn/packages"),
         registry_auth_file: platform.registry_auth_file.clone(),
@@ -3502,6 +3478,7 @@ async fn rerun(
         digest: run.kept.release_digest.clone(),
         show_expected: None,
         _forward: forward,
+        _nats_forward: nats_forward,
     };
     for check in checks {
         let result = (check.run)(run, &context).await;
@@ -3567,7 +3544,6 @@ fn kept_metadata_round_trips() -> anyhow::Result<()> {
             materializer: "materializer@sha256:123".into(),
         }),
         registry_address: "172.18.0.2:5000".into(),
-        event_server: "nats://172.18.0.3:4222".into(),
         release_digest: "sha256:456".into(),
         releases: [("files".into(), b"manifest".to_vec())].into(),
         file_setup_error: None,

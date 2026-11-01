@@ -53,6 +53,51 @@ pub fn objects(
     Ok(objects)
 }
 
+/// The one NATS and its certificates for a cluster that runs the platform in
+/// one `namespace`, as the kind tests do (docs/plan/alignment.md R1-R4).
+///
+/// # Errors
+///
+/// Returns an error naming an unreadable or invalid manifest.
+pub fn one_nats(repository: &Path, namespace: &str) -> anyhow::Result<Vec<Value>> {
+    let mut objects = Vec::new();
+    for path in [
+        "deploy/infra/nats-certificates.yaml",
+        "deploy/gcp/nats-jetstream.yaml",
+    ] {
+        let path = repository.join(path);
+        let source = std::fs::read_to_string(&path)
+            .with_context(|| format!("read manifest {}", path.display()))?;
+        for yaml in serde_yaml::Deserializer::from_str(&source) {
+            let object = Value::deserialize(yaml)
+                .with_context(|| format!("decode manifest {}", path.display()))?;
+            if !object.is_null() {
+                objects.push(in_namespace(object, namespace)?);
+            }
+        }
+    }
+    Ok(objects)
+}
+
+/// Move a platform, hosts or identity object to `namespace`, and the NATS
+/// server name with it. The CA stays in cert-manager, where its ClusterIssuer
+/// reads it.
+///
+/// # Errors
+///
+/// Returns an error when the object does not encode.
+pub fn in_namespace(mut object: Value, namespace: &str) -> anyhow::Result<Value> {
+    if matches!(
+        object["metadata"]["namespace"].as_str(),
+        Some("platform" | "hosts" | "identity")
+    ) {
+        object["metadata"]["namespace"] = namespace.into();
+    }
+    let text = serde_json::to_string(&object)?
+        .replace("wamn-nats.platform", &format!("wamn-nats.{namespace}"));
+    Ok(serde_json::from_str(&text)?)
+}
+
 pub(super) fn platform_inputs(
     repository: &Path,
     document: &ClusterDocument,

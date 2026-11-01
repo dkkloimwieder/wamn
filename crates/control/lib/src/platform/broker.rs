@@ -255,6 +255,43 @@ pub(super) async fn apply(target: &Target, environments: &Path, org: &str) -> an
     Ok(changed)
 }
 
+/// The NATS objects of a cluster that runs the platform in one `namespace`, as
+/// the kind tests do: the authorization Secret with the platform users, the
+/// control host user of `org` and one user per environment of `documents`,
+/// and each user's Certificate and materializer binding.
+///
+/// # Errors
+///
+/// Returns an error when an object does not render.
+pub fn single_namespace_nats(
+    namespace: &str,
+    org: &str,
+    documents: &[EnvironmentDocument],
+) -> anyhow::Result<Vec<Value>> {
+    let mut authorization = Authorization {
+        users: platform_users(),
+    };
+    let (control, certificate) = control_user(org);
+    keep_user(&mut authorization, control);
+    let mut objects = vec![certificate];
+    for document in documents {
+        objects.extend(render(document, &mut authorization)?);
+    }
+    objects.push(serde_json::to_value(secret(
+        "platform",
+        AUTHORIZATION,
+        [(
+            "authorization.conf".into(),
+            format!("authorization: {}\n", json!(authorization)),
+        )]
+        .into(),
+    ))?);
+    objects
+        .into_iter()
+        .map(|object| super::manifests::in_namespace(object, namespace))
+        .collect()
+}
+
 /// Render the environment's NATS objects without a cluster or a live broker.
 pub fn render_event_secrets(document: &EnvironmentDocument) -> anyhow::Result<Vec<Value>> {
     render(document, &mut Authorization { users: Vec::new() })?

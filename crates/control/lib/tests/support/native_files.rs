@@ -533,8 +533,7 @@ pub async fn exercise(
     let mut group: Value = serde_yaml::from_slice(&std::fs::read(
         platform.host_group.as_ref().context("host group")?,
     )?)?;
-    let event_server = &platform.events.as_ref().context("events")?.nats.nats_url;
-    let (with_events, secret) = super::event_overlay(&document, group, event_server)?;
+    let (with_events, secret) = super::event_overlay(&document, group)?;
     group = with_events;
     let secret_path = run.work.join("files-events.json");
     std::fs::write(&secret_path, serde_json::to_vec(&secret)?)?;

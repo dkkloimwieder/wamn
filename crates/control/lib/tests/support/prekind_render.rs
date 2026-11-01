@@ -64,6 +64,15 @@ fn fixture_secrets(document: &EnvironmentDocument, event_secret: Value) -> Vec<V
     oauth["stringData"]["key"] = "o".repeat(32).into();
     secrets.push(oauth);
     secrets.push(event_secret);
+    // cert-manager issues the environment's NATS certificate, which the host
+    // mounts as its data certificate (docs/plan/alignment.md R5).
+    let env_key =
+        wamn_control_registry::project_env_key(&document.org, &document.project, &document.env);
+    secrets.push(prerequisite(
+        &format!("wamn-nats-{env_key}"),
+        &["ca.crt", "tls.crt", "tls.key"],
+        NAMESPACE,
+    ));
     secrets
 }
 
@@ -94,7 +103,7 @@ fn prekind_environment_renders() -> anyhow::Result<()> {
             manifest.digest().as_str(),
         );
         let base = serde_yaml::from_slice(&std::fs::read(work.path().join("host-group.yaml"))?)?;
-        let (group, event_secret) = event_overlay(&document, base, "nats://events:4222")?;
+        let (group, event_secret) = event_overlay(&document, base)?;
         let path = work.path().join(format!("{env}-event-host-group.yaml"));
         std::fs::write(&path, serde_yaml::to_string(&group)?)?;
         let selected = if name == "rollback A" {
@@ -114,12 +123,8 @@ fn prekind_environment_renders() -> anyhow::Result<()> {
     // Both connectors share integration.k and its session/event host overlay.
     for connector in ["rest_connector", "netsuite"] {
         let document = integration::fixture_document(connector);
-        let group = integration::event_host_values(
-            base.clone(),
-            "nats://events:4222",
-            "https://integration-session",
-            "render",
-        )?;
+        let group =
+            integration::event_host_values(base.clone(), "https://integration-session", "render")?;
         let path = work.path().join("integration-host-group.yaml");
         std::fs::write(&path, serde_yaml::to_string(&group)?)?;
         let mut release: Value = serde_json::from_slice(&a)?;
@@ -134,7 +139,7 @@ fn prekind_environment_renders() -> anyhow::Result<()> {
         )?;
         let release = manifest(&wamn_execution_contract::canonical_json_bytes(&release))?;
         let values = render_values(&document, &release, &path, 70)?;
-        let event_secret = integration::event_secret("render", "render", "render", "{}");
+        let event_secret = integration::event_secret("e30=");
         assert_complete(
             &template(&values, NAMESPACE)?,
             &fixture_secrets(&document, event_secret),
@@ -156,11 +161,7 @@ fn prekind_rejects_old_missing_conn_reader() -> anyhow::Result<()> {
     let work = ScratchRoot::create()?;
     let manifest = manifest(&fixture_releases()?[0])?;
     let document = fixture_document("dev", "dev.orders.example", manifest.digest().as_str());
-    let (group, event_secret) = event_overlay(
-        &document,
-        fixture_host_group("registry.invalid"),
-        "nats://events:4222",
-    )?;
+    let (group, event_secret) = event_overlay(&document, fixture_host_group("registry.invalid"))?;
     let path = rollback_host_group(work.path());
     std::fs::write(&path, serde_yaml::to_string(&group)?)?;
     let documents = template(&render_values(&document, &manifest, &path, 70)?, NAMESPACE)?;
@@ -189,11 +190,8 @@ fn prekind_rejects_old_rollback_without_events() -> anyhow::Result<()> {
     let work = ScratchRoot::create()?;
     let manifest = manifest(&fixture_releases()?[0])?;
     let document = fixture_document("dev", "dev.orders.example", manifest.digest().as_str());
-    let (mut group, event_secret) = event_overlay(
-        &document,
-        fixture_host_group("registry.invalid"),
-        "nats://events:4222",
-    )?;
+    let (mut group, event_secret) =
+        event_overlay(&document, fixture_host_group("registry.invalid"))?;
     let path = rollback_host_group(work.path());
     std::fs::write(&path, serde_yaml::to_string(&group)?)?;
     let secrets = fixture_secrets(&document, event_secret);
@@ -327,6 +325,11 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
         prerequisite("wamn-event-nats", &["username", "password"], NAMESPACE),
         prerequisite("wamn-materializer-nats", &["binding.json"], NAMESPACE),
         prerequisite("wamn-registry-pull", &[".dockerconfigjson"], NAMESPACE),
+        prerequisite(
+            &format!("wamn-nats-acme--{project}--dev"),
+            &["ca.crt", "tls.crt", "tls.key"],
+            NAMESPACE,
+        ),
     ]);
     assert_complete(&template(&values, NAMESPACE)?, &secrets)?;
     println!("{project}: PAT overlay -> case_release::render -> release chart");
