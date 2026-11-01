@@ -5881,6 +5881,7 @@ dependencies = [
  "clap",
  "reqwest",
  "rustix 1.1.5",
+ "rustls",
  "serde",
  "serde_json",
  "tokio",

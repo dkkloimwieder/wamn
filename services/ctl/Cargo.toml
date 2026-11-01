@@ -55,6 +55,7 @@ tracing = { workspace = true }
 # no-OTEL behavior of wash_runtime::observability::initialize_observability.
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 reqwest = { workspace = true, features = ["rustls"] }
+rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
 # CF-DEF-ID: immutable flow registration uses the canonical artifact identity
 # implemented by the catalog model; the writer never re-derives that hash.
 wamn-catalog = { workspace = true }

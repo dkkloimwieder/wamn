@@ -69,6 +69,9 @@ enum DevEnvironmentCommand {
 #[cfg(target_os = "linux")]
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // As wash_runtime::init_crypto does for the host. An earlier install
+    // leaves its provider in place.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     if std::env::var_os("RUST_LOG").is_some() {
         let filter = tracing_subscriber::EnvFilter::try_from_default_env()
             .context("read the development diagnostics filter")?;
