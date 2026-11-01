@@ -261,6 +261,7 @@ pub fn load(work: &Path) -> anyhow::Result<EventBroker> {
             ca: directory.join("ca.crt"),
             key: directory.join(format!("client-{user}.key")),
             cert,
+            inbox: format!("_INBOX_{user}"),
             user,
         })
     };

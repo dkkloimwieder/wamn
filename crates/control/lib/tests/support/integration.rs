@@ -201,8 +201,10 @@ async fn certificate(
     }
     let [ca, cert, key] =
         <[PathBuf; 3]>::try_from(files).map_err(|_| anyhow::anyhow!("three files"))?;
+    // The platform users reply on `_INBOX` (platform/broker.rs platform_users).
     Ok(event_broker::Credentials {
         user: user.to_owned(),
+        inbox: "_INBOX".to_owned(),
         ca,
         cert,
         key,

@@ -41,6 +41,10 @@ impl std::fmt::Debug for Authority {
 pub struct ClientCertificate {
     /// The user that the server maps the certificate to.
     pub user: String,
+    /// The reply subject prefix that the user's permissions allow: `_INBOX`
+    /// for a platform user of the one NATS, `_INBOX_<user>` for an
+    /// environment user and the users of a local broker.
+    pub inbox: String,
     pub ca: PathBuf,
     pub cert: PathBuf,
     pub key: PathBuf,
@@ -72,7 +76,7 @@ impl ClientCertificate {
             .require_tls(true)
             .add_root_certificates(self.ca.clone())
             .add_client_certificate(self.cert.clone(), self.key.clone())
-            .custom_inbox_prefix(format!("_INBOX_{}", self.user))
+            .custom_inbox_prefix(self.inbox.clone())
     }
 }
 
@@ -122,6 +126,7 @@ impl Authority {
         if cert.is_file() {
             return Ok(ClientCertificate {
                 user: user.to_owned(),
+                inbox: format!("_INBOX_{user}"),
                 ca: self.ca.clone(),
                 key: self.directory.join(format!("client-{user}.key")),
                 cert,
@@ -134,6 +139,7 @@ impl Authority {
         )?;
         Ok(ClientCertificate {
             user: user.to_owned(),
+            inbox: format!("_INBOX_{user}"),
             ca: self.ca.clone(),
             cert,
             key,

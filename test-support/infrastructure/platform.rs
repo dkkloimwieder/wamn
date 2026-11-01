@@ -315,6 +315,7 @@ pub async fn cluster_nats(
             SYSTEM_NAMESPACE,
             "wamn-provisioning-nats",
             "wamn-provisioning",
+            "_INBOX",
         )
         .await?,
         publisher: certificate(
@@ -324,6 +325,7 @@ pub async fn cluster_nats(
             SYSTEM_NAMESPACE,
             "wamn-cdc-reader-nats",
             "wamn-cdc-reader",
+            "_INBOX",
         )
         .await?,
         observer: certificate(
@@ -333,6 +335,7 @@ pub async fn cluster_nats(
             SYSTEM_NAMESPACE,
             "wamn-ctl-nats",
             "wamn-ctl",
+            "_INBOX",
         )
         .await?,
         environment: certificate(
@@ -342,6 +345,10 @@ pub async fn cluster_nats(
             hosts,
             &environment,
             &wamn_control_registry::environment_nats_user(env_key),
+            &format!(
+                "_INBOX_{}",
+                wamn_control_registry::environment_nats_user(env_key)
+            ),
         )
         .await?,
         _forward: forward,
@@ -365,7 +372,7 @@ pub async fn cluster_nats(
 }
 
 /// The certificate of the Secret `name` in `namespace`, as private files in
-/// `work`.
+/// `work`, for `user` with its reply prefix `inbox`.
 async fn certificate(
     kubeconfig: &Path,
     context: &str,
@@ -373,6 +380,7 @@ async fn certificate(
     namespace: &str,
     name: &str,
     user: &str,
+    inbox: &str,
 ) -> anyhow::Result<ClientCertificate> {
     use base64::Engine as _;
     let secret: serde_json::Value = serde_json::from_slice(
@@ -399,6 +407,7 @@ async fn certificate(
         .map_err(|_| anyhow::anyhow!("three certificate files"))?;
     Ok(ClientCertificate {
         user: user.to_owned(),
+        inbox: inbox.to_owned(),
         ca,
         cert,
         key,
