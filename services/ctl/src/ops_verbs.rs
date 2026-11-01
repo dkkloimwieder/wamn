@@ -3,8 +3,6 @@
 //! The work runs in `wamn-control`. This module holds the clap surface and the
 //! printed lines.
 
-use std::path::PathBuf;
-
 use clap::Args;
 use wamn_control::create_user::{CreateUserRequest, create_user_principal};
 use wamn_control::event_advisories::{EventAdvisoriesRequest, read_retained_advisories};
