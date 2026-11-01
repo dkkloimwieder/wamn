@@ -864,6 +864,7 @@ pub(super) mod tests {
             },
             inputs: build_record::BuildInputs {
                 digest: build_record::input_digest(&root).unwrap(),
+                generation_digest: build_record::generation_digest(&root).unwrap(),
                 files: BTreeMap::new(),
             },
             dependencies: Vec::new(),

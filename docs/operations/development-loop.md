@@ -236,16 +236,25 @@ It also reuses the catalogs when the record matches the current build inputs.
 
 A change to the build inputs of a package runs Migrate, Introspect and Generate again on the kept target.
 Cargo controls which selected components need compilation.
-Generate runs [`wamn build`](building.md#wamn-build) for each package, the base packages first, without the component build.
+Generate runs the generation steps of [`wamn build`](building.md#wamn-build) for each changed package, with base packages first.
 Each build describes its statements against its own fresh database on the server of the target database, and it writes `build.json` into the build output.
-The Build stage then runs the component build of `wamn build` for each package, and the Virtualize stage selects the components that each `build.json` records.
+Build compiles changed packages and dependent overlays, copies generated clients, and compiles each web client after generation.
+The Virtualize stage selects the components that each `build.json` records.
 SQLx metadata is prepared again only when [its inputs](running-tests.md#application-generation-and-sqlx) changed.
 The build inputs are the files of the package without `target`, `node_modules`, `generated` and `web/dist`, the lock file of the apps workspace, and the generator identity.
 The watcher skips each directory that the Git ignore rules cover.
 The watcher watches the package directories, `apps/platform`, the shared platform WIT sources, and the local configuration files of `dev.json`.
 Nothing in the loop builds natively, so the root Cargo files and `crates/client` are not inputs.
 In a package that authors `wamn.k`, the watcher takes `wamn.k` as the manifest input and `wamn.json` in the build output, `apps/target/wamn/<package>`, as generated output.
-A missing `build.json`, or one that records other inputs, prevents reuse.
+The build record contains a full digest, `inputs.digest`, and a generation digest, `inputs.generation_digest`.
+A digest identifies content through its SHA-256 hash.
+The generation digest excludes only package-local `component/`, `data/`, and `web/` trees.
+It retains the manifest, SQL, migrations, shared WIT, platform trees, lock file, and generator identity.
+Migrate, Introspect, Generate, ACL, and SQLx preparation reuse results when generation inputs match.
+Source edits in the excluded trees run Build for that package and its dependent overlays.
+Build refreshes the full digest in the same `build.json`.
+Admission and publication still refuse a build record whose full digest differs from current source.
+A missing or invalid `build.json` prevents reuse.
 Receiving and Acme use the shared SQLx CLI 0.9.0 commands and their existing verifier targets.
 
 The loop stops the host before it recreates the target or applies any pending migration file.

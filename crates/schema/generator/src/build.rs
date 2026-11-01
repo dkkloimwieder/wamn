@@ -116,7 +116,10 @@ pub async fn build_package(request: &BuildRequest) -> Result<BuildRecord> {
         eprintln!("{} is current", build_record.package.id);
         return Ok(build_record);
     }
-    let build_record = generate_package(request).await?;
+    let build_record = match current_generation(&request.package_root, &request.output_root)? {
+        Some(build_record) => build_record,
+        None => generate_package(request).await?,
+    };
     build_components(request, &build_record.package.id).await
 }
 
@@ -126,20 +129,42 @@ pub async fn build_package(request: &BuildRequest) -> Result<BuildRecord> {
 ///
 /// When the inputs, output directory, manifest, or base components cannot be read.
 pub fn current_build(package_root: &Path, output_root: &Path) -> Result<Option<BuildRecord>> {
+    current_build_inputs(package_root, output_root, false)
+}
+
+/// Find complete output with matching generation inputs, even after source edits.
+///
+/// # Errors
+///
+/// When the inputs, outputs, manifest, or base components cannot be read.
+pub fn current_generation(package_root: &Path, output_root: &Path) -> Result<Option<BuildRecord>> {
+    current_build_inputs(package_root, output_root, true)
+}
+
+fn current_build_inputs(
+    package_root: &Path,
+    output_root: &Path,
+    generation_only: bool,
+) -> Result<Option<BuildRecord>> {
     let directories = match fs::read_dir(output_root) {
         Ok(directories) => directories,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error).context("read the package build output root"),
     };
-    let digest = crate::build_record::input_digest(package_root)?;
+    let inputs = crate::build_record::inputs(package_root)?;
     for directory in directories {
         let output = directory?.path();
         let Ok(build_record) = crate::build_record::read(&output) else {
             continue;
         };
-        if build_record.inputs.digest != digest
+        let matches = if generation_only {
+            build_record.inputs.generation_digest == inputs.generation_digest
+        } else {
+            build_record.inputs.digest == inputs.digest
+        };
+        if !matches
             // A build record written before the web build must not make an unfinished build current.
-            || (package_root.join("web/package.json").is_file()
+            || (!generation_only && package_root.join("web/package.json").is_file()
                 && build_record.outputs.web.is_none())
             || !build_record
                 .outputs
@@ -155,7 +180,12 @@ pub fn current_build(package_root: &Path, output_root: &Path) -> Result<Option<B
                 web_digest(&output.join(WEB_OUTPUT)).as_ref().ok() != Some(digest)
             })
             || !build_record.dependencies.iter().all(|dependency| {
-                crate::build_record::read_current(
+                let read = if generation_only {
+                    crate::build_record::read_generated
+                } else {
+                    crate::build_record::read_current
+                };
+                read(
                     &crate::output::dependency_root(package_root, &dependency.id),
                     &package_output(output_root, &dependency.id),
                 )
@@ -184,18 +214,20 @@ pub fn current_build(package_root: &Path, output_root: &Path) -> Result<Option<B
             }) {
                 continue;
             }
-            crate::components::base_components(
-                &BuildRequest::new(package_root, output_root, ""),
-                &manifest,
-            )?;
+            if !generation_only {
+                crate::components::base_components(
+                    &BuildRequest::new(package_root, output_root, ""),
+                    &manifest,
+                )?;
+            }
         }
         return Ok(Some(build_record));
     }
     Ok(None)
 }
 
-/// Every step of [`build_package`] except the component build (step 7): the
-/// build record it writes records no component.
+/// Generate package output before component and web compilation.
+/// The build record contains no compiled component or web output.
 ///
 /// # Errors
 ///
@@ -230,7 +262,7 @@ pub async fn generate_package(request: &BuildRequest) -> Result<BuildRecord> {
 
     let package_output = package_output(&request.output_root, &provisional.package.id);
     let outputs = write_outputs(&package_output, &canonical, &files)?;
-    let mut build_record = BuildRecord {
+    let build_record = BuildRecord {
         schema: BUILD_RECORD_SCHEMA.to_owned(),
         package: BuildPackage {
             id: provisional.package.id.clone(),
@@ -242,15 +274,6 @@ pub async fn generate_package(request: &BuildRequest) -> Result<BuildRecord> {
         outputs,
     };
     let path = package_output.join(BUILD_RECORD_FILE);
-    // Client copying and the web build read generated output, so its build record must exist first.
-    fs::write(&path, build_record.to_bytes())
-        .with_context(|| format!("write {}", path.display()))?;
-    crate::materialize::materialize_client_consumers(
-        package_root,
-        &provisional.package.id,
-        &package_output.join("client-ts"),
-    )?;
-    build_record.outputs.web = build_web(package_root, &package_output).await?;
     fs::write(&path, build_record.to_bytes())
         .with_context(|| format!("write {}", path.display()))?;
     Ok(build_record)
@@ -928,7 +951,10 @@ fn write_outputs(
 /// built files. The web client resolves its client package in the default
 /// output root, `target/wamn/<package>/client-ts`, which pass two writes when
 /// the request names that root. `write_outputs` removed the previous web build.
-async fn build_web(package_root: &Path, package_output: &Path) -> Result<Option<String>> {
+pub(crate) async fn build_web(
+    package_root: &Path,
+    package_output: &Path,
+) -> Result<Option<String>> {
     let source = package_root.join(WEB_SOURCE);
     if !source.join("package.json").is_file() {
         return Ok(None);

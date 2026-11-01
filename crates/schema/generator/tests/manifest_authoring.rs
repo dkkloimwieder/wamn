@@ -22,6 +22,7 @@ fn write_build_record(root: &Path) {
         },
         inputs: build_record::BuildInputs {
             digest: build_record::input_digest(root).unwrap(),
+            generation_digest: build_record::generation_digest(root).unwrap(),
             files: std::collections::BTreeMap::new(),
         },
         dependencies: Vec::new(),

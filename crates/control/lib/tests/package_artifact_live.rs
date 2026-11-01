@@ -48,6 +48,7 @@ async fn push_package_refuses_stale_output_before_reading_its_manifest() -> anyh
         },
         inputs: build_record::BuildInputs {
             digest: build_record::input_digest(&package)?,
+            generation_digest: build_record::generation_digest(&package)?,
             files: std::collections::BTreeMap::new(),
         },
         dependencies: Vec::new(),

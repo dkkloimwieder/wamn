@@ -391,21 +391,29 @@ Generation removes obsolete output files and keeps SQLx metadata prepared after 
 Authored publication references use the current source manifest, even when an earlier build output exists.
 Build every package before you compile the apps workspace, the app test crates, or an app web: their sources include files from the build output.
 `build.json` is the build record, schema `wamn.build/v1`, in canonical JSON.
-It records the input files and their digest, the base packages, the generator identity, and the digest of each output.
+It records input files, both input digests, base packages, generator identity, and output digests.
+A digest identifies content through its SHA-256 hash.
+`inputs.digest` covers all build inputs.
+`inputs.generation_digest` excludes only the package-local `component/`, `data/`, and `web/` trees.
+Both digests cover the manifest, authored SQL, migrations, generator identity, and every other build input.
 The input files include the package's own files and `apps/Cargo.lock`.
 They also include `apps/platform/data`, `apps/platform/execution/contract`, and `apps/platform/execution/jsonata`.
 The build derives shared WIT inputs from `wit_bindgen::generate!` paths across the guest workspace, including their dependencies.
 It excludes generated WIT under `target` or `generated` because build records track those outputs.
 A change in a shared WIT input or platform tree makes every package stale.
 The input digest also covers the generator source, KCL templates, embedded SQL, Cargo manifest, and build script through `wamn_schema_generator::build_record::GENERATOR_FINGERPRINT`.
-A change to these generator inputs makes every package stale without a version bump.
+Both input digests cover these generator inputs, shared WIT, platform trees, and the lock file.
+A change to these inputs requires generation and compilation again without a version bump.
 If the input digest and base packages match the build record and its outputs exist, `wamn build` prints that the package is current.
 It leaves the output files and `build.json` unchanged.
 An overlay reads the `build.json` of each base package, so build the base first.
 Every reader of `apps/target/wamn` calls `wamn_schema_generator::build_record::read_current` first, as `push-package` does.
 If the package has no `build.json`, or its `inputs.digest` differs from the package tree, the reader refuses and tells you to run `wamn build`.
-Before Cargo compiles the components, `wamn build` makes the same comparison for the package and each base package.
-For a package that has a `web/` directory, the build then runs `pnpm run build` there with Vite's `outDir` set to `web/` in the package's build output, `apps/target/wamn/<package>/web`.
+If only the full digest changes, the build reuses generated output and rebuilds the package components and web client.
+Build records the new full digest, so readers accept the rebuilt output.
+A reader still refuses changed source until Build refreshes the build record.
+After generation and component compilation, the build copies generated clients to their consumers.
+For a package that has a `web/` directory, Build runs `pnpm run build` there with Vite's `outDir` set to `web/` in the package's build output, `apps/target/wamn/<package>/web`.
 Run `pnpm install` at the repository root first.
 `build.json` records the digest of the web files as `outputs.web`, and `null` for a package without a web client.
 Each app's `vite.config.ts` names the same directory, so `pnpm run build` by hand writes there too.

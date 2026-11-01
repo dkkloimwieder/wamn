@@ -1996,7 +1996,7 @@ manifest.Package {
         let built: build_record::BuildRecord = serde_json::from_value(json!({
             "schema": build_record::BUILD_RECORD_SCHEMA,
             "package": {"id": "source_package", "version": "1.0.0"},
-            "inputs": {"digest": build_record::input_digest(&root).unwrap(), "files": {}},
+            "inputs": {"digest": build_record::input_digest(&root).unwrap(), "generation_digest": build_record::generation_digest(&root).unwrap(), "files": {}},
             "dependencies": [],
             "generator": {"id": "generator", "toolchain": "toolchain", "sqlx": "0.9.0"},
             "outputs": {"manifest": "sha256:fixture", "files": {}, "components": [], "web": null}

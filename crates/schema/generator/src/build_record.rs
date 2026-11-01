@@ -3,8 +3,7 @@
 //!
 //! The build record names the build's inputs, the exact dependency packages, the
 //! generator and toolchain identity, and the digest of every output. Its bytes
-//! are canonical JSON (RFC 8785). Schema `wamn.build/v1` is frozen: a change of
-//! shape is a new schema name.
+//! are canonical JSON (RFC 8785).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -74,6 +73,8 @@ pub struct BuildPackage {
 pub struct BuildInputs {
     /// The digest of [`input_digest`]: the files, generator identity, and fingerprint.
     pub digest: String,
+    /// The digest without package-local component, data, and web source files.
+    pub generation_digest: String,
     /// The `sha256:` digest of each input file, by its path relative to the
     /// package root.
     pub files: BTreeMap<String, String>,
@@ -245,6 +246,30 @@ pub fn input_digest(package_root: &Path) -> Result<String> {
     Ok(inputs(package_root)?.digest)
 }
 
+/// The generation digest excludes package-local component, data, and web trees.
+///
+/// # Errors
+///
+/// When the package inputs cannot be read.
+pub fn generation_digest(package_root: &Path) -> Result<String> {
+    Ok(inputs(package_root)?.generation_digest)
+}
+
+/// Read generated output whose generation inputs still match its source.
+///
+/// # Errors
+///
+/// When the build record is missing, invalid, or records other generation inputs.
+pub fn read_generated(package_root: &Path, output_dir: &Path) -> Result<BuildRecord> {
+    let build_record = read(output_dir)?;
+    ensure!(
+        build_record.inputs.generation_digest == generation_digest(package_root)?,
+        "the generated output of {} is stale; run wamn build again",
+        package_root.display()
+    );
+    Ok(build_record)
+}
+
 /// The build inputs of the package at `package_root`: every file of the package
 /// directory except build output and installed dependencies, the lock file of
 /// the enclosing Cargo workspace when there is one, every file of each
@@ -273,8 +298,28 @@ pub(crate) fn inputs(package_root: &Path) -> Result<BuildInputs> {
         let bytes = fs::read(&lock).with_context(|| format!("read {}", lock.display()))?;
         files.insert(WORKSPACE_LOCK.to_owned(), sha256(&bytes));
     }
-    let digest = digest_inputs(&files, &generator(), GENERATOR_FINGERPRINT);
-    Ok(BuildInputs { digest, files })
+    Ok(digests(files, &generator(), GENERATOR_FINGERPRINT))
+}
+
+fn digests(
+    files: BTreeMap<String, String>,
+    generator: &BuildGenerator,
+    fingerprint: &str,
+) -> BuildInputs {
+    let generation_files = files
+        .iter()
+        .filter(|(path, _)| {
+            !["component", "data", "web"]
+                .iter()
+                .any(|tree| Path::new(path).starts_with(tree))
+        })
+        .map(|(path, digest)| (path.clone(), digest.clone()))
+        .collect();
+    BuildInputs {
+        digest: digest_inputs(&files, generator, fingerprint),
+        generation_digest: digest_inputs(&generation_files, generator, fingerprint),
+        files,
+    }
 }
 
 fn digest_inputs(
@@ -566,15 +611,72 @@ mod tests {
     }
 
     #[test]
-    fn generator_changes_make_identical_package_inputs_stale() {
-        let files = BTreeMap::from([("wamn.k".to_owned(), sha256(b"package"))]);
+    fn generator_changes_invalidate_both_digests() {
+        let files = BTreeMap::from([
+            ("wamn.k".to_owned(), sha256(b"package")),
+            ("component/src/lib.rs".to_owned(), sha256(b"source")),
+        ]);
         let generator = generator();
-        let before = digest_inputs(&files, &generator, "old templates");
-        assert_ne!(before, digest_inputs(&files, &generator, "new templates"));
-
+        let before = digests(files.clone(), &generator, "old templates");
         let mut changed = generator.clone();
         changed.id.push_str("-changed");
-        assert_ne!(before, digest_inputs(&files, &changed, "old templates"));
+        for after in [
+            digests(files.clone(), &generator, "new templates"),
+            digests(files, &changed, "old templates"),
+        ] {
+            assert_ne!(before.digest, after.digest);
+            assert_ne!(before.generation_digest, after.generation_digest);
+        }
+    }
+
+    #[test]
+    fn package_sources_change_only_the_full_digest() {
+        let scratch = scratch("source-digests");
+        let package = scratch.0.join("package");
+        fs::write(package.join("wamn.k"), "manifest").unwrap();
+        for relative in ["component/src/lib.rs", "data/src/lib.rs", "web/src/main.ts"] {
+            let path = package.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let before = inputs(&package).unwrap();
+            fs::write(&path, "original").unwrap();
+            let added = inputs(&package).unwrap();
+            assert_ne!(before.digest, added.digest, "{relative}");
+            assert_eq!(
+                before.generation_digest, added.generation_digest,
+                "{relative}"
+            );
+            fs::write(&path, "changed").unwrap();
+            let edited = inputs(&package).unwrap();
+            assert_ne!(added.digest, edited.digest, "{relative}");
+            assert_eq!(
+                added.generation_digest, edited.generation_digest,
+                "{relative}"
+            );
+        }
+    }
+
+    #[test]
+    fn generation_inputs_change_both_digests() {
+        let scratch = scratch("generation-digests");
+        let package = scratch.0.join("package");
+        for relative in [
+            "wamn.k",
+            "query/list.sql",
+            "migrations/0001_initial.sql",
+            "../Cargo.lock",
+        ] {
+            let path = package.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, "original").unwrap();
+            let before = inputs(&package).unwrap();
+            fs::write(&path, "changed").unwrap();
+            let after = inputs(&package).unwrap();
+            assert_ne!(before.digest, after.digest, "{relative}");
+            assert_ne!(
+                before.generation_digest, after.generation_digest,
+                "{relative}"
+            );
+        }
     }
 
     struct Scratch(PathBuf);
@@ -683,14 +785,26 @@ mod tests {
                 .contains_key("../../platform/data/postgres-statements/src/lib.rs")
         );
 
+        let generation_before = [
+            generation_digest(&top).unwrap(),
+            generation_digest(&nested).unwrap(),
+        ];
         let before = [input_digest(&top).unwrap(), input_digest(&nested).unwrap()];
         fs::write(&wit, "interface statements { next-number: func(); }").unwrap();
         let after_wit = [input_digest(&top).unwrap(), input_digest(&nested).unwrap()];
         assert_ne!(before[0], after_wit[0]);
         assert_ne!(before[1], after_wit[1]);
+        let generation_after_wit = [
+            generation_digest(&top).unwrap(),
+            generation_digest(&nested).unwrap(),
+        ];
+        assert_ne!(generation_before[0], generation_after_wit[0]);
+        assert_ne!(generation_before[1], generation_after_wit[1]);
         fs::write(&sdk, format!("{bindings}\npub fn next_number() {{}}")).unwrap();
         assert_ne!(input_digest(&top).unwrap(), after_wit[0]);
         assert_ne!(input_digest(&nested).unwrap(), after_wit[1]);
+        assert_ne!(generation_digest(&top).unwrap(), generation_after_wit[0]);
+        assert_ne!(generation_digest(&nested).unwrap(), generation_after_wit[1]);
     }
 
     #[test]
@@ -833,6 +947,7 @@ mod tests {
             },
             inputs: BuildInputs {
                 digest: sha256(b"i"),
+                generation_digest: sha256(b"g"),
                 files: BTreeMap::new(),
             },
             dependencies: Vec::new(),

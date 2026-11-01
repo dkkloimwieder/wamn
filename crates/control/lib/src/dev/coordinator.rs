@@ -570,9 +570,14 @@ impl ProductionDevStageRunner {
             .map_err(|source| {
                 ProductionDevStageError::owner("read generated package manifests", source.into())
             })?;
-        // Step 7 of `wamn build` for each package, bases first: an overlay
-        // composes with the components its bases recorded.
-        for package in self.package_inputs()? {
+        let packages = self.package_inputs()?;
+        self.pending_builds.extend(
+            package_builds(&packages, wamn_schema_generator::build::current_build)
+                .into_iter()
+                .filter_map(|(id, build)| build.is_none().then_some(id)),
+        );
+        // Build each changed package, bases first, including dependent overlays.
+        for package in packages {
             if !self.pending_builds.contains(&package.manifest.package.id) {
                 continue;
             }
@@ -1266,22 +1271,32 @@ impl ProductionDevStageRunner {
     }
 }
 
-/// The build.json inputs digest of each package, in order: the one owner of
-/// the build input identity (docs/plan/platform-deploy.md §7.2).
+/// The generation digest of each package, in order, from the build record.
 fn build_inputs(packages: &[PackageInput]) -> Result<Vec<String>, ProductionDevStageError> {
     packages
         .iter()
         .map(|package| {
-            wamn_schema_generator::build_record::input_digest(&package.root)
+            wamn_schema_generator::build_record::generation_digest(&package.root)
                 .map_err(|source| ProductionDevStageError::owner("read the build inputs", source))
         })
         .collect()
 }
 
-/// Reuse the package builder's input digest and completeness rules, bases first.
+/// Reuse generation digests and output completeness rules, bases first.
 /// An unreadable build selects rebuilding, including each dependent overlay.
 fn current_package_builds(
     packages: &[PackageInput],
+) -> BTreeMap<String, Option<wamn_schema_generator::build_record::BuildRecord>> {
+    package_builds(packages, wamn_schema_generator::build::current_generation)
+}
+
+fn package_builds(
+    packages: &[PackageInput],
+    mut current: impl FnMut(
+        &Path,
+        &Path,
+    )
+        -> anyhow::Result<Option<wamn_schema_generator::build_record::BuildRecord>>,
 ) -> BTreeMap<String, Option<wamn_schema_generator::build_record::BuildRecord>> {
     let mut builds: BTreeMap<String, Option<wamn_schema_generator::build_record::BuildRecord>> =
         BTreeMap::new();
@@ -1294,7 +1309,7 @@ fn current_package_builds(
         let build = if base_changed {
             None
         } else {
-            wamn_schema_generator::build::current_build(
+            current(
                 &package.root,
                 &wamn_schema_generator::build::default_output_root(&package.root),
             )
@@ -1333,7 +1348,7 @@ where
     Ok(built)
 }
 
-/// What a verifier's SQLx metadata was prepared from: the input digest of the
+/// What a verifier's SQLx metadata was prepared from: the generation digest of the
 /// package's build.json and the digests of its base packages.
 ///
 /// The verifier's statements and the schema they run against both come from
@@ -1348,7 +1363,7 @@ struct SqlxMetadataInputs {
 impl SqlxMetadataInputs {
     fn of(build_record: &wamn_schema_generator::build_record::BuildRecord) -> Self {
         Self {
-            inputs: build_record.inputs.digest.clone(),
+            inputs: build_record.inputs.generation_digest.clone(),
             dependencies: build_record.dependencies.clone(),
         }
     }
@@ -1408,10 +1423,9 @@ impl DevStageRunner for ProductionDevStageRunner {
         if stage != DevStage::Generate {
             return Ok(false);
         }
-        Ok(self.pending_builds.is_empty()
-            && current_package_builds(&self.package_inputs()?)
-                .values()
-                .all(Option::is_some))
+        Ok(current_package_builds(&self.package_inputs()?)
+            .values()
+            .all(Option::is_some))
     }
 
     fn stage_failed(&mut self, stage: DevStage, failure: DevStageFailure) {
@@ -2136,6 +2150,12 @@ mod tests {
                 )
                 .unwrap();
                 fs::write(package.root.join("input.txt"), "original").unwrap();
+                fs::create_dir_all(package.root.join("component/src")).unwrap();
+                fs::write(
+                    package.root.join("component/src/lib.rs"),
+                    "pub fn original() {}",
+                )
+                .unwrap();
                 write_package_build(package);
             }
             Self {
@@ -2179,7 +2199,7 @@ mod tests {
         let built: build_record::BuildRecord = serde_json::from_value(serde_json::json!({
             "schema": build_record::BUILD_RECORD_SCHEMA,
             "package": {"id": package.manifest.package.id, "version": "1.0.0"},
-            "inputs": {"digest": inputs, "files": {}},
+            "inputs": {"digest": inputs, "generation_digest": build_record::generation_digest(&package.root).unwrap(), "files": {}},
             "dependencies": dependencies,
             "generator": {"id": "generator", "toolchain": "rust", "sqlx": "0.9.0"},
             "outputs": {
@@ -2243,6 +2263,89 @@ mod tests {
             ]
         );
         assert_ne!(other_before, package_output_snapshot(&fixture.packages[1]));
+    }
+
+    #[tokio::test]
+    async fn source_edits_skip_generation_and_build_only_changed_packages_and_overlays() {
+        use wamn_schema_generator::{build, build_record};
+
+        for changed in ["other", "base"] {
+            let fixture = PackageBuildFixture::new();
+            let before = fixture
+                .packages
+                .iter()
+                .map(package_output_snapshot)
+                .collect::<Vec<_>>();
+            let generation_inputs = build_inputs(&fixture.packages).unwrap();
+            let package = fixture
+                .packages
+                .iter()
+                .find(|package| package.manifest.package.id == changed)
+                .unwrap();
+            fs::write(
+                package.root.join("component/src/lib.rs"),
+                "pub fn changed() {}",
+            )
+            .unwrap();
+            assert!(build_record::check_current(&package.root).is_err());
+            assert_eq!(generation_inputs, build_inputs(&fixture.packages).unwrap());
+            let current = current_package_builds(&fixture.packages);
+            assert!(current.values().all(Option::is_some));
+            let generated =
+                generate_changed_packages(fixture.packages.clone(), &current, |_| async {
+                    panic!("source edits must keep generated output")
+                })
+                .await
+                .unwrap();
+            assert!(generated.is_empty());
+            let pending = package_builds(&fixture.packages, build::current_build);
+            let selected = pending
+                .iter()
+                .filter_map(|(id, build)| build.is_none().then_some(id.as_str()))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                selected,
+                if changed == "base" {
+                    vec!["base", "overlay"]
+                } else {
+                    vec!["other"]
+                }
+            );
+            for package in &fixture.packages {
+                if pending[&package.manifest.package.id].is_none() {
+                    build::build_components(
+                        &build::BuildRequest::new(
+                            &package.root,
+                            &build::default_output_root(&package.root),
+                            "",
+                        ),
+                        &package.manifest.package.id,
+                    )
+                    .await
+                    .unwrap();
+                    build_record::check_current(&package.root).unwrap();
+                }
+            }
+            for (index, package) in fixture.packages.iter().enumerate() {
+                if pending[&package.manifest.package.id].is_some() {
+                    assert_eq!(before[index], package_output_snapshot(package));
+                }
+            }
+            let rebuilt = build_record::read_current(
+                &package.root,
+                &wamn_schema_generator::output_root(&package.root),
+            )
+            .unwrap();
+            assert_eq!(
+                rebuilt.inputs.digest,
+                build_record::input_digest(&package.root).unwrap()
+            );
+            assert!(
+                package_builds(&fixture.packages, build::current_build)
+                    .values()
+                    .all(Option::is_some)
+            );
+        }
     }
 
     #[tokio::test]
@@ -2416,19 +2519,23 @@ mod tests {
     }
 
     #[test]
-    fn sqlx_preparation_is_keyed_on_the_build_input_digest() {
+    fn sqlx_preparation_is_keyed_on_the_generation_digest() {
         let build_record = |inputs: &str, base: &str| {
             let build_record: wamn_schema_generator::build_record::BuildRecord =
                 serde_json::from_value(serde_json::json!({
-                    "schema": "wamn.build/v1",
+                    "schema": wamn_schema_generator::build_record::BUILD_RECORD_SCHEMA,
                     "package": {"id": "demo", "version": "1.0.0"},
-                    "inputs": {"digest": inputs, "files": {}},
+                    "inputs": {"digest": "full", "generation_digest": inputs, "files": {}},
                     "dependencies": [{"id": "base", "version": "1.0.0", "digest": base}],
                     "generator": {"id": "generator", "toolchain": "rust", "sqlx": "0.9.0"},
                     "outputs": {"manifest": "m", "files": {}, "components": [], "web": null},
                 }))
                 .unwrap();
-            SqlxMetadataInputs::of(&build_record)
+            let expected = SqlxMetadataInputs::of(&build_record);
+            let mut source_edit = build_record;
+            source_edit.inputs.digest.push_str("-source-edit");
+            assert_eq!(expected, SqlxMetadataInputs::of(&source_edit));
+            expected
         };
         let prepared = build_record("sha256:a", "sha256:base");
         assert!(
@@ -2684,6 +2791,7 @@ mod tests {
                 },
                 inputs: build_record::BuildInputs {
                     digest: "sha256:inputs".to_owned(),
+                    generation_digest: "sha256:generation".to_owned(),
                     files: BTreeMap::new(),
                 },
                 dependencies: Vec::new(),

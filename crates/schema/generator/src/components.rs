@@ -75,14 +75,37 @@ struct Built {
 }
 
 /// Compile the components of the package that `request` names, whose id is
-/// `package`, after its generation, and record them in its `build.json`.
+/// `package`, after generation, then copy clients and compile its web output.
+/// Record the full input digest and compiled outputs in its `build.json`.
 ///
 /// # Errors
 ///
-/// When the package has no current build output, when a guest does not build,
+/// When generated output is stale, when a guest or web client does not build,
 /// carries a local path or differs from its pin, when virtualization or
 /// composition fails, or when the output cannot be written.
 pub async fn build_components(request: &BuildRequest, package: &str) -> Result<BuildRecord> {
+    let package_root = request.package_root.as_path();
+    let output = package_output(&request.output_root, package);
+    let mut build_record = build_record::read_generated(package_root, &output)?;
+    build_record.inputs = build_record::inputs(package_root)?;
+    build_record.outputs.components.clear();
+    build_record.outputs.web = None;
+    let path = output.join(BUILD_RECORD_FILE);
+    fs::write(&path, build_record.to_bytes())
+        .with_context(|| format!("write {}", path.display()))?;
+    let mut build_record = compile_components(request, package).await?;
+    crate::materialize::materialize_client_consumers(
+        package_root,
+        package,
+        &output.join("client-ts"),
+    )?;
+    build_record.outputs.web = crate::build::build_web(package_root, &output).await?;
+    fs::write(&path, build_record.to_bytes())
+        .with_context(|| format!("write {}", path.display()))?;
+    Ok(build_record)
+}
+
+async fn compile_components(request: &BuildRequest, package: &str) -> Result<BuildRecord> {
     let package_root = request.package_root.as_path();
     let output = package_output(&request.output_root, package);
     let mut build_record = build_record::read_current(package_root, &output)?;
