@@ -1,6 +1,6 @@
 use super::grants::{
     RoleAcl, StableGrantSet, stable_grant_set, verify_audit_retention_grants,
-    verify_event_materializer_grants, verify_http_admitter_grants,
+    verify_connection_reader_grants, verify_event_materializer_grants, verify_http_admitter_grants,
     verify_management_admitter_grants, verify_session_role_reader_grants,
     verify_system_reader_grants,
 };
@@ -625,6 +625,46 @@ fn role_acl(kind: &str, schema: &str, object: &str, privilege: &str) -> RoleAcl 
         privilege: privilege.to_string(),
         grantable: false,
     }
+}
+
+#[test]
+fn connection_reader_requires_exact_grants_with_the_oauth_rows() {
+    let mut exact = vec![
+        role_acl("schema", "registry", "registry", "USAGE"),
+        role_acl("schema", "identity", "identity", "USAGE"),
+    ];
+    for table in ["oauth_token", "oauth_authorization"] {
+        for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
+            exact.push(role_acl("relation", "identity", table, privilege));
+        }
+    }
+    for routine in [
+        "lock_oauth_connection",
+        "read_connection_credential",
+        "read_file_connection",
+        "read_connection_fact",
+        "read_connection_generation",
+        "read_connection_secret",
+        "read_env_connections",
+        "read_integration_version",
+    ] {
+        exact.push(role_acl("routine", "registry", routine, "EXECUTE"));
+    }
+    let verify = |rows: &[RoleAcl]| {
+        verify_connection_reader_grants("wamn_conn_reader", "wamn_system", "wamn_system", rows)
+    };
+    assert!(verify(&exact).is_ok());
+    for index in 0..exact.len() {
+        let mut missing = exact.clone();
+        missing.remove(index);
+        assert!(verify(&missing).is_err());
+    }
+    let mut widened = exact.clone();
+    widened.push(role_acl("relation", "identity", "principals", "SELECT"));
+    assert!(verify(&widened).is_err());
+    assert!(
+        verify_connection_reader_grants("wamn_conn_reader", "other-db", "wamn_system", &[]).is_ok()
+    );
 }
 
 #[test]

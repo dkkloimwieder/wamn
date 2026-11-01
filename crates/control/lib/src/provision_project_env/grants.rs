@@ -939,8 +939,9 @@ pub(super) fn verify_event_materializer_grants(
     Ok(())
 }
 
-/// Require only the login-scoped credential lookup in the control database.
-fn verify_connection_reader_grants(
+/// Require only the login-scoped credential lookup in the control database,
+/// and the OAuth token rows that the host's reader login locks and writes.
+pub(super) fn verify_connection_reader_grants(
     role: &str,
     database: &str,
     required_database: &str,
@@ -966,6 +967,16 @@ fn verify_connection_reader_grants(
         .collect::<BTreeSet<_>>();
     let expected = BTreeSet::from([
         ("schema", "registry", "registry", "USAGE"),
+        ("schema", "identity", "identity", "USAGE"),
+        ("relation", "identity", "oauth_token", "SELECT"),
+        ("relation", "identity", "oauth_token", "INSERT"),
+        ("relation", "identity", "oauth_token", "UPDATE"),
+        ("relation", "identity", "oauth_token", "DELETE"),
+        ("relation", "identity", "oauth_authorization", "SELECT"),
+        ("relation", "identity", "oauth_authorization", "INSERT"),
+        ("relation", "identity", "oauth_authorization", "UPDATE"),
+        ("relation", "identity", "oauth_authorization", "DELETE"),
+        ("routine", "registry", "lock_oauth_connection", "EXECUTE"),
         (
             "routine",
             "registry",
