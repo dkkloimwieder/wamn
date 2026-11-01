@@ -1026,8 +1026,6 @@ pub async fn exercise(
     }
     run.retain_failure_diagnostics(connector).await?;
     environment::delete::delete(&platform, &scope, true).await?;
-    run.run("docker", &["rm", "-f", &format!("{}-events", run.cluster)])
-        .await?;
     Ok(())
 }
 

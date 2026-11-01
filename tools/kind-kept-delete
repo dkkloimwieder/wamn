@@ -18,7 +18,7 @@ jq -n --argjson exit_code "$status" --rawfile leftovers "$leftovers" \
   >"$work/kind-teardown.json"
 # Keep credentials if kind still needs them for another cleanup attempt.
 if ((status != 0)); then exit "$status"; fi
-docker rm --force --volumes "$registry" "$cluster-events" "$cluster-apply-events" >&2 || true
+docker rm --force --volumes "$registry" >&2 || true
 docker image rm "$cluster-http-fixture:debug" "$cluster-identity:debug" >&2 || true
 rm -f -- "$kubeconfig" "$secret_work/ca.key" "$secret_work/tls.key" \
   "$secret_work/htpasswd" "$secret_work/auth.json" "$secret_work/integration-session-db.json" \
