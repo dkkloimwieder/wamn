@@ -290,7 +290,7 @@ cluster.Cluster {{
         &[
             "rollout",
             "status",
-            "statefulset/evt-nats",
+            "statefulset/wamn-nats",
             "--timeout=300s",
         ],
         None,
@@ -338,7 +338,8 @@ cluster.Cluster {{
         failures.record("4.4 / 4.7 / 4.11 / 4.12 installed objects", result);
     }
     let result = async {
-        // nats-server opens to anonymous clients when its users list is empty.
+        // R4: a client without a certificate is refused, because the server
+        // requires TLS and maps every user from its certificate.
         let anonymous = kubectl::kubectl(
             &kubeconfig,
             &context,
@@ -346,7 +347,9 @@ cluster.Cluster {{
             &[
                 "exec",
                 "-i",
-                "evt-nats-0",
+                "wamn-nats-0",
+                "-c",
+                "nats",
                 "--",
                 "nc",
                 "-w",
@@ -358,13 +361,69 @@ cluster.Cluster {{
         )
         .await?;
         ensure!(
-            anonymous.contains("Authorization Violation") && !anonymous.contains("PONG"),
-            "event NATS accepted an anonymous connection: {anonymous}"
+            !anonymous.contains("PONG"),
+            "NATS accepted a connection without a certificate: {anonymous}"
         );
+        // R4: the authorization file has no password entry.
+        let authorization: Value = kubectl::get(
+            &kubeconfig,
+            &context,
+            "platform",
+            "secret",
+            "wamn-nats-authorization",
+        )
+        .await?
+        .context("missing Secret platform/wamn-nats-authorization")?;
+        let text = String::from_utf8(base64::Engine::decode(
+            &base64::engine::general_purpose::STANDARD,
+            authorization["data"]["authorization.conf"]
+                .as_str()
+                .context("the authorization Secret has no authorization.conf")?,
+        )?)?;
+        ensure!(
+            !text.contains("password"),
+            "the NATS authorization has a password user"
+        );
+        ensure!(
+            text.contains("wamn-env-test--receiving--dev"),
+            "the NATS authorization has no user for test/receiving/dev"
+        );
+        // R1: one NATS. The operator release renders none.
+        let deployments = kubectl::kubectl(
+            &kubeconfig,
+            &context,
+            "platform",
+            &["get", "deployment,statefulset", "-o", "name"],
+            None,
+        )
+        .await?;
+        let nats: Vec<_> = deployments
+            .lines()
+            .filter(|line| line.contains("nats"))
+            .collect();
+        ensure!(
+            nats == ["statefulset.apps/wamn-nats"],
+            "the platform namespace runs another NATS: {nats:?}"
+        );
+        // R3: cert-manager owns each Secret the operator chart names.
+        for (namespace, name) in [
+            ("platform", "wasmcloud-nats-tls"),
+            ("platform", "wasmcloud-operator-tls"),
+            ("hosts", "wasmcloud-runtime-tls"),
+            ("hosts", "wasmcloud-data-tls"),
+        ] {
+            let secret: Value = kubectl::get(&kubeconfig, &context, namespace, "secret", name)
+                .await?
+                .with_context(|| format!("missing Secret {namespace}/{name}"))?;
+            ensure!(
+                secret["metadata"]["annotations"]["cert-manager.io/certificate-name"] == name,
+                "Secret {namespace}/{name} has no owning cert-manager Certificate"
+            );
+        }
         Ok(())
     }
     .await;
-    failures.record("4.8 anonymous NATS refusal", result);
+    failures.record("4.4 / 4.8 one NATS, certificates and users", result);
     let prefix = format!("{}: release = \"", input.display());
     let digest = first
         .iter()
@@ -1971,13 +2030,9 @@ fn private_url_password(value: &str, values: &mut Vec<String>) {
 async fn secret_versions(kubeconfig: &Path, context: &str) -> anyhow::Result<Vec<(String, Value)>> {
     let names = [
         ("platform", "wamn-pg-superuser"),
-        ("platform", "evt-nats-authorization"),
-        ("platform", "evt-nats-test--receiving--dev-provisioning"),
-        ("platform", "evt-nats-test--receiving--dev-publisher"),
-        ("platform", "evt-nats-test--receiving--dev-observer"),
-        ("hosts", "evt-nats-test--receiving--dev-publisher"),
-        ("hosts", "evt-nats-test--receiving--dev-runtime"),
-        ("hosts", "evt-nats-test--receiving--dev-materializer"),
+        ("platform", "wamn-nats-authorization"),
+        ("hosts", "wamn-nats-test--receiving--dev"),
+        ("hosts", "wamn-nats-test--receiving--dev-materializer"),
         ("identity", "wamn-session-role-reader-test--receiving--dev"),
         ("identity", "identity-resend"),
         ("identity", "wamn-identity-db"),
@@ -2270,6 +2325,12 @@ fn prekind_platform_renders() -> anyhow::Result<()> {
         let mut secrets = credential_secrets(&document.triple(), "hosts");
         secrets.extend(operator_prerequisites("hosts"));
         secrets.extend(wamn_control::platform::render_event_secrets(&document)?);
+        // cert-manager issues the environment's NATS certificate Secret.
+        secrets.push(json!({
+            "apiVersion": "v1", "kind": "Secret",
+            "metadata": {"name": format!("wamn-nats-test--{project}--dev"), "namespace": "hosts"},
+            "data": {"ca.crt": "", "tls.crt": "", "tls.key": ""}
+        }));
         assert_complete(
             &template(&environment(&document, &manifest, &path, 70)?, "hosts")?,
             &secrets,
