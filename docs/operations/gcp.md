@@ -714,6 +714,8 @@ The GCP environment overlays also carry that value for direct `env apply`.
 Local cluster targets share the `hosts/wamn-oauth` Secret across application and control hosts.
 Platform install creates its 32-byte key only when the Secret is absent.
 The hosts mount it with mode `0600` at `/etc/wamn/oauth/key` through `WAMN_OAUTH_KEY_FILE`.
+The kubelet adds group read for the pod `fsGroup`, so the file has mode `0640` in the pod.
+The host refuses any other access to the key file.
 The local development target uses `<dev-root>/oauth.key` with the same permissions.
 Keep these keys across restarts because a replacement key cannot decrypt existing rows.
 

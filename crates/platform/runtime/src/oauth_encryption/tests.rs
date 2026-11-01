@@ -54,10 +54,17 @@ fn key_file_requires_exact_length_and_private_permissions() {
     for (bytes, mode) in [
         (vec![7; 31], 0o600),
         (vec![7; 33], 0o600),
-        (vec![7; 32], 0o640),
-        (vec![7; 32], 0o400),
+        (vec![7; 32], 0o644),
+        (vec![7; 32], 0o660),
+        (vec![7; 32], 0o700),
+        (vec![7; 32], 0o604),
+        (vec![7; 32], 0o040),
     ] {
         assert!(local(&bytes, mode).is_err());
+    }
+    // The kubelet adds group read for the pod fsGroup.
+    for mode in [0o600, 0o640, 0o400, 0o440] {
+        assert!(local(&[7; 32], mode).is_ok());
     }
 }
 

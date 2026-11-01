@@ -253,13 +253,14 @@ fn file_key(path: &Path) -> Result<FileKey, Error> {
     let metadata = file
         .metadata()
         .map_err(|_| failure("open", "key file metadata unavailable"))?;
-    if !metadata.is_file()
-        || metadata.permissions().mode() & 0o7777 != 0o600
-        || metadata.len() != 32
-    {
+    // The kubelet adds group read for the pod fsGroup, so group read is
+    // allowed. Special bits, owner execute, group write or execute and any
+    // other access refuse, and the owner must read.
+    let mode = metadata.permissions().mode();
+    if !metadata.is_file() || mode & 0o7137 != 0 || mode & 0o400 == 0 || metadata.len() != 32 {
         return Err(failure(
             "open",
-            "key file must contain 32 bytes and use mode 0600",
+            "key file must contain 32 bytes and allow only owner read and write and group read",
         ));
     }
     let mut key = Zeroizing::new([0; 32]);
