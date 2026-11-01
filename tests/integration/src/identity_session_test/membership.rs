@@ -1,11 +1,11 @@
-//! Grant or revoke a user's membership in one project environment.
+//! Membership setup for disposable platform fixtures.
 //!
-//! These commands use the provisioning administrator for the system database.
+//! These fixtures use the provisioning administrator for the system database.
 //! They change membership only and do not create users, roles, or tokens.
 
-use crate::provision_project_env::provisioning_transaction;
 use anyhow::Context as _;
 use tokio_postgres::NoTls;
+use wamn_control::provision_project_env::provisioning_transaction;
 use wamn_control_provision::validate_project_env;
 use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
 use wamn_platform_identity::{
@@ -14,7 +14,7 @@ use wamn_platform_identity::{
 
 /// Inputs that name one existing user and one existing project environment.
 #[derive(Debug)]
-pub struct ProjectEnvMembershipRequest {
+pub(crate) struct MembershipRequest {
     /// Organization that owns the project environment.
     pub org: String,
 
@@ -40,26 +40,26 @@ enum Action {
 /// Grant membership without changing an existing grant.
 /// A grant writes no fact that a host keeps, because a host keeps only the
 /// positive answer of a credential.
-pub async fn grant(args: ProjectEnvMembershipRequest) -> anyhow::Result<PrincipalId> {
+pub(crate) async fn grant(args: MembershipRequest) -> anyhow::Result<PrincipalId> {
     run(args, Action::Grant, &AuthChanges::default()).await
 }
 
 /// Revoke membership without failing if the grant is absent.
-pub async fn revoke(
-    args: ProjectEnvMembershipRequest,
+pub(crate) async fn revoke(
+    args: MembershipRequest,
     changes: &AuthChanges,
 ) -> anyhow::Result<PrincipalId> {
     run(args, Action::Revoke, changes).await
 }
 
-fn validate_args(args: &ProjectEnvMembershipRequest) -> anyhow::Result<PrincipalId> {
+fn validate_args(args: &MembershipRequest) -> anyhow::Result<PrincipalId> {
     validate_project_env(&args.org, &args.project, &args.env)
         .context("invalid --org, --project, or --env")?;
     args.principal_id.parse().context("invalid --principal-id")
 }
 
 async fn run(
-    args: ProjectEnvMembershipRequest,
+    args: MembershipRequest,
     action: Action,
     changes: &AuthChanges,
 ) -> anyhow::Result<PrincipalId> {
@@ -117,10 +117,10 @@ async fn run(
 
 #[cfg(test)]
 mod tests {
-    use super::{ProjectEnvMembershipRequest, validate_args};
+    use super::{MembershipRequest, validate_args};
 
-    fn request() -> ProjectEnvMembershipRequest {
-        ProjectEnvMembershipRequest {
+    fn request() -> MembershipRequest {
+        MembershipRequest {
             org: "acme".to_owned(),
             project: "billing".to_owned(),
             env: "dev".to_owned(),
@@ -139,7 +139,7 @@ mod tests {
 
     #[test]
     fn malformed_scope_or_principal_is_refused_before_connecting() {
-        type SetField = fn(&mut ProjectEnvMembershipRequest, &str);
+        type SetField = fn(&mut MembershipRequest, &str);
         let fields: [(SetField, &str); 4] = [
             (|request, value| request.org = value.to_owned(), "Bad-org"),
             (
@@ -157,5 +157,71 @@ mod tests {
             set(&mut request, value);
             assert!(validate_args(&request).is_err(), "{value} must be refused");
         }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires PostgreSQL 18"]
+    async fn membership_steps_write_as_provisioning_without_an_admin() {
+        use wamn_control_provision::PlatformComponent;
+        use wamn_platform_identity::auth_changes::AuthChanges;
+
+        let _lock = wamn_test_postgres::lock();
+        let database = wamn_control_provision::test_database::system();
+        database
+            .execute(&[
+                &wamn_control_provision::test_database::seed_org_project_env_sql(
+                    "acme", "billing", "dev",
+                ),
+            ])
+            .unwrap();
+        let (mut client, connection) =
+            tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
+                .await
+                .unwrap();
+        let connection = tokio::spawn(connection);
+        client.batch_execute("SET ROLE wamn_system").await.unwrap();
+        let transaction =
+            wamn_control::provision_project_env::provisioning_transaction(&mut client)
+                .await
+                .unwrap();
+        let user = wamn_platform_identity::create_or_reuse_user(
+            &transaction,
+            "fixture@example.test",
+            "Fixture user",
+        )
+        .await
+        .unwrap();
+        transaction.commit().await.unwrap();
+        let arguments = || MembershipRequest {
+            system_database_url: database.url().to_owned(),
+            principal_id: user.principal_id.as_str().to_owned(),
+            ..request()
+        };
+        for _ in 0..2 {
+            assert_eq!(super::grant(arguments()).await.unwrap(), user.principal_id);
+        }
+        let row = client.query_one(
+            "SELECT created_by::text, updated_by::text FROM identity.project_env_memberships \
+             WHERE principal_id = $1::text::uuid AND org = 'acme' AND project = 'billing' AND env = 'dev'",
+            &[&user.principal_id.as_str()],
+        ).await.unwrap();
+        let provisioning = PlatformComponent::Provisioning.principal_id().to_string();
+        assert_eq!(row.get::<_, String>(0), provisioning);
+        assert_eq!(row.get::<_, String>(1), provisioning);
+        let row = client
+            .query_one("SELECT count(*) FROM identity.org_roles", &[])
+            .await
+            .unwrap();
+        assert_eq!(row.get::<_, i64>(0), 0);
+        super::revoke(arguments(), &AuthChanges::default())
+            .await
+            .unwrap();
+        let row = client.query_one(
+            "SELECT count(*) FROM identity.project_env_memberships WHERE principal_id = $1::text::uuid",
+            &[&user.principal_id.as_str()],
+        ).await.unwrap();
+        assert_eq!(row.get::<_, i64>(0), 0);
+        drop(client);
+        connection.await.unwrap().unwrap();
     }
 }

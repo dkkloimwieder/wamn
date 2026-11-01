@@ -9,7 +9,6 @@ use anyhow::Context as _;
 use tokio_postgres::Client;
 use wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION;
 use wamn_control::apply_package::{self, ApplyPackageRequest};
-use wamn_control::project_env_membership::{self, ProjectEnvMembershipRequest};
 use wamn_control::provision_project_env::{self, secret_value};
 use wamn_control::role_permission;
 use wamn_control::user_role::{self, EnvironmentTarget, UserRoleRequest};
@@ -30,6 +29,7 @@ use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, CredentialProvider, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
 };
 
+use crate::identity_session_test::membership::{self as fixture_membership, MembershipRequest};
 use wamn_control::dev::environment::{
     ENV_KEY, ENVIRONMENT, JourneyScope, ORG, PROJECT, connect, generation_args, provision_route,
     reset_control_store,
@@ -449,7 +449,7 @@ async fn assert_user_environment_membership(
     )
     .await?;
     let authorization = format!("Bearer {}", token.token());
-    let membership = |org: &str, env: &str, principal_id: &str| ProjectEnvMembershipRequest {
+    let membership = |org: &str, env: &str, principal_id: &str| MembershipRequest {
         org: org.to_owned(),
         project: PROJECT.to_owned(),
         env: env.to_owned(),
@@ -562,7 +562,7 @@ async fn assert_user_environment_membership(
         Err(unauthorized.clone())
     );
     for (org, env) in [(ORG, OTHER_ENVIRONMENT), ("other-org", ENVIRONMENT)] {
-        project_env_membership::grant(membership(org, env, user.id().as_str())).await?;
+        fixture_membership::grant(membership(org, env, user.id().as_str())).await?;
         assert_eq!(
             invoke(
                 route_auth,
@@ -577,7 +577,7 @@ async fn assert_user_environment_membership(
     }
     let mut other_project = membership(ORG, ENVIRONMENT, user.id().as_str());
     other_project.project = OTHER_PROJECT.to_owned();
-    project_env_membership::grant(other_project).await?;
+    fixture_membership::grant(other_project).await?;
     assert_eq!(
         invoke(
             route_auth,
@@ -591,7 +591,7 @@ async fn assert_user_environment_membership(
     );
     let mut forbidden_writer = membership(ORG, ENVIRONMENT, user.id().as_str());
     forbidden_writer.system_database_url = identity_url.to_owned();
-    project_env_membership::grant(forbidden_writer)
+    fixture_membership::grant(forbidden_writer)
         .await
         .expect_err("the identity reader cannot provision membership");
     assert_eq!(
@@ -607,7 +607,7 @@ async fn assert_user_environment_membership(
     assert_eq!(admissions, 0, "a nonmember reached application admission");
 
     for _ in 0..2 {
-        project_env_membership::grant(membership(ORG, ENVIRONMENT, user.id().as_str())).await?;
+        fixture_membership::grant(membership(ORG, ENVIRONMENT, user.id().as_str())).await?;
     }
     assert_eq!(
         admin
@@ -692,7 +692,7 @@ async fn assert_user_environment_membership(
         );
     }
 
-    project_env_membership::grant(membership(ORG, ENVIRONMENT, other.id().as_str())).await?;
+    fixture_membership::grant(membership(ORG, ENVIRONMENT, other.id().as_str())).await?;
     let other_token =
         issue_pat(admin, other.id(), "other member", Duration::from_secs(3600)).await?;
     assert_eq!(
@@ -756,7 +756,7 @@ async fn assert_user_environment_membership(
     .await
     .expect("restored environment role authorizes again");
     for _ in 0..2 {
-        project_env_membership::revoke(
+        fixture_membership::revoke(
             membership(ORG, ENVIRONMENT, user.id().as_str()),
             &AuthChanges::default(),
         )
@@ -772,7 +772,7 @@ async fn assert_user_environment_membership(
             Err(unauthorized.clone())
         );
     }
-    project_env_membership::grant(membership(ORG, ENVIRONMENT, user.id().as_str())).await?;
+    fixture_membership::grant(membership(ORG, ENVIRONMENT, user.id().as_str())).await?;
     disable_principal(admin, user.id(), &mut AuthDrops::default()).await?;
     assert_eq!(
         invoke(

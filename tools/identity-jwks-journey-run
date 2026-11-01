@@ -68,7 +68,9 @@ if [[ "$apply" != true ]]; then
   printf '%s\n' 'order=canonical identity build; serial component-builder prewarm; canonical gates build; own kind+PG18; production credential CLI; actual identity chart; five key-set Jobs; named cleanup' \
     'test=public HTTPS JWKS and key evidence only; token_admission=not_tested expiry_outage=not_tested'
   if [[ "$session_exchange" == true ]]; then
-    printf '%s\n' 'session_order=registry and app fixtures; protected PAT fixture; actual reader credential and membership CLI; configured identity chart; signed-claim and refusal Job; membership revoke; next-exchange refusal Job' \
+    printf '%s\n' 'session_order=registry and app fixtures; protected PAT fixture; actual reader credential; fixture membership grant; configured identity chart; signed-claim and refusal Job; fixture membership revoke; next-exchange refusal Job' \
+      'session_grant=wamn-gates identity-session-fixture grant-membership --org acme --project shared --env dev --principal-id <fixture-user-id>' \
+      'session_revoke=wamn-gates identity-session-fixture revoke-membership --org acme --project shared --env dev --principal-id <fixture-user-id>' \
       'session_test=exchange only; host_admission=not_tested'
   fi
   exit 0
@@ -446,7 +448,8 @@ session_journey() {
   session_target acme dev k3m9x2p7 t1 member
   session_target acme prod p7x2m9k3 t2 administrator
   session_target other dev q2n5r8t4 t3 outsider
-  run "${kube[@]}" -n "$namespace" exec "$provisioner" -- /usr/local/bin/wamn-ctl grant-project-env-membership \
+  run "${kube[@]}" -n "$namespace" exec "$provisioner" -- env WAMN_SESSION_FIXTURE_ALLOW=1 \
+    /usr/local/bin/wamn-gates identity-session-fixture grant-membership \
     --org acme --project shared --env dev --principal-id "$session_user_id" \
     >"$evidence_dir/session-grant-membership.log" 2>&1
   # The five foundation Jobs ran with no target files, including their absent
@@ -471,7 +474,8 @@ session_journey() {
       {name:"service-pat",pat:$f.service_pat,audience:$dev,expected_status:401,subject:"",org:"",roles:[]}
     ]' >"$work_dir/session-initial-cases.json"
   session_gate initial "$work_dir/session-initial-cases.json"
-  run "${kube[@]}" -n "$namespace" exec "$provisioner" -- /usr/local/bin/wamn-ctl revoke-project-env-membership \
+  run "${kube[@]}" -n "$namespace" exec "$provisioner" -- env WAMN_SESSION_FIXTURE_ALLOW=1 \
+    /usr/local/bin/wamn-gates identity-session-fixture revoke-membership \
     --org acme --project shared --env dev --principal-id "$session_user_id" \
     >"$evidence_dir/session-revoke-membership.log" 2>&1
   jq '[.[] | select(.name == "user-dev") | .name="membership-revoked" | .expected_status=401 | .subject="" | .org="" | .roles=[]]' \

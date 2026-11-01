@@ -52,10 +52,9 @@ enum Command {
     GrantProjectEnvMembership(identity_verbs::ProjectEnvMembershipArgs),
     /// Revoke one user's access to one project environment.
     RevokeProjectEnvMembership(identity_verbs::ProjectEnvMembershipArgs),
-    /// Ask identity to mail an invitation to one user principal.
+    /// Provision the first org admin through SQL as the Provisioning platform principal.
     ///
-    /// The platform's bootstrap write: Provisioning creates the first admin;
-    /// later invitations use user.invite.
+    /// Refuse an org that already has an active org admin. Use user.invite afterward.
     Invite(identity_verbs::InviteArgs),
     /// Give a user or a service one existing role in one environment.
     GrantRole(role_verbs::UserRoleArgs),
@@ -219,16 +218,16 @@ mod tests {
             let cli = Cli::try_parse_from([
                 "wamn-ctl",
                 verb,
-                "--org",
-                "acme",
+                "--host-url",
+                "https://control.example",
                 "--project",
                 "billing",
                 "--env",
                 "dev",
                 "--principal-id",
                 "00112233-4455-6677-8899-aabbccddeeff",
-                "--system-database-url",
-                "postgres://admin:secret@localhost/wamn_system",
+                "--token",
+                "session",
             ])
             .unwrap();
             let args = match cli.command {
@@ -242,7 +241,8 @@ mod tests {
                 }
                 _ => panic!("expected a project environment membership command"),
             };
-            assert_eq!(args.org, "acme");
+            assert_eq!(args.host_url, "https://control.example");
+            assert_eq!(args.token, "session");
             assert_eq!(args.project, "billing");
             assert_eq!(args.env, "dev");
             assert_eq!(args.principal_id, "00112233-4455-6677-8899-aabbccddeeff");

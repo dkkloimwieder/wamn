@@ -109,13 +109,14 @@ fn request(args: &ConfigurationArgs, operation: &str) -> anyhow::Result<Value> {
 
 fn route_request(
     client: &reqwest::Client,
-    args: &ConfigurationArgs,
+    host_url: &str,
+    token: &str,
     attachment: &HostAttachment,
     value: &Value,
 ) -> anyhow::Result<reqwest::Request> {
     let mut url = format!(
         "{}{}",
-        args.host_url.trim_end_matches('/'),
+        host_url.trim_end_matches('/'),
         attachment.definition["route"]["path"]
             .as_str()
             .context("route path")?
@@ -139,17 +140,27 @@ fn route_request(
             .json(&json!([{"request_id":request_id,"value":value}]))
     };
     request
-        .bearer_auth(&args.token)
+        .bearer_auth(token)
         .build()
         .context("build control request")
 }
 
 /// Call one route with the caller's token and print its response.
 pub async fn configuration(args: ConfigurationArgs, operation: &str) -> anyhow::Result<()> {
-    let attachment = route(operation)?;
     let value = request(&args, operation)?;
+    call(&args.host_url, &args.token, operation, &value).await
+}
+
+/// Call a control route with an already assembled request value.
+pub(crate) async fn call(
+    host_url: &str,
+    token: &str,
+    operation: &str,
+    value: &Value,
+) -> anyhow::Result<()> {
+    let attachment = route(operation)?;
     let client = reqwest::Client::new();
-    let request = route_request(&client, &args, attachment, &value)?;
+    let request = route_request(&client, host_url, token, attachment, value)?;
     let response = client
         .execute(request)
         .await
@@ -238,7 +249,8 @@ mod tests {
         assert_eq!(value["version"], 2);
         let request = route_request(
             &reqwest::Client::new(),
-            &args,
+            &args.host_url,
+            &args.token,
             route("connection.test").unwrap(),
             &value,
         )
@@ -253,7 +265,8 @@ mod tests {
         let value = json!({"project":"app","env":"dev","name":"erp"});
         let request = route_request(
             &reqwest::Client::new(),
-            &args(),
+            &args().host_url,
+            &args().token,
             route("connection.get").unwrap(),
             &value,
         )
@@ -274,7 +287,8 @@ mod tests {
         let value = json!({"project":"app","env":"dev","name":"erp","credential":"private-value"});
         let request = route_request(
             &reqwest::Client::new(),
-            &args(),
+            &args().host_url,
+            &args().token,
             route("connection.set_credential").unwrap(),
             &value,
         )

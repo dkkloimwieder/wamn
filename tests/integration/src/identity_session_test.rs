@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, ensure};
-use clap::Args;
+use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt as _;
 use wamn_control_provision::identity_issuer::validate_identity_issuer;
@@ -27,6 +27,8 @@ const IO_TIMEOUT: Duration = Duration::from_secs(5);
 const TEST_TIMEOUT: Duration = Duration::from_secs(90);
 const MAX_BYTES: usize = 65_536;
 
+pub(crate) mod membership;
+
 /// HTTPS observer inputs; the cases file is a protected Secret mount.
 #[derive(Debug, Args)]
 pub struct IdentitySessionTestArgs {
@@ -38,11 +40,34 @@ pub struct IdentitySessionTestArgs {
     pub cases_file: PathBuf,
 }
 
-/// Explicit private output only; database authority is accepted from Secret env.
+/// Private credentials and membership setup. Database authority comes from Secret env.
 #[derive(Debug, Args)]
+#[command(subcommand_negates_reqs = true, args_conflicts_with_subcommands = true)]
 pub struct IdentitySessionFixtureArgs {
+    #[arg(long, required = true)]
+    pub output: Option<PathBuf>,
+    #[command(subcommand)]
+    pub command: Option<IdentitySessionFixtureCommand>,
+}
+
+/// Membership changes inside an explicitly armed disposable fixture.
+#[derive(Debug, Subcommand)]
+pub enum IdentitySessionFixtureCommand {
+    GrantMembership(MembershipArgs),
+    RevokeMembership(MembershipArgs),
+}
+
+/// One existing fixture user and project environment.
+#[derive(Debug, Args)]
+pub struct MembershipArgs {
     #[arg(long)]
-    pub output: PathBuf,
+    pub org: String,
+    #[arg(long)]
+    pub project: String,
+    #[arg(long)]
+    pub env: String,
+    #[arg(long)]
+    pub principal_id: String,
 }
 
 #[derive(Deserialize)]
@@ -324,15 +349,11 @@ struct FixtureDocument<'a> {
     service_pat: &'a str,
 }
 
-/// Mint disposable fixtures only after explicit arming; never print their values.
+/// Change disposable fixtures only after explicit arming. Never print credentials.
 pub async fn fixture(args: IdentitySessionFixtureArgs) -> anyhow::Result<()> {
     ensure!(
         std::env::var("WAMN_SESSION_FIXTURE_ALLOW").as_deref() == Ok("1"),
         "identity session fixture is not explicitly armed"
-    );
-    ensure!(
-        args.output.is_absolute(),
-        "identity session fixture output must be an explicit absolute path"
     );
     let raw = std::env::var("WAMN_SYSTEM_ADMIN_URL")
         .map_err(|_| anyhow!("identity session fixture database Secret is required"))?;
@@ -346,11 +367,38 @@ pub async fn fixture(args: IdentitySessionFixtureArgs) -> anyhow::Result<()> {
             && parsed.fragment().is_none(),
         "identity session fixture must address the owned system database"
     );
+    if let Some(command) = args.command {
+        let (state, principal) = match command {
+            IdentitySessionFixtureCommand::GrantMembership(args) => (
+                "granted",
+                membership::grant(membership_request(args, raw)).await?,
+            ),
+            IdentitySessionFixtureCommand::RevokeMembership(args) => (
+                "revoked",
+                membership::revoke(
+                    membership_request(args, raw),
+                    &wamn_platform_identity::auth_changes::AuthChanges::default(),
+                )
+                .await?,
+            ),
+        };
+        println!(
+            "IDENTITY_SESSION_FIXTURE result=pass membership={state} principal_id={principal}"
+        );
+        return Ok(());
+    }
+    let output = args
+        .output
+        .ok_or_else(|| anyhow!("identity session fixture output is required"))?;
+    ensure!(
+        output.is_absolute(),
+        "identity session fixture output must be an explicit absolute path"
+    );
     let mut output = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o600)
-        .open(&args.output)
+        .open(&output)
         .map_err(|_| anyhow!("create private identity fixture output failed"))?;
     let bytes = tokio::time::timeout(Duration::from_secs(30), create_fixture(&raw))
         .await
@@ -363,6 +411,19 @@ pub async fn fixture(args: IdentitySessionFixtureArgs) -> anyhow::Result<()> {
         .map_err(|_| anyhow!("flush private identity fixture output failed"))?;
     println!("IDENTITY_SESSION_FIXTURE result=pass principals=2");
     Ok(())
+}
+
+fn membership_request(
+    args: MembershipArgs,
+    system_database_url: String,
+) -> membership::MembershipRequest {
+    membership::MembershipRequest {
+        org: args.org,
+        project: args.project,
+        env: args.env,
+        principal_id: args.principal_id,
+        system_database_url,
+    }
 }
 
 async fn create_fixture(url: &str) -> anyhow::Result<Vec<u8>> {

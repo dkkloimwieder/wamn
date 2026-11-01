@@ -6,13 +6,12 @@ use std::fmt;
 use std::path::PathBuf;
 
 use clap::{ArgGroup, Args};
+use serde_json::json;
 use wamn_control::identity_issuer::{
     IdentityIssuerAction, IdentityIssuerRequest, provision_identity_issuer,
 };
 use wamn_control::invite::{InviteRequest, invite as run_invite};
-use wamn_control::project_env_membership::{self, ProjectEnvMembershipRequest};
 use wamn_control_provision::CredentialGeneration;
-use wamn_platform_identity::PrincipalId;
 use wamn_platform_identity::org::MemberGrants;
 
 use crate::provisioning_verbs::PatIssuerArgs;
@@ -78,9 +77,13 @@ impl fmt::Debug for IdentityIssuerArgs {
 /// Arguments that name one existing user and one existing project environment.
 #[derive(Debug, Args)]
 pub struct ProjectEnvMembershipArgs {
-    /// Organization that owns the project environment.
-    #[arg(long)]
-    pub org: String,
+    /// Base URL of the control host for the organization.
+    #[arg(long, env = "WAMN_CONTROL_URL")]
+    pub host_url: String,
+
+    /// The caller's session token.
+    #[arg(long, env = "WAMN_TOKEN", hide_env_values = true)]
+    pub token: String,
 
     /// Project within the organization.
     #[arg(long)]
@@ -93,14 +96,10 @@ pub struct ProjectEnvMembershipArgs {
     /// Existing user principal UUID from the system database.
     #[arg(long)]
     pub principal_id: String,
-
-    /// Provisioning administrator URL for the system database.
-    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
-    pub system_database_url: String,
 }
 
-/// Arguments that name one user, one org, the grants and the operator
-/// identity client.
+/// Provision the first org admin through SQL as the Provisioning platform principal.
+/// An org with an active org admin refuses this command. Use user.invite afterward.
 #[derive(Debug, Args)]
 pub struct InviteArgs {
     /// The user's email. Identity creates the user or reuses the user that
@@ -116,8 +115,8 @@ pub struct InviteArgs {
     #[arg(long)]
     pub org: String,
 
-    /// Grant `org-admin` in the org.
-    #[arg(long)]
+    /// Grant `org-admin` to the first administrator of the org.
+    #[arg(long, required = true)]
     pub org_admin: bool,
 
     /// A project of the org where the user gets `project-admin`. Repeatable.
@@ -191,23 +190,6 @@ pub async fn provision_issuer(args: IdentityIssuerArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn membership_request(args: &ProjectEnvMembershipArgs) -> ProjectEnvMembershipRequest {
-    ProjectEnvMembershipRequest {
-        org: args.org.clone(),
-        project: args.project.clone(),
-        env: args.env.clone(),
-        principal_id: args.principal_id.clone(),
-        system_database_url: args.system_database_url.clone(),
-    }
-}
-
-fn print_membership(state: &str, args: &ProjectEnvMembershipArgs, principal_id: &PrincipalId) {
-    println!(
-        "membership {state} principal_id={principal_id} org={} project={} env={}",
-        args.org, args.project, args.env
-    );
-}
-
 /// Invite one user to an org and print what it did. Identity's reply carries
 /// no token, because identity mails the invitation secret.
 ///
@@ -252,25 +234,28 @@ pub async fn invite(args: InviteArgs) -> anyhow::Result<()> {
 
 /// Grant one user's project environment membership and print the new state.
 pub async fn grant(args: ProjectEnvMembershipArgs) -> anyhow::Result<()> {
-    let principal_id = project_env_membership::grant(membership_request(&args)).await?;
-    print_membership("granted", &args, &principal_id);
-    Ok(())
+    membership(args, "member.grant").await
 }
 
 /// Revoke one user's project environment membership and print the new state.
 pub async fn revoke(args: ProjectEnvMembershipArgs) -> anyhow::Result<()> {
-    let changes = wamn_platform_identity::auth_changes::AuthChanges::connect(
-        &wamn_platform_identity::nats::PlatformNats::from_env()?,
+    membership(args, "member.revoke").await
+}
+
+async fn membership(args: ProjectEnvMembershipArgs, operation: &str) -> anyhow::Result<()> {
+    crate::component_verbs::call(
+        &args.host_url,
+        &args.token,
+        operation,
+        &json!({"project": args.project, "env": args.env, "principal_id": args.principal_id}),
     )
-    .await?;
-    let principal_id = project_env_membership::revoke(membership_request(&args), &changes).await?;
-    print_membership("revoked", &args, &principal_id);
-    Ok(())
+    .await
 }
 
 #[cfg(test)]
 mod tests {
     use clap::{CommandFactory as _, Parser};
+    use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _};
 
     use super::{IdentityIssuerArgs, InviteArgs, ProjectEnvMembershipArgs};
 
@@ -292,6 +277,78 @@ mod tests {
         args: InviteArgs,
     }
 
+    async fn membership_server(path: &'static str) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let host_url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut stream = tokio::io::BufReader::new(stream);
+            let mut line = String::new();
+            stream.read_line(&mut line).await.unwrap();
+            assert_eq!(line, format!("POST {path} HTTP/1.1\r\n"));
+            let mut length = None;
+            let mut authorization = None;
+            loop {
+                line.clear();
+                assert_ne!(stream.read_line(&mut line).await.unwrap(), 0);
+                if line == "\r\n" {
+                    break;
+                }
+                let (name, value) = line.split_once(':').unwrap();
+                if name.eq_ignore_ascii_case("content-length") {
+                    length = Some(value.trim().parse::<usize>().unwrap());
+                }
+                if name.eq_ignore_ascii_case("authorization") {
+                    authorization = Some(value.trim().to_owned());
+                }
+            }
+            assert_eq!(authorization.as_deref(), Some("Bearer session"));
+            let mut body = vec![0; length.unwrap()];
+            stream.read_exact(&mut body).await.unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(body.as_array().unwrap().len(), 1);
+            assert!(!body[0]["request_id"].as_str().unwrap().is_empty());
+            assert_eq!(
+                body[0]["value"],
+                serde_json::json!({
+                    "project": "billing", "env": "dev",
+                    "principal_id": "00112233-4455-6677-8899-aabbccddeeff"
+                })
+            );
+            let body = r#"[{"value":{}}]"#;
+            stream
+                .write_all(format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+                    body.len()
+                ).as_bytes())
+                .await
+                .unwrap();
+        });
+        (host_url, server)
+    }
+
+    #[tokio::test]
+    async fn grant_posts_to_member_grant() {
+        let (host_url, server) = membership_server("/wamn_control/member/grant").await;
+        let mut args = MembershipCli::try_parse_from(membership_arguments())
+            .unwrap()
+            .args;
+        args.host_url = host_url;
+        super::grant(args).await.unwrap();
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn revoke_posts_to_member_revoke() {
+        let (host_url, server) = membership_server("/wamn_control/member/revoke").await;
+        let mut args = MembershipCli::try_parse_from(membership_arguments())
+            .unwrap()
+            .args;
+        args.host_url = host_url;
+        super::revoke(args).await.unwrap();
+        server.await.unwrap();
+    }
+
     fn invite_arguments() -> Vec<&'static str> {
         vec![
             "invite",
@@ -301,6 +358,7 @@ mod tests {
             "Ann",
             "--org",
             "acme",
+            "--org-admin",
             "--system-database-url",
             "postgres://admin:secret@localhost/wamn_system",
         ]
@@ -310,7 +368,6 @@ mod tests {
     fn invite_arguments_repeat_grants_and_split_memberships() {
         let mut values = invite_arguments();
         values.extend([
-            "--org-admin",
             "--project-admin",
             "billing",
             "--project-admin",
@@ -331,7 +388,7 @@ mod tests {
             ]
         );
         let args = InviteCli::try_parse_from(invite_arguments()).unwrap().args;
-        assert!(!args.org_admin && args.project_admins.is_empty() && args.memberships.is_empty());
+        assert!(args.org_admin && args.project_admins.is_empty() && args.memberships.is_empty());
         for extra in [
             ["--membership", "billing"],
             ["--membership", "billing/dev/x"],
@@ -342,6 +399,9 @@ mod tests {
             values.extend(extra);
             assert!(InviteCli::try_parse_from(values).is_err(), "{extra:?}");
         }
+        let mut values = invite_arguments();
+        values.retain(|value| *value != "--org-admin");
+        assert!(InviteCli::try_parse_from(values).is_err());
     }
 
     fn issuer_arguments() -> Vec<&'static str> {
@@ -363,16 +423,16 @@ mod tests {
     fn membership_arguments() -> [&'static str; 11] {
         [
             "membership",
-            "--org",
-            "acme",
+            "--host-url",
+            "https://control.example",
             "--project",
             "billing",
             "--env",
             "dev",
             "--principal-id",
             "00112233-4455-6677-8899-aabbccddeeff",
-            "--system-database-url",
-            "postgres://admin:secret@localhost/wamn_system",
+            "--token",
+            "session",
         ]
     }
 
@@ -410,7 +470,8 @@ mod tests {
         let args = MembershipCli::try_parse_from(membership_arguments())
             .unwrap()
             .args;
-        assert_eq!(args.org, "acme");
+        assert_eq!(args.host_url, "https://control.example");
+        assert_eq!(args.token, "session");
         assert_eq!(args.project, "billing");
         assert_eq!(args.env, "dev");
         assert_eq!(args.principal_id, "00112233-4455-6677-8899-aabbccddeeff");
@@ -419,23 +480,19 @@ mod tests {
     #[test]
     fn every_membership_argument_is_required() {
         let command = MembershipCli::command();
-        for name in [
-            "org",
-            "project",
-            "env",
-            "principal_id",
-            "system_database_url",
-        ] {
+        for name in ["host_url", "token", "project", "env", "principal_id"] {
             let argument = command
                 .get_arguments()
                 .find(|argument| argument.get_id() == name)
                 .unwrap();
             assert!(argument.is_required_set(), "{name} must be required");
         }
-        let database = command
-            .get_arguments()
-            .find(|argument| argument.get_id() == "system_database_url")
-            .unwrap();
-        assert_eq!(database.get_env().unwrap(), "WAMN_SYSTEM_ADMIN_URL");
+        for (name, environment) in [("host_url", "WAMN_CONTROL_URL"), ("token", "WAMN_TOKEN")] {
+            let argument = command
+                .get_arguments()
+                .find(|argument| argument.get_id() == name)
+                .unwrap();
+            assert_eq!(argument.get_env().unwrap(), environment);
+        }
     }
 }

@@ -41,7 +41,7 @@ enum Command {
     IdentityKeysTest(identity_keys_test::IdentityKeysTestArgs),
     /// Test fresh PAT exchange and signed environment claims through HTTPS.
     IdentitySessionTest(identity_session_test::IdentitySessionTestArgs),
-    /// Mint private credentials only inside an explicitly armed disposable fixture.
+    /// Seed credentials or change membership in an explicitly armed disposable fixture.
     #[command(name = "identity-session-fixture")]
     IdentitySessionFixture(identity_session_test::IdentitySessionFixtureArgs),
     /// Test fresh user membership through a deployed Receiving HTTP route.
@@ -96,4 +96,87 @@ async fn async_main() -> anyhow::Result<()> {
 
     shutdown_observability();
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Command};
+    use clap::Parser as _;
+    use wamn_integration_tests::identity_session_test::IdentitySessionFixtureCommand;
+
+    #[test]
+    fn membership_fixture_steps_parse_their_scope_without_credentials_or_output() {
+        for step in ["grant-membership", "revoke-membership"] {
+            let cli = Cli::try_parse_from([
+                "wamn-gates",
+                "identity-session-fixture",
+                step,
+                "--org",
+                "acme",
+                "--project",
+                "shared",
+                "--env",
+                "dev",
+                "--principal-id",
+                "00112233-4455-6677-8899-aabbccddeeff",
+            ])
+            .unwrap();
+            let Command::IdentitySessionFixture(args) = cli.command else {
+                panic!("fixture command")
+            };
+            assert!(args.output.is_none());
+            let args = match args.command.unwrap() {
+                IdentitySessionFixtureCommand::GrantMembership(args) => {
+                    assert_eq!(step, "grant-membership");
+                    args
+                }
+                IdentitySessionFixtureCommand::RevokeMembership(args) => {
+                    assert_eq!(step, "revoke-membership");
+                    args
+                }
+            };
+            assert_eq!(args.org, "acme");
+            assert_eq!(args.project, "shared");
+            assert_eq!(args.env, "dev");
+            assert_eq!(args.principal_id, "00112233-4455-6677-8899-aabbccddeeff");
+        }
+    }
+
+    #[test]
+    fn credential_fixture_requires_its_output_and_refuses_membership_steps_with_it() {
+        assert!(Cli::try_parse_from(["wamn-gates", "identity-session-fixture"]).is_err());
+        let cli = Cli::try_parse_from([
+            "wamn-gates",
+            "identity-session-fixture",
+            "--output",
+            "/tmp/identity.json",
+        ])
+        .unwrap();
+        let Command::IdentitySessionFixture(args) = cli.command else {
+            panic!("fixture command")
+        };
+        assert_eq!(
+            args.output.unwrap(),
+            std::path::Path::new("/tmp/identity.json")
+        );
+        assert!(args.command.is_none());
+        assert!(
+            Cli::try_parse_from([
+                "wamn-gates",
+                "identity-session-fixture",
+                "--output",
+                "/tmp/identity.json",
+                "grant-membership",
+                "--org",
+                "acme",
+                "--project",
+                "shared",
+                "--env",
+                "dev",
+                "--principal-id",
+                "00112233-4455-6677-8899-aabbccddeeff",
+            ])
+            .is_err()
+        );
+    }
 }

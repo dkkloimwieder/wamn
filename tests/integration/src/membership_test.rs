@@ -14,6 +14,7 @@ use wamn_platform_identity::application;
 use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
 use wamn_platform_identity::nats::PlatformNats;
 
+use crate::identity_session_test::membership::{self as fixture_membership, MembershipRequest};
 use anyhow::{Context as _, anyhow, ensure};
 use clap::Args;
 use serde_json::{Value, json};
@@ -115,7 +116,7 @@ pub async fn run(args: MembershipTestArgs) -> anyhow::Result<()> {
     if let Some(path) = &args.throughput_pat_file {
         let result = tokio::time::timeout(TEST_TIMEOUT, async {
             seed_env_key_role(&args, &mut project, user.id(), &role, &auth).await?;
-            membership(&args, user.id(), "grant-project-env-membership", &auth).await?;
+            membership(&args, user.id(), "grant-membership", &auth).await?;
             let token = issue_pat(
                 &system,
                 user.id(),
@@ -236,7 +237,7 @@ async fn exercise(
     let request = |case: &'static str, status| get_case(args, http, token.token(), case, status);
     request("absent_membership", 401).await?;
     for case in ["granted", "repeated_grant"] {
-        membership(args, principal, "grant-project-env-membership", auth).await?;
+        membership(args, principal, "grant-membership", auth).await?;
         request(case, 200).await?;
     }
     let user = format!("{role}@example.test");
@@ -265,7 +266,7 @@ async fn exercise(
     .context("restore this user's tenant role")?;
     request("role_restored", 200).await?;
     for case in ["revoked", "repeated_revoke"] {
-        membership(args, principal, "revoke-project-env-membership", auth).await?;
+        membership(args, principal, "revoke-membership", auth).await?;
         request(case, 401).await?;
     }
     Ok(())
@@ -337,7 +338,7 @@ async fn membership(
     verb: &str,
     auth: &AuthChanges,
 ) -> anyhow::Result<()> {
-    let arguments = wamn_control::project_env_membership::ProjectEnvMembershipRequest {
+    let arguments = MembershipRequest {
         org: args.org.clone(),
         project: args.project.clone(),
         env: args.env.clone(),
@@ -346,13 +347,9 @@ async fn membership(
     };
     tokio::time::timeout(OPERATION_TIMEOUT, async {
         match verb {
-            "grant-project-env-membership" => {
-                wamn_control::project_env_membership::grant(arguments).await
-            }
-            "revoke-project-env-membership" => {
-                wamn_control::project_env_membership::revoke(arguments, auth).await
-            }
-            _ => unreachable!("the membership test names only its two control operations"),
+            "grant-membership" => fixture_membership::grant(arguments).await,
+            "revoke-membership" => fixture_membership::revoke(arguments, auth).await,
+            _ => unreachable!("the membership test names only its two fixture operations"),
         }
     })
     .await

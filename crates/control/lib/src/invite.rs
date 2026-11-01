@@ -1,6 +1,7 @@
-//! Invite one user to an org
+//! Provision the first admin of an org through SQL
 //! (docs/architecture/overview.md#organization-membership-and-administration).
 //!
+//! An active org admin refuses this path and directs callers to user.invite.
 //! Identity creates or reuses the user by email. One system database
 //! transaction, as `wamn_system` bound to `wamn:provisioning`, then writes the
 //! org membership and the requested grants through the one write of each
@@ -46,18 +47,77 @@ pub struct InviteOutcome {
     pub invitation: Option<InvitationReply>,
 }
 
-/// Run the three steps of one invitation.
+/// Provision the first org admin. Later invitations must use user.invite.
 pub async fn invite(
     request: &InviteRequest,
     changes: &AuthChanges,
 ) -> anyhow::Result<InviteOutcome> {
+    anyhow::ensure!(
+        request.grants.org_admin,
+        "invite provisions the first org admin; use user.invite for other invitations"
+    );
     for (project, env) in &request.grants.memberships {
         validate_project_env(&request.org, project, env)
             .with_context(|| format!("invalid --membership {project}/{env}"))?;
     }
-    let user =
-        pat_client::create_user(&request.identity, &request.email, &request.display_name).await?;
-    write_grants(request, &user.principal_id, changes).await?;
+    let (mut client, connection) = tokio_postgres::connect(&request.system_database_url, NoTls)
+        .await
+        .context("connect to the system database for the invitation")?;
+    let connection_task = tokio::spawn(connection);
+    let result = async {
+        client
+            .batch_execute("SET ROLE wamn_system")
+            .await
+            .context("SET ROLE wamn_system for the invitation")?;
+        let transaction = provisioning_transaction(&mut client).await?;
+        transaction
+            .query(
+                "SELECT id FROM registry.orgs WHERE id = $1 FOR UPDATE",
+                &[&request.org],
+            )
+            .await
+            .context("lock the org for its first admin")?;
+        let has_admin: bool = transaction
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM identity.org_roles r \
+                 JOIN identity.org_memberships m USING (principal_id, org) \
+                 JOIN identity.principals p ON p.id = r.principal_id \
+                 WHERE r.org = $1 AND r.role = 'org-admin' AND m.status = 'active' \
+                 AND p.status = 'active')",
+                &[&request.org],
+            )
+            .await
+            .context("read the active org admin")?
+            .get(0);
+        anyhow::ensure!(
+            !has_admin,
+            "org {} already has an active org admin; use user.invite",
+            request.org
+        );
+        let user =
+            pat_client::create_user(&request.identity, &request.email, &request.display_name)
+                .await?;
+        invite_member(
+            &transaction,
+            &user.principal_id,
+            &request.org,
+            &request.grants,
+        )
+        .await
+        .context("write the org membership and the grants")?;
+        let mut drops = AuthDrops::default();
+        drops.identity(user.principal_id.as_str());
+        transaction
+            .commit()
+            .await
+            .context("commit the invitation grants")?;
+        changes.publish(drops).await;
+        Ok::<_, anyhow::Error>(user)
+    }
+    .await;
+    drop(client);
+    let _ = connection_task.await;
+    let user = result?;
     let invitation = if user.enrolled {
         None
     } else {
@@ -74,38 +134,4 @@ pub async fn invite(
         principal_id: user.principal_id,
         invitation,
     })
-}
-
-/// Write the org membership and the grants in one transaction.
-async fn write_grants(
-    request: &InviteRequest,
-    principal_id: &PrincipalId,
-    changes: &AuthChanges,
-) -> anyhow::Result<()> {
-    let (mut client, connection) = tokio_postgres::connect(&request.system_database_url, NoTls)
-        .await
-        .context("connect to the system database for the invitation")?;
-    let connection_task = tokio::spawn(connection);
-    let result = async {
-        client
-            .batch_execute("SET ROLE wamn_system")
-            .await
-            .context("SET ROLE wamn_system for the invitation")?;
-        let transaction = provisioning_transaction(&mut client).await?;
-        invite_member(&transaction, principal_id, &request.org, &request.grants)
-            .await
-            .context("write the org membership and the grants")?;
-        let mut drops = AuthDrops::default();
-        drops.identity(principal_id.as_str());
-        transaction
-            .commit()
-            .await
-            .context("commit the invitation grants")?;
-        changes.publish(drops).await;
-        Ok(())
-    }
-    .await;
-    drop(client);
-    let _ = connection_task.await;
-    result
 }

@@ -34,7 +34,6 @@ pub mod package_artifact;
 pub mod platform;
 pub mod platform_build;
 pub use wamn_identity_client as pat_client;
-pub mod project_env_membership;
 pub mod provision_org;
 pub mod provision_project_env;
 pub mod provision_system;
