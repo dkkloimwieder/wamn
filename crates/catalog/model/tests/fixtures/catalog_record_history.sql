@@ -26,18 +26,6 @@ INSERT INTO catalog.connection_binding (env_key,manifest_digest,component_digest
 VALUES ('history','sha256:' || encode(sha256('{}'::bytea),'hex'),'sha256:' || repeat('a',64),'fixture','store','10000000-0000-4000-8000-000000000002');
 INSERT INTO catalog.wiring_tombstones (env_key, package_id, environment, wiring_id, reason)
 VALUES ('history', 'fixture', 'dev', 'retired', 'fixture');
-INSERT INTO catalog.package_upgrade_qualifications
-    (env_key, package_id, candidate_package_version, canonical_bytes, result_sha256,
-     predecessor_manifest_digest, package_artifact_digest)
-VALUES ('history', 'fixture', '2', '{}'::bytea, 'sha256:' || encode(sha256('{}'::bytea), 'hex'),
-        'sha256:' || encode(sha256('{}'::bytea), 'hex'), 'sha256:' || repeat('a', 64));
-INSERT INTO catalog.package_upgrade_stages
-    (env_key, package_id, package_version, predecessor_version, status, cursor,
-     package_artifact_digest, predecessor_release_digest, evidence_digest)
-VALUES ('history', 'fixture', '2', '1', 'in_progress', 'null',
-        'sha256:' || repeat('a', 64), 'sha256:' || repeat('b', 64), 'sha256:' || repeat('c', 64));
-INSERT INTO catalog.package_floors (env_key, package_id, version) VALUES ('history', 'fixture', '1');
-
 DO $assert_inserts$
 DECLARE
     relation text;
@@ -46,7 +34,7 @@ BEGIN
     FOREACH relation IN ARRAY ARRAY[
         'packages', 'package_migrations', 'package_definition_owners', 'releases',
         'release_connection', 'connection_binding',
-        'wiring_tombstones', 'package_upgrade_qualifications', 'package_upgrade_stages', 'package_floors'
+        'wiring_tombstones'
     ] LOOP
         ASSERT (SELECT count(*) = 4 AND bool_and(attnotnull AND atthasdef = false)
                   FROM pg_attribute
@@ -67,7 +55,7 @@ BEGIN
             ASSERT SQLERRM = 'actor-required', format('%s missing actor: %s', relation, SQLERRM);
         END;
         PERFORM set_config('app.user_id', '00000000-0000-4000-8000-0000000000f1', true);
-        IF relation NOT IN ('package_upgrade_stages', 'package_floors', 'release_connection', 'connection_binding') THEN
+        IF relation NOT IN ('release_connection', 'connection_binding') THEN
             BEGIN
                 EXECUTE format('UPDATE catalog.%I SET created_by = created_by', relation);
                 RAISE EXCEPTION '% accepted an immutable update', relation;
@@ -78,56 +66,4 @@ BEGIN
     END LOOP;
 END
 $assert_inserts$;
-COMMIT;
-
--- transaction boundary
-BEGIN;
-SELECT set_config('app.user_id', '00000000-0000-4000-8000-0000000000f2', true),
-       set_config('app.operation', 'admin:update-catalog-history', true);
-UPDATE catalog.package_floors SET version = '2',
-    created_by = '00000000-0000-4000-8000-0000000000f2', created_at = '2000-01-01';
-UPDATE catalog.package_upgrade_stages SET cursor = '1', completed_batches = 1,
-    created_by = '00000000-0000-4000-8000-0000000000f2', created_at = '2000-01-01';
-DO $assert_updates$
-DECLARE
-    relation text;
-    stamped boolean;
-BEGIN
-    FOREACH relation IN ARRAY ARRAY['package_floors', 'package_upgrade_stages'] LOOP
-        EXECUTE format(
-            'SELECT bool_and(created_by = %L::uuid AND updated_by = %L::uuid
-                 AND updated_at = transaction_timestamp() AND created_at < updated_at) FROM catalog.%I',
-            '00000000-0000-4000-8000-0000000000f1', '00000000-0000-4000-8000-0000000000f2', relation
-        ) INTO stamped;
-        ASSERT stamped, format('%s update preserves creation and stamps the editor', relation);
-    END LOOP;
-END
-$assert_updates$;
-COMMIT;
-
--- transaction boundary
-BEGIN;
-SELECT set_config('app.user_id', '00000000-0000-4000-8000-0000000000f1', true);
-DO $assert_noops$
-DECLARE
-    relation text;
-    before_image jsonb;
-    after_image jsonb;
-BEGIN
-    FOREACH relation IN ARRAY ARRAY['package_floors', 'package_upgrade_stages'] LOOP
-        EXECUTE format('SELECT to_jsonb(row) FROM catalog.%I row', relation) INTO before_image;
-        EXECUTE format('UPDATE catalog.%I SET updated_by = created_by, updated_at = transaction_timestamp()', relation);
-        EXECUTE format('SELECT to_jsonb(row) FROM catalog.%I row', relation) INTO after_image;
-        ASSERT before_image = after_image, format('%s no-op preserves all stamps', relation);
-        PERFORM set_config('app.user_id', '', true);
-        BEGIN
-            EXECUTE format('UPDATE catalog.%I SET updated_by = updated_by', relation);
-            RAISE EXCEPTION '% accepted an update without an actor', relation;
-        EXCEPTION WHEN SQLSTATE '55000' THEN
-            ASSERT SQLERRM = 'actor-required', format('%s missing update actor', relation);
-        END;
-        PERFORM set_config('app.user_id', '00000000-0000-4000-8000-0000000000f1', true);
-    END LOOP;
-END
-$assert_noops$;
 COMMIT;

@@ -41,13 +41,8 @@ pub struct EnvironmentRow {
 /// One installed package in the project database.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Installed {
-    /// The installed version: the registered version that no other succeeds.
+    /// The installed package baseline.
     pub current: String,
-    /// Every registered version to its predecessor version.
-    pub lineage: BTreeMap<String, Option<String>>,
-    /// The registered versions with stage evidence
-    /// (`catalog.package_upgrade_qualifications`).
-    pub evidence: BTreeSet<String>,
 }
 
 /// What the project database holds.
@@ -56,8 +51,6 @@ pub struct ProjectState {
     pub installed: BTreeMap<String, Installed>,
     /// `(manifest_digest, component_digest, store_alias, instance_id)`.
     pub bindings: BTreeSet<(String, String, String, String)>,
-    /// Package id to recorded floor version.
-    pub floors: BTreeMap<String, String>,
 }
 
 /// The release the document names, as OCI and the chart hold it.
@@ -86,17 +79,6 @@ impl Revision {
     }
 }
 
-/// What the verified artifact of a declared floor version that the
-/// environment has not registered says about it (R13, R16).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FloorArtifact {
-    pub version: String,
-    /// The artifact's `predecessor_version`.
-    pub predecessor: Option<String>,
-    /// Whether the artifact is a contract-phase version.
-    pub contract: bool,
-}
-
 /// Everything analysis read.
 #[derive(Debug, Clone)]
 pub struct Authorities {
@@ -111,11 +93,6 @@ pub struct Authorities {
     pub revision: Option<Revision>,
     /// Release digest to the count of host pods that are not terminated.
     pub live: BTreeMap<String, usize>,
-    /// Package id to the artifact of its declared floor version, for each
-    /// declared floor of an installed package whose version is not registered.
-    /// `None` under `--dry-run`, which pulls no artifact: `apply` checks the
-    /// lineage of such a floor.
-    pub floor_artifacts: Option<BTreeMap<String, FloorArtifact>>,
 }
 
 /// The result of analysis: the authorities and the differences to apply.
@@ -128,7 +105,6 @@ pub struct Analysis {
 }
 
 /// Read every authority and check the document against it (§10.1 steps 2 and 3).
-/// With `dry_run`, analysis reads release package declarations but pulls no floor artifact.
 ///
 /// # Errors
 ///
@@ -137,7 +113,6 @@ pub struct Analysis {
 pub async fn analyse(
     platform: &Platform,
     document: &EnvironmentDocument,
-    dry_run: bool,
 ) -> anyhow::Result<Analysis> {
     let release_name =
         release_chart::release_name(&document.org, &document.project, &document.env)?;
@@ -158,10 +133,6 @@ pub async fn analyse(
     };
     let revision = read_revision(platform, &release_name).await?;
     let live = read_live_set(platform, &release_name).await?;
-    let floor_artifacts = match floors_to_pull(document, project.as_ref(), dry_run) {
-        Some(floors) => Some(read_floor_artifacts(platform, floors).await?),
-        None => None,
-    };
     let packages = match &release {
         Some(release) => read_release_sequences(platform, &release.manifest).await?,
         None => Vec::new(),
@@ -198,7 +169,6 @@ pub async fn analyse(
         release,
         revision,
         live,
-        floor_artifacts,
     };
     let actor = actor();
     let mut refusals = refusals(document, &authorities);
@@ -263,63 +233,6 @@ fn replica_refusal(connection: &str, replicas: Option<u64>) -> Option<String> {
              WAMN_RELEASE_HOST_GROUP must name replicas: 1"
         )
     })
-}
-
-/// The declared floor versions of installed packages that the environment has
-/// not registered, as `(package, version)`: analysis pulls their artifacts.
-/// `None` under `--dry-run`, which pulls no artifact.
-fn floors_to_pull<'a>(
-    document: &'a EnvironmentDocument,
-    project: Option<&ProjectState>,
-    dry_run: bool,
-) -> Option<Vec<(&'a str, &'a str)>> {
-    if dry_run {
-        return None;
-    }
-    let Some(project) = project.filter(|_| document.release != DeclaredRelease::None) else {
-        return Some(Vec::new());
-    };
-    Some(
-        document
-            .floors
-            .iter()
-            .filter(|(package, version)| {
-                project
-                    .installed
-                    .get(*package)
-                    .is_some_and(|installed| !installed.lineage.contains_key(*version))
-            })
-            .map(|(package, version)| (package.as_str(), version.as_str()))
-            .collect(),
-    )
-}
-
-/// Read the verified artifact of each floor of [`floors_to_pull`]: its lineage
-/// is checked here, at analysis, not when step 9 applies it (R13, R16).
-async fn read_floor_artifacts(
-    platform: &Platform,
-    floors: Vec<(&str, &str)>,
-) -> anyhow::Result<BTreeMap<String, FloorArtifact>> {
-    let mut artifacts = BTreeMap::new();
-    for (package, version) in floors {
-        let opened = super::stage::open(platform, package, version).await?;
-        let path = wamn_schema_generator::package_manifest_path(opened.root());
-        let manifest = wamn_schema_generator::PackageManifest::from_slice(
-            &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
-        )
-        .with_context(|| format!("parse {}", path.display()))?;
-        artifacts.insert(
-            package.to_owned(),
-            FloorArtifact {
-                version: version.to_owned(),
-                predecessor: manifest.package.predecessor_version.clone(),
-                contract: manifest.upgrade_stage.as_ref().is_some_and(|stage| {
-                    stage.phase == wamn_schema_generator::UpgradeStagePhase::Contract
-                }),
-            },
-        );
-    }
-    Ok(artifacts)
 }
 
 /// The package manifests of the release, read from their verified artifacts
@@ -449,40 +362,19 @@ pub(crate) async fn read_project(
     let mut installed = BTreeMap::<String, Installed>::new();
     for row in transaction
         .query(
-            "SELECT package_id, package_version, predecessor_version FROM catalog.packages \
+            "SELECT package_id, package_version FROM catalog.packages \
               WHERE env_key = $1",
             &[&env_key],
         )
         .await
         .context("read the installed packages")?
     {
-        installed
-            .entry(row.get(0))
-            .or_default()
-            .lineage
-            .insert(row.get(1), row.get(2));
-    }
-    for package in installed.values_mut() {
-        let succeeded: BTreeSet<&String> = package.lineage.values().flatten().collect();
-        package.current = package
-            .lineage
-            .keys()
-            .find(|version| !succeeded.contains(version))
-            .cloned()
-            .unwrap_or_default();
-    }
-    for row in transaction
-        .query(
-            "SELECT package_id, candidate_package_version \
-               FROM catalog.package_upgrade_qualifications WHERE env_key = $1",
-            &[&env_key],
-        )
-        .await
-        .context("read the stage evidence")?
-    {
-        if let Some(package) = installed.get_mut(row.get::<_, &str>(0)) {
-            package.evidence.insert(row.get(1));
-        }
+        installed.insert(
+            row.get(0),
+            Installed {
+                current: row.get(1),
+            },
+        );
     }
     let bindings = transaction
         .query(
@@ -495,33 +387,10 @@ pub(crate) async fn read_project(
         .into_iter()
         .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
         .collect();
-    let floors_installed: bool = transaction
-        .query_one(
-            "SELECT to_regclass('catalog.package_floors') IS NOT NULL",
-            &[],
-        )
-        .await
-        .context("probe the floor table")?
-        .get(0);
-    let floors = if floors_installed {
-        transaction
-            .query(
-                "SELECT package_id, version FROM catalog.package_floors WHERE env_key = $1",
-                &[&env_key],
-            )
-            .await
-            .context("read the recorded floors")?
-            .into_iter()
-            .map(|row| (row.get(0), row.get(1)))
-            .collect()
-    } else {
-        BTreeMap::new()
-    };
     transaction.commit().await.context("end the project read")?;
     Ok(Some(ProjectState {
         installed,
         bindings,
-        floors,
     }))
 }
 
@@ -756,48 +625,16 @@ pub(crate) async fn read_pods(platform: &Platform, release_name: &str) -> anyhow
 
 pub(crate) use wamn_control_provision::environment_state::live_set;
 
-/// Whether `version` is `ancestor` or descends from it through
-/// `predecessor_version` (R16). No ordering of versions is used.
-pub fn descends(lineage: &BTreeMap<String, Option<String>>, ancestor: &str, version: &str) -> bool {
-    let mut at = Some(version);
-    let mut seen = BTreeSet::new();
-    while let Some(current) = at {
-        if current == ancestor {
-            return true;
-        }
-        if !seen.insert(current) {
-            return false;
-        }
-        at = lineage.get(current).and_then(Option::as_deref);
-    }
-    false
-}
-
-/// The R17 predicate for one package the release names that is installed:
-/// the installed version, a staged successor with stage evidence, or the
-/// tested predecessor that the installed version's stage evidence names.
-/// `apply` and `rollback` use this one function.
+/// A release uses the installed package baseline until the application resets.
 pub fn package_compatible(installed: &Installed, version: &str) -> Result<(), String> {
     if version == installed.current {
-        return Ok(());
+        Ok(())
+    } else {
+        Err(format!(
+            "differs from installed version {}; reset the application database",
+            installed.current
+        ))
     }
-    let staged_successor = installed.lineage.get(version).and_then(Option::as_deref)
-        == Some(installed.current.as_str())
-        && installed.evidence.contains(version);
-    let tested_predecessor = installed.evidence.contains(&installed.current)
-        && installed
-            .lineage
-            .get(&installed.current)
-            .and_then(Option::as_deref)
-            == Some(version);
-    if staged_successor || tested_predecessor {
-        return Ok(());
-    }
-    Err(format!(
-        "is neither the installed version {}, a staged successor with stage evidence, \
-         nor the tested predecessor of the installed version",
-        installed.current
-    ))
 }
 
 /// Every reason the document is refused against the authorities (§10.1 step 3).
@@ -805,77 +642,13 @@ pub fn refusals(document: &EnvironmentDocument, authorities: &Authorities) -> Ve
     let mut refusals = Vec::new();
     let empty = ProjectState::default();
     let project = authorities.project.as_ref().unwrap_or(&empty);
-    for (package, recorded) in &project.floors {
-        let lineage = project
-            .installed
-            .get(package)
-            .map(|installed| &installed.lineage);
-        match document.floors.get(package) {
-            None => refusals.push(format!(
-                "floor {package}@{recorded} is recorded and not declared"
-            )),
-            Some(declared) if document.release == DeclaredRelease::None && declared != recorded => {
-                refusals.push(format!(
-                    "floor {package}@{declared}: with release none no floor advances from {recorded}"
-                ));
-            }
-            // A version not registered yet is checked against its artifact
-            // below.
-            Some(declared)
-                if lineage.is_some_and(|lineage| {
-                    lineage.contains_key(declared) && !descends(lineage, recorded, declared)
-                }) =>
-            {
-                refusals.push(format!(
-                    "floor {package}@{declared} does not descend from the recorded floor {recorded}"
-                ));
-            }
-            Some(_) => {}
-        }
-    }
-    for (package, declared) in &document.floors {
-        match project.installed.get(package) {
-            None => refusals.push(format!(
-                "floor {package}@{declared} names a package not installed"
-            )),
-            Some(_)
-                if document.release == DeclaredRelease::None
-                    && !project.floors.contains_key(package) =>
-            {
-                refusals.push(format!(
-                    "floor {package}@{declared}: with release none no floor advances"
-                ));
-            }
-            Some(installed)
-                if document.release != DeclaredRelease::None
-                    && !installed.lineage.contains_key(declared) =>
-            {
-                // Under --dry-run no artifact was pulled: apply checks it.
-                if let Some(artifacts) = &authorities.floor_artifacts {
-                    refusals.extend(unregistered_floor(
-                        package,
-                        declared,
-                        installed,
-                        project.floors.get(package),
-                        artifacts.get(package),
-                    ));
-                }
-            }
-            Some(_) => {}
-        }
-    }
     if let Some(release) = &authorities.release {
         for package in &release.manifest.release.packages {
             let (id, version) = (package.package_id(), package.package_version());
-            if let Some(installed) = project.installed.get(id) {
-                if let Err(reason) = package_compatible(installed, version) {
-                    refusals.push(format!("package {id}@{version} {reason}"));
-                }
-                if let Some(floor) = project.floors.get(id)
-                    && !descends(&installed.lineage, floor, version)
-                {
-                    refusals.push(format!("package {id}@{version} is below the floor {floor}"));
-                }
+            if let Some(installed) = project.installed.get(id)
+                && let Err(reason) = package_compatible(installed, version)
+            {
+                refusals.push(format!("package {id}@{version} {reason}"));
             }
         }
         for component in &release.manifest.components {
@@ -974,45 +747,6 @@ pub(crate) fn application_refusals<'a>(
     refusals
 }
 
-/// The refusal of a declared floor version the environment has not
-/// registered, from its verified artifact (R13, R16). Step 9 applies the
-/// version, so it must be a contract-phase version whose predecessor is the
-/// installed version, and with that link it must descend from the recorded
-/// floor.
-fn unregistered_floor(
-    package: &str,
-    declared: &str,
-    installed: &Installed,
-    recorded: Option<&String>,
-    artifact: Option<&FloorArtifact>,
-) -> Option<String> {
-    let Some(artifact) = artifact.filter(|artifact| artifact.version == declared) else {
-        return Some(format!(
-            "floor {package}@{declared} is not registered and its artifact was not read"
-        ));
-    };
-    if !artifact.contract {
-        return Some(format!(
-            "floor {package}@{declared} is not a contract-phase version"
-        ));
-    }
-    if artifact.predecessor.as_deref() != Some(installed.current.as_str()) {
-        return Some(format!(
-            "floor {package}@{declared} is outside the lineage: its predecessor {:?} is not \
-             the installed version {}",
-            artifact.predecessor, installed.current
-        ));
-    }
-    let mut lineage = installed.lineage.clone();
-    lineage.insert(declared.to_owned(), artifact.predecessor.clone());
-    match recorded {
-        Some(recorded) if !descends(&lineage, recorded, declared) => Some(format!(
-            "floor {package}@{declared} does not descend from the recorded floor {recorded}"
-        )),
-        _ => None,
-    }
-}
-
 /// The differences from each authority (§10.1 step 3, the plan).
 fn plan(document: &EnvironmentDocument, authorities: &Authorities) -> Vec<String> {
     let mut plan = Vec::new();
@@ -1054,24 +788,6 @@ fn plan(document: &EnvironmentDocument, authorities: &Authorities) -> Vec<String
         (None, Some(current)) => plan.push(format!("uninstall release {current} and drain")),
         (None, None) => {}
     }
-    if let Some(project) = &authorities.project {
-        for (package, declared) in &document.floors {
-            if project.floors.get(package) != Some(declared) {
-                plan.push(format!("contract {package} to floor {declared} when safe"));
-            }
-            if authorities.floor_artifacts.is_none()
-                && project
-                    .installed
-                    .get(package)
-                    .is_some_and(|installed| !installed.lineage.contains_key(declared))
-            {
-                plan.push(format!(
-                    "floor {package}@{declared} is not registered: apply pulls its artifact \
-                     and checks its lineage"
-                ));
-            }
-        }
-    }
     if plan.is_empty() {
         plan.push("nothing differs".to_owned());
     }
@@ -1097,48 +813,18 @@ mod tests {
         assert!(replica_refusal("meter", Some(1)).is_none());
     }
 
-    fn lineage(pairs: &[(&str, Option<&str>)]) -> BTreeMap<String, Option<String>> {
-        pairs
-            .iter()
-            .map(|(version, predecessor)| ((*version).to_owned(), predecessor.map(str::to_owned)))
-            .collect()
-    }
-
     #[test]
-    fn descends_through_predecessors_only() {
-        let lineage = lineage(&[
-            ("2.2.0", None),
-            ("2.3.0", Some("2.2.0")),
-            ("2.4.0", Some("2.3.0")),
-        ]);
-        assert!(descends(&lineage, "2.2.0", "2.4.0"));
-        assert!(descends(&lineage, "2.4.0", "2.4.0"));
-        assert!(!descends(&lineage, "2.4.0", "2.2.0"));
-        assert!(!descends(&lineage, "2.2.0", "9.9.9"));
-    }
-
-    #[test]
-    fn the_compatibility_predicate_holds_its_table() {
+    fn release_requires_the_installed_package_version() {
         let installed = Installed {
-            current: "2.3.0".to_owned(),
-            lineage: lineage(&[
-                ("2.2.0", None),
-                ("2.3.0", Some("2.2.0")),
-                ("2.4.0", Some("2.3.0")),
-            ]),
-            evidence: BTreeSet::from(["2.3.0".to_owned()]),
+            current: "2.3.0".into(),
         };
-        // installed, tested predecessor, staged successor without evidence, unrelated.
         assert!(package_compatible(&installed, "2.3.0").is_ok());
-        assert!(package_compatible(&installed, "2.2.0").is_ok());
+        assert!(
+            package_compatible(&installed, "2.2.0")
+                .unwrap_err()
+                .contains("reset")
+        );
         assert!(package_compatible(&installed, "2.4.0").is_err());
-        assert!(package_compatible(&installed, "1.0.0").is_err());
-        let staged = Installed {
-            evidence: BTreeSet::from(["2.4.0".to_owned()]),
-            ..installed
-        };
-        assert!(package_compatible(&staged, "2.4.0").is_ok());
-        assert!(package_compatible(&staged, "2.2.0").is_err());
     }
 
     #[test]
@@ -1164,140 +850,6 @@ mod tests {
         assert_eq!(
             live_set(&pods),
             BTreeMap::from([("sha256:a".to_owned(), 2), ("sha256:b".to_owned(), 1)])
-        );
-    }
-
-    fn authorities(floors: &[(&str, &str)]) -> Authorities {
-        Authorities {
-            release_name: "r-prod-0".to_owned(),
-            connections: BTreeMap::new(),
-            artifact_bindings: BTreeSet::new(),
-            policy: Policy {
-                name: "prod".to_owned(),
-                readiness_budget_seconds: 600,
-                drain_bound_seconds: 300,
-            },
-            row: None,
-            project: Some(ProjectState {
-                installed: BTreeMap::from([(
-                    "wamn_wms".to_owned(),
-                    Installed {
-                        current: "2.4.0".to_owned(),
-                        lineage: lineage(&[
-                            ("2.2.0", None),
-                            ("2.3.0", Some("2.2.0")),
-                            ("2.4.0", Some("2.3.0")),
-                        ]),
-                        evidence: BTreeSet::new(),
-                    },
-                )]),
-                floors: floors
-                    .iter()
-                    .map(|(package, version)| ((*package).to_owned(), (*version).to_owned()))
-                    .collect(),
-                ..ProjectState::default()
-            }),
-            release: None,
-            revision: None,
-            live: BTreeMap::new(),
-            floor_artifacts: Some(BTreeMap::new()),
-        }
-    }
-
-    fn document(release: DeclaredRelease, floors: &[(&str, &str)]) -> EnvironmentDocument {
-        EnvironmentDocument {
-            integrations: std::collections::BTreeMap::new(),
-            target: "cloud".into(),
-            org: "acme".to_owned(),
-            project: "wms".to_owned(),
-            env: "prod".to_owned(),
-            release,
-            route_host: "wms.acme.example".to_owned(),
-            client_package: None,
-            policy: "prod".to_owned(),
-            applications: BTreeMap::new(),
-            floors: floors
-                .iter()
-                .map(|(package, version)| ((*package).to_owned(), (*version).to_owned()))
-                .collect(),
-        }
-    }
-
-    #[test]
-    fn floors_are_declared_and_monotonic() {
-        let digest = DeclaredRelease::Digest(format!("sha256:{}", "a".repeat(64)));
-        let recorded = authorities(&[("wamn_wms", "2.3.0")]);
-        assert!(
-            refusals(
-                &document(digest.clone(), &[("wamn_wms", "2.4.0")]),
-                &recorded
-            )
-            .is_empty()
-        );
-        assert!(
-            refusals(
-                &document(digest.clone(), &[("wamn_wms", "2.3.0")]),
-                &recorded
-            )
-            .is_empty()
-        );
-        let omitted = refusals(&document(digest.clone(), &[]), &recorded);
-        assert!(
-            omitted[0].contains("recorded and not declared"),
-            "{omitted:?}"
-        );
-        let ancestor = refusals(
-            &document(digest.clone(), &[("wamn_wms", "2.2.0")]),
-            &recorded,
-        );
-        assert!(ancestor[0].contains("does not descend"), "{ancestor:?}");
-        let advanced = refusals(
-            &document(DeclaredRelease::None, &[("wamn_wms", "2.4.0")]),
-            &recorded,
-        );
-        assert!(advanced[0].contains("no floor advances"), "{advanced:?}");
-        let first = refusals(
-            &document(digest.clone(), &[("wamn_wms", "2.4.0")]),
-            &authorities(&[]),
-        );
-        assert!(first.is_empty(), "{first:?}");
-        // A version not registered yet is the contract-phase successor that
-        // step 9 applies from its artifact: its artifact names the installed
-        // version as its predecessor.
-        let artifact = |predecessor: Option<&str>, contract: bool| {
-            let mut with = recorded.clone();
-            with.floor_artifacts.as_mut().unwrap().insert(
-                "wamn_wms".to_owned(),
-                FloorArtifact {
-                    version: "2.5.0".to_owned(),
-                    predecessor: predecessor.map(str::to_owned),
-                    contract,
-                },
-            );
-            refusals(&document(digest.clone(), &[("wamn_wms", "2.5.0")]), &with)
-        };
-        assert!(artifact(Some("2.4.0"), true).is_empty());
-        // R13, R16: a declared floor outside the lineage is refused here, not
-        // at step 9.
-        for (predecessor, reason) in [
-            (Some("2.3.0"), "outside the lineage"),
-            (Some("9.9.9"), "outside the lineage"),
-            (None, "outside the lineage"),
-        ] {
-            let refused = artifact(predecessor, true);
-            assert!(refused[0].contains(reason), "{refused:?}");
-        }
-        let expand = artifact(Some("2.4.0"), false);
-        assert!(expand[0].contains("not a contract-phase"), "{expand:?}");
-        let unread = refusals(&document(digest, &[("wamn_wms", "2.5.0")]), &recorded);
-        assert!(unread[0].contains("artifact was not read"), "{unread:?}");
-        let none_first = refusals(
-            &document(DeclaredRelease::None, &[("wamn_wms", "2.4.0")]),
-            &authorities(&[]),
-        );
-        assert!(
-            none_first[0].contains("no floor advances"),
-            "{none_first:?}"
         );
     }
 
@@ -1427,33 +979,5 @@ mod tests {
             ("wamn_wms", &[("purchase_order", "W-{seq:po}")]),
         ]);
         assert!(sequence_refusals(&declared, &declarations).is_empty());
-    }
-
-    #[test]
-    fn dry_run_pulls_no_floor_artifact() {
-        let digest = DeclaredRelease::Digest(format!("sha256:{}", "a".repeat(64)));
-        let unregistered = document(digest, &[("wamn_wms", "2.5.0")]);
-        let recorded = authorities(&[("wamn_wms", "2.3.0")]);
-        assert_eq!(
-            floors_to_pull(&unregistered, recorded.project.as_ref(), false),
-            Some(vec![("wamn_wms", "2.5.0")])
-        );
-        assert_eq!(
-            floors_to_pull(&unregistered, recorded.project.as_ref(), true),
-            None
-        );
-        // Without the artifact, analysis does not refuse the floor, and the
-        // plan says that apply checks its lineage.
-        let dry = Authorities {
-            floor_artifacts: None,
-            ..recorded
-        };
-        assert!(refusals(&unregistered, &dry).is_empty());
-        let plan = plan(&unregistered, &dry);
-        assert!(
-            plan.iter()
-                .any(|line| line.contains("apply pulls its artifact and checks its lineage")),
-            "{plan:?}"
-        );
     }
 }

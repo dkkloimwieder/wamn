@@ -12,6 +12,4 @@ environment.Environment {
     applications = {
         "wamn_receiving" = {packages = ["wamn_receiving"]}
     }
-    floors = {
-    }
 }

@@ -42,7 +42,7 @@ fn refusal(error: &anyhow::Error, kind: PackageMigrationErrorType) {
 }
 
 #[tokio::test]
-async fn registration_serializes_replay_conflicts_successors_and_rollback() {
+async fn registration_preserves_replays_and_refuses_another_version() {
     let _lock = wamn_test_postgres::lock();
     let hash = format!("sha256:{}", "a".repeat(64));
     let other_hash = format!("sha256:{}", "b".repeat(64));
@@ -81,106 +81,11 @@ async fn registration_serializes_replay_conflicts_successors_and_rollback() {
             PackageMigrationErrorType::CoordinatePredecessorConflict,
         );
 
-        // Each contender reaches the actual caller while the winning transaction holds its lineage lock.
-        for (winner, contender, contender_hash, expected) in [
-            ("2.0.0", "2.0.0", hash.as_str(), None),
-            (
-                "3.0.0",
-                "3.0.0",
-                other_hash.as_str(),
-                Some(PackageMigrationErrorType::CoordinateContentConflict),
-            ),
-            (
-                "4.0.0",
-                "4.1.0",
-                hash.as_str(),
-                Some(PackageMigrationErrorType::PredecessorNotCurrent),
-            ),
-        ] {
-            let predecessor = match winner {
-                "2.0.0" => "1.0.0",
-                "3.0.0" => "2.0.0",
-                _ => "3.0.0",
-            };
-            let tx = first.transaction().await.unwrap();
-            crate::apply_package::bind_apply_package_principal(&tx)
+        refusal(
+            &register(&mut second, "2.0.0", &hash, Some("1.0.0"))
                 .await
-                .unwrap();
-            assert!(
-                register_package(
-                    &tx,
-                    ENV_KEY,
-                    &PackageCoordinate::new("inventory", winner).unwrap(),
-                    Some(&hash),
-                    Some(predecessor)
-                )
-                .await
-                .unwrap()
-            );
-            let pending = register(&mut second, contender, contender_hash, Some(predecessor));
-            tokio::pin!(pending);
-            assert!(
-                tokio::time::timeout(std::time::Duration::from_millis(100), &mut pending)
-                    .await
-                    .is_err(),
-                "registration must wait for the lineage transaction"
-            );
-            tx.commit().await.unwrap();
-            let outcome = pending.await;
-            if let Some(kind) = expected {
-                refusal(&outcome.unwrap_err(), kind);
-            } else {
-                assert!(!outcome.unwrap());
-            }
-        }
-        // Exact retries of older versions remain valid after a successor is installed.
-        assert!(!register(&mut first, "1.0.0", &hash, None).await.unwrap());
-        let tx = first.transaction().await.unwrap();
-        crate::apply_package::bind_apply_package_principal(&tx)
-            .await
-            .unwrap();
-        assert!(
-            register_package(
-                &tx,
-                ENV_KEY,
-                &PackageCoordinate::new("inventory", "5.0.0").unwrap(),
-                Some(&hash),
-                Some("4.0.0")
-            )
-            .await
-            .unwrap()
-        );
-        tx.batch_execute("CREATE TABLE catalog.registration_rollback (id integer); INSERT INTO catalog.registration_rollback VALUES (1)").await.unwrap();
-        tx.batch_execute("SELECT 1/0").await.unwrap_err();
-        tx.rollback().await.unwrap();
-        assert!(
-            !first
-                .query_one(
-                    "SELECT EXISTS (SELECT FROM catalog.packages WHERE package_version = '5.0.0')",
-                    &[]
-                )
-                .await
-                .unwrap()
-                .get::<_, bool>(0)
-        );
-        assert!(
-            first
-                .query_one(
-                    "SELECT to_regclass('catalog.registration_rollback')::text",
-                    &[]
-                )
-                .await
-                .unwrap()
-                .get::<_, Option<String>>(0)
-                .is_none()
-        );
-        assert_eq!(
-            first
-                .query_one("SELECT count(*) FROM catalog.packages", &[])
-                .await
-                .unwrap()
-                .get::<_, i64>(0),
-            4
+                .unwrap_err(),
+            PackageMigrationErrorType::BaselineChanged,
         );
         assert!(first.query_one("SELECT to_regprocedure('catalog.register_package(text,text,text,text,text)')::text", &[]).await.unwrap().get::<_, Option<String>>(0).is_none());
     }

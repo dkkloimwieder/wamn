@@ -145,24 +145,6 @@ fn observation_at_record() -> RunPlaneObservation {
         }
     }
     obs.app_run_capture_privileges = (false, false, true);
-    for table in [
-        "effect_attempts",
-        "effect_attempt_dispatches",
-        "effect_attempt_outcomes",
-    ] {
-        obs.effect_table_owners
-            .insert(table.to_string(), "platform_admin".to_string());
-        // All three tables are at record without append authority — born
-        // parked, matching `deploy/sql/run-state.sql`.
-        let key = (table.to_string(), "wamn_app".to_string());
-        let privileges: BTreeSet<String> = ["SELECT".to_string()].into_iter().collect();
-        obs.effect_table_privileges
-            .insert(key.clone(), privileges.clone());
-        obs.effect_table_effective_privileges
-            .insert(key.clone(), privileges.clone());
-        obs.effect_table_effective_column_privileges
-            .insert(key, privileges);
-    }
     for spec in CHECK_SPECS {
         obs.checks.insert(
             (spec.table.to_string(), spec.name.to_string()),
@@ -177,71 +159,17 @@ fn observation_at_record() -> RunPlaneObservation {
         obs.triggers
             .insert((spec.table, spec.name), spec.definition);
     }
-    obs.indexes.insert(
-        "effect_attempts_occurrence_key".to_string(),
-        "CREATE UNIQUE INDEX effect_attempts_occurrence_key ON wamn_run.effect_attempts USING btree (env_key, run_id, frame_id, local_node_id, occurrence)".to_string(),
-    );
-    obs.indexes.insert(
-        "effect_attempts_dispatch_identity_key".to_string(),
-        EFFECT_ATTEMPTS_DISPATCH_IDENTITY_KEY_DEF.to_string(),
-    );
-    obs.indexes.insert(
-        "effect_attempt_dispatches_occurrence_key".to_string(),
-        EFFECT_DISPATCHES_OCCURRENCE_KEY_DEF.to_string(),
-    );
-    obs.defaulted_columns.insert((
-        "effect_attempts".to_string(),
-        "attempt_started_at".to_string(),
-    ));
-    for (table, column, ty, not_null) in [
-        ("effect_attempts", "root_plan_hash", "text", true),
-        ("effect_attempts", "current_plan_hash", "text", true),
-        ("effect_attempts", "frame_id", "bigint", true),
-        ("effect_attempts", "parent_frame_id", "bigint", false),
-        ("effect_attempts", "call_site_id", "text", false),
-        ("effect_attempts", "local_node_id", "text", true),
-        ("effect_attempts", "source_artifact_hash", "text", true),
-        ("effect_attempts", "requirement_name", "text", true),
-        ("effect_attempt_dispatches", "run_id", "text", true),
-        ("effect_attempt_dispatches", "frame_id", "bigint", true),
-        ("effect_attempt_dispatches", "local_node_id", "text", true),
-        ("effect_attempt_dispatches", "occurrence", "integer", true),
-    ] {
-        let key = (table.to_string(), column.to_string());
-        obs.column_types.insert(key.clone(), ty.to_string());
-        if not_null {
-            obs.non_nullable_columns.insert(key);
-        }
-    }
     for (column, ty) in [("package_id", "text"), ("environment", "text")] {
         let key = ("runs".to_string(), column.to_string());
         obs.non_nullable_columns.insert(key.clone());
         obs.column_types.insert(key, ty.to_string());
     }
-    obs.foreign_keys.insert(
-        ("runs".to_string(), "runs_release_fk".to_string()),
-        RUNS_RELEASE_FK_DEF.to_string(),
-    );
     obs.triggers.insert(
         (
             "runs".to_string(),
             "runs_admission_pins_immutable".to_string(),
         ),
         RUNS_ADMISSION_PINS_TRIGGER_DEF.to_string(),
-    );
-    obs.foreign_keys.insert(
-        (
-            "effect_attempt_dispatches".to_string(),
-            EFFECT_DISPATCH_ATTEMPT_FK_NAME.to_string(),
-        ),
-        EFFECT_DISPATCH_ATTEMPT_FK_DEF.to_string(),
-    );
-    obs.foreign_keys.insert(
-        (
-            "effect_attempt_outcomes".to_string(),
-            EFFECT_OUTCOME_DISPATCH_FK_NAME.to_string(),
-        ),
-        EFFECT_OUTCOME_DISPATCH_FK_DEF.to_string(),
     );
     obs
 }
@@ -466,8 +394,8 @@ fn observation_at_record_plans_a_noop() {
     assert!(plan.extra_columns.is_empty());
     assert_eq!(
         plan.at_target.len(),
-        6,
-        "all six retained run-plane tables are at target"
+        3,
+        "all retained run-plane tables are at target"
     );
 }
 
@@ -720,89 +648,6 @@ fn guest_column_authority_alone_never_plans_false_clean() {
     );
 }
 
-#[test]
-fn current_populated_single_target_creates_missing_peer_without_frame_refusal() {
-    let mut obs = observation_at_record();
-    obs.tables.remove("effect_attempts");
-
-    let plan = plan_run_plane(&schema("demo"), &obs);
-    assert!(plan.actions.iter().any(|action| {
-        action.kind == RunPlaneActionKind::CreateTable && action.target == "effect_attempts"
-    }));
-}
-
-#[test]
-fn populated_current_frame_identity_drift_refuses() {
-    #[expect(
-        clippy::type_complexity,
-        reason = "the table-driven test pairs each drift label with one noncapturing mutation"
-    )]
-    // Current frame identities retain their type, nullability, and checks.
-    let cases: [(&str, fn(&mut RunPlaneObservation)); 3] = [
-        ("wrong-type", |obs| {
-            obs.column_types.insert(
-                ("effect_attempts".to_string(), "frame_id".to_string()),
-                "integer".to_string(),
-            );
-        }),
-        ("wrong-nullability", |obs| {
-            obs.non_nullable_columns.remove(&(
-                "effect_attempts".to_string(),
-                "requirement_name".to_string(),
-            ));
-        }),
-        ("wrong-frame-check", |obs| {
-            obs.checks.insert(
-                (
-                    "effect_attempts".to_string(),
-                    "effect_attempts_frame_relation_check".to_string(),
-                ),
-                "CHECK (frame_id >= 0)".to_string(),
-            );
-        }),
-    ];
-
-    for (case, mutate) in cases {
-        let mut obs = observation_at_record();
-        mutate(&mut obs);
-        obs.effect_record_rows = 1;
-        let plan = plan_run_plane(&schema("demo"), &obs);
-        let action = plan.actions.first().expect(case);
-        assert_eq!(action.kind, RunPlaneActionKind::RefuseSchemaDrift, "{case}");
-        assert!(action.sql.contains("effect-ledger-schema-drift"));
-        assert_eq!(plan.actions.len(), 1);
-    }
-}
-
-#[test]
-fn effect_lineage_and_temporal_fks_are_repaired_on_existing_tables() {
-    let mut obs = observation_at_record();
-    for (table, name) in [
-        ("effect_attempt_dispatches", EFFECT_DISPATCH_ATTEMPT_FK_NAME),
-        ("effect_attempt_outcomes", EFFECT_OUTCOME_DISPATCH_FK_NAME),
-    ] {
-        obs.foreign_keys
-            .remove(&(table.to_string(), name.to_string()));
-    }
-
-    let plan = plan_run_plane(&schema("demo"), &obs);
-    let targets: BTreeSet<String> = plan
-        .actions
-        .into_iter()
-        .filter(|action| action.kind == RunPlaneActionKind::RepairForeignKey)
-        .map(|action| action.target)
-        .collect();
-    for target in [
-        "effect_attempt_dispatches.effect_attempt_dispatches_attempt_fk",
-        "effect_attempt_outcomes.effect_attempt_outcomes_dispatch_fk",
-    ] {
-        assert!(
-            targets.contains(target),
-            "missing repair for {target}: {targets:#?}"
-        );
-    }
-}
-
 /// From zero (an empty database): the full run-plane set in FK order behind
 /// the schema ensure, plus the whole catalog schema — the fixture-wipe
 /// restore path (manifestations 3 + 5).
@@ -819,17 +664,7 @@ fn from_zero_plans_the_full_set_in_order() {
         .filter(|a| a.kind == RunPlaneActionKind::CreateTable)
         .map(|a| a.target.as_str())
         .collect();
-    assert_eq!(
-        creates,
-        [
-            "environment_policies",
-            "runs",
-            "effect_attempts",
-            "effect_attempt_dispatches",
-            "effect_attempt_outcomes",
-            "run_queue"
-        ]
-    );
+    assert_eq!(creates, ["environment_policies", "runs", "run_queue"]);
     assert!(
         plan.actions
             .iter()
@@ -857,7 +692,6 @@ fn from_zero_plans_the_full_set_in_order() {
     // No column/index repairs on tables being created (sections carry them).
     assert!(!kinds.contains(&RunPlaneActionKind::AddColumn));
     assert!(!kinds.contains(&RunPlaneActionKind::CreateIndex));
-    assert!(!kinds.contains(&RunPlaneActionKind::RepairForeignKey));
     // The rewrite reached the sections.
     let rq = plan
         .actions
@@ -988,10 +822,6 @@ fn drifted_and_missing_checks_plan_exact_repairs() {
         ("runs".to_string(), "runs_fail_type_check".to_string()),
         "CHECK (fail_type = 'terminal'::text)".to_string(),
     );
-    obs.checks.remove(&(
-        "effect_attempts".to_string(),
-        "effect_attempts_deadline_check".to_string(),
-    ));
 
     let plan = plan_run_plane(&schema("demo"), &obs);
     let repairs: Vec<&RunPlaneAction> = plan
@@ -1001,8 +831,8 @@ fn drifted_and_missing_checks_plan_exact_repairs() {
         .collect();
     assert_eq!(
         repairs.len(),
-        2,
-        "only the two drifted checks: {repairs:#?}"
+        1,
+        "only the changed constraint: {repairs:#?}"
     );
     assert!(repairs.iter().any(|action| {
         action.target == "runs.runs_fail_type_check"
@@ -1010,13 +840,6 @@ fn drifted_and_missing_checks_plan_exact_repairs() {
                 .sql
                 .contains("DROP CONSTRAINT \"runs_fail_type_check\"")
             && action.sql.contains("unbound-requirement")
-    }));
-    assert!(repairs.iter().any(|action| {
-        action.target == "effect_attempts.effect_attempts_deadline_check"
-            && !action.sql.contains("DROP CONSTRAINT")
-            && action
-                .sql
-                .contains("attempt_started_at <= attempt_deadline_at")
     }));
 }
 
@@ -1240,7 +1063,7 @@ fn missing_helpers_and_record_triggers_are_repaired() {
             .iter()
             .filter(|action| action.kind == RunPlaneActionKind::RepairHelperFunction)
             .count(),
-        4
+        3
     );
     let terminal_delete_guard = plan
         .actions
@@ -1288,115 +1111,7 @@ fn missing_helpers_and_record_triggers_are_repaired() {
             .iter()
             .filter(|action| action.kind == RunPlaneActionKind::RepairTrigger)
             .count(),
-        14
-    );
-}
-
-#[test]
-fn effect_table_acl_repair_removes_table_and_column_drift() {
-    let mut obs = observation_at_record();
-    obs.effect_table_effective_privileges.insert(
-        (
-            "effect_attempts".to_string(),
-            SCENARIO_AUTHOR_ROLE.to_string(),
-        ),
-        ["SELECT".to_string()].into_iter().collect(),
-    );
-    obs.effect_table_effective_column_privileges
-        .entry(("effect_attempts".to_string(), "wamn_app".to_string()))
-        .or_default()
-        .insert("UPDATE".to_string());
-
-    let plan = plan_run_plane(&schema("demo"), &obs);
-    let table_action = plan
-        .actions
-        .iter()
-        .find(|action| {
-            action.kind == RunPlaneActionKind::RepairEffectTablePrivilege
-                && action.target == "demo.effect_attempts"
-        })
-        .expect("effect table ACL repair");
-    assert!(table_action.sql.contains("REVOKE SELECT ("));
-    assert!(table_action.sql.contains("has_any_column_privilege"));
-    // BORN PARKED: the attempt table is re-granted READ ONLY, and the block
-    // refuses to see the server still report the guest holding INSERT.
-    assert!(
-        table_action
-            .sql
-            .contains("GRANT SELECT ON TABLE \"demo\".\"effect_attempts\" TO wamn_app")
-    );
-    assert!(!table_action.sql.contains("GRANT SELECT, INSERT"));
-    assert!(table_action.sql.contains(
-        "ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) privilege \
-             WHERE pg_catalog.has_table_privilege('wamn_app'"
-    ));
-    assert!(table_action.sql.contains(
-        "has_any_column_privilege('wamn_app', \
-             '\"demo\".\"effect_attempts\"', 'INSERT,UPDATE,REFERENCES')"
-    ));
-}
-
-/// The convergent author, for one sibling table. `deploy/sql/run-state.sql`
-/// is only the BIRTH author; this builder is what an already-provisioned
-/// database converges onto, so restoring the append here would re-mint the
-/// dormant authority on every reconcile even with the DDL parked.
-#[test]
-fn dispatch_table_reconciles_parked() {
-    assert_sibling_table_reconciles_parked("effect_attempt_dispatches");
-}
-
-/// The same arm for the second sibling, named separately so a mutant that
-/// re-arms exactly one relation cannot hide behind the other.
-#[test]
-fn outcome_table_reconciles_parked() {
-    assert_sibling_table_reconciles_parked("effect_attempt_outcomes");
-}
-
-fn assert_sibling_table_reconciles_parked(table: &str) {
-    let mut obs = observation_at_record();
-    obs.effect_table_effective_column_privileges
-        .entry((table.to_string(), "wamn_app".to_string()))
-        .or_default()
-        .insert("UPDATE".to_string());
-    let plan = plan_run_plane(&schema("demo"), &obs);
-    let action = plan
-        .actions
-        .iter()
-        .find(|action| {
-            action.kind == RunPlaneActionKind::RepairEffectTablePrivilege
-                && action.target == format!("demo.{table}")
-        })
-        .expect("sibling table ACL repair");
-    // The re-grant is READ ONLY…
-    assert!(
-        action.sql.contains(&format!(
-            "GRANT SELECT ON TABLE \"demo\".\"{table}\" TO wamn_app"
-        )),
-        "{table}: sibling table is not re-granted read-only: {}",
-        action.sql
-    );
-    assert!(
-        !action.sql.contains("GRANT SELECT, INSERT"),
-        "{table}: reconciler still re-mints a live append: {}",
-        action.sql
-    );
-    // …and the generated self-check moved with it, so the step REFUSES to see
-    // the server report an append the record does not carry.
-    assert!(
-        action.sql.contains(
-            "ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) privilege \
-                 WHERE pg_catalog.has_table_privilege('wamn_app'"
-        ),
-        "{table}: table-level self-check does not forbid INSERT: {}",
-        action.sql
-    );
-    assert!(
-        action.sql.contains(&format!(
-            "has_any_column_privilege('wamn_app', \
-                 '\"demo\".\"{table}\"', 'INSERT,UPDATE,REFERENCES')"
-        )),
-        "{table}: column-level self-check does not forbid INSERT: {}",
-        action.sql
+        5
     );
 }
 
@@ -1503,7 +1218,6 @@ fn observation_sql_is_pinned() {
     assert!(catalog_schema_present_sql().contains("'catalog'"));
     assert!(select_schema_checks_sql().contains("con.contype = 'c'"));
     assert!(select_schema_checks_sql().contains("pg_get_constraintdef"));
-    assert!(select_schema_foreign_keys_sql().contains("con.contype = 'f'"));
     assert!(select_schema_triggers_sql().contains("NOT t.tgisinternal"));
     assert!(select_scenario_author_role_sql().contains("rolbypassrls"));
     assert!(select_app_scenario_author_membership_sql().contains("'MEMBER'"));
@@ -1538,7 +1252,4 @@ fn observation_sql_is_pinned() {
     assert!(select_authoring_effective_column_privileges_sql().contains("('SELECT'::text)"));
     assert!(select_scenario_author_schema_usage_sql().contains("has_schema_privilege"));
     assert!(select_run_plane_helper_functions_sql().contains("pg_get_functiondef"));
-    assert!(
-        select_run_plane_helper_functions_sql().contains("reject_immutable_effect_fact_change")
-    );
 }

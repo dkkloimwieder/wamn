@@ -239,7 +239,6 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
     let package_manifest =
         wamn_schema_generator::PackageManifest::from_slice(&directory.manifest_bytes)
             .context("parse strict package manifest before component publication")?;
-    check_package_backfill(&package_manifest)?;
     let component_bytes = std::fs::read(&args.component_bytes)
         .with_context(|| format!("read component bytes {}", args.component_bytes.display()))?;
     wamn_component_composer::validate_application_member(&component_bytes)
@@ -446,6 +445,7 @@ fn host_transaction_exports<T>(
 }
 
 /// Load every manifest operation's exact statement facts without component publication.
+#[cfg(test)]
 pub(crate) fn load_package_statement_facts(
     package_root: &Path,
     manifest: &wamn_schema_generator::PackageManifest,
@@ -813,24 +813,6 @@ fn check_statement_sql(
             format!("operation {operation:?} statement {statement:?} is refused: {refusal}"),
         )
     })
-}
-
-/// Apply the declared-statement policy to the batch SQL carried by a package.
-pub(crate) fn check_package_backfill(
-    manifest: &wamn_schema_generator::PackageManifest,
-) -> Result<(), ComponentProjectionError> {
-    if let Some(batch) = manifest
-        .upgrade_stage
-        .as_ref()
-        .and_then(|stage| stage.backfill.as_ref())
-    {
-        check_statement_sql(
-            &manifest.package.id,
-            "upgrade_stage.backfill.sql",
-            &batch.sql,
-        )?;
-    }
-    Ok(())
 }
 
 /// Refuse a stored component whose declared SQL the parsed check refuses.

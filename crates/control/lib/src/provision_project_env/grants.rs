@@ -655,12 +655,6 @@ fn verify_executor_platform_grants(
             "run_queue".to_string(),
             "DELETE".to_string(),
         ),
-        (
-            "relation".to_string(),
-            "wamn_run".to_string(),
-            "effect_attempts".to_string(),
-            "SELECT".to_string(),
-        ),
         // An event admission reads the durability class (wamn-upl3.6).
         (
             "relation".to_string(),

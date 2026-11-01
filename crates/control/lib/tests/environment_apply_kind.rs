@@ -79,9 +79,6 @@
 //!     applies, reached through the suite's port forward; no registry and no
 //!     image beyond the suite's.
 //!
-//! A6 (kind half) needs a staged package upgrade; this fixture has none, and
-//! the report says so.
-//!
 //! The fixture package is `apps/edge_device`: one stateless component,
 //! `device`, with no SQL. `push-package` admits it, so it needs the output of
 //! `wamn build apps/edge_device` of this checkout. Releases A and B name fake
@@ -2310,12 +2307,6 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     .await;
     run.collect("11 / 12 database and row deletion", result);
 
-    run.record(
-        "A6 kind half",
-        "",
-        json!({"reason": "the fixture release has no staged package upgrade, so no old release serves on an expanded schema between steps 5 and 6"}),
-        "not-run",
-    );
     let result = async {
     // 13. A7: each route host reaches only its own environment.
     let digest_h = push_manifest_bytes(

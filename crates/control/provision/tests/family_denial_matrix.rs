@@ -92,7 +92,7 @@ const SCENARIO_AUTHOR_PROBE: &str = "wamn_matrix_author_probe";
 /// catalog relations the platform families read, and a package-shaped logged
 /// relation pair with its history tables. A family reaching one it does not own
 /// is what the pairwise arms below name.
-const MATRIX_RELATIONS: [&str; 28] = [
+const MATRIX_RELATIONS: [&str; 25] = [
     "platform.environment",
     "platform.permission",
     "platform.user_role",
@@ -115,9 +115,6 @@ const MATRIX_RELATIONS: [&str; 28] = [
     "retention_fixture.entry_history",
     "retention_fixture.ledger",
     "retention_fixture.ledger_history",
-    "wamn_run.effect_attempt_dispatches",
-    "wamn_run.effect_attempt_outcomes",
-    "wamn_run.effect_attempts",
     "wamn_run.environment_policies",
     "wamn_run.run_queue",
     "wamn_run.runs",
@@ -191,9 +188,6 @@ const MATRIX: [FamilyReach; 10] = [
             "platform.permission|SELECT|table",
             "platform.setting|SELECT|table",
             "platform.user_role|SELECT|table",
-            "wamn_run.effect_attempt_dispatches|SELECT|table",
-            "wamn_run.effect_attempt_outcomes|SELECT|table",
-            "wamn_run.effect_attempts|SELECT|table",
             "wamn_run.environment_policies|SELECT|table",
             "wamn_run.runs|DELETE|table",
             "wamn_run.runs|SELECT|table",
@@ -224,7 +218,6 @@ const MATRIX: [FamilyReach; 10] = [
             "platform.\"user\"|SELECT|column",
             "platform.connection|SELECT|table",
             "platform.integration|SELECT|table",
-            "wamn_run.effect_attempts|SELECT|table",
             "wamn_run.environment_policies|SELECT|table",
             "wamn_run.run_queue|DELETE|table",
             "wamn_run.run_queue|INSERT|column",
@@ -631,7 +624,7 @@ fn reset(admin: &str) {
 /// Two, not one: an arm that reads its own tenant cannot tell confinement from
 /// an empty table, and the platform arm's whole claim is that it reads BOTH.
 const SEED: &str = "\
-DO $seed$ DECLARE t text; a uuid; BEGIN
+DO $seed$ DECLARE t text; BEGIN
 FOREACH t IN ARRAY ARRAY['t1','t2'] LOOP
   INSERT INTO catalog.packages
     (env_key, package_id, package_version, artifact_digest)
@@ -646,23 +639,6 @@ FOREACH t IN ARRAY ARRAY['t1','t2'] LOOP
      wiring_id, wiring_version, wiring_hash, binding_world_json, input_json)
     VALUES (t, 'r1', 'widgets', 'dev', 'dispatched', 'internal', 'w', 1,
             'sha256:'||repeat('c',64), '[]', '{\"a\":1}');
-  a := gen_random_uuid();
-  INSERT INTO wamn_run.effect_attempts
-    (env_key, attempt_id, run_id, root_plan_hash, current_plan_hash, local_node_id,
-     source_artifact_hash, requirement_name, occurrence, seq, generation_fact_type,
-     attempt_started_at, attempt_deadline_at, attempt_input_ref)
-    VALUES (t, a, 'r1', 'sha256:'||repeat('a',64), 'sha256:'||repeat('b',64), 'n1',
-            'sha256:'||repeat('d',64), 'req', 0, 0, 'not-required',
-            now(), now() + interval '1 hour', 'ref');
-  INSERT INTO wamn_run.effect_attempt_dispatches
-    (env_key, attempt_id, attempt_started_at, run_id, frame_id, local_node_id,
-     occurrence, dispatched_at)
-    SELECT t, a, e.attempt_started_at, 'r1', 0, 'n1', 0, e.attempt_started_at
-      FROM wamn_run.effect_attempts e WHERE e.env_key = t AND e.attempt_id = a;
-  INSERT INTO wamn_run.effect_attempt_outcomes
-    (env_key, attempt_id, dispatched_at, outcome_status, recorded_at)
-    SELECT t, a, d.dispatched_at, 'success', d.dispatched_at
-      FROM wamn_run.effect_attempt_dispatches d WHERE d.env_key = t AND d.attempt_id = a;
 END LOOP;
 END $seed$;
 ";
@@ -1261,28 +1237,11 @@ fn a_platform_family_without_env_key_context_reads_exactly_what_its_grants_say()
         "a platform family reached the guest session derivation; if it can \
          derive a tenant key, this arm is measuring a guest"
     );
-    for (relation, expected) in [("wamn_run.runs", "2"), ("wamn_run.effect_attempts", "2")] {
-        assert_eq!(
-            query(&as_executor, &format!("SELECT count(*) FROM {relation}")),
-            expected,
-            "the executor-platform family reads {expected} rows from {relation} \
-             on its grants; a different count means the platform arm admits it \
-             partially or not at all"
-        );
-    }
-    // …and NOTHING MORE. These two are the guest's.
-    for relation in [
-        "wamn_run.effect_attempt_dispatches",
-        "wamn_run.effect_attempt_outcomes",
-    ] {
-        assert_eq!(
-            sqlstate(&as_executor, &format!("SELECT count(*) FROM {relation};\n")).as_deref(),
-            Some("42501"),
-            "the executor-platform family reached {relation}, which its grant \
-             set does not name: the permissive platform arm is USING (true), so \
-             a grant here would be unbounded reach"
-        );
-    }
+    assert_eq!(
+        query(&as_executor, "SELECT count(*) FROM wamn_run.runs"),
+        "2",
+        "the executor-platform family reads runs through its declared grants"
+    );
 }
 
 /// THE TENANT-SCOPED PLATFORM MEMBER (`wamn-0h0g.22.25`).
@@ -1323,13 +1282,7 @@ fn the_env_key_scoped_platform_member_reads_nothing_outside_its_grants() {
         "2",
         "the retention family cannot read the relation its grant set names"
     );
-    for relation in [
-        "wamn_run.effect_attempts",
-        "wamn_run.effect_attempt_dispatches",
-        "wamn_run.effect_attempt_outcomes",
-        "wamn_run.environment_policies",
-        "wamn_run.run_queue",
-    ] {
+    for relation in ["wamn_run.environment_policies", "wamn_run.run_queue"] {
         assert_eq!(
             sqlstate(
                 &as_retention,
@@ -1483,13 +1436,7 @@ fn every_governed_relation_carries_the_tenant_key_expression_index() {
     // A floor, so an empty schema cannot satisfy the equality above trivially.
     // The five run-plane relations are named because they are the ones whose
     // policies the platform arms share.
-    for relation in [
-        "wamn_run.runs",
-        "wamn_run.effect_attempts",
-        "wamn_run.effect_attempt_dispatches",
-        "wamn_run.effect_attempt_outcomes",
-        "wamn_run.environment_policies",
-    ] {
+    for relation in ["wamn_run.runs", "wamn_run.environment_policies"] {
         assert!(
             governed.iter().any(|row| row == relation),
             "{relation} carries no governed predicate at all"

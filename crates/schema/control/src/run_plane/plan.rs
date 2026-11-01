@@ -7,9 +7,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use wamn_catalog::CATALOG_SCHEMA_SQL;
 
 use super::schema::{
-    current_effect_schema_drift, index_definition_stale, index_statements,
-    normalize_observed_schema, quote_ident, record_columns, record_table_names, record_tables,
-    schema_header_section, table_section, table_section_carries_trigger,
+    index_definition_stale, index_statements, normalize_observed_schema, quote_ident,
+    record_columns, record_table_names, record_tables, schema_header_section, table_section,
+    table_section_carries_trigger,
 };
 
 use super::{
@@ -20,9 +20,6 @@ use super::{
 
 use super::declarations::{
     AUTHORING_PRIVILEGE_SPECS, AuthoringTableSchema, CHECK_SPECS, CheckOrigin,
-    EFFECT_DISPATCH_ATTEMPT_FK_DEF, EFFECT_DISPATCH_ATTEMPT_FK_NAME,
-    EFFECT_DISPATCH_ATTEMPT_FK_SQL, EFFECT_OUTCOME_DISPATCH_FK_DEF,
-    EFFECT_OUTCOME_DISPATCH_FK_NAME, EFFECT_OUTCOME_DISPATCH_FK_SQL,
     ENVIRONMENT_POLICY_ENV_KEY_QUAL, TABLE_PRIVILEGE_TYPES, helper_specs, trigger_specs,
 };
 
@@ -221,34 +218,6 @@ fn run_capture_privileges_drifted(schema: &BareSchemaName, obs: &RunPlaneObserva
 /// driver read; the returned plan is what it should execute, in order.
 pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> RunPlanePlan {
     let mut plan = RunPlanePlan::default();
-    if obs.effect_record_rows != 0 && current_effect_schema_drift(schema, obs) {
-        let tables = [
-            "effect_attempts",
-            "effect_attempt_dispatches",
-            "effect_attempt_outcomes",
-        ]
-        .into_iter()
-        .filter(|table| obs.tables.contains_key(*table));
-        let locks = tables
-            .map(|table| {
-                format!(
-                    "LOCK TABLE {}.{} IN ACCESS EXCLUSIVE MODE;",
-                    schema.quoted(),
-                    quote_ident(table),
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RefuseSchemaDrift,
-            target: "effect-ledger.current-schema".to_string(),
-            sql: format!(
-                "{locks} DO $drift$ BEGIN RAISE EXCEPTION USING \
-                ERRCODE = '55000', MESSAGE = 'effect-ledger-schema-drift'; END $drift$;"
-            ),
-        });
-        return plan;
-    }
     let capture_mode_present = obs
         .tables
         .get("runs")
@@ -382,106 +351,6 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                 schema.quoted()
             ),
         });
-    }
-
-    for table in [
-        "effect_attempts",
-        "effect_attempt_dispatches",
-        "effect_attempt_outcomes",
-    ] {
-        if !obs.tables.contains_key(table) {
-            continue;
-        }
-        // BORN PARKED (owner ruling on wamn-0h0g.20.28, widened to the two sibling
-        // tables by wamn-0h0g.20.32). NO effect table's APPEND authority is part
-        // of the record: the effect writer is not built. So a live INSERT on any
-        // of the three is DRIFT, and this convergent step REMOVES it rather than
-        // re-granting it. Whoever builds the writer grants those INSERTs here.
-        let expected = |grantee: &str| -> BTreeSet<String> {
-            match grantee {
-                "wamn_app" => ["SELECT"].into_iter().map(str::to_string).collect(),
-                "PUBLIC" | SCENARIO_AUTHOR_ROLE => BTreeSet::new(),
-                _ => unreachable!("closed effect-table grantee set"),
-            }
-        };
-        let direct_drifted = ["PUBLIC", "wamn_app", SCENARIO_AUTHOR_ROLE]
-            .into_iter()
-            .any(|grantee| {
-                obs.effect_table_privileges
-                    .get(&(table.to_string(), grantee.to_string()))
-                    .cloned()
-                    .unwrap_or_default()
-                    != expected(grantee)
-            });
-        let effective_drifted = ["wamn_app", SCENARIO_AUTHOR_ROLE]
-            .into_iter()
-            .any(|grantee| {
-                obs.effect_table_effective_privileges
-                    .get(&(table.to_string(), grantee.to_string()))
-                    .cloned()
-                    .unwrap_or_default()
-                    != expected(grantee)
-            });
-        let effective_column_drifted =
-            ["wamn_app", SCENARIO_AUTHOR_ROLE]
-                .into_iter()
-                .any(|grantee| {
-                    let expected_columns: BTreeSet<String> = expected(grantee)
-                        .into_iter()
-                        .filter(|privilege| {
-                            ["SELECT", "INSERT", "UPDATE", "REFERENCES"]
-                                .contains(&privilege.as_str())
-                        })
-                        .collect();
-                    obs.effect_table_effective_column_privileges
-                        .get(&(table.to_string(), grantee.to_string()))
-                        .cloned()
-                        .unwrap_or_default()
-                        != expected_columns
-                });
-        let boundary_owned = obs
-            .effect_table_owners
-            .get(table)
-            .is_some_and(|owner| matches!(owner.as_str(), "wamn_app" | SCENARIO_AUTHOR_ROLE));
-        if !direct_drifted && !effective_drifted && !effective_column_drifted && !boundary_owned {
-            continue;
-        }
-        let qualified = format!("{}.{}", schema.quoted(), quote_ident(table));
-        let columns = obs
-            .tables
-            .get(table)
-            .expect("present effect table")
-            .iter()
-            .map(|column| quote_ident(column))
-            .collect::<Vec<_>>()
-            .join(", ");
-        plan.actions.push(RunPlaneAction {
-                kind: RunPlaneActionKind::RepairEffectTablePrivilege,
-                target: format!("{}.{}", schema.as_str(), table),
-                sql: format!(
-                    "REVOKE SELECT ({columns}), INSERT ({columns}), UPDATE ({columns}), \
-                            REFERENCES ({columns}) ON TABLE {qualified} \
-                       FROM PUBLIC, wamn_app, {SCENARIO_AUTHOR_ROLE}; \
-                     REVOKE ALL PRIVILEGES ON TABLE {qualified} \
-                       FROM PUBLIC, wamn_app, {SCENARIO_AUTHOR_ROLE}; \
-                     GRANT SELECT ON TABLE {qualified} TO wamn_app; \
-                     DO $effect_table_acl$ BEGIN \
-                       IF EXISTS (SELECT 1 FROM unnest(ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) privilege \
-                                   WHERE pg_catalog.has_table_privilege('wamn_app', '{qualified}', privilege)) \
-                          OR EXISTS (SELECT 1 FROM unnest(ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) privilege \
-                                   WHERE pg_catalog.has_table_privilege('{SCENARIO_AUTHOR_ROLE}', '{qualified}', privilege)) \
-                          OR pg_catalog.has_any_column_privilege('wamn_app', '{qualified}', 'INSERT,UPDATE,REFERENCES') \
-                          OR pg_catalog.has_any_column_privilege('{SCENARIO_AUTHOR_ROLE}', '{qualified}', 'SELECT,INSERT,UPDATE,REFERENCES') \
-                          OR (SELECT owner.rolname FROM pg_catalog.pg_class relation \
-                              JOIN pg_catalog.pg_roles owner ON owner.oid = relation.relowner \
-                             WHERE relation.oid = pg_catalog.to_regclass('{qualified}')) \
-                             IN ('wamn_app', '{SCENARIO_AUTHOR_ROLE}') \
-                       THEN RAISE EXCEPTION USING ERRCODE = '42501', \
-                            MESSAGE = 'effect-ledger-effective-privilege-out-of-bounds:{table}'; \
-                       END IF; \
-                     END $effect_table_acl$"
-                ),
-            });
     }
 
     // The host-only role needs schema visibility even when an existing schema
@@ -772,50 +641,6 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                 ),
             });
         }
-    }
-
-    // 2d. The effect-table FKs remain exact. A missing table's canonical
-    // CREATE section carries these, so repair only observed tables.
-    for (table, name, definition, sql) in [
-        (
-            "effect_attempt_dispatches",
-            EFFECT_DISPATCH_ATTEMPT_FK_NAME,
-            EFFECT_DISPATCH_ATTEMPT_FK_DEF,
-            EFFECT_DISPATCH_ATTEMPT_FK_SQL,
-        ),
-        (
-            "effect_attempt_outcomes",
-            EFFECT_OUTCOME_DISPATCH_FK_NAME,
-            EFFECT_OUTCOME_DISPATCH_FK_DEF,
-            EFFECT_OUTCOME_DISPATCH_FK_SQL,
-        ),
-    ] {
-        if !obs.tables.contains_key(table) {
-            continue;
-        }
-        let key = (table.to_string(), name.to_string());
-        if obs
-            .foreign_keys
-            .get(&key)
-            .is_some_and(|observed| normalize_observed_schema(observed, schema) == definition)
-        {
-            continue;
-        }
-        let drop = if obs.foreign_keys.contains_key(&key) {
-            format!(
-                "ALTER TABLE {}.{} DROP CONSTRAINT {}; ",
-                schema.quoted(),
-                quote_ident(table),
-                quote_ident(name),
-            )
-        } else {
-            String::new()
-        };
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RepairForeignKey,
-            target: format!("{table}.{name}"),
-            sql: format!("{drop}{}", rewrite_schema(sql, schema)),
-        });
     }
 
     // 2e. User triggers are explicit record objects. A missing table's section

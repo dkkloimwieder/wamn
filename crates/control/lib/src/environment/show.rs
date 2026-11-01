@@ -4,7 +4,7 @@
 //! The release is the digest of the newest successful Helm revision, or
 //! `none`, and the applications are the ones that revision keeps. The route host and the policy name come from the environment row.
 //! Connection names come from the applied application map, and the
-//! floors are the recorded floors. `show` takes no lock.
+//! document uses the current authorities. `show` takes no lock.
 
 use std::collections::BTreeMap;
 
@@ -12,7 +12,7 @@ use anyhow::Context as _;
 use wamn_control_registry::Triple;
 
 use super::Platform;
-use super::analyse::{connect, read_project, read_revision, read_row};
+use super::analyse::{connect, read_revision, read_row};
 use super::document::{DeclaredRelease, EnvironmentDocument};
 use crate::release_chart;
 
@@ -78,9 +78,6 @@ pub async fn show(platform: &Platform, triple: &Triple) -> anyhow::Result<Enviro
                 document.integrations.insert(integration, super::document::Integration {version:binding.get(3)});
             }
         }
-    }
-    if let Some(project) = read_project(platform, &document, &row).await? {
-        document.floors = project.floors;
     }
     Ok(document)
 }

@@ -41,10 +41,6 @@ CREATE TRIGGER wamn_record_history_stamp
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
-CREATE UNIQUE INDEX packages_one_successor_per_version
-    ON catalog.packages (env_key, package_id, predecessor_version)
-    WHERE predecessor_version IS NOT NULL;
-
 CREATE TABLE catalog.package_migrations (
     env_key         text        NOT NULL CHECK (env_key <> ''),
     package_id      text        NOT NULL CHECK (package_id <> ''),
@@ -81,7 +77,7 @@ CREATE TABLE catalog.package_definition_owners (
     relation_name          text    NOT NULL
         CHECK (relation_name ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$'),
     definition_type        text    NOT NULL
-        CHECK (definition_type IN ('relation', 'field', 'constraint', 'synchronization_function', 'synchronization_trigger')),
+        CHECK (definition_type IN ('relation', 'field', 'constraint')),
     definition_name        text    NOT NULL
         CHECK (definition_name ~ '^[a-z][a-z0-9]*(_[a-z0-9]+)*$'),
     owner_package_id       text    NOT NULL
@@ -106,10 +102,6 @@ CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON catalog.package_definition_owners
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
-
-CREATE UNIQUE INDEX package_definition_owners_synchronization_function
-    ON catalog.package_definition_owners (env_key, schema_name, definition_name)
-    WHERE definition_type = 'synchronization_function';
 
 -- One installed release (docs/plan/platform-deploy.md R1). The manifest
 -- digest is the release; this row is an immutable cache of the canonical
@@ -393,121 +385,6 @@ CREATE TRIGGER workflows_delete_immutable
     BEFORE DELETE ON catalog.workflows
     FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 
-CREATE TABLE catalog.package_upgrade_qualifications (
-    env_key                     text        NOT NULL CHECK (env_key <> ''),
-    package_id                  text        NOT NULL CHECK (package_id <> ''),
-    candidate_package_version   text        NOT NULL CHECK (candidate_package_version <> ''),
-    canonical_bytes             bytea       NOT NULL CHECK (octet_length(canonical_bytes) > 0),
-    result_sha256               text        NOT NULL CHECK (result_sha256 ~ '^sha256:[0-9a-f]{64}$'),
-    predecessor_manifest_digest text        NOT NULL
-        CHECK (predecessor_manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
-    recorded_at                 timestamptz NOT NULL DEFAULT now(),
-    package_artifact_digest     text        NOT NULL
-        CHECK (package_artifact_digest ~ '^sha256:[0-9a-f]{64}$'),
-    created_at                  timestamptz NOT NULL,
-    created_by                  uuid        NOT NULL,
-    updated_at                  timestamptz NOT NULL,
-    updated_by                  uuid        NOT NULL,
-    CONSTRAINT package_upgrade_qualifications_pkey
-        PRIMARY KEY (env_key, package_id, candidate_package_version),
-    CONSTRAINT package_upgrade_qualifications_package_fkey
-        FOREIGN KEY (env_key, package_id, candidate_package_version)
-        REFERENCES catalog.packages (env_key, package_id, package_version),
-    CONSTRAINT package_upgrade_qualifications_predecessor_fkey
-        FOREIGN KEY (env_key, predecessor_manifest_digest)
-        REFERENCES catalog.releases (env_key, manifest_digest),
-    CONSTRAINT package_upgrade_qualifications_exact_hash
-        CHECK (result_sha256 = 'sha256:' || encode(sha256(canonical_bytes), 'hex'))
-);
-
-CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON catalog.package_upgrade_qualifications
-    FOR EACH ROW
-    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
-
--- Stage progress survives committed batches before the package version advances.
-CREATE TABLE catalog.package_upgrade_stages (
-    env_key              text NOT NULL CHECK (env_key <> ''),
-    package_id           text NOT NULL CHECK (package_id <> ''),
-    package_version      text NOT NULL CHECK (package_version <> ''),
-    predecessor_version  text NOT NULL CHECK (predecessor_version <> '' AND predecessor_version <> package_version),
-    status               text NOT NULL CHECK (status IN ('in_progress', 'abandoned', 'completed')),
-    cursor               jsonb NOT NULL,
-    completed_batches    bigint NOT NULL DEFAULT 0 CHECK (completed_batches >= 0),
-    package_artifact_digest    text NOT NULL CHECK (package_artifact_digest ~ '^sha256:[0-9a-f]{64}$'),
-    predecessor_release_digest text NOT NULL CHECK (predecessor_release_digest ~ '^sha256:[0-9a-f]{64}$'),
-    evidence_digest            text NOT NULL CHECK (evidence_digest ~ '^sha256:[0-9a-f]{64}$'),
-    created_at           timestamptz NOT NULL,
-    created_by           uuid        NOT NULL,
-    updated_at           timestamptz NOT NULL,
-    updated_by           uuid        NOT NULL,
-    CONSTRAINT package_upgrade_stages_pkey PRIMARY KEY (env_key, package_id, package_version)
-);
-
-CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON catalog.package_upgrade_stages
-    FOR EACH ROW
-    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
-
-CREATE FUNCTION catalog.guard_package_upgrade_stage_change()
-RETURNS trigger
-LANGUAGE plpgsql
-SET search_path = pg_catalog
-AS $$
-BEGIN
-    IF TG_OP = 'DELETE' THEN
-        RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'package-upgrade-stage-cannot-be-deleted';
-    END IF;
-    IF ROW(NEW.env_key, NEW.package_id, NEW.package_version, NEW.predecessor_version,
-           NEW.package_artifact_digest, NEW.predecessor_release_digest, NEW.evidence_digest)
-       IS DISTINCT FROM
-       ROW(OLD.env_key, OLD.package_id, OLD.package_version, OLD.predecessor_version,
-           OLD.package_artifact_digest, OLD.predecessor_release_digest, OLD.evidence_digest) THEN
-        RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'package-upgrade-stage-identity-is-immutable';
-    END IF;
-    IF OLD.status <> 'in_progress' THEN
-        RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'package-upgrade-stage-is-terminal';
-    END IF;
-    IF NEW.completed_batches < OLD.completed_batches
-       OR NEW.completed_batches > OLD.completed_batches + 1 THEN
-        RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'package-upgrade-stage-invalid-batch-count';
-    END IF;
-    IF NEW.completed_batches = OLD.completed_batches AND NEW.cursor IS DISTINCT FROM OLD.cursor THEN
-        RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'package-upgrade-stage-cursor-requires-batch';
-    END IF;
-    RETURN NEW;
-END
-$$;
-CREATE TRIGGER package_upgrade_stages_guard
-    BEFORE UPDATE OR DELETE ON catalog.package_upgrade_stages
-    FOR EACH ROW EXECUTE FUNCTION catalog.guard_package_upgrade_stage_change();
-REVOKE ALL ON FUNCTION catalog.guard_package_upgrade_stage_change() FROM PUBLIC;
-REVOKE ALL ON catalog.package_upgrade_stages FROM PUBLIC, wamn_app;
-
--- The recorded floor of each installed package (docs/plan/platform-deploy.md
--- R13, R16): the version `env apply` contracted it to at step 9. A floor only
--- advances along `predecessor_version`; `apply` refuses a document that omits
--- it or declares an ancestor of it.
-CREATE TABLE catalog.package_floors (
-    env_key     text        NOT NULL CHECK (env_key <> ''),
-    package_id  text        NOT NULL,
-    version     text        NOT NULL,
-    recorded_at timestamptz NOT NULL DEFAULT now(),
-    created_at  timestamptz NOT NULL,
-    created_by  uuid        NOT NULL,
-    updated_at  timestamptz NOT NULL,
-    updated_by  uuid        NOT NULL,
-    CONSTRAINT package_floors_pkey PRIMARY KEY (env_key, package_id),
-    CONSTRAINT package_floors_package_fkey
-        FOREIGN KEY (env_key, package_id, version)
-        REFERENCES catalog.packages (env_key, package_id, package_version)
-);
-
-CREATE TRIGGER wamn_record_history_stamp
-    BEFORE INSERT OR UPDATE ON catalog.package_floors
-    FOR EACH ROW
-    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
-
 -- Tenant floors are one mechanism applied to the complete current relation
 -- set. The server catalog, rather than checked-in SQL text, shows the result.
 DO $tenant_floors$
@@ -518,9 +395,7 @@ BEGIN
         'packages', 'package_migrations', 'package_definition_owners',
         'releases',
         'connection_requirement', 'release_connection', 'connection_binding',
-        'wiring_tombstones', 'workflows',
-        'package_upgrade_qualifications',
-        'package_upgrade_stages', 'package_floors'
+        'wiring_tombstones', 'workflows'
     ] LOOP
         EXECUTE format('ALTER TABLE catalog.%I ENABLE ROW LEVEL SECURITY', relation_name);
         EXECUTE format('ALTER TABLE catalog.%I FORCE ROW LEVEL SECURITY', relation_name);
@@ -550,8 +425,7 @@ BEGIN
         'packages', 'package_migrations', 'package_definition_owners',
         'releases',
         'connection_requirement',
-        'wiring_tombstones',
-        'package_upgrade_qualifications'
+        'wiring_tombstones'
     ] LOOP
         EXECUTE format(
             'CREATE TRIGGER %I BEFORE UPDATE OR DELETE ON catalog.%I FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change()',

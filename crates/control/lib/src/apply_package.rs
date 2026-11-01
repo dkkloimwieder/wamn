@@ -1,4 +1,4 @@
-//! Apply one package-owned migration stream exactly once per immutable file.
+//! Install one package baseline from immutable files.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -8,45 +8,36 @@ use tokio_postgres::{NoTls, Transaction, error::SqlState};
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 use wamn_schema_control::{
     AppliedPackage, PackageDirectory, RecordedMigration, SqlStatement, plan_package_migrations,
-    plan_package_registration,
 };
 use wamn_schema_generator::PackageManifest;
 
-use definition_ownership::reconcile_definition_ownership;
+use definition_ownership::{
+    reconcile_definition_ownership, validate_definition_ownership_before_apply,
+    validate_migration_policy,
+};
 use entity_maps::reconcile_entity_maps;
-use migration_policy::{
-    MigrationPolicyPlan, validate_definition_ownership_before_apply, validate_migration_policy,
-};
 use operation_grants::ensure_admin_role;
-use package_version::{
-    current_package_version, predecessor_not_current_error, predecessor_prefix_error,
-};
+use package_version::current_package_version;
 use record_history::{create_history_tables, reconcile_record_history_triggers};
 use roles::assert_host_role;
 
-mod abandon;
-mod backfill;
 mod definition_ownership;
 mod entity_maps;
 mod error;
 mod local_target;
-mod migration_policy;
 mod operation_grants;
 mod package_version;
 mod record_history;
 mod roles;
-mod stage;
-mod synchronization;
 #[cfg(test)]
 mod tests;
 
-pub use abandon::{AbandonStageOutcome, abandon_stage};
 pub use error::{
     APPLY_PACKAGE_REFUSAL, ApplyPackageError, ApplyPackageErrorType,
     BASE_DEFINITION_MUTATION_REFUSAL, DEFINITION_NOT_FOUND_REFUSAL,
     DEFINITION_OWNER_CONFLICT_REFUSAL, DEFINITION_OWNER_DECLARATION_MISSING_REFUSAL,
     PACKAGE_ARTIFACT_REQUIRED_REFUSAL, PACKAGE_VERSION_SEALED_REFUSAL,
-    PREDECESSOR_NOT_CURRENT_REFUSAL, RELATION_NOT_CLIENT_EXTENSIBLE_REFUSAL,
+    RELATION_NOT_CLIENT_EXTENSIBLE_REFUSAL,
 };
 pub use local_target::{applied_migration_drift, local_target_recreate_reason};
 pub(crate) use local_target::{manifest_digest, record_manifest};
@@ -152,21 +143,7 @@ pub(crate) struct PreparedPackage {
     pub root: PathBuf,
     pub directory: PackageDirectory,
     pub manifest: PackageManifest,
-    migration_policy: MigrationPolicyPlan,
-}
-
-impl PreparedPackage {
-    /// The digest of the verified artifact this package was opened from. A
-    /// release apply and its stage evidence take nothing else.
-    pub(crate) fn artifact_digest(&self) -> anyhow::Result<&str> {
-        self.directory.artifact_digest.as_deref().ok_or_else(|| {
-            ApplyPackageError::artifact_required(&format!(
-                "{}@{}",
-                self.manifest.package.id, self.manifest.package.version
-            ))
-            .into()
-        })
-    }
+    policy: definition_ownership::MigrationPolicyPlan,
 }
 
 /// Validate one package directory before opening an application transaction.
@@ -176,143 +153,21 @@ pub(crate) fn prepare_package(root: &PackageRoot) -> anyhow::Result<PreparedPack
         .context("validate package directory before database work")?;
     let manifest = PackageManifest::from_slice(&directory.manifest_bytes)
         .context("parse strict package manifest for definition ownership")?;
-    crate::qualify_upgrade::stage::require_executor(&manifest, &directory)?;
     wamn_schema_generator::validate_operation_vocabulary(&manifest)
         .context("validate package manifest for registration projection")?;
-    let migration_policy = validate_migration_policy(&root.path, &directory, &presented)?;
+    let policy = validate_migration_policy(&root.path, &directory, &presented)?;
     Ok(PreparedPackage {
         component_source: None,
         root: root.path.clone(),
         directory,
         manifest,
-        migration_policy,
+        policy,
     })
-}
-
-#[derive(Clone, Copy)]
-enum ApplicationMode<'a> {
-    Production(Option<&'a crate::package_upgrade::AcceptedUpgrade>),
-    Qualification,
-    Coordinated,
-    Local(&'a str),
-    BackfillCompletion,
 }
 
 /// Apply the immutable pending suffix from one package directory.
 pub async fn apply_package(request: ApplyPackageRequest) -> anyhow::Result<ApplyOutcome> {
-    apply_request(request, ApplicationMode::Production(None)).await
-}
-
-/// Apply an installed successor using its exact pre-apply qualification evidence.
-pub async fn apply_qualified_package(
-    request: ApplyPackageRequest,
-    evidence_path: &Path,
-) -> anyhow::Result<ApplyOutcome> {
-    let evidence = crate::package_upgrade::read_evidence(evidence_path)?;
-    apply_request(request, ApplicationMode::Production(Some(&evidence))).await
-}
-
-/// Apply a qualified base and its overlay successors atomically, base first.
-pub async fn apply_qualified_package_set(
-    request: ApplyPackageRequest,
-    presented_packages: &[PackageRoot],
-    evidence_path: &Path,
-) -> anyhow::Result<Vec<ApplyOutcome>> {
-    let evidence = crate::package_upgrade::read_evidence(evidence_path)?;
-    crate::package_upgrade::apply_coordinated(request, presented_packages, evidence).await
-}
-
-/// Apply only to the owned disposable database of upgrade qualification.
-pub(crate) async fn apply_qualification_package(
-    request: ApplyPackageRequest,
-) -> anyhow::Result<ApplyOutcome> {
-    apply_request(request, ApplicationMode::Qualification).await
-}
-
-/// Apply base and overlay successors atomically to an owned qualification database.
-pub(crate) async fn apply_qualification_packages(
-    database_url: &str,
-    env_key: &str,
-    roots: &[PackageRoot],
-    complete_roots: &[PackageRoot],
-    manifest: &wamn_catalog::ServingManifest,
-    component_source: Option<
-        &wamn_runtime::component_artifact_source::ComponentArtifactSourceConfig,
-    >,
-) -> anyhow::Result<Vec<ApplyOutcome>> {
-    ensure!(
-        !env_key.is_empty(),
-        "org, project and environment must not be empty"
-    );
-    ensure!(
-        !roots.is_empty(),
-        "qualification requires at least one package"
-    );
-    let packages = roots
-        .iter()
-        .map(|root| {
-            let mut package = prepare_package(root)?;
-            package.component_source = component_source.cloned();
-            Ok(package)
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    let (mut client, connection) = tokio_postgres::connect(database_url, NoTls)
-        .await
-        .context("connect to qualification environment")?;
-    let connection_task = tokio::spawn(connection);
-    let result = async {
-        let mut tx = client
-            .transaction()
-            .await
-            .context("begin coordinated qualification apply")?;
-        if packages
-            .iter()
-            .any(|package| package.manifest.upgrade_stage.is_some())
-        {
-            tx.batch_execute("SET LOCAL lock_timeout = '5s'").await?;
-        }
-        tx.query_one(CLAIM_ENV_KEY_SQL, &[&env_key])
-            .await
-            .context("claim package tenant")?;
-        bind_apply_package_principal(&tx).await?;
-        tx.query_one(crate::reconcile_package_data_access::LOCK_SQL, &[])
-            .await
-            .context("lock data access before coordinated package application")?;
-        let families = packages
-            .iter()
-            .map(|package| package.manifest.package.id.clone())
-            .collect::<BTreeSet<_>>();
-        for package_id in families {
-            tx.query_one(LOCK_PACKAGE_SQL, &[&env_key, &package_id])
-                .await
-                .context("lock package family")?;
-        }
-        let mut outcomes = Vec::with_capacity(packages.len());
-        // Input order is the qualification coordinator's base-first order.
-        for package in &packages {
-            outcomes.push(apply_in_transaction(&tx, env_key, package).await?);
-        }
-        if packages.iter().any(|package| {
-            crate::qualify_upgrade::stage::whole_row_grants(package.manifest.upgrade_stage.as_ref())
-        }) {
-            finish_whole_row_stage(&mut tx, env_key, complete_roots, &packages, manifest).await?;
-        }
-        tx.commit()
-            .await
-            .context("commit coordinated package suffixes")?;
-        Ok(outcomes)
-    }
-    .await;
-    drop(client);
-    if result.is_err() {
-        connection_task.abort();
-    } else {
-        connection_task
-            .await
-            .context("join qualification database connection")?
-            .context("drive qualification database connection")?;
-    }
-    result
+    apply_request(request, None).await
 }
 
 /// Apply one package directory to a local target that wamn dev created.
@@ -332,12 +187,12 @@ pub async fn apply_local_package(
         environment,
     )
     .await?;
-    apply_request(request, ApplicationMode::Local(environment)).await
+    apply_request(request, Some(environment)).await
 }
 
 async fn apply_request(
     request: ApplyPackageRequest,
-    mode: ApplicationMode<'_>,
+    local_environment: Option<&str>,
 ) -> anyhow::Result<ApplyOutcome> {
     ensure!(
         ![&request.org, &request.project, &request.environment]
@@ -349,23 +204,11 @@ async fn apply_request(
     package
         .component_source
         .clone_from(&request.component_source);
-    if crate::qualify_upgrade::stage::whole_row_grants(package.manifest.upgrade_stage.as_ref())
-        && let ApplicationMode::Production(Some(accepted)) = mode
-    {
-        let roots = vec![request.package.clone()];
-        let mut outcomes = Box::pin(crate::package_upgrade::apply_coordinated(
-            request,
-            &roots,
-            accepted.clone(),
-        ))
-        .await?;
-        return Ok(outcomes.remove(0));
-    }
     let (mut client, connection) = tokio_postgres::connect(&request.database_url, NoTls)
         .await
         .context("connect to project environment")?;
     let connection_task = tokio::spawn(connection);
-    let result = Box::pin(apply(&mut client, &request.env_key(), &package, mode)).await;
+    let result = apply(&mut client, &request.env_key(), &package, local_environment).await;
     if let Ok(outcome) = &result {
         request.changes.publish(outcome.drops.clone()).await;
     }
@@ -385,21 +228,10 @@ async fn apply(
     client: &mut tokio_postgres::Client,
     env_key: &str,
     package: &PreparedPackage,
-    mode: ApplicationMode<'_>,
+    local_environment: Option<&str>,
 ) -> anyhow::Result<ApplyOutcome> {
-    if package
-        .manifest
-        .upgrade_stage
-        .as_ref()
-        .is_some_and(|stage| stage.phase == wamn_schema_generator::UpgradeStagePhase::Backfill)
-    {
-        return backfill::apply(client, env_key, package, mode).await;
-    }
     let presented = plan_package_migrations(&package.directory, None)?;
     let tx = client.transaction().await.context("begin package apply")?;
-    if package.manifest.upgrade_stage.is_some() {
-        tx.batch_execute("SET LOCAL lock_timeout = '5s'").await?;
-    }
     tx.query_one(CLAIM_ENV_KEY_SQL, &[&env_key])
         .await
         .context("claim package tenant")?;
@@ -415,98 +247,33 @@ async fn apply(
     )
     .await
     .context("lock package family")?;
-    let outcome = apply_prepared(&tx, env_key, package, mode).await?;
+    let outcome = apply_prepared(&tx, env_key, package, local_environment).await?;
     tx.commit().await.context("commit whole package suffix")?;
     Ok(outcome)
-}
-
-/// Complete the explicit grant exception before the caller commits schema or evidence.
-pub(crate) async fn finish_whole_row_stage(
-    tx: &mut Transaction<'_>,
-    env_key: &str,
-    roots: &[PackageRoot],
-    packages: &[PreparedPackage],
-    manifest: &wamn_catalog::ServingManifest,
-) -> anyhow::Result<()> {
-    let runtime = crate::qualify_upgrade::runtime_schemas(
-        &roots
-            .iter()
-            .map(read_package_root)
-            .collect::<anyhow::Result<Vec<_>>>()?,
-        manifest,
-    )?;
-    crate::reconcile_package_data_access::upgrade::reconcile_upgrade_in_transaction(
-        tx, env_key, roots,
-    )
-    .await?;
-    for package in packages {
-        if !crate::qualify_upgrade::stage::whole_row_grants(package.manifest.upgrade_stage.as_ref())
-        {
-            continue;
-        }
-        let schema = runtime
-            .get(&package.manifest.package.id)
-            .context("whole_row_grants requires a runtime schema")?;
-        stage::conditions(
-            tx,
-            env_key,
-            &package.manifest.package.id,
-            schema,
-            "postconditions",
-            &package
-                .manifest
-                .upgrade_stage
-                .as_ref()
-                .expect("explicit exception has a stage")
-                .postconditions,
-        )
-        .await?;
-    }
-    crate::qualify_upgrade::plan_predecessor_in_transaction(tx, manifest, &runtime)
-        .await
-        .context("serving statements fail after atomic stage grant reconciliation")
-}
-
-/// Apply within a transaction whose caller already checked qualification evidence.
-///
-/// The caller owns the tenant binding, locks, evidence persistence, and commit.
-pub(crate) async fn apply_in_transaction(
-    tx: &Transaction<'_>,
-    env_key: &str,
-    package: &PreparedPackage,
-) -> anyhow::Result<ApplyOutcome> {
-    ensure!(
-        !package
-            .manifest
-            .upgrade_stage
-            .as_ref()
-            .is_some_and(|stage| stage.phase == wamn_schema_generator::UpgradeStagePhase::Backfill),
-        "backfill batches require separate transactions; coordinated backfill application is not available"
-    );
-    apply_prepared(tx, env_key, package, ApplicationMode::Coordinated).await
 }
 
 async fn apply_prepared(
     tx: &Transaction<'_>,
     env_key: &str,
     package: &PreparedPackage,
-    mode: ApplicationMode<'_>,
+    local_environment: Option<&str>,
 ) -> anyhow::Result<ApplyOutcome> {
     let package_root = &package.root;
     let directory = &package.directory;
     let manifest = &package.manifest;
-    let migration_policy = &package.migration_policy;
+    let definition_ownership::MigrationPolicyPlan {
+        mutations,
+        deferred,
+    } = &package.policy;
     let presented =
         plan_package_migrations(directory, None).context("validate package directory")?;
     let package_id = presented.coordinate.package_id().to_owned();
     let package_version = presented.coordinate.package_version().to_owned();
     let coordinate_label = format!("{package_id}@{package_version}");
     let coordinate_text = coordinate_label.as_str();
-    let mut local_comment = match mode {
-        ApplicationMode::Local(environment) => {
-            Some(local_target::lift_release_seal(tx, env_key, environment).await?)
-        }
-        _ => None,
+    let mut local_comment = match local_environment {
+        Some(environment) => Some(local_target::lift_release_seal(tx, env_key, environment).await?),
+        None => None,
     };
 
     // A release apply takes only a verified artifact. wamn dev applies its
@@ -522,18 +289,6 @@ async fn apply_prepared(
         )
     };
     let applied = load_applied_package(tx, env_key, &package_id, &package_version).await?;
-    if applied.is_none()
-        && let Some(artifact_digest) = &artifact_digest
-    {
-        crate::package_upgrade::progress::require_no_other_stage(
-            tx,
-            env_key,
-            &package_id,
-            &package_version,
-            artifact_digest,
-        )
-        .await?;
-    }
     let plan = if let Some(applied) = applied.as_ref() {
         let compared = if local_comment.is_some() {
             // A local target takes a changed tree at the same coordinate.
@@ -551,39 +306,16 @@ async fn apply_prepared(
         };
         compared.context("compare package bytes with immutable records")?
     } else {
-        match current_package_version(tx, env_key, &package_id).await? {
-            None => presented,
-            Some(current_version) => {
-                plan_package_registration(
-                    &presented.coordinate,
-                    presented.artifact_digest.as_deref(),
-                    presented.predecessor_version.as_deref(),
-                    None,
-                    Some(&current_version),
-                )
-                .map_err(|_| {
-                    predecessor_not_current_error(
-                        coordinate_text,
-                        presented.predecessor_version.as_deref(),
-                        &current_version,
-                    )
-                })?;
-                let predecessor = load_applied_package(tx, env_key, &package_id, &current_version)
-                    .await?
-                    .expect("the selected package-family leaf is an applied package");
-                plan_package_migrations(directory, Some(&predecessor)).map_err(|source| {
-                    predecessor_prefix_error(
-                        coordinate_text,
-                        &current_version,
-                        Some(source),
-                        presented
-                            .pending
-                            .first()
-                            .map(|migration| migration.relative_path.as_str()),
-                    )
-                })?
-            }
-        }
+        wamn_schema_control::plan_package_registration(
+            &presented.coordinate,
+            presented.artifact_digest.as_deref(),
+            presented.predecessor_version.as_deref(),
+            None,
+            current_package_version(tx, env_key, &package_id)
+                .await?
+                .as_deref(),
+        )?;
+        presented
     };
     let requirements_written = crate::connection_requirement::install(
         tx,
@@ -595,41 +327,16 @@ async fn apply_prepared(
     .await?;
     let applied_count = plan.pending.len();
     let migration_changed = !plan.is_noop();
-    ensure!(
-        !migration_changed
-            || !crate::qualify_upgrade::stage::whole_row_grants(manifest.upgrade_stage.as_ref())
-            || matches!(mode, ApplicationMode::Coordinated),
-        "whole_row_grants requires --upgrade-qualification and atomic application with the complete presented package roots"
-    );
-    ensure!(
-        manifest.upgrade_stage.is_none() || !matches!(mode, ApplicationMode::Local(_)),
-        "online package stages require upgrade qualification; local application is refused"
-    );
     let pending_paths = plan
         .pending
         .iter()
         .map(|migration| migration.relative_path.as_str())
         .collect::<BTreeSet<_>>();
-    let MigrationPolicyPlan {
-        mutations,
-        synchronizations,
-        deferred,
-    } = migration_policy;
     let pending_mutations = mutations
         .iter()
         .filter(|planned| pending_paths.contains(planned.relative_path.as_ref()))
         .collect::<Vec<_>>();
 
-    synchronization::require_pending_phase(manifest, synchronizations, &pending_paths)?;
-    synchronization::verify_inherited(
-        tx,
-        env_key,
-        &package_id,
-        manifest,
-        synchronizations,
-        &pending_paths,
-    )
-    .await?;
     validate_definition_ownership_before_apply(
         tx,
         env_key,
@@ -640,71 +347,13 @@ async fn apply_prepared(
     )
     .await?;
     if let Some(deferred) = deferred {
-        // Recreate the owned error only on refusal, preserving its typed source.
-        let reparsed = validate_migration_policy(package_root, directory, &plan)?;
-        let source = reparsed
+        let refusal = validate_migration_policy(package_root, directory, &plan)?
             .deferred
-            .expect("the same immutable migration bytes retain their policy refusal")
+            .expect("the package retains its policy refusal")
             .source;
-        return Err(source)
+        return Err(refusal)
             .with_context(|| format!("validate {} before apply", deferred.relative_path));
     }
-    if manifest.upgrade_stage.is_some() {
-        stage::require_owned_column_additions(tx, env_key, &package_id, &pending_mutations).await?;
-    }
-
-    let accepted_upgrade = match mode {
-        ApplicationMode::Production(evidence) => {
-            crate::package_upgrade::require_application(
-                tx,
-                env_key,
-                package_root,
-                directory,
-                &plan,
-                evidence,
-                false,
-            )
-            .await?
-        }
-        ApplicationMode::Qualification
-        | ApplicationMode::Coordinated
-        | ApplicationMode::Local(_)
-        | ApplicationMode::BackfillCompletion => None,
-    };
-
-    let stage_schema = if migration_changed && let Some(upgrade_stage) = &manifest.upgrade_stage {
-        ensure!(
-            current_package_version(tx, env_key, &package_id)
-                .await?
-                .as_deref()
-                == manifest.package.predecessor_version.as_deref(),
-            "online package stage requires its installed predecessor"
-        );
-        let schemas = wamn_schema_generator::data_access_schemas(&directory.manifest_bytes)?;
-        ensure!(
-            schemas.len() == 1,
-            "online package stage requires one runtime schema"
-        );
-        tx.batch_execute("SET LOCAL lock_timeout = '5s'").await?;
-        let schema = schemas
-            .into_iter()
-            .next()
-            .expect("one schema was established");
-        if !matches!(mode, ApplicationMode::BackfillCompletion) {
-            stage::conditions(
-                tx,
-                env_key,
-                &package_id,
-                &schema,
-                "preconditions",
-                &upgrade_stage.preconditions,
-            )
-            .await?;
-        }
-        Some(schema)
-    } else {
-        None
-    };
 
     // wamn-yk9l. The platform extensions go in FIRST, while this connection is
     // still the administrator: `CREATE EXTENSION` is refused to a package by
@@ -737,34 +386,13 @@ async fn apply_prepared(
         // The planner carries exact package bytes as its parameter-free batch
         // statements; every host-authored record statement has binds.
         if statement.params.is_empty() {
-            if stage_schema.is_some() {
-                tx.batch_execute("SET LOCAL lock_timeout = '5s'").await?;
-            }
-            if let Some(synchronization) = synchronizations.iter().find(|item| {
-                statement.summary.strip_prefix("apply ") == Some(item.relative_path.as_str())
-            }) {
-                synchronization::install(
-                    tx,
-                    env_key,
-                    &package_id,
-                    manifest,
-                    synchronization,
-                    statement,
-                    &pending_mutations,
-                )
-                .await?;
-            } else {
-                roles::execute_migration(tx, manifest, statement).await?;
-            }
+            roles::execute_migration(tx, manifest, statement).await?;
         } else {
             assert_host_role(tx).await?;
             execute(tx, statement, coordinate_text).await?;
         }
     }
     assert_host_role(tx).await?;
-    if crate::qualify_upgrade::stage::whole_row_grants(manifest.upgrade_stage.as_ref()) {
-        stage::require_nullable_additions(tx, &pending_mutations).await?;
-    }
     let ownership_changed = reconcile_definition_ownership(
         tx,
         env_key,
@@ -776,27 +404,9 @@ async fn apply_prepared(
     .await?;
     let history_changed = create_history_tables(tx, manifest).await?;
     reconcile_entity_maps(tx, &plan, manifest).await?;
-    let triggers_changed =
-        reconcile_record_history_triggers(tx, manifest, synchronizations).await?;
+    let triggers_changed = reconcile_record_history_triggers(tx, manifest).await?;
     let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
     let admin_role_changed = ensure_admin_role(tx, env_key, &mut drops).await?;
-    if let Some(schema) = stage_schema
-        && !crate::qualify_upgrade::stage::whole_row_grants(manifest.upgrade_stage.as_ref())
-    {
-        stage::conditions(
-            tx,
-            env_key,
-            &package_id,
-            &schema,
-            "postconditions",
-            &manifest
-                .upgrade_stage
-                .as_ref()
-                .expect("stage was established")
-                .postconditions,
-        )
-        .await?;
-    }
     let comment_changed = match local_comment.as_mut() {
         Some(comment) => {
             local_target::record_manifest(
@@ -809,12 +419,6 @@ async fn apply_prepared(
         }
         None => false,
     };
-    if let Some(evidence) = &accepted_upgrade {
-        let artifact_digest = artifact_digest
-            .as_deref()
-            .expect("a release apply carries its artifact digest");
-        crate::package_upgrade::persist(tx, evidence, artifact_digest).await?;
-    }
     Ok(ApplyOutcome {
         drops,
         package_id,
@@ -864,20 +468,11 @@ pub async fn reconcile_local_package_configuration(
     );
     // The relation classification check of apply refuses a manifest that drops
     // a model whose relation the installed migrations create.
-    let policy = validate_migration_policy(Path::new(""), directory, &plan)?;
+    validate_migration_policy(Path::new(""), directory, &plan)?;
     let manifest = PackageManifest::from_slice(&directory.manifest_bytes)?;
-    synchronization::verify_inherited(
-        tx,
-        env_key,
-        plan.coordinate.package_id(),
-        &manifest,
-        &policy.synchronizations,
-        &BTreeSet::new(),
-    )
-    .await?;
     create_history_tables(tx, &manifest).await?;
     reconcile_entity_maps(tx, &plan, &manifest).await?;
-    reconcile_record_history_triggers(tx, &manifest, &policy.synchronizations).await?;
+    reconcile_record_history_triggers(tx, &manifest).await?;
     ensure_admin_role(tx, env_key, drops).await?;
     Ok(())
 }
@@ -954,8 +549,6 @@ async fn execute(
         Err(source) if is_package_version_sealed(&source) => Err(ApplyPackageError {
             type_: ApplyPackageErrorType::PackageVersionSealed,
             coordinate: coordinate.to_owned(),
-            predecessor_version: None,
-            current_version: None,
             path: None,
             schema: None,
             relation: None,

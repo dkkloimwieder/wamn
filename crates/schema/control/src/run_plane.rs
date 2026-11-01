@@ -11,12 +11,8 @@ pub use plan::plan_run_plane;
 
 #[cfg(test)]
 use declarations::{
-    AUTHORING_PRIVILEGE_SPECS, AuthoringTableSchema, CHECK_SPECS,
-    EFFECT_ATTEMPTS_DISPATCH_IDENTITY_KEY_DEF, EFFECT_DISPATCH_ATTEMPT_FK_DEF,
-    EFFECT_DISPATCH_ATTEMPT_FK_NAME, EFFECT_DISPATCHES_OCCURRENCE_KEY_DEF,
-    EFFECT_OUTCOME_DISPATCH_FK_DEF, EFFECT_OUTCOME_DISPATCH_FK_NAME,
-    RUNS_ADMISSION_PINS_TRIGGER_DEF, RUNS_ADMISSION_PINS_TRIGGER_SQL, RUNS_RELEASE_FK_DEF,
-    helper_specs, trigger_specs,
+    AUTHORING_PRIVILEGE_SPECS, AuthoringTableSchema, CHECK_SPECS, RUNS_ADMISSION_PINS_TRIGGER_DEF,
+    RUNS_ADMISSION_PINS_TRIGGER_SQL, helper_specs, trigger_specs,
 };
 #[cfg(test)]
 use plan::environment_policy_row_security_at_record;
@@ -41,12 +37,11 @@ pub use observation_sql::{
     catalog_schema_present_sql, select_app_run_queue_authority_sql,
     select_app_scenario_author_membership_sql, select_authoring_effective_column_privileges_sql,
     select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,
-    select_authoring_table_privileges_sql, select_effect_table_effective_column_privileges_sql,
-    select_effect_table_effective_privileges_sql, select_effect_table_privileges_sql,
-    select_environment_policy_policies_sql, select_environment_policy_row_security_sql,
-    select_run_capture_privileges_sql, select_scenario_author_role_sql,
-    select_scenario_author_schema_usage_sql, select_schema_checks_sql, select_schema_columns_sql,
-    select_schema_foreign_keys_sql, select_schema_indexes_sql, select_schema_triggers_sql,
+    select_authoring_table_privileges_sql, select_environment_policy_policies_sql,
+    select_environment_policy_row_security_sql, select_run_capture_privileges_sql,
+    select_scenario_author_role_sql, select_scenario_author_schema_usage_sql,
+    select_schema_checks_sql, select_schema_columns_sql, select_schema_indexes_sql,
+    select_schema_triggers_sql,
 };
 #[doc(inline)]
 pub use schema::{BareSchemaName, InvalidBareSchemaName, rewrite_schema};
@@ -67,8 +62,6 @@ pub const SCENARIO_AUTHOR_ROLE: &str = "wamn_scenario_author";
 /// What one plan action does (for reporting; the SQL is on the action).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunPlaneActionKind {
-    /// Refuse incompatible drift on a populated current effect ledger.
-    RefuseSchemaDrift,
     /// Create or harden the host-only `wamn_scenario_author` NOLOGIN role.
     EnsureScenarioAuthorRole,
     /// `CREATE SCHEMA IF NOT EXISTS` + role usage grant (the run-state.sql
@@ -78,12 +71,8 @@ pub enum RunPlaneActionKind {
     CreateTable,
     /// Add a record column missing from a present table.
     AddColumn,
-    /// Converge exact effect-table ACLs and deny guest and author writes.
-    RepairEffectTablePrivilege,
     /// Drop/re-add a drifted record CHECK, or add it when absent.
     RepairConstraint,
-    /// Drop/re-add a missing or drifted named record foreign key.
-    RepairForeignKey,
     /// Enable + force RLS and replace the projected env-policy policy set.
     RepairRowSecurity,
     /// Remove a CHECK on a record table that is absent from the schema of record.
@@ -174,7 +163,6 @@ pub fn select_run_plane_helper_functions_sql() -> &'static str {
      JOIN pg_namespace n ON n.oid = p.pronamespace \
      WHERE n.nspname = $1 \
        AND p.proname IN ('guard_event_lineage_immutable', \
-                         'reject_immutable_effect_fact_change', \
                          'guard_run_admission_pins_immutable', \
                          'guard_terminal_run_delete') \
      ORDER BY p.proname"

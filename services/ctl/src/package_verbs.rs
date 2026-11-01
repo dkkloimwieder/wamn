@@ -9,7 +9,6 @@ use wamn_control::apply_package::{self, ApplyOutcome, ApplyPackageRequest, Packa
 use wamn_control::package_artifact::{
     self, OpenedPackage, PackagePushDisposition, PackageRegistry, PackageSource, PushPackageRequest,
 };
-use wamn_control::qualify_upgrade::{self, QualifyUpgradeRequest};
 use wamn_control::reconcile_package_data_access::{self, ReconcilePackageDataAccessRequest};
 use wamn_control::reconcile_replica_identity::{
     ReconcileReplicaIdentityRequest, reconcile_package_replica_identity,
@@ -24,11 +23,7 @@ use wamn_schema_control::{ReplicaIdentity, ReplicaIdentityPlan};
 #[derive(Debug, Args)]
 pub struct ApplyPackageArgs {
     /// Repository of the component binaries that package descriptors name.
-    #[arg(
-        long,
-        env = "WAMN_COMPONENT_ARTIFACT_BASE",
-        required_unless_present = "abandon_stage"
-    )]
+    #[arg(long, env = "WAMN_COMPONENT_ARTIFACT_BASE", required = true)]
     pub component_artifact_base: Option<String>,
 
     /// Package artifact `<package_id>-<version>` that `push-package` pushed.
@@ -50,23 +45,6 @@ pub struct ApplyPackageArgs {
     pub project: String,
     #[arg(long)]
     pub environment: String,
-
-    /// Exact qualification result for an installed successor migration.
-    #[arg(long)]
-    pub upgrade_qualification: Option<PathBuf>,
-
-    /// Abandon an existing backfill and retain its recorded cursor.
-    #[arg(
-        long,
-        requires = "upgrade_qualification",
-        conflicts_with = "presented_packages"
-    )]
-    pub abandon_stage: bool,
-
-    /// Complete successor artifacts `<package_id>-<version>` for an overlay
-    /// upgrade or whole-row grant exception.
-    #[arg(long = "presented-package", requires = "upgrade_qualification")]
-    pub presented_packages: Vec<String>,
 }
 
 // Environment contract for this verb as invoked by platform install Jobs.
@@ -84,75 +62,7 @@ pub(crate) const APPLY_PACKAGE_INSTALL_ENV: crate::install_job_tests::Environmen
         optional: &["WAMN_NATS_TLS_SERVER_NAME", "WASH_OCI_CA_PATHS"],
     };
 
-/// Prove one package successor against the installed predecessor snapshot.
-#[derive(Debug, Args)]
-pub struct QualifyUpgradeArgs {
-    /// Candidate package artifact `<package_id>-<version>`.
-    #[arg(long)]
-    pub package: String,
-    /// Complete package artifacts for the resulting installed environment.
-    #[arg(long = "presented-package", required = true)]
-    pub presented_packages: Vec<String>,
-    /// Complete original artifacts for a coordinated base and overlay upgrade.
-    #[arg(long = "predecessor-package")]
-    pub predecessor_packages: Vec<String>,
-    /// The registry flags of `push-package`, for every package artifact.
-    #[command(flatten)]
-    pub registry: RegistryArgs,
-    /// Exact built base component artifact for a coordinated upgrade.
-    #[arg(long)]
-    pub base_component: Option<PathBuf>,
-    /// Owner connection to the installed predecessor database.
-    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
-    pub database_url: String,
-    #[arg(long)]
-    pub org: String,
-    /// Project whose environment owns the package lineage.
-    #[arg(long)]
-    pub project: String,
-    /// Environment whose selected release currently serves.
-    #[arg(long)]
-    pub environment: String,
-    /// Manifest digest of the release the environment serves; it must be in
-    /// `catalog.releases` and name the installed package versions.
-    #[arg(long)]
-    pub predecessor_release: String,
-    /// New file for canonical qualification evidence.
-    #[arg(long)]
-    pub result: PathBuf,
-}
-
-/// Qualify the database transition and print its immutable result identity.
-pub async fn qualify_upgrade(args: QualifyUpgradeArgs) -> anyhow::Result<()> {
-    let registry = args.registry.registry();
-    let package = open(&registry, args.package).await?;
-    let presented = open_all(&registry, args.presented_packages).await?;
-    let predecessors = open_all(&registry, args.predecessor_packages).await?;
-    let outcome = qualify_upgrade::qualify_upgrade(QualifyUpgradeRequest {
-        component_source: apply_package::component_source_from_env(Some(&registry))?,
-        database_url: args.database_url,
-        org: args.org.clone(),
-        project: args.project.clone(),
-        environment: args.environment,
-        predecessor_release: args.predecessor_release,
-        package: package.package_root(),
-        presented_packages: roots(&presented),
-        predecessor_packages: roots(&predecessors),
-        base_component: args.base_component,
-        result: args.result,
-    })
-    .await?;
-    println!(
-        "qualified upgrade {}@{}: {} {}",
-        outcome.package_id,
-        outcome.package_version,
-        outcome.sha256,
-        outcome.result.display()
-    );
-    Ok(())
-}
-
-/// The registry flags of `apply-package`, `qualify-upgrade` and
+/// The registry flags of `apply-package` and
 /// `reconcile-package-data-access`.
 #[derive(Debug, Args)]
 pub struct RegistryArgs {
@@ -325,24 +235,19 @@ pub(crate) const RECONCILE_REPLICA_IDENTITY_INSTALL_ENV: crate::install_job_test
 pub async fn apply(args: ApplyPackageArgs) -> anyhow::Result<()> {
     let registry = args.registry.registry();
     let opened = open(&registry, args.package_artifact).await?;
-    let presented = open_all(&registry, args.presented_packages).await?;
-    let component_source = if args.abandon_stage {
-        None
-    } else {
-        let base = args
-            .component_artifact_base
-            .as_deref()
-            .context("package install requires --component-artifact-base")?;
-        Some(
-            wamn_runtime::component_artifact_source::ComponentArtifactSourceConfig::new(
-                base,
-                registry.insecure_registry,
-                std::time::Duration::from_secs(30),
-            )?
-            .with_registry_auth_file(&registry.registry_auth_file)?
-            .with_ca_paths(&registry.oci_ca_paths)?,
-        )
-    };
+    let base = args
+        .component_artifact_base
+        .as_deref()
+        .context("package install requires --component-artifact-base")?;
+    let component_source = Some(
+        wamn_runtime::component_artifact_source::ComponentArtifactSourceConfig::new(
+            base,
+            registry.insecure_registry,
+            std::time::Duration::from_secs(30),
+        )?
+        .with_registry_auth_file(&registry.registry_auth_file)?
+        .with_ca_paths(&registry.oci_ca_paths)?,
+    );
     let request = ApplyPackageRequest {
         component_source,
         changes: wamn_platform_identity::auth_changes::AuthChanges::connect(
@@ -355,37 +260,8 @@ pub async fn apply(args: ApplyPackageArgs) -> anyhow::Result<()> {
         project: args.project.clone(),
         environment: args.environment.clone(),
     };
-    if args.abandon_stage {
-        let path = args
-            .upgrade_qualification
-            .as_deref()
-            .context("--abandon-stage requires --upgrade-qualification")?;
-        let outcome = apply_package::abandon_stage(request, path).await?;
-        println!(
-            "abandoned {}@{}: installed version {}; retained cursor {} ({} completed batches)",
-            outcome.package_id,
-            outcome.package_version,
-            outcome.installed_version,
-            outcome.cursor,
-            outcome.completed_batches,
-        );
-    } else if presented.is_empty() {
-        let outcome = if let Some(path) = args.upgrade_qualification {
-            apply_package::apply_qualified_package(request, &path).await?
-        } else {
-            apply_package::apply_package(request).await?
-        };
-        print_applied(&outcome);
-    } else {
-        let path = args.upgrade_qualification.as_deref().ok_or_else(|| {
-            anyhow::anyhow!("--presented-package requires --upgrade-qualification")
-        })?;
-        let outcomes =
-            apply_package::apply_qualified_package_set(request, &roots(&presented), path).await?;
-        for outcome in &outcomes {
-            print_applied(outcome);
-        }
-    }
+    let outcome = apply_package::apply_package(request).await?;
+    print_applied(&outcome);
     Ok(())
 }
 
@@ -468,63 +344,5 @@ fn print_replica_identity_plan(plan: &ReplicaIdentityPlan, dry_run: bool) {
     }
     for table in &plan.skipped_absent {
         println!("[skip] {table} is absent; apply the package before reconciling");
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use clap::Parser as _;
-
-    #[derive(Debug, clap::Parser)]
-    struct ApplyCli {
-        #[command(flatten)]
-        args: super::ApplyPackageArgs,
-    }
-
-    #[test]
-    fn abandonment_requires_qualification_and_refuses_presented_roots() {
-        let mut arguments = vec![
-            "apply-package",
-            "--package-artifact",
-            "unused-1.0.0",
-            "--artifact-base",
-            "registry.invalid/wamn/packages",
-            "--registry-auth-file",
-            "config.json",
-            "--database-url",
-            "unused",
-            "--org",
-            "fixture",
-            "--project",
-            "fixture",
-            "--environment",
-            "dev",
-            "--abandon-stage",
-        ];
-        assert_eq!(
-            ApplyCli::try_parse_from(&arguments).unwrap_err().kind(),
-            clap::error::ErrorKind::MissingRequiredArgument,
-        );
-        arguments.extend(["--upgrade-qualification", "qualification.json"]);
-        assert!(
-            ApplyCli::try_parse_from(&arguments)
-                .unwrap()
-                .args
-                .abandon_stage
-        );
-        arguments.extend(["--presented-package", "other"]);
-        assert_eq!(
-            ApplyCli::try_parse_from(&arguments).unwrap_err().kind(),
-            clap::error::ErrorKind::ArgumentConflict,
-        );
-        arguments.truncate(arguments.len() - 2);
-        arguments.retain(|argument| *argument != "--abandon-stage");
-        let error = ApplyCli::try_parse_from(&arguments).unwrap_err();
-        assert!(error.to_string().contains("--component-artifact-base"));
-        arguments.extend([
-            "--component-artifact-base",
-            "registry.invalid/wamn/components",
-        ]);
-        assert!(ApplyCli::try_parse_from(&arguments).is_ok());
     }
 }

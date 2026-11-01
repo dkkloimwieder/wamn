@@ -3,8 +3,6 @@
 
 #[path = "run_plane_live/catalog.rs"]
 mod catalog;
-#[path = "run_plane_live/effect_tables.rs"]
-mod effect_tables;
 #[path = "run_plane_live/partition.rs"]
 mod partition;
 #[path = "run_plane_live/platform_configuration.rs"]
@@ -525,7 +523,6 @@ async fn run_plane_reconcile_live() {
     current_noop_leg(&su).await;
     two_plane_residency_leg(&su).await;
     forced_rls_owner_refusal_leg(&su).await;
-    effect_tables::effect_table_privileges_leg(&su).await;
     partition::global_fifo_queue_leg(&su).await;
     capture_mode_security_leg(&su, &url).await;
     environment_policy_row_security_leg(&su, &url).await;
@@ -969,14 +966,7 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
     // authoring-test relations left this roster with wamn-0h0g.9.11.2
     // (38860fab) — `deploy/sql/control-portable-store.sql` provisions them into
     // the same schema, and this verb never applies that file.
-    for t in [
-        "runs",
-        "environment_policies",
-        "effect_attempts",
-        "effect_attempt_dispatches",
-        "effect_attempt_outcomes",
-        "run_queue",
-    ] {
+    for t in ["runs", "environment_policies", "run_queue"] {
         assert!(
             table_exists(su, SCHEMA, t).await,
             "run-plane table {t} provisioned"
@@ -1260,14 +1250,14 @@ async fn current_noop_leg(su: &Client) {
         "current schema dry-run is a no-op: {:#?}",
         dry.actions
     );
-    // The record is the five `run-state.sql` tables plus `run_queue`, pinned by
+    // The record is the two `run-state.sql` tables plus `run_queue`, pinned by
     // `record_tables_are_pinned`. The authoring-test orchestration relations that
     // used to make this twelve left the record with wamn-0h0g.9.11.3 (805701ec);
     // this assertion had been unreachable behind an earlier leg's abort ever since.
     assert_eq!(
         dry.at_target.len(),
-        6,
-        "all six run-plane record tables at target: {:?}",
+        3,
+        "all three run-plane record tables at target: {:?}",
         dry.at_target
     );
 

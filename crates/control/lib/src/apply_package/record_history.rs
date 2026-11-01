@@ -338,7 +338,6 @@ pub(super) async fn create_history_tables(
 pub(super) async fn reconcile_record_history_triggers(
     tx: &Transaction<'_>,
     manifest: &PackageManifest,
-    synchronizations: &[super::synchronization::PlannedSynchronization],
 ) -> anyhow::Result<bool> {
     let owned = manifest
         .models
@@ -436,18 +435,6 @@ pub(super) async fn reconcile_record_history_triggers(
             }
             expected.insert(created);
         }
-    }
-    // Each pair already passed typed ownership and exact catalog inspection in
-    // this transaction. Include only those exact identities in the complete set.
-    for synchronization in synchronizations {
-        let declaration = &synchronization.declaration;
-        let (_, definitions) = installed
-            .get(&(declaration.schema.clone(), declaration.relation.clone()))
-            .context("verified synchronization relation is absent from the owned model set")?;
-        let definition = definitions
-            .get(&declaration.trigger)
-            .context("verified synchronization trigger is missing")?;
-        expected.insert(definition.clone());
     }
     // A trigger needs its function, and a dropped function needs no trigger.
     for statement in functions

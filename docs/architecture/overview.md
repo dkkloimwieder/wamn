@@ -207,16 +207,8 @@ The global principal stays, and access in other orgs does not change.
 Reactivation makes the membership active and restores nothing else.
 The control host exposes these writes as the routes `user.invite`, `user.activate`, `user.deactivate`, `org_admin.grant` and `org_admin.revoke`.
 
-An additive base can satisfy an unchanged overlay's declared schema and operation requirements.
-Installed additive upgrades use a separate `qualify-upgrade` proof before `apply-package` changes production.
-Qualification copies predecessor data and ownership, observes the actual runtime schema, and requires the successor to retain that schema.
-It proves predecessor SQL under both predecessor and candidate grants, then records the exact candidate roots and final privileges.
-Application stores accepted evidence with the successor in one transaction.
-For a base upgrade, that transaction installs the base first and every affected overlay successor afterward.
-Each overlay preserves its consumed operation contracts and pins the exact candidate base version and component digest.
-Qualification refuses an omitted overlay, a changed contract, or a migration statement that cannot run inside the transaction.
-Reconciliation requires evidence for the complete current package set and privileges, without selecting by timestamp.
-The [package upgrade procedure](../operations/deployment.md#package-upgrades) owns command order and recovery.
+A package schema change requires a new release and a reset of the application tables.
+The [owner ruling](../audit/README.md) defines this baseline policy.
 
 ## Runtime owners
 

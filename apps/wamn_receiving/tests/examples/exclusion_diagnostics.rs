@@ -151,11 +151,6 @@ async fn main() -> anyhow::Result<()> {
     client
         .batch_execute(include_str!("../../migrations/0001_initial.sql"))
         .await?;
-    client
-        .batch_execute(include_str!(
-            "../../migrations/0002_supplier_name_min_length.sql"
-        ))
-        .await?;
     client.batch_execute("GRANT SELECT, UPDATE ON receiving.purchase_order TO wamn_app;
         INSERT INTO receiving.supplier (id, name)
         VALUES ('00000000-0000-4000-8000-000000000f01', 'first supplier'),

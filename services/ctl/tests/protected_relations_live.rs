@@ -177,14 +177,7 @@ async fn install_project_database(client: &Client, url: &str) {
     at_target.sort();
     assert_eq!(
         at_target,
-        [
-            "effect_attempt_dispatches",
-            "effect_attempt_outcomes",
-            "effect_attempts",
-            "environment_policies",
-            "run_queue",
-            "runs",
-        ],
+        ["environment_policies", "run_queue", "runs",],
         "the converged post-check did not name exactly the project run-plane record"
     );
 

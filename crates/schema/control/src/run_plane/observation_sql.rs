@@ -7,51 +7,6 @@ pub fn select_scenario_author_role_sql() -> &'static str {
        FROM pg_catalog.pg_roles WHERE rolname = 'wamn_scenario_author'"
 }
 
-/// Direct grants on the three immutable effect tables.
-pub fn select_effect_table_privileges_sql() -> &'static str {
-    "SELECT table_name, grantee, privilege_type \
-       FROM information_schema.table_privileges \
-      WHERE table_schema = $1 \
-        AND table_name IN ('effect_attempts', 'effect_attempt_dispatches', \
-                           'effect_attempt_outcomes') \
-        AND grantee IN ('PUBLIC', 'wamn_app', 'wamn_scenario_author') \
-      ORDER BY table_name, grantee, privilege_type"
-}
-
-/// Effective grants and owners on the effect table boundary.
-pub fn select_effect_table_effective_privileges_sql() -> &'static str {
-    "SELECT relation.relname, actor.rolname, privilege.name, owner.rolname \
-       FROM pg_catalog.pg_class AS relation \
-       JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
-       JOIN pg_catalog.pg_roles AS owner ON owner.oid = relation.relowner \
-       CROSS JOIN pg_catalog.pg_roles AS actor \
-       CROSS JOIN (VALUES ('SELECT'::text), ('INSERT'::text), ('UPDATE'::text), \
-                          ('DELETE'::text), ('TRUNCATE'::text), \
-                          ('REFERENCES'::text), ('TRIGGER'::text)) AS privilege(name) \
-      WHERE namespace.nspname = $1 AND relation.relkind = 'r' \
-        AND relation.relname IN ('effect_attempts', 'effect_attempt_dispatches', \
-                                 'effect_attempt_outcomes') \
-        AND actor.rolname IN ('wamn_app', 'wamn_scenario_author') \
-        AND pg_catalog.has_table_privilege(actor.oid, relation.oid, privilege.name) \
-      ORDER BY relation.relname, actor.rolname, privilege.name"
-}
-
-/// Effective column grants on the effect table boundary.
-pub fn select_effect_table_effective_column_privileges_sql() -> &'static str {
-    "SELECT relation.relname, actor.rolname, privilege.name \
-       FROM pg_catalog.pg_class AS relation \
-       JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
-       CROSS JOIN pg_catalog.pg_roles AS actor \
-       CROSS JOIN (VALUES ('SELECT'::text), ('INSERT'::text), ('UPDATE'::text), \
-                          ('REFERENCES'::text)) AS privilege(name) \
-      WHERE namespace.nspname = $1 AND relation.relkind = 'r' \
-        AND relation.relname IN ('effect_attempts', 'effect_attempt_dispatches', \
-                                 'effect_attempt_outcomes') \
-        AND actor.rolname IN ('wamn_app', 'wamn_scenario_author') \
-        AND pg_catalog.has_any_column_privilege(actor.oid, relation.oid, privilege.name) \
-      ORDER BY relation.relname, actor.rolname, privilege.name"
-}
-
 // --- Dispatcher read-principal observation (wamn-0h0g.12.123) ----------------
 //
 // `$2` carries the ROLE NAME instead of the inline literal every neighbouring
@@ -333,16 +288,6 @@ pub fn select_schema_checks_sql() -> &'static str {
      JOIN pg_class c ON c.oid = con.conrelid \
      JOIN pg_namespace n ON n.oid = c.relnamespace \
      WHERE n.nspname = $1 AND c.relkind = 'r' AND con.contype = 'c' \
-     ORDER BY c.relname, con.conname"
-}
-
-/// Every named foreign key on an ordinary table in `$1`.
-pub fn select_schema_foreign_keys_sql() -> &'static str {
-    "SELECT c.relname, con.conname, pg_get_constraintdef(con.oid, true) \
-     FROM pg_constraint con \
-     JOIN pg_class c ON c.oid = con.conrelid \
-     JOIN pg_namespace n ON n.oid = c.relnamespace \
-     WHERE n.nspname = $1 AND c.relkind = 'r' AND con.contype = 'f' \
      ORDER BY c.relname, con.conname"
 }
 

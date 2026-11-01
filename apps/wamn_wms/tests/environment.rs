@@ -807,11 +807,7 @@ pub async fn publish(
         },
         &BTreeMap::from([(
             package.package_id().to_owned(),
-            Installed {
-                current: version.clone(),
-                lineage: BTreeMap::from([(version, None)]),
-                evidence: BTreeSet::new(),
-            },
+            Installed { current: version },
         )]),
         &release_digest,
         &manifest,

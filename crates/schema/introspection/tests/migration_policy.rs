@@ -6,7 +6,6 @@ use wamn_schema_introspection::migration_policy::{
     DefinitionAction, DefinitionType, MigrationPolicyError, MigrationPolicyErrorType,
     inspect_migration_definition_mutations, validate_migration_bytes, validate_migration_file,
     validate_migration_file_for_schemas,
-    validate_predecessor_compatible_migration_bytes_for_schemas,
 };
 
 static ARTIFACT_ID: AtomicU64 = AtomicU64::new(0);
@@ -352,88 +351,6 @@ fn refuses_view_forms_outside_the_admitted_header() {
 }
 
 #[test]
-fn retyping_a_column_under_a_view_stays_refused() {
-    let sql = b"CREATE TABLE inventory.widget (value int4); \
-                CREATE VIEW inventory.v AS SELECT value FROM inventory.widget; \
-                DROP VIEW inventory.v; \
-                ALTER TABLE inventory.widget ALTER COLUMN value TYPE int8; \
-                CREATE VIEW inventory.v AS SELECT value FROM inventory.widget;";
-    for error in [
-        validate_migration_bytes("initial.sql", sql, "inventory").unwrap_err(),
-        validate_predecessor_compatible_migration_bytes_for_schemas(
-            "successor.sql",
-            sql,
-            &["inventory"],
-        )
-        .unwrap_err(),
-    ] {
-        assert_eq!(
-            error.error_type(),
-            MigrationPolicyErrorType::UnsupportedStatement
-        );
-        assert_eq!(error.statement_index(), Some(4));
-    }
-}
-
-#[test]
-fn predecessor_upgrade_admits_views() {
-    for sql in [
-        "CREATE VIEW inventory.v AS SELECT 1;",
-        "CREATE OR REPLACE VIEW inventory.v AS SELECT 1;",
-        "DROP VIEW inventory.v;",
-        "DROP VIEW IF EXISTS inventory.v RESTRICT;",
-        "DROP VIEW inventory.v; ALTER TABLE inventory.widget ADD COLUMN note text; CREATE VIEW inventory.v AS SELECT note FROM inventory.widget;",
-    ] {
-        validate_predecessor_compatible_migration_bytes_for_schemas(
-            "upgrade.sql",
-            sql.as_bytes(),
-            &["inventory"],
-        )
-        .unwrap_or_else(|error| panic!("{sql}: {error}"));
-    }
-}
-
-#[test]
-fn predecessor_upgrade_refuses_drop_view_cascade() {
-    for sql in [
-        "DROP VIEW inventory.v CASCADE;",
-        "DROP VIEW IF EXISTS inventory.v CASCADE;",
-    ] {
-        let error = validate_predecessor_compatible_migration_bytes_for_schemas(
-            "upgrade.sql",
-            sql.as_bytes(),
-            &["inventory"],
-        )
-        .expect_err("a successor cannot cascade a view drop");
-        assert_eq!(
-            error.error_type(),
-            MigrationPolicyErrorType::UnsupportedStatement
-        );
-        assert_eq!(error.statement_index(), Some(1));
-    }
-}
-
-#[test]
-fn predecessor_upgrade_refuses_views_outside_configured_schemas() {
-    for sql in [
-        "CREATE VIEW other.v AS SELECT 1;",
-        "CREATE OR REPLACE VIEW other.v AS SELECT 1;",
-        "DROP VIEW other.v;",
-    ] {
-        let error = validate_predecessor_compatible_migration_bytes_for_schemas(
-            "upgrade.sql",
-            sql.as_bytes(),
-            &["inventory"],
-        )
-        .expect_err("a successor cannot change another schema's view");
-        assert_eq!(
-            error.error_type(),
-            MigrationPolicyErrorType::CrossSchemaMutation
-        );
-    }
-}
-
-#[test]
 fn admits_the_demanded_overlay_additions() {
     let artifact = TempArtifact::write(
         "sql",
@@ -450,103 +367,6 @@ ALTER TABLE inventory.widget_maker
 
     validate_migration_file(artifact.path(), "inventory")
         .expect("the two client fields and named check are the admitted overlay DDL");
-}
-
-#[test]
-fn predecessor_upgrade_admits_new_tables_with_internal_constraints_and_existing_column_forms() {
-    let sql = r"
-CREATE TABLE inventory.upgrade_detail (
-    id uuid CONSTRAINT upgrade_detail_pkey PRIMARY KEY,
-    quantity bigint CONSTRAINT upgrade_detail_quantity_check CHECK (quantity > 0),
-    widget_id uuid CONSTRAINT upgrade_detail_widget_fk REFERENCES inventory.widget (id)
-);
-ALTER TABLE inventory.widget ADD COLUMN inspection_required boolean NOT NULL DEFAULT false;
-ALTER TABLE inventory.widget ADD COLUMN quality_status text NOT NULL DEFAULT 'not_required';
-ALTER TABLE warehouse.area ADD COLUMN description text;
-";
-    validate_predecessor_compatible_migration_bytes_for_schemas(
-        "upgrade.sql",
-        sql.as_bytes(),
-        &["inventory", "warehouse"],
-    )
-    .expect("new-table constraints and admitted columns preserve predecessor write shapes");
-
-    for column_type in [
-        "boolean",
-        "integer",
-        "bigint",
-        "double precision",
-        "text",
-        "bytea",
-        "numeric",
-        "timestamp with time zone",
-        "jsonb",
-        "uuid",
-    ] {
-        let sql = format!("ALTER TABLE inventory.widget ADD COLUMN detail {column_type};");
-        validate_predecessor_compatible_migration_bytes_for_schemas(
-            "upgrade.sql",
-            sql.as_bytes(),
-            &["inventory"],
-        )
-        .unwrap_or_else(|error| panic!("{sql} must be admitted: {error}"));
-    }
-}
-
-#[test]
-fn predecessor_upgrade_refuses_an_existing_relation_check_admitted_by_ordinary_policy() {
-    let sql = r"
-ALTER TABLE inventory.widget ADD COLUMN description text;
-ALTER TABLE inventory.widget ADD CONSTRAINT widget_description_check
-    CHECK (description IS NOT NULL);
-";
-    let artifact = TempArtifact::write("sql", sql);
-    validate_migration_file(artifact.path(), "inventory")
-        .expect("ordinary migrations admit named checks");
-
-    let error = validate_predecessor_compatible_migration_bytes_for_schemas(
-        artifact.path(),
-        sql.as_bytes(),
-        &["inventory"],
-    )
-    .expect_err("a check can reject predecessor writes even when their SQL plans successfully");
-    assert_eq!(
-        error.error_type(),
-        MigrationPolicyErrorType::UnsupportedStatement
-    );
-    assert_eq!(error.statement_index(), Some(2));
-    assert_eq!(error.path(), artifact.path());
-    assert!(error.to_string().contains("predecessor-compatible"));
-}
-
-#[test]
-fn predecessor_upgrade_preserves_ordinary_policy_refusals() {
-    for sql in [
-        "ALTER TABLE inventory.widget ADD COLUMN description text NOT NULL;",
-        "ALTER TABLE inventory.widget ADD COLUMN description text DEFAULT 'open';",
-        "ALTER TABLE inventory.widget ADD COLUMN description text CONSTRAINT widget_description_check CHECK (description <> '');",
-        "ALTER TABLE inventory.widget ALTER COLUMN description TYPE bigint;",
-        "ALTER TABLE inventory.widget ALTER COLUMN description SET NOT NULL;",
-        "ALTER TABLE inventory.widget DROP COLUMN description;",
-        "UPDATE inventory.widget SET description = 'backfilled';",
-        "CREATE TABLE public.hidden (id uuid);",
-        "CREATE TABLE inventory.hidden (id uuid PRIMARY KEY);",
-        "GRANT SELECT ON inventory.widget TO attacker;",
-    ] {
-        let ordinary = refusal(sql);
-        let upgrade = validate_predecessor_compatible_migration_bytes_for_schemas(
-            "upgrade.sql",
-            sql.as_bytes(),
-            &["inventory"],
-        )
-        .expect_err("an upgrade must not widen ordinary migration authority");
-        assert_eq!(upgrade.error_type(), ordinary.error_type(), "{sql}");
-        assert_eq!(
-            upgrade.statement_index(),
-            ordinary.statement_index(),
-            "{sql}"
-        );
-    }
 }
 
 #[test]
@@ -1031,4 +851,31 @@ fn refuses_unterminated_lexical_regions() {
             "{sql}"
         );
     }
+}
+
+#[test]
+fn retyping_a_column_under_a_view_stays_refused() {
+    let sql = b"CREATE TABLE inventory.widget (value int4); \
+                CREATE VIEW inventory.v AS SELECT value FROM inventory.widget; \
+                DROP VIEW inventory.v; \
+                ALTER TABLE inventory.widget ALTER COLUMN value TYPE int8; \
+                CREATE VIEW inventory.v AS SELECT value FROM inventory.widget;";
+    let error = validate_migration_bytes("initial.sql", sql, "inventory").unwrap_err();
+    assert_eq!(
+        error.error_type(),
+        MigrationPolicyErrorType::UnsupportedStatement
+    );
+    assert_eq!(error.statement_index(), Some(4));
+}
+
+#[test]
+fn ordinary_policy_admits_an_existing_relation_check() {
+    let sql = r"
+ALTER TABLE inventory.widget ADD COLUMN description text;
+ALTER TABLE inventory.widget ADD CONSTRAINT widget_description_check
+    CHECK (description IS NOT NULL);
+";
+    let artifact = TempArtifact::write("sql", sql);
+    validate_migration_file(artifact.path(), "inventory")
+        .expect("ordinary migrations admit named checks");
 }

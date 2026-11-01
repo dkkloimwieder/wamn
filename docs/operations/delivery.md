@@ -2,8 +2,8 @@
 
 ## Release qualification
 
-For a package successor with application migrations, first follow [package upgrades](deployment.md#package-upgrades).
-`qualify-upgrade` proves the database transition before application. It does not qualify a release or replace the release qualification below.
+A package schema change requires a new release and a reset of the application tables.
+The [owner ruling](../audit/README.md) defines this baseline policy.
 
 Publish the release first with `publish-release`, as [deployment](deployment.md#publish-a-release) shows.
 It pushes the release manifest to the repository that `WAMN_RELEASE_ARTIFACT_BASE` names, and it prints the release digest.

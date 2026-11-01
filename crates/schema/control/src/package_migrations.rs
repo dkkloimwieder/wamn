@@ -21,7 +21,6 @@ pub const PACKAGE_MANIFEST_PATH: &str = "wamn.json";
 pub const PACKAGE_MIGRATION_DRIFT_REFUSAL: &str = "package-migration-drift";
 pub const PACKAGE_MIGRATION_DUPLICATE_REFUSAL: &str = "package-migration-duplicate";
 pub const PACKAGE_MIGRATION_GAP_REFUSAL: &str = "package-migration-gap";
-pub const PREDECESSOR_PREFIX_MISMATCH_REFUSAL: &str = "predecessor-prefix-mismatch";
 pub const PACKAGE_COORDINATE_WITHOUT_ARTIFACT_REFUSAL: &str = "package-coordinate-without-artifact";
 
 /// One exact migration file discovered under a package directory.
@@ -96,7 +95,6 @@ pub struct PackageMigrationPlan {
     pub artifact_digest: Option<String>,
     pub models: Vec<ManagedModel>,
     pub cdc_excluded_relations: Vec<CdcExcludedRelation>,
-    pub verified_prefix: Vec<PendingMigration>,
     pub pending: Vec<PendingMigration>,
     pub statements: Vec<SqlStatement>,
 }
@@ -116,11 +114,10 @@ pub enum PackageMigrationErrorType {
     Duplicate,
     Gap,
     MigrationDrift,
-    PredecessorPrefixMismatch,
     CoordinateContentConflict,
     CoordinateWithoutArtifact,
     CoordinatePredecessorConflict,
-    PredecessorNotCurrent,
+    BaselineChanged,
 }
 
 impl PackageMigrationErrorType {
@@ -131,11 +128,10 @@ impl PackageMigrationErrorType {
             Self::Duplicate => PACKAGE_MIGRATION_DUPLICATE_REFUSAL,
             Self::Gap => PACKAGE_MIGRATION_GAP_REFUSAL,
             Self::MigrationDrift => PACKAGE_MIGRATION_DRIFT_REFUSAL,
-            Self::PredecessorPrefixMismatch => PREDECESSOR_PREFIX_MISMATCH_REFUSAL,
             Self::CoordinateContentConflict => "package-coordinate-content-conflict",
             Self::CoordinateWithoutArtifact => PACKAGE_COORDINATE_WITHOUT_ARTIFACT_REFUSAL,
             Self::CoordinatePredecessorConflict => "package-coordinate-predecessor-conflict",
-            Self::PredecessorNotCurrent => "predecessor-not-current",
+            Self::BaselineChanged => "package-baseline-changed",
         }
     }
 }
@@ -288,14 +284,11 @@ pub fn plan_package_registration(
         }
         return Ok(false);
     }
-    if let Some(current) = current_version
-        && predecessor_version != Some(current)
-    {
+    if let Some(current) = current_version {
         return Err(PackageMigrationError::new(
-            PackageMigrationErrorType::PredecessorNotCurrent,
+            PackageMigrationErrorType::BaselineChanged,
             format!(
-                "predecessor-not-current: declared={} current={current}",
-                predecessor_version.unwrap_or("<none>")
+                "package-baseline-changed: installed={current}; reset the application database"
             ),
         ));
     }
@@ -383,7 +376,10 @@ pub fn plan_package_migrations(
 
     if let Some(existing) = applied {
         if existing.coordinate != coordinate {
-            return plan_package_migrations_from_predecessor(directory, existing);
+            return Err(PackageMigrationError::new(
+                PackageMigrationErrorType::BaselineChanged,
+                "package-baseline-changed: reset the application database",
+            ));
         }
         if existing.artifact_digest != artifact_digest {
             return Err(digest_conflict(
@@ -454,7 +450,7 @@ pub fn plan_package_migrations(
             sha256: migration.sha256.clone(),
         })
         .collect::<Vec<_>>();
-    let statements = transaction_statements(&coordinate, &[], pending_sources)?;
+    let statements = transaction_statements(&coordinate, pending_sources)?;
 
     Ok(PackageMigrationPlan {
         coordinate,
@@ -462,101 +458,9 @@ pub fn plan_package_migrations(
         artifact_digest,
         models,
         cdc_excluded_relations,
-        verified_prefix: Vec::new(),
         pending,
         statements,
     })
-}
-
-/// Plan a cumulative new coordinate from exactly its declared predecessor.
-fn plan_package_migrations_from_predecessor(
-    directory: &PackageDirectory,
-    predecessor: &AppliedPackage,
-) -> Result<PackageMigrationPlan, PackageMigrationError> {
-    let fresh = plan_package_migrations(directory, None)?;
-    let migrations = normalized_migrations(&directory.migrations)?;
-    let first_path = migrations
-        .first()
-        .expect("normalized package migration streams are nonempty")
-        .source
-        .relative_path
-        .clone();
-    let declared_predecessor = fresh.predecessor_version.as_deref();
-    if predecessor.coordinate.package_id() != fresh.coordinate.package_id()
-        || declared_predecessor != Some(predecessor.coordinate.package_version())
-    {
-        return Err(PackageMigrationError {
-            type_: PackageMigrationErrorType::PredecessorPrefixMismatch,
-            context: format!(
-                "{PREDECESSOR_PREFIX_MISMATCH_REFUSAL}: applied coordinate {} is not the declared predecessor of {}",
-                coordinate_text(&predecessor.coordinate),
-                coordinate_text(&fresh.coordinate)
-            ).into_boxed_str(),
-            coordinate: Some(coordinate_text(&fresh.coordinate).into_boxed_str()),
-            path: Some(first_path.into_boxed_str()),
-            recorded_hash: None,
-            actual_hash: None,
-            source: None,
-        });
-    }
-    if predecessor.migrations.is_empty() {
-        return Err(PackageMigrationError {
-            type_: PackageMigrationErrorType::PredecessorPrefixMismatch,
-            context: format!(
-                "{PREDECESSOR_PREFIX_MISMATCH_REFUSAL}: declared predecessor has no applied migration prefix"
-            ).into_boxed_str(),
-            coordinate: Some(coordinate_text(&fresh.coordinate).into_boxed_str()),
-            path: Some(first_path.into_boxed_str()),
-            recorded_hash: Some("missing".into()),
-            actual_hash: Some(migrations[0].sha256.clone().into_boxed_str()),
-            source: None,
-        });
-    }
-    validate_recorded_prefix(&predecessor.coordinate, &predecessor.migrations, &migrations)
-        .map_err(|source| {
-            let path = source.path.clone().or_else(|| Some(first_path.clone().into_boxed_str()));
-            let recorded_hash = source.recorded_hash.clone();
-            let actual_hash = source.actual_hash.clone();
-            PackageMigrationError {
-                type_: PackageMigrationErrorType::PredecessorPrefixMismatch,
-                context: format!(
-                    "{PREDECESSOR_PREFIX_MISMATCH_REFUSAL}: {} does not equal the cumulative prefix of {}",
-                    coordinate_text(&predecessor.coordinate),
-                    coordinate_text(&fresh.coordinate)
-                ).into_boxed_str(),
-                coordinate: Some(coordinate_text(&fresh.coordinate).into_boxed_str()),
-                path,
-                recorded_hash,
-                actual_hash,
-                source: Some(Box::new(source)),
-            }
-        })?;
-
-    let prefix_len = predecessor.migrations.len();
-    let prefix_sources = &migrations[..prefix_len];
-    let pending_sources = &migrations[prefix_len..];
-    let verified_prefix = prefix_sources.iter().map(migration_identity).collect();
-    let pending = pending_sources.iter().map(migration_identity).collect();
-    let statements = transaction_statements(&fresh.coordinate, prefix_sources, pending_sources)?;
-
-    Ok(PackageMigrationPlan {
-        coordinate: fresh.coordinate,
-        predecessor_version: fresh.predecessor_version,
-        artifact_digest: fresh.artifact_digest,
-        models: fresh.models,
-        cdc_excluded_relations: fresh.cdc_excluded_relations,
-        verified_prefix,
-        pending,
-        statements,
-    })
-}
-
-fn migration_identity(migration: &NormalizedMigration<'_>) -> PendingMigration {
-    PendingMigration {
-        ordinal: migration.ordinal,
-        relative_path: migration.source.relative_path.clone(),
-        sha256: migration.sha256.clone(),
-    }
 }
 
 struct NormalizedMigration<'a> {
@@ -718,15 +622,9 @@ fn validate_recorded_prefix(
 
 fn transaction_statements(
     coordinate: &PackageCoordinate,
-    verified_prefix: &[NormalizedMigration<'_>],
     pending: &[NormalizedMigration<'_>],
 ) -> Result<Vec<SqlStatement>, PackageMigrationError> {
-    let mut statements = Vec::with_capacity(verified_prefix.len() + pending.len() * 2);
-    for migration in verified_prefix {
-        statements.push(record_migration_statement(
-            coordinate, migration, "inherit",
-        )?);
-    }
+    let mut statements = Vec::with_capacity(pending.len() * 2);
     for migration in pending {
         let sql = std::str::from_utf8(&migration.source.bytes).map_err(|source| {
             PackageMigrationError::with_source(
@@ -741,7 +639,7 @@ fn transaction_statements(
             sql: sql.into(),
             params: Vec::new(),
         });
-        statements.push(record_migration_statement(coordinate, migration, "record")?);
+        statements.push(record_migration_statement(coordinate, migration)?);
     }
     Ok(statements)
 }
@@ -749,10 +647,9 @@ fn transaction_statements(
 fn record_migration_statement(
     coordinate: &PackageCoordinate,
     migration: &NormalizedMigration<'_>,
-    action: &str,
 ) -> Result<SqlStatement, PackageMigrationError> {
     Ok(SqlStatement {
-        summary: format!("{action} {}", migration.source.relative_path),
+        summary: format!("record {}", migration.source.relative_path),
         sql: "INSERT INTO catalog.package_migrations \
               (env_key, package_id, package_version, ordinal, relative_path, sha256) \
               VALUES (NULLIF(current_setting('app.env_key', true), ''), $1, $2, $3, $4, $5)"
@@ -799,12 +696,6 @@ mod tests {
             r#"{{"package":{{"id":"orders","version":"{version}"}},"required_platform_policy_contract":{{"id":"orders_access","state":"unsatisfied"}},"models":{{"widget_tag":{{"schema":"fixture","table":"widget_tag","owner":"orders","audit_log":{{"columns":[],"retention":"none"}},"operations":{{"get":{{"permission":"widget_tag.get","result":"one"}}}}}}}},"connections":{{}},"components":{{"data":{{"connections":["postgres"]}}}}}}"#
         )
         .into_bytes()
-    }
-
-    fn manifest_with_predecessor(version: &str, predecessor: &str) -> Vec<u8> {
-        let mut manifest: serde_json::Value = serde_json::from_slice(&manifest(version)).unwrap();
-        manifest["package"]["predecessor_version"] = serde_json::Value::String(predecessor.into());
-        serde_json::to_vec(&manifest).unwrap()
     }
 
     fn source(path: &str, sql: &str) -> MigrationSource {
@@ -861,13 +752,13 @@ mod tests {
     }
 
     #[test]
-    fn registration_preserves_replay_conflicts_and_current_predecessor() {
+    fn registration_preserves_replays_and_requires_a_reset_for_another_version() {
         let coordinate = PackageCoordinate::new("orders", "2.0.0").unwrap();
         let hash = Some("hash");
         assert!(plan_package_registration(&coordinate, hash, Some("1.0.0"), None, None).unwrap());
         assert!(
             plan_package_registration(&coordinate, hash, Some("1.0.0"), None, Some("1.0.0"))
-                .unwrap()
+                .is_err()
         );
         assert!(
             !plan_package_registration(
@@ -917,16 +808,16 @@ mod tests {
                 None,
                 None,
                 Some("1.0.0"),
-                PackageMigrationErrorType::PredecessorNotCurrent,
-                "predecessor-not-current",
+                PackageMigrationErrorType::BaselineChanged,
+                "package-baseline-changed",
             ),
             (
                 Some("hash"),
                 Some("0.9.0"),
                 None,
                 Some("1.0.0"),
-                PackageMigrationErrorType::PredecessorNotCurrent,
-                "predecessor-not-current",
+                PackageMigrationErrorType::BaselineChanged,
+                "package-baseline-changed",
             ),
         ] {
             let error =
@@ -1021,99 +912,6 @@ mod tests {
                 .source()
                 .is_some_and(|source| source.to_string().contains("must not declare a permission"))
         );
-    }
-
-    #[test]
-    fn cumulative_upgrade_inherits_exact_prefix_and_runs_only_suffix() {
-        let predecessor_plan = plan_package_migrations(&directory(), None).unwrap();
-        let predecessor = AppliedPackage {
-            coordinate: predecessor_plan.coordinate,
-            predecessor_version: None,
-            artifact_digest: predecessor_plan.artifact_digest,
-            migrations: predecessor_plan
-                .pending
-                .iter()
-                .map(|migration| RecordedMigration {
-                    ordinal: migration.ordinal,
-                    relative_path: migration.relative_path.clone(),
-                    sha256: migration.sha256.clone(),
-                })
-                .collect(),
-        };
-        let mut cumulative = directory();
-        cumulative.manifest_bytes = manifest_with_predecessor("1.1.0", "1.0.0");
-        cumulative
-            .migrations
-            .push(source("migrations/0003_add_maker.sql", "SELECT 3;"));
-
-        let fresh = plan_package_migrations(&cumulative, None).unwrap();
-        assert!(fresh.verified_prefix.is_empty());
-        assert_eq!(fresh.pending.len(), 3, "fresh targets execute every file");
-
-        let upgrade = plan_package_migrations(&cumulative, Some(&predecessor)).unwrap();
-        assert_eq!(upgrade.predecessor_version.as_deref(), Some("1.0.0"));
-        assert_eq!(
-            upgrade
-                .verified_prefix
-                .iter()
-                .map(|migration| migration.relative_path.as_str())
-                .collect::<Vec<_>>(),
-            ["migrations/0001_initial.sql", "migrations/0002_add_tag.sql"]
-        );
-        assert_eq!(upgrade.pending.len(), 1);
-        assert_eq!(
-            upgrade.pending[0].relative_path,
-            "migrations/0003_add_maker.sql"
-        );
-        assert!(!upgrade.is_noop());
-    }
-
-    #[test]
-    fn cumulative_upgrade_refuses_the_first_short_or_divergent_prefix_file() {
-        let predecessor_plan = plan_package_migrations(&directory(), None).unwrap();
-        let predecessor = AppliedPackage {
-            coordinate: predecessor_plan.coordinate,
-            predecessor_version: None,
-            artifact_digest: predecessor_plan.artifact_digest,
-            migrations: predecessor_plan
-                .pending
-                .iter()
-                .map(|migration| RecordedMigration {
-                    ordinal: migration.ordinal,
-                    relative_path: migration.relative_path.clone(),
-                    sha256: migration.sha256.clone(),
-                })
-                .collect(),
-        };
-        let mut cumulative = directory();
-        cumulative.manifest_bytes = manifest_with_predecessor("1.1.0", "1.0.0");
-
-        let mut short = cumulative.clone();
-        short
-            .migrations
-            .retain(|migration| migration.relative_path == "migrations/0001_initial.sql");
-        let error = plan_package_migrations(&short, Some(&predecessor))
-            .expect_err("a short cumulative prefix refuses");
-        assert_eq!(
-            error.error_type(),
-            PackageMigrationErrorType::PredecessorPrefixMismatch
-        );
-        assert_eq!(error.path(), Some("migrations/0002_add_tag.sql"));
-
-        cumulative
-            .migrations
-            .iter_mut()
-            .find(|migration| migration.relative_path == "migrations/0001_initial.sql")
-            .unwrap()
-            .bytes
-            .push(b' ');
-        let error = plan_package_migrations(&cumulative, Some(&predecessor))
-            .expect_err("a divergent cumulative prefix refuses");
-        assert_eq!(
-            error.error_type(),
-            PackageMigrationErrorType::PredecessorPrefixMismatch
-        );
-        assert_eq!(error.path(), Some("migrations/0001_initial.sql"));
     }
 
     #[test]

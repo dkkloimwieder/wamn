@@ -58,7 +58,6 @@ The evidence names the overlay component by the digest the release manifest carr
 An additive base and a breaking combination need a second base that no candidate carries, so they are not cluster cases.
 
 This tests fresh-install compatibility, not an upgrade of an existing database.
-The separate [package upgrade tests](database-tests.md#package-upgrades) exercise migration suffixes on copied predecessor data and accepted production evidence.
 The installed-schema observer does not claim production schema-admission enforcement.
 
 ## Committed events

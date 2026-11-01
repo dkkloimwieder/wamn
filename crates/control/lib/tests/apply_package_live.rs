@@ -844,91 +844,6 @@ async fn write_identity(client: &Client) -> Vec<String> {
         .collect()
 }
 
-/// Row values and tuple identities prove that a suffix preserves every old row.
-async fn platform_fixture_rows(client: &Client) -> Vec<String> {
-    client
-        .query(
-            "SELECT identity FROM ( \
-               SELECT 'maker:' || (to_jsonb(maker) - 'note')::text || ':' || maker.xmin::text AS identity \
-                 FROM inventory.widget_maker AS maker \
-               UNION ALL \
-               SELECT 'widget:' || to_jsonb(widget)::text || ':' || widget.xmin::text \
-                 FROM inventory.widget AS widget \
-               UNION ALL \
-               SELECT 'tag:' || to_jsonb(tag)::text || ':' || tag.xmin::text \
-                 FROM inventory.widget_tag AS tag \
-             ) AS observed ORDER BY identity COLLATE \"C\"",
-            &[],
-        )
-        .await
-        .expect("read every predecessor fixture row")
-        .into_iter()
-        .map(|row| row.get(0))
-        .collect()
-}
-
-#[tokio::test]
-async fn platform_successor_without_qualification_preserves_predecessor_state() {
-    let url = locked_database::database(wamn_test_postgres::database);
-    let client = connect(&url).await;
-    install(&client).await;
-    let package =
-        fixture_root().with_file_name(format!("platform-fixture-upgrade-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&package);
-    wamn_fixture_package::write_upgrade_package(&package);
-    wamn_schema_generator::write_compiled_manifest(&package).unwrap();
-    write_receipt(&package);
-    let predecessor = wamn_fixture_package::package_root();
-    apply(&url, &predecessor)
-        .await
-        .expect("install platform_fixture 2.1.0");
-    client
-        .batch_execute(&format!(
-            "BEGIN; \
-             SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
-                    set_config('app.operation', 'admin:seed-upgrade-fixture', true); \
-             INSERT INTO inventory.widget_maker (id, name) VALUES \
-               ('00000000-0000-4000-8000-00000000b001', 'first'), \
-               ('00000000-0000-4000-8000-00000000b002', 'second'); \
-             INSERT INTO inventory.widget (code, note, maker_id) VALUES \
-               ('priority', 'retain this note', '00000000-0000-4000-8000-00000000b001'), \
-               ('standard', NULL, NULL); \
-             INSERT INTO inventory.widget_tag (label) VALUES ('first tag'), ('second tag'); \
-             COMMIT;"
-        ))
-        .await
-        .expect("seed rows in every predecessor relation");
-    let original_rows = platform_fixture_rows(&client).await;
-    assert_eq!(original_rows.len(), 6);
-    let original_identity = write_identity(&client).await;
-
-    let error = apply(&url, &package)
-        .await
-        .expect_err("an installed successor suffix requires qualification");
-    assert!(
-        error.to_string().contains("--upgrade-qualification"),
-        "{error:#}"
-    );
-    assert_eq!(write_identity(&client).await, original_identity);
-    assert_eq!(platform_fixture_rows(&client).await, original_rows);
-    assert!(
-        client
-            .query_one(
-                "SELECT NOT EXISTS (SELECT FROM catalog.packages \
-                    WHERE env_key = $1 AND package_id = 'platform_fixture' \
-                      AND package_version = '2.2.0') \
-                    AND NOT EXISTS (SELECT FROM information_schema.columns \
-                    WHERE table_schema = 'inventory' AND table_name = 'widget_maker' \
-                      AND column_name = 'note')",
-                &[&ENV_KEY],
-            )
-            .await
-            .expect("inspect the unchanged package and column")
-            .get::<_, bool>(0)
-    );
-    std::fs::remove_dir_all(package).expect("remove test-owned successor fixture");
-}
-
 #[tokio::test]
 async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix() {
     let url = locked_database::database(wamn_test_postgres::database);
@@ -1706,87 +1621,16 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     )
     .expect("replace the refused suffix with the new version's declared model");
     write_receipt(&package);
-    let undeclared = apply(&url, &package)
+    let before = write_identity(&client).await;
+    let refused = apply(&url, &package)
         .await
-        .expect_err("a new coordinate over existing history must declare its predecessor");
-    let undeclared = undeclared
-        .downcast_ref::<apply_package::ApplyPackageError>()
-        .expect("an undeclared predecessor is a typed apply-package refusal");
-    assert_eq!(
-        undeclared.error_type(),
-        apply_package::ApplyPackageErrorType::PredecessorNotCurrent
-    );
-    assert_eq!(undeclared.coordinate(), "wamn_inventory@1.0.1");
-    assert_eq!(undeclared.predecessor_version(), None);
-    assert_eq!(undeclared.current_version(), Some("1.0.0"));
-    assert_eq!(undeclared.path(), None);
-
-    set_package_identity(&package, "1.0.1", Some("0.9.0"));
-    let absent = apply(&url, &package)
-        .await
-        .expect_err("an upgrade cannot substitute another installed version for its predecessor");
-    let absent = absent
-        .downcast_ref::<apply_package::ApplyPackageError>()
-        .expect("an absent predecessor is a typed apply-package refusal");
-    assert_eq!(
-        absent.error_type(),
-        apply_package::ApplyPackageErrorType::PredecessorNotCurrent
-    );
-    assert_eq!(absent.coordinate(), "wamn_inventory@1.0.1");
-    assert_eq!(absent.predecessor_version(), Some("0.9.0"));
-    assert_eq!(absent.current_version(), Some("1.0.0"));
-    assert_eq!(absent.path(), None);
-
-    set_package_identity(&package, "1.0.1", Some("1.0.0"));
-    let mut divergent = original.clone();
-    divergent.extend_from_slice(b"\n");
-    std::fs::write(&migration, divergent).expect("diverge the cumulative predecessor prefix");
-    write_receipt(&package);
-    let mismatch = apply(&url, &package)
-        .await
-        .expect_err("a divergent predecessor prefix refuses before writes");
-    let mismatch = mismatch
-        .downcast_ref::<apply_package::ApplyPackageError>()
-        .expect("a divergent predecessor is a typed apply-package refusal");
-    assert_eq!(
-        mismatch.error_type(),
-        apply_package::ApplyPackageErrorType::PredecessorPrefixMismatch
-    );
-    assert_eq!(mismatch.predecessor_version(), Some("1.0.0"));
-    assert_eq!(mismatch.path(), Some("migrations/0001_initial.sql"));
+        .expect_err("a changed package requires a reset");
     assert!(
-        !client
-            .query_one(
-                "SELECT EXISTS (SELECT 1 FROM catalog.packages \
-                  WHERE env_key = $1 AND package_id = 'wamn_inventory' \
-                    AND package_version = '1.0.1')",
-                &[&ENV_KEY],
-            )
-            .await
-            .unwrap()
-            .get::<_, bool>(0),
-        "predecessor mismatch refuses before registering the new root"
+        refused
+            .to_string()
+            .contains("reset the application database")
     );
-    assert!(
-        !client
-            .query_one(
-                "SELECT to_regclass('inventory.after_seal') IS NOT NULL",
-                &[]
-            )
-            .await
-            .unwrap()
-            .get::<_, bool>(0),
-        "predecessor mismatch refuses before executing the suffix"
-    );
-    std::fs::write(&migration, &original).expect("restore the cumulative predecessor prefix");
-    write_receipt(&package);
-
-    let predecessor_identity = write_identity(&client).await;
-    let unqualified = apply(&url, &package)
-        .await
-        .expect_err("an installed suffix requires accepted qualification");
-    assert!(unqualified.to_string().contains("--upgrade-qualification"));
-    assert_eq!(write_identity(&client).await, predecessor_identity);
+    assert_eq!(write_identity(&client).await, before);
 
     install(&client).await;
     apply(&url, &package)
@@ -1842,6 +1686,21 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
 }
 
 /// Spec test 13: the declaration is the trigger.
+async fn reconcile_history_configuration(url: &str, package: &Path) -> anyhow::Result<()> {
+    let mut client = connect(url).await;
+    let tx = client.transaction().await?;
+    let directory = apply_package::read_package_directory(package)?;
+    apply_package::reconcile_local_package_configuration(
+        &tx,
+        ENV_KEY,
+        &directory,
+        &mut wamn_platform_identity::auth_changes::AuthDrops::default(),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 #[tokio::test]
 async fn record_history_triggers_follow_the_declaration() {
     let url = locked_database::database(wamn_test_postgres::database);
@@ -1897,17 +1756,16 @@ async fn record_history_triggers_follow_the_declaration() {
         grant_stamps.get::<_, i64>(0) == 1 && grant_stamps.get::<_, i64>(1) == 1,
         "the admin role row must stamp wamn:apply-package"
     );
-    apply(&url, &package)
+    reconcile_history_configuration(&url, &package)
         .await
         .expect("an exact replay keeps the installed trigger");
     assert_eq!(inventory_triggers(&client).await, installed);
 
-    set_package_identity(&package, "1.0.1", Some("1.0.0"));
     set_audit_log_columns(&package, "panel", &[]);
     set_audit_log_columns(&package, "rack", &["created_at"]);
-    apply(&url, &package)
+    reconcile_history_configuration(&url, &package)
         .await
-        .expect("an upgrade moves the trigger with its declaration");
+        .expect("local configuration moves the trigger with its declaration");
     assert_eq!(
         trigger_definitions(&inventory_triggers(&client).await),
         [
@@ -1922,7 +1780,6 @@ async fn record_history_triggers_follow_the_declaration() {
     );
     let upgraded = inventory_triggers(&client).await;
 
-    set_package_identity(&package, "1.0.2", Some("1.0.1"));
     std::fs::write(
         package.join("migrations/0002_trigger.sql"),
         "CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON inventory.ingot \
@@ -1945,7 +1802,6 @@ async fn record_history_triggers_follow_the_declaration() {
         .expect("remove the refused trigger migration");
     write_receipt(&package);
 
-    set_package_identity(&package, "1.0.1", Some("1.0.0"));
     client
         .batch_execute(
             "CREATE FUNCTION public.record_history_foreign() RETURNS trigger \
@@ -1955,7 +1811,7 @@ async fn record_history_triggers_follow_the_declaration() {
         )
         .await
         .expect("install a trigger outside the platform shape");
-    let refused = apply(&url, &package)
+    let refused = reconcile_history_configuration(&url, &package)
         .await
         .expect_err("apply-package refuses a trigger that the declarations do not derive");
     assert!(
@@ -2166,18 +2022,17 @@ async fn record_history_log_follows_the_declaration() {
     );
 
     let installed = inventory_triggers(&client).await;
-    apply(&url, &package)
+    reconcile_history_configuration(&url, &package)
         .await
         .expect("an exact replay keeps the log triggers and the history tables");
     assert_eq!(inventory_triggers(&client).await, installed);
 
     // Spec test 14: a retention of none removes the trigger and keeps the table.
-    set_package_identity(&package, "1.0.1", Some("1.0.0"));
     set_audit_log_retention(&package, "panel", "P90D");
     set_audit_log_retention(&package, "panel_line", "none");
-    apply(&url, &package)
+    reconcile_history_configuration(&url, &package)
         .await
-        .expect("an upgrade moves the log triggers with the declarations");
+        .expect("local configuration moves the log triggers with the declarations");
     assert_eq!(
         inventory_log_triggers(&client).await,
         [
@@ -2221,7 +2076,7 @@ async fn record_history_log_follows_the_declaration() {
         )
         .await
         .expect("change the installed retention outside apply-package");
-    apply(&url, &package)
+    reconcile_history_configuration(&url, &package)
         .await
         .expect("a replay repairs the installed retention");
     assert_eq!(
@@ -2241,7 +2096,7 @@ async fn record_history_log_follows_the_declaration() {
         )
         .await
         .expect("widen the audit retention grants outside apply-package");
-    apply(&url, &package)
+    reconcile_history_configuration(&url, &package)
         .await
         .expect("a replay repairs the audit retention grants");
     assert_eq!(
@@ -2250,11 +2105,10 @@ async fn record_history_log_follows_the_declaration() {
     );
 
     // P90D to unlimited revokes.
-    set_package_identity(&package, "1.0.2", Some("1.0.1"));
     set_audit_log_retention(&package, "panel", "unlimited");
-    apply(&url, &package)
+    reconcile_history_configuration(&url, &package)
         .await
-        .expect("an upgrade to unlimited retention revokes the retention grants");
+        .expect("local unlimited retention revokes the retention grants");
     assert_eq!(
         audit_retention_grants(&client).await,
         [
@@ -2266,7 +2120,6 @@ async fn record_history_log_follows_the_declaration() {
     );
 
     // A migration cannot create a table with the reserved history suffix.
-    set_package_identity(&package, "1.0.3", Some("1.0.2"));
     std::fs::write(
         package.join("migrations/0002_history.sql"),
         "CREATE TABLE inventory.rack_history (\

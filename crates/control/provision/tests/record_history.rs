@@ -67,21 +67,12 @@ fn fresh_run_history_stamps_rows() {
         r"
         INSERT INTO wamn_run.environment_policies (env_key,expected_environment,durability_class) VALUES ('history','dev','standard');
         INSERT INTO wamn_run.runs (env_key,run_id,flow_id,flow_version,package_id,environment) VALUES ('history','run','flow',1,'package','dev');
-        INSERT INTO wamn_run.effect_attempts (env_key,attempt_id,run_id,root_plan_hash,current_plan_hash,local_node_id,source_artifact_hash,requirement_name,occurrence,seq,generation_fact_type,attempt_deadline_at,attempt_input_ref) VALUES ('history','11111111-1111-4111-8111-111111111111','run','sha256:'||repeat('a',64),'sha256:'||repeat('a',64),'node','sha256:'||repeat('a',64),'database',0,0,'not-required',now()+interval '1 hour','input');
-        INSERT INTO wamn_run.effect_attempt_dispatches (env_key,attempt_id,attempt_started_at,run_id,frame_id,local_node_id,occurrence) SELECT env_key,attempt_id,attempt_started_at,run_id,frame_id,local_node_id,occurrence FROM wamn_run.effect_attempts;
-        INSERT INTO wamn_run.effect_attempt_outcomes (env_key,attempt_id,dispatched_at,outcome_status) SELECT env_key,attempt_id,dispatched_at,'success' FROM wamn_run.effect_attempt_dispatches;
     ",
         "INSERT INTO wamn_run.run_queue(env_key,run_id) VALUES ('history','run');",
         "COMMIT",
     ]).unwrap();
     let actor = PlatformComponent::Provisioning.principal_id();
-    for relation in [
-        "wamn_run.environment_policies",
-        "wamn_run.effect_attempts",
-        "wamn_run.effect_attempt_dispatches",
-        "wamn_run.effect_attempt_outcomes",
-        "wamn_run.run_queue",
-    ] {
+    for relation in ["wamn_run.environment_policies", "wamn_run.run_queue"] {
         database.execute(&[&format!("DO $$ BEGIN ASSERT (SELECT count(*)=1 AND bool_and(created_by='{actor}'::uuid AND updated_by='{actor}'::uuid AND created_at=updated_at AND isfinite(created_at)) FROM {relation}), '{relation}: stamps'; END $$;")]).unwrap();
     }
 }

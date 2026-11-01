@@ -14,6 +14,4 @@ environment.Environment {
     applications = {
         "wamn_wms" = {packages = ["wamn_wms"], connections = {labels = "wms-labels"}}
     }
-    floors = {
-    }
 }

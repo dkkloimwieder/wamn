@@ -445,11 +445,8 @@ fn manifest_digest(root: &Path) -> String {
 /// Stage one package root under the lineage fixture directory.
 ///
 /// This helper copies the shipped root and returns the digest of the staged
-/// manifest, because a `bump` rewrites its manifest and the evidence must
-/// follow the copy rather than the shipped file. A `bump` also moves the
-/// coordinate, which is how an author recovers from a stage that refused an
-/// already published version.
-fn stage_package_root(source: &Path, name: &str, bump: Option<(&str, &str)>) -> (PathBuf, String) {
+/// manifest.
+fn stage_package_root(source: &Path, name: &str) -> (PathBuf, String) {
     let root = lineage_fixture_directory().join(name);
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("migrations")).expect("create staged migrations directory");
@@ -468,51 +465,10 @@ fn stage_package_root(source: &Path, name: &str, bump: Option<(&str, &str)>) -> 
         .unwrap_or_else(|error| panic!("{error:#}"));
     let manifest_bytes = std::fs::read(wamn_schema_generator::package_manifest_path(source))
         .expect("read package manifest");
-    let manifest_bytes = match bump {
-        None => manifest_bytes,
-        Some((version, predecessor)) => {
-            let mut manifest: serde_json::Value =
-                serde_json::from_slice(&manifest_bytes).expect("parse package manifest");
-            let package = manifest
-                .get_mut("package")
-                .and_then(serde_json::Value::as_object_mut)
-                .expect("package manifest carries a package identity");
-            package.insert("version".to_owned(), serde_json::json!(version));
-            package.insert(
-                "predecessor_version".to_owned(),
-                serde_json::json!(predecessor),
-            );
-            wamn_execution_contract::canonical_json_bytes(&manifest)
-        }
-    };
     std::fs::write(root.join("wamn.json"), &manifest_bytes).expect("write staged manifest");
 
-    let mut overlay: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(overlay_evidence_path(source)).expect("read package evidence"),
-    )
-    .expect("parse package evidence");
-    let overlay_object = overlay
-        .as_object_mut()
-        .expect("package evidence is an object");
-    if let Some((version, _)) = bump {
-        let package: String = overlay_object
-            .get("package")
-            .and_then(serde_json::Value::as_str)
-            .expect("package evidence names its coordinate")
-            .split('@')
-            .next()
-            .expect("a coordinate always carries a package id")
-            .to_owned();
-        overlay_object.insert(
-            "package".to_owned(),
-            serde_json::json!(format!("{package}@{version}")),
-        );
-    }
-    std::fs::write(
-        overlay_evidence_path(&root),
-        wamn_execution_contract::canonical_json_bytes(&overlay),
-    )
-    .expect("write staged evidence");
+    std::fs::copy(overlay_evidence_path(source), overlay_evidence_path(&root))
+        .expect("copy staged evidence");
     wamn_test_infrastructure::fixture_digest::write_receipt(&root);
     let staged = manifest_digest(&root);
     (root, staged)
@@ -584,63 +540,18 @@ async fn apply(url: &str, package: PathBuf) {
 }
 
 #[tokio::test]
-async fn an_author_recovers_from_a_failed_version_bump_in_either_direction() {
+async fn moved_bytes_under_an_applied_version_are_refused() {
     let url = locked_database::database(wamn_test_postgres::database);
-    let admin = install_lineage_fixture(&url).await;
-    let (released, _) = stage_package_root(&fixture_package_root(), "fixture", None);
-    let (overlay, _) = stage_package_root(&overlay_package_root(), "overlay", None);
-    let (bumped, bumped_digest) = stage_package_root(
-        &fixture_package_root(),
-        "fixture-bumped",
-        Some(("2.2.0", "2.1.0")),
-    );
+    let _admin = install_lineage_fixture(&url).await;
+    let (released, released_digest) = stage_package_root(&fixture_package_root(), "fixture");
+    let (overlay, _) = stage_package_root(&overlay_package_root(), "overlay");
     apply(&url, released.clone()).await;
     apply(&url, overlay.clone()).await;
 
-    // The failed run applied the bumped coordinate and then refused later on.
-    // Both coordinates of one package are now applied, and no source tree can
-    // present them together.
-    apply(&url, bumped.clone()).await;
-    assert_eq!(
-        admin
-            .query_one(
-                "SELECT count(*) FROM catalog.packages \
-                  WHERE env_key = $1 AND package_id = 'platform_fixture'",
-                &[&ENV_KEY],
-            )
-            .await
-            .expect("count the applied fixture coordinates")
-            .get::<_, i64>(0),
-        2,
-        "the failed bump did not leave two applied coordinates"
-    );
-
-    let reverted = reconcile_package_data_access::reconcile_package_data_access(reconcile_args(
-        &url,
-        vec![released.clone(), overlay.clone()],
-    ))
-    .await
-    .expect("a tree carrying only the earlier version reconciles beside the applied bump");
-    assert!(
-        !reverted.is_noop(),
-        "the reverted tree did not converge the generated authority"
-    );
-
-    let forward = reconcile_package_data_access::reconcile_package_data_access(reconcile_args(
-        &url,
-        vec![bumped.clone(), overlay.clone()],
-    ))
-    .await
-    .expect("a tree carrying only the newer version reconciles beside the applied predecessor");
-    assert!(
-        forward.is_noop(),
-        "the same authority union changed under the newer coordinate"
-    );
-
     // A published version stays immutable. Moving the bytes under an applied
-    // coordinate is still refused, and the refusal names that coordinate.
+    // coordinate is refused, and the refusal names that coordinate.
     let mut moved: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(bumped.join("wamn.json")).expect("read manifest"))
+        serde_json::from_slice(&std::fs::read(released.join("wamn.json")).expect("read manifest"))
             .expect("parse manifest");
     moved
         .get_mut("package")
@@ -648,23 +559,23 @@ async fn an_author_recovers_from_a_failed_version_bump_in_either_direction() {
         .expect("the staged manifest carries a package identity")
         .insert("predecessor_version".to_owned(), serde_json::json!("0.9.0"));
     let moved_bytes = wamn_execution_contract::canonical_json_bytes(&moved);
-    std::fs::write(bumped.join("wamn.json"), &moved_bytes).expect("move the manifest bytes");
-    wamn_test_infrastructure::fixture_digest::write_receipt(&bumped);
+    std::fs::write(released.join("wamn.json"), &moved_bytes).expect("move the manifest bytes");
+    wamn_test_infrastructure::fixture_digest::write_receipt(&released);
     assert_ne!(
-        manifest_digest(&bumped),
-        bumped_digest,
+        manifest_digest(&released),
+        released_digest,
         "the package bytes did not move"
     );
     let drift = reconcile_package_data_access::reconcile_package_data_access(reconcile_args(
         &url,
-        vec![bumped.clone(), overlay.clone()],
+        vec![released.clone(), overlay.clone()],
     ))
     .await
     .expect_err("moved bytes reconciled under an already applied version");
     assert!(
         drift
             .to_string()
-            .contains("package-data-access-source-drift: package=platform_fixture@2.2.0"),
+            .contains("package-data-access-source-drift: package=platform_fixture@2.1.0"),
         "the immutable coordinate did not carry its drift refusal: {drift:#}"
     );
 
@@ -726,7 +637,7 @@ async fn reconciliation_leaves_every_platform_schema_grant_on_the_app_role_stand
 
 /// Stage the fixture application, whose `widget` relation logs.
 fn stage_logged_fixture() -> PathBuf {
-    let (root, _) = stage_package_root(&fixture_package_root(), "fixture-logged", None);
+    let (root, _) = stage_package_root(&fixture_package_root(), "fixture-logged");
     let manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(root.join("wamn.json")).expect("read manifest"))
             .expect("parse manifest");
@@ -963,9 +874,8 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
     const ENVIRONMENT: &str = "development";
     let url = locked_database::database(wamn_test_postgres::database);
     let admin = install_lineage_fixture(&url).await;
-    let (fixture, first) = stage_package_root(&fixture_package_root(), "fixture-local", None);
-    let (overlay, overlay_digest) =
-        stage_package_root(&overlay_package_root(), "overlay-local", None);
+    let (fixture, first) = stage_package_root(&fixture_package_root(), "fixture-local");
+    let (overlay, overlay_digest) = stage_package_root(&overlay_package_root(), "overlay-local");
     apply(&url, fixture.clone()).await;
     apply(&url, overlay.clone()).await;
 

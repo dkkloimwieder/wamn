@@ -61,3 +61,11 @@ CREATE TABLE inventory.numbered_label (
     updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_by uuid NOT NULL
 );
+
+CREATE TABLE inventory.counter (
+    id bigint GENERATED ALWAYS AS IDENTITY
+        CONSTRAINT counter_id_pkey PRIMARY KEY,
+    label text NOT NULL,
+    edit_version int4 NOT NULL DEFAULT 1,
+    created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

@@ -2,14 +2,17 @@ CREATE TABLE wms.product (
     id uuid CONSTRAINT product_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
     product_code text NOT NULL CONSTRAINT product_product_code_key UNIQUE,
     row_version int4 NOT NULL DEFAULT 1,
-    created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT product_product_code_check CHECK (char_length(btrim(product_code)) >= 1)
 );
 
 CREATE TABLE wms.location (
     id uuid CONSTRAINT location_id_pkey PRIMARY KEY DEFAULT gen_random_uuid(),
     location_code text NOT NULL CONSTRAINT location_location_code_key UNIQUE,
     row_version int4 NOT NULL DEFAULT 1,
-    created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    description text,
+    CONSTRAINT location_location_code_check CHECK (char_length(btrim(location_code)) >= 1)
 );
 
 CREATE TABLE wms.packaging (
@@ -29,7 +32,8 @@ CREATE TABLE wms.packaging (
     CONSTRAINT packaging_type_check
         CHECK (type IN ('pallet', 'tote', 'bin', 'case', 'loose')),
     CONSTRAINT packaging_status_check
-        CHECK (status IN ('available', 'held', 'consumed'))
+        CHECK (status IN ('available', 'held', 'consumed')),
+    CONSTRAINT packaging_packaging_code_check CHECK (char_length(btrim(packaging_code)) >= 1)
 );
 
 CREATE TABLE wms.packaging_quantity (
@@ -88,3 +92,12 @@ CREATE TABLE wms.inventory_transaction (
             OR from_status IS DISTINCT FROM to_status
         )
 );
+
+CREATE INDEX inventory_transaction_id_created_at_idx ON wms.inventory_transaction (created_at, id);
+CREATE INDEX location_id_created_at_idx ON wms.location (created_at, id);
+CREATE INDEX packaging_id_created_at_idx ON wms.packaging (created_at, id);
+CREATE INDEX packaging_id_location_id_idx ON wms.packaging (location_id, id);
+CREATE INDEX packaging_id_packaging_code_idx ON wms.packaging (packaging_code, id);
+CREATE INDEX packaging_id_updated_at_idx ON wms.packaging (updated_at, id);
+CREATE INDEX packaging_quantity_id_created_at_idx ON wms.packaging_quantity (created_at, id);
+CREATE INDEX product_id_created_at_idx ON wms.product (created_at, id);

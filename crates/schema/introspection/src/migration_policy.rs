@@ -25,13 +25,6 @@ use std::path::{Path, PathBuf};
 
 use crate::ir::postgres_type;
 
-mod stage;
-pub use stage::{
-    StageRelation, StageSynchronization, StageUniqueKey, inspect_stage_synchronization,
-    inspect_stage_synchronization_declaration, refuse_dynamic_stage_sql, validate_stage_batch,
-    validate_stage_condition, validate_stage_expression, validate_stage_trigger_body,
-};
-
 /// Stable internal class for a refused migration artifact.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MigrationPolicyErrorType {
@@ -225,58 +218,6 @@ pub fn validate_migration_bytes_for_schemas(
             path,
             index + 1,
         )?;
-    }
-    Ok(())
-}
-
-/// Validate an additive upgrade while its immediate predecessor can still serve.
-///
-/// The ordinary migration validator owns SQL admission. This narrower policy
-/// permits views, new tables and added columns, but refuses added constraints on
-/// existing relations because planning cannot prove their runtime compatibility.
-/// Qualification compares predecessor view columns after applying the successor.
-/// Qualification and production application must use this same predicate.
-pub fn validate_predecessor_compatible_migration_bytes_for_schemas(
-    path: impl AsRef<Path>,
-    bytes: &[u8],
-    configured_schemas: &[&str],
-) -> Result<(), MigrationPolicyError> {
-    let path = path.as_ref();
-    let statements = artifact_statements(path, bytes, configured_schemas)?;
-
-    for (index, tokens) in statements.iter().enumerate() {
-        let statement_index = index + 1;
-        validate_statement(
-            tokens,
-            &statements[..index],
-            &[],
-            configured_schemas,
-            path,
-            statement_index,
-        )?;
-        if words(tokens, 0, &["create", "view"])
-            || words(tokens, 0, &["create", "or", "replace", "view"])
-            || words(tokens, 0, &["drop", "view"])
-        {
-            continue;
-        }
-        let mutation = definition_mutation(tokens, configured_schemas, path, statement_index)?;
-        if !matches!(
-            mutation
-                .as_ref()
-                .map(|mutation| (mutation.action(), mutation.definition_type())),
-            Some(
-                (DefinitionAction::Create, DefinitionType::Relation)
-                    | (DefinitionAction::Add, DefinitionType::Field)
-            )
-        ) {
-            return refuse_statement(
-                MigrationPolicyErrorType::UnsupportedStatement,
-                path,
-                statement_index,
-                "predecessor-compatible upgrades admit only view DDL, new ordinary tables and added columns; constraints on existing relations require an exceptional migration procedure",
-            );
-        }
     }
     Ok(())
 }

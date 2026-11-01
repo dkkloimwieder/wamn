@@ -21,19 +21,19 @@ pub use database::{
     ensure_db_owner_role_sql, install_platform_extensions_sql, set_database_owner_sql,
 };
 
+pub(crate) use credentials::{
+    ensure_acl_role_sql, retire_acl_generation_sql, revoke_superuser_sql,
+};
 #[doc(inline)]
 pub use credentials::{
-    ensure_control_author_acl_role_sql,
-    ensure_workload_acl_role_sql, forget_generation_password_sql, generation_password_recorded_sql,
+    ensure_control_author_acl_role_sql, ensure_workload_acl_role_sql,
+    forget_generation_password_sql, generation_password_recorded_sql,
     normalize_workload_generation_membership_sql, prepare_control_author_generation_sql,
     prepare_workload_generation_sql, record_generation_password_sql,
     retire_control_author_generation_sql, retire_workload_generation_sql,
     system_generation_state_sql, terminate_control_author_generation_sessions_sql,
     terminate_workload_generation_sessions_sql, workload_generation_state_sql,
     workload_scope_lock_sql,
-};
-pub(crate) use credentials::{
-    ensure_acl_role_sql, retire_acl_generation_sql, revoke_superuser_sql,
 };
 
 #[doc(inline)]
@@ -687,8 +687,6 @@ pub fn grant_session_role_reader_surface_sql() -> String {
 ///   [`EXECUTOR_PLATFORM_QUEUE_INSERT_COLUMNS`], plus `SELECT` on
 ///   `environment_policies`: the host admits event and schedule runs
 ///   under the declaring release. Schedules carry their application identity.
-/// * `effect_attempts`: `SELECT` only. The claim path only asks whether a row
-///   exists.
 /// * `wamn_authority.tenant_key(text)`: MEASURED, and not optional. `runs`
 ///   carries the `runs_tkey` EXPRESSION INDEX over that function, and
 ///   PostgreSQL evaluates an index expression while forming the new index entry
@@ -745,7 +743,6 @@ pub fn grant_executor_platform_surface_sql(schema: &str) -> String {
          GRANT UPDATE ({queue_update}) ON TABLE {schema}.\"run_queue\" TO {role}; \
          GRANT INSERT ({queue_insert}) ON TABLE {schema}.\"run_queue\" TO {role}; \
          GRANT SELECT ON TABLE {schema}.\"environment_policies\" TO {role}; \
-         GRANT SELECT ON TABLE {schema}.\"effect_attempts\" TO {role}; \
          GRANT SELECT (id, type, status, email) ON TABLE platform.\"user\" TO {role};"
     )
     .expect("writing to a String cannot fail");
@@ -1359,8 +1356,6 @@ mod tests {
              GRANT INSERT (\"env_key\", \"run_id\") \
              ON TABLE \"wamn_run\".\"run_queue\" TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE \"wamn_run\".\"environment_policies\" \
-             TO \"wamn_executor_platform\"; \
-             GRANT SELECT ON TABLE \"wamn_run\".\"effect_attempts\" \
              TO \"wamn_executor_platform\"; \
              GRANT SELECT (id, type, status, email) ON TABLE platform.\"user\" \
              TO \"wamn_executor_platform\"; \

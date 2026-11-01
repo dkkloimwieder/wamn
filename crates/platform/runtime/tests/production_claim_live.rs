@@ -269,39 +269,6 @@ async fn production_claim_live() -> anyhow::Result<()> {
     );
     assert_terminal_status_dequeued(admin, "grant-refused", "infrastructure-failure").await?;
 
-    // An effect attempt does not bypass the crash budget or prevent reaping.
-    seed_exhausted_run(admin, "standard-effect", 66).await?;
-    admin
-        .execute(
-            &format!(
-                "INSERT INTO {SCHEMA}.effect_attempts \
-                   (env_key,run_id,root_plan_hash,current_plan_hash,frame_id, \
-                    local_node_id,source_artifact_hash,requirement_name,occurrence,seq, \
-                    generation_fact_type,attempt_deadline_at,attempt_input_ref) \
-                 VALUES ($1,'standard-effect',$2,$2,0,'effect-node',$2,'manager',0,1, \
-                         'not-required','2099-01-01T00:00:00Z','sha256:claim-live-effect-input')"
-            ),
-            &[&ENV_KEY, &EMPTY_HASH],
-        )
-        .await?;
-    assert_eq!(
-        plugin
-            .claim_next(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
-            .await?,
-        ProductionClaimResult::Empty,
-        "an effect record bypassed the standard crash budget"
-    );
-    assert_eq!(
-        plugin
-            .reap_exhausted(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
-            .await?,
-        ProductionReapResult::Reaped {
-            run_id: "standard-effect".into()
-        },
-        "the janitor deferred to effect evidence the default class may not act on"
-    );
-    assert_terminal_status_dequeued(admin, "standard-effect", "infrastructure-failure").await?;
-
     // ---- the admission pin (platform-deploy.md R1) ------------------------
     //
     // Admission pins the release by its manifest digest. A matching pod claims

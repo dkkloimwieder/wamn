@@ -31,7 +31,6 @@ pub mod kubectl;
 pub mod org_connection;
 pub mod owned_command;
 pub mod package_artifact;
-mod package_upgrade;
 pub mod platform;
 pub mod platform_build;
 pub use wamn_identity_client as pat_client;
@@ -44,7 +43,6 @@ pub mod prune_record_history;
 #[cfg(feature = "ops")]
 pub mod prune_run_history;
 pub mod publish_release;
-pub mod qualify_upgrade;
 pub mod reconcile_package_data_access;
 pub mod reconcile_replica_identity;
 pub mod reconcile_run_plane;

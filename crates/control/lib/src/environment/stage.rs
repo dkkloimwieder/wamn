@@ -4,16 +4,13 @@
 //!
 //! Under the lifecycle lock, compare the installed schema baseline with this
 //! binary and refuse a mismatch. Install each package the
-//! environment never had from its verified artifact; verify the predecessor
-//! (the installed versions are the ones analysis read); apply the stage of
-//! each staged successor the release names; write the release cache row;
+//! environment never had from its verified artifact; write the release cache row;
 //! materialize the release's connection requirements from the admitted
 //! descriptors the release manifest carries (contract D, R2 (3)); reconcile
 //! the packages' data access; create the number sequence row of each
 //! package default that the environment does not have yet. A failed stage
 //! stops here, and
-//! nothing was written to Kubernetes. A backfill that stops on a lock is
-//! resumed by applying again.
+//! nothing was written to Kubernetes.
 
 use std::collections::BTreeMap;
 
@@ -65,11 +62,6 @@ pub async fn stage(
         changed.join("; ")
     );
 
-    // Each package the environment never had, and each staged successor:
-    // its verified artifact, applied. A staged successor's stage runs under
-    // its stage evidence (`apply_coordinated` and the backfill unchanged in
-    // content). An overlay applies after the bases it extends, which own the
-    // relations its migrations add definitions to.
     let mut opened = Vec::new();
     for package in &manifest.release.packages {
         let (id, version) = (package.package_id(), package.package_version());
@@ -101,14 +93,7 @@ pub async fn stage(
     for index in order {
         let (id, version, opened, package_manifest) =
             opened[index].take().context("each package applies once")?;
-        let applies = match analysed.get(&id) {
-            None => true,
-            Some(installed) => {
-                installed.current != version
-                    && installed.lineage.get(&version).and_then(Option::as_deref)
-                        == Some(installed.current.as_str())
-            }
-        };
+        let applies = !analysed.contains_key(&id);
         if applies {
             crate::apply_package::apply_package(crate::apply_package::ApplyPackageRequest {
                 component_source: platform.component_source()?,
@@ -150,9 +135,7 @@ pub async fn stage(
     .await
     .context("create the number sequences of the release's packages")?;
 
-    // 3. The data access of the packages of the release, when each is the
-    // installed version. A release on the tested predecessor keeps the
-    // expanded schema's grants, which qualify-upgrade tested (§14).
+    // 3. Reconcile data access for the installed package baselines.
     let installed = installed(platform, document).await?;
     let current = packages.iter().all(|(id, version, _, _)| {
         installed

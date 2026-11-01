@@ -15,9 +15,6 @@ use crate::ir::{
     ViewColumnOrigin, postgres_default, postgres_type,
 };
 
-mod synchronization;
-pub use synchronization::{StageSynchronizationExpectation, verify_stage_synchronizations};
-
 /// Stable class of PostgreSQL catalog refusal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PostgresIntrospectionErrorType {
@@ -2377,21 +2374,7 @@ pub async fn read_catalog_excluding_relations(
     application_schemas: &[&str],
     excluded_relations: &[(&str, &str)],
 ) -> Result<CatalogIr, PostgresIntrospectionError> {
-    read_catalog_with_synchronizations(client, application_schemas, excluded_relations, &[]).await
-}
-
-/// Read a catalog with an exact, caller-authorized synchronization object set.
-///
-/// Every expected pair must exist without drift. All other application routines
-/// and user triggers remain refused, with the existing platform fixture exclusions.
-pub async fn read_catalog_with_synchronizations(
-    client: &Client,
-    application_schemas: &[&str],
-    excluded_relations: &[(&str, &str)],
-    expected: &[StageSynchronizationExpectation],
-) -> Result<CatalogIr, PostgresIntrospectionError> {
     let schemas = configured_schemas(application_schemas);
-    synchronization::validate_expected_scope(&schemas, excluded_relations, expected)?;
     if schemas.is_empty() {
         return Ok(CatalogIr::new(Vec::new()));
     }
@@ -2407,18 +2390,8 @@ pub async fn read_catalog_with_synchronizations(
         .collect::<Vec<_>>();
     let views = load_views(client, &schemas, excluded_relations).await?;
     let mut tables = validate_relations(&relations)?;
-    if expected.is_empty() {
-        refuse_routines(client, &schemas).await?;
-        refuse_triggers(client, &schemas, excluded_relations).await?;
-    } else {
-        synchronization::verify_catalog_synchronizations(
-            client,
-            &schemas,
-            excluded_relations,
-            expected,
-        )
-        .await?;
-    }
+    refuse_routines(client, &schemas).await?;
+    refuse_triggers(client, &schemas, excluded_relations).await?;
     refuse_rules(client, &schemas, excluded_relations).await?;
     refuse_policies(client, &schemas, excluded_relations).await?;
     validate_types(client, &schemas, excluded_relations, &views).await?;

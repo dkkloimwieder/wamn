@@ -27,7 +27,6 @@ Publication refuses an application that spans multiple schemas.
 The host binds the pinned schema before it opens the application's transactions, including transactions shared by composed members.
 Two applications in one release each resolve unqualified SQL only in their own schema.
 For a release without the field, the host uses its process-wide `WAMN_SCHEMA` fallback.
-Upgrade qualification reads the pinned schema and refuses a candidate that changes it.
 
 The migration policy admits the supported additive table, field, and named-constraint forms.
 It also admits plain indexes on tables created earlier in the package's migrations, under the table's owner.
@@ -37,25 +36,8 @@ It normalizes identity sequences and indexes that belong to constraints instead 
 It excludes PostgreSQL object identifiers and storage details from semantic identity.
 Its exact supported forms live in [introspection](../../crates/schema/introspection/src/postgres.rs) and [migration policy](../../crates/schema/introspection/src/migration_policy.rs).
 
-An installed successor with new migrations also requires `qualify-upgrade` evidence before production application.
-Its narrower policy permits new ordinary tables and the admitted column additions, but refuses added constraints on existing relations.
-Qualification copies the installed database with its data and object ownership.
-It reads each SQL-bearing application's runtime schema from the selected release and requires the candidate's declared schema to match.
-For a release without a schema pin, qualification uses the package's declared schema.
-Predecessor SQL must plan against the candidate schema before grants change and again after the complete candidate root set reconciles.
-Candidate SQL must plan under those same final grants. Planning preserves the grants it examines.
-
-A base upgrade requires a successor for every installed overlay that pins that base.
-Each overlay successor preserves its migrations and consumed operation contracts, then pins the exact candidate base version and component digest.
-Qualification binds the complete predecessor and successor root sets and the candidate component bytes.
-Application installs the base first, then every affected overlay, in one transaction with the accepted evidence.
-A failure rolls back the complete transition. Nontransactional migration statements refuse with the named operation.
-
-`apply-package` records accepted evidence in `catalog.package_upgrade_qualifications` within the transaction that installs the successor.
-Reconciliation requires evidence that matches the complete installed package set, exact presented roots, and derived privileges.
-It selects evidence by those identities, never by timestamp. Earlier qualifications remain immutable history.
-Release rollback retains committed migrations and admits only the exact immediate predecessor whose accepted evidence still matches the live database.
-The [package upgrade procedure](../operations/deployment.md#package-upgrades) defines prerequisites, command order, and recovery.
+A package schema change requires a new release and a reset of the application tables.
+The [owner ruling](../audit/README.md) defines this baseline policy.
 
 Package migrations cannot create roles, grants, extensions, routines, triggers, rules, or row policies.
 Managed schemas refuse foreign tables, authored views, materialized views, unsupported types, and unsupported generated properties.
@@ -69,7 +51,6 @@ Provisioning creates one `NOLOGIN` role per package ID before package migrations
 The role owns the package schemas, tables, sequences, and generated history functions.
 An overlay keeps its own role and uses the base relation owner for admitted changes to that relation.
 The database owner, `wamn_db_owner`, retains platform objects.
-Publication parses backfill SQL with the same statement checks as declared component SQL.
 
 Each managed relation, field, and constraint records its owning package.
 An overlay can add a field only where the base permits that extension.
@@ -87,49 +68,6 @@ Control-store projections retain their separate tenant-scoped policies.
 The native runtime refuses absent membership at the existing guest error boundary.
 
 ## Application declarations
-
-An optional `upgrade_stage` in the package manifest declares one online migration stage for that package version.
-Its `phase` is `expand`, `backfill`, or `contract`.
-Named `preconditions` and `postconditions` carry SQL directly, so the manifest identity covers their exact bytes.
-A backfill also declares `sql`, a positive `batch_size`, and an explicit `initial_cursor` under `backfill`.
-Batch SQL takes `$1::jsonb` for the cursor and `$2::int4` for the batch size.
-It returns one row with `next_cursor jsonb` and `complete bool`.
-KCL authors use a non-null cursor because the manifest compiler omits `None` values.
-The explicit `whole_row_grants` exception belongs only to an expand stage.
-Stage declarations require a predecessor and a package that declares SQL.
-
-Qualification format 12 carries the stage declaration beside the package, root, and privilege identities. Formats 10 (plain) and 11 (overlay) carry none.
-Expand stages support the admitted column additions on package-owned relations.
-They run named conditions before and after their migration suffix in the same transaction.
-Application repeats the conditions against current data and records qualification evidence only after success.
-Each stage statement uses a five-second lock timeout. A lock failure aborts the transaction without an automatic retry.
-Condition inspection reads relation ownership and scalar column types from the current database.
-Conditions admit package-owned column references, bound parameters, comparisons, and `EXISTS`.
-Functions and casts use the shared column-default policy. Defaults retain their existing restrictions.
-Backfill stages retain the predecessor migration files and carry no new DDL suffix.
-Each batch updates one owned relation, ordered and bounded by an immediate, non-null, single-column unique key.
-The supported SQL selects a `batch`, updates those keys, then returns the cursor unchanged and whether the batch was empty.
-The package predicate must exclude processed rows. Inspection does not establish that the procedure terminates.
-Each successful batch commits its data and progress together. The installed version stays at the predecessor until completion and successful postconditions.
-Resume uses the recorded cursor and exact qualification. A different unfinished stage or a changed stage manifest is refused.
-Preconditions run before the first committed batch. A failed final postcondition preserves earlier batches and leaves the predecessor installed.
-Expand migrations also admit one invoker function and its synchronization trigger together in one SQL file.
-The trigger runs before each insert or update and assigns approved expressions to explicitly writable package columns.
-The function body contains `BEGIN`, `NEW` assignments, `RETURN NEW`, and `END`.
-It cannot write identity fields, generated fields, declared server-owned fields, or platform history and tombstone fields.
-Application code writes the source column. The trigger writes its destination column without an application grant on that destination.
-
-Immutable ownership records bind the function and trigger to their package and relation.
-Before each batch, application compares inherited definitions against the exact artifact, current column types, and stored owners.
-Unknown triggers, changed function bodies, elevated privileges, and changed trigger behavior are refused.
-Function replacement and reuse of names with ownership history are refused.
-An expand stage can declare `exceptions = ["whole_row_grants"]` for nullable column additions without defaults.
-The existing data-access owner derives grants from the complete candidate roots inside the package transaction.
-The platform then runs postconditions and plans the selected release's serving SQL under those grants.
-Schema changes, derived grants, and accepted qualification evidence commit together.
-If a condition or statement fails, the transaction rolls back all three.
-The exception does not admit package-authored grants or skip statement planning.
-Other staged DDL and contract execution are unavailable.
 
 `wamn.k` declares application choices that another source cannot determine exactly.
 The generator supplies fixed protocol rules and rejects authored fields for them.
@@ -960,14 +898,14 @@ An applier installs `record-history.sql` and then `record-history-app-grants.sql
 `platform.write_log` is the one exception: it has no stamps and no trigger.
 It is the idempotency record, and the rows that the work writes carry the actor ([app-schema.sql](../../deploy/sql/app-schema.sql#L412)).
 
-The run plane stamps `environment_policies`, `run_queue`, `effect_attempts`, `effect_attempt_dispatches`, and `effect_attempt_outcomes`.
+The run plane stamps `environment_policies` and `run_queue`.
 The three effect tables still have no production append writer.
 Their stamps apply to administrative writes and future writers that bind an actor.
 
 ### Catalog stamps
 
 The project catalog stamps `packages`, `package_migrations`, `package_definition_owners`, and `releases`.
-It also stamps `wiring_tombstones`, `package_upgrade_qualifications`, `package_upgrade_stages`, and `package_floors`.
+It also stamps `wiring_tombstones`.
 Each table carries the four stamp columns as `NOT NULL` with no default and a `wamn_record_history_stamp` trigger.
 These tables keep stamps only, with no history table.
 `release_connection` and `connection_binding` carry stamps and record history for changes within a release.

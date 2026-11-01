@@ -19,12 +19,3 @@ pub(crate) fn copy_schema_fixture(root: &std::path::Path) {
         std::fs::write(root.join(migration.relative_path), migration.bytes).unwrap();
     }
 }
-
-/// Compile the authored fixture and record the output that this test writes.
-pub(crate) fn compile_package(root: &std::path::Path) {
-    let bytes = wamn_schema_generator::compile_manifest(root).unwrap();
-    let output = wamn_schema_generator::output_root(root);
-    std::fs::create_dir_all(&output).unwrap();
-    std::fs::write(wamn_schema_generator::package_manifest_path(root), bytes).unwrap();
-    wamn_test_infrastructure::fixture_digest::write_receipt(root);
-}

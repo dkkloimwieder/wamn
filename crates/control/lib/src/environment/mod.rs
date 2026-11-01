@@ -15,7 +15,6 @@ pub mod analyse;
 pub mod bindings;
 mod clients;
 pub mod connections;
-pub mod contract;
 pub mod delete;
 pub mod document;
 pub mod drain;
@@ -216,7 +215,7 @@ fn current_context(kubeconfig: &Path) -> anyhow::Result<String> {
 /// When the document is refused, or an authority cannot be read.
 pub async fn dry_run(platform: &Platform, file: &Path) -> anyhow::Result<Analysis> {
     let document = EnvironmentDocument::compile(file)?;
-    analyse::analyse(platform, &document, true).await
+    analyse::analyse(platform, &document).await
 }
 
 /// `env apply <file>`: take the lifecycle lock and run the steps of §10.1.
@@ -235,10 +234,10 @@ pub async fn apply(platform: &Platform, file: &Path) -> anyhow::Result<Analysis>
     .await
 }
 
-/// Steps 2 to 9 of §10.1 under a lifecycle lock the caller holds: analyse,
+/// Steps 2 to 8 of §10.1 under a lifecycle lock the caller holds: analyse,
 /// ensure the substrate, expand (row, policy projection, connections,
 /// packages, the package stage), write the release chart and wait for
-/// readiness, or uninstall it for `release = none`, then drain and contract.
+/// readiness, or uninstall it for `release = none`, then drain.
 /// `reason` is a rollback's, kept in the Helm description (§11.2).
 ///
 /// Every step is an ensure judged by observation, so a crash anywhere is
@@ -253,7 +252,7 @@ pub(crate) async fn apply_locked(
     reason: Option<&str>,
 ) -> anyhow::Result<Analysis> {
     crate::schema_baseline::compare_system(&platform.system_database_url).await?;
-    let mut analysis = analyse::analyse(platform, document, false).await?;
+    let mut analysis = analyse::analyse(platform, document).await?;
     ensure::ensure(platform, document, &analysis)
         .await
         .context("step 4, ensure the substrate")?;
@@ -281,13 +280,9 @@ pub(crate) async fn apply_locked(
             .context("step 6, uninstall the release chart")?;
         analysis.plan.push(format!("uninstalled {release_name}"));
     }
-    let live = drain::drain(platform, document, &analysis)
+    drain::drain(platform, document, &analysis)
         .await
         .context("step 8, drain")?;
-    let contracted = contract::contract(platform, document, &analysis, &live)
-        .await
-        .context("step 9, contract")?;
-    analysis.plan.extend(contracted);
     Ok(analysis)
 }
 

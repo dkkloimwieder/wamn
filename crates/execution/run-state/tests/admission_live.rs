@@ -261,7 +261,7 @@ fn surviving_authority_matrix_live() {
                                      'TRUNCATE','REFERENCES','TRIGGER']) AS p \
             WHERE n.nspname = 'wamn_run' AND c.relkind IN ('r','p','v','m') \
               AND pg_catalog.has_table_privilege('wamn_executor_platform', c.oid, p); \
-           ASSERT actual = 'effect_attempts:SELECT,environment_policies:SELECT,\
+           ASSERT actual = 'environment_policies:SELECT,\
 run_queue:DELETE,run_queue:SELECT,runs:SELECT', \
                   'run-plane TABLE grain drifted: ' || coalesce(actual, '<none>'); \
            SELECT string_agg(c.relname || ':' || p, ',' ORDER BY c.relname || ':' || p) \

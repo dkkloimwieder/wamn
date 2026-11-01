@@ -1949,7 +1949,6 @@ mod tests {
             }),
             revision: None,
             live: BTreeMap::new(),
-            floor_artifacts: Some(BTreeMap::new()),
         };
         assert!(crate::environment::analyse::refusals(&document, &authorities).is_empty());
     }

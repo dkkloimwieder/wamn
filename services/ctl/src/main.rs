@@ -79,8 +79,6 @@ enum Command {
     ApplyPackage(package_verbs::ApplyPackageArgs),
     /// Push one authored package as a registry artifact and record its digest (wamn-zua8.3)
     PushPackage(package_verbs::PushPackageArgs),
-    /// Prove a package successor on a copy of the serving predecessor database.
-    QualifyUpgrade(package_verbs::QualifyUpgradeArgs),
     /// Reconcile generated package data privileges after apply-package.
     ReconcilePackageDataAccess(package_verbs::ReconcilePackageDataAccessArgs),
     /// Manage environment connections through control routes.
@@ -152,7 +150,6 @@ async fn main() -> anyhow::Result<()> {
         Command::CloseCaptureGap(args) => provisioning_verbs::close_capture_gap(args).await,
         Command::ApplyPackage(args) => package_verbs::apply(args).await,
         Command::PushPackage(args) => package_verbs::push(args).await,
-        Command::QualifyUpgrade(args) => package_verbs::qualify_upgrade(args).await,
         Command::Connection(args) => component_verbs::connection(args).await,
         Command::ExternalSystem(args) => component_verbs::external_system(args).await,
         Command::IntegrationType(args) => component_verbs::integration_type(args).await,
@@ -250,49 +247,6 @@ mod tests {
             assert_eq!(args.env, "dev");
             assert_eq!(args.principal_id, "00112233-4455-6677-8899-aabbccddeeff");
         }
-    }
-
-    const PREDECESSOR: &str =
-        "sha256:1111111111111111111111111111111111111111111111111111111111111111";
-
-    /// `qualify-upgrade` needs `--predecessor-release` and passes it on.
-    #[test]
-    fn qualify_upgrade_requires_the_predecessor_release() {
-        let mut values = vec![
-            "wamn-ctl",
-            "qualify-upgrade",
-            "--package",
-            "orders-2.0.0",
-            "--presented-package",
-            "orders-2.0.0",
-            "--artifact-base",
-            "registry.example/wamn/packages",
-            "--registry-auth-file",
-            "/run/registry/config.json",
-            "--database-url",
-            "postgres://project.invalid/project",
-            "--org",
-            "acme",
-            "--project",
-            "plant",
-            "--environment",
-            "dev",
-            "--result",
-            "/tmp/qualification.json",
-        ];
-        let Err(missing) = Cli::try_parse_from(values.clone()) else {
-            panic!("qualify-upgrade without a predecessor release refuses");
-        };
-        assert_eq!(
-            missing.kind(),
-            clap::error::ErrorKind::MissingRequiredArgument
-        );
-        assert!(missing.to_string().contains("--predecessor-release"));
-        values.extend(["--predecessor-release", PREDECESSOR]);
-        let Command::QualifyUpgrade(args) = Cli::try_parse_from(values).unwrap().command else {
-            panic!("expected qualify-upgrade");
-        };
-        assert_eq!(args.predecessor_release, PREDECESSOR);
     }
 
     #[test]

@@ -1,7 +1,5 @@
 //! Converge the generated GuestSql authority union for the installed package set.
 
-pub(crate) mod upgrade;
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::PathBuf;
@@ -124,11 +122,82 @@ struct DirectAcl {
 /// when the privilege is a column privilege, and the privilege name.
 type UndeclaredResidue = BTreeSet<(String, String, String, Option<String>, String)>;
 
-type EffectiveAcl = upgrade::UpgradePrivileges;
+const SCHEMA_PRIVILEGES: &[&str] = &["CREATE", "USAGE"];
+const TABLE_PRIVILEGES: &[&str] = &[
+    "DELETE",
+    "INSERT",
+    "MAINTAIN",
+    "REFERENCES",
+    "SELECT",
+    "TRIGGER",
+    "TRUNCATE",
+    "UPDATE",
+];
+const COLUMN_PRIVILEGES: &[&str] = &["INSERT", "REFERENCES", "SELECT", "UPDATE"];
+
+/// Sorted effective privilege facts; table grants remain distinct from column grants.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct EffectiveAcl {
+    schema: BTreeSet<(String, String)>,
+    table: BTreeSet<(String, String, String)>,
+    column: BTreeSet<(String, String, String, String)>,
+}
+
+/// Read effective application privileges for reconciliation.
+async fn read_effective_privileges(
+    tx: &Transaction<'_>,
+    role: &str,
+    schemas: &[String],
+) -> anyhow::Result<EffectiveAcl> {
+    let mut acl = EffectiveAcl::default();
+    for row in tx
+        .query(
+            "SELECT n.nspname::text, privilege FROM pg_namespace n \
+             CROSS JOIN unnest($3::text[]) AS privilege \
+             WHERE n.nspname = ANY($2::text[]) AND has_schema_privilege($1, n.oid, privilege)",
+            &[&role, &schemas, &SCHEMA_PRIVILEGES],
+        )
+        .await
+        .context("read effective application schema privileges")?
+    {
+        acl.schema.insert((row.get(0), row.get(1)));
+    }
+    for row in tx
+        .query(
+            "SELECT n.nspname::text, c.relname::text, privilege \
+             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+             CROSS JOIN unnest($3::text[]) AS privilege \
+             WHERE n.nspname = ANY($2::text[]) AND c.relkind IN ('r','p','v','m','f') \
+               AND has_table_privilege($1, c.oid, privilege)",
+            &[&role, &schemas, &TABLE_PRIVILEGES],
+        )
+        .await
+        .context("read effective application table privileges")?
+    {
+        acl.table.insert((row.get(0), row.get(1), row.get(2)));
+    }
+    for row in tx
+        .query(
+            "SELECT n.nspname::text, c.relname::text, a.attname::text, privilege \
+             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+             JOIN pg_attribute a ON a.attrelid = c.oid \
+             CROSS JOIN unnest($3::text[]) AS privilege \
+             WHERE n.nspname = ANY($2::text[]) AND c.relkind IN ('r','p','v','m','f') \
+               AND a.attnum > 0 AND NOT a.attisdropped \
+               AND has_column_privilege($1, c.oid, a.attnum, privilege)",
+            &[&role, &schemas, &COLUMN_PRIVILEGES],
+        )
+        .await
+        .context("read effective application column privileges")?
+    {
+        acl.column
+            .insert((row.get(0), row.get(1), row.get(2), row.get(3)));
+    }
+    Ok(acl)
+}
 
 #[derive(Debug)]
 struct PresentedPackage {
-    root: PackageRoot,
     coordinate: String,
     package_id: String,
     package_version: String,
@@ -145,7 +214,6 @@ pub struct PreparedLocalDataAccess(Vec<PresentedPackage>);
 #[derive(Clone, Copy)]
 enum ReconcileMode<'a> {
     Production,
-    Qualification,
     Local(&'a str),
 }
 
@@ -244,7 +312,6 @@ fn read_presented_packages(roots: &[PackageRoot]) -> anyhow::Result<Vec<Presente
             plan.coordinate.package_id()
         );
         packages.push(PresentedPackage {
-            root: package_root.clone(),
             coordinate,
             package_id: plan.coordinate.package_id().to_owned(),
             package_version: plan.coordinate.package_version().to_owned(),
@@ -325,7 +392,7 @@ async fn reconcile_in_transaction(
 ) -> anyhow::Result<DataAccessReconcileResult> {
     let local = match mode {
         ReconcileMode::Local(environment) => Some(environment),
-        _ => None,
+        ReconcileMode::Production => None,
     };
     tx.query_one(CLAIM_ENV_KEY_SQL, &[&env_key])
         .await
@@ -345,16 +412,6 @@ async fn reconcile_in_transaction(
         }
     }
     validate_installed_set(tx, env_key, packages, local.is_some()).await?;
-    let accepted_upgrade = match mode {
-        ReconcileMode::Production => {
-            let roots = packages
-                .iter()
-                .map(|package| package.root.clone())
-                .collect::<Vec<_>>();
-            crate::package_upgrade::reconciliation_evidence(tx, env_key, &roots).await?
-        }
-        ReconcileMode::Qualification | ReconcileMode::Local(_) => None,
-    };
     let schemas = packages
         .iter()
         .flat_map(|package| package.schemas.iter().cloned())
@@ -423,9 +480,6 @@ async fn reconcile_in_transaction(
         "package-data-access-undeclared-relation-refused: role={DATA_ACCESS_ROLE}; relations=[{}]; cause=the App role reaches authority no package declares, and an owner never loses a privilege on its own relation; remedy=declare the relation in a package, or drop the relation",
         residue_targets(&after_residue)
     );
-    if let Some(evidence) = &accepted_upgrade {
-        crate::package_upgrade::require_reconciled_privileges(tx, evidence).await?;
-    }
     if apply && let Some(environment) = local {
         record_local_manifests(tx, env_key, environment, packages).await?;
     }
@@ -754,8 +808,7 @@ async fn effective_acl(
     tx: &Transaction<'_>,
     effective: &EffectiveDataAccess,
 ) -> anyhow::Result<EffectiveAcl> {
-    let mut acl =
-        upgrade::read_effective_privileges(tx, effective.role(), effective.schemas()).await?;
+    let mut acl = read_effective_privileges(tx, effective.role(), effective.schemas()).await?;
     let declared = effective
         .relations()
         .iter()

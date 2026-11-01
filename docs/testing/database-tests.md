@@ -30,31 +30,12 @@ Establish whether a failure occurred before commit, after commit with a lost res
 A timeout alone does not establish that boundary.
 For rollback, observe an intermediate write before forcing failure and then inspect the final business state.
 
-## Package upgrades
-
-The [upgrade qualification tests](../../crates/control/lib/src/qualify_upgrade/tests.rs) copy an installed platform fixture into disposable PostgreSQL.
-They retain rows and ownership, reproduce predecessor grants, and apply the exact candidate suffix.
-Predecessor SQL must pass before candidate grant reconciliation and again afterward.
-A whole-row query must fail when the added column lacks a predecessor grant, even when candidate grants restore access.
-The tests also compare source state, refuse changed package evidence, and require failed suffix execution to roll back.
-
-The [overlay upgrade tests](../../crates/control/lib/src/qualify_upgrade/tests/overlay.rs) retain predecessor rows, overlay values, ownership, and constraints.
-They require exact base pins and successors for every affected overlay, including a case with two overlays.
-An injected failure in an overlay successor must roll back the base migration and accepted evidence.
-They also refuse changed contracts and nontransactional statements without changing the source database.
-
 The [statement planner test](../../crates/schema/generator/tests/statement_check_live.rs) uses one exact runtime schema without an added `public` fallback.
 It requires planning to preserve grants, session authority, and the caller's surrounding transaction.
-
-The [accepted-evidence tests](../../crates/control/lib/src/package_upgrade/tests.rs) exercise immediate-predecessor rollback against retained schema and live privileges.
-They require reconciliation evidence to match the complete current package set and presented roots, independent of timestamps or earlier qualifications.
-These database tests do not establish deployment or authenticated business success in the live WMS environment.
-The [deployment procedure](../operations/deployment.md#package-upgrades) defines the supported production order and recovery.
 
 ## Runtime claim coverage
 
 The [standard claim test](../../crates/platform/runtime/tests/production_claim_live.rs) exercises claims with a declared executor credential.
-It includes an effect attempt to show that standard claims and reaping ignore it.
 The fixture superuser records the attempt because no effect writer exists.
 
 ## Record history
@@ -78,7 +59,7 @@ The [stamp rules](../architecture/data-access.md#record-history) define the expe
 - The [family denial matrix](../../crates/control/provision/tests/family_denial_matrix.rs) pins the audit retention reach to the history table of a P<n>D relation. The role holds nothing on an unlimited history table and no `wamn_platform` edge.
 - The [introspection test](../../crates/schema/introspection/tests/postgres_live.rs) installs a history table and both record history triggers. It makes sure that the schema description bytes do not change.
 - The [package data-access test](../../crates/control/lib/tests/package_data_access_live.rs) writes a logged relation with no stamp columns through the production App role, and it makes sure that the reconciler keeps the history insert grant.
-- The [catalog stamp test](../../crates/catalog/model/tests/record_history.rs) tests all eleven stamped catalog tables against PostgreSQL. It covers missing actors, immutable rows, creation preservation, and no-op updates. Control tests also assert the actors of package, connection, release, qualification, stage, and floor writers.
+- The [catalog stamp test](../../crates/catalog/model/tests/record_history.rs) tests the retained catalog tables against PostgreSQL. It covers missing actors and immutable rows. Control tests also cover package, connection, and release writers.
 - The [platform schema test](../../crates/identity/project-state/tests/schema.rs) tests the platform rows, their pinned ids, and the provisioning stamps. It makes sure that each `platform` relation except `number_counter` logs every row change, including a key change, a cascaded delete, and `api_key.key_hash`. It makes sure that `wamn_history.row_image` spells each `timestamptz` as the platform canonicalizer spells it.
 - The [platform authority test](../../crates/identity/project-state/tests/authority.rs) makes sure that an App generation reads no `platform` history table and writes none, and that it writes no `platform` table. It writes `number_counter` only through `platform.bump_counter`, `platform.assign_counter` and `platform.set_counter`, which refuse an id that is not a sequence. The numbering tests of the `wamn:postgres` plugin check that a caller reaches no sequence of another application, even when the `app.application` claim is rewritten.
 - The [platform grant test](../../crates/control/lib/tests/platform_grants_live.rs) reads the `wamn_app` privileges in `platform` from the server catalogs, on a fresh install and after migrations `0025`, `0028`, `0029`, `0030` and `0031`. It makes sure that `wamn_app` holds `SELECT` on the listed tables, `EXECUTE` on `platform.bump_counter`, `platform.assign_counter` and `platform.set_counter`, the existing grants of `platform.write_log`, and nothing else in `platform`. A second case applies `0031` to a database with one row of each table in the old shape. It makes sure that each row stays without `tenant_id`, that each history entry keeps its row under the new key, and that the counter functions run on the sequence id alone. A counter function refuses an id that is not a sequence.

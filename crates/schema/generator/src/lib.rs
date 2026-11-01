@@ -50,7 +50,6 @@ mod sql;
 mod sql_lex;
 mod sqlx_metadata;
 mod tofu;
-mod upgrade_stage;
 
 pub use authoring::{
     AUTHORED_MANIFEST, COMPILED_MANIFEST, KCL_ENV, compile_environment, compile_manifest,
@@ -105,7 +104,4 @@ pub use sqlx_metadata::{
 #[doc(inline)]
 pub use tofu::render_project_tofu;
 #[doc(inline)]
-pub use upgrade_stage::{
-    BackfillStage, UpgradeStage, UpgradeStageException, UpgradeStagePhase, validate_upgrade_stage,
-};
 pub use wamn_schema_introspection::ir::CatalogIr;

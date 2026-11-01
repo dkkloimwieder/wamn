@@ -215,33 +215,18 @@ pub(super) async fn two_plane_residency_leg(su: &Client) {
         .await
         .expect("read-only third reconcile");
     assert!(dry.is_noop(), "dry-run drift: {:#?}", dry.actions);
-    // …and the post-check names the PROJECT record exactly: the five run-state
-    // tables plus run_queue, with the co-resident control relation excluded.
+    // The project tables remain separate from the control relation.
     let mut at_target = dry.at_target.clone();
     at_target.sort();
     assert_eq!(
         at_target,
-        [
-            "effect_attempt_dispatches",
-            "effect_attempt_outcomes",
-            "effect_attempts",
-            "environment_policies",
-            "run_queue",
-            "runs",
-        ],
+        ["environment_policies", "run_queue", "runs"],
         "the converged post-check did not name exactly the project record"
     );
 
     // POST-STATE FROM THE CATALOG, not from an exit status. Every project record
     // table is present…
-    for table in [
-        "environment_policies",
-        "runs",
-        "effect_attempts",
-        "effect_attempt_dispatches",
-        "effect_attempt_outcomes",
-        "run_queue",
-    ] {
+    for table in ["environment_policies", "runs", "run_queue"] {
         assert!(
             table_exists(su, SCHEMA, table).await,
             "project record table {table} is absent after convergence"

@@ -207,7 +207,7 @@ Declare stream replicas and the duplicate window in the environment configuratio
 Activation compares declared configuration with the provisioned resources and refuses disagreement.
 It does not grant runtime credentials permission to reconfigure streams.
 
-For an installed package successor, follow [package upgrades](#package-upgrades) before changing its application schema.
+A package schema change requires a new release and a reset of the application tables.
 
 Read each command's current required arguments with `--help`.
 
@@ -470,75 +470,12 @@ Use the environment's identity Deployment and require its readiness before issui
 The full schema files under `deploy/sql/` own each platform schema and build fresh installations.
 Application package migrations retain their own streams.
 
-## Package upgrades
-
-This path advances one installed package to its direct successor while retaining its rows.
-The successor names the installed version as `predecessor_version` and preserves its migration stream as an exact byte prefix.
-An installed overlay that pins the base requires a coordinated upgrade with every affected overlay successor.
-An overlay is a package that consumes a pinned base.
-Each overlay successor changes only its package coordinate and exact base version/digest pin.
-Every consumed operation contract stays unchanged.
-
-Use a patch version for an internal correction without an application migration suffix.
-Use a minor version for predecessor-compatible additive schema or operation changes.
-Use a major version for an incompatible contract or migration that requires client changes.
-A nonempty application migration suffix requires at least a minor version, such as `2.0.0 → 2.1.0`.
-
-The ordinary upgrade policy permits new ordinary tables, nullable modeled columns without defaults, and two non-null constant defaults: `boolean DEFAULT false` and `text DEFAULT 'not_required'`.
-It refuses new constraints on existing relations, type changes, backfills, and destructive changes.
-
-`qualify-upgrade` proves the database transition before production mutation.
-It copies the installed predecessor database, preserves object ownership, restores predecessor grants, and applies the candidate suffix on that copy.
-It plans predecessor SQL under both predecessor grants and the complete candidate grants after reconciliation.
-A failure before reconciliation refuses the upgrade even if candidate grants restore access.
-
-`qualify-release` remains the single release-qualification path that [release qualification](delivery.md#release-qualification) describes.
-It proves the published release on a platform image set after the package upgrade.
-An upgrade result cannot replace release qualification.
-
-### Upgrade prerequisites
-
-Use one deployment writer for the environment.
-`--predecessor-release` names the manifest digest of the release the environment serves.
-The command refuses it when `catalog.releases` has no row for it, or when it names a package version that is not installed.
-Qualification reads no Kubernetes resource.
-
-Each SQL-bearing package must declare one application schema. Predecessor SQL plans with that schema as its exact `search_path`.
-A schema change makes predecessor SQL fail to plan and refuses qualification.
-Packages with no SQL need no application schema.
-
-The full schema files install the `catalog.package_upgrade_qualifications` carrier.
-Keep the exact predecessor release available for recovery.
-Run qualification on a machine authorized to hold copied production data, with PostgreSQL 18 tools and enough temporary storage.
-The command owns its temporary PostgreSQL server and private dump directory and removes them after use.
-It copies application data, preserves required ownership, and reconstructs effective privileges without copying cluster login-role secrets.
-Keep database credentials outside committed files. Retain the qualification result through application and resolve any reported cleanup failure.
-
-### Upgrade failures
-
-| Failure point | Installed state and recovery |
-| --- | --- |
-| Qualification | Production is unchanged. Correct the candidate or observed deployment and qualify again. |
-| Package application | The transaction rolls back, including candidate registration and accepted evidence. Correct the cause and retry. |
-| Application committed, data access not reconciled | The candidate schema remains with predecessor grants. Qualification proved predecessor SQL in this state. Repair reconciliation using the qualified roots. |
-| Data access committed, replica identity or later publication/qualification failed | The predecessor serves on candidate schema and grants. Repair and continue, or abandon that release attempt. |
-| `env apply` write or readiness | The release chart serves its newest successful revision. Apply again, or run `wamn-ctl env rollback`. Restore convergence before another upgrade. |
-
-Never reverse a committed package migration for recovery.
-Any replacement package candidate names the installed leaf as its predecessor, including after a later deployment failure.
-
 ## Rollback and maintenance
 
 Run `wamn-ctl env rollback <coordinate> --reason <text>`, which applies the previous intended release of the release chart.
 A release digest selects exact bytes, but a mutable image tag does not.
 The installed package and its committed migrations remain in place.
 Reverse migration is not rollback.
-
-After an additive package upgrade, rollback supports only the exact immediate predecessor release recorded in accepted upgrade evidence.
-`apply` refuses a release whose packages the installed schema is not compatible with.
-Rollback needs no operator-local upgrade result file. Ordinary release qualification and publication requirements still apply.
-Prove readiness and authenticated operation success after the rollback.
-The installed successor schema remains throughout rollback and any later re-forward deployment.
 
 `wamn-ctl-ops` contains copy, run-history pruning, event advisory, and cluster recovery commands.
 For backup and recovery, use CloudNativePG backup and recovery on the cluster.

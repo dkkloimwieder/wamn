@@ -17,9 +17,9 @@ The shared generator derives its package-scoped typed WIT contract from the Acme
 The component calls Acme's existing SQL accessor directly and keeps JSON conversion at the HTTP and dynamic routing boundaries.
 It cannot update the base supplier, status, or received quantities.
 It cannot create or delete base purchase-order rows.
-Its [first migration](migrations/0001_add_inspection_required.sql) and manifest carry that declared surface.
+Its [initial SQL](migrations/0001_initial.sql) and manifest carry that declared surface.
 
-The [inspection migration](migrations/0002_quality_inspection.sql) creates `quality_inspection`.
+The [initial SQL](migrations/0001_initial.sql) creates `quality_inspection`.
 Its primary key and receipt foreign key use `receipt_id`.
 There is no second inspection identifier.
 Inspection status is `pending` or `approved`.

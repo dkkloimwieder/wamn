@@ -12,7 +12,6 @@ Each plan describes work or decisions for its subject. [Architecture](../archite
 - [NATS outage](nats-outage.md): evidence and recovery requirements.
 - [Observability](observability.md): telemetry collection and export.
 - [Operator image](operator-image.md): image ownership.
-- [Package upgrade](package-upgrade.md): staged migration work and upgrade decisions.
 - [Performance architecture](perf-arch.md): request execution design.
 - [Platform configuration](platform-config.md): application configuration and owner rulings.
 - [Platform deploy](platform-deploy.md): environment lifecycle rules.

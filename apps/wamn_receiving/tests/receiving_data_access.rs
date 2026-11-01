@@ -17,10 +17,6 @@ mod tests {
         include_bytes!("../../../apps/target/wamn/client_acme_receiving/wamn.json");
     const MIGRATION: &str =
         include_str!("../../../apps/wamn_receiving/migrations/0001_initial.sql");
-    const VIEWS_MIGRATION: &str =
-        include_str!("../../../apps/wamn_receiving/migrations/0004_receiving_views.sql");
-    const WRITE_GUARD_MIGRATION: &str =
-        include_str!("../../../apps/wamn_receiving/migrations/0005_receipt_screen_write_guard.sql");
     const SCREEN_SQL: &str =
         include_str!("../../../apps/wamn_receiving/query/load_receipt_screen.sql");
     const SUMMARY_SQL: &str =
@@ -48,11 +44,8 @@ mod tests {
         include_str!("../../../apps/wamn_receiving/command/record_receipt/lock_purchase_order.sql");
     const RECORD_RECEIPT_SQL: &str =
         include_str!("../../../apps/wamn_receiving/command/record_receipt/record_receipt.sql");
-    const OVERLAY_FIELDS_MIGRATION: &str = include_str!(
-        "../../../apps/client_acme_receiving/migrations/0001_add_inspection_required.sql"
-    );
-    const OVERLAY_INSPECTION_MIGRATION: &str =
-        include_str!("../../../apps/client_acme_receiving/migrations/0002_quality_inspection.sql");
+    const OVERLAY_FIELDS_MIGRATION: &str =
+        include_str!("../../../apps/client_acme_receiving/migrations/0001_initial.sql");
     const OVERLAY_GET_SQL: &str =
         include_str!("../../../apps/target/wamn/client_acme_receiving/sql/purchase_order/get.sql");
     const OVERLAY_UPDATE_SQL: &str = include_str!(
@@ -199,8 +192,7 @@ mod tests {
             )
             .await?;
         client.batch_execute(MIGRATION).await?;
-        client.batch_execute(VIEWS_MIGRATION).await?;
-        client.batch_execute(WRITE_GUARD_MIGRATION).await?;
+
         install_record_history(&client, MANIFEST).await?;
         select_receiving_schema(&client).await?;
         bind_actor(&client, FIXTURE_PRINCIPAL).await?;
@@ -357,8 +349,7 @@ mod tests {
             )
             .await?;
         client.batch_execute(MIGRATION).await?;
-        client.batch_execute(VIEWS_MIGRATION).await?;
-        client.batch_execute(WRITE_GUARD_MIGRATION).await?;
+
         client
             .batch_execute(
                 "INSERT INTO receiving.supplier (id, name) VALUES
@@ -552,11 +543,10 @@ mod tests {
             )
             .await?;
         client.batch_execute(MIGRATION).await?;
-        client.batch_execute(VIEWS_MIGRATION).await?;
-        client.batch_execute(WRITE_GUARD_MIGRATION).await?;
+
         install_record_history(&client, MANIFEST).await?;
         client.batch_execute(OVERLAY_FIELDS_MIGRATION).await?;
-        client.batch_execute(OVERLAY_INSPECTION_MIGRATION).await?;
+
         client
             .batch_execute(
                 "ALTER TABLE receiving.purchase_order ADD COLUMN overlay_compatibility_note text",
@@ -722,11 +712,10 @@ mod tests {
             )
             .await?;
         client.batch_execute(MIGRATION).await?;
-        client.batch_execute(VIEWS_MIGRATION).await?;
-        client.batch_execute(WRITE_GUARD_MIGRATION).await?;
+
         install_record_history(&client, MANIFEST).await?;
         client.batch_execute(OVERLAY_FIELDS_MIGRATION).await?;
-        client.batch_execute(OVERLAY_INSPECTION_MIGRATION).await?;
+
         install_record_history(&client, OVERLAY_MANIFEST).await?;
         select_receiving_schema(&client).await?;
         let id = Uuid::from_u128(0x800);
@@ -955,8 +944,7 @@ mod tests {
             .batch_execute(MIGRATION)
             .await
             .context("apply the exact Receiving migration")?;
-        client.batch_execute(VIEWS_MIGRATION).await?;
-        client.batch_execute(WRITE_GUARD_MIGRATION).await?;
+
         install_record_history(&client, MANIFEST).await?;
         install_write_log(&client).await?;
         select_receiving_schema(&client).await?;
@@ -1054,10 +1042,7 @@ mod tests {
             .batch_execute(OVERLAY_FIELDS_MIGRATION)
             .await
             .context("apply the exact Acme field migration")?;
-        client
-            .batch_execute(OVERLAY_INSPECTION_MIGRATION)
-            .await
-            .context("apply the exact Acme inspection migration")?;
+
         install_record_history(&client, OVERLAY_MANIFEST).await?;
         assert_acme_overlay(&mut client).await?;
 

@@ -268,7 +268,7 @@ async fn pass_one_and_two(
     let typed = serde_json::to_vec(authored).context("serialize the typed manifest")?;
     let typed = crate::inheritance::complete_manifest(&typed, bases)?;
     let manifest = PackageManifest::from_slice(&typed).context("parse the typed manifest")?;
-    let catalog = introspect_with_manifest(database_url, package_root, &manifest).await?;
+    let catalog = introspect_with_manifest(database_url, &manifest).await?;
     // The build refuses correctness only (owner ruling 2026-10-18): a missing
     // pagination index is a warning.
     for warning in missing_paged_query_indexes(database_url, &catalog, &manifest).await? {
@@ -1184,7 +1184,7 @@ mod tests {
         migrate(database.url(), root, manifest)
             .await
             .expect("migrate the test package");
-        let catalog = introspect_with_manifest(database.url(), root, manifest)
+        let catalog = introspect_with_manifest(database.url(), manifest)
             .await
             .expect("introspect the migrated package");
         missing_paged_query_indexes(database.url(), &catalog, manifest)

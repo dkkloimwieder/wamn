@@ -6,8 +6,6 @@ use wamn_schema_introspection::migration_policy::DefinitionType;
 pub const APPLY_PACKAGE_REFUSAL: &str = "apply-package-refused";
 /// Server refusal translated when release membership seals a package version.
 pub const PACKAGE_VERSION_SEALED_REFUSAL: &str = "package-version-sealed";
-/// A new coordinate must extend the one installed leaf for its package family.
-pub const PREDECESSOR_NOT_CURRENT_REFUSAL: &str = "predecessor-not-current";
 /// An overlay attempted to mutate a definition owned by another package.
 pub const BASE_DEFINITION_MUTATION_REFUSAL: &str = "base-definition-mutation-refused";
 /// A shared relation did not publish additive client-field authority.
@@ -26,8 +24,6 @@ pub const PACKAGE_ARTIFACT_REQUIRED_REFUSAL: &str = "package-artifact-required";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ApplyPackageErrorType {
     PackageVersionSealed,
-    PredecessorNotCurrent,
-    PredecessorPrefixMismatch,
     BaseDefinitionMutation,
     RelationNotClientExtensible,
     DefinitionOwnerDeclarationMissing,
@@ -40,10 +36,6 @@ impl ApplyPackageErrorType {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::PackageVersionSealed => PACKAGE_VERSION_SEALED_REFUSAL,
-            Self::PredecessorNotCurrent => PREDECESSOR_NOT_CURRENT_REFUSAL,
-            Self::PredecessorPrefixMismatch => {
-                wamn_schema_control::PackageMigrationErrorType::PredecessorPrefixMismatch.as_str()
-            }
             Self::BaseDefinitionMutation => BASE_DEFINITION_MUTATION_REFUSAL,
             Self::RelationNotClientExtensible => RELATION_NOT_CLIENT_EXTENSIBLE_REFUSAL,
             Self::DefinitionOwnerDeclarationMissing => DEFINITION_OWNER_DECLARATION_MISSING_REFUSAL,
@@ -59,8 +51,6 @@ impl ApplyPackageErrorType {
 pub struct ApplyPackageError {
     pub(super) type_: ApplyPackageErrorType,
     pub(super) coordinate: String,
-    pub(super) predecessor_version: Option<String>,
-    pub(super) current_version: Option<String>,
     pub(super) path: Option<String>,
     pub(super) schema: Option<String>,
     pub(super) relation: Option<String>,
@@ -78,8 +68,6 @@ impl ApplyPackageError {
         Self {
             type_: ApplyPackageErrorType::ArtifactRequired,
             coordinate: coordinate.to_owned(),
-            predecessor_version: None,
-            current_version: None,
             path: None,
             schema: None,
             relation: None,
@@ -97,14 +85,6 @@ impl ApplyPackageError {
 
     pub fn coordinate(&self) -> &str {
         &self.coordinate
-    }
-
-    pub fn predecessor_version(&self) -> Option<&str> {
-        self.predecessor_version.as_deref()
-    }
-
-    pub fn current_version(&self) -> Option<&str> {
-        self.current_version.as_deref()
     }
 
     pub fn path(&self) -> Option<&str> {
@@ -136,14 +116,6 @@ impl fmt::Display for ApplyPackageError {
             self.type_.as_str(),
             self.coordinate
         )?;
-        if let Some(predecessor) = &self.predecessor_version {
-            write!(formatter, "; predecessor-version={predecessor}")?;
-        } else if self.type_ == ApplyPackageErrorType::PredecessorNotCurrent {
-            formatter.write_str("; predecessor-version=<none>")?;
-        }
-        if let Some(current) = &self.current_version {
-            write!(formatter, "; current-version={current}")?;
-        }
         if let Some(path) = &self.path {
             write!(formatter, "; file={path}")?;
         }

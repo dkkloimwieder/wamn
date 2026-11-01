@@ -853,7 +853,6 @@ fn verify_package(root: &Path) -> anyhow::Result<VerifiedPackage> {
     refuse_workflow_declarations(&manifest_bytes)?;
     let manifest = PackageManifest::from_slice(&manifest_bytes)
         .with_context(|| format!("parse {}", manifest_path.display()))?;
-    crate::component_admission::check_package_backfill(&manifest)?;
     let contract = &manifest.required_platform_policy_contract;
     ensure!(
         contract.state == PolicyContractState::Satisfied,
@@ -1523,7 +1522,7 @@ mod tests {
         let second = pack_package(&root).unwrap();
         assert_eq!(first.digest, second.digest);
         assert_eq!(first.digest, sha256_digest(&first.manifest));
-        assert_eq!(first.tag(), "wamn_receiving-2.2.8");
+        assert_eq!(first.tag(), "wamn_receiving-2.2.9");
 
         let layout = first
             .layers
@@ -1592,7 +1591,7 @@ mod tests {
             manifest["annotations"],
             serde_json::json!({
                 "wamn.package.id": "wamn_receiving",
-                "wamn.package.version": "2.2.8",
+                "wamn.package.version": "2.2.9",
             })
         );
         remove(&root);

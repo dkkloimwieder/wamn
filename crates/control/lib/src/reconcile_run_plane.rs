@@ -20,12 +20,10 @@ use wamn_schema_control::{
     select_app_run_queue_authority_sql, select_app_scenario_author_membership_sql,
     select_authoring_effective_column_privileges_sql,
     select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,
-    select_authoring_table_privileges_sql, select_effect_table_effective_column_privileges_sql,
-    select_effect_table_effective_privileges_sql, select_effect_table_privileges_sql,
-    select_environment_policy_policies_sql, select_environment_policy_row_security_sql,
-    select_run_capture_privileges_sql, select_run_plane_helper_functions_sql,
-    select_scenario_author_role_sql, select_scenario_author_schema_usage_sql,
-    select_schema_checks_sql, select_schema_columns_sql, select_schema_foreign_keys_sql,
+    select_authoring_table_privileges_sql, select_environment_policy_policies_sql,
+    select_environment_policy_row_security_sql, select_run_capture_privileges_sql,
+    select_run_plane_helper_functions_sql, select_scenario_author_role_sql,
+    select_scenario_author_schema_usage_sql, select_schema_checks_sql, select_schema_columns_sql,
     select_schema_indexes_sql, select_schema_triggers_sql,
 };
 
@@ -925,45 +923,6 @@ async fn observe(
             }),
         ..Default::default()
     };
-    for row in client
-        .query(select_effect_table_privileges_sql(), &[&schema.as_str()])
-        .await
-        .context("read direct effect-table privileges")?
-    {
-        obs.effect_table_privileges
-            .entry((row.get(0), row.get(1)))
-            .or_default()
-            .insert(row.get(2));
-    }
-    for row in client
-        .query(
-            select_effect_table_effective_privileges_sql(),
-            &[&schema.as_str()],
-        )
-        .await
-        .context("read effective effect-table privileges")?
-    {
-        let table: String = row.get(0);
-        obs.effect_table_effective_privileges
-            .entry((table.clone(), row.get(1)))
-            .or_default()
-            .insert(row.get(2));
-        obs.effect_table_owners.insert(table, row.get(3));
-    }
-    for row in client
-        .query(
-            select_effect_table_effective_column_privileges_sql(),
-            &[&schema.as_str()],
-        )
-        .await
-        .context("read effective effect-table column privileges")?
-    {
-        obs.effect_table_effective_column_privileges
-            .entry((row.get(0), row.get(1)))
-            .or_default()
-            .insert(row.get(2));
-    }
-
     obs.app_is_scenario_author_member = client
         .query_one(select_app_scenario_author_membership_sql(), &[])
         .await
@@ -1096,29 +1055,6 @@ async fn observe(
         }
         obs.environment_policy_row_security = Some(row_security);
     }
-    let effect_tables: Vec<&str> = [
-        "effect_attempts",
-        "effect_attempt_dispatches",
-        "effect_attempt_outcomes",
-    ]
-    .into_iter()
-    .filter(|table| obs.tables.contains_key(*table))
-    .collect();
-    if !effect_tables.is_empty() {
-        let count_sql = effect_tables
-            .iter()
-            .map(|table| format!("SELECT count(*) FROM {}.{}", schema.quoted(), table))
-            .collect::<Vec<_>>()
-            .join(" UNION ALL ");
-        obs.effect_record_rows = client
-            .query_one(
-                &format!("SELECT COALESCE(sum(n), 0)::bigint FROM ({count_sql}) AS counts(n)"),
-                &[],
-            )
-            .await
-            .context("count effect records for current-schema safety")?
-            .get(0);
-    }
     for row in client
         .query(select_schema_indexes_sql(), &[&schema.as_str()])
         .await
@@ -1132,14 +1068,6 @@ async fn observe(
         .context("read schema check constraints")?
     {
         obs.checks.insert((row.get(0), row.get(1)), row.get(2));
-    }
-    for row in client
-        .query(select_schema_foreign_keys_sql(), &[&schema.as_str()])
-        .await
-        .context("read schema foreign keys")?
-    {
-        obs.foreign_keys
-            .insert((row.get(0), row.get(1)), row.get(2));
     }
     for row in client
         .query(select_schema_triggers_sql(), &[&schema.as_str()])

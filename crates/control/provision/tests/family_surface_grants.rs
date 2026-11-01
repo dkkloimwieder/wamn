@@ -424,7 +424,6 @@ fn expected_executor_grants() -> Vec<String> {
     }
     rows.push("relation|platform|connection|SELECT".to_owned());
     rows.push("relation|platform|integration|SELECT".to_owned());
-    rows.push("relation|wamn_run|effect_attempts|SELECT".to_owned());
     rows.push("relation|wamn_run|run_queue|DELETE".to_owned());
     rows.push("relation|wamn_run|run_queue|SELECT".to_owned());
     rows.push("relation|wamn_run|runs|SELECT".to_owned());
@@ -541,8 +540,6 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
         "catalog.packages",
         "catalog.package_migrations",
         "catalog.wiring_tombstones",
-        "wamn_run.effect_attempt_dispatches",
-        "wamn_run.effect_attempt_outcomes",
     ] {
         for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
             writeln!(
@@ -567,11 +564,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
          ASSERT has_table_privilege(r, 'wamn_run.run_queue', 'SELECT'), 'no queue read'; \
          ASSERT has_table_privilege(r, 'wamn_run.run_queue', 'DELETE'), 'no dequeue'; \
          ASSERT NOT has_table_privilege(r, 'wamn_run.run_queue', 'INSERT'), \
-           'an event admission enqueues by tenant and run id only'; \
-         ASSERT has_table_privilege(r, 'wamn_run.effect_attempts', 'SELECT'), \
-           'the claim asks whether an effect attempt exists'; \
-         ASSERT NOT has_table_privilege(r, 'wamn_run.effect_attempts', 'INSERT'), \
-           'the executor appends no effect attempt'; \n",
+           'an event admission enqueues by tenant and run id only'; \n",
     );
     for column in sql::EXECUTOR_PLATFORM_RUN_INSERT_COLUMNS {
         writeln!(
@@ -841,7 +834,6 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
     for relation in [
         "wamn_run.runs",
         "wamn_run.run_queue",
-        "wamn_run.effect_attempts",
         "wamn_run.environment_policies",
         "catalog.packages",
         "catalog.workflows",

@@ -453,19 +453,6 @@ DO $$ BEGIN
     'runs carries the causation and release pin carriers';
 END $$;
 
--- One effect attempt per frame node occurrence.
-DO $$ BEGIN
-  ASSERT EXISTS (
-    SELECT FROM pg_constraint AS con
-     WHERE con.conrelid = 'wamn_run.effect_attempts'::regclass AND con.contype = 'u'
-       AND (SELECT array_agg(att.attname::text ORDER BY key.ordinality)
-              FROM unnest(con.conkey) WITH ORDINALITY AS key(attnum, ordinality)
-              JOIN pg_attribute AS att
-                ON att.attrelid = con.conrelid AND att.attnum = key.attnum)
-           = ARRAY['env_key', 'run_id', 'frame_id', 'local_node_id', 'occurrence']
-  ), 'effect_attempts is unique per tenant, run, frame, node and occurrence';
-END $$;
-
 -- An admitted run defaults to no capture and the standard class, and refuses
 -- a class or capture outside its vocabulary.
 INSERT INTO wamn_run.runs (
@@ -610,87 +597,12 @@ BEGIN
       'registration_id','caller_outcome_type','caller_outcome_json','caller_http_status',
       'caller_release_node_id','caller_outcome_hash','caller_released_at',
       'response_deadline_at','run_deadline_at','invocation_context',
-      'admission_context_version','platform_revision','terminal_reason']),
-    ('wamn_run.effect_attempts'::regclass, ARRAY['root_plan_hash','current_plan_hash',
-      'frame_id','parent_frame_id','call_site_id','local_node_id',
-      'source_artifact_hash','requirement_name']),
-    ('wamn_run.effect_attempt_dispatches'::regclass,
-      ARRAY['run_id','frame_id','local_node_id','occurrence'])
+      'admission_context_version','platform_revision','terminal_reason'])
   LOOP
     FOREACH column_name IN ARRAY required LOOP
       ASSERT EXISTS (SELECT FROM pg_attribute WHERE attrelid=relation
                       AND NOT attisdropped AND attname=column_name),
         format('%s lacks %s', relation, column_name);
-    END LOOP;
-  END LOOP;
-  ASSERT NOT EXISTS (
-    SELECT FROM pg_attribute WHERE attrelid='wamn_run.effect_attempts'::regclass
-      AND NOT attisdropped AND attname IN ('attempt_index','predecessor_attempt_id',
-        'legacy_imported','selected_recovery_class','recovery_class','attempt_key')
-  ), 'effect attempts retain no successor shape';
-  ASSERT (SELECT atttypid='bigint'::regtype FROM pg_attribute
-           WHERE attrelid='wamn_run.effect_attempts'::regclass AND attname='frame_id'),
-    'frame ids retain their bigint range';
-  ASSERT EXISTS (
-    SELECT FROM pg_constraint AS con
-     WHERE con.conrelid='wamn_run.effect_attempt_dispatches'::regclass AND con.contype='u'
-       AND (SELECT array_agg(att.attname::text ORDER BY key.ordinality)
-              FROM unnest(con.conkey) WITH ORDINALITY AS key(attnum, ordinality)
-              JOIN pg_attribute AS att
-                ON att.attrelid=con.conrelid AND att.attnum=key.attnum)
-           = ARRAY['env_key','run_id','frame_id','local_node_id','occurrence']
-  ), 'dispatches are unique per frame node occurrence';
-  ASSERT EXISTS (
-    SELECT FROM pg_constraint AS con
-     WHERE con.conrelid='wamn_run.effect_attempt_dispatches'::regclass AND con.contype='f'
-       AND con.confrelid='wamn_run.effect_attempts'::regclass
-       AND (SELECT array_agg(att.attname::text ORDER BY key.ordinality)
-              FROM unnest(con.conkey) WITH ORDINALITY AS key(attnum, ordinality)
-              JOIN pg_attribute AS att
-                ON att.attrelid=con.conrelid AND att.attnum=key.attnum)
-           = ARRAY['env_key','attempt_id','attempt_started_at',
-                   'run_id','frame_id','local_node_id','occurrence']
-       AND (SELECT array_agg(att.attname::text ORDER BY key.ordinality)
-              FROM unnest(con.confkey) WITH ORDINALITY AS key(attnum, ordinality)
-              JOIN pg_attribute AS att
-                ON att.attrelid=con.confrelid AND att.attnum=key.attnum)
-           = ARRAY['env_key','attempt_id','attempt_started_at',
-                   'run_id','frame_id','local_node_id','occurrence']
-  ), 'dispatches reference the exact attempt coordinates';
-END $$;
-
--- Each immutable effect table refuses writes to its existing facts.
-INSERT INTO wamn_run.effect_attempts (env_key,attempt_id,run_id,root_plan_hash,
-  current_plan_hash,local_node_id,source_artifact_hash,requirement_name,occurrence,
-  seq,generation_fact_type,attempt_started_at,attempt_deadline_at,attempt_input_ref)
-VALUES ('t3','00000000-0000-0000-0000-000000000003','record-probe',
-  'sha256:' || repeat('a',64),'sha256:' || repeat('b',64),'effect',
-  'sha256:' || repeat('c',64),'store',0,0,'not-required','2000-01-01 00:00+00','2000-01-02 00:00+00','input');
-INSERT INTO wamn_run.effect_attempt_dispatches
-  (env_key,attempt_id,attempt_started_at,run_id,frame_id,local_node_id,occurrence,dispatched_at)
-VALUES ('t3','00000000-0000-0000-0000-000000000003','2000-01-01 00:00+00',
-  'record-probe',0,'effect',0,'2000-01-01 01:00+00');
-INSERT INTO wamn_run.effect_attempt_outcomes
-  (env_key,attempt_id,dispatched_at,outcome_status,recorded_at)
-VALUES ('t3','00000000-0000-0000-0000-000000000003','2000-01-01 01:00+00',
-  'success','2000-01-01 02:00+00');
-DO $$
-DECLARE relation regclass; command text;
-BEGIN
-  FOR relation IN SELECT unnest(ARRAY['wamn_run.effect_attempts'::regclass,
-      'wamn_run.effect_attempt_dispatches'::regclass,'wamn_run.effect_attempt_outcomes'::regclass])
-  LOOP
-    FOREACH command IN ARRAY ARRAY['UPDATE %s SET env_key=env_key','DELETE FROM %s'] LOOP
-      BEGIN
-        EXECUTE format(command,relation);
-        ASSERT false, format('%s admitted %s',relation,command);
-      EXCEPTION WHEN object_not_in_prerequisite_state THEN
-        ASSERT SQLERRM='effect-fact-immutable', SQLERRM;
-      END;
-      ASSERT (SELECT count(*) FROM wamn_run.effect_attempts)=1
-         AND (SELECT count(*) FROM wamn_run.effect_attempt_dispatches)=1
-         AND (SELECT count(*) FROM wamn_run.effect_attempt_outcomes)=1,
-        'refused mutations preserve every effect fact';
     END LOOP;
   END LOOP;
 END $$;

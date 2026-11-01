@@ -22,7 +22,7 @@ const CODE: &str = "apps/wamn_receiving/component/src/reads.rs";
 const SQL: &str = "apps/wamn_receiving/query/location.sql";
 const MANIFEST: &str = "apps/wamn_receiving/wamn.k";
 const MIGRATIONS: &str = "apps/wamn_receiving/migrations";
-const APPENDED: &str = "apps/wamn_receiving/migrations/0003_location_note.sql";
+const APPENDED: &str = "apps/wamn_receiving/migrations/0002_location_note.sql";
 const APPENDED_SQL: &[u8] = b"ALTER TABLE receiving.location ADD COLUMN note text;\n";
 const CODE_BEFORE: &str = "read::location_list(connection)";
 const CODE_AFTER: &str = "async { let mut rows = read::location_list(connection).await?; for row in &mut rows { row.location_code.push_str(\"-edited\"); } Ok::<_, wamn_receiving_data_access::AccessError>(rows) }";

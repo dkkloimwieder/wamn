@@ -3,11 +3,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, ensure};
 use tokio_postgres::Transaction;
 use wamn_schema_control::{
-    AppliedPackage, MigrationSource, PackageDirectory, PackageMigrationError, RecordedMigration,
-    plan_package_registration,
+    AppliedPackage, MigrationSource, PackageDirectory, RecordedMigration, plan_package_registration,
 };
-
-use super::error::{ApplyPackageError, ApplyPackageErrorType};
 
 pub const LOCK_PACKAGE_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
      'wamn.package.lineage:' || $1 || ':' || $2, 0))";
@@ -20,14 +17,8 @@ SELECT ordinal, relative_path, sha256 FROM catalog.package_migrations \
  WHERE env_key = $1 AND package_id = $2 AND package_version = $3 \
  ORDER BY ordinal";
 pub const SELECT_CURRENT_PACKAGE_VERSION_SQL: &str = "\
-SELECT package.package_version FROM catalog.packages AS package \
- WHERE package.env_key = $1 AND package.package_id = $2 \
-   AND NOT EXISTS (\
-       SELECT 1 FROM catalog.packages AS successor \
-        WHERE successor.env_key = package.env_key \
-          AND successor.package_id = package.package_id \
-          AND successor.predecessor_version = package.package_version\
-   )";
+SELECT package_version FROM catalog.packages \
+ WHERE env_key = $1 AND package_id = $2";
 
 /// Register a package while retaining its lineage lock through the caller's transaction.
 pub async fn register_package(
@@ -92,61 +83,6 @@ pub(super) async fn current_package_version(
         .await
         .context("read current package-family leaf")
         .map(|row| row.map(|row| row.get(0)))
-}
-
-pub(super) fn predecessor_not_current_error(
-    coordinate: &str,
-    declared_version: Option<&str>,
-    current_version: &str,
-) -> ApplyPackageError {
-    ApplyPackageError {
-        type_: ApplyPackageErrorType::PredecessorNotCurrent,
-        coordinate: coordinate.to_owned(),
-        predecessor_version: declared_version.map(str::to_owned),
-        current_version: Some(current_version.to_owned()),
-        path: None,
-        schema: None,
-        relation: None,
-        definition_type: None,
-        definition: None,
-        owner_package: None,
-        detail: "declare the current installed package version as predecessor_version".into(),
-        source: None,
-    }
-}
-
-pub(super) fn predecessor_prefix_error(
-    coordinate: &str,
-    predecessor_version: &str,
-    source: Option<PackageMigrationError>,
-    fallback_path: Option<&str>,
-) -> ApplyPackageError {
-    let path = source
-        .as_ref()
-        .and_then(PackageMigrationError::path)
-        .or(fallback_path)
-        .map(str::to_owned);
-    let detail = source.as_ref().map_or_else(
-        || {
-            "declared predecessor is not applied; apply that exact predecessor before upgrading"
-                .to_owned()
-        },
-        |source| format!("declared predecessor does not match the cumulative prefix: {source}"),
-    );
-    ApplyPackageError {
-        type_: ApplyPackageErrorType::PredecessorPrefixMismatch,
-        coordinate: coordinate.to_owned(),
-        predecessor_version: Some(predecessor_version.to_owned()),
-        current_version: None,
-        path,
-        schema: None,
-        relation: None,
-        definition_type: None,
-        definition: None,
-        owner_package: None,
-        detail,
-        source: source.map(|source| Box::new(source) as Box<dyn std::error::Error + Send + Sync>),
-    }
 }
 
 pub async fn load_applied_package(

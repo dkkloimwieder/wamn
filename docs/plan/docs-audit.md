@@ -65,7 +65,6 @@ An agent who reads docs/architecture does not learn about these items.
 
 ### Plans other than PC
 
-- package-upgrade.md:117-135, :289-300, :395-429, :574, :691-736, :781-797: use deleted verbs (`push-component`, `prepare-release`, `qualify-release`, `select-release`, `deploy-release`) and say that qualification reads pods. The code uses `env apply`, `--predecessor-release` and contract.rs.
 - platform-deploy.md:351, :415-439, :506: cite files and a head table that are gone.
 - environment-teardown.md:51-68: `delete-project-env --confirm`. The verb is `env delete <coordinate> [--data]`.
 - workflows.md:26, :55 and workflow-feature.md:54, :100: `queued_service_caller` and the old `list` meaning. The code has `queued_run_caller`, `list` for workflows and `runs` for runs.
@@ -95,7 +94,7 @@ An agent who reads docs/architecture does not learn about these items.
 
 ## 5. Plan status, one line per plan
 
-Live (8): delivery, identity, integrations (Epic 6 and later), nats-outage, package-upgrade (§7.3, §7.4), platform-install (E5), wamn-sync (Epics 2a-5), workflows (Epics 2-4). platform-config is also live.
+Live (7): delivery, identity, integrations (Epic 6 and later), nats-outage, platform-install (E5), wamn-sync (Epics 2a-5), workflows (Epics 2-4). platform-config is also live.
 
 Archive candidates (20): cdc-reader-slot, component-pull, environment-teardown, generated-operations, manifest-authoring, observability, operator-image, operator-ui, perf-arch, platform-deploy, platform-ui-app, platform-ui, request-round-trips, routes-router, table-adv-data, table-adv-ui, trx-pkg-plan, web-deployment, workflow-feature, write-log.
 

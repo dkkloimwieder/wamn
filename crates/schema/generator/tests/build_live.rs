@@ -306,7 +306,7 @@ fn authored_feed_workspace(name: &str, definition: &str) -> Workspace {
         "audit_log = {columns = [\"created_at\"]}",
         "audit_log = {columns = [\"created_at\"], retention = \"P30D\"}",
     );
-    fs::write(workspace.package().join("migrations/0003_feed.sql"), format!(
+    fs::write(workspace.package().join("migrations/0002_feed.sql"), format!(
         "ALTER TABLE inventory.widget ADD COLUMN tag_id uuid CONSTRAINT widget_tag_id_fkey REFERENCES inventory.widget_tag(id);\n\
          ALTER TABLE inventory.widget_maker ADD COLUMN supplier_id uuid CONSTRAINT widget_maker_supplier_id_fkey REFERENCES inventory.widget_tag(id);\n\
          CREATE VIEW inventory.widget_screen AS {definition};\n"
@@ -570,11 +570,9 @@ async fn projection_view_keeps_non_null_and_nullable_declarations() {
             serde_json::json!(["id", "code", "edit_version", "attributes"])
         );
         database.execute(&["CREATE SCHEMA inventory"]).unwrap();
-        for migration in ["0001_initial.sql", "0002_counter.sql"] {
-            let sql =
-                fs::read_to_string(workspace.package().join("migrations").join(migration)).unwrap();
-            database.execute(&[&sql]).unwrap();
-        }
+        let sql =
+            fs::read_to_string(workspace.package().join("migrations/0001_initial.sql")).unwrap();
+        database.execute(&[&sql]).unwrap();
         let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
             .ancestors()
             .nth(3)

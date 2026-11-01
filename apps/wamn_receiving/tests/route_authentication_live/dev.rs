@@ -8,19 +8,13 @@ mod scheduler_outage;
 pub(super) const DEV_COMMAND_TIMEOUT: Duration = Duration::from_mins(12);
 /// The migrations the dev command installs, with each package version from
 /// its wamn.json.
-pub(super) fn dev_expected_migrations() -> [(&'static str, &'static str, i32, &'static str); 3] {
+pub(super) fn dev_expected_migrations() -> [(&'static str, &'static str, i32, &'static str); 2] {
     [
         (
             OVERLAY_PACKAGE_ID,
             *OVERLAY_PACKAGE_VERSION,
             1,
-            "migrations/0001_add_inspection_required.sql",
-        ),
-        (
-            OVERLAY_PACKAGE_ID,
-            *OVERLAY_PACKAGE_VERSION,
-            2,
-            "migrations/0002_quality_inspection.sql",
+            "migrations/0001_initial.sql",
         ),
         (
             BASE_PACKAGE_ID,

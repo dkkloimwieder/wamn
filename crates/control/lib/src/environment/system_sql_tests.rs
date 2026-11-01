@@ -93,7 +93,6 @@ fn apply_system_statements_write_only_project_envs() {
         include_str!("write.rs"),
         include_str!("readiness.rs"),
         include_str!("drain.rs"),
-        include_str!("contract.rs"),
         include_str!("show.rs"),
     ] {
         let mut literals = SqlLiterals::default();

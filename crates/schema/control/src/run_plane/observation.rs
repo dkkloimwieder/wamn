@@ -57,19 +57,9 @@ pub struct RowSecurityObservation {
 /// pure planner turns it into the action list.
 #[derive(Debug, Clone, Default)]
 pub struct RunPlaneObservation {
-    /// Immutable effect rows that prevent unsafe current-schema repairs.
-    pub effect_record_rows: i64,
     /// Host-only scenario-author role attributes, or absent when the cluster
     /// has not yet provisioned the role.
     pub scenario_author_role: Option<ScenarioAuthorRoleObservation>,
-    /// Direct table grants keyed by `(table, grantee)`.
-    pub effect_table_privileges: BTreeMap<(String, String), BTreeSet<String>>,
-    /// Effective table grants keyed by `(table, grantee)`.
-    pub effect_table_effective_privileges: BTreeMap<(String, String), BTreeSet<String>>,
-    /// Effective column grants keyed by `(table, grantee)`.
-    pub effect_table_effective_column_privileges: BTreeMap<(String, String), BTreeSet<String>>,
-    /// Owners keyed by table.
-    pub effect_table_owners: BTreeMap<String, String>,
     /// Whether guest-visible `wamn_app` inherits the host-only author role.
     pub app_is_scenario_author_member: bool,
     /// Revocable table or column authority on `run_queue` held directly by
@@ -119,8 +109,6 @@ pub struct RunPlaneObservation {
     pub checks: BTreeMap<(String, String), String>,
     /// Managed foreign keys keyed by `(table, name)`, with PostgreSQL's
     /// canonical `pg_get_constraintdef(..., true)` definition. The planner
-    /// repairs only explicitly named record FKs; unrelated live FKs are inert.
-    pub foreign_keys: BTreeMap<(String, String), String>,
     /// Every non-internal trigger on a record table, keyed by `(table, name)`,
     /// with PostgreSQL's canonical `pg_get_triggerdef(..., true)` definition.
     pub triggers: BTreeMap<(String, String), String>,

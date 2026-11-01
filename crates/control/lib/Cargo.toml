@@ -95,8 +95,6 @@ wamn-engine = { workspace = true }
 wamn-schema-control = { workspace = true }
 wamn-schema-generator = { workspace = true }
 wamn-schema-introspection = { workspace = true }
-# Upgrade qualification uses the owned PostgreSQL lifecycle of the existing runner.
-wamn-test-postgres = { workspace = true }
 
 [dev-dependencies]
 syn = { workspace = true, features = ["full", "visit"] }

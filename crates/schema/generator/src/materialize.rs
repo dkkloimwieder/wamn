@@ -8,9 +8,7 @@ use std::path::{Component, Path, PathBuf};
 use anyhow::{Context as _, Result, ensure};
 use tokio_postgres::NoTls;
 use wamn_schema_introspection::ir::CatalogIr;
-use wamn_schema_introspection::postgres::read_catalog_with_synchronizations;
-
-mod synchronization;
+use wamn_schema_introspection::postgres::read_catalog_excluding_relations;
 
 use crate::StatementTransactionality;
 use crate::authoring::{COMPILED_MANIFEST, compile_manifest, is_authored, package_manifest_path};
@@ -49,13 +47,12 @@ pub async fn materialize_package(database_url: &str, package_root: &Path) -> Res
 /// Introspect the package-owned schemas in one already-migrated PostgreSQL database.
 pub async fn introspect_package(database_url: &str, package_root: &Path) -> Result<CatalogIr> {
     let (_, manifest) = load_manifest(package_root)?;
-    introspect_with_manifest(database_url, package_root, &manifest).await
+    introspect_with_manifest(database_url, &manifest).await
 }
 
 /// Introspect the schemas that `manifest` names, as [`introspect_package`] does.
 pub(crate) async fn introspect_with_manifest(
     database_url: &str,
-    package_root: &Path,
     manifest: &PackageManifest,
 ) -> Result<CatalogIr> {
     let schemas = application_schemas(manifest).context("resolve application schemas")?;
@@ -74,8 +71,7 @@ pub(crate) async fn introspect_with_manifest(
         })
         .collect::<Vec<_>>();
     let catalog_result = async {
-        let expected = synchronization::expectations(&client, package_root, manifest).await?;
-        read_catalog_with_synchronizations(&client, &schema_names, &excluded_relations, &expected)
+        read_catalog_excluding_relations(&client, &schema_names, &excluded_relations)
             .await
             .context("introspect package schemas")
     }
@@ -1134,7 +1130,7 @@ mod tests {
              CREATE TABLE external.item (id bigint);
              CREATE VIEW application.item_view AS SELECT id FROM external.item"])
             .unwrap();
-        let error = introspect_with_manifest(database.url(), &package.root, &manifest)
+        let error = introspect_with_manifest(database.url(), &manifest)
             .await
             .unwrap_err();
         let message = format!("{error:#}");
