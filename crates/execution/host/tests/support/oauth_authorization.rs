@@ -9,7 +9,9 @@ use wash_runtime::host::http::{
 };
 
 #[tokio::test]
+#[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
 async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&["WAMN_NATIVE_C_NATS_BIN"]);
     let _lock = wamn_test_postgres::lock();
     let mut postgres = wamn_test_postgres::start(&[])?;
     let database = postgres.create_database("control_oauth_authorization")?;
