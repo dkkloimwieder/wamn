@@ -45,6 +45,7 @@ mod tests {
             ASSERT (SELECT rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolreplication AND NOT rolbypassrls FROM pg_roles WHERE rolname='wamn_apply');
             ASSERT pg_has_role('wamn_apply', 'wamn_db_owner', 'MEMBER');
             ASSERT NOT pg_has_role('wamn_apply', 'wamn_system', 'MEMBER');
+            ASSERT has_table_privilege('wamn_apply', 'registry.schema_baseline', 'SELECT');
             FOREACH relation IN ARRAY ARRAY[
                 'registry.connection', 'registry.integration', 'registry.connection_generation',
                 'identity.credential', 'identity.oauth_token', 'identity.oauth_authorization', 'identity.pats'

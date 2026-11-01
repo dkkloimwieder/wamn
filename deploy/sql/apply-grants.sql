@@ -4,7 +4,7 @@ DO $apply_connect$ BEGIN
 END $apply_connect$;
 GRANT USAGE ON SCHEMA registry, identity, catalog, wamn_authority TO wamn_apply;
 GRANT SELECT ON registry.orgs, registry.env_policies, registry.project_envs,
-    registry.target, registry.meta, identity.org_roles, identity.project_roles,
+    registry.target, registry.meta, registry.schema_baseline, identity.org_roles, identity.project_roles,
     identity.project_env_memberships, identity.principals, catalog.tenant_environments,
     registry.generation_passwords, wamn_authority.author_login_tenants TO wamn_apply;
 GRANT SELECT (org, id), INSERT (org, id) ON registry.projects TO wamn_apply;
