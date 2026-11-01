@@ -749,12 +749,21 @@ The host appends `/oauth/callback` to that origin.
 PKCE binds the authorization code to the verifier through a SHA-256 challenge.
 The authorization URL preserves existing query parameters and adds the state, callback address, scopes, and S256 challenge.
 
-The callback locks the state and active connection generation, deletes the state, exchanges the code, and writes the encrypted token in one transaction.
+The callback opens its own connection through the control login and holds no org write lock during the provider call.
+
+It locks the state and active connection generation, deletes the state, exchanges the code, and writes the encrypted token in one transaction.
 A successful callback consumes the state once.
 Every refusal rolls back, including provider errors, expired states, and stale generations.
 Expired or stale states remain until a generation write or connection deletion removes them.
 A generation write deletes pending states, so a later callback reports an unknown state.
 The callback escapes all page values and returns no credential material.
+
+Every OAuth type accepts an optional `parameters.auth.token_authority` as an exact `host:port` for HTTPS token requests.
+Without it, token requests use the connection authority and its base path.
+An explicit token authority permits a separate HTTPS origin with the same address checks and pinned transport.
+The host refuses any other token origin before sending a request.
+This applies to token fetches, refreshes, candidate health, and authorization code exchanges.
+The browser's `authorize_url` stays outside this token boundary.
 
 OAuth storage uses `identity.oauth_token` and `identity.oauth_authorization` in the system database.
 Only the host connection role and the control role receive table grants.

@@ -290,6 +290,43 @@ pub(crate) fn bound_http_target(
     Ok((target, url.as_str().into()))
 }
 
+/// Bind an OAuth endpoint to the connection or its explicit HTTPS authority.
+pub(crate) fn bound_oauth_token(
+    connection: &HttpConnectionAuthority,
+    token_authority: Option<&str>,
+    endpoint: &str,
+) -> Result<(HttpConnectionAuthority, CanonicalHttpTarget, Box<str>), AuthorityError> {
+    let extra = token_authority
+        .map(|value| {
+            let authority: hyper::http::uri::Authority = value.parse().map_err(|_| {
+                AuthorityError::new(
+                    AuthorityErrorType::InvalidDefinition,
+                    "invalid token authority",
+                )
+            })?;
+            if authority.port_u16().is_none() || authority.host().contains(['*', '@', '%', '\\']) {
+                return Err(AuthorityError::new(
+                    AuthorityErrorType::InvalidDefinition,
+                    "token authority requires an exact host and port",
+                ));
+            }
+            parse_http_connection_authority(
+                &format!("https://{value}/"),
+                TlsPolicy::VerifyAuthority,
+                connection.canonical_proxy_url(),
+            )
+        })
+        .transpose()?;
+    let url = parse_absolute_url(endpoint, "credential endpoint")?;
+    let selected = if canonical_authority(&url)? == connection.authority {
+        connection
+    } else {
+        extra.as_ref().unwrap_or(connection)
+    };
+    let (target, endpoint) = bound_http_target(selected, endpoint)?;
+    Ok((selected.clone(), target, endpoint))
+}
+
 /// Re-enter the resolver for one redirect without widening authority or base path.
 pub async fn resolve_http_redirect<R, N>(
     connection: &HttpConnectionAuthority,
@@ -680,5 +717,85 @@ mod tests {
             .await
             .expect_err("resolved target escaped its configured base");
         assert_eq!(error.error_type(), AuthorityErrorType::BasePathEscape);
+    }
+}
+
+#[cfg(test)]
+mod oauth_tests {
+    use super::*;
+
+    #[test]
+    fn token_authority_keeps_the_original_path_boundary_and_requires_https() {
+        let connection = parse_http_connection_authority(
+            "https://api.example/base/",
+            TlsPolicy::VerifyAuthority,
+            None,
+        )
+        .unwrap();
+        let (selected, _, _) = bound_oauth_token(
+            &connection,
+            Some("tokens.example:443"),
+            "https://tokens.example/token",
+        )
+        .unwrap();
+        assert_eq!(selected.authority().host(), "tokens.example");
+        assert!(
+            bound_oauth_token(
+                &connection,
+                Some("tokens.example:443"),
+                "http://tokens.example/token"
+            )
+            .is_err()
+        );
+        assert!(
+            bound_oauth_token(
+                &connection,
+                Some("tokens.example:443"),
+                "https://other.example/token"
+            )
+            .is_err()
+        );
+        assert!(
+            bound_oauth_token(
+                &connection,
+                Some("tokens.example:443"),
+                "https://tokens.example:444/token"
+            )
+            .is_err()
+        );
+        assert!(
+            bound_oauth_token(
+                &connection,
+                Some("api.example:443"),
+                "https://api.example/elsewhere/token"
+            )
+            .is_err()
+        );
+        assert!(
+            bound_oauth_token(
+                &connection,
+                Some("tokens.example:443"),
+                "https://tokens.example/a/%2e%2e/token"
+            )
+            .is_err()
+        );
+        assert!(bound_oauth_token(&connection, None, "https://api.example/base/token").is_ok());
+        assert!(bound_oauth_token(&connection, None, "https://tokens.example/token").is_err());
+        for invalid in [
+            "tokens.example",
+            "https://tokens.example:443",
+            "tokens.example:443/path",
+            "tokens.example:443?query",
+            "user@tokens.example:443",
+            "*.example:443",
+            "tokens.example:65536",
+            "tokens.example:443#fragment",
+        ] {
+            assert!(
+                bound_oauth_token(&connection, Some(invalid), "https://api.example/base/token")
+                    .is_err(),
+                "{invalid}"
+            );
+        }
     }
 }

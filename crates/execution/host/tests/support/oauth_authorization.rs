@@ -15,6 +15,7 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
     let database = postgres.create_database("control_oauth_authorization")?;
     let mut admin = connect(database.url()).await?;
     let control_url = install(&admin, database.url()).await?;
+    let (logins, _billing, _shop) = environments(&admin, database.url(), "oauth").await?;
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
     let key = scratch.path().join("oauth.key");
     std::fs::write(&key, [9_u8; 32])?;
@@ -24,15 +25,21 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
     }
     let store = Arc::new(wamn_test_infrastructure::credentials::LocalCredentials::create()?);
     let listener = TcpListener::bind("127.0.0.1:0").await?;
-    let token_url = format!("http://{}/token", listener.local_addr()?);
+    let provider_base = format!("http://{}/", listener.local_addr()?);
+    let token_url = format!("{provider_base}token");
     let challenge = Arc::new(std::sync::Mutex::new(None::<String>));
     let expected = Arc::clone(&challenge);
+    let (arrived, arrival) = tokio::sync::oneshot::channel();
+    let (resume, resumed) = tokio::sync::oneshot::channel();
+    let pause = Arc::new(tokio::sync::Mutex::new(Some((arrived, resumed))));
     let provider = tokio::spawn(async move {
         loop {
             let (stream, _) = listener.accept().await.unwrap();
             let expected = Arc::clone(&expected);
+            let pause = Arc::clone(&pause);
             hyper::server::conn::http1::Builder::new().serve_connection(hyper_util::rt::TokioIo::new(stream),hyper::service::service_fn(move |request:hyper::Request<hyper::body::Incoming>| {
                 let expected = Arc::clone(&expected);
+                let pause = Arc::clone(&pause);
                 async move {
                     assert_eq!(request.uri().path(),"/token");
                     let body = request.into_body().collect().await.unwrap().to_bytes();
@@ -43,14 +50,19 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
                     assert_eq!(form["client_secret"],"private-secret");
                     let actual = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(form["code_verifier"].as_bytes()));
                     assert_eq!(expected.lock().unwrap().as_deref(),Some(actual.as_str()));
+                    if let Some((arrived, resumed)) = pause.lock().await.take() {
+                        arrived.send(()).unwrap();
+                        resumed.await.unwrap();
+                    }
                     Ok::<_,std::convert::Infallible>(hyper::Response::new(Full::new(bytes::Bytes::from_static(br#"{"access_token":"stored-access","refresh_token":"stored-refresh","token_type":"Bearer","expires_in":3600}"#))))
                 }
             })).await.unwrap();
         }
     });
-    admin.batch_execute(&format!("SET app.user_id='{}'; INSERT INTO registry.target(name,type,status) VALUES('oauth-fixture','local','active'); UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='oauth-fixture')",PlatformComponent::Provisioning.principal_id())).await?;
+    admin.batch_execute(&format!("SET app.user_id='{}'; UPDATE registry.meta SET platform_domain='example.test'; INSERT INTO registry.target(name,type,status) VALUES('oauth-fixture','local','active'); UPDATE registry.project_envs SET target_id=(SELECT id FROM registry.target WHERE name='oauth-fixture')",PlatformComponent::Provisioning.principal_id())).await?;
     let tx = admin.transaction().await?;
-    wamn_test_infrastructure::credentials::define(&tx,ORG,&json!({"project":"billing","env":"dev","name":"oauth","integration_type":"http","auth_type":"oauth2_authorization_code","parameters":{"primary-authority":token_url,"tls-verification":"disabled","auth":{"client_id":"admin-client","authorize_url":"https://provider.example/authorize?existing=a%2Bb","token_url":token_url,"scopes":["read+","write"]}},"credential":json!({"client_secret":"private-secret"}).to_string()}),store.as_ref()).await?;
+    wamn_test_infrastructure::credentials::define(&tx,ORG,&json!({"project":"billing","env":"dev","name":"oauth","integration_type":"http","auth_type":"oauth2_authorization_code","parameters":{"primary-authority":provider_base,"tls-verification":"disabled","auth":{"client_id":"admin-client","authorize_url":"https://provider.example/authorize?existing=a%2Bb","token_url":token_url,"scopes":["read+","write"]}},"credential":json!({"client_secret":"private-secret"}).to_string()}),store.as_ref()).await?;
+    wamn_test_infrastructure::credentials::define(&tx, ORG, &json!({"project":"billing","env":"dev","name":"other","integration_type":"http","auth_type":"none","parameters":{"primary-authority":provider_base,"tls-verification":"disabled"}}), store.as_ref()).await?;
     tx.commit().await?;
     let boss = create_or_reuse_user(&admin, "oauth-admin@example.test", "OAuth admin")
         .await?
@@ -106,12 +118,12 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
         )
         .await?;
     let callback_oauth = Arc::clone(&oauth);
-    let callback_writer = Arc::clone(&writer);
+    let callback_url = control_url.clone();
     let callback = tokio::spawn(async move {
         while let Some(job) = receiver.recv().await {
             let response = wamn_execution_host::oauth_callback::response(
                 &callback_oauth,
-                &callback_writer,
+                &callback_url,
                 ORG,
                 job.req,
             )
@@ -127,7 +139,7 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
             control: Arc::new(connect(&control_url).await?),
             writer,
             identity: None,
-            administration: None,
+            administration: Some(logins.clone()),
             status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
             org: ORG.to_owned(),
             changes: AuthChanges::new(nats),
@@ -198,7 +210,18 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
             .await?
             .contains("&lt;script&gt;&amp;&quot;&#39;")
     );
-    let success = client.get(&callback_url).send().await?;
+    let pending_client = client.clone();
+    let pending_url = callback_url.clone();
+    let pending = tokio::spawn(async move { pending_client.get(pending_url).send().await });
+    tokio::time::timeout(std::time::Duration::from_secs(5), arrival).await??;
+    let write = tokio::time::timeout(std::time::Duration::from_secs(5), call(&delivery, "connection/write", boss.as_str(), json!({"project":"billing","env":"dev","name":"other","parameters":{"primary-authority":provider_base,"tls-verification":"disabled"}}))).await.expect("another connection write finishes before the callback provider answers").unwrap();
+    assert_eq!(write["name"], "other");
+    assert!(
+        !pending.is_finished(),
+        "the callback still waits for its provider"
+    );
+    resume.send(()).unwrap();
+    let success = pending.await??;
     assert_eq!(success.status(), 200);
     assert!(success.text().await?.contains("Authorization succeeded"));
     let replay = client.get(&callback_url).send().await?;
@@ -233,5 +256,6 @@ async fn project_admin_authorize_and_public_pkce_callback() -> anyhow::Result<()
     ingress.stop().await?;
     callback.abort();
     provider.abort();
+    std::fs::remove_dir_all(logins)?;
     Ok(())
 }

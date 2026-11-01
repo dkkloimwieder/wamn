@@ -15,6 +15,7 @@ use super::{ConnectionError, Oauth2Request};
 struct Parameters {
     client_id: String,
     token_url: String,
+    token_authority: Option<String>,
     #[serde(default)]
     scopes: Vec<String>,
     key_id: String,
@@ -173,6 +174,7 @@ fn build_request(
     }
     Ok(Oauth2Request {
         token_url: parameters.token_url,
+        token_authority: parameters.token_authority,
         body: form.finish(),
         authorization: None,
     })

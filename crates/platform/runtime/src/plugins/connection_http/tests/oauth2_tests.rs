@@ -1669,3 +1669,278 @@ async fn authorization_code_expired_provider_error_and_new_generation_refuse_wit
         0
     );
 }
+
+struct TlsTokenEndpoint {
+    url: String,
+    transport: Arc<HttpTransport>,
+    observed: Arc<Mutex<Vec<Observed>>>,
+    accepted: Arc<std::sync::atomic::AtomicUsize>,
+    task: JoinHandle<()>,
+}
+
+impl TlsTokenEndpoint {
+    async fn start() -> Self {
+        let certificate =
+            rcgen::generate_simple_self_signed(vec!["127.0.0.1".into(), "localhost".into()])
+                .unwrap();
+        let server = rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::aws_lc_rs::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![certificate.cert.der().clone()],
+            rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
+                certificate.signing_key.serialize_der(),
+            )),
+        )
+        .unwrap();
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(certificate.cert.der().clone()).unwrap();
+        let client = rustls::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::aws_lc_rs::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+        let transport = Arc::new(HttpTransport::with_tls_config(client));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("https://{}/token", listener.local_addr().unwrap());
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&observed);
+        let accepted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let accept_count = Arc::clone(&accepted);
+        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server));
+        let task = tokio::spawn(async move {
+            loop {
+                let (tcp, _) = listener.accept().await.unwrap();
+                accept_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let stream = acceptor.accept(tcp).await.unwrap();
+                let observed = Arc::clone(&recorded);
+                hyper::server::conn::http1::Builder::new().serve_connection(TokioIo::new(stream), service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
+                    let observed = Arc::clone(&observed);
+                    async move {
+                        let (parts, body) = request.into_parts();
+                        let body = body.collect().await.unwrap().to_bytes().to_vec();
+                        observed.lock().unwrap().push(Observed { path: parts.uri.to_string(), method: parts.method.to_string(), headers: parts.headers, body });
+                        Ok::<_,Infallible>(hyper::Response::builder().header("connection","close").body(Full::new(bytes::Bytes::from_static(br#"{"access_token":"fixture-token-1","refresh_token":"separate-refresh","token_type":"Bearer","expires_in":3600}"#))).unwrap())
+                    }
+                })).await.unwrap();
+            }
+        });
+        Self {
+            url,
+            transport,
+            observed,
+            accepted,
+            task,
+        }
+    }
+
+    fn authority(&self) -> String {
+        let url = url::Url::parse(&self.url).unwrap();
+        format!(
+            "{}:{}",
+            url.host_str().unwrap(),
+            url.port_or_known_default().unwrap()
+        )
+    }
+}
+
+impl Drop for TlsTokenEndpoint {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+#[tokio::test]
+async fn token_authority_health_allows_secret_and_jwt_and_refuses_other_origins() {
+    let endpoint = TlsTokenEndpoint::start().await;
+    let refused_endpoint = TlsTokenEndpoint::start().await;
+    let port = url::Url::parse(&endpoint.url).unwrap().port().unwrap();
+    for auth_type in ["oauth2_client_credentials", "oauth2_client_credentials_jwt"] {
+        let mut auth = serde_json::json!({"client_id":"client", "scopes":["a","b"], "token_url":endpoint.url, "token_authority":endpoint.authority()});
+        let material = if auth_type == "oauth2_client_credentials_jwt" {
+            auth["algorithm"] = "ES256".into();
+            auth["key_id"] = "certificate-id".into();
+            super::super::jwt::tests::material("ES256")
+        } else {
+            serde_json::json!({"client_secret":"secret"}).to_string()
+        };
+        let mut parameters = serde_json::json!({"primary-authority":format!("https://localhost:{port}/api/"), "tls-verification":"verify-authority", "auth":auth});
+        health(&endpoint.transport, &parameters, auth_type, Some(&material))
+            .await
+            .unwrap();
+        let before = endpoint.observed.lock().unwrap().len();
+        parameters["auth"]["token_url"] = refused_endpoint.url.clone().into();
+        assert!(
+            health(&endpoint.transport, &parameters, auth_type, Some(&material))
+                .await
+                .is_err()
+        );
+        assert_eq!(endpoint.observed.lock().unwrap().len(), before);
+        assert!(refused_endpoint.observed.lock().unwrap().is_empty());
+        assert_eq!(
+            refused_endpoint
+                .accepted
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+    }
+    let requests = endpoint.observed.lock().unwrap();
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.method == "POST" && request.path == "/token")
+            .count(),
+        2
+    );
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.method == "HEAD" && request.path == "/api/")
+            .count(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn token_authority_client_credentials_fetch_and_refresh_refuse_other_origins() {
+    let _lock = wamn_test_postgres::lock();
+    for allowed in [true, false] {
+        let endpoint = TlsTokenEndpoint::start().await;
+        let other = TlsTokenEndpoint::start().await;
+        let mut fixture = Fixture::start(vec![], vec![200; 2]).await;
+        let mut auth = fixture.parameters();
+        auth["token_authority"] = endpoint.authority().into();
+        auth["token_url"] = if allowed { &endpoint.url } else { &other.url }
+            .clone()
+            .into();
+        let mut plugin = fixture.plugin(&auth).await;
+        plugin.transport = Arc::clone(&endpoint.transport);
+        let mut hosts = plugin.allowed_hosts.to_vec();
+        hosts.push(AllowedHost::Authority(
+            endpoint.authority().parse().unwrap(),
+        ));
+        plugin.allowed_hosts = hosts.into();
+        if allowed {
+            fixture.send(&plugin, "handle").await.unwrap();
+            fixture.due(&plugin).await;
+            fixture.send(&plugin, "handle").await.unwrap();
+            assert_eq!(endpoint.observed.lock().unwrap().len(), 2);
+        } else {
+            assert!(matches!(
+                fixture.send(&plugin, "handle").await,
+                Err(ConnectionError::CredentialUnavailable)
+            ));
+            assert!(endpoint.observed.lock().unwrap().is_empty());
+            assert_eq!(fixture.counts(), (0, 0));
+        }
+        assert!(other.observed.lock().unwrap().is_empty());
+        assert_eq!(other.accepted.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+}
+
+#[tokio::test]
+async fn token_authority_authorization_code_exchange_and_refresh_refuse_other_origins() {
+    use base64::Engine as _;
+    use sha2::{Digest as _, Sha256};
+    let _lock = wamn_test_postgres::lock();
+    for allowed in [true, false] {
+        let endpoint = TlsTokenEndpoint::start().await;
+        let other = TlsTokenEndpoint::start().await;
+        let mut fixture = Fixture::start(vec![], vec![200; 2]).await;
+        let mut auth = fixture.parameters();
+        auth["authorize_url"] = "https://browser.example/authorize".into();
+        auth["token_authority"] = endpoint.authority().into();
+        auth["token_url"] = if allowed { &endpoint.url } else { &other.url }
+            .clone()
+            .into();
+        let mut plugin = fixture
+            .plugin_with_auth(
+                &auth,
+                "oauth2_authorization_code",
+                &serde_json::json!({"client_secret":CLIENT_SECRET}).to_string(),
+            )
+            .await;
+        plugin.transport = Arc::clone(&endpoint.transport);
+        let mut hosts = plugin.allowed_hosts.to_vec();
+        hosts.push(AllowedHost::Authority(
+            endpoint.authority().parse().unwrap(),
+        ));
+        plugin.allowed_hosts = hosts.into();
+        let oauth = crate::oauth_authorization::Authorization::new(
+            "http://control.example.test",
+            plugin.facts.oauth_encryption().unwrap(),
+        )
+        .unwrap()
+        .with_store(fixture.credentials.store.clone())
+        .with_transport(Arc::clone(&endpoint.transport));
+        let url = fixture.authorize(&oauth).await;
+        assert_eq!(url.host_str(), Some("browser.example"));
+        let query: std::collections::HashMap<_, _> = url.query_pairs().into_owned().collect();
+        let result = oauth
+            .callback(
+                &mut fixture.credentials.admin,
+                "acme",
+                &format!("state={}&code=code", query["state"]),
+            )
+            .await;
+        if allowed {
+            result.unwrap();
+            fixture.send(&plugin, "handle").await.unwrap();
+            fixture.due(&plugin).await;
+            fixture.send(&plugin, "handle").await.unwrap();
+            let requests = endpoint.observed.lock().unwrap();
+            assert_eq!(requests.len(), 2);
+            let form: std::collections::HashMap<_, _> =
+                url::form_urlencoded::parse(&requests[0].body)
+                    .into_owned()
+                    .collect();
+            assert_eq!(
+                base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .encode(Sha256::digest(form["code_verifier"].as_bytes())),
+                query["code_challenge"]
+            );
+            assert_eq!(form["grant_type"], "authorization_code");
+            assert_eq!(
+                requests[1].body,
+                b"grant_type=refresh_token&refresh_token=separate-refresh"
+            );
+        } else {
+            assert_eq!(
+                result.unwrap_err().reason,
+                "token endpoint authority refused"
+            );
+            assert!(endpoint.observed.lock().unwrap().is_empty());
+            assert_eq!(fixture.counts(), (0, 0));
+            assert_eq!(
+                fixture
+                    .credentials
+                    .admin
+                    .query_one(
+                        "SELECT count(*) FROM identity.oauth_authorization WHERE state=$1",
+                        &[&query["state"]]
+                    )
+                    .await
+                    .unwrap()
+                    .get::<_, i64>(0),
+                1
+            );
+            assert_eq!(
+                fixture
+                    .credentials
+                    .admin
+                    .query_one("SELECT count(*) FROM identity.oauth_token", &[])
+                    .await
+                    .unwrap()
+                    .get::<_, i64>(0),
+                0
+            );
+        }
+        assert!(other.observed.lock().unwrap().is_empty());
+        assert_eq!(other.accepted.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+}

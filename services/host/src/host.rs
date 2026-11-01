@@ -782,6 +782,7 @@ struct ControlConnection {
     verifier: SessionVerifier<IssuerKeys>,
     client: Arc<tokio_postgres::Client>,
     writer: Arc<tokio::sync::Mutex<tokio_postgres::Client>>,
+    url: String,
     org: String,
 }
 
@@ -827,6 +828,7 @@ async fn control_connection(args: &HostArgs) -> anyhow::Result<ControlConnection
         verifier,
         client: Arc::new(connect_control(&url).await?),
         writer: Arc::new(tokio::sync::Mutex::new(connect_control(&url).await?)),
+        url,
         org: org.to_owned(),
     })
 }
@@ -1819,12 +1821,15 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                 .on_service_http_resolved("wamn-oauth-callback", &[route], sender)
                 .await?;
             let oauth = Arc::clone(oauth);
-            let writer = Arc::clone(&control.writer);
+            let database_url = control.url.clone();
             let org = control.org.clone();
             schedule_tasks.spawn(async move {
                 while let Some(job) = requests.recv().await {
                     let response = wamn_execution_host::oauth_callback::response(
-                        &oauth, &writer, &org, job.req,
+                        &oauth,
+                        &database_url,
+                        &org,
+                        job.req,
                     )
                     .await;
                     let _ = job.resp_tx.send(Ok(response));

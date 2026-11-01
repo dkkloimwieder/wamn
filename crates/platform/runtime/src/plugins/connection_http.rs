@@ -28,7 +28,7 @@ use wash_runtime::wit::{WitInterface, WitWorld};
 
 use crate::connection_authority::{
     AuthorityDecision, AuthorityError, HttpConnectionAuthority, TlsPolicy, TokioDnsResolver,
-    bound_http_target, parse_http_connection_authority, resolve_http_request,
+    bound_http_target, bound_oauth_token, parse_http_connection_authority, resolve_http_request,
 };
 use crate::plugins::effect_span::{
     EFFECT_OPERATION, EffectEvidence, EffectIdentity, EffectOutcomeGuard, EffectWiring,
@@ -738,16 +738,13 @@ impl ConnectionHttp {
                 };
                 let request = oauth2_request(auth_type, parameters, material, refresh.as_deref())
                     .map_err(|_| anyhow::anyhow!("OAuth credential unavailable"))?;
-                let (target, endpoint) = bound_http_target(authority, &request.token_url)?;
-                let mut decision = resolve_http_request(
+                let decision = token_endpoint(
                     authority,
-                    &target,
-                    &self.allowed_hosts,
-                    &ConnectionNetworkPolicy,
-                    &TokioDnsResolver,
+                    request.token_authority.as_deref(),
+                    &request.token_url,
+                    Some(&self.allowed_hosts),
                 )
                 .await?;
-                decision.logical_url = endpoint;
                 let token = fetch_oauth2_token(&self.transport, scope.clone(), &decision, &request)
                     .await
                     .map_err(|_| anyhow::anyhow!("OAuth provider unavailable"))?;
@@ -811,6 +808,7 @@ impl Attempt {
 
 struct Oauth2Credential {
     token_url: String,
+    token_authority: Option<String>,
     client_id: String,
     client_secret: String,
     scope: Option<String>,
@@ -828,6 +826,7 @@ fn oauth2_credential_for(
         client_id: String,
         scopes: Vec<String>,
         authorize_url: Option<String>,
+        token_authority: Option<String>,
     }
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -847,6 +846,7 @@ fn oauth2_credential_for(
     }
     Ok(Oauth2Credential {
         token_url: parameters.token_url,
+        token_authority: parameters.token_authority,
         client_id: parameters.client_id,
         client_secret: credential.client_secret,
         scope: (!parameters.scopes.is_empty()).then(|| parameters.scopes.join(" ")),
@@ -863,6 +863,7 @@ struct Oauth2Token {
 
 struct Oauth2Request {
     token_url: String,
+    token_authority: Option<String>,
     body: String,
     authorization: Option<String>,
 }
@@ -903,9 +904,40 @@ fn oauth2_request(
     };
     Ok(Oauth2Request {
         token_url: credential.token_url,
+        token_authority: credential.token_authority,
         body,
         authorization: Some(format!("Basic {basic}")),
     })
+}
+
+/// Apply the same origin, path, address, and pinning rules to every OAuth grant.
+pub(crate) async fn token_endpoint(
+    connection: &HttpConnectionAuthority,
+    token_authority: Option<&str>,
+    token_url: &str,
+    platform_hosts: Option<&[AllowedHost]>,
+) -> Result<AuthorityDecision, AuthorityError> {
+    let (authority, target, endpoint) = bound_oauth_token(connection, token_authority, token_url)?;
+    let url = url::Url::parse(authority.canonical_base_url()).expect("canonical token URL");
+    let exact = [AllowedHost::Authority(
+        format!(
+            "{}:{}",
+            url.host_str().expect("canonical token host"),
+            authority.authority().port()
+        )
+        .parse()
+        .expect("canonical token authority"),
+    )];
+    let mut decision = resolve_http_request(
+        &authority,
+        &target,
+        platform_hosts.unwrap_or(&exact),
+        &ConnectionNetworkPolicy,
+        &TokioDnsResolver,
+    )
+    .await?;
+    decision.logical_url = endpoint;
+    Ok(decision)
 }
 
 fn token_request<'a>(
@@ -1428,16 +1460,13 @@ pub async fn health(
         ) {
             let token_request = oauth2_request(auth_type, &auth, credential, None)
                 .map_err(|_| anyhow::anyhow!("HTTP authentication unavailable"))?;
-            let (target, endpoint) = bound_http_target(&authority, &token_request.token_url)?;
-            let mut token_decision = resolve_http_request(
+            let token_decision = token_endpoint(
                 &authority,
-                &target,
-                &allowed,
-                &ConnectionNetworkPolicy,
-                &TokioDnsResolver,
+                token_request.token_authority.as_deref(),
+                &token_request.token_url,
+                None,
             )
             .await?;
-            token_decision.logical_url = endpoint;
             let token = fetch_health_token(transport, &token_decision, &token_request)
                 .await
                 .map_err(|_| anyhow::anyhow!("HTTP authentication unavailable"))?;

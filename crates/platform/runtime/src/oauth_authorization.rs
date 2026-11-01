@@ -54,7 +54,7 @@ fn failed(reason: &'static str, source: impl Into<anyhow::Error>) -> Error {
 pub struct Authorization {
     redirect_uri: String,
     envelope: Arc<Envelope>,
-    client: reqwest::Client,
+    transport: Arc<crate::plugins::connection_http::transport::HttpTransport>,
     #[cfg(any(test, feature = "test-util"))]
     store: Option<Arc<dyn wamn_credential_store::Store>>,
 }
@@ -78,10 +78,7 @@ impl Authorization {
             envelope,
             #[cfg(any(test, feature = "test-util"))]
             store: None,
-            client: reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .timeout(Duration::from_secs(20))
-                .build()?,
+            transport: Arc::new(crate::plugins::connection_http::transport::HttpTransport::new()?),
         })
     }
 
@@ -89,6 +86,16 @@ impl Authorization {
     #[cfg(any(test, feature = "test-util"))]
     pub fn with_store(mut self, store: Arc<dyn wamn_credential_store::Store>) -> Self {
         self.store = Some(store);
+        self
+    }
+
+    /// Use a fixture's private TLS roots for pinned token exchanges.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn with_transport(
+        mut self,
+        transport: Arc<crate::plugins::connection_http::transport::HttpTransport>,
+    ) -> Self {
+        self.transport = transport;
         self
     }
 
@@ -241,22 +248,41 @@ impl Authorization {
                 ])
                 .finish(),
         );
-        let response = self
-            .client
-            .post(provider_url(&auth.token_url)?)
+        let parameters = &context["parameters"];
+        let tls = match parameters["tls-verification"].as_str() {
+            Some("disabled") => crate::connection_authority::TlsPolicy::Disabled,
+            Some("verify-authority") => crate::connection_authority::TlsPolicy::VerifyAuthority,
+            _ => return Err(refused("invalid connection TLS policy")),
+        };
+        let authority = crate::connection_authority::parse_http_connection_authority(
+            parameters["primary-authority"]
+                .as_str()
+                .ok_or_else(|| refused("missing connection authority"))?,
+            tls,
+            None,
+        )
+        .map_err(|error| failed("invalid connection authority", error))?;
+        let decision = crate::plugins::connection_http::token_endpoint(
+            &authority,
+            auth.token_authority.as_deref(),
+            &auth.token_url,
+            None,
+        )
+        .await
+        .map_err(|error| failed("token endpoint authority refused", error))?;
+        let request = hyper::Request::builder()
+            .method("POST")
+            .uri(decision.logical_url.as_ref())
             .header("content-type", "application/x-www-form-urlencoded")
-            .body(form.to_string())
-            .send()
+            .body(form.as_bytes())
+            .map_err(|error| failed("invalid token request", error))?;
+        let response = self
+            .transport
+            .send_once(&decision, request)
             .await
             .map_err(|error| failed("provider token endpoint unavailable", error))?;
         let status = response.status();
-        let bytes = Zeroizing::new(
-            response
-                .bytes()
-                .await
-                .map_err(|error| failed("provider token response unavailable", error))?
-                .to_vec(),
-        );
+        let bytes = Zeroizing::new(response.into_body().to_vec());
         if let Ok(error) = serde_json::from_slice::<ProviderError>(&bytes) {
             return Err(refused(format!(
                 "provider token exchange failed: {}",
@@ -333,6 +359,7 @@ struct Parameters {
     client_id: String,
     authorize_url: String,
     token_url: String,
+    token_authority: Option<String>,
     scopes: Vec<String>,
 }
 #[derive(Deserialize)]

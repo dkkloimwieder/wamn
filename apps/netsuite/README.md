@@ -180,9 +180,8 @@ The pull runs as the `workflow` user with its execution role, so grant that role
 
 Oracle publishes separate [SuiteTalk and RESTlet authorities](https://docs.oracle.com/en/cloud/saas/netsuite/ns-online-help/chapter_157011836591.html).
 RESTlets use `<account>.restlets.api.netsuite.com`.
-The current host confines the token endpoint to the connection origin.
-A RESTlet connection therefore cannot fetch its token from the separate SuiteTalk authority.
-Live RESTlet calls need a change to that host boundary before they can use this authentication.
+RESTlet connections set `parameters.auth.token_authority` to `<account>.suitetalk.api.netsuite.com:443`.
+This permits the HTTPS token endpoint on SuiteTalk while the connection serves RESTlets.
 The local fixture serves all paths under one authority.
 The guest cannot choose another host through a path.
 

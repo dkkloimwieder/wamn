@@ -7,7 +7,7 @@ use wasmtime_wasi_http::WasiBody;
 /// Answer only the exact callback path and GET method, without a session.
 pub async fn response(
     oauth: &Authorization,
-    writer: &tokio::sync::Mutex<tokio_postgres::Client>,
+    database_url: &str,
     org: &str,
     request: hyper::Request<WasiBody>,
 ) -> hyper::Response<WasiBody> {
@@ -17,11 +17,22 @@ pub async fn response(
     if request.method() != hyper::Method::GET {
         return page(405, "OAuth callback requires GET");
     }
-    let mut writer = writer.lock().await;
-    match oauth
-        .callback(&mut writer, org, request.uri().query().unwrap_or_default())
-        .await
-    {
+    let Ok((mut database, connection)) =
+        tokio_postgres::connect(database_url, tokio_postgres::NoTls).await
+    else {
+        return page(503, "callback database unavailable");
+    };
+    let driver = tokio::spawn(connection);
+    let result = oauth
+        .callback(
+            &mut database,
+            org,
+            request.uri().query().unwrap_or_default(),
+        )
+        .await;
+    drop(database);
+    let _ = driver.await;
+    match result {
         Ok(()) => page(200, "Authorization succeeded. You can close this page."),
         Err(error) => page(400, &error.reason),
     }
