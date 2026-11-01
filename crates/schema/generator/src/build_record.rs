@@ -255,6 +255,17 @@ pub fn generation_digest(package_root: &Path) -> Result<String> {
     Ok(inputs(package_root)?.generation_digest)
 }
 
+/// The generation input digest without package-local query files.
+///
+/// # Errors
+///
+/// When the package inputs cannot be read.
+pub fn schema_digest(package_root: &Path) -> Result<String> {
+    let mut files = generation_files(&inputs(package_root)?.files);
+    files.retain(|path, _| !Path::new(path).starts_with("query"));
+    Ok(digest_inputs(&files, &generator(), GENERATOR_FINGERPRINT))
+}
+
 /// Read generated output whose generation inputs still match its source.
 ///
 /// # Errors
@@ -306,7 +317,15 @@ fn digests(
     generator: &BuildGenerator,
     fingerprint: &str,
 ) -> BuildInputs {
-    let generation_files = files
+    BuildInputs {
+        digest: digest_inputs(&files, generator, fingerprint),
+        generation_digest: digest_inputs(&generation_files(&files), generator, fingerprint),
+        files,
+    }
+}
+
+fn generation_files(files: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    files
         .iter()
         .filter(|(path, _)| {
             !["component", "data", "web"]
@@ -314,12 +333,7 @@ fn digests(
                 .any(|tree| Path::new(path).starts_with(tree))
         })
         .map(|(path, digest)| (path.clone(), digest.clone()))
-        .collect();
-    BuildInputs {
-        digest: digest_inputs(&files, generator, fingerprint),
-        generation_digest: digest_inputs(&generation_files, generator, fingerprint),
-        files,
-    }
+        .collect()
 }
 
 fn digest_inputs(
@@ -676,6 +690,34 @@ mod tests {
                 before.generation_digest, after.generation_digest,
                 "{relative}"
             );
+        }
+    }
+
+    #[test]
+    fn query_edits_keep_the_schema_digest_and_schema_edits_change_it() {
+        let scratch = scratch("schema-digest");
+        let package = scratch.0.join("package");
+        for relative in [
+            "query/location.sql",
+            "migrations/0001_initial.sql",
+            "wamn.k",
+        ] {
+            let path = package.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, "original").unwrap();
+            let generation = generation_digest(&package).unwrap();
+            let schema = schema_digest(&package).unwrap();
+            fs::write(&path, "changed").unwrap();
+            assert_ne!(
+                generation,
+                generation_digest(&package).unwrap(),
+                "{relative}"
+            );
+            if relative.starts_with("query/") {
+                assert_eq!(schema, schema_digest(&package).unwrap(), "{relative}");
+            } else {
+                assert_ne!(schema, schema_digest(&package).unwrap(), "{relative}");
+            }
         }
     }
 

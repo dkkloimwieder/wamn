@@ -229,12 +229,13 @@ The test also rejects duplicate environment names and unused exceptions. It cont
 The running loop holds a lease, an exclusive claim on its application database.
 A second loop or reset command cannot take that target while the lease remains active.
 The first run creates the target from the environment template.
-After each successful introspection, the loop records the build inputs and the introspected catalogs beside its local artifacts.
-The build inputs are the `inputs.digest` of each package's `build.json` ([building](building.md#wamn-build)).
+After each successful introspection, the loop records the schema digests and introspected catalogs beside its local artifacts.
+The schema digest covers generation inputs except the package-local `query/` tree ([building](building.md#wamn-build)).
 A restarted developer process keeps the target, unless a change below recreates it.
-It also reuses the catalogs when the record matches the current build inputs.
+It also reuses the catalogs when the recorded schema digests match the current schema inputs.
 
-A change to the build inputs of a package runs Migrate, Introspect and Generate again on the kept target.
+A change to schema inputs runs Migrate, Introspect and Generate again on the kept target.
+An edit under `query/` runs Generate and keeps Migrate and existing introspection results.
 Cargo controls which selected components need compilation.
 Generate runs the generation steps of [`wamn build`](building.md#wamn-build) for each changed package, with base packages first.
 Each build describes its statements against its own fresh database on the server of the target database, and it writes `build.json` into the build output.
@@ -250,7 +251,10 @@ The build record contains a full digest, `inputs.digest`, and a generation diges
 A digest identifies content through its SHA-256 hash.
 The generation digest excludes only package-local `component/`, `data/`, and `web/` trees.
 It retains the manifest, SQL, migrations, shared WIT, platform trees, lock file, and generator identity.
-Migrate, Introspect, Generate, ACL, and SQLx preparation reuse results when generation inputs match.
+Migrate reuses results when schema inputs match, and Introspect reuses existing catalogs.
+Generate, ACL, and SQLx preparation reuse results when generation inputs match.
+The schema digest also covers the generator identity and fingerprint.
+The build record stores no schema digest.
 Source edits in the excluded trees run Build for that package and its dependent overlays.
 Build refreshes the full digest in the same `build.json`.
 Admission and publication still refuse a build record whose full digest differs from current source.

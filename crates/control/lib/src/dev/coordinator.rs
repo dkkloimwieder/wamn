@@ -214,10 +214,11 @@ pub struct ProductionDevStageRunner {
     local_grants: Option<PreparedLocalGrants>,
     activation: Option<DevActivation>,
     cdc_reader: Option<super::cdc_reader::CdcReaderProcess>,
-    /// The build.json inputs digest of each package that this run reads,
-    /// bases first.
+    /// The generation digest of each package that this run reads, bases first.
     build_inputs: Option<Vec<String>>,
-    /// The build inputs that Migrate last applied to the target.
+    /// The schema digest of each package that this run reads, bases first.
+    schema_inputs: Option<Vec<String>>,
+    /// The schema inputs that Migrate last applied to the target.
     migrated_inputs: Option<Vec<String>>,
     /// Packages whose generation still needs component compilation.
     pending_builds: BTreeSet<String>,
@@ -295,6 +296,7 @@ impl ProductionDevStageRunner {
             activation: None,
             cdc_reader: None,
             build_inputs: None,
+            schema_inputs: None,
             migrated_inputs: None,
             pending_builds: BTreeSet::new(),
             composed_entry: None,
@@ -439,7 +441,7 @@ impl ProductionDevStageRunner {
             tracing::info!(package = %outcome.package_id, version = %outcome.package_version, migrations = outcome.migrations_applied, changed = outcome.changed, "applied development package");
         }
         self.grant_operator_admin_role().await?;
-        self.migrated_inputs.clone_from(&self.build_inputs);
+        self.migrated_inputs.clone_from(&self.schema_inputs);
         Ok(())
     }
 
@@ -484,7 +486,7 @@ impl ProductionDevStageRunner {
                 .expect("prepare_run claimed the target instance"),
             self.migrated_inputs
                 .as_deref()
-                .expect("Migrate recorded the build inputs"),
+                .expect("Migrate recorded the schema inputs"),
             &self.catalogs,
         )
         .map_err(|source| ProductionDevStageError::owner("record the target schema", source))?;
@@ -1282,6 +1284,17 @@ fn build_inputs(packages: &[PackageInput]) -> Result<Vec<String>, ProductionDevS
         .collect()
 }
 
+/// The schema digest of each package, in order, for migration and target reuse.
+fn schema_inputs(packages: &[PackageInput]) -> Result<Vec<String>, ProductionDevStageError> {
+    packages
+        .iter()
+        .map(|package| {
+            wamn_schema_generator::build_record::schema_digest(&package.root)
+                .map_err(|source| ProductionDevStageError::owner("read the schema inputs", source))
+        })
+        .collect()
+}
+
 /// Reuse generation digests and output completeness rules, bases first.
 /// An unreadable build selects rebuilding, including each dependent overlay.
 fn current_package_builds(
@@ -1409,7 +1422,7 @@ impl DevStageRunner for ProductionDevStageRunner {
         match stage {
             DevStage::Migrate => {
                 return Ok(
-                    self.migrated_inputs.is_some() && self.migrated_inputs == self.build_inputs
+                    self.migrated_inputs.is_some() && self.migrated_inputs == self.schema_inputs
                 );
             }
             DevStage::Introspect => {
@@ -1479,6 +1492,7 @@ impl DevStageRunner for ProductionDevStageRunner {
         )
         .map_err(|source| ProductionDevStageError::owner("read local sequence defaults", source))?;
         let inputs = build_inputs(&packages)?;
+        let schema_inputs = schema_inputs(&packages)?;
         if self.target_lease.is_none() {
             self.target_lease = Some(target_database::acquire(&self.config).await.map_err(
                 |source| {
@@ -1494,11 +1508,11 @@ impl DevStageRunner for ProductionDevStageRunner {
             .map_err(|source| {
                 ProductionDevStageError::owner("check local session lease", source.into())
             })?;
-        if self.migrated_inputs.as_ref() != Some(&inputs) {
+        if self.migrated_inputs.as_ref() != Some(&schema_inputs) {
             // A target keeps its data unless the kept-target check below
             // refuses it. The first run of a session takes the target that a
             // previous session recorded, and it also keeps the catalogs of
-            // unchanged build inputs.
+            // unchanged schema inputs.
             let kept = match &self.target_instance {
                 None => self
                     .target_lease
@@ -1507,7 +1521,7 @@ impl DevStageRunner for ProductionDevStageRunner {
                     .retained_target(&self.config)
                     .await
                     .map(|(instance, recorded, catalogs)| {
-                        (instance, (recorded == inputs).then_some(catalogs))
+                        (instance, (recorded == schema_inputs).then_some(catalogs))
                     }),
                 Some(instance) => Some((instance.clone(), None)),
             };
@@ -1545,7 +1559,7 @@ impl DevStageRunner for ProductionDevStageRunner {
             let lease = self.target_lease.as_ref().expect("lease acquired");
             let instance = match kept {
                 Some((instance, Some(catalogs))) => {
-                    self.migrated_inputs = Some(inputs.clone());
+                    self.migrated_inputs = Some(schema_inputs.clone());
                     self.catalogs = catalogs;
                     instance
                 }
@@ -1563,6 +1577,7 @@ impl DevStageRunner for ProductionDevStageRunner {
             self.target_instance = Some(instance);
         }
         self.build_inputs = Some(inputs);
+        self.schema_inputs = Some(schema_inputs);
         Ok(())
     }
 
@@ -2346,6 +2361,81 @@ mod tests {
                     .all(Option::is_some)
             );
         }
+    }
+
+    #[tokio::test]
+    async fn query_edits_keep_migration_and_catalogs_but_require_generation() {
+        use super::super::config::{parse_config, resolve_dev_packages, tests::complete_document};
+
+        let mut fixture = PackageBuildFixture::new();
+        let package = &mut fixture.packages[1];
+        package.manifest.models = serde_json::from_value(serde_json::json!({
+            "location": {
+                "schema": "inventory", "table": "location", "owner": "other",
+                "server_owned_fields": [],
+                "audit_log": {"columns": [], "retention": "unlimited"},
+                "operations": {"get": {"permission": "location.get", "result": "one"}}
+            }
+        }))
+        .unwrap();
+        fs::write(
+            package.root.join("wamn.json"),
+            serde_json::to_vec(&package.manifest).unwrap(),
+        )
+        .unwrap();
+        let query = package.root.join("query/location.sql");
+        fs::create_dir_all(query.parent().unwrap()).unwrap();
+        fs::write(&query, "SELECT 1;").unwrap();
+        write_package_build(package);
+        let config = parse_config(
+            &serde_json::to_vec(&complete_document(&std::array::from_fn(|_| {
+                "127.0.0.1:41000".parse().unwrap()
+            })))
+            .unwrap(),
+        )
+        .unwrap();
+        let packages = resolve_dev_packages(&config, &package.root).unwrap();
+        let git = GitSource::discover(env!("CARGO_MANIFEST_DIR"))
+            .await
+            .unwrap();
+        let environment = serde_json::from_value(serde_json::json!({
+            "org": "acme", "project": "fixture", "env": "fixture-dev",
+            "target": "local", "release": "none", "route_host": "fixture.localhost",
+            "policy": "default", "applications": {}
+        }))
+        .unwrap();
+        let mut runner = ProductionDevStageRunner::new(
+            config,
+            package.root.clone(),
+            git,
+            fixture.directory.join("environment.k"),
+            environment,
+        );
+        runner.packages = Some(packages);
+        let packages = runner.package_inputs().unwrap();
+        runner.schema_inputs = Some(schema_inputs(&packages).unwrap());
+        runner.build_inputs = Some(build_inputs(&packages).unwrap());
+        runner.migrated_inputs.clone_from(&runner.schema_inputs);
+        runner.acl_inputs.clone_from(&runner.build_inputs);
+        runner.catalogs.insert(
+            package.manifest.package.id.clone(),
+            CatalogIr::new(Vec::new()),
+        );
+        assert!(runner.stage_is_unchanged(DevStage::Migrate).await.unwrap());
+        assert!(runner.stage_is_unchanged(DevStage::Generate).await.unwrap());
+
+        fs::write(&query, "SELECT 2;").unwrap();
+        runner.schema_inputs = Some(schema_inputs(&packages).unwrap());
+        runner.build_inputs = Some(build_inputs(&packages).unwrap());
+        assert!(runner.stage_is_unchanged(DevStage::Migrate).await.unwrap());
+        assert!(
+            runner
+                .stage_is_unchanged(DevStage::Introspect)
+                .await
+                .unwrap()
+        );
+        assert!(!runner.stage_is_unchanged(DevStage::Generate).await.unwrap());
+        assert!(!runner.stage_is_unchanged(DevStage::Acl).await.unwrap());
     }
 
     #[tokio::test]
