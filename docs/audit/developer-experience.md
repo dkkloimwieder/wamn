@@ -201,15 +201,17 @@ Effort: M
 Area: crates/control/lib/src/dev/config.rs  
 Evidence: `crates/control/lib/src/dev/coordinator.rs:1375`, `crates/control/lib/src/dev/config.rs:1291`, `crates/schema/generator/src/receipt.rs:178`, `apps/wamn_receiving/tests/route_authentication_live/dev/local_delivery.rs:165`
 
-Problem: Each run resolves packages before it reaches Generate. Package resolution requires a build receipt whose input digest matches the current source. A saved SQL, migration, or manifest edit changes that digest, so the loop refuses the edit before rebuilding it. The existing acceptance test expects SQL edits to reach generation without a separate manual build.
+Problem: Each run resolves packages before it reaches Generate. Package resolution requires a build record whose input digest matches the current source. A saved SQL, migration, or manifest edit changes that digest, so the loop refuses the edit before rebuilding it. The existing acceptance test expects SQL edits to reach generation without a separate manual build.
 
-Proposal: Give source preparation and artifact consumption separate boundaries. Prepare the candidate from authored inputs, then require a current receipt when admission or publication consumes its output.
+Proposal: Give source preparation and artifact consumption separate boundaries. Prepare the candidate from authored inputs, then require a current build record when admission or publication consumes its output.
 
-Deletes: Remove the receipt freshness prerequisite from development source resolution and its call to `write_compiled_manifest`.
+Deletes: Remove the build record freshness prerequisite from development source resolution and its call to `write_compiled_manifest`.
 
-Risk: Accepting stale output at publication remains unacceptable. The saved-edit acceptance test must pass while publication still refuses an outdated receipt.
+Risk: Accepting stale output at publication remains unacceptable. The saved-edit acceptance test must pass while publication still refuses an outdated build record.
 
 Owner review 2026-10-31: keep, Group 2 Do, as written. Fix before any stack rework.
+
+Owner review 2026-10-31: README Group 2 row N1 renames the build record (`BuildReceipt` to `BuildRecord`, `receipt.rs` to `build_record.rs`) in the same files and lands with this row. "receipt" names only a physical goods receipt in an application.
 
 ## Finding F2-2: Watch mode ignores application Rust and web edits
 
@@ -459,7 +461,7 @@ wamn deploy acme/hello/dev
 
 The editor step changes the schema, declared operations, labels, and visible fields. SQL owns database types. Generation derives operation contracts from the installed baseline.
 
-`wamn dev` generates `target/wamn/hello_app/`. Its output contains the compiled manifest, SQL, contracts, WIT interfaces, Rust implementation, component bytes, browser client, web bundle, and `build.json`. WIT defines component interfaces. The build receipt records inputs and output digests. Generated Cargo manifests and wrappers remain build output.
+`wamn dev` generates `target/wamn/hello_app/`. Its output contains the compiled manifest, SQL, contracts, WIT interfaces, Rust implementation, component bytes, browser client, web bundle, and `build.json`. WIT defines component interfaces. The build record records inputs and output digests. Generated Cargo manifests and wrappers remain build output.
 
 `wamn deploy acme/hello/dev` generates package, release, and qualification artifacts. Qualification is evidence that required platform tests pass. Deployment selects their exact digests, applies the environment, publishes browser files, and prints the authenticated application URL.
 

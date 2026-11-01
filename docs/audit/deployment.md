@@ -374,11 +374,11 @@ Commit
  |      -> tools/test-changes                [test selection owner]
  |      -> generated inputs + native/guest/web tests
  |      -> lint
- |    Stops here: no published release or deployment receipt.
+ |    Stops here: no published release or build record.
  |
  +-- Application packages                    [schema generator / package owner]
  |    wamn build + verification PostgreSQL
- |      -> generated SQL, guests, clients, receipts
+ |      -> generated SQL, guests, clients, build records
  |      -> push-package + publish-release     [wamn-control publication owner]
  |
  +-- Platform image set                      [platform_build.rs]
@@ -425,7 +425,7 @@ Severity: high
 Effort: M  
 Area: crates/control/lib/src/upgrade_environment.rs  
 Evidence: `crates/control/lib/src/upgrade_environment.rs:282`, `crates/control/lib/src/upgrade_environment.rs:320`, `crates/control/lib/src/upgrade_environment.rs:348`, `crates/control/lib/src/upgrade_environment.rs:769`, `crates/schema/generator/src/receipt.rs:178`, `docs/architecture/overview.md:13`.  
-Problem: The upgrade creates a detached worktree, then builds native programs and two platform guests. It never builds the declared application packages before requiring their current receipts. Generated application output is absent from Git, so the upgrade cannot complete from a fresh worktree.  
+Problem: The upgrade creates a detached worktree, then builds native programs and two platform guests. It never builds the declared application packages before requiring their current build records. Generated application output is absent from Git, so the upgrade cannot complete from a fresh worktree.  
 Closed by C3-3 (owner review 2026-10-31): `upgrade_environment.rs` is deleted in Group 1. No clean-worktree upgrade test is written for a deleted path.
 
 ## Finding D2-2: The older image pipeline builds artifacts that deployment does not select
@@ -478,7 +478,7 @@ Severity: medium
 Effort: M  
 Area: crates/control/lib/src/platform/build.rs  
 Evidence: `crates/control/lib/src/platform/build.rs:30`, `crates/control/lib/src/platform/build.rs:39`, `crates/control/lib/src/platform/build.rs:57`, `crates/control/lib/src/platform/build.rs:165`, `crates/control/lib/src/platform/packages.rs:35`, `crates/control/lib/src/platform/install.rs:80`.  
-Problem: An existing platform stamp skips package builds and the UI build before their freshness is considered. Later package publication still requires current package receipts. A changed application under an unchanged platform version therefore reaches a stale-output refusal. The library also invokes a debug `wamn-ctl` executable to perform its own stamp operation.  
+Problem: An existing platform stamp skips package builds and the UI build before their freshness is considered. Later package publication still requires current package build records. A changed application under an unchanged platform version therefore reaches a stale-output refusal. The library also invokes a debug `wamn-ctl` executable to perform its own stamp operation.  
 Proposal: Make installation consume published package, UI, and platform artifacts. Give each artifact its own identity. Call the stamp library directly during artifact production.  
 Deletes: Merged with D3-1. The installer deletions are stated once under D3-1.  
 Risk: Installation loses its implicit local preparation behavior. A test with an unchanged platform and changed application must select the new package without rebuilding platform images.
@@ -500,7 +500,7 @@ Severity: medium
 Effort: S  
 Area: tools/train-run; tools/test-changes; crates/control/lib/src/platform_build.rs  
 Evidence: `tools/train-run:60`, `tools/train-run:74`, `tools/train-run:80`, `tools/test-changes-suites.json:2`, `tools/test-changes:293`, `crates/control/lib/src/platform_build.rs:60`, `crates/control/lib/src/platform_build.rs:71`; measurements.md section 3 records missing generated inputs during direct workspace linting.  
-Problem: The train records broad step timestamps but deletes successful logs and ends after source tests. Platform builds print stage durations, while their receipt stores only the UI digest. No retained record joins source testing, artifact production, qualification, and readiness. The always-selected quality suite also generates application inputs, so “selected tests” alone does not describe the work performed.  
+Problem: The train records broad step timestamps but deletes successful logs and ends after source tests. Platform builds print stage durations, while their build record stores only the UI digest. No retained record joins source testing, artifact production, qualification, and readiness. The always-selected quality suite also generates application inputs, so “selected tests” alone does not describe the work performed.  
 Proposal: Keep successful logs. Retain one build record with stage durations and artifact digests. No budgets yet, because the next real build is the measurement.  
 Deletes: Success-path evidence deletion and duplicate textual timing summaries.  
 Risk: The build record must exclude credentials and distinguish reused work from executed work. Train-tool tests must assert retained successful evidence, and a timed release run must reconcile its record with actual registry artifacts.

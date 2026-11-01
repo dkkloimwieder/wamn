@@ -254,7 +254,7 @@ Effort: L
 Area: `crates/control/lib/src/platform`, `crates/control/lib/src/platform_build.rs`  
 Evidence: `crates/control/lib/src/platform/install.rs:54`, `crates/control/lib/src/platform/build.rs:45`, `crates/control/lib/src/platform/build.rs:56`, `crates/control/lib/src/platform_build.rs:236`, `crates/control/lib/src/upgrade_environment.rs:917`.  
 Problem: Platform installation selects numbered runbook steps, builds package and UI outputs, and invokes `wamn-ctl` for stamping. Upgrade orchestration invokes another `wamn-ctl` for qualification. These nested CLI calls create dependencies on binary locations, argument spelling, and printed results alongside existing Rust APIs.  
-Proposal (owner review 2026-10-31, Group 1 Do, merged with D3-1, same Deletes): `build-platform` stays a `wamn-ctl` verb. `platform apply` consumes its outputs: the chart, image digests, package artifacts, and UI receipt. Keep provider setup and installation orchestration in services/ctl, with pure resource rendering in provisioning.
+Proposal (owner review 2026-10-31, Group 1 Do, merged with D3-1, same Deletes): `build-platform` stays a `wamn-ctl` verb. `platform apply` consumes its outputs: the chart, image digests, package artifacts, and the UI build record. Keep provider setup and installation orchestration in services/ctl, with pure resource rendering in provisioning.
 Deletes: Build-machine discovery and build execution from installation. Remove self-invocation of `wamn-ctl`, duplicate stamp argument builders, and duplicate image preparation in upgrade-environment.  
 Risk: Image reuse and repeated installation can change. Retain `platform_apply_kind.rs:98`, plus `platform_build.rs:2318` and `platform_build.rs:2397` for stamping and build-before-push ordering.
 

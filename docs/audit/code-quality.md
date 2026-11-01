@@ -674,7 +674,7 @@ Effort: L
 Area: crates  
 Evidence: `crates/control/lib/src/publish_release.rs:315`, `crates/catalog/package-artifact/src/lib.rs:432`, `crates/platform/engine/src/operation.rs:97`, `crates/platform/runtime/src/connectors.rs:180`, `crates/execution/host/src/router_delivery.rs:60`, `crates/execution/workflow/src/queue.rs:66`, `crates/identity/client/src/lib.rs:158`, `crates/identity/platform/src/connection_changes.rs:111`, `crates/platform/component-composer/src/lib.rs:39`, `crates/schema/generator/src/receipt.rs:153`.
 
-Problem: These public APIs expose `anyhow`, including the generator receipt API through an imported `Result` alias. Callers must inspect chains or display text to distinguish refusals from infrastructure failures. This violates the public boundary convention even when a later wire adapter returns fixed cases. The sampled route adapter correctly returns `DeliveryError::ExecutionFailed` instead of sending arbitrary `anyhow` text (`crates/execution/host/src/router_delivery.rs:285`).
+Problem: These public APIs expose `anyhow`, including the generator build record API through an imported `Result` alias. Callers must inspect chains or display text to distinguish refusals from infrastructure failures. This violates the public boundary convention even when a later wire adapter returns fixed cases. The sampled route adapter correctly returns `DeliveryError::ExecutionFailed` instead of sending arbitrary `anyhow` text (`crates/execution/host/src/router_delivery.rs:285`).
 
 Proposal: Remove public visibility from implementation helpers. Give true public operations owner-defined result contracts, with contextual errors below them and one translation at each boundary. Keep `anyhow` at process entry points.
 
