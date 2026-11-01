@@ -51,6 +51,16 @@ const RETIRED_IMAGE_MARKERS: [&str; 4] = ["wamn-gates", "node-host", "serve-node
 /// Mounted names must be declared by a platform manifest or allowed here.
 /// A Certificate declares its `spec.secretName` output, which cert-manager writes.
 const EXTERNAL_PREREQUISITES: [(&str, &str); 7] = [
+    // The host Pod's runtime and data certificates, which cert-manager issues
+    // from deploy/infra/nats-certificates.yaml (docs/plan/alignment.md R4).
+    (
+        "wasmcloud-runtime-tls",
+        "cert-manager Certificate in deploy/infra/nats-certificates.yaml",
+    ),
+    (
+        "wasmcloud-data-tls",
+        "cert-manager Certificate in deploy/infra/nats-certificates.yaml",
+    ),
     (
         IDENTITY_TLS_SECRET,
         "operator-configured serving certificate from the existing issuer/CA",
@@ -71,14 +81,6 @@ const EXTERNAL_PREREQUISITES: [(&str, &str); 7] = [
     (
         "pg-init",
         "kubectl create configmap pg-init --from-file=deploy/sql/postgres-init.sql",
-    ),
-    (
-        "wamn-event-nats",
-        "Receiving/WMS journey bootstrap: host registration/publication broker credential and scope",
-    ),
-    (
-        "wamn-materializer-nats",
-        "Receiving/WMS journey bootstrap: native materializer broker credential and binding",
     ),
     (
         "wamn-object-store-credentials-acme--wms--dev",
@@ -757,22 +759,10 @@ fn only_identity_receives_issuer_credentials_and_other_consumers_keep_their_clas
     assert_eq!(issuer_url_consumers, ["identity"]);
     assert_eq!(identity_image_consumers, ["identity"]);
     let source = read(&root, HOST_VALUES_FILE);
-    let mut expected = BTreeMap::from([(
+    let expected = BTreeMap::from([(
         "WAMN_PG_URL".to_owned(),
         ("wamn-host-db".to_owned(), "url".to_owned()),
     )]);
-    for (variable, key) in [
-        ("WAMN_EVT_ORG", "org"),
-        ("WAMN_EVT_PROJECT", "project"),
-        ("WAMN_EVT_ENV", "environment"),
-        ("WAMN_EVT_STREAM_REPLICAS", "stream_replicas"),
-        ("WAMN_EVT_DUP_WINDOW_SECS", "dup_window_secs"),
-    ] {
-        expected.insert(
-            variable.to_owned(),
-            ("wamn-event-nats".to_owned(), key.to_owned()),
-        );
-    }
     assert_eq!(
         environment_secret_bindings(&source, HOST_VALUES_FILE),
         expected,

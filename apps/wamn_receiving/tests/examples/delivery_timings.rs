@@ -59,7 +59,6 @@ impl Compose {
             .arg(self.environment.join("local-artifacts/otel/compose.json"))
             .env("WAMN_STD_VIRT_PG_PORT", "0")
             .env("WAMN_STD_VIRT_REGISTRY_PORT", "0")
-            .env("WAMN_RECEIVING_DEV_NATS_PORT", "0")
             .env("WAMN_RECEIVING_DEV_OTLP_PORT", "0")
             .env("WAMN_RECEIVING_DEV_MINIO_PORT", "0")
             .env("WAMN_RECEIVING_DEV_MINIO_USER", MINIO_USER)

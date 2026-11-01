@@ -238,7 +238,6 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
             component_artifact_base: "registry.invalid/wamn/components".into(),
             release_artifact_base: "registry.invalid/wamn/releases".into(),
             manifest_digest: manifest.digest().as_str().into(),
-            nats_url: "nats://events:4222".into(),
             stream_replicas: 1,
             dup_window_secs: 120,
             event,
@@ -279,11 +278,10 @@ fn pat_release(project: &str) -> anyhow::Result<()> {
         host_group: wamn_gate_harness::case_release::host_group(&overlay)?,
     })?;
     secrets.extend(operator_prerequisites(NAMESPACE));
-    // platform fixture startup emits these event and registry Secrets before
-    // either application installs its release. The PAT files document the keys.
+    // platform fixture startup emits the registry Secret, and cert-manager the
+    // environment's NATS certificate, before either application installs its
+    // release.
     secrets.extend([
-        prerequisite("wamn-event-nats", &["username", "password"], NAMESPACE),
-        prerequisite("wamn-materializer-nats", &["binding.json"], NAMESPACE),
         prerequisite("wamn-registry-pull", &[".dockerconfigjson"], NAMESPACE),
         prerequisite(
             &format!("wamn-nats-acme--{project}--dev"),

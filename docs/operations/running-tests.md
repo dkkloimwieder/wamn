@@ -1309,7 +1309,8 @@ pnpm --dir apps/wamn_receiving/web check
 ## Cleanup
 
 The app and RC runners clean up their own named resources on success, failure, or handled interruption.
-The RC runner removes its PostgreSQL and NATS containers with `docker rm --force --volumes`.
+The RC runner removes its PostgreSQL container with `docker rm --force --volumes`.
+The cluster journeys and the RC case run the one NATS inside their kind cluster, so the cluster delete removes it.
 The package-build PostgreSQL fixture, both registries of `platform_apply_kind`, and the local package registry use `docker rm -f -v`.
 These commands also remove anonymous volumes, which Docker creates for image-declared data directories.
 Container restarts retain their data until cleanup removes the container.
@@ -1326,7 +1327,7 @@ tools/receiving-cluster-journey-run remove <cluster>
 tools/wms-cluster-journey-run remove <cluster>
 ```
 
-The script deletes the kind cluster and its `<cluster>-postgres`, `-registry`, `-nats` and `-minio` containers.
+The script deletes the kind cluster and its `<cluster>-postgres`, `-registry` and `-minio` containers.
 Never remove a cluster that another session created.
 
 The cluster journeys keep their built images between runs.

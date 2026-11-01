@@ -22,7 +22,7 @@ use tokio::process::Command;
 use wamn_control::environment::{EventBroker, Platform};
 use wamn_control::pat_client::PatIssuerConfig;
 use wamn_control::release_chart::Target;
-use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
+use wamn_control_provision::events::source_stream_config;
 use wamn_control_registry::Triple;
 use wamn_gate_harness::delivery::{
     self, Application, Inputs, application_directory, coordinate_name, share_kubeconfig,
@@ -32,7 +32,7 @@ use wamn_gate_harness::session_issuer::{IssuerCluster, prepare_application};
 use wamn_test_infrastructure::delivery_cluster::{
     KeptCluster, NAMESPACE, ensure_database, start_container,
 };
-use wamn_test_infrastructure::event_broker;
+use wamn_test_infrastructure::platform;
 
 use super::{application, bootstrap, build, checked, deployment};
 use crate::environment::identity;
@@ -69,7 +69,15 @@ async fn owned_release_delivery() -> anyhow::Result<()> {
     DirBuilder::new().mode(0o700).create(&evidence)?;
     println!("WMS delivery results: {}", evidence.display());
     let started = Instant::now();
-    let kept = delivery::kept_cluster(&repository).await?;
+    let kept = delivery::kept_cluster(
+        &repository,
+        &Triple::new(
+            identity().org.as_str(),
+            identity().project.as_str(),
+            identity().environment.as_str(),
+        ),
+    )
+    .await?;
     let result = Box::pin(run(&repository, &kept, &target, &evidence)).await;
     write_result(
         &evidence,
@@ -105,37 +113,13 @@ async fn run(
         identity().environment.as_str(),
     );
 
-    // The event broker, the labels store and the database of this application.
+    // The kept cluster's one NATS, the labels store and the database of this
+    // application.
     let source = source_stream_config(&triple, 1, Duration::from_secs(120));
-    let advisory = advisory_stream_config(&triple, source.num_replicas);
     let consumers =
         crate::environment::declared_consumers(&crate::environment::package_manifest()?);
-    let broker = event_broker::prepare(
-        &work,
-        &triple,
-        identity().env_key().as_str(),
-        &source,
-        &advisory,
-        &consumers,
-    )?;
-    let nats = start_container(
-        &format!("{owner}-nats"),
-        &[
-            "--volume",
-            &format!(
-                "{}:/etc/nats/event-nats.conf:ro",
-                broker.configuration.display()
-            ),
-            "nats:2.10-alpine",
-            "--config",
-            "/etc/nats/event-nats.conf",
-            "--jetstream",
-            "--store_dir",
-            "/data",
-        ],
-    )
-    .await?;
-    let nats_url = format!("nats://{nats}:4222");
+    let nats =
+        platform::cluster_nats(&work, &kept.name, identity().env_key().as_str(), NAMESPACE).await?;
     let minio = start_container(
         &format!("{owner}-minio"),
         &[
@@ -219,15 +203,7 @@ async fn run(
     )
     .await?;
     application::seed(&route, evidence).await?;
-    event_broker::write_binding(&broker, &nats_url, &source)?;
-    let deadline = Instant::now() + Duration::from_secs(60);
-    let provisioning = loop {
-        match event_broker::connect(&broker.provisioning, &nats_url).await {
-            Ok(client) => break client,
-            Err(error) if Instant::now() >= deadline => return Err(error),
-            Err(_) => tokio::time::sleep(Duration::from_secs(1)).await,
-        }
-    };
+    let provisioning = nats.provisioning.connect(&nats.server).await?;
     wamn_control::event_streams::provision(
         &async_nats::jetstream::new(provisioning.clone()),
         &triple,
@@ -289,41 +265,16 @@ async fn run(
     // copies named from the coordinate (§9.1).
     deployment::install_application_secrets(&document, &files, &kept.name, &work, &database.host)
         .await?;
-    let renames: Vec<(String, String)> = [
-        "wamn-event-nats",
-        "wamn-materializer-nats",
-        "host-session-public-ca",
-    ]
-    .into_iter()
-    .map(|name| (name.to_owned(), coordinate_name(name, &triple)))
-    .collect();
-    let runtime_password = fs::read_to_string(&broker.runtime.password_file)?;
-    deployment::apply_secret(
-        &kept.name,
-        &work,
-        &json!({"apiVersion":"v1","kind":"Secret",
-            "metadata":{"name":renames[0].1,"namespace":NAMESPACE},"type":"Opaque",
-            "stringData":{"username":broker.runtime.username,"password":runtime_password,
-                "org":triple.org,"project":triple.project,"environment":triple.env.as_str(),
-                "stream_replicas":source.num_replicas.to_string(),
-                "dup_window_secs":source.duplicate_window.as_secs().to_string()}}),
-    )
-    .await?;
-    deployment::apply_secret(
-        &kept.name,
-        &work,
-        &json!({"apiVersion":"v1","kind":"Secret",
-            "metadata":{"name":renames[1].1,"namespace":NAMESPACE},"type":"Opaque",
-            "stringData":{"binding.json":fs::read_to_string(&broker.binding)?}}),
-    )
-    .await?;
-    kept.copy_config_map(&owner, &renames[2].0, &renames[2].1)
+    let renames: Vec<(String, String)> = ["host-session-public-ca"]
+        .into_iter()
+        .map(|name| (name.to_owned(), coordinate_name(name, &triple)))
+        .collect();
+    kept.copy_config_map(&owner, &renames[0].0, &renames[0].1)
         .await?;
     let (_, overlay) = application::render_host(
         &document,
         &application::HostBinding {
             host_tag: &owner,
-            nats_url: &nats_url,
             database_host: &database.host,
             manifest_digest: release.manifest_digest.as_str(),
             source: &source,
@@ -342,9 +293,7 @@ async fn run(
             database_namespace: DATABASE_NAMESPACE,
             database_host: &database.host,
             events: EventBroker {
-                nats_url: nats_url.clone(),
-                nats_username: broker.provisioning.username.clone(),
-                nats_password_file: broker.provisioning.password_file.clone(),
+                nats: nats.provisioning.platform_nats(&nats.server),
                 stream_replicas: source.num_replicas,
                 dup_window_secs: source.duplicate_window.as_secs(),
             },

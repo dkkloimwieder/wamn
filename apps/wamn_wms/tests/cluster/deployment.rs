@@ -39,7 +39,6 @@ pub(super) async fn preflight(
             ![
                 "postgres",
                 "registry",
-                "nats",
                 "minio",
                 "control-plane",
                 "worker",

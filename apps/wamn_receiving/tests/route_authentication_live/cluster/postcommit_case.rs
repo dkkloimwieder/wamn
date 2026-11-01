@@ -7,11 +7,11 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use tokio::process::Command;
 use wamn_gate_harness::journey::PostcommitPhase;
-use wamn_test_infrastructure::{event_broker, release_chart, workload};
+use wamn_test_infrastructure::{release_chart, workload};
 
 use super::{
-    NAMESPACE, ReceivingCluster, cdc, checked, deployment, install_release, kubectl,
-    materializer_case, provision, resources, seed, start,
+    NAMESPACE, ReceivingCluster, cdc, checked, install_release, kubectl, materializer_case,
+    provision, resources, seed, start,
 };
 
 #[tokio::test]
@@ -85,10 +85,9 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
         &cluster.resources.work,
         &replication_password,
         cdc::BrokerBinding {
-            nats_url: &cluster.nats_url,
-            nats_username: cluster.broker.publisher.username.clone(),
-            nats_password_file: cluster.broker.publisher.password_file.clone(),
-            provisioning: &cluster.broker.provisioning,
+            nats_url: &cluster.nats.server,
+            publisher: &cluster.nats.publisher,
+            provisioning: &cluster.nats.provisioning,
             consumers: &cluster.consumers,
             source: &cluster.source,
         },
@@ -98,7 +97,7 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
         reader,
         &cluster.resources.evidence.join("cdc-reader.log"),
     )?);
-    let observer = event_broker::connect(&cluster.broker.observer, &cluster.nats_url).await?;
+    let observer = cluster.nats.observer.connect(&cluster.nats.server).await?;
     cdc::ready(
         &cluster
             .resources
@@ -110,15 +109,12 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
         &cluster.resources.evidence,
     )
     .await?;
-    let secrets = deployment::native_secrets(cluster)?;
     let (issuer, instance) = super::session_cluster::prepare_application(cluster, &carrier).await?;
     let deployed = install_release(
         cluster,
         &carrier,
         &super::HostBinding {
             replicas: 3,
-            nats_url: &cluster.nats_url,
-            native_nats_secrets: &secrets,
             source: &cluster.source,
             session: Some((&issuer, &instance)),
         },
@@ -192,7 +188,11 @@ async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
         ),
         statement_timeout_ms: statement_timeout(resources, &deployed.name).await?,
     });
-    let replay = event_broker::connect(&cluster.broker.runtime, &cluster.nats_url).await?;
+    let replay = cluster
+        .nats
+        .environment
+        .connect(&cluster.nats.server)
+        .await?;
     let wiring = wamn_control::author_workflow::read_wiring_document(
         &super::super::overlay_package_root()
             .join("publication/wirings/quality_create_inspection.json"),

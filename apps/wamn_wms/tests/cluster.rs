@@ -28,10 +28,9 @@ use wamn_control_provision::events::{advisory_stream_config, source_stream_confi
 use wamn_control_registry::Triple;
 use wamn_gate_harness::case_release::{self, NAMESPACE, Registry};
 use wamn_gate_harness::journey::JourneyDocument;
-use wamn_test_infrastructure::event_broker::EventBroker;
 use wamn_test_infrastructure::release_chart::{Release, hosts_ready, role_placed};
 use wamn_test_infrastructure::scratch::ScratchRoot;
-use wamn_test_infrastructure::{event_broker, platform, workload};
+use wamn_test_infrastructure::{platform, workload};
 
 use crate::wms_runtime_live::write_result;
 use deployment::{checked, kubectl};
@@ -136,15 +135,6 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
                 crate::environment::identity().environment.as_str(),
             );
             let source = source_stream_config(&scope, 1, Duration::from_secs(120));
-            let advisory = advisory_stream_config(&scope, source.num_replicas);
-            let broker = event_broker::prepare(
-                work.path(),
-                &scope,
-                crate::environment::identity().env_key().as_str(),
-                &source,
-                &advisory,
-                &consumers,
-            )?;
             crate::delivery::registry_files(&candidate, work.path(), &[&image, &identity_image])
                 .await?;
             checked(
@@ -182,7 +172,6 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
                     identity_image: &identity_image,
                     runtime_digest: &digest,
                     files: &files,
-                    broker: &broker,
                     source: &source,
                     consumers: &consumers,
                     packages: &packages,
@@ -296,7 +285,6 @@ struct CaseContext<'a> {
     identity_image: &'a str,
     runtime_digest: &'a str,
     files: &'a bootstrap::BootstrapFiles,
-    broker: &'a EventBroker,
     source: &'a async_nats::jetstream::stream::Config,
     /// The materializer consumers of the candidate's WMS package.
     consumers: &'a [async_nats::jetstream::consumer::pull::Config],
@@ -349,7 +337,6 @@ async fn run_created(
         identity_image: _,
         runtime_digest,
         files,
-        broker,
         source,
         consumers,
         packages,
@@ -362,8 +349,6 @@ async fn run_created(
     let postgres_ip = bootstrap::kind_address(&postgres)?.to_string();
     let registry = deployment::inspect(lifecycle, &format!("{cluster}-registry")).await?;
     let registry_authority = format!("{}:5000", bootstrap::kind_address(&registry)?);
-    let nats = deployment::inspect(lifecycle, &format!("{cluster}-nats")).await?;
-    let nats_url = format!("nats://{}:4222", bootstrap::kind_address(&nats)?);
     let minio = deployment::inspect(lifecycle, &format!("{cluster}-minio")).await?;
     let minio_endpoint = format!("http://{}:9000", bootstrap::kind_address(&minio)?);
     let registry_auth = bootstrap::write_registry_auth(files, work, &registry_authority)?;
@@ -376,6 +361,35 @@ async fn run_created(
             .arg("install-labels")
             .arg(cluster)
             .arg(work),
+    )
+    .await?;
+    let operator_values = work.join("operator-values.json");
+    fs::write(
+        &operator_values,
+        serde_json::to_vec_pretty(&json!({"operator":{
+            "watchNamespaces":[NAMESPACE],"hostNamespaces":[NAMESPACE],"allowSharedHosts":false,
+        }}))?,
+    )?;
+    platform::install(
+        repository,
+        lifecycle,
+        cluster,
+        work,
+        NAMESPACE,
+        &operator_values,
+        &wamn_control::platform::kind_nats(
+            repository,
+            NAMESPACE,
+            scope.org.as_str(),
+            std::slice::from_ref(scope),
+        )?,
+    )
+    .await?;
+    let nats = platform::cluster_nats(
+        work,
+        cluster,
+        crate::environment::identity().env_key().as_str(),
+        NAMESPACE,
     )
     .await?;
     let host_secrets = work.join("host-secrets");
@@ -411,9 +425,8 @@ async fn run_created(
     let (route, _) = application::provision(&document, work, &admin_url).await?;
     crate::environment::install(candidate, &document, &route, packages, &minio_endpoint).await?;
     application::seed(&route, evidence).await?;
-    event_broker::write_binding(broker, &nats_url, source)?;
     if measure_startup {
-        let provisioning = event_broker::connect(&broker.provisioning, &nats_url).await?;
+        let provisioning = nats.provisioning.connect(&nats.server).await?;
         wamn_control::event_streams::provision(
             &async_nats::jetstream::new(provisioning.clone()),
             scope,
@@ -429,14 +442,14 @@ async fn run_created(
             &route,
             work,
             &bootstrap::random_password()?,
-            &nats_url,
-            &broker.provisioning,
+            &nats.server,
+            &nats.provisioning,
             source,
             consumers,
         )
         .await?;
     }
-    let observer = event_broker::connect(&broker.observer, &nats_url).await?;
+    let observer = nats.observer.connect(&nats.server).await?;
     let context = async_nats::jetstream::new(observer.clone());
     let source_observed = context.get_stream(&source.name).await?;
     let advisory = advisory_stream_config(scope, source.num_replicas);
@@ -462,13 +475,7 @@ async fn run_created(
     let reader_args = if measure_startup {
         None
     } else {
-        Some(reader::args(
-            work,
-            &nats_url,
-            source,
-            &broker.publisher.username,
-            &broker.publisher.password_file,
-        )?)
+        Some(reader::args(work, &nats.server, source, &nats.publisher)?)
     };
     let cdc_url = reader_args.as_ref().map(|args| args.cdc_url.clone());
     let cancellation = wamn_cdc_reader::ReaderShutdown::new();
@@ -487,30 +494,6 @@ async fn run_created(
 
         deployment::install_application_secrets(&document, files, cluster, work, &postgres_ip)
             .await?;
-        install_event_secrets(cluster, work, broker, source).await?;
-        let operator_values = work.join("operator-values.json");
-        fs::write(
-            &operator_values,
-            serde_json::to_vec_pretty(&json!({"operator":{
-                "watchNamespaces":[NAMESPACE],"hostNamespaces":[NAMESPACE],"allowSharedHosts":false,
-            }}))?,
-        )?;
-        let nats = wamn_control::platform::kind_nats(
-            repository,
-            "wamn-system",
-            &document.org,
-            &[document.triple()],
-        )?;
-        platform::install(
-            repository,
-            lifecycle,
-            cluster,
-            work,
-            NAMESPACE,
-            &operator_values,
-            &nats,
-        )
-        .await?;
         let (issuer, instance) =
             start_session_issuer(case_context, &document, manifest_digest.as_str()).await?;
         let replicas = if measure_startup { 1 } else { 3 };
@@ -518,7 +501,6 @@ async fn run_created(
             &document,
             &application::HostBinding {
                 host_tag: cluster,
-                nats_url: &nats_url,
                 database_host: &postgres_ip,
                 manifest_digest: manifest_digest.as_str(),
                 source,
@@ -688,29 +670,4 @@ async fn run_created(
     drop(project);
     project_task.abort();
     result
-}
-
-async fn install_event_secrets(
-    cluster: &str,
-    work: &Path,
-    broker: &EventBroker,
-    source: &async_nats::jetstream::stream::Config,
-) -> anyhow::Result<()> {
-    let runtime_password = fs::read_to_string(&broker.runtime.password_file)?;
-    deployment::apply_secret(cluster, work, &json!({"apiVersion":"v1","kind":"Secret",
-        "metadata":{"name":"wamn-event-nats","namespace":NAMESPACE},"type":"Opaque",
-        "stringData":{"username":broker.runtime.username,"password":runtime_password,
-            "org":crate::environment::identity().org.as_str(),"project":crate::environment::identity().project.as_str(),"environment":crate::environment::identity().environment.as_str(),
-            "stream_replicas":source.num_replicas.to_string(),"dup_window_secs":source.duplicate_window.as_secs().to_string()}
-    })).await?;
-    let binding = fs::read_to_string(&broker.binding)?;
-    deployment::apply_secret(
-        cluster,
-        work,
-        &json!({"apiVersion":"v1","kind":"Secret",
-            "metadata":{"name":"wamn-materializer-nats","namespace":NAMESPACE},"type":"Opaque",
-            "stringData":{"binding.json":binding}
-        }),
-    )
-    .await
 }

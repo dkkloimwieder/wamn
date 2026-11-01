@@ -13,8 +13,8 @@ use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 
 use super::super::{
     GitSource, GitSourceState, PLATFORM_DOMAIN, ScratchRoot, connect,
-    environment::seed_receiving_business_rows, identity, repository_root, required_journey,
-    required_journey_path, write_dev_config,
+    environment::seed_receiving_business_rows, identity, repository_root, required_journey_path,
+    write_dev_config,
 };
 use super::{DEV_COMMAND_TIMEOUT, DevJourneyInputs, current_database_acl};
 

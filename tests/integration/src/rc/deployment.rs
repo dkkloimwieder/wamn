@@ -8,7 +8,7 @@ use async_nats::jetstream::stream;
 use serde_json::{Value, json};
 use wamn_control_provision::events;
 use wamn_control_registry::Triple;
-use wamn_test_infrastructure::{event_broker::EventBroker, platform};
+use wamn_test_infrastructure::platform;
 
 use super::{CLUSTER, NAMESPACE, Resources, apply, checked, kubectl, resources::write_private};
 
@@ -40,11 +40,10 @@ fn validate_source(source: &stream::Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(super) async fn install(
-    resources: &Resources,
-    broker: &EventBroker,
-    source: &stream::Config,
-) -> anyhow::Result<()> {
+/// The cert-manager CA, the one NATS and the operator. The hosts run in
+/// `NAMESPACE`, so the environment's certificate lives there
+/// (docs/plan/alignment.md R5).
+pub(super) async fn install_platform(resources: &Resources) -> anyhow::Result<()> {
     checked(kubectl(resources).args(["create", "namespace", NAMESPACE])).await?;
     let operator = resources.work.join("operator-values.yaml");
     write_private(
@@ -53,12 +52,21 @@ pub(super) async fn install(
             &json!({"operator":{"watchNamespaces":[NAMESPACE],"hostNamespaces":[NAMESPACE],"allowSharedHosts":false}}),
         )?,
     )?;
-    let nats = wamn_control::platform::kind_nats(
+    let mut nats = wamn_control::platform::kind_nats(
         &resources.repository,
         "wamn-system",
         "rc",
         &[Triple::new("rc", "app", "dev")],
     )?;
+    let certificate = format!(
+        "wamn-nats-{}",
+        wamn_control_registry::project_env_key("rc", "app", "dev")
+    );
+    for object in &mut nats {
+        if object["kind"] == "Certificate" && object["metadata"]["name"] == certificate.as_str() {
+            object["metadata"]["namespace"] = json!(NAMESPACE);
+        }
+    }
     platform::install(
         &resources.repository,
         &resources.lifecycle,
@@ -68,7 +76,14 @@ pub(super) async fn install(
         &operator,
         &nats,
     )
-    .await?;
+    .await
+}
+
+/// The host release, after the event stream exists.
+pub(super) async fn install_host(
+    resources: &Resources,
+    source: &stream::Config,
+) -> anyhow::Result<()> {
     for (name, document) in [
         (
             "host-db.json",
@@ -77,18 +92,6 @@ pub(super) async fn install(
         (
             "registry-pull.json",
             json!({"apiVersion":"v1","kind":"Secret","type":"kubernetes.io/dockerconfigjson","metadata":{"name":"wamn-registry-pull","namespace":NAMESPACE},"stringData":{".dockerconfigjson":serde_json::to_string(&json!({"auths":{"registry.wamn-system.svc.cluster.local:5000":{"username":"unused","password":"unused","auth":"dW51c2VkOnVudXNlZA=="}}}))?}}),
-        ),
-        (
-            "event-nats.json",
-            json!({"apiVersion":"v1","kind":"Secret","type":"Opaque","metadata":{"name":"wamn-event-nats","namespace":NAMESPACE},"stringData":{
-                "ca.crt":fs::read_to_string(&broker.runtime.ca)?,"tls.crt":fs::read_to_string(&broker.runtime.cert)?,
-                "tls.key":fs::read_to_string(&broker.runtime.key)?,"org":"rc","project":"app","environment":"dev",
-                "stream_replicas":source.num_replicas.to_string(),"dup_window_secs":source.duplicate_window.as_secs().to_string(),
-            }}),
-        ),
-        (
-            "materializer-nats.json",
-            json!({"apiVersion":"v1","kind":"Secret","type":"Opaque","metadata":{"name":"wamn-materializer-nats","namespace":NAMESPACE},"stringData":{"binding.json":fs::read_to_string(&broker.binding)?}}),
         ),
     ] {
         let path = resources.work.join(name);
@@ -100,7 +103,7 @@ pub(super) async fn install(
             .repository
             .join("deploy/platform/values-host-default.yaml"),
     )?)?;
-    let rendered = host_values(base, &resources.host_image)?;
+    let rendered = host_values(base, &resources.host_image, source)?;
     let values = resources.work.join("host-values.yaml");
     write_private(&values, &serde_json::to_vec(&rendered)?)?;
     super::resources::recorded(
@@ -125,7 +128,7 @@ pub(super) async fn install(
     .await?;
     Ok(())
 }
-fn host_values(mut base: Value, image: &str) -> anyhow::Result<Value> {
+fn host_values(mut base: Value, image: &str, source: &stream::Config) -> anyhow::Result<Value> {
     let (repository, tag) = image
         .rsplit_once(':')
         .context("RC image has its explicit tag")?;
@@ -148,7 +151,28 @@ fn host_values(mut base: Value, image: &str) -> anyhow::Result<Value> {
         .as_object_mut()
         .context("host group is an object")?
         .remove("extraArgs");
-    // The base names the one NATS for both connections (docs/plan/alignment.md R2).
+    // The event coordinates, and the environment's certificate for the data
+    // connection to the one NATS (docs/plan/alignment.md R2, R5).
+    group["env"]
+        .as_array_mut()
+        .context("host group declares its environment")?
+        .extend(
+            [
+                ("WAMN_EVT_ORG", "rc".to_owned()),
+                ("WAMN_EVT_PROJECT", "app".to_owned()),
+                ("WAMN_EVT_ENV", "dev".to_owned()),
+                ("WAMN_EVT_STREAM_REPLICAS", source.num_replicas.to_string()),
+                (
+                    "WAMN_EVT_DUP_WINDOW_SECS",
+                    source.duplicate_window.as_secs().to_string(),
+                ),
+            ]
+            .map(|(name, value)| json!({"name": name, "value": value})),
+        );
+    base["global"]["certificates"]["dataCertSecretName"] = json!(format!(
+        "wamn-nats-{}",
+        wamn_control_registry::project_env_key("rc", "app", "dev")
+    ));
     Ok(base)
 }
 
@@ -178,7 +202,13 @@ mod tests {
             "../../../../deploy/platform/values-host-default.yaml"
         ))
         .unwrap();
-        let actual = host_values(base.clone(), "wamn-host:rc-test-debug").unwrap();
+        let actual = host_values(
+            base.clone(),
+            "wamn-host:rc-test-debug",
+            &source_declaration(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             actual["runtime"]["hostGroups"][0]["volumes"],
             base["runtime"]["hostGroups"][0]["volumes"]
@@ -192,9 +222,18 @@ mod tests {
         let new = actual["runtime"]["hostGroups"][0]["env"]
             .as_array()
             .unwrap();
-        assert_eq!(old.len(), new.len());
+        // The base environment, then the five event coordinates.
+        assert_eq!(old.len() + 5, new.len());
         for (a, b) in old.iter().zip(new) {
             assert_eq!(a, b);
         }
+        assert_eq!(new[old.len()]["name"], "WAMN_EVT_ORG");
+        assert_eq!(
+            actual["global"]["certificates"]["dataCertSecretName"],
+            format!(
+                "wamn-nats-{}",
+                wamn_control_registry::project_env_key("rc", "app", "dev")
+            )
+        );
     }
 }

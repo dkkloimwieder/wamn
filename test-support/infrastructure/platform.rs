@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 use tokio::process::Command;
 
+use crate::nats_tls::ClientCertificate;
+
 const SYSTEM_NAMESPACE: &str = "wamn-system";
 
 /// The one NATS of a cluster that runs the platform in `wamn-system`.
@@ -197,7 +199,7 @@ pub async fn install(
 
 /// Apply the CA and the certificates, wait for them, then the users and the
 /// server, and wait for the server.
-async fn install_nats(
+pub(crate) async fn install_nats(
     kubeconfig: &Path,
     context: &str,
     work: &Path,
@@ -257,6 +259,150 @@ async fn install_nats(
     ]))
     .await?;
     Ok(())
+}
+
+/// The one NATS of a cluster that [`install`] set up, through a port forward
+/// to this machine, with the certificates of the platform clients that a
+/// case acts as. The server certificate names 127.0.0.1 for the forward.
+#[derive(Debug)]
+pub struct ClusterNats {
+    /// The forwarded URL on this machine.
+    pub server: String,
+    /// The provisioning Jobs: stream and consumer management.
+    pub provisioning: ClientCertificate,
+    /// The CDC reader: the environment's events.
+    pub publisher: ClientCertificate,
+    /// `wamn-ctl`: stream and consumer information.
+    pub observer: ClientCertificate,
+    /// The environment user of the hosts and the materializer.
+    pub environment: ClientCertificate,
+    _forward: tokio::process::Child,
+}
+
+/// Forward the one NATS of `cluster` and read the client certificates that
+/// cert-manager issued, as private files in `work`. `env_key` names the
+/// environment certificate, which lives in the hosts namespace `hosts`
+/// (docs/plan/alignment.md R4, R5).
+pub async fn cluster_nats(
+    work: &Path,
+    cluster: &str,
+    env_key: &str,
+    hosts: &str,
+) -> anyhow::Result<ClusterNats> {
+    let kubeconfig = work.join("kubeconfig");
+    let context = format!("kind-{cluster}");
+    let environment = format!("wamn-nats-{env_key}");
+    let port = std::net::TcpListener::bind("127.0.0.1:0")?
+        .local_addr()?
+        .port();
+    let forward = kubectl(&kubeconfig, &context)
+        .args([
+            "-n",
+            SYSTEM_NAMESPACE,
+            "port-forward",
+            "svc/wamn-nats",
+            &format!("{port}:4222"),
+        ])
+        .kill_on_drop(true)
+        .spawn()
+        .context("forward the one NATS")?;
+    let nats = ClusterNats {
+        server: format!("nats://127.0.0.1:{port}"),
+        provisioning: certificate(
+            &kubeconfig,
+            &context,
+            work,
+            SYSTEM_NAMESPACE,
+            "wamn-provisioning-nats",
+            "wamn-provisioning",
+        )
+        .await?,
+        publisher: certificate(
+            &kubeconfig,
+            &context,
+            work,
+            SYSTEM_NAMESPACE,
+            "wamn-cdc-reader-nats",
+            "wamn-cdc-reader",
+        )
+        .await?,
+        observer: certificate(
+            &kubeconfig,
+            &context,
+            work,
+            SYSTEM_NAMESPACE,
+            "wamn-ctl-nats",
+            "wamn-ctl",
+        )
+        .await?,
+        environment: certificate(
+            &kubeconfig,
+            &context,
+            work,
+            hosts,
+            &environment,
+            &wamn_control_registry::environment_nats_user(env_key),
+        )
+        .await?,
+        _forward: forward,
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        match nats.provisioning.connect(&nats.server).await {
+            Ok(client) => {
+                client
+                    .drain()
+                    .await
+                    .context("close the forward check client")?;
+                return Ok(nats);
+            }
+            Err(_) if std::time::Instant::now() < deadline => {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// The certificate of the Secret `name` in `namespace`, as private files in
+/// `work`.
+async fn certificate(
+    kubeconfig: &Path,
+    context: &str,
+    work: &Path,
+    namespace: &str,
+    name: &str,
+    user: &str,
+) -> anyhow::Result<ClientCertificate> {
+    use base64::Engine as _;
+    let secret: serde_json::Value = serde_json::from_slice(
+        &checked(
+            kubectl(kubeconfig, context)
+                .args(["-n", namespace, "get", "secret", name, "-o", "json"]),
+        )
+        .await?,
+    )
+    .with_context(|| format!("parse Secret {name}"))?;
+    let mut files = Vec::new();
+    for key in ["ca.crt", "tls.crt", "tls.key"] {
+        let file = work.join(format!("{name}-{key}"));
+        let encoded = secret["data"][key]
+            .as_str()
+            .with_context(|| format!("Secret {name} has no {key}"))?;
+        write_private(
+            &file,
+            &base64::engine::general_purpose::STANDARD.decode(encoded)?,
+        )?;
+        files.push(file);
+    }
+    let [ca, cert, key] = <[std::path::PathBuf; 3]>::try_from(files)
+        .map_err(|_| anyhow::anyhow!("three certificate files"))?;
+    Ok(ClientCertificate {
+        user: user.to_owned(),
+        ca,
+        cert,
+        key,
+    })
 }
 
 fn kubectl(kubeconfig: &Path, context: &str) -> Command {

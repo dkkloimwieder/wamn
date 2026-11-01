@@ -73,9 +73,6 @@ case "$action" in
     docker run --detach --name "$cluster-registry" --network kind --env REGISTRY_AUTH=htpasswd \
       --env 'REGISTRY_AUTH_HTPASSWD_REALM=WAMN Receiving cluster journey' --env REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd \
       --volume "$work/registry/htpasswd:/auth/htpasswd:ro" registry:2
-    docker run --detach --name "$cluster-nats" --network kind \
-      --volume "$work/event-nats/nats.conf:/etc/nats/event-nats.conf:ro" \
-      nats:2.10-alpine --config /etc/nats/event-nats.conf --jetstream --store_dir /data
     ;;
   install-operator)
     work=${3:?work directory}; values=${4:?operator values}
@@ -122,7 +119,7 @@ case "$action" in
     if [[ -n $work ]]; then printf '%s' "$leftovers" > "$work/kind-teardown-leftovers" || status=1; fi
     # Leftovers are reported by the Rust caller without failing passing cases.
     if ((status == 2)); then status=0; fi
-    for suffix in postgres registry nats minio; do
+    for suffix in postgres registry minio; do
       if docker container inspect "$cluster-$suffix" >/dev/null 2>&1; then
         docker rm --force --volumes "$cluster-$suffix" || status=1
       fi

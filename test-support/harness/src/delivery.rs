@@ -703,13 +703,27 @@ pub fn coordinate_name(name: &str, triple: &Triple) -> String {
     )
 }
 
-/// Ensure the kept cluster named by `WAMN_DELIVERY_CLUSTER`.
+/// Ensure the kept cluster named by `WAMN_DELIVERY_CLUSTER`, with a NATS user
+/// for the environment `triple`.
 ///
 /// # Errors
 ///
 /// When the name is missing or refused, or the platform cannot be ensured.
-pub async fn kept_cluster(repository: &Path) -> anyhow::Result<KeptCluster> {
-    delivery_cluster::ensure(repository, &delivery_cluster::name_from_env()?).await
+pub async fn kept_cluster(repository: &Path, triple: &Triple) -> anyhow::Result<KeptCluster> {
+    delivery_cluster::ensure(
+        repository,
+        &delivery_cluster::name_from_env()?,
+        triple,
+        |environments| {
+            wamn_control::platform::kind_nats(
+                repository,
+                delivery_cluster::NAMESPACE,
+                triple.org.as_str(),
+                environments,
+            )
+        },
+    )
+    .await
 }
 
 #[cfg(test)]

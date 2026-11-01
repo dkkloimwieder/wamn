@@ -7,8 +7,8 @@
 //! Nothing here removes it: `tools/delivery-owned remove-kept <name>` does.
 //!
 //! The platform is the one of `crates/control/lib/tests/environment_apply_kind.rs`:
-//! cert-manager, CloudNativePG, the operator release `wamn` in `wamn-system`,
-//! and a registry with TLS from a private CA and a password. `env apply` and
+//! cert-manager, CloudNativePG, the one NATS and the operator release `wamn`
+//! in `wamn-system`, and a registry with TLS from a private CA and a password. `env apply` and
 //! the release chart's hosts read a registry over TLS only, because the chart
 //! takes no `--allow-insecure-registries`. The application fixtures push over
 //! plain HTTP, so a second registry container serves the same storage over
@@ -164,7 +164,16 @@ pub fn name_from_env() -> anyhow::Result<String> {
 
 /// Create the kept cluster and its platform, or attach to them. Every step is
 /// an ensure, so a second case changes nothing the first made.
-pub async fn ensure(repository: &Path, name: &str) -> anyhow::Result<KeptCluster> {
+///
+/// `nats` renders the one NATS with a user for each environment it gets:
+/// `scope` and the environments of the earlier cases, which the private
+/// directory lists (docs/plan/alignment.md R1-R5).
+pub async fn ensure(
+    repository: &Path,
+    name: &str,
+    scope: &wamn_control_registry::Triple,
+    nats: impl FnOnce(&[wamn_control_registry::Triple]) -> anyhow::Result<Vec<Value>>,
+) -> anyhow::Result<KeptCluster> {
     ensure!(name != "wamn", "the kind-wamn cluster is frozen");
     let work = std::env::temp_dir().join(name);
     DirBuilder::new()
@@ -223,6 +232,27 @@ pub async fn ensure(repository: &Path, name: &str) -> anyhow::Result<KeptCluster
         ]))
         .await?;
     }
+    let listed = work.join("nats-environments.json");
+    let mut environments: Vec<wamn_control_registry::Triple> = match fs::read(&listed) {
+        Ok(bytes) => serde_json::from_slice(&bytes).context("parse the kept NATS environments")?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => return Err(error).context("read the kept NATS environments"),
+    };
+    if !environments.contains(scope) {
+        environments.push(scope.clone());
+    }
+    write_private(&listed, &serde_json::to_vec(&environments)?)?;
+    crate::platform::install_nats(&kubeconfig, &kept.context(), &work, &nats(&environments)?)
+        .await?;
+    let operator_nats = work.join("operator-nats.yaml");
+    write_private(
+        &operator_nats,
+        format!(
+            "global: {{nats: {{schedulerUrl: \"{url}\", dataUrl: \"{url}\"}}}}\n",
+            url = crate::platform::NATS_URL
+        )
+        .as_bytes(),
+    )?;
     let operator = Command::new("helm")
         .args(["status", "wamn", "-n", NAMESPACE, "--kubeconfig"])
         .arg(&kubeconfig)
@@ -249,6 +279,8 @@ pub async fn ensure(repository: &Path, name: &str) -> anyhow::Result<KeptCluster
                 .arg(&kubeconfig)
                 .args(["--kube-context", &kept.context(), "-f"])
                 .arg(repository.join("deploy/infra/values-wamn.yaml"))
+                .arg("-f")
+                .arg(&operator_nats)
                 .args(["--wait", "--timeout", "5m"]),
         )
         .await?;

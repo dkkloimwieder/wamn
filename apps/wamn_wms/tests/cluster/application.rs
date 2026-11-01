@@ -135,7 +135,6 @@ pub(super) fn host_secrets(
 /// The identities one rendered host group binds to.
 pub(super) struct HostBinding<'a> {
     pub(super) host_tag: &'a str,
-    pub(super) nats_url: &'a str,
     pub(super) database_host: &'a str,
     pub(super) manifest_digest: &'a str,
     pub(super) source: &'a async_nats::jetstream::stream::Config,
@@ -159,7 +158,6 @@ pub(super) fn render_host(
 
     let HostBinding {
         host_tag,
-        nats_url,
         database_host,
         manifest_digest,
         source,
@@ -213,7 +211,6 @@ pub(super) fn render_host(
             component_artifact_base: inputs.component_artifact_base.clone(),
             release_artifact_base: inputs.release_artifact_base.clone(),
             manifest_digest: manifest_digest.to_owned(),
-            nats_url: nats_url.to_owned(),
             event,
             guest_secret_name: guest.name.clone(),
             role_secrets,

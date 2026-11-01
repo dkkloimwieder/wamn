@@ -23,9 +23,6 @@ case "${1-}" in
     kind load docker-image "$host_image" --name "$cluster"
     docker run --detach --name "$cluster-postgres" --network kind \
       --publish 127.0.0.1::5432 --env POSTGRES_HOST_AUTH_METHOD=trust "$postgres_image"
-    docker run --detach --name "$cluster-nats" --network kind \
-      --volume "$work/event-nats/nats.conf:/etc/nats/event-nats.conf:ro" \
-      nats:2.10-alpine --config /etc/nats/event-nats.conf --jetstream --store_dir /data
     ;;
   inspect) docker inspect --format '{{json .NetworkSettings}}' "$2" ;;
   image-labels) docker image inspect --format '{{json .Config.Labels}}' "$2" ;;
@@ -50,7 +47,7 @@ case "${1-}" in
     leftovers=$(KUBECONFIG="$work/kubeconfig" bash "$(dirname -- "${BASH_SOURCE[0]}")/kind-cluster-delete" "$cluster") || status=$?
     printf '%s' "$leftovers" > "$work/kind-teardown-leftovers" || status=1
     if ((status == 2)); then status=0; fi
-    for container in "$cluster-postgres" "$cluster-nats"; do
+    for container in "$cluster-postgres"; do
       if docker container inspect "$container" >/dev/null 2>&1; then docker rm --force --volumes "$container" >/dev/null || status=1; fi
     done
     for image in "$@"; do

@@ -21,10 +21,7 @@ use futures_util::StreamExt as _;
 use tokio::process::Command;
 use tokio::time::{Instant, sleep, timeout};
 
-use super::super::{
-    PLATFORM_DOMAIN, ScratchRoot, connect, required_journey, required_journey_path,
-    write_dev_config,
-};
+use super::super::{PLATFORM_DOMAIN, ScratchRoot, connect, write_dev_config};
 use super::DevJourneyInputs;
 use super::local_delivery::Watch;
 

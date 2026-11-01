@@ -273,7 +273,7 @@ pub(super) async fn trigger(
             && detail[0]["value"]["acme_quality_status"] == "pending",
             "the separate materializer Receipt detail read must retain its expected state");
         Ok::<_, anyhow::Error>(MaterializerPhase {
-            project_pg_url: database_url.to_owned(), nats_url: cluster.nats_url.clone(), receipt_id: receipt_id.to_owned(),
+            project_pg_url: database_url.to_owned(), nats_url: cluster.nats.server.clone(), receipt_id: receipt_id.to_owned(),
         })
     }).await.context("the materializer HTTP commands exceeded 90 seconds")?
         .map(|phase| (phase, update_trace, receipt_trace))

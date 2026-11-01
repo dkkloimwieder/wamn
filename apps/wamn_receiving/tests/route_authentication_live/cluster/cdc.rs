@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::route_authentication_live::scope;
 use anyhow::{Context as _, ensure};
@@ -12,15 +12,16 @@ use wamn_control::enable_cdc_project_env::EnableCdcProjectEnvRequest;
 use wamn_control::provision_project_env::{self, ProvisionedRoute, read_json, secret_value};
 use wamn_control_provision::workload_role::WorkloadRoleFamily;
 use wamn_gate_harness::journey::JourneyDocument;
+use wamn_test_infrastructure::nats_tls::ClientCertificate;
 
 use super::super::identity;
 
-/// The broker identity one CDC reader publishes under.
+/// The NATS users of one CDC reader: it publishes as `publisher`, and
+/// `provisioning` makes the streams.
 pub(super) struct BrokerBinding<'a> {
     pub(super) nats_url: &'a str,
-    pub(super) nats_username: String,
-    pub(super) nats_password_file: PathBuf,
-    pub(super) provisioning: &'a wamn_test_infrastructure::event_broker::Credentials,
+    pub(super) publisher: &'a ClientCertificate,
+    pub(super) provisioning: &'a ClientCertificate,
     pub(super) consumers: &'a [async_nats::jetstream::consumer::pull::Config],
     pub(super) source: &'a async_nats::jetstream::stream::Config,
 }
@@ -34,8 +35,7 @@ pub(super) async fn configure(
 ) -> anyhow::Result<EventReaderArgs> {
     let BrokerBinding {
         nats_url,
-        nats_username,
-        nats_password_file,
+        publisher,
         provisioning,
         consumers,
         source,
@@ -65,9 +65,7 @@ pub(super) async fn configure(
             cluster_namespace: "platform".into(),
             secret_namespace: Some(inputs.host_secret_namespace.clone()),
             stream: None,
-            nats_url: nats_url.to_owned(),
-            nats_username: provisioning.username.clone(),
-            nats_password_file: provisioning.password_file.clone(),
+            nats: provisioning.platform_nats(nats_url),
             stream_replicas: source.num_replicas,
             dup_window_secs: source.duplicate_window.as_secs(),
             consumer_config: consumers
@@ -90,9 +88,7 @@ pub(super) async fn configure(
         inputs,
         route,
         &wamn_control::environment::EventBroker {
-            nats_url: nats_url.to_owned(),
-            nats_username: provisioning.username.clone(),
-            nats_password_file: provisioning.password_file.clone(),
+            nats: provisioning.platform_nats(nats_url),
             stream_replicas: source.num_replicas,
             dup_window_secs: source.duplicate_window.as_secs(),
         },
@@ -128,7 +124,7 @@ pub(super) async fn configure(
             "the reader credential must select the owned PostgreSQL endpoint"
         );
     }
-    reader_args(work, nats_url, nats_username, nats_password_file, source)
+    reader_args(work, nats_url, publisher, source)
 }
 
 /// The reader arguments from the credentials that `configure` wrote. A later
@@ -136,8 +132,7 @@ pub(super) async fn configure(
 pub(super) fn reader_args(
     work: &Path,
     nats_url: &str,
-    nats_username: String,
-    nats_password_file: PathBuf,
+    publisher: &ClientCertificate,
     source: &async_nats::jetstream::stream::Config,
 ) -> anyhow::Result<EventReaderArgs> {
     Ok(EventReaderArgs {
@@ -147,8 +142,9 @@ pub(super) fn reader_args(
         system_database_url: secret_value(&work.join("registry-reader.json"), "url")?,
         cdc_url: secret_value(&work.join("cdc-reader.json"), "url")?,
         nats_url: nats_url.to_owned(),
-        nats_username: Some(nats_username),
-        nats_password_file: Some(nats_password_file),
+        nats_tls_ca: Some(publisher.ca.clone()),
+        nats_tls_cert: Some(publisher.cert.clone()),
+        nats_tls_key: Some(publisher.key.clone()),
         sslmode: "disable".to_owned(),
         stream_replicas: source.num_replicas,
         dup_window_secs: source.duplicate_window.as_secs(),

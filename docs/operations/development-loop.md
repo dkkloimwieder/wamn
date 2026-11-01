@@ -26,7 +26,7 @@ Read the current required arguments from the existing command:
 "$CARGO_TARGET_DIR/debug/wamn" dev up --help
 ```
 
-Supply these flags: `--system-database-url`, `--root`, `--nats-url`, `--event-nats-url`, `--route-host`, `--host-binary`, and one `--package` for each package root.
+Supply these flags: `--system-database-url`, `--root`, `--nats-url`, `--nats-tls-ca`, `--nats-tls-cert`, `--nats-tls-key`, `--route-host`, `--host-binary`, and one `--package` for each package root.
 Supply the other flags below as the session needs them.
 
 Render the local collector before starting the session:

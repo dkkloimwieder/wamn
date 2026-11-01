@@ -7,13 +7,13 @@ use anyhow::{Context as _, ensure};
 use serde_json::json;
 use tokio_postgres::Client;
 use wamn_cdc_reader::EventReaderArgs;
+use wamn_test_infrastructure::nats_tls::ClientCertificate;
 
 pub(super) fn args(
     work: &Path,
     nats_url: &str,
     source: &async_nats::jetstream::stream::Config,
-    username: &str,
-    password_file: &Path,
+    publisher: &ClientCertificate,
 ) -> anyhow::Result<EventReaderArgs> {
     use wamn_control::provision_project_env::secret_value;
     Ok(EventReaderArgs {
@@ -23,8 +23,9 @@ pub(super) fn args(
         system_database_url: secret_value(&work.join("registry-reader.json"), "url")?,
         cdc_url: secret_value(&work.join("cdc-reader.json"), "url")?,
         nats_url: nats_url.to_owned(),
-        nats_username: Some(username.to_owned()),
-        nats_password_file: Some(password_file.to_path_buf()),
+        nats_tls_ca: Some(publisher.ca.clone()),
+        nats_tls_cert: Some(publisher.cert.clone()),
+        nats_tls_key: Some(publisher.key.clone()),
         sslmode: "disable".into(),
         stream_replicas: source.num_replicas,
         dup_window_secs: source.duplicate_window.as_secs(),

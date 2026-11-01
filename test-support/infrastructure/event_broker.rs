@@ -20,7 +20,6 @@ pub type Credentials = ClientCertificate;
 #[derive(Debug)]
 pub struct EventBroker {
     pub configuration: PathBuf,
-    pub binding: PathBuf,
     pub provisioning: Credentials,
     pub runtime: Credentials,
     pub publisher: Credentials,
@@ -242,7 +241,6 @@ fn prepare_with(
     )?;
     Ok(EventBroker {
         configuration,
-        binding: directory.join("binding.json"),
         provisioning,
         runtime,
         publisher,
@@ -274,7 +272,6 @@ pub fn load(work: &Path) -> anyhow::Result<EventBroker> {
     };
     Ok(EventBroker {
         configuration: directory.join("nats.conf"),
-        binding: directory.join("binding.json"),
         provisioning: role("provisioning")?,
         runtime: role("runtime")?,
         publisher: role("publisher")?,
@@ -325,27 +322,6 @@ fn write_private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     file.write_all(bytes).context("write private broker file")
 }
 
-/// Write the native binding after container inspection supplies the broker address.
-pub fn write_binding(
-    broker: &EventBroker,
-    server: &str,
-    source: &stream::Config,
-) -> anyhow::Result<()> {
-    let binding = serde_json::json!({
-        "servers": server,
-        "tls-ca": broker.materializer.ca,
-        "tls-cert": broker.materializer.cert,
-        "tls-key": broker.materializer.key,
-        "inbox-prefix": format!("_INBOX_{}", broker.materializer.user),
-        "stream-allow": source.name,
-        "subject-allow": source.subjects.join(","),
-        "subscription-capacity-bytes": "4194304",
-        "subscription-capacity": "64",
-        "max-in-flight": "64"
-    });
-    write_private(&broker.binding, &serde_json::to_vec(&binding)?)
-}
-
 /// Connect with the selected role and its private reply subjects.
 pub async fn connect(
     credentials: &Credentials,
@@ -394,10 +370,10 @@ mod tests {
     }
 
     #[test]
-    fn private_files_bind_the_inspected_server_with_the_materializer_certificate() {
+    fn the_broker_files_are_private() {
         let root = directory();
         let (scope, source, advisory, consumer) = declarations();
-        let broker = prepare(
+        prepare(
             root.path(),
             &scope,
             "example",
@@ -406,8 +382,6 @@ mod tests {
             &[consumer],
         )
         .unwrap();
-        assert!(!broker.binding.exists());
-        write_binding(&broker, "nats://172.20.0.9:4222", &source).unwrap();
         assert_eq!(
             std::fs::metadata(root.path().join("event-nats"))
                 .unwrap()
@@ -422,18 +396,6 @@ mod tests {
                 0o600
             );
         }
-        let binding: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&broker.binding).unwrap()).unwrap();
-        assert_eq!(
-            binding["tls-cert"],
-            serde_json::json!(broker.materializer.cert)
-        );
-        assert!(binding.get("password").is_none());
-        assert_eq!(binding["servers"], "nats://172.20.0.9:4222");
-        assert_eq!(binding["stream-allow"], source.name);
-        assert_eq!(binding["subject-allow"], source.subjects[0]);
-        assert_eq!(binding["subscription-capacity-bytes"], "4194304");
-        assert!(write_binding(&broker, "nats://other:4222", &source).is_err());
     }
 
     #[test]

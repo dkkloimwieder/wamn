@@ -3,7 +3,6 @@
 mod build;
 mod cdc;
 mod delivery_case;
-mod deployment;
 mod materializer_case;
 mod postcommit_case;
 mod resources;
@@ -39,9 +38,9 @@ use wamn_test_infrastructure::secrets::{
 
 use super::{connect, identity, repository_root, routes};
 use resources::{Resources, checked, write_private};
-use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
+use wamn_control_provision::events::source_stream_config;
 use wamn_control_registry::Triple;
-use wamn_test_infrastructure::event_broker::{self, EventBroker};
+use wamn_test_infrastructure::platform::ClusterNats;
 
 /// One Receiving cluster case's environment of the candidate release, which it
 /// installs through the package stage and publishes nothing
@@ -49,8 +48,8 @@ use wamn_test_infrastructure::event_broker::{self, EventBroker};
 struct ReceivingCluster {
     resources: Resources,
     inputs: JourneyDocument,
-    broker: EventBroker,
-    nats_url: String,
+    /// The one NATS through a port forward, with the platform certificates.
+    nats: ClusterNats,
     source: async_nats::jetstream::stream::Config,
     /// The candidate's packages, from their artifacts, by package id.
     packages: BTreeMap<String, OpenedPackage>,
@@ -91,15 +90,6 @@ async fn start(evidence: &Path, gates_image: bool) -> anyhow::Result<ReceivingCl
         identity().environment.as_str(),
     );
     let source = source_stream_config(&scope, 1, Duration::from_secs(120));
-    let advisory = advisory_stream_config(&scope, 1);
-    let broker = event_broker::prepare(
-        &cluster.work,
-        &scope,
-        identity().env_key().as_str(),
-        &source,
-        &advisory,
-        &consumers,
-    )?;
     resources::create(&mut cluster).await?;
     checked(kubectl(&cluster).args([
         "wait",
@@ -119,30 +109,45 @@ async fn start(evidence: &Path, gates_image: bool) -> anyhow::Result<ReceivingCl
     let loopback_port = resources::postgres_host_port(&postgres)?;
     let registry_address =
         resources::kind_address(&resources::inspect(&cluster, "registry").await?)?;
-    let nats_address = resources::kind_address(&resources::inspect(&cluster, "nats").await?)?;
     ensure!(
-        postgres_address != registry_address
-            && postgres_address != nats_address
-            && registry_address != nats_address,
+        postgres_address != registry_address,
         "the owned services must have distinct addresses"
     );
     postgres_ready(&cluster, postgres_address, loopback_port).await?;
     let authority = format!("{registry_address}:5000");
     let registry_auth_file =
         resources::registry_auth(&cluster, &authority, &registry_password).await?;
-    let nats_url = format!("nats://{nats_address}:4222");
-    event_broker::write_binding(&broker, &nats_url, &source)?;
-    let deadline = Instant::now() + Duration::from_secs(60);
-    let provisioning = loop {
-        if let Ok(client) = event_broker::connect(&broker.provisioning, &nats_url).await {
-            break client;
-        }
-        ensure!(
-            Instant::now() < deadline,
-            "the owned NATS broker did not become ready"
-        );
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    };
+    // The platform, with the one NATS, installs before the streams.
+    let operator_values = cluster.work.join("operator-values.yaml");
+    fs::write(
+        &operator_values,
+        serde_json::to_vec(&json!({"operator":{
+            "watchNamespaces":[NAMESPACE],"hostNamespaces":[NAMESPACE],"allowSharedHosts":false,
+        }}))?,
+    )?;
+    wamn_test_infrastructure::platform::install(
+        &cluster.repository,
+        &cluster.lifecycle,
+        &cluster.name,
+        &cluster.work,
+        NAMESPACE,
+        &operator_values,
+        &wamn_control::platform::kind_nats(
+            &cluster.repository,
+            NAMESPACE,
+            scope.org.as_str(),
+            std::slice::from_ref(&scope),
+        )?,
+    )
+    .await?;
+    let nats = wamn_test_infrastructure::platform::cluster_nats(
+        &cluster.work,
+        &cluster.name,
+        identity().env_key().as_str(),
+        NAMESPACE,
+    )
+    .await?;
+    let provisioning = nats.provisioning.connect(&nats.server).await?;
     wamn_control::event_streams::provision(
         &async_nats::jetstream::new(provisioning),
         &scope,
@@ -165,8 +170,7 @@ async fn start(evidence: &Path, gates_image: bool) -> anyhow::Result<ReceivingCl
     Ok(ReceivingCluster {
         resources: cluster,
         inputs,
-        broker,
-        nats_url,
+        nats,
         source,
         packages,
         consumers,
@@ -473,12 +477,10 @@ async fn host_image(resources: &Resources) -> anyhow::Result<(String, String)> {
     Ok((pinned, digest))
 }
 
-/// What one installed host group binds to: how many replicas, which broker,
-/// and the optional session issuer the overlay pins.
+/// What one installed host group binds to: how many replicas, which event
+/// stream, and the optional session issuer the overlay pins.
 struct HostBinding<'a> {
     replicas: u32,
-    nats_url: &'a str,
-    native_nats_secrets: &'a [PathBuf],
     source: &'a async_nats::jetstream::stream::Config,
     session: Option<(&'a str, &'a str)>,
 }
@@ -489,7 +491,6 @@ async fn prepare_host(
     carrier: &ReleaseCarrier,
     binding: &HostBinding<'_>,
 ) -> anyhow::Result<(PathBuf, PathBuf)> {
-    let native_nats_secrets = binding.native_nats_secrets;
     let database_host = reqwest::Url::parse(&inputs.system_pg_url)?
         .host_str()
         .context("the owned system URL has a host")?
@@ -506,9 +507,6 @@ async fn prepare_host(
     for secret in &secrets {
         apply(cluster, &secret.path).await?;
     }
-    for secret in native_nats_secrets {
-        apply(cluster, secret).await?;
-    }
     install_route_credential(cluster, inputs, NAMESPACE).await?;
     let registry_secret = cluster.work.join("registry-pull.json");
     write_private(
@@ -520,34 +518,6 @@ async fn prepare_host(
         }))?,
     )?;
     apply(cluster, &registry_secret).await?;
-    let operator_values = cluster.work.join("operator-values.yaml");
-    fs::write(
-        &operator_values,
-        serde_json::to_vec(&json!({"operator":{
-            "watchNamespaces":[NAMESPACE],"hostNamespaces":[NAMESPACE],"allowSharedHosts":false,
-        }}))?,
-    )?;
-    let scope = wamn_control_registry::Triple::new(
-        identity().org.as_str(),
-        identity().project.as_str(),
-        identity().environment.as_str(),
-    );
-    let nats = wamn_control::platform::kind_nats(
-        &cluster.repository,
-        "wamn-system",
-        &scope.org.clone(),
-        &[scope],
-    )?;
-    wamn_test_infrastructure::platform::install(
-        &cluster.repository,
-        &cluster.lifecycle,
-        &cluster.name,
-        &cluster.work,
-        NAMESPACE,
-        &operator_values,
-        &nats,
-    )
-    .await?;
     render_host(cluster, inputs, carrier, &secrets, binding)
 }
 
@@ -562,10 +532,8 @@ fn render_host(
 ) -> anyhow::Result<(PathBuf, PathBuf)> {
     let HostBinding {
         replicas,
-        nats_url,
         source,
         session,
-        ..
     } = *binding;
     let guest = secrets
         .iter()
@@ -606,7 +574,6 @@ fn render_host(
             component_artifact_base: inputs.component_artifact_base.clone(),
             release_artifact_base: carrier.artifact_base.clone(),
             manifest_digest: carrier.manifest_digest.to_string(),
-            nats_url: nats_url.to_owned(),
             event,
             guest_secret_name: guest.name.clone(),
             role_secrets: roles,
@@ -826,7 +793,6 @@ async fn serve_released_http(
     carrier: ReleaseCarrier,
 ) -> anyhow::Result<(ProvisionedRoute, String)> {
     use wamn_test_infrastructure::{release_chart, workload};
-    let secrets = deployment::native_secrets(cluster)?;
     let resources = &cluster.resources;
     let (issuer, instance) = session_cluster::prepare_application(cluster, &carrier).await?;
     let deployed = install_release(
@@ -834,8 +800,6 @@ async fn serve_released_http(
         &carrier,
         &HostBinding {
             replicas,
-            nats_url: &cluster.nats_url,
-            native_nats_secrets: &secrets,
             source: &cluster.source,
             session: Some((&issuer, &instance)),
         },

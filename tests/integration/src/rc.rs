@@ -9,9 +9,8 @@ use anyhow::{Context as _, ensure};
 use clap::Args;
 use serde_json::{Value, json};
 use tokio::process::Command;
-use wamn_control_provision::events;
 use wamn_control_registry::Triple;
-use wamn_test_infrastructure::{event_broker, rendering, workload};
+use wamn_test_infrastructure::{platform, rendering, workload};
 
 mod bootstrap;
 mod deployment;
@@ -22,7 +21,6 @@ use resources::Resources;
 
 const CLUSTER: &str = "wamn-rc";
 const NAMESPACE: &str = "wamn-rc";
-const ENV_KEY: &str = "00000000-0000-0000-0000-000000000001";
 
 /// Run the RC on its explicitly owned disposable cluster.
 #[derive(Args, Debug)]
@@ -118,8 +116,6 @@ async fn execute(
     source: async_nats::jetstream::stream::Config,
 ) -> anyhow::Result<()> {
     let scope = Triple::new("rc", "app", "dev");
-    let advisory = events::advisory_stream_config(&scope, source.num_replicas);
-    let broker = event_broker::prepare(&resources.work, &scope, ENV_KEY, &source, &advisory, &[])?;
     resources::write_private(
         &resources.work.join("kind.yaml"),
         rendering::render_kind_cluster(&fs::read_to_string(
@@ -161,23 +157,15 @@ async fn execute(
             .arg(&resources.postgres_image),
     )
     .await?;
-    let nats: Value = serde_json::from_slice(
-        &resources::recorded(
-            resources,
-            "inspect-nats",
-            Command::new(&resources.lifecycle).args(["inspect", "wamn-rc-nats"]),
-        )
-        .await?,
+    deployment::install_platform(resources).await?;
+    let nats = platform::cluster_nats(
+        &resources.work,
+        CLUSTER,
+        &wamn_control_registry::project_env_key("rc", "app", "dev"),
+        NAMESPACE,
     )
-    .context("parse the owned broker network")?;
-    let nats_host = nats
-        .pointer("/Networks/kind/IPAddress")
-        .and_then(Value::as_str)
-        .context("the owned broker has a kind network address")?;
-    let _: std::net::Ipv4Addr = nats_host.parse().context("the broker address is IPv4")?;
-    let server = format!("nats://{nats_host}:4222");
-    event_broker::write_binding(&broker, &server, &source)?;
-    let client = connect_broker(&broker.provisioning, &server).await?;
+    .await?;
+    let client = nats.provisioning.connect(&nats.server).await?;
     wamn_control::event_streams::provision(
         &async_nats::jetstream::new(client),
         &scope,
@@ -201,7 +189,7 @@ async fn execute(
     )
     .await?;
     jobs::inspect_image(resources).await?;
-    deployment::install(resources, &broker, &source).await?;
+    deployment::install_host(resources, &source).await?;
     workload::hosts_ready(&workload::HostsReadyInput {
         lifecycle: &resources.lifecycle,
         cluster: CLUSTER,
@@ -231,22 +219,6 @@ async fn execute(
         "jobs":[socket,trace]}),
     )?;
     Ok(())
-}
-
-async fn connect_broker(
-    credentials: &event_broker::Credentials,
-    server: &str,
-) -> anyhow::Result<async_nats::Client> {
-    tokio::time::timeout(Duration::from_secs(120), async {
-        loop {
-            if let Ok(client) = event_broker::connect(credentials, server).await {
-                return client;
-            }
-            tokio::time::sleep(Duration::from_millis(500)).await;
-        }
-    })
-    .await
-    .context("the owned event broker did not start")
 }
 
 fn kubectl(resources: &Resources) -> Command {

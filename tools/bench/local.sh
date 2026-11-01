@@ -254,7 +254,7 @@ DATABASE_URL="postgresql://postgres:probe@127.0.0.1:$pg_port/wamn_system" \
     cat "$work/build.log" >&2
     exit 1
   }
-"$bin/examples/event_broker_files" "$work" "nats://127.0.0.1:$event_port" \
+"$bin/examples/event_broker_files" "$work" \
   "$org" "$project" "$environment" "$env_key" 1 \
   "$repository/apps/target/wamn/wamn_receiving/wamn.json" >"$work/event-broker.log"
 event_memory=$(python3 - "$work" "$prefix-events" <<'CONFIGURATION'

@@ -213,7 +213,6 @@ fn host_input(project: &str) -> HostValuesInput {
         component_artifact_base: "registry.test.invalid:5000/components".into(),
         release_artifact_base: "registry.test.invalid:5000/releases".into(),
         manifest_digest: "sha256:0123456789abcdef".into(),
-        nats_url: "nats://nats.test.invalid:4222".into(),
         stream_replicas: 1,
         dup_window_secs: 120,
         event: event(project),

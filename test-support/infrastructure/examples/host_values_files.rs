@@ -51,7 +51,6 @@ const ENVIRONMENT: &str = "dev";
 const OVERLAY_ORG: &str = "acme";
 const NAMESPACE: &str = "hosts";
 const COMPONENT_BASE: &str = "us-central1-docker.pkg.dev/wamn-dev/wamn/components";
-const EVENT_NATS: &str = "nats://wamn-nats.platform.svc.cluster.local:4222";
 const CONTROL_NATS: &str = "nats://wamn-nats.platform.svc.cluster.local:4222";
 const ISSUER: &str = "https://identity.identity.svc.cluster.local";
 /// The ConfigMap that names the `wamn` credential helper for the registry.
@@ -65,9 +64,6 @@ struct Application {
     /// The instance suffix of its project environment in the registry.
     instance_suffix: &'static str,
     guest_secret: &'static str,
-    /// The event NATS Secrets, which carry the application's own users.
-    event_secret: &'static str,
-    materializer_secret: &'static str,
 }
 
 const RECEIVING: Application = Application {
@@ -76,8 +72,6 @@ const RECEIVING: Application = Application {
     overlay: "deploy/platform/values-host-receiving-pat.yaml",
     instance_suffix: "4pqjfmli",
     guest_secret: "wamn-host-db",
-    event_secret: "wamn-event-nats",
-    materializer_secret: "wamn-materializer-nats",
 };
 
 const WMS: Application = Application {
@@ -86,8 +80,6 @@ const WMS: Application = Application {
     overlay: "deploy/platform/values-host-wms-pat.yaml",
     instance_suffix: "0nk1lrpr",
     guest_secret: "wamn-host-db-wms",
-    event_secret: "wamn-event-nats-wms",
-    materializer_secret: "wamn-materializer-nats-wms",
 };
 
 /// The production families bound by this overlay, with its guest handled separately.
@@ -175,7 +167,6 @@ fn render(
             component_artifact_base: COMPONENT_BASE.to_owned(),
             release_artifact_base: release_artifact_base.to_owned(),
             manifest_digest: manifest_digest.to_owned(),
-            nats_url: EVENT_NATS.to_owned(),
             stream_replicas: 1,
             dup_window_secs: 120,
             event: EventIdentity {
@@ -292,18 +283,11 @@ fn google_cloud_base(base: &str) -> anyhow::Result<String> {
 }
 
 /// Remove what exists only for kind, set the resources of one small node, add
-/// the session entries of the identity issuer, and name the group and its
-/// event NATS Secrets.
+/// the session entries of the identity issuer, and name the group.
 fn google_cloud_overlay(overlay: &str, application: &Application) -> anyhow::Result<String> {
     let mut document: Value = serde_yaml::from_str(overlay)?;
     let group = group_mut(&mut document)?;
     group["name"] = application.group.into();
-    rename_secret(group, "wamn-event-nats", application.event_secret)?;
-    rename_secret(
-        group,
-        "wamn-materializer-nats",
-        application.materializer_secret,
-    )?;
     pull_with_metadata_token(group)?;
     let args = group["extraArgs"]
         .as_sequence_mut()
@@ -461,34 +445,6 @@ fn pull_with_metadata_token(group: &mut Value) -> anyhow::Result<()> {
     *volume = serde_yaml::from_str(&format!(
         "{{name: registry-pull, configMap: {{name: {REGISTRY_HELPER}}}}}"
     ))?;
-    Ok(())
-}
-
-/// Point every env reference and volume of Secret `from` at Secret `to`.
-fn rename_secret(group: &mut Value, from: &str, to: &str) -> anyhow::Result<()> {
-    let mut renamed = 0;
-    for entry in group["env"].as_sequence_mut().into_iter().flatten() {
-        if let Some(name) = entry
-            .get_mut("valueFrom")
-            .and_then(|from| from.get_mut("secretKeyRef"))
-            .and_then(|reference| reference.get_mut("name"))
-            && name.as_str() == Some(from)
-        {
-            *name = to.into();
-            renamed += 1;
-        }
-    }
-    for volume in group["volumes"].as_sequence_mut().into_iter().flatten() {
-        if let Some(name) = volume
-            .get_mut("secret")
-            .and_then(|secret| secret.get_mut("secretName"))
-            && name.as_str() == Some(from)
-        {
-            *name = to.into();
-            renamed += 1;
-        }
-    }
-    ensure!(renamed > 0, "the overlay names no Secret {from}");
     Ok(())
 }
 

@@ -59,7 +59,6 @@ pub struct HostValuesInput {
     pub component_artifact_base: String,
     pub release_artifact_base: String,
     pub manifest_digest: String,
-    pub nats_url: String,
     pub stream_replicas: usize,
     pub dup_window_secs: u64,
     pub event: EventIdentity,
