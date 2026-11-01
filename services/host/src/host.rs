@@ -136,9 +136,16 @@ pub struct HostArgs {
     #[arg(long = "data-nats-tls-key")]
     pub data_nats_tls_key: Option<PathBuf>,
 
-    /// Host-private JSON configuration for the platform materializer's native events binding.
-    #[arg(long, env = "WAMN_MAT_NATS_BINDING_FILE")]
-    pub materializer_nats_binding_file: Option<PathBuf>,
+    /// The host configuration file that the operator chart renders for the
+    /// host group's `plugins` entries (docs/plan/alignment.md R6, R9).
+    #[arg(long = "user-config")]
+    pub user_config: Option<PathBuf>,
+
+    /// The address of the `wasmcloud:nats` bindings, when it is not the data
+    /// connection. Left out, a binding that names no `servers` takes the data
+    /// URL and its TLS (the chart's `wasmcloudNatsUrl`).
+    #[arg(long = "wasmcloud-nats-url")]
+    pub wasmcloud_nats_url: Option<String>,
 
     /// The host name to assign to the host (chart passes the pod IP)
     #[arg(long = "host-name")]
@@ -621,13 +628,86 @@ fn served_release_scope(args: &HostArgs) -> anyhow::Result<ReleaseScope> {
     release_scope(args)
 }
 
-/// Declare the platform binding through the native host configuration policy.
-fn materializer_nats_bindings(config: HashMap<String, String>) -> plugin::PluginBindings {
-    plugin::PluginBindings::new().with_plugin(
-        plugin::PluginBindingSet::new(plugin::wasmcloud_nats::PLUGIN_NATS_ID)
-            .with_binding("events", config)
-            .with_workload_config(plugin::WorkloadConfigPolicy::Deny),
-    )
+/// The `host.plugins` entries of the chart's host configuration file. Only
+/// the native entries the release chart declares are read: a plugin with an
+/// image, a file, `configFrom` or `secretFrom` is refused.
+#[derive(serde::Deserialize)]
+struct UserConfig {
+    host: UserHost,
+}
+
+#[derive(serde::Deserialize)]
+struct UserHost {
+    #[serde(default)]
+    plugins: Vec<UserPlugin>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct UserPlugin {
+    id: String,
+    #[serde(default)]
+    config: HashMap<String, String>,
+    #[serde(default)]
+    bindings: std::collections::BTreeMap<String, UserBinding>,
+    #[serde(default)]
+    workload_config: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UserBinding {
+    #[serde(default)]
+    config: HashMap<String, String>,
+}
+
+/// The operator's binding declarations from the chart's host configuration
+/// file. A `wasmcloud:nats` binding that names no `servers` dials the data
+/// connection with its certificate, as `wash host` does: the address and its
+/// TLS are one bundle, so a binding pointed elsewhere inherits no TLS.
+fn plugin_bindings(args: &HostArgs, source: &str) -> anyhow::Result<plugin::PluginBindings> {
+    let config: UserConfig =
+        serde_yaml::from_str(source).context("decode the host configuration file")?;
+    let mut bindings = plugin::PluginBindings::new();
+    for entry in config.host.plugins {
+        let policy = match entry.workload_config.as_deref() {
+            None | Some("deny") => plugin::WorkloadConfigPolicy::Deny,
+            Some("allow") => plugin::WorkloadConfigPolicy::Allow,
+            Some("warn") => plugin::WorkloadConfigPolicy::Warn,
+            Some(other) => anyhow::bail!("plugin {} has workloadConfig {other:?}", entry.id),
+        };
+        let mut set = plugin::PluginBindingSet::new(entry.id.clone())
+            .with_base(entry.config)
+            .with_workload_config(policy);
+        for (name, binding) in entry.bindings {
+            set = set.with_binding(name, binding.config);
+        }
+        if entry.id == plugin::wasmcloud_nats::PLUGIN_NATS_ID {
+            let mut bundle = vec![(
+                "servers",
+                args.wasmcloud_nats_url
+                    .clone()
+                    .unwrap_or_else(|| args.data_nats_url.clone()),
+            )];
+            if args.wasmcloud_nats_url.is_none() {
+                for (key, path) in [
+                    ("tls-ca", &args.data_nats_tls_ca),
+                    ("tls-cert", &args.data_nats_tls_cert),
+                    ("tls-key", &args.data_nats_tls_key),
+                ] {
+                    if let Some(path) = path {
+                        bundle.push((key, path.display().to_string()));
+                    }
+                }
+                if args.data_nats_tls_first {
+                    bundle.push(("tls-first", "true".to_owned()));
+                }
+            }
+            set = set.with_default_bundle("servers", bundle);
+        }
+        bindings = bindings.with_plugin(set);
+    }
+    Ok(bindings)
 }
 
 /// Resolve the native wash-runtime memory settings carried by the host CLI.
@@ -1706,12 +1786,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         _ => None,
     };
 
-    let native_event_bindings = if let Some(path) = &args.materializer_nats_binding_file {
-        let bytes = tokio::fs::read(path)
+    let native_event_bindings = if let Some(path) = &args.user_config {
+        let source = tokio::fs::read_to_string(path)
             .await
-            .context("read the platform materializer NATS binding")?;
-        let config = serde_json::from_slice(&bytes)
-            .context("decode the platform materializer NATS binding")?;
+            .with_context(|| format!("read the host configuration file {}", path.display()))?;
         plugins.push(Arc::new(
             plugin::wasmcloud_nats::WasmcloudNats::new()
                 .with_memory_budget(host_memory.max_guest_memory)
@@ -1720,7 +1798,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
                     format!("{}.", wash_runtime::washlet::OPERATOR_API_PREFIX),
                 ]),
         ));
-        Some(materializer_nats_bindings(config))
+        Some(plugin_bindings(&args, &source)?)
     } else {
         None
     };
@@ -2686,21 +2764,31 @@ mod tests {
     }
 
     #[test]
-    fn materializer_binding_keeps_credentials_and_grants_host_owned() {
+    fn the_chart_binding_inherits_the_data_connection_and_keeps_its_grants() {
         use plugin::HostPlugin as _;
 
-        let config: HashMap<String, String> = [
-            ("servers", "nats://event-broker.invalid:4222"),
-            ("username", "materializer"),
-            ("password", "test-password"),
-            ("inbox-prefix", "_INBOX_materializer"),
-            ("stream-allow", "EVT_7_fixture_7_widgets_4_prod"),
-            ("subject-allow", "evt.fixture.widgets.prod.>"),
-        ]
-        .into_iter()
-        .map(|(key, value)| (key.to_owned(), value.to_owned()))
-        .collect();
-        let bindings = materializer_nats_bindings(config.clone());
+        let args = parse([
+            "wamn-host",
+            "--data-nats-url=nats://wamn-nats.platform.svc.cluster.local:4222",
+            "--data-nats-tls-ca=/data-cert/ca.crt",
+            "--data-nats-tls-cert=/data-cert/tls.crt",
+            "--data-nats-tls-key=/data-cert/tls.key",
+        ])
+        .unwrap()
+        .args;
+        let source = r"
+host:
+  plugins:
+    - id: wasmcloud-nats
+      workloadConfig: deny
+      bindings:
+        events:
+          config:
+            inbox-prefix: _INBOX_wamn-env-fixture--widgets--prod
+            stream-allow: EVT_7_fixture_7_widgets_4_prod
+            subject-allow: evt.fixture.widgets.prod.>
+";
+        let bindings = plugin_bindings(&args, source).unwrap();
         let declared = bindings.for_plugin(plugin::wasmcloud_nats::PLUGIN_NATS_ID);
         let schema = plugin::wasmcloud_nats::binding_schema();
         let native = plugin::wasmcloud_nats::WasmcloudNats::new();
@@ -2709,13 +2797,18 @@ mod tests {
         let resolve = |name: &str, overrides: &HashMap<String, String>| {
             declared.resolve(name, overrides, &schema, &narrows)
         };
-        assert_eq!(resolve("events", &HashMap::new()).unwrap(), config);
-        assert!(resolve("", &HashMap::new()).unwrap().is_empty());
+        let events = resolve("events", &HashMap::new()).unwrap();
+        assert_eq!(
+            events["servers"],
+            "nats://wamn-nats.platform.svc.cluster.local:4222"
+        );
+        assert_eq!(events["tls-cert"], "/data-cert/tls.crt");
+        assert_eq!(events["stream-allow"], "EVT_7_fixture_7_widgets_4_prod");
         assert!(resolve("foreign", &HashMap::new()).is_err());
+        // R6: workloadConfig deny refuses a workload's connection or wider grant.
         for (key, value) in [
             ("servers", "nats://foreign.invalid:4222"),
-            ("username", "administrator"),
-            ("password", "foreign-password"),
+            ("tls-cert", "/foreign/tls.crt"),
             ("inbox-prefix", "_INBOX_foreign"),
             ("stream-allow", ">"),
             ("subject-allow", ">"),
@@ -2723,9 +2816,10 @@ mod tests {
             let overrides = HashMap::from([(key.to_owned(), value.to_owned())]);
             let error = resolve("events", &overrides).unwrap_err().to_string();
             assert!(error.contains(key), "{error}");
-            assert!(!error.contains("test-password"), "{error}");
-            assert!(!error.contains("foreign-password"), "{error}");
         }
+        assert!(
+            plugin_bindings(&args, "host:\n  plugins:\n    - id: x\n      image: y\n").is_err()
+        );
     }
 
     #[test]

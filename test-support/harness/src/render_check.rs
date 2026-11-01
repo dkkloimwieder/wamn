@@ -141,19 +141,18 @@ pub fn assert_complete(documents: &[Value], secrets: &[Value]) -> anyhow::Result
                     interface["namespace"].as_str(),
                     interface["package"].as_str(),
                 ) {
+                    // The events binding is the host group's `plugins` entry,
+                    // which the chart renders into the host configuration file
+                    // (docs/plan/alignment.md R6).
                     (Some("wasmcloud"), Some("nats")) if interface["name"] == "events" => {
-                        let binding = require("WAMN_MAT_NATS_BINDING_FILE")?["value"]
-                            .as_str()
-                            .context("events binding path")?;
-                        mounted_secret_key(
-                            pod,
-                            container,
-                            binding,
-                            &all,
-                            host["metadata"]["namespace"]
-                                .as_str()
-                                .context("host namespace")?,
-                        )?;
+                        ensure!(
+                            container["args"]
+                                .as_array()
+                                .is_some_and(|args| args.iter().any(|arg| arg
+                                    .as_str()
+                                    .is_some_and(|arg| arg.starts_with("--user-config=")))),
+                            "the host lacks the plugins entry of the events binding"
+                        );
                     }
                     (Some("wamn"), Some("postgres")) => {
                         require("WAMN_PG_URL")?;

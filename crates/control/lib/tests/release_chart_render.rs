@@ -229,6 +229,8 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
     // custom resource.
     let expected: BTreeSet<(String, String)> = [
         ("ConfigMap", name.clone()),
+        // R6: the subchart's host configuration file for the `plugins` entry.
+        ("ConfigMap", format!("hostgroup-{name}-host-config")),
         ("Deployment", format!("hostgroup-{name}")),
         ("WorkloadDeployment", format!("{name}-http")),
         ("WorkloadDeployment", format!("{name}-materializer")),
@@ -240,6 +242,46 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
     .map(|(kind, name)| (kind.to_owned(), name))
     .collect();
     assert_eq!(kinds, expected);
+    // R6: the materializer's events binding comes from the chart, and every
+    // grant is inside the environment's prefix.
+    let host_config = documents
+        .iter()
+        .find(|object| {
+            object["kind"] == "ConfigMap"
+                && object["metadata"]["name"].as_str()
+                    == Some(&format!("hostgroup-{name}-host-config"))
+        })
+        .expect("the host configuration file");
+    let file: Value = serde_yaml::from_str(
+        host_config["data"]["config.yaml"]
+            .as_str()
+            .expect("config.yaml"),
+    )
+    .expect("the host configuration file is YAML");
+    let plugins = file["host"]["plugins"].as_sequence().expect("plugins");
+    assert_eq!(plugins.len(), 1);
+    let nats = &plugins[0];
+    assert_eq!(nats["id"].as_str(), Some("wasmcloud-nats"));
+    assert_eq!(nats["workloadConfig"].as_str(), Some("deny"));
+    let events = &nats["bindings"]["events"]["config"];
+    assert!(
+        events.get("servers").is_none(),
+        "the binding inherits the data connection"
+    );
+    let prefix = wamn_control_registry::project_env_key("acme", "wms", "prod");
+    assert_eq!(
+        events["subject-allow"].as_str(),
+        Some("evt.acme.wms.prod.>")
+    );
+    assert!(
+        events["stream-allow"]
+            .as_str()
+            .is_some_and(|stream| stream.starts_with("EVT_") && stream.ends_with("_4_prod"))
+    );
+    assert_eq!(
+        events["inbox-prefix"].as_str(),
+        Some(format!("_INBOX_wamn-env-{prefix}").as_str())
+    );
     let row = documents
         .iter()
         .find(|object| object["kind"] == "ConfigMap" && object["metadata"]["name"] == name)

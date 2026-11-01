@@ -53,7 +53,6 @@ runtime:
         - { name: WAMN_REGISTRY_AUTH_FILE, value: /etc/wamn/registry/config.json }
         - name: WAMN_COMPONENT_ARTIFACT_BASE
           value: registry.wamn-system.svc.cluster.local:5000/wamn/components
-        - { name: WAMN_MAT_NATS_BINDING_FILE, value: /etc/wamn/materializer-nats/binding.json }
         - { name: WAMN_EVT_ORG, value: acme }
         - { name: WAMN_EVT_PROJECT, value: receiving }
         - { name: WAMN_EVT_ENV, value: dev }
@@ -98,13 +97,6 @@ runtime:
               key: url
               optional: false
       volumes:
-        - name: materializer-nats
-          secret:
-            secretName: wamn-materializer-nats
-            optional: false
-            items:
-              - key: binding.json
-                path: binding.json
         - name: registry-pull
           secret:
             secretName: wamn-registry-pull
@@ -113,9 +105,6 @@ runtime:
               - key: .dockerconfigjson
                 path: config.json
       volumeMounts:
-        - name: materializer-nats
-          mountPath: /etc/wamn/materializer-nats
-          readOnly: true
         - name: registry-pull
           mountPath: /etc/wamn/registry
           readOnly: true

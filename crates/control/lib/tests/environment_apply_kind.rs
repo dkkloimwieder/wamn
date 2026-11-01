@@ -1291,17 +1291,7 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
         let group = serde_yaml::from_slice(&std::fs::read(
             platform.host_group.as_ref().context("host group")?,
         )?)?;
-        let (group, secret_document) = event_overlay(document, group)?;
-        let secret = work.join(format!("{}-events.json", document.env));
-        std::fs::write(&secret, serde_json::to_vec(&secret_document)?)?;
-        wamn_control::kubectl::kubectl(
-            &platform.target.kubeconfig,
-            &platform.target.context,
-            NAMESPACE,
-            &["apply", "-f", &secret.to_string_lossy()],
-            None,
-        )
-        .await?;
+        let group = event_overlay(document, group)?;
         let file = work.join(format!("{}-event-host-group.yaml", document.env));
         std::fs::write(&file, serde_yaml::to_string(&group)?)?;
         let mut platform = platform.clone();
@@ -2402,28 +2392,15 @@ fn fixture_document(env: &str, route_host: &str, digest: &str) -> EnvironmentDoc
     }
 }
 
-/// The materializer binding of `document`, which the NATS setup rendered for
-/// the environment's user, and the host group that mounts it. The host's data
-/// connection is the environment's certificate (docs/plan/alignment.md R5).
-fn event_overlay(
-    document: &EnvironmentDocument,
-    mut group: Value,
-) -> anyhow::Result<(Value, Value)> {
-    let secret = wamn_control::platform::render_event_secrets(document)?
-        .into_iter()
-        .find(|object| object["kind"] == "Secret")
-        .context("the environment has no materializer binding")?;
-    let secret = wamn_control::platform::manifests::in_namespace(secret, NAMESPACE)?;
-    let secret_name = secret["metadata"]["name"]
-        .as_str()
-        .context("the binding Secret has no name")?
-        .to_owned();
+/// The host group of `document` with its event coordinates. The release
+/// chart declares the materializer's binding, which inherits the host's data
+/// connection and the environment's certificate (docs/plan/alignment.md R5, R6).
+fn event_overlay(document: &EnvironmentDocument, mut group: Value) -> anyhow::Result<Value> {
     group["env"]
         .as_array_mut()
         .context("host environment")?
         .extend(
             [
-                ("WAMN_MAT_NATS_BINDING_FILE", "/apply-events/binding.json"),
                 ("WAMN_EVT_ORG", document.org.as_str()),
                 ("WAMN_EVT_PROJECT", document.project.as_str()),
                 ("WAMN_EVT_ENV", document.env.as_str()),
@@ -2432,15 +2409,7 @@ fn event_overlay(
             ]
             .map(|(name, value)| json!({"name":name,"value":value})),
         );
-    group["volumes"]
-        .as_array_mut()
-        .context("host volumes")?
-        .push(json!({"name":"apply-events","secret":{"secretName":secret_name}}));
-    group["volumeMounts"]
-        .as_array_mut()
-        .context("host mounts")?
-        .push(json!({"name":"apply-events","mountPath":"/apply-events","readOnly":true}));
-    Ok((group, secret))
+    Ok(group)
 }
 
 fn rollback_host_group(work: &Path) -> PathBuf {
@@ -3340,11 +3309,7 @@ async fn apply_platform_document(
     let group = serde_yaml::from_slice(&std::fs::read(
         platform.host_group.as_ref().context("host group")?,
     )?)?;
-    let (group, secret) = event_overlay(document, group)?;
-    let file = run.work.join(format!("{}-events.json", document.env));
-    std::fs::write(&file, serde_json::to_vec(&secret)?)?;
-    run.run("kubectl", &["apply", "-f", &file.to_string_lossy()])
-        .await?;
+    let group = event_overlay(document, group)?;
     let file = run
         .work
         .join(format!("{}-event-host-group.yaml", document.env));

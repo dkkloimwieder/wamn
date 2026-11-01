@@ -362,6 +362,41 @@ fn applications_argument(
         .context("the canonical applications are UTF-8")
 }
 
+/// The host group's `plugins` entry for the materializer's `events` binding
+/// (docs/plan/alignment.md R6). Its grants are the environment's own stream and
+/// subjects, and its replies use the environment user's inbox. It names no
+/// `servers`, so it inherits the data connection and its certificate (R5).
+/// `workloadConfig: deny` keeps every connection key and grant here.
+pub fn events_plugin(org: &str, project: &str, env: &str) -> anyhow::Result<Value> {
+    let scope = wamn_control_registry::Triple::new(org, project, env);
+    let source =
+        wamn_control_provision::events::source_stream_config(&scope, 1, Duration::from_secs(120));
+    let env_key = wamn_control_registry::project_env_key(org, project, env);
+    let config = mapping([
+        (
+            "inbox-prefix",
+            format!(
+                "_INBOX_{}",
+                wamn_control_registry::environment_nats_user(&env_key)
+            ),
+        ),
+        ("stream-allow", source.name),
+        ("subject-allow", source.subjects.join(",")),
+        ("subscription-capacity-bytes", "4194304".to_owned()),
+        ("subscription-capacity", "64".to_owned()),
+        ("max-in-flight", "64".to_owned()),
+    ]);
+    let mut binding = Mapping::new();
+    binding.insert("config".into(), config);
+    let mut bindings = Mapping::new();
+    bindings.insert("events".into(), Value::Mapping(binding));
+    let mut entry = Mapping::new();
+    entry.insert("id".into(), "wasmcloud-nats".into());
+    entry.insert("workloadConfig".into(), "deny".into());
+    entry.insert("bindings".into(), Value::Mapping(bindings));
+    Ok(Value::Sequence(vec![Value::Mapping(entry)]))
+}
+
 /// Render the install values of one environment.
 pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
     ensure!(
@@ -446,6 +481,14 @@ pub fn values(input: &ValuesInput) -> anyhow::Result<Value> {
         .context("the host group body's `networking` is not a mapping")?
         .entry("socketEgress".into())
         .or_insert_with(|| SOCKET_EGRESS.into());
+    ensure!(
+        !group.contains_key("plugins"),
+        "the host group body sets `plugins`, which the release chart derives"
+    );
+    group.insert(
+        "plugins".into(),
+        events_plugin(&input.org, &input.project, &input.env)?,
+    );
     let roles = input
         .roles
         .iter()

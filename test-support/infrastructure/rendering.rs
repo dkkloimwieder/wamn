@@ -254,6 +254,30 @@ pub fn render_host_values(
     group.namespace.clone_from(&input.namespace);
     group.replicas = input.replicas;
     unique_env(&group.env)?;
+    // The materializer's events binding is the host group's `plugins` entry,
+    // as the release chart declares it: the environment's stream, subjects
+    // and inbox, and no `servers`, so it inherits the data connection
+    // (docs/plan/alignment.md R6).
+    let source = wamn_control_provision::events::source_stream_config(
+        &wamn_control_registry::Triple::new(
+            input.event.org.as_str(),
+            input.event.project.as_str(),
+            input.event.environment.as_str(),
+        ),
+        input.stream_replicas,
+        std::time::Duration::from_secs(input.dup_window_secs),
+    );
+    let plugins: Value = serde_yaml::from_str(&format!(
+        "[{{id: wasmcloud-nats, workloadConfig: deny, bindings: {{events: {{config: {{\
+         inbox-prefix: \"_INBOX_{}\", stream-allow: \"{}\", subject-allow: \"{}\", \
+         subscription-capacity-bytes: \"4194304\", subscription-capacity: \"64\", \
+         max-in-flight: \"64\"}}}}}}}}]",
+        wamn_control_registry::environment_nats_user(&env_key),
+        source.name,
+        source.subjects.join(","),
+    ))
+    .context("render the events plugins entry")?;
+    group.extra.insert("plugins".into(), plugins);
     let guest = env_mut(&mut group.env, "WAMN_PG_URL")?;
     guest
         .value_from

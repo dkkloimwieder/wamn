@@ -91,7 +91,6 @@ const HOST_TEMPLATE: &str = r#"runtime:
         - { name: DOCKER_CONFIG, value: /etc/wamn/registry }
         - name: WAMN_COMPONENT_ARTIFACT_BASE
           value: registry.wamn-system.svc.cluster.local:5000/wamn/components
-        - { name: WAMN_MAT_NATS_BINDING_FILE, value: /etc/wamn/materializer-nats/binding.json }
         - { name: WAMN_EVT_ORG, value: __ORG__ }
         - { name: WAMN_EVT_PROJECT, value: __PROJECT__ }
         - { name: WAMN_EVT_ENV, value: dev }
@@ -125,13 +124,6 @@ const HOST_TEMPLATE: &str = r#"runtime:
               key: url
               optional: false
       volumes:
-        - name: materializer-nats
-          secret:
-            secretName: wamn-materializer-nats
-            optional: false
-            items:
-              - key: binding.json
-                path: binding.json
         - name: registry-pull
           secret:
             secretName: wamn-registry-pull
@@ -141,9 +133,6 @@ const HOST_TEMPLATE: &str = r#"runtime:
                 path: config.json
 __CREDENTIALS_VOLUME__
       volumeMounts:
-        - name: materializer-nats
-          mountPath: /etc/wamn/materializer-nats
-          readOnly: true
         - name: registry-pull
           mountPath: /etc/wamn/registry
           readOnly: true
@@ -271,7 +260,10 @@ fn host_values_keep_both_applications_separate_and_preserve_credentials() {
         let old = &original.runtime.host_groups[0];
         assert_eq!(group.namespace, input.namespace);
         assert_eq!(group.replicas, 3);
-        assert_eq!(group.extra, old.extra);
+        // The render adds only the plugins entry to the group's other fields.
+        let mut extra = group.extra.clone();
+        assert!(extra.remove("plugins").is_some());
+        assert_eq!(extra, old.extra);
         for (name, expected) in [
             (
                 "WAMN_COMPONENT_ARTIFACT_BASE",
@@ -288,10 +280,6 @@ fn host_values_keep_both_applications_separate_and_preserve_credentials() {
             (
                 "OTEL_EXPORTER_OTLP_ENDPOINT",
                 "http://otel-collector.wamn-system.svc.cluster.local:4317",
-            ),
-            (
-                "WAMN_MAT_NATS_BINDING_FILE",
-                "/etc/wamn/materializer-nats/binding.json",
             ),
         ] {
             assert_eq!(value(&group.env, name), expected, "{project}: {name}");
@@ -316,19 +304,34 @@ fn host_values_keep_both_applications_separate_and_preserve_credentials() {
                 1
             );
         }
-        for name in ["materializer-nats", "registry-pull"] {
-            let rendered = group
-                .volumes
+        // R6: the events binding is the host group's plugins entry, inside the
+        // environment's prefix, and it names no servers.
+        let events = &group.extra["plugins"][0]["bindings"]["events"]["config"];
+        assert_eq!(
+            group.extra["plugins"][0]["workloadConfig"].as_str(),
+            Some("deny")
+        );
+        assert!(events.get("servers").is_none(), "{project}");
+        assert_eq!(
+            events["subject-allow"].as_str(),
+            Some(
+                format!(
+                    "evt.{}.{}.{}.>",
+                    input.event.org, input.event.project, input.event.environment
+                )
+                .as_str()
+            ),
+            "{project}"
+        );
+        let registry = |volumes: &[Volume]| {
+            volumes
                 .iter()
-                .find(|volume| volume.name == name)
-                .unwrap();
-            let before = old
-                .volumes
-                .iter()
-                .find(|volume| volume.name == name)
-                .unwrap();
-            assert_eq!(rendered.secret, before.secret, "{name}");
-        }
+                .find(|volume| volume.name == "registry-pull")
+                .unwrap()
+                .secret
+                .clone()
+        };
+        assert_eq!(registry(&group.volumes), registry(&old.volumes));
         // R5: no event password user; the data connection is the
         // environment's certificate.
         assert!(

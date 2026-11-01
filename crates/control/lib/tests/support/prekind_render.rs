@@ -51,7 +51,7 @@ fn manifest(bytes: &[u8]) -> anyhow::Result<wamn_catalog::ServingManifest> {
     Ok(manifest)
 }
 
-fn fixture_secrets(document: &EnvironmentDocument, event_secret: Value) -> Vec<Value> {
+fn fixture_secrets(document: &EnvironmentDocument) -> Vec<Value> {
     let mut secrets = credential_secrets(&document.triple(), NAMESPACE);
     secrets.extend(operator_prerequisites(NAMESPACE));
     // scenario() emits apply-registry before installing any environment.
@@ -63,7 +63,6 @@ fn fixture_secrets(document: &EnvironmentDocument, event_secret: Value) -> Vec<V
     let mut oauth = prerequisite("wamn-oauth", &["key"], NAMESPACE);
     oauth["stringData"]["key"] = "o".repeat(32).into();
     secrets.push(oauth);
-    secrets.push(event_secret);
     // cert-manager issues the environment's NATS certificate, which the host
     // mounts as its data certificate (docs/plan/alignment.md R5).
     let env_key =
@@ -103,7 +102,7 @@ fn prekind_environment_renders() -> anyhow::Result<()> {
             manifest.digest().as_str(),
         );
         let base = serde_yaml::from_slice(&std::fs::read(work.path().join("host-group.yaml"))?)?;
-        let (group, event_secret) = event_overlay(&document, base)?;
+        let group = event_overlay(&document, base)?;
         let path = work.path().join(format!("{env}-event-host-group.yaml"));
         std::fs::write(&path, serde_yaml::to_string(&group)?)?;
         let selected = if name == "rollback A" {
@@ -113,7 +112,7 @@ fn prekind_environment_renders() -> anyhow::Result<()> {
         };
         let values = render_values(&document, &manifest, &selected, drain)?;
         let documents = template(&values, NAMESPACE)?;
-        assert_complete(&documents, &fixture_secrets(&document, event_secret))
+        assert_complete(&documents, &fixture_secrets(&document))
             .with_context(|| name.to_owned())?;
         println!(
             "{name}: host-group.yaml + {}",
@@ -139,12 +138,8 @@ fn prekind_environment_renders() -> anyhow::Result<()> {
         )?;
         let release = manifest(&wamn_execution_contract::canonical_json_bytes(&release))?;
         let values = render_values(&document, &release, &path, 70)?;
-        let event_secret = integration::event_secret("e30=");
-        assert_complete(
-            &template(&values, NAMESPACE)?,
-            &fixture_secrets(&document, event_secret),
-        )
-        .with_context(|| connector.to_owned())?;
+        assert_complete(&template(&values, NAMESPACE)?, &fixture_secrets(&document))
+            .with_context(|| connector.to_owned())?;
         println!(
             "{connector}: integration.k + integration-host-group.yaml with session and events"
         );
@@ -161,11 +156,11 @@ fn prekind_rejects_old_missing_conn_reader() -> anyhow::Result<()> {
     let work = ScratchRoot::create()?;
     let manifest = manifest(&fixture_releases()?[0])?;
     let document = fixture_document("dev", "dev.orders.example", manifest.digest().as_str());
-    let (group, event_secret) = event_overlay(&document, fixture_host_group("registry.invalid"))?;
+    let group = event_overlay(&document, fixture_host_group("registry.invalid"))?;
     let path = rollback_host_group(work.path());
     std::fs::write(&path, serde_yaml::to_string(&group)?)?;
     let documents = template(&render_values(&document, &manifest, &path, 70)?, NAMESPACE)?;
-    let mut secrets = fixture_secrets(&document, event_secret);
+    let mut secrets = fixture_secrets(&document);
     assert_complete(&documents, &secrets)?;
     let missing = wamn_control_provision::workload_secret_name(
         WorkloadRoleFamily::ConnectionReader,
@@ -182,41 +177,6 @@ fn prekind_rejects_old_missing_conn_reader() -> anyhow::Result<()> {
         "{error:#}"
     );
     println!("0.1.121 proof: {error:#}");
-    Ok(())
-}
-
-#[test]
-fn prekind_rejects_old_rollback_without_events() -> anyhow::Result<()> {
-    let work = ScratchRoot::create()?;
-    let manifest = manifest(&fixture_releases()?[0])?;
-    let document = fixture_document("dev", "dev.orders.example", manifest.digest().as_str());
-    let (mut group, event_secret) =
-        event_overlay(&document, fixture_host_group("registry.invalid"))?;
-    let path = rollback_host_group(work.path());
-    std::fs::write(&path, serde_yaml::to_string(&group)?)?;
-    let secrets = fixture_secrets(&document, event_secret);
-    assert_complete(
-        &template(&render_values(&document, &manifest, &path, 70)?, NAMESPACE)?,
-        &secrets,
-    )?;
-    // A12 selected the original base group, without the event overlay.
-    group["env"]
-        .as_array_mut()
-        .context("environment")?
-        .retain(|var| var["name"] != "WAMN_MAT_NATS_BINDING_FILE");
-    std::fs::write(&path, serde_yaml::to_string(&group)?)?;
-    let error = assert_complete(
-        &template(&render_values(&document, &manifest, &path, 70)?, NAMESPACE)?,
-        &secrets,
-    )
-    .unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("lacks WAMN_MAT_NATS_BINDING_FILE"),
-        "{error:#}"
-    );
-    println!("0.1.117 proof: {error:#}");
     Ok(())
 }
 

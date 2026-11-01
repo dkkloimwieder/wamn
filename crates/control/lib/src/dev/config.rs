@@ -59,7 +59,7 @@ const HOST_NAME: &str = "host_name";
 const RUNNER: &str = "runner";
 const HOST_BINARY: &str = "host_binary";
 const WASMTIME_CACHE_DIR: &str = "wasmtime_cache_dir";
-const MATERIALIZER_NATS_BINDING_FILE: &str = "materializer_nats_binding_file";
+const HOST_CONFIG_FILE: &str = "host_config_file";
 const CDC_READER: &str = "cdc_reader";
 #[cfg(test)]
 const PACKAGE_MANIFEST_FILE: &str = "wamn.json";
@@ -160,7 +160,7 @@ struct DevConfigDocument {
     wasmtime_cache_dir: PathBuf,
     /// The materializer's events binding in the environment's private root,
     /// as the cluster mounts its Secret.
-    materializer_nats_binding_file: PathBuf,
+    host_config_file: PathBuf,
     /// The CDC reader that `wamn dev up` enabled. Absent means no reader runs.
     #[serde(default)]
     cdc_reader: Option<CdcReader>,
@@ -578,7 +578,7 @@ pub struct DevConfig {
     activation_identity: DevActivationIdentity,
     host_binary: PathBuf,
     wasmtime_cache_dir: PathBuf,
-    materializer_nats_binding_file: PathBuf,
+    host_config_file: PathBuf,
     cdc_reader: Option<CdcReader>,
     probes: Box<[ReachabilityProbe]>,
 }
@@ -643,10 +643,7 @@ impl fmt::Debug for DevConfig {
             .field("activation_identity", &self.activation_identity)
             .field(HOST_BINARY, &self.host_binary)
             .field(WASMTIME_CACHE_DIR, &self.wasmtime_cache_dir)
-            .field(
-                MATERIALIZER_NATS_BINDING_FILE,
-                &self.materializer_nats_binding_file,
-            )
+            .field(HOST_CONFIG_FILE, &self.host_config_file)
             .field(CDC_READER, &self.cdc_reader)
             .finish_non_exhaustive()
     }
@@ -833,9 +830,9 @@ impl DevConfig {
     }
 
     /// The materializer's events binding, passed to the host as
-    /// `--materializer-nats-binding-file`.
-    pub fn materializer_nats_binding_file(&self) -> &Path {
-        &self.materializer_nats_binding_file
+    /// `--user-config`: the host configuration file with the `plugins` entry.
+    pub fn host_config_file(&self) -> &Path {
+        &self.host_config_file
     }
 
     /// The CDC reader the loop starts after each activation, when enabled.
@@ -919,7 +916,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         runner,
         host_binary,
         wasmtime_cache_dir,
-        materializer_nats_binding_file,
+        host_config_file,
         cdc_reader,
     } = input;
 
@@ -1033,11 +1030,11 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     };
     let host_binary = nonempty_path(host_binary, HOST_BINARY)?;
     let wasmtime_cache_dir = nonempty_path(wasmtime_cache_dir, WASMTIME_CACHE_DIR)?;
-    if !materializer_nats_binding_file.is_absolute() {
+    if !host_config_file.is_absolute() {
         return Err(DevConfigError::new(
             DevConfigErrorType::InvalidValue,
-            MATERIALIZER_NATS_BINDING_FILE,
-            "the materializer binding file path must be absolute",
+            HOST_CONFIG_FILE,
+            "the host configuration file path must be absolute",
         ));
     }
     if let Some(reader) = &cdc_reader {
@@ -1169,7 +1166,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         activation_identity,
         host_binary,
         wasmtime_cache_dir,
-        materializer_nats_binding_file,
+        host_config_file,
         cdc_reader,
         probes: probes.into_boxed_slice(),
     })
@@ -1760,7 +1757,7 @@ pub(crate) mod tests {
             (RUNNER): "wamn-dev-fixture-1",
             (HOST_BINARY): "/opt/wamn/bin/wamn-host",
             (WASMTIME_CACHE_DIR): "/tmp/wamn-dev-cache",
-            (MATERIALIZER_NATS_BINDING_FILE): "/tmp/wamn-dev/materializer-nats.json",
+            (HOST_CONFIG_FILE): "/tmp/wamn-dev/host-config.yaml",
         })
     }
 

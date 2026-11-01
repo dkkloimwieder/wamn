@@ -37,7 +37,14 @@ use wamn_package_artifact::registry_credentials::read_registry_credentials;
 /// its hosts live (R6).
 pub const NAMESPACE: &str = "wamn-system";
 /// The host group keys and variables that the release chart derives.
-const DERIVED_KEYS: [&str; 5] = ["name", "namespace", "service", "extraArgs", "image"];
+const DERIVED_KEYS: [&str; 6] = [
+    "name",
+    "namespace",
+    "service",
+    "extraArgs",
+    "image",
+    "plugins",
+];
 const DERIVED_VARIABLES: [&str; 8] = [
     "WAMN_ORG",
     "WAMN_PROJECT",

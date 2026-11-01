@@ -790,16 +790,7 @@ pub async fn exercise(
     } else {
         super::session_issuer::deploy(run, repository, &platform).await?
     };
-    platform.host_group = Some(
-        event_host_group(
-            run,
-            &platform,
-            &fixture_document(connector),
-            &issuer,
-            &suffix,
-        )
-        .await?,
-    );
+    platform.host_group = Some(event_host_group(run, &platform, &issuer, &suffix)?);
     let mut project_url = url::Url::parse(admin_url)?;
     project_url.set_path(&format!(
         "/{}",
@@ -1141,29 +1132,12 @@ async fn publish(
         .canonical_bytes)
 }
 
-async fn event_host_group(
+fn event_host_group(
     run: &Run,
     platform: &Platform,
-    document: &EnvironmentDocument,
     issuer: &str,
     suffix: &str,
 ) -> anyhow::Result<PathBuf> {
-    let binding = wamn_control::platform::render_event_secrets(document)?
-        .into_iter()
-        .find(|object| object["kind"] == "Secret")
-        .context("the environment has no materializer binding")?;
-    let binding = wamn_control::platform::manifests::in_namespace(binding, NAMESPACE)?;
-    let secret = run.work.join("integration-events.json");
-    std::fs::write(
-        &secret,
-        serde_json::to_vec(&event_secret(
-            binding["data"]["binding.json"]
-                .as_str()
-                .context("the binding Secret has no binding.json")?,
-        ))?,
-    )?;
-    run.run("kubectl", &["apply", "-f", &secret.to_string_lossy()])
-        .await?;
     let group: Value = serde_yaml::from_slice(&std::fs::read(
         platform.host_group.as_ref().context("host group")?,
     )?)?;
@@ -1171,15 +1145,6 @@ async fn event_host_group(
     let file = run.work.join("integration-host-group.yaml");
     std::fs::write(&file, serde_yaml::to_string(&group)?)?;
     Ok(file)
-}
-
-/// The materializer binding of the integration environment, from its
-/// base64 `binding.json`.
-pub(super) fn event_secret(binding: &str) -> Value {
-    json!({
-        "apiVersion":"v1", "kind":"Secret", "metadata":{"name":"integration-events","namespace":NAMESPACE},
-        "data":{"binding.json":binding}
-    })
 }
 
 pub(super) fn fixture_document(connector: &str) -> EnvironmentDocument {
@@ -1221,10 +1186,6 @@ pub(super) fn event_host_values(
                 ("WAMN_SESSION_ISSUER", issuer),
                 ("WAMN_SESSION_JWKS_CA", "/integration-session/ca.crt"),
                 ("WAMN_SESSION_INSTANCE_SUFFIX", suffix),
-                (
-                    "WAMN_MAT_NATS_BINDING_FILE",
-                    "/integration-events/binding.json",
-                ),
                 ("WAMN_EVT_ORG", ORG),
                 ("WAMN_EVT_PROJECT", PROJECT),
                 ("WAMN_EVT_ENV", ENVIRONMENT),
@@ -1237,14 +1198,12 @@ pub(super) fn event_host_values(
         .as_array_mut()
         .context("host volumes")?
         .extend([
-            json!({"name":"integration-events","secret":{"secretName":"integration-events"}}),
             json!({"name":"integration-session","configMap":{"name":"integration-session-ca"}}),
         ]);
     group["volumeMounts"]
         .as_array_mut()
         .context("host mounts")?
         .extend([
-            json!({"name":"integration-events","mountPath":"/integration-events","readOnly":true}),
             json!({"name":"integration-session","mountPath":"/integration-session","readOnly":true}),
         ]);
     Ok(group)

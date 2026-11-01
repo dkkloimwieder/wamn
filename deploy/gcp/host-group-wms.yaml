@@ -22,8 +22,6 @@ env:
   value: /etc/wamn/registry
 - name: WAMN_COMPONENT_ARTIFACT_BASE
   value: us-central1-docker.pkg.dev/wamn-dev/wamn/components
-- name: WAMN_MAT_NATS_BINDING_FILE
-  value: /etc/wamn/materializer-nats/binding.json
 - name: WAMN_EVT_ORG
   value: dkk
 - name: WAMN_EVT_PROJECT
@@ -45,13 +43,6 @@ env:
 - name: WAMN_SESSION_JWKS_CA
   value: /etc/identity-ca/ca.crt
 volumes:
-- name: materializer-nats
-  secret:
-    secretName: wamn-materializer-nats-wms
-    optional: false
-    items:
-    - key: binding.json
-      path: binding.json
 - name: registry-pull
   configMap:
     name: wamn-registry-helper
@@ -77,9 +68,6 @@ resources:
   guestMemoryMode: count
   maxConcurrentStarts: 1
 volumeMounts:
-- name: materializer-nats
-  mountPath: /etc/wamn/materializer-nats
-  readOnly: true
 - name: registry-pull
   mountPath: /etc/wamn/registry
   readOnly: true

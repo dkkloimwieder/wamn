@@ -169,7 +169,6 @@ runtime:
         # Host-owned registration and publication use their own broker user.
         # The native materializer binding uses a separate restricted credential.
         # Required Secrets keep password bytes outside workload configuration.
-        - { name: WAMN_MAT_NATS_BINDING_FILE, value: /etc/wamn/materializer-nats/binding.json }
         - name: WAMN_EVT_ORG
           valueFrom:
             secretKeyRef:
@@ -201,13 +200,6 @@ runtime:
               key: dup_window_secs
               optional: false
       volumes:
-        - name: materializer-nats
-          secret:
-            secretName: wamn-materializer-nats
-            optional: false
-            items:
-              - key: binding.json
-                path: binding.json
         - name: registry-pull
           secret:
             secretName: wamn-registry-pull
@@ -216,9 +208,6 @@ runtime:
               - key: .dockerconfigjson
                 path: config.json
       volumeMounts:
-        - name: materializer-nats
-          mountPath: /etc/wamn/materializer-nats
-          readOnly: true
         - name: registry-pull
           mountPath: /etc/wamn/registry
           readOnly: true

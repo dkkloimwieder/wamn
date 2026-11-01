@@ -15,8 +15,6 @@ use crate::{kubectl, release_chart::Target};
 
 use super::install::apply_object;
 
-const SERVER: &str = "nats://wamn-nats.platform.svc.cluster.local:4222";
-
 /// The Secret that holds the authorization file of the one NATS.
 pub(super) const AUTHORIZATION: &str = "wamn-nats-authorization";
 
@@ -226,7 +224,7 @@ pub(super) async fn apply(target: &Target, environments: &Path, org: &str) -> an
             "environment {} names another org",
             path.display()
         );
-        for object in render(&document.triple(), &mut authorization)? {
+        for object in render(&document.triple(), &mut authorization) {
             changed |= apply_object(target, &object).await?;
         }
     }
@@ -275,7 +273,7 @@ pub fn single_namespace_nats(
     keep_user(&mut authorization, control);
     let mut objects = vec![certificate];
     for scope in environments {
-        objects.extend(render(scope, &mut authorization)?);
+        objects.extend(render(scope, &mut authorization));
     }
     objects.push(serde_json::to_value(secret(
         "platform",
@@ -312,16 +310,13 @@ pub fn kind_nats(
 
 /// Render the environment's NATS objects without a cluster or a live broker.
 pub fn render_event_secrets(document: &EnvironmentDocument) -> anyhow::Result<Vec<Value>> {
-    render(&document.triple(), &mut Authorization { users: Vec::new() })?
+    render(&document.triple(), &mut Authorization { users: Vec::new() })
         .into_iter()
         .map(|object| serde_json::to_value(object).context("encode event object"))
         .collect()
 }
 
-fn render(
-    scope: &wamn_control_registry::Triple,
-    authorization: &mut Authorization,
-) -> anyhow::Result<Vec<Value>> {
+fn render(scope: &wamn_control_registry::Triple, authorization: &mut Authorization) -> Vec<Value> {
     let env_key =
         wamn_control_registry::project_env_key(&scope.org, &scope.project, scope.env.as_str());
     let source = source_stream_config(scope, 1, Duration::from_secs(120));
@@ -364,26 +359,12 @@ fn render(
             },
         },
     );
-    let certificate = format!("wamn-nats-{env_key}");
-    // The materializer binding until the release chart declares it
-    // (docs/plan/alignment.md R6). Its connection is the host's data
-    // connection, whose certificate the chart mounts at /data-cert.
-    let binding = json!({
-        "servers": SERVER,
-        "tls-ca": "/data-cert/ca.crt", "tls-cert": "/data-cert/tls.crt", "tls-key": "/data-cert/tls.key",
-        "inbox-prefix": format!("_INBOX_{user}"),
-        "stream-allow": source.name, "subject-allow": source.subjects.join(","),
-        "subscription-capacity-bytes": "4194304", "subscription-capacity": "64",
-        "max-in-flight": "64"
-    });
-    Ok(vec![
-        environment_certificate(&certificate, &user),
-        serde_json::to_value(secret(
-            "hosts",
-            &format!("{certificate}-materializer"),
-            [("binding.json".into(), binding.to_string())].into(),
-        ))?,
-    ])
+    // The release chart declares the materializer's binding, which inherits
+    // the host's data connection (docs/plan/alignment.md R6).
+    vec![environment_certificate(
+        &format!("wamn-nats-{env_key}"),
+        &user,
+    )]
 }
 
 /// What a host may do on its own keys of the memory `bucket`: put and delete
@@ -481,13 +462,13 @@ mod tests {
             users: platform_users(),
         };
         let platform = authorization.users.len();
-        let first = render(&document("one").triple(), &mut authorization).unwrap();
+        let first = render(&document("one").triple(), &mut authorization);
         let users = serde_json::to_value(&authorization).unwrap();
-        let repeated = render(&document("one").triple(), &mut authorization).unwrap();
+        let repeated = render(&document("one").triple(), &mut authorization);
         assert_eq!(first, repeated);
         assert_eq!(users, serde_json::to_value(&authorization).unwrap());
         assert_eq!(authorization.users.len(), platform + 1);
-        render(&document("two").triple(), &mut authorization).unwrap();
+        render(&document("two").triple(), &mut authorization);
         assert_eq!(authorization.users.len(), platform + 2);
         // R4: no user has a password.
         assert!(
@@ -508,8 +489,8 @@ mod tests {
     #[test]
     fn an_environment_user_reaches_no_subject_of_another() {
         let mut authorization = Authorization { users: Vec::new() };
-        render(&document("one").triple(), &mut authorization).unwrap();
-        render(&document("two").triple(), &mut authorization).unwrap();
+        render(&document("one").triple(), &mut authorization);
+        render(&document("two").triple(), &mut authorization);
         let subjects = |user: &Account| {
             let mut all = user.permissions.publish.allow.clone();
             all.extend(user.permissions.subscribe.allow.clone());

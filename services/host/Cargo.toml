@@ -23,6 +23,8 @@ wash-runtime = { workspace = true, features = ["washlet", "wasi-config", "wasi-o
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 serde_json = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_yaml = { workspace = true }
 humantime = { workspace = true }
 async-nats = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }

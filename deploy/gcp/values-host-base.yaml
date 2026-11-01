@@ -25,8 +25,6 @@ runtime:
       value: /etc/wamn/registry
     - name: WAMN_COMPONENT_ARTIFACT_BASE
       value: registry.wamn-system.svc.cluster.local:5000/wamn/components
-    - name: WAMN_MAT_NATS_BINDING_FILE
-      value: /etc/wamn/materializer-nats/binding.json
     - name: WAMN_EVT_ORG
       valueFrom:
         secretKeyRef:
@@ -60,13 +58,6 @@ runtime:
     - name: WAMN_REGISTRY_TOKEN_METADATA
       value: 'true'
     volumes:
-    - name: materializer-nats
-      secret:
-        secretName: wamn-materializer-nats
-        optional: false
-        items:
-        - key: binding.json
-          path: binding.json
     - name: registry-pull
       configMap:
         name: wamn-registry-helper
@@ -90,9 +81,6 @@ runtime:
     service:
       type: ClusterIP
     volumeMounts:
-    - name: materializer-nats
-      mountPath: /etc/wamn/materializer-nats
-      readOnly: true
     - name: registry-pull
       mountPath: /etc/wamn/registry
       readOnly: true

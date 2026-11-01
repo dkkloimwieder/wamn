@@ -244,13 +244,7 @@ fn host_command(
             {
                 continue;
             }
-            match value {
-                "/apply-events/password" => directory.join("password").display().to_string(),
-                "/apply-events/binding.json" => {
-                    directory.join("binding.json").display().to_string()
-                }
-                _ => value.to_owned(),
-            }
+            value.to_owned()
         } else if let Some(reference) = variable.pointer("/valueFrom/secretKeyRef") {
             let secret = secrets
                 .iter()
@@ -287,6 +281,26 @@ fn host_command(
             "--files-addr" => format!("{flag}={files}"),
             "--oci-cache-dir" => format!("{flag}={}", directory.join("oci").display()),
             "--host-name" => "--host-name=prekind".into(),
+            // The chart's host configuration file with the plugins entry (R6).
+            "--user-config" => {
+                let file = documents
+                    .iter()
+                    .find(|document| {
+                        document["kind"] == "ConfigMap"
+                            && document["metadata"]["name"]
+                                .as_str()
+                                .is_some_and(|name| name.ends_with("-host-config"))
+                    })
+                    .context("rendered host configuration file")?;
+                let path = directory.join("host-config.yaml");
+                std::fs::write(
+                    &path,
+                    file["data"]["config.yaml"]
+                        .as_str()
+                        .context("host configuration config.yaml")?,
+                )?;
+                format!("{flag}={}", path.display())
+            }
             _ => argument.to_owned(),
         });
     }
@@ -689,22 +703,13 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
             bindings,
         })?,
     )?;
-    let (mut group, event_secret) =
-        event_overlay(&document, fixture_host_group("registry.invalid"))?;
+    let mut group = event_overlay(&document, fixture_host_group("registry.invalid"))?;
     group["env"]
         .as_array_mut()
         .context("environment")?
         .iter_mut()
         .find(|variable| variable["name"] == "WAMN_ALLOWED_HOSTS")
         .context("allowed hosts")?["value"] = json!(origin);
-    for key in ["password", "binding.json"] {
-        std::fs::write(
-            directory.join(key),
-            event_secret["stringData"][key]
-                .as_str()
-                .context("event Secret")?,
-        )?;
-    }
     let group_path = directory.join("http-event-host-group.yaml");
     std::fs::write(&group_path, serde_yaml::to_string(&group)?)?;
     let rendered = wamn_gate_harness::render_check::environment(
@@ -724,7 +729,15 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         &["config.json", "ca.crt"],
         NAMESPACE,
     ));
-    secrets.push(event_secret);
+    // cert-manager issues the environment's NATS certificate (R5).
+    secrets.push(wamn_gate_harness::render_check::prerequisite(
+        &format!(
+            "wamn-nats-{}",
+            wamn_control_registry::project_env_key(&scope.org, &scope.project, scope.env.as_str())
+        ),
+        &["ca.crt", "tls.crt", "tls.key"],
+        NAMESPACE,
+    ));
     wamn_gate_harness::render_check::assert_complete(&documents, &secrets)?;
     let materializer = PathBuf::from(
         std::env::var_os("WAMN_MATERIALIZER_COMPONENT").context("materializer bytes")?,

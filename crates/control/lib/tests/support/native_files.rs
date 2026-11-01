@@ -533,21 +533,7 @@ pub async fn exercise(
     let mut group: Value = serde_yaml::from_slice(&std::fs::read(
         platform.host_group.as_ref().context("host group")?,
     )?)?;
-    let (with_events, secret) = super::event_overlay(&document, group)?;
-    group = with_events;
-    let secret_path = run.work.join("files-events.json");
-    std::fs::write(&secret_path, serde_json::to_vec(&secret)?)?;
-    run.run(
-        "kubectl",
-        &[
-            "-n",
-            NAMESPACE,
-            "apply",
-            "-f",
-            &secret_path.to_string_lossy(),
-        ],
-    )
-    .await?;
+    group = super::event_overlay(&document, group)?;
     let issuer = format!("https://integration-session.{NAMESPACE}.svc.cluster.local");
     group["env"]
         .as_array_mut()

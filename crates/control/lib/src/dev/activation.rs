@@ -938,12 +938,8 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
         request.release.manifest_digest.to_string(),
         "--wasmtime-cache-dir".to_owned(),
         request.wasmtime_cache_dir.display().to_string(),
-        "--materializer-nats-binding-file".to_owned(),
-        request
-            .config
-            .materializer_nats_binding_file()
-            .display()
-            .to_string(),
+        "--user-config".to_owned(),
+        request.config.host_config_file().display().to_string(),
         "--project".to_owned(),
         identity.project.clone(),
         "--org".to_owned(),
@@ -1916,7 +1912,7 @@ mod tests {
             "runner": "wamn-dev-fixture-1",
             "host_binary": "/opt/wamn/bin/wamn-host",
             "wasmtime_cache_dir": "/tmp/wamn-dev-cache",
-            "materializer_nats_binding_file": "/tmp/wamn-dev/materializer-nats.json"
+            "host_config_file": "/tmp/wamn-dev/host-config.yaml"
         })
     }
 
@@ -2096,7 +2092,6 @@ mod tests {
                     "--schema" => "WAMN_SCHEMA",
                     "--drain-bound-seconds" => "WAMN_DRAIN_BOUND_SECONDS",
                     "--wasmtime-cache-dir" => "WAMN_WASMTIME_CACHE_DIR",
-                    "--materializer-nats-binding-file" => "WAMN_MAT_NATS_BINDING_FILE",
                     _ => key,
                 };
                 // The release's --environment overrides the chart's namespace argument.
@@ -2281,7 +2276,6 @@ mod tests {
             "WAMN_HTTP_ADMITTER_PG_URL", // Local databases use disposable credentials and endpoints.
             "WAMN_EVENT_MATERIALIZER_PG_URL", // Local databases use disposable credentials and endpoints.
             "WAMN_ADMINISTRATION_PG_URL", // Local databases use disposable credentials and endpoints.
-            "WAMN_MAT_NATS_BINDING_FILE", // Local materializer credentials use a private file.
             "WAMN_CONNECTION_STORE_URL",  // Local credentials use the database reader.
             "WAMN_OAUTH_ENCRYPTION",      // Local hosts share a file key.
             "WAMN_OAUTH_KEY_FILE",        // Local hosts share the target directory.
@@ -2688,8 +2682,8 @@ mod tests {
             expected_digest.as_str(),
             "--wasmtime-cache-dir",
             "/tmp/wamn-dev-cache",
-            "--materializer-nats-binding-file",
-            "/tmp/wamn-dev/materializer-nats.json",
+            "--user-config",
+            "/tmp/wamn-dev/host-config.yaml",
             "--project",
             "fixture",
             "--org",

@@ -61,41 +61,26 @@ pub struct DevEnvironmentInputs {
     pub cdc_reader: Option<super::config::CdcReader>,
 }
 
-/// The materializer's events binding inside the private root.
-const MATERIALIZER_NATS_BINDING_FILE: &str = "materializer-nats.json";
+/// The host configuration file inside the private root.
+const HOST_CONFIG_FILE: &str = "host-config.yaml";
 
-/// Write the materializer's events binding in the shape that the cluster
-/// mounts from its Secret: the server, the certificate, and the environment's
-/// source stream and subjects.
-fn write_materializer_binding(
-    root: &Path,
-    inputs: &DevEnvironmentInputs,
-    identity: &DevActivationIdentity,
-) -> anyhow::Result<PathBuf> {
+/// Write the host configuration file with the `plugins` entry that the
+/// release chart declares (docs/plan/alignment.md R6). Its `events` binding
+/// inherits the host's data connection, as in the cluster.
+fn write_host_config(root: &Path, identity: &DevActivationIdentity) -> anyhow::Result<PathBuf> {
     use std::io::Write as _;
     use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
 
-    let source = wamn_control_provision::events::source_stream_config(
-        &wamn_control_registry::Triple::new(
-            &identity.org,
-            &identity.project,
-            identity.environment.clone(),
-        ),
-        inputs.stream_replicas,
-        Duration::from_secs(inputs.dup_window_secs),
-    );
-    let binding = serde_json::json!({
-        "servers": inputs.nats.nats_url,
-        "tls-ca": inputs.nats.nats_tls_ca,
-        "tls-cert": inputs.nats.nats_tls_cert,
-        "tls-key": inputs.nats.nats_tls_key,
-        "stream-allow": source.name,
-        "subject-allow": source.subjects.join(","),
-        "subscription-capacity-bytes": "4194304",
-        "subscription-capacity": "64",
-        "max-in-flight": "64"
-    });
-    let path = root.join(MATERIALIZER_NATS_BINDING_FILE);
+    let plugins = crate::release_chart::events_plugin(
+        &identity.org,
+        &identity.project,
+        identity.environment.as_str(),
+    )?;
+    let mut host = serde_yaml::Mapping::new();
+    host.insert("plugins".into(), plugins);
+    let mut config = serde_yaml::Mapping::new();
+    config.insert("host".into(), serde_yaml::Value::Mapping(host));
+    let path = root.join(HOST_CONFIG_FILE);
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -105,7 +90,7 @@ fn write_materializer_binding(
         .with_context(|| format!("create {}", path.display()))?;
     // A file left by an earlier run keeps its old mode, so set it again.
     file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    file.write_all(&serde_json::to_vec(&binding)?)
+    file.write_all(serde_yaml::to_string(&config)?.as_bytes())
         .with_context(|| format!("write {}", path.display()))?;
     Ok(path)
 }
@@ -1071,7 +1056,7 @@ pub fn write_dev_config(
     // compilation cache is the point of keeping it.
     std::fs::create_dir_all(&wasmtime_cache)
         .context("create the product-command Wasmtime cache")?;
-    let materializer_binding = write_materializer_binding(root, inputs, identity)?;
+    let host_config = write_host_config(root, identity)?;
     let mut config = serde_json::json!({
         "target_database_url": route.database_url.as_str(),
         // The loop recreates the target when its schema inputs change, which
@@ -1115,7 +1100,7 @@ pub fn write_dev_config(
         "runner": identity.runner.as_str(),
         "host_binary": &inputs.host_binary,
         "wasmtime_cache_dir": wasmtime_cache,
-        "materializer_nats_binding_file": materializer_binding,
+        "host_config_file": host_config,
     });
     // A separate insert keeps the literal above inside the json! recursion limit.
     config["platform_domain"] = inputs.platform_domain.as_str().into();

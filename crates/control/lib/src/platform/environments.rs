@@ -315,11 +315,6 @@ pub fn render_host_group(
     suffix: &str,
 ) -> anyhow::Result<serde_json::Value> {
     let mut group: serde_json::Value = serde_yaml::from_str(yaml)?;
-    let env_key = wamn_control_registry::project_env_key(
-        &environment.org,
-        &environment.project,
-        &environment.env,
-    );
     for variable in group["env"]
         .as_array_mut()
         .context("host group has no env list")?
@@ -334,14 +329,6 @@ pub fn render_host_group(
         };
         if let Some(value) = replacement {
             variable["value"] = value.into();
-        }
-    }
-    for volume in group["volumes"]
-        .as_array_mut()
-        .context("host group has no volumes")?
-    {
-        if volume["name"] == "materializer-nats" {
-            volume["secret"]["secretName"] = format!("wamn-nats-{env_key}-materializer").into();
         }
     }
     Ok(group)

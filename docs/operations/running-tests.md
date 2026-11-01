@@ -323,7 +323,7 @@ Run the phase 1 cases by their full names:
 
 ```bash
 for name in prekind_environment_renders prekind_rejects_old_missing_conn_reader \
-  prekind_rejects_old_rollback_without_events prekind_receiving_pat_renders prekind_wms_pat_renders; do
+  prekind_receiving_pat_renders prekind_wms_pat_renders; do
   cargo test --locked --offline -p wamn-control --test environment_apply_kind \
     "prekind_render::$name" -- --exact --nocapture --test-threads=1 || exit "$?"
 done
