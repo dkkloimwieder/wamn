@@ -24,6 +24,23 @@ pub trait InvocationPolicy: HostPlugin + Sized {
     /// The host transaction of one request element of a logged call.
     type Transaction: Transaction;
 
+    /// Bind declared capabilities after the loader installs the application's linker.
+    fn bind_application(
+        &self,
+        item: &mut wash_runtime::engine::workload::WorkloadItem<'_>,
+        fact: &AdmittedComponent,
+    ) -> impl Future<Output = anyhow::Result<()>> + Send {
+        async {
+            let imports = fact
+                .imports
+                .iter()
+                .map(|name| wash_runtime::wit::WitInterface::from(name.as_str()))
+                .collect();
+            self.on_workload_item_bind(item, wash_runtime::plugin::WitInterfaces::new(&imports))
+                .await
+        }
+    }
+
     /// Begin the host transaction of one request element of a logged call, before its
     /// claim and its guest call (`docs/history/host-transaction.md` 4.1). It
     /// admits the call as [`activate`](Self::activate) does. An operation that

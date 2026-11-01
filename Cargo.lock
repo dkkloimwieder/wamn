@@ -5977,6 +5977,7 @@ dependencies = [
  "wash-runtime",
  "wasmparser 0.261.0",
  "wasmtime",
+ "wasmtime-wasi",
  "wasmtime-wasi-http",
  "wat",
  "wit-component 0.254.2",

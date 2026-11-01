@@ -20,6 +20,10 @@ Package operations version together even when their implementations occupy separ
 A component declaration records its operations, ports, effects, static SQL, and connection requirements.
 Admission derives effects from the actual imports and compares the declared operation facts.
 The component's complete admitted facts remain separate from its compiled bytes.
+After native resolution, the host replaces each application's linker with one built from its declared imports.
+It then binds declared capabilities before preparing dispatch, including components that match no native plugin interface.
+An undeclared import refuses at instantiation, and the error names that import.
+Platform workloads and the composed platform HTTP entry retain their native linkers.
 Synchronous palette nodes export `wamn:node/handler`.
 Asynchronous palette nodes export `wamn:node/async-handler@0.1.0`.
 Application operations use their package interfaces and can await asynchronous capabilities.

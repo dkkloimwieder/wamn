@@ -276,7 +276,7 @@ fn validate_pooling_capacity_environment(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::collections::HashMap;
     use std::fs;
     use std::future::Future as _;
@@ -567,7 +567,7 @@ interface tcp-create-socket {
           (then (return (i32.or (i32.const 0x100) (i32.load8_u (i32.const 33))))))
         i32.const 0))"#;
 
-    fn socket_guest_bytes() -> Vec<u8> {
+    pub(crate) fn socket_guest_bytes() -> Vec<u8> {
         let mut resolve = Resolve::new();
         resolve
             .push_str("wasi-sockets.wit", SOCKETS_SUBSET_WIT)

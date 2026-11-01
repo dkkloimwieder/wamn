@@ -100,6 +100,113 @@ async fn load_with_reuse(
 }
 
 #[tokio::test]
+async fn native_loader_scopes_unmatched_application_imports() {
+    let clock = "wasi:clocks/monotonic-clock@0.2.0";
+    let sockets = "wasi:sockets/instance-network@0.2.12";
+    for (import, declared) in [(sockets, false), (clock, false), (clock, true)] {
+        let mut input = component("declared-world", OPERATION, None, 0);
+        input.bytes = if import == sockets {
+            crate::engine::tests::socket_guest_bytes()
+        } else {
+            wat::parse_str(format!(
+                r#"(component
+                  (import "{import}" (instance $clock
+                    (export "now" (func (result u64)))))
+                  (core func $now (canon lower (func $clock "now")))
+                  (core module $module
+                    (import "clock" "now" (func $now (result i64)))
+                    (func (export "read") (result i64) call $now))
+                  (core instance $module (instantiate $module
+                    (with "clock" (instance (export "now" (func $now))))))
+                  (func (export "read") (result u64)
+                    (canon lift (core func $module "read"))))"#
+            ))
+            .expect("import fixture")
+        };
+        input.fact.component_digest = crate::component_admission::component_digest(&input.bytes);
+        input.fact.operations.clear();
+        input.fact.imports = if declared {
+            vec![import.into()]
+        } else {
+            Vec::new()
+        };
+        // No host interface matches this component, so native plugin binding never runs.
+        let workload = load_with_reuse(
+            vec![input],
+            crate::warm_reuse::WarmReuse::default(),
+            Vec::new(),
+        )
+        .await
+        .expect("compile and resolve imports without executing the component");
+        let id = workload.component_ids().next().expect("component id");
+        let resolved = workload.resolved(id).expect("resolved component");
+        let pre = resolved.instantiate_pre(id).await;
+        if declared {
+            let mut store = resolved.new_store(id).await.expect("store");
+            pre.expect("declared clock links")
+                .instantiate_async(&mut store)
+                .await
+                .expect("declared clock instantiates");
+        } else {
+            let error = pre
+                .err()
+                .expect("an undeclared import refuses at instantiation");
+            let message = format!("{error:#}");
+            let named = if import == sockets {
+                [
+                    "wasi:sockets/network@0.2.12",
+                    "wasi:sockets/instance-network@0.2.12",
+                    "wasi:sockets/tcp-create-socket@0.2.12",
+                    "wasi:sockets/tcp@0.2.12",
+                ]
+                .iter()
+                .any(|name| message.contains(name))
+            } else {
+                message.contains(import)
+            };
+            assert!(named, "{error:#}");
+        }
+        workload.unbind_all_plugins().await.expect("unbind");
+    }
+}
+
+#[tokio::test]
+async fn native_loader_keeps_platform_entry_linker() {
+    let bytes = crate::engine::tests::socket_guest_bytes();
+    let digest = crate::component_admission::component_digest(&bytes);
+    let workload = load_native_workload(
+        Arc::new(crate::build_engine(&[]).expect("production engine")),
+        NativeWorkloadSpec {
+            warm_reuse: crate::warm_reuse::WarmReuse::default(),
+            id: "platform-entry-linking".into(),
+            namespace: "test".into(),
+            name: "platform-entry-linking".into(),
+            components: Vec::new(),
+            entry: Some(super::NativeEntry {
+                members: Vec::new(),
+                bytes,
+                digest,
+            }),
+            local_resources: LocalResources::default(),
+            host_interfaces: Vec::new(),
+        },
+        &HashMap::default(),
+        &PluginBindings::new(),
+        &Meters::new(MeterKind::Off),
+    )
+    .await
+    .expect("platform entry resolves");
+    let id = workload.component_ids().next().expect("entry id");
+    workload
+        .resolved(id)
+        .expect("platform workload")
+        .instantiate_pre(id)
+        .await
+        .expect("platform socket imports retain their native implementations");
+    workload.unbind_all_plugins().await.expect("unbind");
+}
+
+#[tokio::test]
 async fn native_loader_allows_repeated_export_only_handlers() {
     let first = component("transform", HANDLER, None, 37);
     let repeat = NativeComponent {

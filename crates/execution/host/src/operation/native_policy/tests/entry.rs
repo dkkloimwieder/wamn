@@ -114,7 +114,7 @@ fn operation_caller() -> Vec<u8> {
 
 /// One release of the root member, on a host whose artifact directory holds
 /// only what that host may load: the entry, or without one the member. The
-/// operation caller is the entry, or without one the member's own bytes.
+/// operation caller is the platform entry. The member has no platform imports.
 struct Release {
     host: Arc<OperationHost>,
     components: Arc<[AdmittedComponent]>,
@@ -127,12 +127,11 @@ fn release(with_entry: bool, postgres: Option<Arc<WamnPostgres>>) -> Release {
     let scratch = ScratchRoot::create().expect("scratch artifact directory");
     let entry = operation_caller();
     let entry_digest = component_digest(&entry);
-    let bare = if with_entry {
-        component_bytes(ROOT, Case::Success)
-    } else {
-        entry.clone()
-    };
-    let member = fact(ROOT, &bare, false);
+    let bare = component_bytes(ROOT, Case::Unobserved);
+    let mut member = fact(ROOT, &bare, false);
+    member
+        .imports
+        .retain(|import| import == "wamn:node/types@0.1.0");
     let composed_entry = if with_entry {
         let path = local_component_path(scratch.path(), &entry_digest).expect("entry path");
         std::fs::write(&path, &entry).expect("write the entry");

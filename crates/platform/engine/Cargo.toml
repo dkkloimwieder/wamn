@@ -14,6 +14,7 @@ wasm_component_model_implements = ["wash-runtime/wasm_component_model_implements
 # No `oci` feature here: the registry source lives in wamn-runtime.
 wash-runtime = { workspace = true }
 wasmtime = { workspace = true }
+wasmtime-wasi = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-component-policy = { workspace = true }
 wamn-execution-contract = { workspace = true }

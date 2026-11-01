@@ -13,11 +13,11 @@ use wamn_catalog::AdmittedComponent;
 use wash_runtime::engine::Engine;
 use wash_runtime::engine::InstancePolicy;
 use wash_runtime::engine::dispatch::DispatchTarget;
-use wash_runtime::engine::workload::ResolvedWorkload;
+use wash_runtime::engine::workload::{ResolvedWorkload, WorkloadItem};
 use wash_runtime::host::HostRef;
 use wash_runtime::host::http::{HostHandler, NullServer};
 use wash_runtime::observability::Meters;
-use wash_runtime::plugin::{HostPlugin, PluginBindings};
+use wash_runtime::plugin::{HostPlugin, PluginBindings, WitInterfaces};
 use wash_runtime::types::{Component, LocalResources, Workload};
 use wash_runtime::wit::WitInterface;
 
@@ -201,6 +201,54 @@ pub async fn load_native_application<P: InvocationPolicy>(
         Arc::new(load_native_workload(engine, spec, plugins, plugin_bindings, meters).await?);
     let mut dispatch_targets = BTreeMap::new();
     for id in workload.component_ids() {
+        if let Some(fact) = workload.facts_by_component_id.get(id) {
+            let bound = async {
+                let components = workload.resolved(id)?.components();
+                let mut components = components.write().await;
+                let component = components
+                    .get_mut(id)
+                    .context("admitted component missing")?;
+                let mut item = WorkloadItem::Component(component);
+                let bound_plugins = item
+                    .plugins()
+                    .as_ref()
+                    .map(|bound| bound.keys().copied().collect::<BTreeSet<_>>())
+                    .unwrap_or_default();
+                for plugin in plugins.values().filter(|plugin| plugin.id() != policy.id()) {
+                    if !bound_plugins.contains(plugin.id()) {
+                        continue;
+                    }
+                    let world = plugin.world();
+                    let imports = fact
+                        .imports
+                        .iter()
+                        .map(|name| WitInterface::from(name.as_str()))
+                        .filter(|interface| {
+                            world
+                                .imports
+                                .iter()
+                                .any(|provided| provided.contains(interface))
+                        })
+                        .collect::<std::collections::HashSet<_>>();
+                    if !imports.is_empty() {
+                        plugin
+                            .on_workload_item_bind(&mut item, WitInterfaces::new(&imports))
+                            .await?;
+                    }
+                }
+                policy.bind_application(&mut item, fact).await?;
+                item.add_plugin(policy.id(), Arc::clone(&policy) as Arc<dyn HostPlugin>);
+                Ok::<_, anyhow::Error>(())
+            }
+            .await;
+            if let Err(error) = bound {
+                workload
+                    .unbind_all_plugins()
+                    .await
+                    .context("unbind native workloads after application binding failed")?;
+                return Err(error);
+            }
+        }
         let target = match workload.dispatch_target(id, policy.id()).await {
             Ok(target) => target,
             Err(error) => {
@@ -331,6 +379,7 @@ pub(super) async fn load_native_workload(
             &spec.namespace,
             &spec.name,
             component,
+            facts_by_name.get(&name),
             &spec.host_interfaces,
             plugins,
             plugin_bindings,
@@ -377,6 +426,7 @@ async fn load_component_workload(
     namespace: &str,
     name: &str,
     component: Component,
+    fact: Option<&AdmittedComponent>,
     host_interfaces: &[WitInterface],
     plugins: &HashMap<&'static str, Arc<dyn HostPlugin>>,
     plugin_bindings: &PluginBindings,
@@ -396,6 +446,7 @@ async fn load_component_workload(
         host_interfaces: host_interfaces.to_vec(),
         volumes: Vec::new(),
     };
+    let native_engine = engine.inner().clone();
     let engine = Arc::clone(engine);
     let unresolved = tokio::task::spawn_blocking(move || engine.initialize_workload(&id, workload))
         .await
@@ -417,7 +468,27 @@ async fn load_component_workload(
         }
     };
     match component_id {
-        Ok(component_id) => Ok((component_id, resolved)),
+        Ok(component_id) => {
+            if let Some(fact) = fact {
+                let scoped = match crate::declared_world::linker(&native_engine, fact) {
+                    Ok(linker) => linker,
+                    Err(error) => {
+                        resolved
+                            .unbind_all_plugins()
+                            .await
+                            .context("unbind native workload after declared linking failed")?;
+                        return Err(error);
+                    }
+                };
+                let components = resolved.components();
+                let mut components = components.write().await;
+                let component = components
+                    .get_mut(component_id.as_str())
+                    .expect("resolved component identity remains present");
+                *component.linker() = scoped;
+            }
+            Ok((component_id, resolved))
+        }
         Err(error) => {
             resolved
                 .unbind_all_plugins()

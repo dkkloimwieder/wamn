@@ -108,6 +108,7 @@ enum Case {
     Cancellation,
     Trap,
     PostgresImport,
+    Unobserved,
     /// A composed root and child, each with its own statements instance.
     MemberInstances,
     /// A composed root without SQL whose operation declares a host
@@ -135,16 +136,31 @@ fn component_bytes(operation: &str, case: Case) -> Vec<u8> {
     let body = match case {
         Case::RunDeadline | Case::Cancellation => "(loop br 0)",
         Case::Trap => "unreachable",
-        Case::Success | Case::CalleeGrant | Case::StartDeadline | Case::PostgresImport => "",
+        Case::Success
+        | Case::CalleeGrant
+        | Case::StartDeadline
+        | Case::PostgresImport
+        | Case::Unobserved => "",
         Case::MemberInstances | Case::SqlFreeRoot => {
             unreachable!()
         }
     };
+    let observer = if matches!(case, Case::Unobserved) {
+        r#"(core module $observer (func (export "record") (param i32)))
+           (core instance $observer (instantiate $observer))
+           (alias core export $observer "record" (core func $observe))"#
+            .to_owned()
+    } else {
+        format!(
+            r#"(import "{OBSERVE}" (instance $observe
+          (export "record" (func (param "phase" u32)))))
+          (core func $observe (canon lower (func $observe "record")))"#
+        )
+    };
     wat::parse_str(format!(
         r#"(component
       {NODE_TYPES}
-      (import "{OBSERVE}" (instance $observe
-        (export "record" (func (param "phase" u32)))))
+      {observer}
       {postgres}
       (core module $memory
         (memory (export "memory") 16)
@@ -159,7 +175,6 @@ fn component_bytes(operation: &str, case: Case) -> Vec<u8> {
             local.get $new local.get $old local.get $old-size memory.copy
           end local.get $new))
       (core instance $memory (instantiate $memory))
-      (core func $observe (canon lower (func $observe "record")))
       (core func $return (canon task.return (result (result $emission (error $error)))
         (memory $memory "memory")))
       (core module $main
@@ -1126,6 +1141,7 @@ async fn run_case(case: Case) {
             }
             Case::Cancellation => unreachable!("cancellation has its own caller task"),
             Case::PostgresImport => unreachable!("the postgres bind case has its own test"),
+            Case::Unobserved => unreachable!("the unobserved member has its own selection test"),
             Case::MemberInstances | Case::SqlFreeRoot => {
                 unreachable!("member instances have their own authenticated tests")
             }

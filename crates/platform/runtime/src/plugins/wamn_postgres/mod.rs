@@ -387,6 +387,7 @@ impl WamnPostgres {
         component: &Component,
         interfaces: &WitInterfaces<'_>,
     ) -> anyhow::Result<()> {
+        let has_types = interfaces.contains("wamn", "postgres", &["types"]);
         let has_client = interfaces.contains("wamn", "postgres", &["client"]);
         let has_statements = interfaces.contains("wamn", "postgres", &["statements"]);
         if interfaces.contains("wamn", "operation", &["operation"]) {
@@ -394,6 +395,12 @@ impl WamnPostgres {
                 _,
                 operation::PostgresOperation,
             >(linker, extract_active_ctx)?;
+        }
+        if has_types {
+            bindings::wamn::postgres::types::add_to_linker::<_, SharedCtx>(
+                linker,
+                extract_active_ctx,
+            )?;
         }
         if !has_client && !has_statements {
             return Ok(());
@@ -428,10 +435,6 @@ impl WamnPostgres {
                     has_unnamed = true;
                 }
             }
-            bindings::wamn::postgres::types::add_to_linker::<_, SharedCtx>(
-                linker,
-                extract_active_ctx,
-            )?;
             if has_unnamed {
                 client::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)?;
             }
