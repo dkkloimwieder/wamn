@@ -25,7 +25,7 @@ use wamn_event_wire::{Envelope, Op, msg_id, subject};
 #[derive(Debug, Args)]
 pub struct ReaderBenchArgs {
     /// Data-plane NATS (JetStream) URL.
-    #[arg(long, env = "WAMN_EVT_NATS_URL")]
+    #[arg(long, env = "WAMN_NATS_URL")]
     pub nats_url: String,
 
     /// Organization slug for the declared event environment.

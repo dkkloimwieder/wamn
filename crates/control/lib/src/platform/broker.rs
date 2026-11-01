@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
 
-use crate::delivery::environment::EnvironmentFile;
 use crate::environment::document::EnvironmentDocument;
 use crate::{kubectl, release_chart::Target};
 
@@ -194,12 +193,7 @@ fn keep_platform_users(authorization: &mut Authorization) {
     }
 }
 
-pub(super) async fn apply(
-    target: &Target,
-    repository: &Path,
-    environments: &Path,
-    org: &str,
-) -> anyhow::Result<bool> {
+pub(super) async fn apply(target: &Target, environments: &Path, org: &str) -> anyhow::Result<bool> {
     let live: Value = kubectl::get(
         &target.kubeconfig,
         &target.context,
@@ -232,20 +226,7 @@ pub(super) async fn apply(
             "environment {} names another org",
             path.display()
         );
-        let file: EnvironmentFile =
-            serde_json::from_slice(&std::fs::read(path.with_extension("json"))?)?;
-        let manifests = file
-            .packages
-            .iter()
-            .map(|package| {
-                wamn_schema_generator::receipt::check_current(&repository.join(package))?;
-                let path = wamn_schema_generator::package_manifest_path(&repository.join(package));
-                Ok(wamn_schema_generator::PackageManifest::from_slice(
-                    &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
-                )?)
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        for object in render(&document, &manifests, &mut authorization)? {
+        for object in render(&document, &mut authorization)? {
             changed |= apply_object(target, &object).await?;
         }
     }
@@ -275,23 +256,15 @@ pub(super) async fn apply(
 }
 
 /// Render the environment's NATS objects without a cluster or a live broker.
-pub fn render_event_secrets(
-    document: &EnvironmentDocument,
-    manifests: &[wamn_schema_generator::PackageManifest],
-) -> anyhow::Result<Vec<Value>> {
-    render(
-        document,
-        manifests,
-        &mut Authorization { users: Vec::new() },
-    )?
-    .into_iter()
-    .map(|object| serde_json::to_value(object).context("encode event object"))
-    .collect()
+pub fn render_event_secrets(document: &EnvironmentDocument) -> anyhow::Result<Vec<Value>> {
+    render(document, &mut Authorization { users: Vec::new() })?
+        .into_iter()
+        .map(|object| serde_json::to_value(object).context("encode event object"))
+        .collect()
 }
 
 fn render(
     document: &EnvironmentDocument,
-    manifests: &[wamn_schema_generator::PackageManifest],
     authorization: &mut Authorization,
 ) -> anyhow::Result<Vec<Value>> {
     let scope = document.triple();
@@ -299,33 +272,20 @@ fn render(
         wamn_control_registry::project_env_key(&document.org, &document.project, &document.env);
     let source = source_stream_config(&scope, 1, Duration::from_secs(120));
     let advisory = advisory_stream_config(&scope, 1);
-    let consumers = wamn_control_provision::events::entity_consumers(
-        &scope,
-        manifests.iter().filter(|manifest| {
-            document
-                .applications
-                .values()
-                .any(|application| application.packages.contains(&manifest.package.id))
-        }),
-    );
     let user = wamn_control_registry::environment_nats_user(&env_key);
-    // The environment's events, and what its host and its materializer do on
-    // that environment's streams and consumers (docs/plan/alignment.md R5).
+    // The environment's events, and what its host and its materializer read
+    // on that environment's own stream: every consumer of the stream, by
+    // wildcard. Stream and consumer management stays with the provisioning
+    // client (docs/plan/alignment.md R5, docs/architecture/capabilities.md).
     let mut publish = vec![source.subjects[0].clone()];
     for name in [&source.name, &advisory.name] {
         publish.push(format!("$JS.API.STREAM.INFO.{name}"));
     }
-    for consumer in consumers {
-        let name = consumer
-            .durable_name
-            .context("materializer has no durable name")?;
-        let suffix = format!("{}.{name}", source.name);
-        publish.extend([
-            format!("$JS.API.CONSUMER.INFO.{suffix}"),
-            format!("$JS.API.CONSUMER.MSG.NEXT.{suffix}"),
-            format!("$JS.ACK.{suffix}.>"),
-        ]);
-    }
+    publish.extend([
+        format!("$JS.API.CONSUMER.INFO.{}.*", source.name),
+        format!("$JS.API.CONSUMER.MSG.NEXT.{}.*", source.name),
+        format!("$JS.ACK.{}.>", source.name),
+    ]);
     for bucket in ["wamn-auth", "wamn-connection"] {
         publish.extend(memory_subjects(bucket, &env_key));
     }
@@ -467,13 +427,13 @@ mod tests {
             users: platform_users(),
         };
         let platform = authorization.users.len();
-        let first = render(&document("one"), &[], &mut authorization).unwrap();
+        let first = render(&document("one"), &mut authorization).unwrap();
         let users = serde_json::to_value(&authorization).unwrap();
-        let repeated = render(&document("one"), &[], &mut authorization).unwrap();
+        let repeated = render(&document("one"), &mut authorization).unwrap();
         assert_eq!(first, repeated);
         assert_eq!(users, serde_json::to_value(&authorization).unwrap());
         assert_eq!(authorization.users.len(), platform + 1);
-        render(&document("two"), &[], &mut authorization).unwrap();
+        render(&document("two"), &mut authorization).unwrap();
         assert_eq!(authorization.users.len(), platform + 2);
         // R4: no user has a password.
         assert!(
@@ -494,8 +454,8 @@ mod tests {
     #[test]
     fn an_environment_user_reaches_no_subject_of_another() {
         let mut authorization = Authorization { users: Vec::new() };
-        render(&document("one"), &[], &mut authorization).unwrap();
-        render(&document("two"), &[], &mut authorization).unwrap();
+        render(&document("one"), &mut authorization).unwrap();
+        render(&document("two"), &mut authorization).unwrap();
         let subjects = |user: &Account| {
             let mut all = user.permissions.publish.allow.clone();
             all.extend(user.permissions.subscribe.allow.clone());
@@ -527,6 +487,52 @@ mod tests {
                     .contains(&format!("$KV.{bucket}.test--one--dev.>"))
             );
         }
+        // Environment one is refused consumer and stream management on its own
+        // event stream; only the filtered KV watches are its own consumers.
+        let stream =
+            source_stream_config(&document("one").triple(), 1, Duration::from_secs(120)).name;
+        for subject in [
+            format!("$JS.API.CONSUMER.CREATE.{stream}.mat"),
+            format!("$JS.API.CONSUMER.CREATE.{stream}.mat.evt.test.one.dev.>"),
+            format!("$JS.API.CONSUMER.DURABLE.CREATE.{stream}.mat"),
+            format!("$JS.API.CONSUMER.DELETE.{stream}.mat"),
+            format!("$JS.API.STREAM.CREATE.{stream}"),
+            format!("$JS.API.STREAM.UPDATE.{stream}"),
+            format!("$JS.API.STREAM.DELETE.{stream}"),
+        ] {
+            assert!(
+                !one.permissions
+                    .publish
+                    .allow
+                    .iter()
+                    .any(|pattern| subject_matches(pattern, &subject)),
+                "{subject} is granted"
+            );
+        }
+        assert!(
+            one.permissions
+                .publish
+                .allow
+                .iter()
+                .any(|pattern| subject_matches(
+                    pattern,
+                    &format!("$JS.API.CONSUMER.MSG.NEXT.{stream}.mat")
+                ))
+        );
+    }
+
+    /// Whether the NATS subject `pattern` matches `subject`.
+    fn subject_matches(pattern: &str, subject: &str) -> bool {
+        let mut subject = subject.split('.');
+        for token in pattern.split('.') {
+            match (token, subject.next()) {
+                (">", Some(_)) => return true,
+                ("*", Some(_)) => {}
+                (token, Some(value)) if token == value => {}
+                _ => return false,
+            }
+        }
+        subject.next().is_none()
     }
 
     #[test]

@@ -1570,7 +1570,7 @@ mod tests {
 
     // -----------------------------------------------------------------------
     // Live round-trip against a real data-plane NATS. Ignored by default and
-    // gated on WAMN_EVT_NATS_URL: it exercises the exact async-nats call
+    // gated on WAMN_NATS_URL and its WAMN_NATS_TLS_* certificate: it exercises the exact async-nats call
     // sequence the plugin relies on (dedupe on publish, durable pull consumer,
     // fetch/metadata/headers/ack) through the plugin's own mapping helpers, so
     // a broken API assumption fails here rather than only in-cluster. The full
@@ -1578,13 +1578,14 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[tokio::test]
-    #[ignore = "requires: WAMN_EVT_NATS_URL"]
+    #[ignore = "requires: WAMN_NATS_URL, WAMN_NATS_TLS_CA, WAMN_NATS_TLS_CERT, WAMN_NATS_TLS_KEY"]
     async fn live_derived_publish_replay_converges_through_jetstream_dedup() {
-        wamn_test_postgres::require_prerequisites(&["WAMN_EVT_NATS_URL"]);
-        let url = std::env::var("WAMN_EVT_NATS_URL")
-            .expect("set WAMN_EVT_NATS_URL to this test's disposable event broker");
-
-        let client = async_nats::connect(&url).await.expect("connect");
+        wamn_test_postgres::require_prerequisites(&["WAMN_NATS_URL"]);
+        let client = wamn_platform_identity::nats::PlatformNats::from_env()
+            .expect("set WAMN_NATS_URL and its certificate to this test's disposable broker")
+            .connect()
+            .await
+            .expect("connect");
         let ctx = async_nats::jetstream::new(client.clone());
         let stream = "EVT_13_wamnjsderived_3_app_3_dev";
         let event_subject = "evt.wamnjsderived.app.dev.orders.update";

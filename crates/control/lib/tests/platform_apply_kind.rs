@@ -2269,10 +2269,7 @@ fn prekind_platform_renders() -> anyhow::Result<()> {
         std::fs::write(&path, serde_yaml::to_string(&group)?)?;
         let mut secrets = credential_secrets(&document.triple(), "hosts");
         secrets.extend(operator_prerequisites("hosts"));
-        secrets.extend(wamn_control::platform::render_event_secrets(
-            &document,
-            &[],
-        )?);
+        secrets.extend(wamn_control::platform::render_event_secrets(&document)?);
         assert_complete(
             &template(&environment(&document, &manifest, &path, 70)?, "hosts")?,
             &secrets,

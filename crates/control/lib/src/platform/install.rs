@@ -647,7 +647,7 @@ async fn broker(
     environments: &Path,
     step: &InstallStep,
 ) -> anyhow::Result<bool> {
-    let mut changed = super::broker::apply(target, repository, environments, &document.org).await?;
+    let mut changed = super::broker::apply(target, environments, &document.org).await?;
     changed |= nats(target, document, repository, step).await?;
     Ok(changed)
 }
