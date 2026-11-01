@@ -116,13 +116,15 @@ Effort: M
 Area: crates/identity/session/src/file_keys.rs  
 Evidence: `crates/identity/session/src/file_keys.rs:30`; `crates/identity/session/src/file_keys.rs:80`; `services/edge/src/authenticator.rs:52`  
 Problem: File-backed keys load once and always report fresh evidence. After a signing key compromise, removing the key from cloud publication cannot stop an edge process from accepting newly forged tokens indefinitely. The short token lifetime does not bound this risk because the attacker can sign new issuance times.  
-Proposal: Give offline key sets a finite trust deadline and require replacement before that deadline. Refuse new admission when the offline trust period ends.  
-Deletes: The unconditional `true` freshness result.  
-Risk: Disconnected devices eventually refuse sessions. A test must retain an old key set, advance beyond its trust deadline, and reject a newly signed token.
+Proposal: No trust deadline on the local key file. A revoked-list file ships with the bundle when wanted.  
+Deletes: Nothing now. The unconditional `true` freshness result stays.  
+Risk: A disconnected box trusts a verified token until its expiry. A test proves that a key listed in the revoked-list file is refused once that file ships.
 
 Owner addendum 2026-10-31: unchanged. Neither [alignment](../plan/alignment.md) nor [integration-schema](../plan/integration-schema.md) covers file-backed signing keys.
 
-Owner review 2026-10-31: low, deferred. The architecture ruling for the local box is: trust a verified token until its expiry, keep no session state, and a revoked-list file can ship with the bundle later. A trust deadline on the key file means a disconnected box refuses every session after the deadline. The owner picks one of: no deadline (current) plus the revoked-list file when wanted, or a deadline and its length. Not filed until picked (question 3).
+Owner review 2026-10-31: low, deferred until the owner picks. The architecture ruling for the local box is: trust a verified token until its expiry, keep no session state, and a revoked-list file can ship with the bundle later. A trust deadline on the key file means a disconnected box refuses every session after the deadline.
+
+Owner review 2026-10-31 against origin/main 64dcf04: question 3 is answered: no trust deadline. A revoked-list file ships with the bundle when wanted. Low, Group 3 In passing when the bundle format is next touched.
 
 ## Finding E1-9: CLI and HTTP routes enforce different grant rules
 
@@ -154,8 +156,8 @@ Owner review 2026-10-31: keep as a deletion, Group 1 In passing. It is a schema 
 
 1. Must org isolation survive compromise of one native host or theft of its scheduler certificate? Answered 2026-10-31 by alignment R5: a compromised host or stolen runtime certificate reaches only its own environment. That is the boundary.
 2. Does every deployed identity database connection have independently enforced transport encryption? Answered 2026-10-31: no. E1-5 is the fix.
-3. Owner pick (E1-8): no trust deadline on the local key file (current) plus a revoked-list file when wanted, or a deadline and its length.
-4. Is every operator certificate intentionally a platform-wide credential, and what revokes one certificate without replacing the CA? Reviewer pick 2026-10-31, owner to confirm: yes, the provisioning operator certificate is one platform-wide principal by design. Revocation is short certificate lifetimes under cert-manager (alignment R3), not a CRL.
+3. Owner pick (E1-8): no trust deadline on the local key file (current) plus a revoked-list file when wanted, or a deadline and its length. Answered 2026-10-31: no trust deadline. A revoked-list file ships with the bundle when wanted.
+4. Is every operator certificate intentionally a platform-wide credential, and what revokes one certificate without replacing the CA? Answered 2026-10-31: yes, the provisioning operator certificate is one platform-wide principal by design. Revocation is short certificate lifetimes under cert-manager (alignment R3), not a CRL (E2-2).
 5. Are cache delays acceptable only after lost invalidation, or also after natural credential expiry? Answered 2026-10-31 under E1-6: only after a lost invalidation. Natural expiry refuses immediately.
 
 <!-- report E2, bead wamn-hgdta.2 -->
@@ -185,6 +187,8 @@ Deletes: Broad control table grants and every org argument to a privileged funct
 Risk: Control operations require new database interfaces. Extend the live denial tests with two organizations and direct SQL attempts against the other organization's rows and functions.
 
 Owner review 2026-10-31: keep, high, Group 3 Do. Question 2 is answered: no, an org control host is trusted for its own org only.
+
+Owner review 2026-10-31 against origin/main 64dcf04: question 4 is answered: the provisioning operator certificate is one platform-wide principal, and revocation is short certificate lifetimes under cert-manager (alignment R3), no CRL.
 
 ## Finding E2-3: Postgres connections expose sensitive traffic without transport encryption
 
@@ -297,6 +301,8 @@ Owner addendum 2026-10-31: [alignment](../plan/alignment.md) W1 to W3 change wha
 
 Owner review 2026-10-31: split. The rejected half is deriving admission facts from bytes at publication and comparing descriptors. Registry write access is the trusted boundary, and publication relies on OCI and WIT. Question 1 is answered: yes. The kept half is the runtime socket refusal above, Group 3 Do, small. It is independent of W1 to W3 and does not wait.
 
+Owner review 2026-10-31 against origin/main 64dcf04: WASI version match closed on main (wamn-cqbb0; `component-policy` carries `WASI_FAMILY` and a build-derived `WASI_CEILING`). The runtime `wasi:sockets` refusal waits on nothing.
+
 ## Finding E3-2: The native lockfile contains reported security vulnerabilities
 
 Severity: high  
@@ -383,6 +389,8 @@ Deletes: The two unused dependency declarations.
 Risk: None beyond a rebuild of the runtime crate.
 
 Owner review 2026-10-31: the advisory-refresh check and the release block are rejected. No owner and no refresh interval exist. Whoever plans the next bump runs `cargo audit` then. `vendor/pg-walstream` stays until upstream has the typed keepalive API. Low, In passing with A1-6.
+
+Owner review 2026-10-31 against origin/main 64dcf04: the adapter-digest answer is verified against wamn-cqbb0.2 at filing. If the constant is gone, the row closes.
 
 ## Open questions for the owner
 

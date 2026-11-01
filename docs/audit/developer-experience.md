@@ -330,6 +330,8 @@ Risk: An incomplete prerequisite list still causes late failures. Prove the docu
 
 Owner review 2026-10-31: In passing with F2-7. One host contract in `building.md`, versions tested before preparation.
 
+Owner review 2026-10-31 against origin/main 64dcf04: the owner confirmed Docker on Linux x86_64 as the supported developer host.
+
 ## Finding F2-9: The collector recipe assumes a cached image and a free fixed port
 
 Severity: medium  
@@ -488,6 +490,8 @@ Risk: Automatic setup can reset another session or leave services running. Propo
 
 Owner review 2026-10-31: keep, Group 2 Do. The pinned development image is struck.
 
+Owner review 2026-10-31 against origin/main 64dcf04: the owner confirmed Docker on Linux x86_64 as the supported developer host.
+
 ## Finding F3-3: Generated descriptions need a default application renderer
 
 Severity: high  
@@ -558,6 +562,8 @@ Risk: Retries can select different bytes or expose an API before its browser fil
 
 Owner review 2026-10-31: keep, Group 1 Do, sequenced after deployment D3-1, because platform apply consumes an immutable bundle. `wamn deploy <org/project/env>` is orchestration over the existing verbs and nothing more. It is the deployment-ergonomics priority: a client submits without an operator. The qualification-failure, upload-failure and rollback tests are dropped.
 
+Owner review 2026-10-31 against origin/main 64dcf04: web upload resumes a partial upload on main (5f59695). The proposal stands.
+
 ## Finding F3-7: The ten-minute target lacks a matching acceptance test
 
 Severity: medium  
@@ -582,6 +588,6 @@ Owner review 2026-10-31: keep the quickstart journey as one platform-owned test,
 All three questions were answered on 2026-10-31.
 
 1. The clock starts after SDK installation and account provisioning. The first run is the measurement, and a limit follows it (F3-7).
-2. Docker on Linux x86_64 is the supported host for now, the reviewer's pick recorded in the README for the owner to confirm.
+2. Docker on Linux x86_64 is the supported developer host, confirmed by the owner on 2026-10-31 (F2-8, F3-2).
 3. Exactly the cases the application declares beside its tests. The platform imposes none (F3-5).
 

@@ -38,11 +38,13 @@ Problem: The cluster document declares the telemetry bucket, project, cluster, z
 
 Proposal: Render cloud destinations from their owning documents. Let the project document own the DNS zone and guard destination. Let the cluster document supply runtime destinations.
 
-Deletes: `deploy/gcp/otel-collector-values.yaml` as an independent authority and the test assertion that preserves `wamn-dev-otel`. The `letsencrypt.yaml` and DNS-project part is moot: [alignment](../plan/alignment.md) C1 replaces it with a Google-managed certificate by DNS authorization. Only the collector destination part survives, In passing.
+Deletes: `deploy/gcp/otel-collector-values.yaml` as an independent authority and the test assertion that preserves `wamn-dev-otel`. The `letsencrypt.yaml` and DNS-project part is done on main: [alignment](../plan/alignment.md) Edge and CDN closed (wamn-wio2s) with a Google-managed certificate by DNS authorization. `deploy/gcp/letsencrypt.yaml` is a deletion candidate: confirm that no installer reads it after the cutover, then delete it with D1-9. Only the collector destination part survives, In passing.
 
 Risk: A second project can receive telemetry failures or DNS challenge failures. Extend `both_providers_render_every_install_manifest` with different project, bucket, email, and domain values. Require every rendered destination to follow those inputs.
 
 Owner review 2026-10-31: severity lowered from high to medium. `wamn-dev` is the only cluster, so the committed values are wrong only for a second project. Fix this when the collector and certificate renderers are next open.
+
+Owner review 2026-10-31 against origin/main 64dcf04: Edge and CDN closed on main (wamn-wio2s). The certificate and DNS-project part is done, not moot. `deploy/gcp/letsencrypt.yaml` is deleted with D1-9 once no installer reads it. The collector destination part stays In passing.
 
 ## Finding D1-3: The RC path installs an incomplete collector variant
 
@@ -82,11 +84,13 @@ Evidence: `crates/control/lib/src/dev/activation.rs:898`, `crates/control/lib/sr
 
 Problem: Local activation combines release-chart defaults with an embedded Receiving cloud manifest. It takes database pool sizes, request limits, and Wasmtime limits from that manifest for every application. Receiving allows four concurrent starts, while WMS declares one. The parity test compares against Receiving again, so it does not establish WMS parity.
 
-Proposal: Local development reads only `deploy/platform/release/values.yaml`. Drop the host-group include. Any per-application host difference is a chart value in the environment, not a second file.
+Proposal: Local development reads only `deploy/platform/release/values.yaml`. Drop the host-group include. One platform host default. No per-application concurrency value, and no chart value per application. WMS's limit of 1 goes.
 
 Deletes: The Receiving manifest embedding, repeated policy values across host overlays, and tests that compare two consumers of the same org-specific input.
 
 Risk: Pool and concurrency behavior can change. Extend `local_host_matches_the_deployed_host_contract` to cover Receiving and WMS with explicit expected differences.
+
+Owner review 2026-10-31 against origin/main 64dcf04: Group 1 Do. Question 1 is answered: one platform host default, no per-application concurrency value, WMS's limit of 1 goes.
 
 ## Finding D1-6: Production CDC uses the gate image
 
@@ -136,6 +140,8 @@ Deletes: Both operator YAML templates and the separate text-substitution rendere
 
 Risk: Invitation and token minting require different arguments and output handling. Preserve their behavior through Job rendering tests and an identity integration test using the stamped runner.
 
+Owner review 2026-10-31 against origin/main 64dcf04: the platform chart is 0.1.140 on main, and the operator Jobs still pin runner 0.1.36. The evidence stands.
+
 ## Finding D1-9: The named orphan candidates have different consumer states
 
 Severity: low  
@@ -148,7 +154,7 @@ Problem: `cdc-reader-wms.yaml` has historical documentation consumers, but curre
 
 Proposal: Delete unused examples and historical CDC carriers. `evt-nats-check.yaml` goes with `evt-nats` under [alignment](../plan/alignment.md) R8. Update the security test’s explanation to cite the current host.
 
-Deletes: `identity-db.example.yaml`, `prometheus-local.yaml`, the CDC files covered by D1-6, `evt-nats-check.yaml` (with `evt-nats`, alignment R8), and stale executor references. Do not recreate `executor.yaml`.
+Deletes: `identity-db.example.yaml`, `prometheus-local.yaml`, the CDC files covered by D1-6, `evt-nats-check.yaml` (with `evt-nats`, alignment R8), `deploy/gcp/letsencrypt.yaml` from D1-2 once no installer reads it after the Edge and CDN cutover (wamn-wio2s), and stale executor references. Do not recreate `executor.yaml`.
 
 Risk: Preserve `a_guest_never_sees_the_host_process_environment`. Its behavioral assertion remains valid. Owner answer 2026-10-31: nothing is applied outside repository automation. Delete without confirming external use.
 
@@ -181,7 +187,7 @@ The `wamn-system` namespace family is one prototype set: `P/postgres.yaml`, `P/w
 | `G/cluster.k`, `G/project.k` | Cluster compilation and infrastructure provisioning: `C/document.rs:71`, `C/project.rs:94` | Keep distinct runtime and infrastructure responsibilities. Derive their shared cluster identity once. |
 | Two `G/environments/*.k` files | Environment discovery: `C/broker.rs:81` | Keep as environment declarations. |
 | Two `G/environments/*.json` files | Build, broker, publication, legacy delivery, and `tools/test-changes:318` | Delete after D1-1. |
-| Five `G/connections/*.json` files | Computed filenames in `crates/control/lib/tests/support/prekind_render.rs:21`, `:24`, `:40` | Keep owned request examples. They are not orphans. |
+| `G/connections/*.json` files, five at `8c831349d` and two on main (`wms-labels.*`, wamn-bz2ko) | Computed filenames in `crates/control/lib/tests/support/prekind_render.rs:21`, `:24`, `:40` | Keep owned request examples. They are not orphans. |
 | `G/guard/{main.py,guard.py,test_guard.py,requirements.txt,config.json}` | Guard entry point and tests; configuration loads at `G/guard/guard.py:12` | Keep guard behavior. Generate its deployment configuration from project identity. |
 | `I/cert-manager.yaml`, `I/cnpg-operator.yaml` | Installer: `C/install.rs:481`, `:641`; cluster fixtures | Keep pinned upstream artifacts. |
 | `I/barman-cloud-plugin.yaml`, `I/minio.yaml` | Backup documentation references in `crates/control/provision/src/backup.rs:9`, `:16`; no executable manifest consumer found | Delete. Preserve backup behavior separately. |
@@ -346,7 +352,7 @@ The equal `0.1.0` literals represent several separate contracts. They require ow
 
 ## Open questions for the owner
 
-1. Must local WMS retain its distinct concurrency limit, or does one platform host policy replace both application policies?
+1. Must local WMS retain its distinct concurrency limit, or does one platform host policy replace both application policies? Answered 2026-10-31: one platform host default. No per-application concurrency value, and WMS's limit of 1 goes (D1-5).
 
 Answered 2026-10-31: nothing is applied outside repository automation, so prototype manifests are deleted without confirming external use. The CDC image identity question is moot because the reader executable moves into the host image (D1-6).
 
@@ -531,6 +537,8 @@ Deletes: Package and UI compilation from `platform/build.rs`, publication from `
 
 Risk: Publication currently uses target credentials and database state. A proposed disconnected-install test must deploy a completed bundle without Cargo, pnpm, source files, or registry write access.
 
+Owner review 2026-10-31 against origin/main 64dcf04: `crates/control/lib/src/platform` changed in eight files on main (de84502 platform apply writes the committed connections, e8726c1 the platform UI Job carries the chart). Pins stand against 8c831349d and are re-pinned at filing.
+
 ## Finding D3-2: Qualification does not identify all deployed behavior
 
 Severity: medium  
@@ -631,6 +639,8 @@ Keep the native `wamn dev` loop as an editing tool. Its process-based activation
 Deletes: `tools/receiving-cluster-journey-run`, `tools/wms-cluster-journey-run`, `tools/delivery-owned`, `tools/rc-gate-run`, `tools/kind-gate-build`, `tests/integration/src/rc/Dockerfile`, and `deploy/mvp/`. Retain generic verdict and cleanup tools where callers still need them.
 
 Risk: Deleting fixtures can discard failure assertions. Move those assertions first, then require Receiving, WMS, coexistence, rollback, drain, credential recovery, and cleanup cases through the common fixture.
+
+Owner review 2026-10-31 against origin/main 64dcf04: `crates/control/lib/src/platform` changed in eight files on main. Pins stand against 8c831349d and are re-pinned at filing. Nothing else named in this report was deleted on main: `lane-start`, `journey-image-cache`, `upgrade_environment.rs` and the environment JSON files are all still present.
 
 ## Finding D3-7: The installation lock cannot serialize different deployment machines
 

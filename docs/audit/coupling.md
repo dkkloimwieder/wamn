@@ -294,7 +294,7 @@ All three questions were answered on 2026-10-31. `upgrade-environment` is delete
 
 Package count is not a goal (owner review 2026-10-31). Delete a package when it has one consumer or no enforced boundary. Keep one when `tools/repo-lint-dependencies` enforces something through it. Everything in this part is Group 4, after Groups 1 to 3, and anything inside runtime waits for the A5 inversion. Deployment binaries and component exports retain their separate identities.
 
-The current inventory is 45 native packages, 34 guest packages, five `no_std` packages, Modbus, two standalone test fixtures, and one vendor package. Evidence: `Cargo.toml:3`, `apps/Cargo.toml:10`, `apps/platform/no-std/Cargo.toml:24`, `integrations/modbus/Cargo.toml:1`, `crates/control/lib/tests/fixtures/connector/Cargo.toml:1`, `crates/control/lib/tests/support/http-fixture/Cargo.toml:1`, and `vendor/pg-walstream/Cargo.toml:15`.
+The current inventory is 45 native packages, 34 guest packages, five `no_std` packages, Modbus, one standalone test fixture (`http-fixture`; the connector fixture was deleted on main under wamn-bz2ko), and one vendor package. Evidence: `Cargo.toml:3`, `apps/Cargo.toml:10`, `apps/platform/no-std/Cargo.toml:24`, `integrations/modbus/Cargo.toml:1`, `crates/control/lib/tests/support/http-fixture/Cargo.toml:1`, and `vendor/pg-walstream/Cargo.toml:15`.
 
 This audit changed no files or tracker state. No builds or tests ran. The final Git status was clean.
 
@@ -465,10 +465,12 @@ Evidence: `apps/platform/no-std/Cargo.toml:5`, `apps/platform/no-std/Cargo.toml:
 Problem: The checkout has six first-party workspace roots. Two exist for small test fixtures, and Modbus has its own root despite using the shared `no_std` runtime. However, combining standard and `no_std` guests reintroduces a recorded panic-handler conflict and forbidden WASI imports.  
 Proposal: Retain the native, standard guest, and `no_std` workspaces. Relocate Modbus under the `no_std` root so its dependencies remain inside that workspace. Move `http-fixture` into T18 as a named binary. Replace the tiny checked-in connector fixture package with fixture source literals in its existing scratch-repository builder. The test still builds a real independent connector in scratch space. Keep the vendor package excluded.
 
-Deletes: The Modbus standalone workspace declaration, both checked-in fixture manifests and lockfiles, and their standalone build contexts. Delete duplicated dependency and lint declarations where workspace inheritance replaces them.  
+Deletes: The Modbus standalone workspace declaration, the `http-fixture` manifest and lockfile, and their standalone build contexts. The connector fixture is struck: main deleted it under wamn-bz2ko. Delete duplicated dependency and lint declarations where workspace inheritance replaces them.  
 Risk: Keep the standalone integration-build property, rather than replacing it with a prebuilt component. Its existing proof is `build_digest_tracks_source_bytes_and_survives_another_checkout` at `crates/control/lib/tests/integration_artifact.rs:57`. Guest closure at `tests/conformance/tests/guest_workspace_closure.rs:256` prevents path escapes. The identity guard at `tests/conformance/src/manifest_dependencies.rs:292` currently scans only native and standard guest workspaces. Extend its existing scan to the retained `no_std` workspace.
 
 Owner review 2026-10-31: keep, Group 4 Do.
+
+Owner review 2026-10-31 against origin/main 64dcf04: wamn-bz2ko deleted `crates/control/lib/tests/fixtures/connector` on main, so the connector fixture is struck from Deletes and one standalone fixture remains, `http-fixture`.
 
 ## Finding B3-6: Test package boundaries can collapse without exporting test authority
 

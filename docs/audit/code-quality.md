@@ -144,6 +144,8 @@ Risk: Dependency removal can expose reliance on combined Cargo features. Compile
 
 Owner review 2026-10-31: delete all 48, Group 4 Do, in the same per-crate commits. The check is `cargo check --all-targets` per affected package. No feature-tree output exists and none is supplied (question 4).
 
+Owner review 2026-10-31 against origin/main 64dcf04: wamn-9xp7e makes every member inherit `wit-component` and `wit-parser` =0.254.2. The ctl entries for those two are re-checked before deletion, because inherited workspace declarations are not unused.
+
 ## Finding A1-7: Generator convenience methods have no callers
 
 Severity: low  
@@ -360,6 +362,8 @@ Deletes: Measured gross deletion of 71 files and 3,020 repeated lines. Estimated
 Risk: Equal contracts can later need different behavior, so assignments must remain explicit. Compare resolved contract bytes and generated clients before and after, then run host-route and control-client live tests.
 
 Owner review 2026-10-31: keep, Group 4 Do, sequenced after [integration-schema](../plan/integration-schema.md) C1 to C3. The integration and connection host routes this finding cites (enable, delete, connection get and write) are renamed or dropped by that plan, so the shape assignment is written against the new routes. Question 3 is answered: yes, resolved contract bytes and generated clients stay unchanged, and per-operation files become build output.
+
+Owner review 2026-10-31 against origin/main 64dcf04: `contracts/connection` changed on main. The 71-file and 3,020-line count is re-measured at filing.
 
 ## Finding A2-4: PostgreSQL adapters repeat transaction and tracing machinery
 
@@ -627,6 +631,8 @@ Risk: Claim lifetime and revocation change. Add subprocess tests for poisoned st
 
 Owner review 2026-10-31: keep, high, owned by A5 ([perf-arch](../plan/perf-arch.md)). The `claims.rs` claim maps are what the begin-operation and commit imports replace, so the one-scope-record fix is written inside that rewrite, not before. Question 1, the reviewer's pick for the owner to confirm: a poisoned authority lock fails the operation and exits the host process, and Kubernetes restarts it. No isolation machinery and no unready-state logic.
 
+Owner review 2026-10-31 against origin/main 64dcf04: question 1 is answered: a poisoned authority lock fails the operation and exits the host, and Kubernetes restarts it. Recorded under the A5-owned row.
+
 ## Finding A3-3: Blobstore exposes backend prose and classifies timeouts by text
 
 Severity: medium  
@@ -784,6 +790,8 @@ Owner addendum 2026-10-31: `upgrade_environment.rs` is deleted under C3-3, so th
 
 Owner review 2026-10-31: In passing with the Group 4 release-control work, `publish_release.rs` and `dev/activation.rs` only.
 
+Owner review 2026-10-31 against origin/main 64dcf04: wamn-bz2ko landed and deleted the WIT package `wamn:connector`. The naming note for `wamn:connector` is satisfied.
+
 ## Finding A3-12: Generator files need semantic splits, not blanket panic removal
 
 Severity: medium  
@@ -837,6 +845,6 @@ Owner review 2026-10-31: In passing. Enforcement is rejected: no lint rule and n
 
 ## Open questions for the owner
 
-1. Must poisoned authority state terminate the process, or must the host isolate the affected owner and become unready? Reviewer pick 2026-10-31, owner to confirm: a poisoned authority lock fails the operation and exits the host process, and Kubernetes restarts it. No isolation machinery, no unready-state logic (A3-2).
+1. Must poisoned authority state terminate the process, or must the host isolate the affected owner and become unready? Answered 2026-10-31: a poisoned authority lock fails the operation and exits the host process, and Kubernetes restarts it. No isolation machinery, no unready-state logic (A3-2).
 2. Which blobstore `Other` messages are frozen consumer contracts before backend prose is replaced? Answered 2026-10-31: none. Replace freely (A3-3).
 

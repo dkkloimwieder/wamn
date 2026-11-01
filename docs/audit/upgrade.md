@@ -38,6 +38,8 @@ Deletes: The installed-environment replay of first apply with `release = none` a
 
 Risk: An image change against a database with the same hash must keep the serving release installed while requests continue. An image change against a database with a different hash must refuse with the message above.
 
+Owner review 2026-10-31 against origin/main 64dcf04: commit 8a3b3cc (wamn-zeg0z) is on main.
+
 ## Finding C1-3: Project migrations run after queries that already require the new schema
 
 Severity: high  
