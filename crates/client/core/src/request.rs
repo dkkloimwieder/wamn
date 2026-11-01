@@ -5,7 +5,6 @@ use std::fmt;
 use std::sync::Arc;
 
 use boon::{Compiler, Draft, Schemas, UrlLoader};
-use chrono::{DateTime, SecondsFormat};
 use serde_json::{Map, Number, Value};
 
 use crate::descriptor::FieldSchema;
@@ -343,12 +342,13 @@ fn canonical_field(
                 .to_string(),
         ),
         "timestamptz" => Value::String(
-            DateTime::parse_from_rfc3339(string(value, path)?)
-                .map_err(|source| caused(path, "expected an RFC3339 timestamp", source))?
-                .to_utc()
-                .to_rfc3339_opts(SecondsFormat::Micros, true),
+            wamn_execution_contract::canonical_timestamptz(string(value, path)?)
+                .ok_or_else(|| invalid(path, "expected an RFC3339 timestamp"))?,
         ),
-        "numeric" => Value::String(canonical_numeric(string(value, path)?, path)?),
+        "numeric" => Value::String(
+            wamn_execution_contract::canonical_numeric(string(value, path)?)
+                .ok_or_else(|| invalid(path, "expected decimal text without an exponent"))?,
+        ),
         "int32" | "int64" => canonical_integer(field.field.type_name, value, schema, path)?,
         "float64" => {
             let number = match value {
@@ -485,39 +485,6 @@ fn canonical_integer(
     } else {
         Value::Number(integer.into())
     })
-}
-
-fn canonical_numeric(value: &str, path: &str) -> Result<String, RequestError> {
-    let value = value.trim();
-    let (negative, digits) = match value.as_bytes().first() {
-        Some(b'-') => (true, &value[1..]),
-        Some(b'+') => (false, &value[1..]),
-        _ => (false, value),
-    };
-    let (integer, fraction) = digits
-        .split_once('.')
-        .map_or((digits, None), |(integer, fraction)| {
-            (integer, Some(fraction))
-        });
-    if (integer.is_empty() && fraction.is_none_or(str::is_empty))
-        || !integer.bytes().all(|byte| byte.is_ascii_digit())
-        || fraction.is_some_and(|fraction| !fraction.bytes().all(|byte| byte.is_ascii_digit()))
-    {
-        return Err(invalid(path, "expected decimal text without an exponent"));
-    }
-    let integer = integer.trim_start_matches('0');
-    let nonzero = !integer.is_empty()
-        || fraction.is_some_and(|fraction| fraction.bytes().any(|byte| byte != b'0'));
-    let mut canonical = String::new();
-    if negative && nonzero {
-        canonical.push('-');
-    }
-    canonical.push_str(if integer.is_empty() { "0" } else { integer });
-    if let Some(fraction) = fraction.filter(|fraction| !fraction.is_empty()) {
-        canonical.push('.');
-        canonical.push_str(fraction);
-    }
-    Ok(canonical)
 }
 
 fn member_name(field: &FieldSchema) -> &str {

@@ -7,7 +7,6 @@
 use std::error::Error;
 use std::fmt;
 
-use chrono::{DateTime, SecondsFormat};
 use serde_json::{Value, json};
 use uuid::Uuid;
 use wamn_execution_contract::canonical_json_bytes;
@@ -578,18 +577,12 @@ fn canonical_uuid(value: &str, field: &'static str) -> Result<Uuid, RecordReceip
 /// whose retry infrastructure re-spells one instant gets one command instead of
 /// an idempotency conflict.
 fn canonical_timestamp(value: &str) -> Result<String, RecordReceiptError> {
-    DateTime::parse_from_rfc3339(value)
-        .map(|timestamp| {
-            timestamp
-                .to_utc()
-                .to_rfc3339_opts(SecondsFormat::Micros, true)
-        })
-        .map_err(|_| {
-            RecordReceiptError::invalid(
-                "value.occurred_at must be an RFC3339 timestamp",
-                "value.occurred_at",
-            )
-        })
+    wamn_execution_contract::canonical_timestamptz(value).ok_or_else(|| {
+        RecordReceiptError::invalid(
+            "value.occurred_at must be an RFC3339 timestamp",
+            "value.occurred_at",
+        )
+    })
 }
 
 /// Respell a positive quantity as PostgreSQL's own text for the same datum,
@@ -608,32 +601,15 @@ fn canonical_timestamp(value: &str) -> Result<String, RecordReceiptError> {
 /// and this crate carries no decimal dependency to do it with. `wms-data`'s
 /// `scalar::numeric` refuses exponents for the same reason.
 fn canonical_positive_numeric(value: &str) -> Result<String, RecordReceiptError> {
-    let (integer, fraction) = match value.split_once('.') {
-        Some((integer, fraction)) => (integer, Some(fraction)),
-        None => (value, None),
-    };
-    let is_digits = |part: &str| part.bytes().all(|byte| byte.is_ascii_digit());
-    // Requiring a non-zero digit also refuses the two spellings PostgreSQL
-    // itself rejects, `""` and `"."`, which carry no digit at all.
-    let positive = integer
+    let positive = value
         .bytes()
-        .chain(fraction.unwrap_or_default().bytes())
-        .any(|byte| byte != b'0');
-    if !is_digits(integer) || !fraction.is_none_or(is_digits) || !positive {
-        return Err(RecordReceiptError::invalid(
-            "value.line[].quantity must be a positive PostgreSQL numeric string \
-             written without an exponent",
+        .any(|byte| byte.is_ascii_digit() && byte != b'0');
+    wamn_execution_contract::canonical_numeric(value)
+        .filter(|parsed| positive && !parsed.starts_with('-'))
+        .ok_or_else(|| RecordReceiptError::invalid(
+            "value.line[].quantity must be a positive PostgreSQL numeric string written without an exponent",
             "value.line[].quantity",
-        ));
-    }
-    let integer = match integer.trim_start_matches('0') {
-        "" => "0",
-        trimmed => trimmed,
-    };
-    Ok(match fraction.filter(|fraction| !fraction.is_empty()) {
-        Some(fraction) => format!("{integer}.{fraction}"),
-        None => integer.to_owned(),
-    })
+        ))
 }
 
 #[cfg(test)]

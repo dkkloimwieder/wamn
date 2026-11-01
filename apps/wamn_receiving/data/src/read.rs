@@ -1,11 +1,12 @@
 //! Application-owned read connections and history image projection.
 
-use crate::cursor::{CursorDirection, decode_cursor, encode_cursor};
 use crate::error::{AccessError, AllowedConstraints};
 use crate::statements::wamn::{
     location_list as location_sql, receiving_load_purchase_order_history as history_sql,
     receiving_purchase_order_summary as summary_sql,
 };
+use wamn_data_access::cursor::Direction;
+use wamn_data_access::cursor::id::{decode_with_id, encode_with_id};
 use wamn_postgres_statements::{Connection, Uuid};
 
 pub use location_sql::ListLocationsRow;
@@ -16,7 +17,7 @@ const MAX_HISTORY_PAGE: i32 = 100;
 /// The sort field that the history cursor names.
 const HISTORY_CURSOR_FIELD: &str = "position";
 /// The history reads forward, from the oldest entry to the newest.
-const HISTORY_CURSOR_DIRECTION: CursorDirection = CursorDirection::Ascending;
+const HISTORY_CURSOR_DIRECTION: Direction = Direction::Ascending;
 /// The `purchase_order` columns that `receiving.load_purchase_order_history`
 /// declares. Every image that the read returns keeps only these columns.
 const PURCHASE_ORDER_HISTORY_COLUMNS: [&str; 9] = [
@@ -62,15 +63,17 @@ fn history_value(
         })
         .ok_or_else(|| AccessError::internal("history read returned no JSON object image"))
     };
-    let record = parse_history_id(id)?;
+    let record = wamn_data_access::scalar::uuid(&id.0)
+        .map_err(|_| AccessError::invalid("id is not a UUID", "id"))?;
     Ok(PurchaseOrderHistoryValue {
         id: row.id,
-        cursor: encode_cursor(
+        cursor: encode_with_id(
             HISTORY_CURSOR_FIELD,
             HISTORY_CURSOR_DIRECTION,
             &row.position,
-            record,
-        )?,
+            &record,
+        )
+        .map_err(|_| AccessError::invalid("invalid history cursor", "cursor"))?,
         type_: row.type_,
         operation: row.operation,
         changed_by: row.changed_by,
@@ -143,21 +146,18 @@ fn history_position(after_cursor: Option<&str>, id: &Uuid) -> Result<i64, Access
     let Some(encoded) = after_cursor.filter(|cursor| !cursor.is_empty()) else {
         return Ok(0);
     };
-    let record = parse_history_id(id)?;
-    let decoded = decode_cursor::<i64>(encoded, HISTORY_CURSOR_FIELD, HISTORY_CURSOR_DIRECTION)?;
-    if decoded.id != record {
+    let record = wamn_data_access::scalar::uuid(&id.0)
+        .map_err(|_| AccessError::invalid("id is not a UUID", "id"))?;
+    let (position, decoded_id) =
+        decode_with_id::<i64, Uuid>(encoded, HISTORY_CURSOR_FIELD, HISTORY_CURSOR_DIRECTION)
+            .map_err(|_| AccessError::invalid("invalid history cursor", "cursor"))?;
+    if decoded_id.0 != record.0 {
         return Err(AccessError::invalid(
             "cursor names another purchase order",
             "after_cursor",
         ));
     }
-    Ok(decoded.key)
-}
-
-fn parse_history_id(id: &Uuid) -> Result<uuid::Uuid, AccessError> {
-    uuid::Uuid::parse_str(&id.0)
-        .ok()
-        .ok_or_else(|| AccessError::invalid("id is not a UUID", "id"))
+    Ok(position)
 }
 
 #[cfg(test)]
@@ -251,11 +251,11 @@ mod tests {
         assert_eq!(history_position(None, &record).unwrap(), 0);
         assert_eq!(history_position(Some(""), &record).unwrap(), 0);
 
-        let cursor = encode_cursor(
+        let cursor = encode_with_id(
             HISTORY_CURSOR_FIELD,
             HISTORY_CURSOR_DIRECTION,
             &7_i64,
-            uuid::Uuid::parse_str(&record.0).unwrap(),
+            &record,
         )
         .unwrap();
         assert_eq!(history_position(Some(&cursor), &record).unwrap(), 7);

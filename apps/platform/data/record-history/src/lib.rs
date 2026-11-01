@@ -309,102 +309,7 @@ pub fn retain_columns(text: &str, columns: &[&str], timestamptz: &[&str]) -> Opt
 /// RFC 3339 form, with a `Z` or a numeric offset, or `None`.
 fn canonical_timestamptz(value: &str) -> Option<String> {
     let text = value.strip_prefix('"')?.strip_suffix('"')?;
-    let (date, rest) = text.split_once('T')?;
-    let mut date_parts = date.splitn(3, '-');
-    let year = digits(date_parts.next()?, 4, 6)?;
-    let month = digits(date_parts.next()?, 2, 2)?;
-    let day = digits(date_parts.next()?, 2, 2)?;
-    let clock = rest.get(..8)?;
-    let (hour, minute, second) = (
-        digits(clock.get(..2)?, 2, 2)?,
-        digits(clock.get(3..5)?, 2, 2)?,
-        digits(clock.get(6..8)?, 2, 2)?,
-    );
-    if clock.as_bytes()[2] != b':' || clock.as_bytes()[5] != b':' {
-        return None;
-    }
-    let mut rest = &rest[8..];
-    let mut micros = 0;
-    if let Some(fraction) = rest.strip_prefix('.') {
-        let length = fraction.bytes().take_while(u8::is_ascii_digit).count();
-        if !(1..=6).contains(&length) {
-            return None;
-        }
-        micros = digits(&fraction[..length], 1, 6)? * 10_i64.pow(u32::try_from(6 - length).ok()?);
-        rest = &fraction[length..];
-    }
-    let offset = match rest.as_bytes().first()? {
-        b'Z' if rest.len() == 1 => 0,
-        sign @ (b'+' | b'-') => {
-            let mut parts = rest[1..].split(':');
-            let hours = digits(parts.next()?, 2, 2)?;
-            let minutes = parts.next().map_or(Some(0), |part| digits(part, 2, 2))?;
-            let seconds = parts.next().map_or(Some(0), |part| digits(part, 2, 2))?;
-            if parts.next().is_some() {
-                return None;
-            }
-            let offset = hours * 3600 + minutes * 60 + seconds;
-            if *sign == b'-' { -offset } else { offset }
-        }
-        _ => return None,
-    };
-    if !(1..=12).contains(&month)
-        || !(1..=31).contains(&day)
-        || hour > 23
-        || minute > 59
-        || second > 59
-    {
-        return None;
-    }
-    let seconds =
-        days_from_civil(year, month, day) * 86_400 + hour * 3600 + minute * 60 + second - offset;
-    let (days, clock) = (seconds.div_euclid(86_400), seconds.rem_euclid(86_400));
-    let (year, month, day) = civil_from_days(days);
-    if year < 1 {
-        return None;
-    }
-    Some(format!(
-        "\"{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{micros:06}Z\"",
-        clock / 3600,
-        clock % 3600 / 60,
-        clock % 60
-    ))
-}
-
-/// The value of an ASCII decimal text of `min` to `max` digits.
-fn digits(text: &str, min: usize, max: usize) -> Option<i64> {
-    ((min..=max).contains(&text.len()) && text.bytes().all(|byte| byte.is_ascii_digit()))
-        .then(|| text.parse().ok())
-        .flatten()
-}
-
-/// Days since 1970-01-01 of a proleptic Gregorian date.
-fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
-    let year = if month <= 2 { year - 1 } else { year };
-    let era = year.div_euclid(400);
-    let year_of_era = year - era * 400;
-    let day_of_year = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    era * 146_097 + day_of_era - 719_468
-}
-
-/// The proleptic Gregorian date of a day count since 1970-01-01.
-fn civil_from_days(days: i64) -> (i64, i64, i64) {
-    let days = days + 719_468;
-    let era = days.div_euclid(146_097);
-    let day_of_era = days - era * 146_097;
-    let year_of_era =
-        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_index = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_index + 2) / 5 + 1;
-    let month = if month_index < 10 {
-        month_index + 3
-    } else {
-        month_index - 9
-    };
-    let year = year_of_era + era * 400 + i64::from(month <= 2);
-    (year, month, day)
+    wamn_execution_contract::canonical_timestamptz(text).map(|canonical| format!("\"{canonical}\""))
 }
 
 /// Split the top-level members of one JSON object without parsing the values.
@@ -557,6 +462,14 @@ mod tests {
     fn a_timestamptz_takes_the_canonical_spelling_from_either_spelling() {
         for (stored, canonical) in [
             (
+                r#""2026-10-20t13:32:00z""#,
+                r#""2026-10-20T13:32:00.000000Z""#,
+            ),
+            (
+                r#""2016-12-31T23:59:60Z""#,
+                r#""2016-12-31T23:59:60.000000Z""#,
+            ),
+            (
                 r#""2026-10-20T13:32:00.621907+00:00""#,
                 r#""2026-10-20T13:32:00.621907Z""#,
             ),
@@ -577,8 +490,12 @@ mod tests {
                 r#""2024-03-01T01:00:00.000000Z""#,
             ),
             (
-                r#""1999-12-31T23:59:59.5-00:00:30""#,
-                r#""2000-01-01T00:00:29.500000Z""#,
+                r#""2026-10-20T13:32:00.1234567Z""#,
+                r#""2026-10-20T13:32:00.123456Z""#,
+            ),
+            (
+                r#""0001-01-01T00:00:00+01:00""#,
+                r#""0000-12-31T23:00:00.000000Z""#,
             ),
             (
                 r#""0001-01-01T00:00:00+00:00""#,
@@ -592,13 +509,18 @@ mod tests {
             );
         }
         for kept in [
+            r#""2026-10-20T13:32:00+02""#,
+            r#""2026-10-20T13:32:00+02:60""#,
+            r#""10000-01-01T00:00:00Z""#,
+            r#""2026-02-29T00:00:00Z""#,
+            r#""2024-04-31T00:00:00Z""#,
+            r#""2026-10-20T13:32:00+24:00""#,
+            r#""1999-12-31T23:59:59.5-00:00:30""#,
             r#""infinity""#,
             r#""-infinity""#,
             r#""2026-10-20 13:32:00+00""#,
             r#""2026-10-20T13:32:00""#,
-            r#""2026-10-20T13:32:00.1234567Z""#,
             r#""0044-03-15T12:00:00+00:00 BC""#,
-            r#""0001-01-01T00:00:00+01:00""#,
             "null",
             "1",
         ] {

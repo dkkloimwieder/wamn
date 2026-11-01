@@ -8,9 +8,7 @@ use wamn_postgres_statements::{Numeric, Uuid};
 use crate::error::{AccessError, AccessErrorType};
 
 pub(crate) fn uuid(field: &str, value: &str) -> Result<Uuid, AccessError> {
-    value
-        .parse::<uuid::Uuid>()
-        .map(|parsed| Uuid(parsed.hyphenated().to_string()))
+    wamn_data_access::scalar::uuid(value)
         .map_err(|_| AccessError::field(AccessErrorType::InvalidInput, field))
 }
 
@@ -21,26 +19,11 @@ pub(crate) fn uuid(field: &str, value: &str) -> Result<Uuid, AccessError> {
 /// Receiving and WMS data access refuse it, because PostgreSQL derives the
 /// scale of an exponent rather than reading it.
 pub(crate) fn positive_numeric(field: &str, value: &str) -> Result<Numeric, AccessError> {
-    let (whole, fraction) = match value.split_once('.') {
-        Some((whole, fraction)) => (whole, Some(fraction)),
-        None => (value, None),
-    };
-    let digits = |part: &str| part.bytes().all(|byte| byte.is_ascii_digit());
-    let positive = whole
+    let positive = value
         .bytes()
-        .chain(fraction.unwrap_or_default().bytes())
-        .any(|byte| byte != b'0');
-    if !digits(whole) || !fraction.is_none_or(digits) || !positive {
-        return Err(AccessError::field(AccessErrorType::InvalidInput, field));
-    }
-    let whole = match whole.trim_start_matches('0') {
-        "" => "0",
-        trimmed => trimmed,
-    };
-    Ok(Numeric(
-        match fraction.filter(|fraction| !fraction.is_empty()) {
-            Some(fraction) => format!("{whole}.{fraction}"),
-            None => whole.to_owned(),
-        },
-    ))
+        .any(|byte| byte.is_ascii_digit() && byte != b'0');
+    wamn_data_access::scalar::numeric(value)
+        .ok()
+        .filter(|parsed| positive && !parsed.0.starts_with('-'))
+        .ok_or_else(|| AccessError::field(AccessErrorType::InvalidInput, field))
 }

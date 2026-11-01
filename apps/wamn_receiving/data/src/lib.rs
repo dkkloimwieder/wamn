@@ -5,7 +5,6 @@
 //! projections and the same physical SQL files; this crate authors no SQL.
 //! The generated operations are generated whole, in [`generated`].
 
-mod cursor;
 mod error;
 pub mod read;
 pub mod record_receipt;

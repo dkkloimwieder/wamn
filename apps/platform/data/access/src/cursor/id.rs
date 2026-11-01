@@ -207,11 +207,26 @@ mod uuid_tests {
             URL_SAFE_NO_PAD.encode(
                 br#"{"direction":"ascending","field":"packaging_code","id":"01234567-89AB-CDEF-0123-456789ABCDEF","key":"PAL-1","v":1}"#,
             ),
+            URL_SAFE_NO_PAD.encode(
+                br#"{"direction":"ascending","field":"packaging_code","id":"01234567-89ab-cdef-0123-456789abcdef","key":"PAL-1","v":2}"#,
+            ),
         ] {
             assert_eq!(
                 decode_with_id::<String, Uuid>(&encoded, "packaging_code", Direction::Ascending),
                 Err(Invalid),
                 "{encoded}"
+            );
+        }
+        for timestamp in [
+            "2026-08-29T12:34:56Z",
+            "2026-08-29T12:34:56.000000+00:00",
+            "2026-02-29T00:00:00.000000Z",
+        ] {
+            let wire = json!({"direction": "ascending", "field": "created_at", "id": ID, "key": timestamp, "v": 1});
+            let encoded = URL_SAFE_NO_PAD.encode(canonical_json_bytes(&wire));
+            assert_eq!(
+                decode_with_id::<TimestampTz, Uuid>(&encoded, "created_at", Direction::Ascending),
+                Err(Invalid)
             );
         }
         assert!(
@@ -224,5 +239,42 @@ mod uuid_tests {
         assert!(
             decode_with_id::<Uuid, Uuid>(&valid, "packaging_code", Direction::Ascending).is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod receiving_bytes {
+    use super::*;
+
+    #[test]
+    fn captured_receiving_cursor_bytes_before_scalar_consolidation() {
+        let id = Uuid("01234567-89ab-cdef-0123-456789abcdef".to_owned());
+        for (position, recorded) in [
+            (
+                i64::MIN,
+                "eyJkaXJlY3Rpb24iOiJhc2NlbmRpbmciLCJmaWVsZCI6InBvc2l0aW9uIiwiaWQiOiIwMTIzNDU2Ny04OWFiLWNkZWYtMDEyMy00NTY3ODlhYmNkZWYiLCJrZXkiOi05MjIzMzcyMDM2ODU0Nzc1ODA4LCJ2IjoxfQ",
+            ),
+            (
+                0,
+                "eyJkaXJlY3Rpb24iOiJhc2NlbmRpbmciLCJmaWVsZCI6InBvc2l0aW9uIiwiaWQiOiIwMTIzNDU2Ny04OWFiLWNkZWYtMDEyMy00NTY3ODlhYmNkZWYiLCJrZXkiOjAsInYiOjF9",
+            ),
+            (
+                7,
+                "eyJkaXJlY3Rpb24iOiJhc2NlbmRpbmciLCJmaWVsZCI6InBvc2l0aW9uIiwiaWQiOiIwMTIzNDU2Ny04OWFiLWNkZWYtMDEyMy00NTY3ODlhYmNkZWYiLCJrZXkiOjcsInYiOjF9",
+            ),
+            (
+                i64::MAX,
+                "eyJkaXJlY3Rpb24iOiJhc2NlbmRpbmciLCJmaWVsZCI6InBvc2l0aW9uIiwiaWQiOiIwMTIzNDU2Ny04OWFiLWNkZWYtMDEyMy00NTY3ODlhYmNkZWYiLCJrZXkiOjkyMjMzNzIwMzY4NTQ3NzU4MDcsInYiOjF9",
+            ),
+        ] {
+            let encoded = encode_with_id("position", Direction::Ascending, &position, &id).unwrap();
+            assert_eq!(encoded, recorded);
+            assert_eq!(
+                decode_with_id::<i64, Uuid>(&encoded, "position", Direction::Ascending)
+                    .unwrap()
+                    .0,
+                position
+            );
+        }
     }
 }

@@ -3,7 +3,7 @@
 //! manual binary-NUMERIC → canonical-string decoder), column/row helpers, and
 //! error mapping. Pure — no pool, clock, or plugin state.
 
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, Utc};
 use tokio_postgres::types::{Format, IsNull, ToSql, Type, to_sql_checked};
 
 use super::{Column, PgError, SqlValue};
@@ -190,13 +190,9 @@ impl<'a> tokio_postgres::types::FromSql<'a> for SqlCell {
     }
 }
 
-/// Spell a PostgreSQL `timestamptz` the one way the platform spells it: UTC
-/// RFC 3339 with exactly six fractional digits and a `Z` offset.
-/// `docs/architecture/data-access.md#canonical-values-and-sql-names` rules this form and every writer
-/// already emits it. This read path is the single emitter, so nothing below it
-/// gets to decide the spelling by omission.
+/// Spell a decoded PostgreSQL timestamp through the shared scalar owner.
 pub fn canonical_timestamptz(value: DateTime<Utc>) -> String {
-    value.to_rfc3339_opts(SecondsFormat::Micros, true)
+    wamn_execution_contract::format_timestamptz(value)
 }
 
 /// Decode Postgres's binary NUMERIC wire format into its canonical string
@@ -512,5 +508,61 @@ mod tests {
             spelled.as_bytes(),
             canonical_timestamptz(row.get::<_, DateTime<Utc>>(2)).as_bytes()
         );
+        for (input, shared, database) in [
+            ("-0.00", "-0.00", "0.00"),
+            ("0012.3400", "12.3400", "12.3400"),
+            (".50", "0.50", "0.50"),
+            ("5.", "5", "5"),
+        ] {
+            let row = client
+                .query_one("SELECT ($1::text::numeric)::text", &[&input])
+                .await
+                .unwrap();
+            assert_eq!(row.get::<_, String>(0), database);
+            assert_eq!(
+                wamn_execution_contract::canonical_numeric(input).as_deref(),
+                Some(shared)
+            );
+        }
+        for (input, shared, database) in [
+            (
+                "2024-03-01T00:30:00+02:00",
+                "2024-02-29T22:30:00.000000Z",
+                "2024-02-29T22:30:00.000000Z",
+            ),
+            (
+                "2026-08-29T12:34:56.123456Z",
+                "2026-08-29T12:34:56.123456Z",
+                "2026-08-29T12:34:56.123456Z",
+            ),
+            (
+                "2026-08-29T12:34:56.1234567Z",
+                "2026-08-29T12:34:56.123456Z",
+                "2026-08-29T12:34:56.123457Z",
+            ),
+        ] {
+            let row = client
+                .query_one("SELECT $1::text::timestamptz", &[&input])
+                .await
+                .unwrap();
+            assert_eq!(canonical_timestamptz(row.get(0)), database);
+            assert_eq!(
+                wamn_execution_contract::canonical_timestamptz(input).as_deref(),
+                Some(shared)
+            );
+        }
+        for input in [
+            "2026-02-29T00:00:00Z",
+            "2024-04-31T00:00:00Z",
+            "2026-08-29T12:34:56+24:00",
+        ] {
+            assert!(
+                client
+                    .query_one("SELECT $1::text::timestamptz", &[&input])
+                    .await
+                    .is_err()
+            );
+            assert_eq!(wamn_execution_contract::canonical_timestamptz(input), None);
+        }
     }
 }

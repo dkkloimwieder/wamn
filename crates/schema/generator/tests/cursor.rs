@@ -108,13 +108,83 @@ fn noncanonical_json_and_unknown_version_never_reset_to_first_page() {
 
 #[test]
 fn noncanonical_timestamps_and_numeric_spellings_refuse() {
+    for (written, canonical, column) in [
+        (
+            "2026-08-29T12:34:56Z",
+            "2026-08-29T12:34:56.000000Z",
+            ColumnType::Timestamptz,
+        ),
+        (
+            "2026-08-29T14:34:56.000000+02:00",
+            "2026-08-29T12:34:56.000000Z",
+            ColumnType::Timestamptz,
+        ),
+        (
+            "2024-03-01T00:30:00+02:00",
+            "2024-02-29T22:30:00.000000Z",
+            ColumnType::Timestamptz,
+        ),
+        (
+            "2026-08-29T12:34:56.1234567Z",
+            "2026-08-29T12:34:56.123456Z",
+            ColumnType::Timestamptz,
+        ),
+        ("01.0", "1.0", ColumnType::Numeric),
+        ("1.", "1", ColumnType::Numeric),
+        (".50", "0.50", ColumnType::Numeric),
+        ("-00.00", "-0.00", ColumnType::Numeric),
+        ("12.3400", "12.3400", ColumnType::Numeric),
+        ("-0", "-0", ColumnType::Numeric),
+    ] {
+        let key = if column == ColumnType::Numeric {
+            CursorValue::Numeric(written.into())
+        } else {
+            CursorValue::Timestamptz(written.into())
+        };
+        let encoded =
+            encode_cursor(&CursorV1::new("value", CursorDirection::Ascending, key, ID)).unwrap();
+        let expected = format!(
+            r#"{{"direction":"ascending","field":"value","id":"{ID}","key":"{canonical}","v":1}}"#
+        );
+        assert_eq!(
+            URL_SAFE_NO_PAD.decode(&encoded).unwrap(),
+            expected.as_bytes()
+        );
+        let decoded = decode_cursor(&encoded, "value", CursorDirection::Ascending, column).unwrap();
+        assert_eq!(encode_cursor(&decoded).unwrap(), encoded);
+        if written != canonical {
+            let noncanonical = format!(
+                r#"{{"direction":"ascending","field":"value","id":"{ID}","key":"{written}","v":1}}"#
+            );
+            assert!(
+                decode_cursor(
+                    &URL_SAFE_NO_PAD.encode(noncanonical),
+                    "value",
+                    CursorDirection::Ascending,
+                    column
+                )
+                .is_err()
+            );
+        }
+    }
+    for numeric in ["1e2", "+1.00", " 1", "1 ", "NaN", "1.2.3"] {
+        let error = encode_cursor(&CursorV1::new(
+            "value",
+            CursorDirection::Ascending,
+            CursorValue::Numeric(numeric.into()),
+            ID,
+        ))
+        .unwrap_err();
+        assert_eq!(error.error_type(), CursorErrorType::InvalidInput);
+    }
     for timestamp in [
-        "2026-08-29T12:34:56Z",
-        "2026-08-29T12:34:56.000000+00:00",
-        "2026-08-29T12:34:56.00000Z",
+        "2026-02-29T00:00:00Z",
+        "2024-04-31T00:00:00Z",
+        "2026-08-29T12:34:56+24:00",
+        "1999-12-31T23:59:59.5-00:00:30",
     ] {
         let error = encode_cursor(&CursorV1::new(
-            "created_at",
+            "value",
             CursorDirection::Ascending,
             CursorValue::Timestamptz(timestamp.into()),
             ID,
@@ -122,16 +192,42 @@ fn noncanonical_timestamps_and_numeric_spellings_refuse() {
         .unwrap_err();
         assert_eq!(error.error_type(), CursorErrorType::InvalidInput);
     }
-    // Input normalization accepts values such as 01.0 and 1. before serialization.
-    // Cursor validation refuses them so the opaque v1 value is never rewritten.
-    for numeric in ["01.0", "1e2", "+1.00", "1."] {
-        let error = encode_cursor(&CursorV1::new(
-            "amount",
-            CursorDirection::Ascending,
-            CursorValue::Numeric(numeric.into()),
-            ID,
-        ))
-        .unwrap_err();
-        assert_eq!(error.error_type(), CursorErrorType::InvalidInput);
+}
+
+#[test]
+fn captured_cursor_bytes_before_scalar_consolidation() {
+    for (key, recorded) in [
+        (
+            CursorValue::Numeric("-0.00".into()),
+            "eyJkaXJlY3Rpb24iOiJhc2NlbmRpbmciLCJmaWVsZCI6InZhbHVlIiwiaWQiOiIwMTIzNDU2Ny04OWFiLWNkZWYtMDEyMy00NTY3ODlhYmNkZWYiLCJrZXkiOiItMC4wMCIsInYiOjF9",
+        ),
+        (
+            CursorValue::Numeric("12.3400".into()),
+            "eyJkaXJlY3Rpb24iOiJhc2NlbmRpbmciLCJmaWVsZCI6InZhbHVlIiwiaWQiOiIwMTIzNDU2Ny04OWFiLWNkZWYtMDEyMy00NTY3ODlhYmNkZWYiLCJrZXkiOiIxMi4zNDAwIiwidiI6MX0",
+        ),
+        (
+            CursorValue::Numeric("-1.50".into()),
+            "eyJkaXJlY3Rpb24iOiJhc2NlbmRpbmciLCJmaWVsZCI6InZhbHVlIiwiaWQiOiIwMTIzNDU2Ny04OWFiLWNkZWYtMDEyMy00NTY3ODlhYmNkZWYiLCJrZXkiOiItMS41MCIsInYiOjF9",
+        ),
+        (
+            CursorValue::Timestamptz("2026-08-29T12:34:56.000000Z".into()),
+            "eyJkaXJlY3Rpb24iOiJhc2NlbmRpbmciLCJmaWVsZCI6InZhbHVlIiwiaWQiOiIwMTIzNDU2Ny04OWFiLWNkZWYtMDEyMy00NTY3ODlhYmNkZWYiLCJrZXkiOiIyMDI2LTA4LTI5VDEyOjM0OjU2LjAwMDAwMFoiLCJ2IjoxfQ",
+        ),
+        (
+            CursorValue::Timestamptz("2024-02-29T23:59:59.123456Z".into()),
+            "eyJkaXJlY3Rpb24iOiJhc2NlbmRpbmciLCJmaWVsZCI6InZhbHVlIiwiaWQiOiIwMTIzNDU2Ny04OWFiLWNkZWYtMDEyMy00NTY3ODlhYmNkZWYiLCJrZXkiOiIyMDI0LTAyLTI5VDIzOjU5OjU5LjEyMzQ1NloiLCJ2IjoxfQ",
+        ),
+        (
+            CursorValue::Text("open".into()),
+            "eyJkaXJlY3Rpb24iOiJhc2NlbmRpbmciLCJmaWVsZCI6InZhbHVlIiwiaWQiOiIwMTIzNDU2Ny04OWFiLWNkZWYtMDEyMy00NTY3ODlhYmNkZWYiLCJrZXkiOiJvcGVuIiwidiI6MX0",
+        ),
+        (
+            CursorValue::Int64(7),
+            "eyJkaXJlY3Rpb24iOiJhc2NlbmRpbmciLCJmaWVsZCI6InZhbHVlIiwiaWQiOiIwMTIzNDU2Ny04OWFiLWNkZWYtMDEyMy00NTY3ODlhYmNkZWYiLCJrZXkiOjcsInYiOjF9",
+        ),
+    ] {
+        let encoded =
+            encode_cursor(&CursorV1::new("value", CursorDirection::Ascending, key, ID)).unwrap();
+        assert_eq!(encoded, recorded);
     }
 }

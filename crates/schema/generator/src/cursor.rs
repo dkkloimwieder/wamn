@@ -3,7 +3,6 @@ use std::fmt;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use chrono::{DateTime, SecondsFormat};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use wamn_execution_contract::canonical_json_bytes;
@@ -39,16 +38,23 @@ impl CursorValue {
         }
     }
 
-    fn as_json(&self) -> Value {
-        match self {
+    fn as_json(&self) -> Result<Value, CursorError> {
+        Ok(match self {
             Self::Boolean(value) => Value::Bool(*value),
             Self::Int32(value) => Value::from(*value),
             Self::Int64(value) => Value::from(*value),
-            Self::Text(value)
-            | Self::Numeric(value)
-            | Self::Timestamptz(value)
-            | Self::Uuid(value) => Value::String(value.to_string()),
-        }
+            Self::Text(value) | Self::Uuid(value) => Value::String(value.to_string()),
+            Self::Numeric(value) => Value::String(
+                wamn_execution_contract::canonical_numeric(value).ok_or_else(|| {
+                    CursorError::invalid("numeric cursor key must be plain decimal text")
+                })?,
+            ),
+            Self::Timestamptz(value) => Value::String(
+                wamn_execution_contract::canonical_timestamptz(value).ok_or_else(|| {
+                    CursorError::invalid("timestamptz cursor key must be RFC3339")
+                })?,
+            ),
+        })
     }
 }
 
@@ -62,7 +68,7 @@ pub struct CursorV1 {
 }
 
 impl CursorV1 {
-    /// Construct a cursor; [`encode_cursor`] validates canonical typed values.
+    /// Construct a cursor. [`encode_cursor`] normalizes its scalar keys.
     pub fn new(
         field: impl Into<Box<str>>,
         direction: CursorDirection,
@@ -180,16 +186,10 @@ struct DecodedCursorWire {
 pub fn encode_cursor(cursor: &CursorV1) -> Result<String, CursorError> {
     validate_field(&cursor.field)?;
     validate_uuid(&cursor.id, "cursor id")?;
-    validate_value(&cursor.key)?;
-    let value = serde_json::to_value(CursorWire {
-        v: VERSION,
-        field: &cursor.field,
-        direction: cursor.direction,
-        key: cursor.key.as_json(),
-        id: &cursor.id,
-    })
-    .expect("cursor wire values always serialize");
-    Ok(URL_SAFE_NO_PAD.encode(canonical_json_bytes(&value)))
+    if let CursorValue::Uuid(value) = &cursor.key {
+        validate_uuid(value, "cursor key")?;
+    }
+    Ok(URL_SAFE_NO_PAD.encode(canonical_bytes(cursor)?))
 }
 
 /// Decode and validate one cursor for an exact manifest field and direction.
@@ -222,23 +222,23 @@ pub fn decode_cursor(
         key,
         id: wire.id,
     };
-    let canonical = canonical_bytes(&cursor);
+    let canonical = canonical_bytes(&cursor)?;
     if canonical != bytes || URL_SAFE_NO_PAD.encode(&bytes) != encoded {
         return Err(CursorError::invalid("cursor is not canonically encoded"));
     }
     Ok(cursor)
 }
 
-fn canonical_bytes(cursor: &CursorV1) -> Vec<u8> {
+fn canonical_bytes(cursor: &CursorV1) -> Result<Vec<u8>, CursorError> {
     let value = serde_json::to_value(CursorWire {
         v: VERSION,
         field: &cursor.field,
         direction: cursor.direction,
-        key: cursor.key.as_json(),
+        key: cursor.key.as_json()?,
         id: &cursor.id,
     })
     .expect("cursor wire values always serialize");
-    canonical_json_bytes(&value)
+    Ok(canonical_json_bytes(&value))
 }
 
 fn value_from_json(expected: ColumnType, value: Value) -> Result<CursorValue, CursorError> {
@@ -270,21 +270,10 @@ fn value_from_json(expected: ColumnType, value: Value) -> Result<CursorValue, Cu
             ));
         }
     };
-    validate_value(&cursor_value)?;
-    Ok(cursor_value)
-}
-
-fn validate_value(value: &CursorValue) -> Result<(), CursorError> {
-    match value {
-        CursorValue::Numeric(value) if !canonical_numeric(value) => Err(CursorError::invalid(
-            "numeric cursor key is not a canonical PostgreSQL lexical value",
-        )),
-        CursorValue::Timestamptz(value) if !canonical_timestamptz(value) => Err(
-            CursorError::invalid("timestamptz cursor key must be UTC RFC3339 with six digits"),
-        ),
-        CursorValue::Uuid(value) => validate_uuid(value, "cursor key"),
-        _ => Ok(()),
+    if let CursorValue::Uuid(value) = &cursor_value {
+        validate_uuid(value, "cursor key")?;
     }
+    Ok(cursor_value)
 }
 
 fn validate_field(field: &str) -> Result<(), CursorError> {
@@ -298,47 +287,6 @@ fn validate_field(field: &str) -> Result<(), CursorError> {
     } else {
         Err(CursorError::invalid("cursor field is not snake_case"))
     }
-}
-
-// A v1 cursor is an opaque server value that clients preserve verbatim.
-// User-entered numerics can be normalized before serialization. Cursor keys
-// retain their PostgreSQL spelling and scale because decode_cursor compares
-// exact canonical bytes. Do not apply input normalization here.
-fn canonical_numeric(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    if bytes.is_empty() {
-        return false;
-    }
-    let start = usize::from(bytes[0] == b'-');
-    if start == bytes.len() {
-        return false;
-    }
-    let rest = &bytes[start..];
-    let integer_end = rest
-        .iter()
-        .position(|byte| *byte == b'.')
-        .unwrap_or(rest.len());
-    let integer = &rest[..integer_end];
-    if integer.is_empty()
-        || !integer.iter().all(u8::is_ascii_digit)
-        || (integer.len() > 1 && integer[0] == b'0')
-    {
-        return false;
-    }
-    if integer_end == rest.len() {
-        return true;
-    }
-    let fraction = &rest[integer_end + 1..];
-    !fraction.is_empty() && fraction.iter().all(u8::is_ascii_digit)
-}
-
-fn canonical_timestamptz(value: &str) -> bool {
-    DateTime::parse_from_rfc3339(value).is_ok_and(|timestamp| {
-        timestamp
-            .to_utc()
-            .to_rfc3339_opts(SecondsFormat::Micros, true)
-            == value
-    })
 }
 
 fn validate_uuid(value: &str, object: &str) -> Result<(), CursorError> {

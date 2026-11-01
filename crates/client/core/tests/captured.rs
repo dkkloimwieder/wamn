@@ -112,7 +112,7 @@ async fn captured_retries_preserve_actual_command_bytes_and_raw_response_evidenc
     };
     let built = build_request(COMMAND, &json!({"request_id":"submission-7","value":{
         "idempotency_key":"intent-7", "occurred_at":"2026-09-08T15:30:00-04:00", "expected_row_version":7,
-        "line":[{"id":"ABCDEF00000000000000000000000001","quantity":"+0005.000"}]
+        "line":[{"id":"ABCDEF00000000000000000000000001","quantity":"0005.000"}]
     }}), None).expect("capture a canonical nested command");
 
     assert_eq!(

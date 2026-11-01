@@ -5671,7 +5671,6 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "boon",
- "chrono",
  "rust_decimal",
  "serde",
  "serde_json",
@@ -6430,6 +6429,9 @@ dependencies = [
 [[package]]
 name = "wamn-record-history"
 version = "0.1.0"
+dependencies = [
+ "wamn-execution-contract",
+]
 
 [[package]]
 name = "wamn-router"
@@ -6592,7 +6594,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
- "chrono",
  "hex",
  "pg_query",
  "proptest",

@@ -8,22 +8,28 @@
 //! `numeric: postgresql_lexical_scale_preserved`.
 
 /// A `timestamptz` in UTC with six fractional digits, or `None` for a value
-/// that is not RFC 3339.
+/// that is not RFC 3339. Fractional digits beyond microseconds are truncated.
 #[must_use]
 pub fn canonical_timestamptz(value: &str) -> Option<String> {
     chrono::DateTime::parse_from_rfc3339(value)
         .ok()
-        .map(|parsed| parsed.to_utc().format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string())
+        .map(|parsed| format_timestamptz(parsed.to_utc()))
 }
 
-/// A `numeric` spelled as PostgreSQL's own text for the same datum, or `None`
-/// for a value that is not a plain decimal.
+/// Format a decoded timestamp in UTC with six fractional digits.
+#[must_use]
+pub fn format_timestamptz(value: chrono::DateTime<chrono::Utc>) -> String {
+    value.format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string()
+}
+
+/// A plain decimal with its lexical scale preserved, or `None` for invalid text.
 ///
 /// The respellings are textual and keep the scale, because a numeric's scale
 /// is part of its value: `12.3400` is scale 4 and `12.34` is scale 2. They move
 /// digits only: `01.0` becomes `1.0`, `1.` becomes `1`, and `.1` becomes `0.1`,
 /// each matching `(value::numeric)::text`. An exponent is not a plain decimal:
-/// PostgreSQL derives the scale from it.
+/// PostgreSQL derives the scale from it. A negative zero keeps its sign,
+/// unlike PostgreSQL text output.
 #[must_use]
 pub fn canonical_numeric(value: &str) -> Option<String> {
     let (sign, unsigned) = value

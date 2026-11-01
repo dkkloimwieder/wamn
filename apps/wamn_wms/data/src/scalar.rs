@@ -15,9 +15,7 @@ use crate::error::{AccessError, AccessErrorType};
 pub(crate) const CONSUMED: &str = "consumed";
 
 pub(crate) fn uuid(field: &str, value: &str) -> Result<Uuid, AccessError> {
-    value
-        .parse::<uuid::Uuid>()
-        .map(|parsed| Uuid(parsed.hyphenated().to_string()))
+    wamn_data_access::scalar::uuid(value)
         .map_err(|_| AccessError::field(AccessErrorType::InvalidInput, field))
 }
 
