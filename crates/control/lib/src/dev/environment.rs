@@ -657,8 +657,16 @@ pub async fn install_journey_platform_floor(
         .await
         .context("read the project database owner")?
         .get(0);
+    let owner = Identifier::new(&owner)?.quoted();
+    // As ensure does for env apply: the owner reaches the platform policies.
     project
-        .batch_execute(&format!("SET ROLE {}", Identifier::new(&owner)?.quoted()))
+        .batch_execute(&format!(
+            "GRANT wamn_platform TO {owner} WITH INHERIT TRUE, SET FALSE"
+        ))
+        .await
+        .context("grant wamn_platform to the project database owner")?;
+    project
+        .batch_execute(&format!("SET ROLE {owner}"))
         .await
         .context("assume the project database owner")?;
     project
