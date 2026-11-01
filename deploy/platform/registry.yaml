@@ -172,7 +172,7 @@ spec:
 #
 # No storageClassName: the cluster default binds. That matches the repo's only
 # other PVC consumers, neither of which names a class
-# (deploy/infra/nats-jetstream.yaml volumeClaimTemplates,
+# (deploy/gcp/nats-jetstream.yaml volumeClaimTemplates,
 # deploy/infra/cnpg-cluster.yaml storage.size); nothing in deploy/ names a
 # StorageClass at all. 2Gi is the size those two chose for a small durable store.
 # Which class that turns out to be decides how much durability this buys: a
