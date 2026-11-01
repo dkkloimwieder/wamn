@@ -6680,6 +6680,7 @@ dependencies = [
  "reqwest",
  "ring",
  "rustix 1.1.5",
+ "rustls",
  "serde",
  "serde_json",
  "serde_yaml",

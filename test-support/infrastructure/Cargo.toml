@@ -23,6 +23,7 @@ base64 = { workspace = true }
 hex = { workspace = true }
 ring = { workspace = true }
 rcgen = { workspace = true }
+rustls = { workspace = true, features = ["aws_lc_rs", "std", "tls12"] }
 reqwest = { workspace = true }
 rustix = { workspace = true }
 wamn-control-registry = { workspace = true }

@@ -72,6 +72,9 @@ impl ClientCertificate {
 
     /// The options of [`Self::connect`], for a caller that adds its own.
     pub fn options(&self) -> async_nats::ConnectOptions {
+        // A test binary links more than one rustls provider, so it names
+        // one, as the host does (wash_runtime::init_crypto).
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         async_nats::ConnectOptions::new()
             .require_tls(true)
             .add_root_certificates(self.ca.clone())

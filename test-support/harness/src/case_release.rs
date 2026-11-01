@@ -881,10 +881,14 @@ pub async fn install(
 /// `--allow-insecure-registries` after the release arguments. The release
 /// chart reads a registry over TLS only; without the flag every host exits at
 /// start, when it cannot read the release manifest (wamn-k8127.6). The hosts
-/// export to the kind cluster's own collector.
+/// export to the kind cluster's own collector and reach its one NATS in
+/// `wamn-system`, where the release chart's default names `platform`.
 pub fn render(input: &ValuesInput) -> anyhow::Result<Value> {
     let mut values = release_chart::values(input)?;
     let group = &mut values["runtime-operator"]["runtime"]["hostGroups"][0];
+    for key in ["schedulerNatsUrl", "dataNatsUrl"] {
+        group[key] = wamn_test_infrastructure::platform::NATS_URL.into();
+    }
     group["extraArgs"]
         .as_sequence_mut()
         .context("the release chart renders the host group's arguments")?

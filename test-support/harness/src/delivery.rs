@@ -316,6 +316,14 @@ fn host_group(
         group.remove(key);
     }
     group.insert("replicas".into(), REPLICAS.into());
+    // The kept cluster runs the one NATS in wamn-system, where the release
+    // chart's default names platform.
+    for key in ["schedulerNatsUrl", "dataNatsUrl"] {
+        group.insert(
+            key.into(),
+            wamn_test_infrastructure::platform::NATS_URL.into(),
+        );
+    }
     let env = group
         .get_mut("env")
         .and_then(Yaml::as_sequence_mut)
