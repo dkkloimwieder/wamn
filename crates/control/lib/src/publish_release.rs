@@ -553,6 +553,28 @@ pub fn compose_covering_entry(
     compose_pinned_application(member, bytes, route_bytes)
 }
 
+/// Keep the composed bytes while the selected member and route digests match.
+pub(crate) fn refresh_composed_entry(
+    entry: &mut Option<ComposedApplication>,
+    published: &PublishedRelease,
+    candidates: &[(&AdmittedComponent, &[u8])],
+    route_bytes: &[u8],
+    applications: &wamn_catalog::EnvironmentApplications,
+) -> anyhow::Result<bool> {
+    let (member, bytes) = covering_application(published, candidates, applications, None)?;
+    let route_digest = wamn_engine::component_admission::component_digest(route_bytes);
+    if entry.as_ref().is_some_and(|entry| {
+        entry.application.package_id == member.scope.package_id
+            && entry.application.component == member.component
+            && entry.application.digest == member.component_digest
+            && entry.route_digest == route_digest
+    }) {
+        return Ok(false);
+    }
+    *entry = Some(compose_pinned_application(member, bytes, route_bytes)?);
+    Ok(true)
+}
+
 pub(crate) fn compose_pinned_application(
     member: &AdmittedComponent,
     bytes: &[u8],
@@ -2352,6 +2374,81 @@ mod tests {
             imports_fingerprint: DIGEST.to_owned(),
             effects: Vec::new(),
         }
+    }
+
+    #[test]
+    fn unchanged_members_keep_the_composed_entry_bytes() {
+        let bytes = wat::parse_str("(component)").unwrap();
+        let mut member = closure_component("entry", None);
+        member.component_digest = wamn_engine::component_admission::component_digest(&bytes);
+        let published = |member: &AdmittedComponent| {
+            let manifest = ServingManifest::new(
+                ServingRelease {
+                    packages: [PackageCoordinate::new("base", "1.0.0").unwrap()].into(),
+                },
+                [ServingComponent::project(member, Vec::new()).unwrap()].into(),
+                BTreeSet::new(),
+                BTreeMap::new(),
+            )
+            .unwrap();
+            PublishedRelease {
+                digest: manifest.digest(),
+                canonical_bytes: manifest.canonical_bytes(),
+                manifest,
+            }
+        };
+        let applications = [(
+            "application".to_owned(),
+            wamn_catalog::ApplicationDefinition {
+                connections: BTreeMap::new(),
+                packages: ["base".to_owned()].into(),
+            },
+        )]
+        .into();
+        // These route bytes cannot compose. A matching entry must reuse its bytes.
+        let route_bytes = b"route";
+        let before = b"already composed";
+        let mut entry = Some(ComposedApplication {
+            bytes: before.to_vec().into_boxed_slice(),
+            digest: wamn_engine::component_admission::component_digest(before),
+            route_digest: wamn_engine::component_admission::component_digest(route_bytes),
+            application: wamn_catalog::ServingEntryMember {
+                package_id: "base".to_owned(),
+                component: "entry".to_owned(),
+                digest: member.component_digest.clone(),
+            },
+            application_digests: [member.component_digest.clone()].into(),
+        });
+        assert!(
+            !refresh_composed_entry(
+                &mut entry,
+                &published(&member),
+                &[(&member, &bytes)],
+                route_bytes,
+                &applications,
+            )
+            .unwrap()
+        );
+        assert_eq!(entry.as_ref().unwrap().bytes(), before);
+
+        let changed = wat::parse_str("(component (component))").unwrap();
+        member.component_digest = wamn_engine::component_admission::component_digest(&changed);
+        assert!(
+            refresh_composed_entry(
+                &mut entry,
+                &published(&member),
+                &[(&member, &changed)],
+                route_bytes,
+                &applications,
+            )
+            .is_err(),
+            "a changed member must attempt composition"
+        );
+        assert_eq!(
+            entry.as_ref().unwrap().bytes(),
+            before,
+            "a failed composition keeps the previous entry"
+        );
     }
 
     #[test]

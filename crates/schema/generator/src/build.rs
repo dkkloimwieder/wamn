@@ -103,7 +103,7 @@ pub fn package_output(output_root: &Path, package: &str) -> PathBuf {
 ///
 /// When [`generate_package`] or [`build_components`] refuses.
 pub async fn build_package(request: &BuildRequest) -> Result<BuildRecord> {
-    if let Some(build_record) = current_build(request)? {
+    if let Some(build_record) = current_build(&request.package_root, &request.output_root)? {
         crate::materialize::materialize_client_consumers(
             &request.package_root,
             &build_record.package.id,
@@ -116,14 +116,18 @@ pub async fn build_package(request: &BuildRequest) -> Result<BuildRecord> {
     build_components(request, &build_record.package.id).await
 }
 
-/// Find the matching inputs without compiling KCL or writing temporary files.
-fn current_build(request: &BuildRequest) -> Result<Option<BuildRecord>> {
-    let directories = match fs::read_dir(&request.output_root) {
+/// Find a complete build with matching inputs without compilation or writes.
+///
+/// # Errors
+///
+/// When the inputs, output directory, manifest, or base components cannot be read.
+pub fn current_build(package_root: &Path, output_root: &Path) -> Result<Option<BuildRecord>> {
+    let directories = match fs::read_dir(output_root) {
         Ok(directories) => directories,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error).context("read the package build output root"),
     };
-    let digest = crate::build_record::input_digest(&request.package_root)?;
+    let digest = crate::build_record::input_digest(package_root)?;
     for directory in directories {
         let output = directory?.path();
         let Ok(build_record) = crate::build_record::read(&output) else {
@@ -131,7 +135,7 @@ fn current_build(request: &BuildRequest) -> Result<Option<BuildRecord>> {
         };
         if build_record.inputs.digest != digest
             // A build record written before the web build must not make an unfinished build current.
-            || (request.package_root.join("web/package.json").is_file()
+            || (package_root.join("web/package.json").is_file()
                 && build_record.outputs.web.is_none())
             || !build_record
                 .outputs
@@ -148,8 +152,8 @@ fn current_build(request: &BuildRequest) -> Result<Option<BuildRecord>> {
             })
             || !build_record.dependencies.iter().all(|dependency| {
                 crate::build_record::read_current(
-                    &crate::output::dependency_root(&request.package_root, &dependency.id),
-                    &package_output(&request.output_root, &dependency.id),
+                    &crate::output::dependency_root(package_root, &dependency.id),
+                    &package_output(output_root, &dependency.id),
                 )
                 .is_ok_and(|base| {
                     base.package.version == dependency.version
@@ -161,7 +165,7 @@ fn current_build(request: &BuildRequest) -> Result<Option<BuildRecord>> {
         }
         // Generation writes a build record before component compilation. Do not
         // accept that intermediate result after a failed component build.
-        if crate::output::package_workspace(&request.package_root)
+        if crate::output::package_workspace(package_root)
             .join("Cargo.toml")
             .is_file()
         {
@@ -176,11 +180,7 @@ fn current_build(request: &BuildRequest) -> Result<Option<BuildRecord>> {
             }) {
                 continue;
             }
-            crate::components::base_components(
-                &request.package_root,
-                &request.output_root,
-                &manifest,
-            )?;
+            crate::components::base_components(package_root, output_root, &manifest)?;
         }
         return Ok(Some(build_record));
     }
@@ -1107,7 +1107,11 @@ mod tests {
         let mut unfinished = crate::build_record::read(&output).unwrap();
         unfinished.inputs.digest = crate::build_record::input_digest(&package).unwrap();
         fs::write(output.join(BUILD_RECORD_FILE), unfinished.to_bytes()).unwrap();
-        assert!(current_build(&request).unwrap().is_none());
+        assert!(
+            current_build(&request.package_root, &request.output_root)
+                .unwrap()
+                .is_none()
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
