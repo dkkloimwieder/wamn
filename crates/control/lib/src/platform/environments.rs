@@ -374,6 +374,9 @@ async fn release_inputs(
         suffix,
     )?;
     super::oauth::host_group(&mut group, &super::oauth::configuration(document))?;
+    // A local target's hosts mount the key, so it exists before their first
+    // apply and not only after the control release of 4.19.1.
+    super::oauth::ensure_key(target, document).await?;
     request
         .files
         .insert("host-group.yaml".into(), serde_yaml::to_string(&group)?);
