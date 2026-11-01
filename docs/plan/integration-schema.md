@@ -450,7 +450,7 @@ Plaintext secrets never sit in Postgres. A credential row holds a reference (`st
 | OAuth tokens (every OAuth type) | `identity.oauth_token`, AES-256-GCM, envelope key in Cloud KMS (local: key file) |
 
 - Old secret material is never read again, because configuration is never rolled back: it is destroyed asynchronously 5 minutes after a rotation becomes active. The credential row stays as audit metadata.
-- GKE application-layer secrets encryption (Cloud KMS) must be on for the Kubernetes backend.
+- GKE application-layer secrets encryption (Cloud KMS key wamn/etcd) is on for the Kubernetes backend; the install steps set it.
 - No External Secrets Operator: credentials are created at run time, and one custom resource per credential is churn. The host reads the store directly. No Workload secretFrom either: the operator resolves those values before the workload deploys, so a rotation would need a redeploy, and the wasmcloud:secrets plugin hands them to the component, while here the host applies auth and integration code never holds the secret.
 
 ### Auth runs in the host
@@ -528,7 +528,6 @@ Each is checked by the named test type: SQL (a statement against a fresh schema)
 | A child row's `BEFORE DELETE` trigger, fired by `ON DELETE CASCADE`, sees its parent `registry.connection` row already gone. | SQL test: delete a connection with generations and credentials; the cascade succeeds while a direct DELETE of a generation raises 55000 | `connection.delete` deletes children first under a transaction-local setting the trigger reads |
 | A Postgres session advisory lock stays held for the life of its dedicated session and is released when the session drops (pod killed, network cut). | live: take the lock from a host, kill the pod, take it from a second session | the lease becomes a row with a heartbeat and expiry |
 | Each env's host pods can run under their own ServiceAccount with a mounted token, so a Role can grant get on that env's Secret name alone (the host pods of all envs share one namespace). | the release chart sets a per-host-group serviceAccountName and token mount | the control host reads the Secret and hands the value to the env host over a host route |
-| GKE application-layer secrets encryption can be enabled on wamn-dev. | `gcloud container clusters describe` shows `databaseEncryption.state: ENCRYPTED` | Kubernetes Secrets are plaintext in etcd: GCP Secret Manager becomes the first cloud backend |
 | A component's imports can be read from its binary at install, so `interface` needs no declaration. | unit: decode a built component with `wit-component` and list its imports | `wamn.k` declares the interface per name |
 | An OAuth refresh token is bound to the client id, not to the client secret, for the providers in use. | test against each provider (NetSuite first): rotate the secret, refresh with the old token | a secret-only rotation deletes the token row and forces `connection.authorize` |
 | Integration code holds no state between calls (a fresh `Store` per call). | unit: two calls on one connection share no guest memory | a live version change must wait for runs to finish |

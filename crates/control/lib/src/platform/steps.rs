@@ -126,6 +126,18 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
             "NUMBER=$(gcloud projects describe {project} --format 'value(projectNumber)')\ngcloud services enable cloudkms.googleapis.com --project {project}\ngcloud kms keyrings create wamn --project {project} --location {region}\ngcloud kms keys create oauth-token --project {project} --location {region} --keyring wamn --purpose encryption\ngcloud kms keys add-iam-policy-binding oauth-token --project {project} --location {region} --keyring wamn --member \"{hosts}\" --role roles/cloudkms.cryptoKeyEncrypterDecrypter"
         ),
     };
+    // GKE application-layer secrets encryption: the Kubernetes Secrets that
+    // hold connection credentials are encrypted in etcd with wamn/etcd.
+    let etcd_key = OwnerInput {
+        name: format!(
+            "secrets encryption key wamn/etcd in {region} on cluster {}",
+            document.cluster_name
+        ),
+        instructions: format!(
+            "NUMBER=$(gcloud projects describe {project} --format 'value(projectNumber)')\ngcloud kms keys create etcd --project {project} --location {region} --keyring wamn --purpose encryption\ngcloud kms keys add-iam-policy-binding etcd --project {project} --location {region} --keyring wamn --member \"serviceAccount:service-$NUMBER@container-engine-robot.iam.gserviceaccount.com\" --role roles/cloudkms.cryptoKeyEncrypterDecrypter\ngcloud container clusters update {} --project {project} --zone {} --database-encryption-key projects/{project}/locations/{region}/keyRings/wamn/cryptoKeys/etcd",
+            document.cluster_name, document.zone
+        ),
+    };
     let registry_owner = history(
         format!("Artifact Registry {registry} (immutable tags)"),
         "1",
@@ -202,7 +214,7 @@ pub fn install_steps(document: &ClusterDocument, platform_version: &str) -> Vec<
             number: "4.9", title: "Platform install inputs",
             runs: Runner::Verb("Kubernetes API"),
             inputs: vec![("project_id", project.clone()), ("registry", registry.clone()), ("node placement", "label=role=bench-host, taint=role=bench-host:NoSchedule".into()), ("host service accounts", "hosts/wamn-host, hosts/wamn-host-<org>-<project>-<env>".into()), ("registry helper and Role", "hosts/wamn-registry-helper, hosts/wamn-control-status".into()), ("ctl NATS certificate", "platform/wamn-ctl-nats".into())],
-            owner_inputs: if document.provider == Provider::Gcp { vec![host_grants.clone(), oauth_key] } else { vec![host_grants.clone()] },
+            owner_inputs: if document.provider == Provider::Gcp { vec![host_grants.clone(), oauth_key, etcd_key] } else { vec![host_grants.clone()] },
         },
         InstallStep {
             number: "4.10", title: "Platform file",
@@ -324,7 +336,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn oauth_owner_commands_create_a_regional_key_and_grant_the_hosts_namespace() {
+    fn kms_owner_commands_create_the_oauth_and_etcd_keys_and_their_grants() {
         let document = serde_json::from_value(serde_json::json!({
             "provider": "gcp", "project_id": "test-project", "zone": "us-central1-a",
             "cluster_name": "test", "org": "test", "owner_email": "owner@example.com",
@@ -345,6 +357,23 @@ mod tests {
                 "gcloud kms keyrings create wamn --project test-project --location us-central1",
                 "gcloud kms keys create oauth-token --project test-project --location us-central1 --keyring wamn --purpose encryption",
                 "gcloud kms keys add-iam-policy-binding oauth-token --project test-project --location us-central1 --keyring wamn --member \"principalSet://iam.googleapis.com/projects/$NUMBER/locations/global/workloadIdentityPools/test-project.svc.id.goog/namespace/hosts\" --role roles/cloudkms.cryptoKeyEncrypterDecrypter",
+            ]
+        );
+        let etcd: Vec<_> = install_steps(&document, "test")
+            .into_iter()
+            .flat_map(|step| step.owner_inputs)
+            .filter(|input| {
+                input.name == "secrets encryption key wamn/etcd in us-central1 on cluster test"
+            })
+            .collect();
+        assert_eq!(etcd.len(), 1);
+        assert_eq!(
+            etcd[0].instructions.lines().collect::<Vec<_>>(),
+            vec![
+                "NUMBER=$(gcloud projects describe test-project --format 'value(projectNumber)')",
+                "gcloud kms keys create etcd --project test-project --location us-central1 --keyring wamn --purpose encryption",
+                "gcloud kms keys add-iam-policy-binding etcd --project test-project --location us-central1 --keyring wamn --member \"serviceAccount:service-$NUMBER@container-engine-robot.iam.gserviceaccount.com\" --role roles/cloudkms.cryptoKeyEncrypterDecrypter",
+                "gcloud container clusters update test --project test-project --zone us-central1-a --database-encryption-key projects/test-project/locations/us-central1/keyRings/wamn/cryptoKeys/etcd",
             ]
         );
     }

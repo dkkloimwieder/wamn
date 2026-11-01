@@ -687,6 +687,19 @@ gcloud kms keys add-iam-policy-binding oauth-token --project wamn-dev --location
   --role roles/cloudkms.cryptoKeyEncrypterDecrypter
 ```
 
+GKE application-layer secrets encryption uses the regional key `wamn/etcd`.
+The Kubernetes Secrets that hold connection credentials are then encrypted in etcd.
+The owner creates the key, grants it to the GKE service agent, and turns the encryption on in step 4.9:
+
+```bash
+gcloud kms keys create etcd --project wamn-dev --location us-central1 --keyring wamn --purpose encryption
+gcloud kms keys add-iam-policy-binding etcd --project wamn-dev --location us-central1 --keyring wamn \
+  --member "serviceAccount:service-$NUMBER@container-engine-robot.iam.gserviceaccount.com" \
+  --role roles/cloudkms.cryptoKeyEncrypterDecrypter
+gcloud container clusters update wamn --project wamn-dev --zone us-central1-a \
+  --database-encryption-key projects/wamn-dev/locations/us-central1/keyRings/wamn/cryptoKeys/etcd
+```
+
 Set `WAMN_OAUTH_ENCRYPTION` on application hosts and the control host through their deployment environment:
 
 ```bash
