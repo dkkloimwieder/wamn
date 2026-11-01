@@ -182,7 +182,16 @@ const NAMESPACE: &str = "wamn-system";
 /// The one NATS of the test cluster.
 const NATS_URL: &str = "nats://wamn-nats.wamn-system.svc.cluster.local:4222";
 /// Every environment the checks apply, which the NATS users cover.
-const KIND_ENVIRONMENTS: [&str; 6] = ["dev", "http", "qa", "broken", "files", "integration"];
+const KIND_ENVIRONMENTS: [&str; 8] = [
+    "dev",
+    "http",
+    "qa",
+    "broken",
+    "files",
+    "integration",
+    "east",
+    "west",
+];
 const OPERATOR_CHART: &str = "oci://ghcr.io/wasmcloud/charts/runtime-operator";
 /// The pin of tests/conformance/tests/chart_seam_governance.rs.
 const OPERATOR_VERSION: &str = "2.11.0";

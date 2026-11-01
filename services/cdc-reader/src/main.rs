@@ -37,6 +37,9 @@ async fn main() -> anyhow::Result<()> {
     let level = tracing::Level::from_str(&cli.log_level)
         .map_err(|_| anyhow::anyhow!("invalid log level: {}", cli.log_level))?;
     init_tracing(level);
+    // As wash_runtime::init_crypto does for the host. An earlier install
+    // leaves its provider in place.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     wamn_cdc_reader::run(cli.args).await
 }

@@ -5651,6 +5651,7 @@ dependencies = [
  "clap",
  "futures-util",
  "pg_walstream",
+ "rustls",
  "serde_json",
  "tokio",
  "tokio-postgres",
