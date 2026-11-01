@@ -571,6 +571,7 @@ mod tests {
             chart.join(BUILD_RECORD_FILE),
             serde_json::to_vec(&PlatformBuildRecord {
                 platform_ui: platform_ui_digest(&dist).unwrap(),
+                stage_durations_ms: std::collections::BTreeMap::new(),
             })
             .unwrap(),
         )

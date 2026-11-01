@@ -14,6 +14,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, ensure};
@@ -36,13 +37,16 @@ const ROLES: [(&str, &str); 2] = [
     ("materializer.wasm", "materializer"),
 ];
 
+type StageDurations = Mutex<BTreeMap<String, u64>>;
+
 /// Print the elapsed time when a build stage ends, including on failure.
-pub(crate) struct Stage {
+pub(crate) struct Stage<'a> {
     name: String,
     start: Instant,
+    durations: Option<&'a StageDurations>,
 }
 
-pub(crate) fn start_stage(name: impl Into<String>) -> Stage {
+pub(crate) fn start_stage(name: impl Into<String>) -> Stage<'static> {
     let name = name.into();
     eprintln!(
         "build-platform {name} start {}",
@@ -51,26 +55,44 @@ pub(crate) fn start_stage(name: impl Into<String>) -> Stage {
     Stage {
         name,
         start: Instant::now(),
+        durations: None,
     }
 }
 
-impl Drop for Stage {
+fn recorded_stage(durations: &StageDurations, name: impl Into<String>) -> Stage<'_> {
+    let mut stage = start_stage(name);
+    stage.durations = Some(durations);
+    stage
+}
+
+impl Drop for Stage<'_> {
     fn drop(&mut self) {
+        let elapsed = self.start.elapsed();
+        if let Some(durations) = self.durations {
+            let milliseconds = u64::try_from(elapsed.as_millis()).expect("stage duration fits u64");
+            *durations
+                .lock()
+                .expect("stage durations lock")
+                .entry(self.name.clone())
+                .or_default() += milliseconds;
+        }
         eprintln!(
             "build-platform {} end {} elapsed {:.3}s",
             self.name,
             Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
-            self.start.elapsed().as_secs_f64()
+            elapsed.as_secs_f64()
         );
     }
 }
 
-/// The content of the platform UI produced by one platform build.
+/// The UI digest and stage durations of one platform build.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlatformBuildRecord {
     /// SHA-256 of the canonical map of relative file paths to file digests.
     pub platform_ui: String,
+    /// Elapsed milliseconds by executed stage, with copies separate from builds.
+    pub stage_durations_ms: BTreeMap<String, u64>,
 }
 
 /// The platform build record beside the stamped chart's defaults.
@@ -90,6 +112,7 @@ fn ui_build_record(repository: &Path) -> anyhow::Result<PlatformBuildRecord> {
     );
     Ok(PlatformBuildRecord {
         platform_ui: platform_ui_digest(&dist)?,
+        stage_durations_ms: BTreeMap::new(),
     })
 }
 
@@ -234,6 +257,7 @@ fn check_package_outputs(repository: &Path) -> anyhow::Result<()> {
 /// pushes nothing. Every image is tagged with the chart version and pinned by
 /// its pushed digest.
 pub async fn build_platform(request: &BuildPlatformRequest) -> anyhow::Result<PathBuf> {
+    let durations = StageDurations::default();
     ensure!(
         !request.cloud || !loopback(&request.registry),
         "--cloud cannot reach a loopback registry; omit --cloud for a local build"
@@ -260,45 +284,63 @@ pub async fn build_platform(request: &BuildPlatformRequest) -> anyhow::Result<Pa
         3.0,
     ) != BuildLocation::Local
     {
-        return cloud_build(request, &processes).await;
+        return cloud_build(request, &processes, &durations).await;
     }
     let roles = std::env::temp_dir().join(format!("wamn-roles-{}", std::process::id()));
     let mut components = OciComponents {
         insecure: loopback(&request.registry),
     };
-    let pushed = build_then_push(request, &roles, output, &mut components).await;
+    let pushed = build_then_push(request, &roles, output, &mut components, &durations).await;
     let _ = std::fs::remove_dir_all(&roles);
     let pushed = pushed?;
-    stamp_chart(request, pushed, &ui_build_record(&request.repository)?)
+    stamp_chart(
+        request,
+        pushed,
+        &ui_build_record(&request.repository)?,
+        &durations,
+    )
 }
 
 /// Stamp the registry's images and role components of `request.version` into
 /// a copy of the release chart at `request.out`. It builds and pushes
 /// nothing; when any of the seven is missing, it refuses and names them.
 pub async fn stamp_only(request: &BuildPlatformRequest) -> anyhow::Result<PathBuf> {
+    stamp_only_with_durations(request, &StageDurations::default()).await
+}
+
+async fn stamp_only_with_durations(
+    request: &BuildPlatformRequest,
+    durations: &StageDurations,
+) -> anyhow::Result<PathBuf> {
     let build_record = ui_build_record(&request.repository)?;
     let insecure = loopback(&request.registry);
-    stamp_from_registry(request, &build_record, output, async |reference: &str| {
-        let parsed = reference.parse()?;
-        let (_, digest) = registry_pull::retry(
-            &parsed,
-            tokio::time::Instant::now() + Duration::from_secs(30),
-            || async {
-                wash_runtime::oci::pull_component(
-                    reference,
-                    wash_runtime::oci::OciConfig {
-                        insecure,
-                        ..wash_runtime::oci::OciConfig::default()
-                    },
-                    wash_runtime::oci::OciPullPolicy::Always,
-                )
-                .await
-            },
-            |error: &anyhow::Error| error.as_ref(),
-        )
-        .await?;
-        Ok(digest)
-    })
+    stamp_from_registry(
+        request,
+        &build_record,
+        durations,
+        output,
+        async |reference: &str| {
+            let parsed = reference.parse()?;
+            let (_, digest) = registry_pull::retry(
+                &parsed,
+                tokio::time::Instant::now() + Duration::from_secs(30),
+                || async {
+                    wash_runtime::oci::pull_component(
+                        reference,
+                        wash_runtime::oci::OciConfig {
+                            insecure,
+                            ..wash_runtime::oci::OciConfig::default()
+                        },
+                        wash_runtime::oci::OciPullPolicy::Always,
+                    )
+                    .await
+                },
+                |error: &anyhow::Error| error.as_ref(),
+            )
+            .await?;
+            Ok(digest)
+        },
+    )
     .await
 }
 
@@ -308,6 +350,7 @@ pub async fn stamp_only(request: &BuildPlatformRequest) -> anyhow::Result<PathBu
 async fn stamp_from_registry(
     request: &BuildPlatformRequest,
     build_record: &PlatformBuildRecord,
+    durations: &StageDurations,
     mut run: impl AsyncFnMut(&mut Command) -> anyhow::Result<String>,
     mut pull: impl AsyncFnMut(&str) -> anyhow::Result<String>,
 ) -> anyhow::Result<PathBuf> {
@@ -316,7 +359,7 @@ async fn stamp_from_registry(
         "the chart output {} exists",
         request.out.display()
     );
-    let stage = start_stage("registry-reads");
+    let stage = recorded_stage(durations, "registry-reads");
     let registry = &request.registry;
     let version = &request.version;
     let mut pinned = Vec::new();
@@ -361,6 +404,7 @@ async fn stamp_from_registry(
         request,
         ([host, runner, gates, identity, edge], (http, materializer)),
         build_record,
+        durations,
     )
 }
 
@@ -381,8 +425,9 @@ fn stamp_chart(
     request: &BuildPlatformRequest,
     ([host, runner, gates, identity, edge], (http, materializer)): ([String; 5], (String, String)),
     build_record: &PlatformBuildRecord,
+    durations: &StageDurations,
 ) -> anyhow::Result<PathBuf> {
-    let _stage = start_stage("stamp");
+    let stage = recorded_stage(durations, "stamp");
     let chart = stamp(
         &request.repository.join("deploy/platform/release"),
         &ImageSet {
@@ -405,9 +450,14 @@ fn stamp_chart(
     );
     defaults["platform"]["edge"]["image"] = edge.into();
     std::fs::write(path, serde_yaml::to_string(&defaults)?)?;
+    drop(stage);
+    let mut build_record = build_record.clone();
+    build_record
+        .stage_durations_ms
+        .extend(durations.lock().expect("stage durations lock").clone());
     std::fs::write(
         chart.join(BUILD_RECORD_FILE),
-        canonical_json_bytes(&serde_json::to_value(build_record)?),
+        canonical_json_bytes(&serde_json::to_value(&build_record)?),
     )?;
     Ok(chart)
 }
@@ -674,10 +724,11 @@ async fn lookup(
 async fn plan(
     request: &BuildPlatformRequest,
     run: &impl AsyncFn(&mut Command) -> anyhow::Result<String>,
+    durations: &StageDurations,
 ) -> anyhow::Result<Plan> {
     let mut hashes = BTreeMap::new();
     {
-        let _stage = start_stage("input-hashes");
+        let _stage = recorded_stage(durations, "input-hashes");
         let mut graphs = Vec::new();
         for manifest in ["Cargo.toml", "apps/Cargo.toml"] {
             let metadata = run(Command::new("cargo")
@@ -701,7 +752,7 @@ async fn plan(
             hashes.insert(target, inputs::input_hash(target, &files));
         }
     }
-    let _stage = start_stage("input-lookups");
+    let _stage = recorded_stage(durations, "input-lookups");
     let registry = &request.registry;
     let lookups = IMAGES.map(|target| lookup(run, registry, target, &hashes[target]));
     let digests = futures_util::future::join_all(lookups).await;
@@ -731,8 +782,9 @@ async fn copy_image(
     target: &str,
     hash: &str,
     digest: &str,
+    durations: &StageDurations,
 ) -> anyhow::Result<String> {
-    let _stage = start_stage(format!("copy-{target}"));
+    let _stage = recorded_stage(durations, format!("copy-{target}"));
     let reference = format!("{registry}/wamn-{target}:{version}");
     // With one source, --prefer-index=false copies the manifest as it is, so
     // the digest holds.
@@ -759,9 +811,10 @@ async fn build_then_push(
     roles: &Path,
     mut run: impl AsyncFn(&mut Command) -> anyhow::Result<String>,
     components: &mut impl Components,
+    durations: &StageDurations,
 ) -> anyhow::Result<([String; 5], (String, String))> {
     {
-        let _stage = start_stage("ui-build");
+        let _stage = recorded_stage(durations, "ui-build");
         run(Command::new("pnpm").current_dir(&request.repository).args([
             "--filter",
             "@wamn/platform-ui",
@@ -775,7 +828,7 @@ async fn build_then_push(
         "HEAD",
     ]))
     .await?;
-    let Plan { hashes, images } = plan(request, &run).await?;
+    let Plan { hashes, images } = plan(request, &run, durations).await?;
     let registry = &request.registry;
     let version = &request.version;
     let mut references = Vec::new();
@@ -783,7 +836,7 @@ async fn build_then_push(
         let reference = format!("{registry}/wamn-{target}:{version}");
         let hash = &hashes[target];
         if !images.contains_key(target) {
-            let _stage = start_stage(format!("image-build-{target}"));
+            let _stage = recorded_stage(durations, format!("image-build-{target}"));
             run(docker(&request.repository)?
                 .args(["--target", target, "--tag", &reference, "--tag"])
                 .arg(input_tag(registry, target, hash))
@@ -796,7 +849,7 @@ async fn build_then_push(
         references.push((target, reference));
     }
     {
-        let _stage = start_stage("roles-export");
+        let _stage = recorded_stage(durations, "roles-export");
         run(docker(&request.repository)?
             .args(["--target", "roles", "--output"])
             .arg(format!("type=local,dest={}", roles.display()))
@@ -812,10 +865,12 @@ async fn build_then_push(
     for (target, reference) in &references {
         let hash = &hashes[target];
         if let Some(digest) = images.get(target) {
-            pushed.push(copy_image(&mut run, registry, version, target, hash, digest).await?);
+            pushed.push(
+                copy_image(&mut run, registry, version, target, hash, digest, durations).await?,
+            );
             continue;
         }
-        let _stage = start_stage(format!("push-{target}"));
+        let _stage = recorded_stage(durations, format!("push-{target}"));
         pushed.push(push_image(&mut run, registry, target, reference).await?);
         run(Command::new("docker").args(["push", &input_tag(registry, target, hash)])).await?;
     }
@@ -823,7 +878,7 @@ async fn build_then_push(
         .map_err(|_| anyhow::anyhow!("five platform images were pushed"))?;
     Ok((
         images,
-        push_roles(registry, version, role_components, components).await?,
+        push_roles(registry, version, role_components, components, durations).await?,
     ))
 }
 
@@ -874,10 +929,11 @@ async fn push_roles(
     version: &str,
     role_components: Vec<(&str, Vec<u8>)>,
     components: &mut impl Components,
+    durations: &StageDurations,
 ) -> anyhow::Result<(String, String)> {
     let mut pushed = Vec::new();
     for (role, bytes) in role_components {
-        let _stage = start_stage(format!("push-{role}"));
+        let _stage = recorded_stage(durations, format!("push-{role}"));
         // A lookup that fails, for any reason, leaves the role to be pushed.
         if let Ok(Some(pinned)) =
             reuse_role(components, registry, version, role, &sha256(&bytes)).await
@@ -906,9 +962,10 @@ async fn reuse_pushed_roles(
     registry: &str,
     version: &str,
     components: &mut impl Components,
+    durations: &StageDurations,
 ) -> anyhow::Result<()> {
     for (_, role) in ROLES {
-        let _stage = start_stage(format!("reuse-{role}"));
+        let _stage = recorded_stage(durations, format!("reuse-{role}"));
         let (manifest, _) = components
             .manifest(&format!("{registry}/wamn/{role}:{version}"))
             .await?;
@@ -1174,6 +1231,7 @@ fn gcloud(project: &str) -> anyhow::Result<Command> {
 async fn cloud_build(
     request: &BuildPlatformRequest,
     processes: &[(u32, Vec<String>)],
+    durations: &StageDurations,
 ) -> anyhow::Result<PathBuf> {
     let cluster = request
         .cluster
@@ -1184,7 +1242,7 @@ async fn cloud_build(
         "Cloud Build requires a GCP --cluster document"
     );
     {
-        let _stage = start_stage("ui-build");
+        let _stage = recorded_stage(durations, "ui-build");
         output(Command::new("pnpm").current_dir(&request.repository).args([
             "--filter",
             "@wamn/platform-ui",
@@ -1193,7 +1251,7 @@ async fn cloud_build(
         .await?;
     }
     let mut run = output;
-    let plan = plan(request, &run).await?;
+    let plan = plan(request, &run, durations).await?;
     let stores = CounterStores {
         gcloud: "gcloud".into(),
         configuration: agent_configuration()?,
@@ -1216,8 +1274,14 @@ async fn cloud_build(
             "Cloud Build refused: spend USD {spend_usd:.4} is at or above cap USD {cap_usd:.4}"
         );
     }
-    let build =
-        submit_cloud_build(request, &plan, &cluster.project_id, &cluster.buckets.state).await?;
+    let build = submit_cloud_build(
+        request,
+        &plan,
+        &cluster.project_id,
+        &cluster.buckets.state,
+        durations,
+    )
+    .await?;
     // Record failed builds before reporting their outcome.
     add_cloud_minutes(&stores, &day, cloud_minutes(&build)?).await?;
     ensure!(
@@ -1234,6 +1298,7 @@ async fn cloud_build(
             target,
             &plan.hashes[target],
             digest,
+            durations,
         )
         .await?;
     }
@@ -1243,9 +1308,10 @@ async fn cloud_build(
         &mut OciComponents {
             insecure: loopback(&request.registry),
         },
+        durations,
     )
     .await?;
-    stamp_only(request).await
+    stamp_only_with_durations(request, durations).await
 }
 
 async fn submit_cloud_build(
@@ -1253,8 +1319,9 @@ async fn submit_cloud_build(
     plan: &Plan,
     project: &str,
     state_bucket: &str,
+    durations: &StageDurations,
 ) -> anyhow::Result<CloudBuild> {
-    let _stage = start_stage("cloud-submit");
+    let _stage = recorded_stage(durations, "cloud-submit");
     let supplement = format!(".wamn-cloud-build-{}", std::process::id());
     let path = request.repository.join(&supplement);
     std::fs::create_dir(&path).context("create the cloud source supplement")?;
@@ -1828,9 +1895,16 @@ mod tests {
         std::fs::create_dir_all(dist.join("assets")).unwrap();
         std::fs::write(dist.join("index.html"), b"index").unwrap();
         std::fs::write(dist.join("assets/app.js"), b"app").unwrap();
+        let durations = StageDurations::default();
+        {
+            let mut stage = recorded_stage(&durations, "ui-build");
+            stage.start -= Duration::from_millis(42);
+        }
         let build_record = PlatformBuildRecord {
             platform_ui: platform_ui_digest(&dist).unwrap(),
+            stage_durations_ms: durations.into_inner().unwrap(),
         };
+        assert!(build_record.stage_durations_ms["ui-build"] >= 42);
         assert_eq!(
             build_record.platform_ui,
             "sha256:5a8575268118ba787b9258f2e2277418d1139a5cc0ba08f3c7bf5e6b0fd04e45"
@@ -1973,6 +2047,7 @@ mod tests {
     ) -> (anyhow::Result<Pinned>, Vec<String>) {
         let (repository, root, apps) = checkout;
         let calls = std::cell::RefCell::new(Vec::new());
+        let durations = StageDurations::default();
         let result = build_then_push(
             &BuildPlatformRequest {
                 cluster: None,
@@ -2013,8 +2088,33 @@ mod tests {
                 Ok(String::new())
             },
             components,
+            &durations,
         )
         .await;
+        if result.is_ok() {
+            let durations = durations.into_inner().unwrap();
+            for target in IMAGES {
+                let built = calls
+                    .borrow()
+                    .iter()
+                    .any(|call| call.contains(&format!("--target {target} ")));
+                assert_eq!(
+                    durations.contains_key(&format!("image-build-{target}")),
+                    built
+                );
+                assert_eq!(durations.contains_key(&format!("copy-{target}")), !built);
+            }
+            for stage in [
+                "ui-build",
+                "input-hashes",
+                "input-lookups",
+                "roles-export",
+                "push-http",
+                "push-materializer",
+            ] {
+                assert!(durations.contains_key(stage), "missing duration: {stage}");
+            }
+        }
         (result, calls.into_inner())
     }
 
@@ -2056,6 +2156,7 @@ mod tests {
                 ensure!(answer != TIMEOUT, "ERROR: {TIMEOUT}");
                 Ok(answer.to_owned())
             },
+            &StageDurations::default(),
         )
         .await;
         let _ = std::fs::remove_dir_all(&repository);
@@ -2253,9 +2354,14 @@ mod tests {
             .await
             .unwrap();
         let before = components.manifests[&format!("{http}:{VERSION}")].clone();
-        reuse_pushed_roles("localhost:5000", VERSION, &mut components)
-            .await
-            .unwrap();
+        reuse_pushed_roles(
+            "localhost:5000",
+            VERSION,
+            &mut components,
+            &StageDurations::default(),
+        )
+        .await
+        .unwrap();
         let after = &components.manifests[&format!("{http}:{VERSION}")];
         assert_ne!(&before, after);
         assert_eq!(after, &components.manifests[&format!("{http}:0.0.1")]);
@@ -2293,7 +2399,9 @@ mod tests {
             },
             &PlatformBuildRecord {
                 platform_ui: digest.clone(),
+                stage_durations_ms: BTreeMap::new(),
             },
+            &StageDurations::default(),
             async |command: &mut Command| {
                 let std = command.as_std();
                 let call = std::iter::once(std.get_program())
@@ -2323,6 +2431,17 @@ mod tests {
         assert_eq!(
             build_record.platform_ui,
             format!("sha256:{}", "a".repeat(64))
+        );
+        assert!(
+            build_record
+                .stage_durations_ms
+                .contains_key("registry-reads")
+        );
+        assert!(build_record.stage_durations_ms.contains_key("stamp"));
+        assert!(
+            !build_record
+                .stage_durations_ms
+                .contains_key("image-build-host")
         );
         let values = stamped
             .and_then(|chart| Ok(std::fs::read_to_string(chart.join("values.yaml"))?))

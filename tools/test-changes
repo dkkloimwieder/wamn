@@ -81,10 +81,17 @@ readonly WAMN_BASE
 # The working tree against the base: committed, staged, unstaged, deleted, and
 # untracked paths. Rename detection is off, so a renamed file counts at both paths.
 declare -a WAMN_CHANGED=()
-mapfile -d '' -t WAMN_CHANGED < <(
-  git diff --name-only --no-renames -z "$WAMN_BASE" --
-  git ls-files --others --exclude-standard -z
-)
+changed_file=$(mktemp "${TMPDIR:-/tmp}/wamn-test-changes.XXXXXXXX")
+if ! git diff --name-only --no-renames -z "$WAMN_BASE" -- > "$changed_file"; then
+  rm -f -- "$changed_file"
+  wamn_fail 65 'cannot read changed paths with git diff'
+fi
+if ! git ls-files --others --exclude-standard -z >> "$changed_file"; then
+  rm -f -- "$changed_file"
+  wamn_fail 65 'cannot read untracked paths with git ls-files'
+fi
+mapfile -d '' -t WAMN_CHANGED < "$changed_file"
+rm -f -- "$changed_file"
 readonly WAMN_CHANGED
 
 WAMN_RELEVANT="$(

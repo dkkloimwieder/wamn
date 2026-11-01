@@ -141,6 +141,8 @@ build-platform <stage> end <RFC 3339 UTC> elapsed <seconds>s
 `--stamp-only` prints these lines around registry reads and the chart stamp.
 Step 4.6 forwards these lines as they arrive and times its package builds, UI build, and stamp-only command.
 An end line marks the stage exit, including failure. The command exit status reports success or failure.
+`platform-build.json` records elapsed milliseconds by stage in `stage_durations_ms`.
+Copy stages and image build stages use separate entries, so the record distinguishes reuse from compilation.
 
 The platform UI is a platform asset and has no `wamn.k` or package artifact.
 Install the workspace dependencies with `pnpm install --offline` before the build.
@@ -240,10 +242,10 @@ build-platform <role> layer <digest> differs from <previous version>
 The manifest copy uses no credential for a loopback registry.
 For other registries, it reads the credential from the Docker configuration or its credential helper.
 
-## Local train builds
+## Local revision builds
 
-The train stores its images in a registry on the build host.
-It needs no GCP access or cluster document.
+Local revision builds store their images in a registry on the build host.
+The build needs no GCP access or cluster document.
 Input-hash lookups and role copies read this same registry.
 Both kind cases copy from the registry named in the stamped chart.
 The build still pulls public base images unless Docker already holds them.
@@ -253,13 +255,13 @@ Then run these commands from the repository root:
 
 ```bash
 export TMPDIR=/var/tmp
-export DOCKER_CONFIG=$(mktemp -d /var/tmp/wamn-train-docker.XXXXXX)
+export DOCKER_CONFIG=$(mktemp -d /var/tmp/wamn-test-revision-docker.XXXXXX)
 printf '{}\n' > "$DOCKER_CONFIG/config.json"
 registry=$(tools/local-registry)
-train_out=$(mktemp -d /var/tmp/wamn-train.XXXXXX)
+revision_out=$(mktemp -d /var/tmp/wamn-test-revision.XXXXXX)
 "$CARGO_TARGET_DIR/debug/wamn-ctl" build-platform \
-  --registry "$registry" --out "$train_out/release-chart"
-export WAMN_RELEASE_CHART="$train_out/release-chart"
+  --registry "$registry" --out "$revision_out/release-chart"
+export WAMN_RELEASE_CHART="$revision_out/release-chart"
 ```
 
 The empty Docker configuration prevents Docker and wash from calling credential helpers.
@@ -267,7 +269,7 @@ The empty Docker configuration prevents Docker and wash from calling credential 
 It prints `127.0.0.1:<port>` after the registry responds over HTTP.
 The container uses `registry:2` and keeps images in the `wamn-local-registry-data` volume.
 It stays outside the kind network because the tests copy images through the host.
-Keep it between train runs so that unchanged images remain available.
+Keep it between revision runs so that unchanged images remain available.
 
 A loopback build stays local even when another builder runs.
 Do not pass `--cloud` for a loopback registry.

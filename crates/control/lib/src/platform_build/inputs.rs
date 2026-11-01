@@ -27,22 +27,6 @@ const COMPONENTS: &[&str] = &[
     "sockprobe",
 ];
 
-/// The build-context paths that a `COPY` without `--from` names in the
-/// Dockerfile. A file outside them never reaches an image.
-pub(super) const COPIED: &[&str] = &[
-    "Cargo.toml",
-    "Cargo.lock",
-    ".cargo/config.toml",
-    "crates",
-    "vendor",
-    "apps",
-    "services",
-    "test-support",
-    "tests",
-    "tools",
-    "deploy",
-];
-
 /// Files that every target hashes besides its own inputs. The manifests
 /// matter to every target because one Cargo invocation unifies the features
 /// of all the packages it builds.
@@ -424,6 +408,137 @@ fn ignored(repository: &Path) -> anyhow::Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
+/// The context paths reachable through the target's stage dependencies.
+/// Refuse unsupported source syntax instead of omitting an input.
+fn copied_paths(dockerfile: &str, target: &str) -> anyhow::Result<BTreeMap<PathBuf, bool>> {
+    #[derive(Default)]
+    struct Sources {
+        dependencies: Vec<String>,
+        paths: BTreeSet<PathBuf>,
+        narrow: bool,
+    }
+    let mut stages = Vec::<Sources>::new();
+    let mut names = BTreeMap::new();
+    let mut instruction = String::new();
+    for line in dockerfile.lines().map(str::trim) {
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        instruction.push_str(line.trim_end_matches('\\'));
+        if line.ends_with('\\') {
+            instruction.push(' ');
+            continue;
+        }
+        let (verb, arguments) = instruction
+            .split_once(char::is_whitespace)
+            .unwrap_or((&instruction, ""));
+        if verb.eq_ignore_ascii_case("FROM") {
+            let mut words = arguments
+                .split_whitespace()
+                .filter(|word| !word.starts_with("--"));
+            let base = words.next().context("FROM has no image")?;
+            let mut sources = Sources::default();
+            sources.dependencies.push(base.to_owned());
+            let index = stages.len();
+            names.insert(index.to_string(), index);
+            if let Some(as_word) = words.next() {
+                ensure!(
+                    as_word.eq_ignore_ascii_case("AS"),
+                    "unsupported FROM: {instruction}"
+                );
+                let name = words.next().context("FROM AS has no name")?;
+                sources.narrow = ["root-source", "component-toolchain"].contains(&name);
+                names.insert(name.to_owned(), index);
+            }
+            stages.push(sources);
+        } else if verb.eq_ignore_ascii_case("COPY") || verb.eq_ignore_ascii_case("ADD") {
+            let sources = stages.last_mut().context("COPY or ADD before FROM")?;
+            let mut rest = arguments.trim();
+            let mut from = None;
+            while rest.starts_with("--") {
+                let (flag, remaining) = rest
+                    .split_once(char::is_whitespace)
+                    .context("COPY or ADD has no source")?;
+                if let Some(stage) = flag.strip_prefix("--from=") {
+                    from = Some(stage.to_owned());
+                } else {
+                    ensure!(flag.contains('='), "unsupported COPY or ADD flag: {flag}");
+                }
+                rest = remaining.trim_start();
+            }
+            if let Some(from) = from {
+                sources.dependencies.push(from);
+            } else {
+                let paths: Vec<String> = if rest.starts_with('[') {
+                    serde_json::from_str(rest).context("read COPY or ADD sources")?
+                } else {
+                    ensure!(
+                        !rest.contains(['\'', '"', '\\']),
+                        "use JSON for quoted COPY or ADD paths: {rest}"
+                    );
+                    rest.split_whitespace().map(str::to_owned).collect()
+                };
+                ensure!(
+                    paths.len() >= 2,
+                    "COPY or ADD needs sources and a destination"
+                );
+                for source in &paths[..paths.len() - 1] {
+                    if verb.eq_ignore_ascii_case("ADD")
+                        && (source.contains("://") || source.starts_with("git@"))
+                    {
+                        continue;
+                    }
+                    ensure!(
+                        !source.contains(['*', '?', '[', '$']) && !source.starts_with("<<"),
+                        "unsupported COPY or ADD source: {source}"
+                    );
+                    let path = resolve(Path::new(""), source.trim_start_matches('/'))
+                        .with_context(|| {
+                            format!("COPY or ADD source leaves the context: {source}")
+                        })?;
+                    sources.paths.insert(path);
+                }
+            }
+        }
+        instruction.clear();
+    }
+    ensure!(instruction.is_empty(), "unfinished Dockerfile instruction");
+    let mut pending = vec![
+        *names
+            .get(target)
+            .with_context(|| format!("no Dockerfile target {target}"))?,
+    ];
+    let mut seen = BTreeSet::new();
+    let mut paths = BTreeMap::new();
+    while let Some(index) = pending.pop() {
+        if !seen.insert(index) {
+            continue;
+        }
+        for path in &stages[index].paths {
+            // Only these source stages use the Cargo graph to narrow roots.
+            // A direct image copy reads the complete source path.
+            let whole = !stages[index].narrow
+                || ![
+                    "crates",
+                    "apps",
+                    "services",
+                    "test-support",
+                    "tests",
+                    "deploy",
+                ]
+                .iter()
+                .any(|root| path == Path::new(root));
+            *paths.entry(path.clone()).or_insert(false) |= whole;
+        }
+        for dependency in &stages[index].dependencies {
+            if let Some(index) = names.get(dependency) {
+                pending.push(*index);
+            }
+        }
+    }
+    Ok(paths)
+}
+
 /// Record each file below `relative` with its digest and mode, or the target
 /// of a symbolic link. `keep` says which paths count.
 fn walk(
@@ -507,7 +622,19 @@ pub(super) fn input_files(
         paths.insert(directory);
     }
     let ignored = ignored(repository)?;
-    let copied: Vec<&Path> = COPIED.iter().chain(COMMON).map(Path::new).collect();
+    let dockerfile = std::fs::read_to_string(repository.join("Dockerfile"))?;
+    let context = copied_paths(&dockerfile, target)?;
+    // Cargo packages and embedded deployment files retain their existing
+    // selection. Other copied sources count in full, including new sources.
+    for (path, whole) in &context {
+        if *whole {
+            paths.insert(path.clone());
+        }
+    }
+    let copied: BTreeSet<PathBuf> = context
+        .into_keys()
+        .chain(COMMON.iter().map(PathBuf::from))
+        .collect();
     let keep = |path: &Path| {
         if ignored.iter().any(|ignored| path.starts_with(ignored)) {
             None
@@ -684,7 +811,10 @@ pub(super) mod tests {
             std::fs::write(path, text).unwrap();
         };
         for (path, text) in [
-            ("Dockerfile", "FROM scratch AS host\n"),
+            (
+                "Dockerfile",
+                include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../Dockerfile")),
+            ),
             (".dockerignore", "/target\n/apps/target\ndocs\n"),
             ("Cargo.toml", "[workspace]\n"),
             ("Cargo.lock", "version = 4\n"),
@@ -700,6 +830,9 @@ pub(super) mod tests {
             ),
             ("deploy/platform/release/values.yaml", "host: {}\n"),
             ("tools/guest-rustflags", "#!/bin/sh\n"),
+            ("tools/bench/src/main.rs", "fn main() {}"),
+            ("tools/submodule-check/src/main.rs", "fn main() {}"),
+            ("vendor/example/src/lib.rs", "// dependency"),
             ("docs/readme.md", "docs\n"),
             ("target/release/wamn-host", "binary"),
         ] {
@@ -826,8 +959,23 @@ pub(super) mod tests {
             ["gates", "runner"]
         );
         assert_eq!(change("deploy/gcp/cluster.k", "new"), ["runner"]);
+        assert_eq!(change("vendor/example/src/lib.rs", "// changed"), all);
+        assert_eq!(change("tools/bench/src/main.rs", "// changed"), all);
+        assert_eq!(
+            change("tools/submodule-check/src/main.rs", "// changed"),
+            all
+        );
         // Shared build inputs reach every target.
-        assert_eq!(change("Dockerfile", "FROM scratch AS gates\n"), all);
+        assert_eq!(
+            change(
+                "Dockerfile",
+                &format!(
+                    "{}\n# new\n",
+                    std::fs::read_to_string(repository.join("Dockerfile")).unwrap()
+                )
+            ),
+            all
+        );
         assert_eq!(change("Cargo.lock", "version = 4\n# new\n"), all);
         assert_eq!(
             change("services/edge/Cargo.toml", "[package]\n# new\n"),
@@ -886,6 +1034,7 @@ pub(super) mod tests {
                     "metadata",
                     "--format-version",
                     "1",
+                    "--offline",
                     "--locked",
                     "--all-features",
                     "--manifest-path",
@@ -922,6 +1071,63 @@ pub(super) mod tests {
         let host = input_files(&repository, "host", &root, &apps).unwrap();
         assert!(host.contains_key("deploy/sql/run-state.sql"));
         assert!(host.contains_key("services/host/src/main.rs"));
+    }
+
+    #[test]
+    fn copy_and_add_follow_stage_dependencies_and_local_sources() {
+        let dockerfile = r#"
+FROM scratch AS source
+COPY --chown=0:0 Cargo.toml \
+    Cargo.lock /build/
+ADD ["local archive.tar", "/unpacked/"]
+ADD --checksum=sha256:abc https://example.com/archive.tar /remote/
+FROM source AS selected
+COPY --from=external /outside /ignored
+COPY --from=apps-target . /generated
+COPY ["new path", "/build/new path"]
+FROM scratch AS unused
+COPY unrelated /unused
+FROM scratch AS image
+COPY --from=selected /build /output
+"#;
+        assert_eq!(
+            copied_paths(dockerfile, "image").unwrap(),
+            ["Cargo.toml", "Cargo.lock", "local archive.tar", "new path"]
+                .into_iter()
+                .map(|path| (PathBuf::from(path), true))
+                .collect()
+        );
+        for source in ["*.rs", "$SOURCE", "<<EOF"] {
+            assert!(
+                copied_paths(
+                    &format!("FROM scratch AS image\nCOPY {source} /out"),
+                    "image"
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn a_new_context_copy_changes_only_the_images_that_read_it() {
+        let (repository, root, apps) = fake_checkout("new-copy");
+        let dockerfile = repository.join("Dockerfile");
+        let text = std::fs::read_to_string(&dockerfile).unwrap().replace(
+            "FROM debian:trixie-slim AS host",
+            "FROM debian:trixie-slim AS host\nCOPY crates /extra",
+        );
+        std::fs::write(&dockerfile, text).unwrap();
+        std::fs::write(repository.join("crates/unrelated.txt"), "before").unwrap();
+        let before = hashes(&repository, &root, &apps);
+        std::fs::write(repository.join("crates/unrelated.txt"), "after").unwrap();
+        let after = hashes(&repository, &root, &apps);
+        for target in before.keys() {
+            assert_eq!(
+                before[target] != after[target],
+                ["host", "gates"].contains(target)
+            );
+        }
+        std::fs::remove_dir_all(repository).unwrap();
     }
 
     #[test]
@@ -964,34 +1170,5 @@ pub(super) mod tests {
             )),
             ["../w", "wit", "w"]
         );
-    }
-
-    #[test]
-    fn the_dockerfile_copies_from_the_context_only_the_hashed_paths() {
-        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let dockerfile = std::fs::read_to_string(repository.join("Dockerfile")).unwrap();
-        let mut sources = BTreeSet::new();
-        for line in dockerfile.lines() {
-            let Some(arguments) = line.strip_prefix("COPY ") else {
-                continue;
-            };
-            let words: Vec<_> = arguments
-                .split_whitespace()
-                .filter(|word| !word.starts_with("--chmod"))
-                .collect();
-            if words.iter().any(|word| word.starts_with("--from")) {
-                continue;
-            }
-            sources.extend(words[..words.len() - 1].iter().map(ToString::to_string));
-        }
-        for source in &sources {
-            assert!(
-                COPIED
-                    .iter()
-                    .any(|copied| Path::new(source).starts_with(copied)),
-                "the Dockerfile copies {source}, which the input hash does not cover"
-            );
-        }
-        assert!(sources.contains("tools"), "{sources:?}");
     }
 }

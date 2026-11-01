@@ -79,24 +79,26 @@ It preserves command failures and refuses absent or entirely ignored test result
 An explicit dry run or a change set with no selected tests remains a planning result.
 It records no permanent result.
 `tools/test-changes` is the broad check before integration, and it runs once per merge.
-The merge train runs it through `tools/train-run` on the combined head.
-A lane does not run it before handoff.
-A lane runs only fmt, Clippy and the tests of the packages that it changed.
+`tools/test-revision` runs it on a committed revision.
+Implementation work runs only fmt, Clippy and the tests of the packages that it changed before handoff.
+Merges are fast-forward after reviewer acceptance.
 
-`tools/train-run REF [--base BASE]` tests a committed revision in a fresh detached worktree at `/var/tmp/wamn-train/worktree`.
+`tools/test-revision REF [--base BASE]` tests a committed revision in a fresh detached worktree at `/var/tmp/wamn-test-revision/worktree`.
 Its default base is the merge base of `REF` and `origin/main`.
 If `origin/main` is absent, it uses local `main`.
 If that worktree already exists, the tool refuses and names its path.
-It initializes submodules and reuses `$HOME/.cache/wamn-target/train` between trains.
-The fixed worktree path keeps compiled source paths valid between trains.
+It initializes submodules and reuses `$HOME/.cache/wamn-target/revision` between runs.
+The fixed worktree path keeps compiled source paths valid between runs.
 It stores logs in a temporary directory under `/var/tmp`.
 If the selected suites need web packages, it runs `pnpm install --offline` there.
+Before the test stage, it runs `cargo run --offline -p wamn-submodule-check -- main` with initialized submodules.
 It then runs `tools/test-changes run --base BASE` in that worktree.
 It prints a PASS or FAIL table with UTC start and end times for each step.
-After success, it removes the worktree and logs but keeps the Cargo target directory.
+After success, it removes the worktree and keeps the logs and Cargo target directory.
+It prints the path of the retained logs.
 After failure, it prints the retained worktree path and keeps its logs and build files.
 It uses committed files from `REF`, so commit tool changes before testing them through this runner.
-Run `tools/train-tools-test` for offline self-tests with fake external commands.
+Run `tools/test-revision-test` for offline self-tests with fake external commands.
 
 `tools/test-changes --cluster` runs the [ignored tests](#ignored-tests) of the selected packages instead of their default tests.
 It uses only the root workspace.
@@ -147,7 +149,7 @@ Use `tools/repo-lint dry-run` to see its exact commands without executing them.
 It reports each command and returns a nonzero status if any command fails.
 The full schema files own fresh platform installations.
 
-Before integration, the train runs `cargo run -p wamn-submodule-check -- main` with Git history and initialized submodules.
+Before integration, `tools/test-revision` runs the submodule guard with Git history and initialized submodules.
 Changed pins require a commit subject that names the submodule path or its last segment and says `bump` or `pin`, plus `revert` when the pin does not descend from main.
 
 ## What a test asserts
@@ -738,7 +740,7 @@ It must leave no HTTPS Job running.
 Both phases retain the PAT, database credential, and unchanged Secret assertions.
 The GCP greenfield covers uploads to a real bucket.
 
-Use the [local train build](building.md#local-train-builds) to prepare the images and stamped chart.
+Use the [local revision build](building.md#local-revision-builds) to prepare the images and stamped chart.
 Keep its `WAMN_RELEASE_CHART` and empty `DOCKER_CONFIG` exports for both cases.
 No GCP credentials, `gcloud`, or GCP cluster document is needed on this path.
 The chart version and all seven images must match this checkout.
@@ -767,11 +769,11 @@ test "$platform_status" -eq 0 && test "$environment_status" -eq 0
 The environment case also needs the package fixtures described below and in its test source.
 Each case creates its own cluster.
 Without `WAMN_RELEASE_CHART`, the older fallback reads `deploy/gcp/cluster.k` and requires the agent GCP credentials.
-Always supply the chart for local train tests.
+Always supply the chart for local revision tests.
 
 The platform fixture starts a `registry:2` container named `<cluster_name>-registry` on the `kind` Docker network.
 Docker selects a free loopback port, and `cluster.k` names the registry as `localhost:<port>`.
-The fixture copies five images and two role components from the train registry, then stamps their local digests.
+The fixture copies five images and two role components from the build host registry, then stamps their local digests.
 The environment JSON gets its gates image from this local stamp.
 Step 4.6 builds the Receiving package with a temporary PostgreSQL 18 container and stamps the local registry images.
 The test never builds platform images.
