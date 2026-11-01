@@ -495,6 +495,12 @@ async fn run_created(
                 "watchNamespaces":[NAMESPACE],"hostNamespaces":[NAMESPACE],"allowSharedHosts":false,
             }}))?,
         )?;
+        let nats = wamn_control::platform::kind_nats(
+            repository,
+            "wamn-system",
+            &document.org,
+            &[document.triple()],
+        )?;
         platform::install(
             repository,
             lifecycle,
@@ -502,6 +508,7 @@ async fn run_created(
             work,
             NAMESPACE,
             &operator_values,
+            &nats,
         )
         .await?;
         let (issuer, instance) =

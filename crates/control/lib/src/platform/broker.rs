@@ -226,7 +226,7 @@ pub(super) async fn apply(target: &Target, environments: &Path, org: &str) -> an
             "environment {} names another org",
             path.display()
         );
-        for object in render(&document, &mut authorization)? {
+        for object in render(&document.triple(), &mut authorization)? {
             changed |= apply_object(target, &object).await?;
         }
     }
@@ -257,7 +257,7 @@ pub(super) async fn apply(target: &Target, environments: &Path, org: &str) -> an
 
 /// The NATS objects of a cluster that runs the platform in one `namespace`, as
 /// the kind tests do: the authorization Secret with the platform users, the
-/// control host user of `org` and one user per environment of `documents`,
+/// control host user of `org` and one user per environment of `environments`,
 /// and each user's Certificate and materializer binding.
 ///
 /// # Errors
@@ -266,7 +266,7 @@ pub(super) async fn apply(target: &Target, environments: &Path, org: &str) -> an
 pub fn single_namespace_nats(
     namespace: &str,
     org: &str,
-    documents: &[EnvironmentDocument],
+    environments: &[wamn_control_registry::Triple],
 ) -> anyhow::Result<Vec<Value>> {
     let mut authorization = Authorization {
         users: platform_users(),
@@ -274,8 +274,8 @@ pub fn single_namespace_nats(
     let (control, certificate) = control_user(org);
     keep_user(&mut authorization, control);
     let mut objects = vec![certificate];
-    for document in documents {
-        objects.extend(render(document, &mut authorization)?);
+    for scope in environments {
+        objects.extend(render(scope, &mut authorization)?);
     }
     objects.push(serde_json::to_value(secret(
         "platform",
@@ -292,23 +292,40 @@ pub fn single_namespace_nats(
         .collect()
 }
 
+/// The one NATS, its certificates and its users for a cluster that runs the
+/// platform in one `namespace`: [`super::manifests::one_nats`] and
+/// [`single_namespace_nats`] together.
+///
+/// # Errors
+///
+/// Returns an error when a manifest is unreadable or an object does not render.
+pub fn kind_nats(
+    repository: &Path,
+    namespace: &str,
+    org: &str,
+    environments: &[wamn_control_registry::Triple],
+) -> anyhow::Result<Vec<Value>> {
+    let mut objects = super::manifests::one_nats(repository, namespace)?;
+    objects.extend(single_namespace_nats(namespace, org, environments)?);
+    Ok(objects)
+}
+
 /// Render the environment's NATS objects without a cluster or a live broker.
 pub fn render_event_secrets(document: &EnvironmentDocument) -> anyhow::Result<Vec<Value>> {
-    render(document, &mut Authorization { users: Vec::new() })?
+    render(&document.triple(), &mut Authorization { users: Vec::new() })?
         .into_iter()
         .map(|object| serde_json::to_value(object).context("encode event object"))
         .collect()
 }
 
 fn render(
-    document: &EnvironmentDocument,
+    scope: &wamn_control_registry::Triple,
     authorization: &mut Authorization,
 ) -> anyhow::Result<Vec<Value>> {
-    let scope = document.triple();
     let env_key =
-        wamn_control_registry::project_env_key(&document.org, &document.project, &document.env);
-    let source = source_stream_config(&scope, 1, Duration::from_secs(120));
-    let advisory = advisory_stream_config(&scope, 1);
+        wamn_control_registry::project_env_key(&scope.org, &scope.project, scope.env.as_str());
+    let source = source_stream_config(scope, 1, Duration::from_secs(120));
+    let advisory = advisory_stream_config(scope, 1);
     let user = wamn_control_registry::environment_nats_user(&env_key);
     // The environment's events, and what its host and its materializer read
     // on that environment's own stream: every consumer of the stream, by
@@ -464,13 +481,13 @@ mod tests {
             users: platform_users(),
         };
         let platform = authorization.users.len();
-        let first = render(&document("one"), &mut authorization).unwrap();
+        let first = render(&document("one").triple(), &mut authorization).unwrap();
         let users = serde_json::to_value(&authorization).unwrap();
-        let repeated = render(&document("one"), &mut authorization).unwrap();
+        let repeated = render(&document("one").triple(), &mut authorization).unwrap();
         assert_eq!(first, repeated);
         assert_eq!(users, serde_json::to_value(&authorization).unwrap());
         assert_eq!(authorization.users.len(), platform + 1);
-        render(&document("two"), &mut authorization).unwrap();
+        render(&document("two").triple(), &mut authorization).unwrap();
         assert_eq!(authorization.users.len(), platform + 2);
         // R4: no user has a password.
         assert!(
@@ -491,8 +508,8 @@ mod tests {
     #[test]
     fn an_environment_user_reaches_no_subject_of_another() {
         let mut authorization = Authorization { users: Vec::new() };
-        render(&document("one"), &mut authorization).unwrap();
-        render(&document("two"), &mut authorization).unwrap();
+        render(&document("one").triple(), &mut authorization).unwrap();
+        render(&document("two").triple(), &mut authorization).unwrap();
         let subjects = |user: &Account| {
             let mut all = user.permissions.publish.allow.clone();
             all.extend(user.permissions.subscribe.allow.clone());

@@ -527,6 +527,17 @@ async fn prepare_host(
             "watchNamespaces":[NAMESPACE],"hostNamespaces":[NAMESPACE],"allowSharedHosts":false,
         }}))?,
     )?;
+    let scope = wamn_control_registry::Triple::new(
+        identity().org.as_str(),
+        identity().project.as_str(),
+        identity().environment.as_str(),
+    );
+    let nats = wamn_control::platform::kind_nats(
+        &cluster.repository,
+        "wamn-system",
+        &scope.org.clone(),
+        &[scope],
+    )?;
     wamn_test_infrastructure::platform::install(
         &cluster.repository,
         &cluster.lifecycle,
@@ -534,6 +545,7 @@ async fn prepare_host(
         &cluster.work,
         NAMESPACE,
         &operator_values,
+        &nats,
     )
     .await?;
     render_host(cluster, inputs, carrier, &secrets, binding)

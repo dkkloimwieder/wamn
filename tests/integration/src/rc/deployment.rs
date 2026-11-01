@@ -54,6 +54,12 @@ pub(super) async fn install(
             &json!({"operator":{"watchNamespaces":[NAMESPACE],"hostNamespaces":[NAMESPACE],"allowSharedHosts":false}}),
         )?,
     )?;
+    let nats = wamn_control::platform::kind_nats(
+        &resources.repository,
+        "wamn-system",
+        "rc",
+        &[Triple::new("rc", "app", "dev")],
+    )?;
     platform::install(
         &resources.repository,
         &resources.lifecycle,
@@ -61,6 +67,7 @@ pub(super) async fn install(
         &resources.work,
         NAMESPACE,
         &operator,
+        &nats,
     )
     .await?;
     for (name, document) in [

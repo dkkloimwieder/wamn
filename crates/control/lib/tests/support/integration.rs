@@ -113,15 +113,11 @@ pub async fn install_one_nats(
             Some("ClusterIssuer" | "Certificate")
         )
     });
-    let documents = environments
+    let scopes = environments
         .iter()
-        .map(|env| {
-            let mut document = fixture_document("rest_connector");
-            (*env).clone_into(&mut document.env);
-            document
-        })
+        .map(|env| wamn_control_registry::Triple::new(ORG, PROJECT, *env))
         .collect::<Vec<_>>();
-    let users = wamn_control::platform::single_namespace_nats(NAMESPACE, ORG, &documents)?;
+    let users = wamn_control::platform::single_namespace_nats(NAMESPACE, ORG, &scopes)?;
     for (name, objects) in [("certificates", certificates), ("users", users)] {
         let file = run.work.join(format!("one-nats-{name}.json"));
         std::fs::write(

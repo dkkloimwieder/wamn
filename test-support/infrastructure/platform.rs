@@ -10,10 +10,17 @@ use tokio::process::Command;
 
 const SYSTEM_NAMESPACE: &str = "wamn-system";
 
+/// The one NATS of a cluster that runs the platform in `wamn-system`.
+pub const NATS_URL: &str = "nats://wamn-nats.wamn-system.svc.cluster.local:4222";
+
 /// Install the shared prerequisites before the application host release.
 ///
-/// The caller creates the cluster and its private work directory first.
-/// Observed objects stay in that directory for the caller to retain.
+/// `nats` is the one NATS with its certificates and users, which
+/// `wamn_control::platform::manifests::one_nats` and
+/// `wamn_control::platform::single_namespace_nats` render for `wamn-system`
+/// (docs/plan/alignment.md R1-R5). The caller creates the cluster and its
+/// private work directory first. Observed objects stay in that directory for
+/// the caller to retain.
 pub async fn install(
     repository: &Path,
     lifecycle: &Path,
@@ -21,6 +28,7 @@ pub async fn install(
     work: &Path,
     namespace: &str,
     operator_values: &Path,
+    nats: &[serde_json::Value],
 ) -> anyhow::Result<()> {
     let kubeconfig = work.join("kubeconfig");
     let context = format!("kind-{cluster}");
@@ -40,11 +48,20 @@ pub async fn install(
         "--timeout=240s",
     ]))
     .await?;
-    std::fs::copy(
-        repository.join("deploy/infra/values-wamn.yaml"),
+    install_nats(&kubeconfig, &context, work, nats).await?;
+    // The operator and every host group reach the one NATS.
+    let mut base: Value = serde_yaml::from_str(
+        &std::fs::read_to_string(repository.join("deploy/infra/values-wamn.yaml"))
+            .context("read operator base values")?,
+    )?;
+    base["global"]["nats"] = serde_yaml::from_str(&format!(
+        "{{schedulerUrl: \"{NATS_URL}\", dataUrl: \"{NATS_URL}\"}}"
+    ))?;
+    std::fs::write(
         work.join("operator-base.yaml"),
+        serde_yaml::to_string(&base)?,
     )
-    .context("copy operator base values")?;
+    .context("write operator base values")?;
     checked(
         Command::new(lifecycle)
             .arg("install-operator")
@@ -142,52 +159,24 @@ pub async fn install(
     ]))
     .await?;
 
-    // In the operator namespace the hosts mount the operator release's own TLS
-    // Secrets (docs/plan/platform-deploy.md R6), so no Certificate replaces them.
+    // The operator namespace has the chart's certificates already. Hosts in
+    // another namespace get theirs from the cluster CA. The data connection is
+    // the environment's certificate (docs/plan/alignment.md R5).
     if namespace == SYSTEM_NAMESPACE {
         return Ok(());
     }
-    let ca = checked(kubectl(&kubeconfig, &context).args([
-        "-n",
-        SYSTEM_NAMESPACE,
-        "get",
-        "secret",
-        "wasmcloud-ca",
-        "-o",
-        "json",
-    ]))
-    .await?;
-    write_private(&work.join("wasmcloud-ca-source.json"), &ca)?;
-    let ca_path = work.join("wasmcloud-ca-copy.json");
-    write_private(&ca_path, &copy_ca(&ca)?)?;
-    checked(
-        kubectl(&kubeconfig, &context)
-            .args(["apply", "-f"])
-            .arg(&ca_path),
-    )
-    .await?;
-    checked(
-        kubectl(&kubeconfig, &context)
-            .args(["apply", "-f"])
-            .arg(repository.join("deploy/infra/wasmcloud-ca-issuer.yaml")),
-    )
-    .await?;
-    checked(kubectl(&kubeconfig, &context).args([
-        "wait",
-        "--for=condition=Ready",
-        "clusterissuer/wasmcloud-ca",
-        "--timeout=60s",
-    ]))
-    .await?;
-    let certificates = render_environment_certificates(
-        &std::fs::read_to_string(
-            repository.join("deploy/platform/host-environment-certs.example.yaml"),
-        )
-        .context("read environment certificate template")?,
-        namespace,
-    )?;
-    let certificate_path = work.join("host-environment-certs.yaml");
-    std::fs::write(&certificate_path, certificates).context("write environment certificates")?;
+    let certificate = serde_json::json!({
+        "apiVersion": "cert-manager.io/v1", "kind": "Certificate",
+        "metadata": {"name": "wasmcloud-runtime-tls", "namespace": namespace},
+        "spec": {
+            "secretName": "wasmcloud-runtime-tls", "commonName": "wasmcloud-runtime",
+            "dnsNames": ["wasmcloud-runtime"],
+            "usages": ["client auth", "digital signature", "key encipherment"],
+            "issuerRef": {"kind": "ClusterIssuer", "name": "wasmcloud-ca", "group": "cert-manager.io"}
+        }
+    });
+    let certificate_path = work.join("host-runtime-certificate.json");
+    write_private(&certificate_path, &serde_json::to_vec(&certificate)?)?;
     checked(
         kubectl(&kubeconfig, &context)
             .args(["apply", "-f"])
@@ -200,8 +189,68 @@ pub async fn install(
         "wait",
         "--for=condition=Ready",
         "certificate/wasmcloud-runtime-tls",
-        "certificate/wasmcloud-data-tls",
         "--timeout=120s",
+    ]))
+    .await?;
+    Ok(())
+}
+
+/// Apply the CA and the certificates, wait for them, then the users and the
+/// server, and wait for the server.
+async fn install_nats(
+    kubeconfig: &Path,
+    context: &str,
+    work: &Path,
+    nats: &[serde_json::Value],
+) -> anyhow::Result<()> {
+    checked(kubectl(kubeconfig, context).args(["create", "namespace", SYSTEM_NAMESPACE])).await?;
+    let (certificates, server): (Vec<_>, Vec<_>) = nats.iter().partition(|object| {
+        matches!(
+            object["kind"].as_str(),
+            Some("ClusterIssuer" | "Certificate")
+        )
+    });
+    for (name, objects) in [("certificates", certificates), ("server", server)] {
+        let file = work.join(format!("one-nats-{name}.json"));
+        write_private(
+            &file,
+            &serde_json::to_vec(&serde_json::json!({
+                "apiVersion": "v1", "kind": "List", "items": objects
+            }))?,
+        )?;
+        checked(
+            kubectl(kubeconfig, context)
+                .args(["apply", "-f"])
+                .arg(&file),
+        )
+        .await?;
+        if name == "certificates" {
+            checked(kubectl(kubeconfig, context).args([
+                "wait",
+                "--for=condition=Ready",
+                "clusterissuer/wasmcloud-ca",
+                "--timeout=120s",
+            ]))
+            .await?;
+            checked(kubectl(kubeconfig, context).args([
+                "-n",
+                SYSTEM_NAMESPACE,
+                "wait",
+                "--for=condition=Ready",
+                "certificate",
+                "--all",
+                "--timeout=180s",
+            ]))
+            .await?;
+        }
+    }
+    checked(kubectl(kubeconfig, context).args([
+        "-n",
+        SYSTEM_NAMESPACE,
+        "rollout",
+        "status",
+        "statefulset/wamn-nats",
+        "--timeout=300s",
     ]))
     .await?;
     Ok(())
@@ -326,32 +375,6 @@ fn validate_event_binding(binding: &EventBinding, namespace: &str) -> anyhow::Re
     Ok(())
 }
 
-fn copy_ca(source: &[u8]) -> anyhow::Result<Vec<u8>> {
-    let mut secret: CaSecret =
-        serde_json::from_slice(source).context("parse operator CA Secret")?;
-    secret.metadata = Metadata {
-        name: "wasmcloud-ca".into(),
-        namespace: "cert-manager".into(),
-        extra: BTreeMap::new(),
-    };
-    serde_json::to_vec(&secret).context("serialize copied operator CA Secret")
-}
-
-fn render_environment_certificates(template: &str, namespace: &str) -> anyhow::Result<String> {
-    let mut certificates = serde_yaml::Deserializer::from_str(template)
-        .map(Certificate::deserialize)
-        .collect::<Result<Vec<_>, _>>()
-        .context("parse environment certificates")?;
-    for certificate in &mut certificates {
-        namespace.clone_into(&mut certificate.metadata.namespace);
-    }
-    Ok(certificates
-        .iter()
-        .map(serde_yaml::to_string)
-        .collect::<Result<Vec<_>, _>>()?
-        .join("---\n"))
-}
-
 type Extra = BTreeMap<String, Value>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -438,54 +461,6 @@ struct OperatorPod {
     service_account_name: String,
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CaSecret {
-    api_version: String,
-    kind: String,
-    metadata: Metadata,
-    data: BTreeMap<String, String>,
-    #[serde(flatten)]
-    extra: Extra,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Certificate {
-    api_version: String,
-    kind: CertificateKind,
-    metadata: Metadata,
-    spec: CertificateSpec,
-    #[serde(flatten)]
-    extra: Extra,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-enum CertificateKind {
-    Certificate,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CertificateSpec {
-    secret_name: String,
-    issuer_ref: IssuerRef,
-    common_name: String,
-    dns_names: Vec<String>,
-    usages: Vec<String>,
-    #[serde(flatten)]
-    extra: Extra,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct IssuerRef {
-    name: String,
-    kind: String,
-    group: String,
-    #[serde(flatten)]
-    extra: Extra,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -493,8 +468,6 @@ mod tests {
 
     const RBAC: &str =
         include_str!("../../deploy/platform/runtime-operator-events-rbac.example.yaml");
-    const CERTIFICATES: &str =
-        include_str!("../../deploy/platform/host-environment-certs.example.yaml");
 
     fn rbac() -> Vec<EventRbac> {
         serde_yaml::Deserializer::from_str(&render_event_rbac(RBAC, "test-warehouse").unwrap())
@@ -583,44 +556,5 @@ mod tests {
         let mut extra_subject = original.clone();
         extra_subject.subjects.push(original.subjects[0].clone());
         assert!(validate_event_binding(&extra_subject, "test-warehouse").is_err());
-    }
-
-    #[test]
-    fn environment_certificates_change_only_the_namespace() {
-        let before = serde_yaml::Deserializer::from_str(CERTIFICATES)
-            .map(|document| Certificate::deserialize(document).unwrap())
-            .collect::<Vec<_>>();
-        let output = render_environment_certificates(CERTIFICATES, "test-warehouse").unwrap();
-        let after = serde_yaml::Deserializer::from_str(&output)
-            .map(|document| Certificate::deserialize(document).unwrap())
-            .collect::<Vec<_>>();
-        assert_eq!(after.len(), 2);
-        for (before, after) in before.iter().zip(&after) {
-            assert_eq!(after.metadata.namespace, "test-warehouse");
-            assert_eq!(before.metadata.name, after.metadata.name);
-            assert_eq!(before.spec, after.spec);
-            assert_eq!(before.extra, after.extra);
-        }
-        assert_eq!(after[0].spec.common_name, "wasmcloud-runtime");
-        assert_eq!(after[0].spec.dns_names, ["wasmcloud-runtime"]);
-        assert_eq!(after[1].spec.common_name, "wasmcloud-data");
-        assert_eq!(after[1].spec.dns_names, ["wasmcloud-data"]);
-    }
-
-    #[test]
-    fn ca_copy_replaces_metadata_and_keeps_all_other_values() {
-        let original = json!({"apiVersion":"v1","kind":"Secret","type":"kubernetes.io/tls",
-            "metadata":{"name":"wasmcloud-ca","namespace":"wamn-system","uid":"old-uid","resourceVersion":"7","labels":{"owner":"chart"}},
-            "data":{"ca.crt":"dGVzdC1jYQ==","tls.crt":"dGVzdC1jZXJ0","tls.key":"dGVzdC1rZXk="}});
-        let output: serde_json::Value =
-            serde_json::from_slice(&copy_ca(&serde_json::to_vec(&original).unwrap()).unwrap())
-                .unwrap();
-        assert_eq!(
-            output["metadata"],
-            json!({"name":"wasmcloud-ca","namespace":"cert-manager"})
-        );
-        let mut expected = original;
-        expected["metadata"] = output["metadata"].clone();
-        assert_eq!(output, expected);
     }
 }
