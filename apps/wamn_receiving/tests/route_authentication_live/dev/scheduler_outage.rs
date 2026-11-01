@@ -36,10 +36,13 @@ const OUTAGE: Duration = Duration::from_secs(20);
 /// The recovery bound of the deleted case.
 const RECOVERY_BUDGET: Duration = Duration::from_secs(120);
 
-/// The scheduler NATS container. Dropping it removes the container.
+/// The one NATS container, with TLS and a full-permission development
+/// certificate. Dropping it removes the container.
 struct Scheduler {
     name: String,
     port: u16,
+    certificate: wamn_test_infrastructure::nats_tls::ClientCertificate,
+    _directory: ScratchRoot,
 }
 
 impl Scheduler {
@@ -49,9 +52,27 @@ impl Scheduler {
         let port = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?
             .local_addr()?
             .port();
+        // The configuration names its certificates by absolute path, so the
+        // container sees the directory at the same path.
+        let directory = ScratchRoot::create()?;
+        let authority = wamn_test_infrastructure::nats_tls::Authority::new(directory.path())?;
+        let certificate = authority.client(wamn_test_infrastructure::nats_tls::DEVELOPMENT_USER)?;
+        let configuration = directory.path().join("nats.conf");
+        std::fs::write(
+            &configuration,
+            serde_json::to_vec(&serde_json::json!({
+                "tls": authority.server_tls(),
+                "authorization": {"users": [wamn_test_infrastructure::nats_tls::full_permission_user(
+                    wamn_test_infrastructure::nats_tls::DEVELOPMENT_USER
+                )]}
+            }))?,
+        )?;
+        let mount = format!("{0}:{0}:ro", directory.path().display());
         let scheduler = Self {
             name: format!("wamn-scheduler-outage-{}", std::process::id()),
             port,
+            certificate,
+            _directory: directory,
         };
         docker(&[
             "run",
@@ -60,7 +81,11 @@ impl Scheduler {
             &scheduler.name,
             "-p",
             &format!("127.0.0.1:{port}:4222"),
+            "--volume",
+            &mount,
             NATS_IMAGE,
+            "--config",
+            &configuration.display().to_string(),
             "--jetstream",
             "--store_dir=/data",
         ])
@@ -76,7 +101,7 @@ impl Scheduler {
     async fn ready(&self) -> anyhow::Result<async_nats::Client> {
         timeout(Duration::from_secs(60), async {
             loop {
-                if let Ok(client) = async_nats::connect(self.url()).await {
+                if let Ok(client) = self.certificate.connect(&self.url()).await {
                     return client;
                 }
                 sleep(Duration::from_millis(250)).await;
@@ -133,7 +158,7 @@ async fn routes_answer_during_a_scheduler_outage_and_recover() -> anyhow::Result
     let system_url = server.create_database("wamn_system")?.url().to_owned();
     let mut inputs = DevJourneyInputs::required()?;
     // One NATS: the outage stops the scheduler, the events and the memories.
-    inputs.environment.nats.nats_url = scheduler.url();
+    inputs.environment.nats = scheduler.certificate.platform_nats(&scheduler.url());
     let scratch = ScratchRoot::create()?;
     let root = scratch.path();
     inputs.environment.local_artifacts.directory = root.join("local-artifacts");
