@@ -317,7 +317,9 @@ pub(super) async fn release(
             namespace: "hosts".into(),
             ..target.clone()
         };
-        crate::release_chart::upgrade(
+        // As environment apply does, a failed upgrade carries the host pods.
+        let poller = crate::environment::host_report::Poller::start(&hosts, &name);
+        let upgraded = crate::release_chart::upgrade(
             &hosts,
             &chart,
             &name,
@@ -325,7 +327,9 @@ pub(super) async fn release(
             std::time::Duration::from_secs(600),
             "platform control host",
         )
-        .await?;
+        .await;
+        let report = poller.finish();
+        upgraded.map_err(|error| crate::environment::host_report::attach(&error, &report))?;
     }
     changed |= release_changed;
     let stamped: Value = serde_yaml::from_slice(&std::fs::read(chart.join("values.yaml"))?)?;
