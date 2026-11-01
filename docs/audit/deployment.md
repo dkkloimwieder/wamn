@@ -1,8 +1,8 @@
-# Audit lane D: Deployment
+# Audit report D: Deployment
 
 Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and checked that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-xm69b.1, wamn-xm69b.2, wamn-xm69b.3. Shared tool output: [measurements.md](measurements.md).
 
-<!-- lane D1, bead wamn-xm69b.1 -->
+<!-- report D1, bead wamn-xm69b.1 -->
 
 ## Part 1: variants
 
@@ -350,7 +350,7 @@ The equal `0.1.0` literals represent several separate contracts. They require ow
 
 Answered 2026-10-31: nothing is applied outside repository automation, so prototype manifests are deleted without confirming external use. The CDC image identity question is moot because the reader executable moves into the host image (D1-6).
 
-<!-- lane D2, bead wamn-xm69b.2 -->
+<!-- report D2, bead wamn-xm69b.2 -->
 
 ## Part 2: pipeline
 
@@ -503,7 +503,7 @@ Risk: The build record must exclude credentials and distinguish reused work from
 
 All three questions were answered on 2026-10-31. `upgrade-environment` is not supported and is deleted. One build graph exists, local by default, with Cloud Build as overflow under the daily cap, and kind and GCP consume the same published artifacts. No budgets exist until the build record has produced numbers.
 
-<!-- lane D3, bead wamn-xm69b.3 -->
+<!-- report D3, bead wamn-xm69b.3 -->
 
 ## Part 3: target path
 

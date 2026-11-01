@@ -1,8 +1,8 @@
-# Audit lane C: Update and upgrade
+# Audit report C: Update and upgrade
 
 Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and checked that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-16jwe.1, wamn-16jwe.2, wamn-16jwe.3. Shared tool output: [measurements.md](measurements.md).
 
-<!-- lane C1, bead wamn-16jwe.1 -->
+<!-- report C1, bead wamn-16jwe.1 -->
 
 ## Part 1: schema
 
@@ -94,7 +94,7 @@ Closed into C1-1 (owner review 2026-10-31). The retired-record test, the empty-l
 
 All three questions were answered on 2026-10-31. No installed database requires a data-preserving upgrade: every one can be reset to the baseline. Old and new images serve concurrently (rolling), and a schema-breaking change during development is a reset, never a maintenance interval. `wamn-m6or2` closes on the next green `environment_apply_kind` run on main, with no dedicated run.
 
-<!-- lane C2, bead wamn-16jwe.2 -->
+<!-- report C2, bead wamn-16jwe.2 -->
 
 ## Part 2: lifecycle verbs
 
@@ -258,7 +258,7 @@ Owner review 2026-10-31: In passing. The duplicate migration calls vanish under 
 
 All three questions were answered on 2026-10-31. `upgrade-environment` is deleted whole, and nothing is absorbed. Contract version minimums are unsupported, and the contract-phase code is deleted. Package application is an internal phase of `env apply`, with no public command.
 
-<!-- lane C3, bead wamn-16jwe.3 -->
+<!-- report C3, bead wamn-16jwe.3 -->
 
 ## Part 3: target model
 

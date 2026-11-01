@@ -1,8 +1,8 @@
-# Audit lane E: Security
+# Audit report E: Security
 
 Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and checked that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-hgdta.1, wamn-hgdta.2, wamn-hgdta.3. Shared tool output: [measurements.md](measurements.md).
 
-<!-- lane E1, bead wamn-hgdta.1 -->
+<!-- report E1, bead wamn-hgdta.1 -->
 
 ## Part 1: identity
 
@@ -158,7 +158,7 @@ Owner review 2026-10-31: keep as a deletion, Group 1 In passing. It is a schema 
 4. Is every operator certificate intentionally a platform-wide credential, and what revokes one certificate without replacing the CA? Reviewer pick 2026-10-31, owner to confirm: yes, the provisioning operator certificate is one platform-wide principal by design. Revocation is short certificate lifetimes under cert-manager (alignment R3), not a CRL.
 5. Are cache delays acceptable only after lost invalidation, or also after natural credential expiry? Answered 2026-10-31 under E1-6: only after a lost invalidation. Natural expiry refuses immediately.
 
-<!-- lane E2, bead wamn-hgdta.2 -->
+<!-- report E2, bead wamn-hgdta.2 -->
 
 ## Part 2: secrets and transport
 
@@ -272,7 +272,7 @@ All five questions were answered on 2026-10-31.
 4. Alignment R3: cert-manager owns the CA and renews it.
 5. Callers require the default server setting (`standard_conforming_strings` on). pg-core states that precondition in its doc comment. Nondefault parsing is unsupported. This closes the A2-11 question too.
 
-<!-- lane E3, bead wamn-hgdta.3 -->
+<!-- report E3, bead wamn-hgdta.3 -->
 
 ## Part 3: sandbox and supply chain
 

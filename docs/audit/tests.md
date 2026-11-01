@@ -1,8 +1,8 @@
-# Audit lane G: Tests
+# Audit report G: Tests
 
 Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and checked that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-lybom.1, wamn-lybom.2, wamn-lybom.3. Shared tool output: [measurements.md](measurements.md).
 
-<!-- lane G1, bead wamn-lybom.1 -->
+<!-- report G1, bead wamn-lybom.1 -->
 
 ## Part 1: duplication
 
@@ -269,7 +269,7 @@ Risk: Ready-only polling must still fail on `Pending`. Retain `callback_error_do
 
 1. Do external consumers require the `wamn-gate-harness` or `wamn-fixture-package` crate names? Answered 2026-10-31: no. Internal callers migrate together.
 
-<!-- lane G2, bead wamn-lybom.2 -->
+<!-- report G2, bead wamn-lybom.2 -->
 
 ## Part 2: ignored and pinned
 
@@ -385,7 +385,7 @@ All three questions were answered on 2026-10-31.
 2. Everything derived from the release `values.yaml` is shared, and the differences are the ones D1-5 names as chart values (G2-4).
 3. The telemetry identifiers stay. The guard's citation of deleted archive documents is replaced by a pointer to the collector template in `deploy/platform/otel-collector.yaml`, the only current consumer. No dashboard owns them.
 
-<!-- lane G3, bead wamn-lybom.3 -->
+<!-- report G3, bead wamn-lybom.3 -->
 
 ## Part 3: tiers
 

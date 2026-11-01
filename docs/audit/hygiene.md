@@ -1,8 +1,8 @@
-# Audit lane H: Hygiene
+# Audit report H: Hygiene
 
 Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and checked that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-lt36n.1, wamn-lt36n.2, wamn-lt36n.3. Shared tool output: [measurements.md](measurements.md).
 
-<!-- lane H1, bead wamn-lt36n.1 -->
+<!-- report H1, bead wamn-lt36n.1 -->
 
 ## Part 1: tools
 
@@ -277,7 +277,7 @@ All three questions were answered on 2026-10-31.
 2. No. Raw results are retained beside the summary (H1-7).
 3. Yes. The repository `evidence/` requirement goes (H1-5).
 
-<!-- lane H2, bead wamn-lt36n.2 -->
+<!-- report H2, bead wamn-lt36n.2 -->
 
 ## Part 2: docs
 
@@ -536,7 +536,7 @@ All three questions were answered on 2026-10-31.
 2. Yes. The untrimmed-plan rule is superseded by the standing rules and is deleted (H2-8).
 3. Nowhere. The twelve links and the proof wording go, and each claim keeps its bead reference with the note "evidence not retained" (H2-6).
 
-<!-- lane H3, bead wamn-lt36n.3 -->
+<!-- report H3, bead wamn-lt36n.3 -->
 
 ## Part 3: web and stray files
 

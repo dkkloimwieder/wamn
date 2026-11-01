@@ -1,8 +1,8 @@
-# Audit lane B: Coupling and architecture
+# Audit report B: Coupling and architecture
 
 Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and checked that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-m0c2w.1, wamn-m0c2w.2, wamn-m0c2w.3. Shared tool output: [measurements.md](measurements.md).
 
-<!-- lane B1, bead wamn-m0c2w.1 -->
+<!-- report B1, bead wamn-m0c2w.1 -->
 
 ## Part 1: graph
 
@@ -168,7 +168,7 @@ The virtualizer is a separate executable invoked by the generator, not a one-typ
 
 Answered 2026-10-31: no timings are supplied for the six development edges, and the next test build is the measurement. A shared layer below generation, provisioning and execution-host is accepted, and it is `crates/catalog/model` today.
 
-<!-- lane B2, bead wamn-m0c2w.2 -->
+<!-- report B2, bead wamn-m0c2w.2 -->
 
 ## Part 2: control
 
@@ -288,7 +288,7 @@ Owner review 2026-10-31: In passing, when the integration-schema plan's C1 to C3
 
 All three questions were answered on 2026-10-31. `upgrade-environment` is deleted whole, and no resume records or retirement behavior migrate. The application declares its own qualification cases, with no approver. No external consumer uses the `wamn-control` API, so the umbrella may go without a facade (Group 4).
 
-<!-- lane B3, bead wamn-m0c2w.3 -->
+<!-- report B3, bead wamn-m0c2w.3 -->
 
 ## Part 3: target map
 

@@ -1,8 +1,8 @@
-# Audit lane A: Code quality
+# Audit report A: Code quality
 
 Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and checked that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-v3cpv.1, wamn-v3cpv.2, wamn-v3cpv.3. Shared tool output: [measurements.md](measurements.md).
 
-<!-- lane A1, bead wamn-v3cpv.1 -->
+<!-- report A1, bead wamn-v3cpv.1 -->
 
 ## Part 1: unused code
 
@@ -299,7 +299,7 @@ All four questions were answered on 2026-10-31.
 3. No external consumer uses these APIs. Delete them.
 4. No. No feature-tree output exists and none is supplied. `cargo check --all-targets` per affected package is the check.
 
-<!-- lane A2, bead wamn-v3cpv.2 -->
+<!-- report A2, bead wamn-v3cpv.2 -->
 
 ## Part 2: duplication
 
@@ -587,7 +587,7 @@ All three questions were answered on 2026-10-31.
 2. Yes. record-history depends on execution-contract, and both land in `wamn-contract` (A2-1).
 3. Yes. Resolved contract bytes and generated clients stay unchanged, and per-operation files become build output (A2-3).
 
-<!-- lane A3, bead wamn-v3cpv.3 -->
+<!-- report A3, bead wamn-v3cpv.3 -->
 
 ## Part 3: errors, panics, file size
 

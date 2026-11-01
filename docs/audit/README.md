@@ -1,6 +1,6 @@
 # WAMN codebase audit, 2026-10-31
 
-This audit covers WAMN applications, runtime services, build and deployment tools, tests, security boundaries, and documentation at commit `8c831349d`. The reports are recorded at `45a5ecd31`. On 2026-10-31 `8c831349d` is 13 commits behind `origin/main`. Every file:line pin in this audit refers to `8c831349d`, so open that commit before using a pin. Twenty-four read-only Codex gpt-6.1-sol runs used high reasoning effort, with one shared measurement pass at `788cdadb4`.
+This audit covers WAMN applications, runtime services, build and deployment tools, tests, security boundaries, and documentation at commit `8c831349d`. The reports are recorded at `45a5ecd31`. On 2026-10-31 `8c831349d` is 13 commits behind `origin/main`. Every file:line pin in this audit refers to `8c831349d`, so open that commit before using a pin. Twenty-four read-only Codex gpt-6.1-sol runs used high reasoning effort, with one shared measurement pass at `788cdadb4`. Finding text copied verbatim from the runs keeps its words as evidence, including the word lane.
 
 Inputs: [measurements](measurements.md), [code quality](code-quality.md), [coupling](coupling.md), [upgrade](upgrade.md), [deployment](deployment.md), [security](security.md), [developer experience](developer-experience.md), [tests](tests.md), and [hygiene](hygiene.md). The synthesis also reads [the architecture overview](../architecture/overview.md) and [CLAUDE.md](../../CLAUDE.md). No build, test, or deployment ran during this synthesis.
 
@@ -224,8 +224,6 @@ The owner review of 2026-10-31 rejects the following. The report evidence stays 
 | D3-2: the wider qualification key (chart, identity, edge, runner, qualification executable) | Rejected. Every chart edit would re-qualify every release, which is the stated cost problem. The key is release digest plus host image digest. Chart, identity, edge and runner changes are proved by `platform_apply_kind` on the branch that touched them. D3-2 is medium and deletes only the `ImageSet` versus `QualificationImages` split. |
 | D3-3: CI service, protected reference, promotion job, "merge only the tested commit or restart" | Rejected. Merges are fast-forward after reviewer acceptance. A branch that touches install, chart or env apply files merges after `platform_apply_kind` passes on that branch. Builds are local. D3-3 closes into D2-8 (keep successful logs). The train-tools-test cases are dropped. |
 | D3-7: deployment queue, promotion job, protected selection | Re-scoped to a Kubernetes Lease held by the installer, released on exit, refused while held. Severity low. Tests: two installers with one refused, and lock loss stops the installer. |
-| Question 8 (retained database data) | Answered: no installed database retains data. |
-| Question 10 (maintenance windows, version-minimum executor) | Answered by the C3-5 ruling. |
 | Question on external consumers of prototype manifests (H3-2, D1-9, D1-10) | Answered: nothing is applied outside repository automation. Delete without confirming external use. |
 | Question on CDC image identity (D1-6) | Moot: the reader executable moves into the host image, so no sixth image exists. |
 | Question on `upgrade-environment` support (B2-1, C2-2, C2-7, D2-1) | Answered: not supported, deleted. |
@@ -494,6 +492,8 @@ These rows use exported `open` or `in_progress` status from `.beads/issues.jsonl
 ## Ordered work groups
 
 The owner reviews of 2026-10-31 replace the epic chain with four ordered groups. Each group has two parts. Do holds the rows the review named and every row that deletes a build, image, route, file or test target. In passing holds helper dedup, naming, count pins and doc links, closed when the owning file is already open and never filed alone. Crate consolidation moves last. Each row copies the Deletes line of its finding from the report file. Shared finding ids close only after all listed work lands.
+
+Filing: the Group 1 Do rows named in its Target paragraph are filed first, one bead per row, with the Image column carried into the bead. The rest of Do waits until those land. In passing rows are never filed. Shared ids close together.
 
 ### Group 1: Deployment consumes, never builds
 

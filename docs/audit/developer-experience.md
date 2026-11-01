@@ -1,8 +1,8 @@
-# Audit lane F: Developer experience
+# Audit report F: Developer experience
 
 Three read-only Codex gpt-6.1-sol runs at reasoning effort high wrote this file, one per part, on 2026-10-31 against commit 8c831349d. Root copied each run's final message and checked that every finding cites a file and line. Root then removed each part's proposed-epics section, because README.md holds the only plan, and marked owner review edits inline with the date. Beads: wamn-rk4wz.1, wamn-rk4wz.2, wamn-rk4wz.3. Shared tool output: [measurements.md](measurements.md).
 
-<!-- lane F1, bead wamn-rk4wz.1 -->
+<!-- report F1, bead wamn-rk4wz.1 -->
 
 ## Part 1: inventory
 
@@ -188,7 +188,7 @@ All three questions were answered on 2026-10-31.
 2. Yes. Route selection, path, authentication policy and body limits stay authored per custom operation. Only the schemas and hashes derive (F1-1).
 3. Yes (F1-4).
 
-<!-- lane F2, bead wamn-rk4wz.2 -->
+<!-- report F2, bead wamn-rk4wz.2 -->
 
 ## Part 2: dev loop
 
@@ -424,7 +424,7 @@ All four questions were answered on 2026-10-31.
 3. None until measured. Record cold and warm timings once when F2-5 lands (F2-11).
 4. No past run is cited. The next run of the `local_delivery` acceptance test after F2-1 to F2-3 is the evidence.
 
-<!-- lane F3, bead wamn-rk4wz.3 -->
+<!-- report F3, bead wamn-rk4wz.3 -->
 
 ## Part 3: target path
 
