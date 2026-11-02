@@ -204,6 +204,19 @@ The platform UI reads status through a control operation with a read-only Servic
 
 - The verb prints each step with its result on one line. It prints no credential.
 
+### Control rows during deletion
+
+6. In one transaction, delete the control rows of the tenant, leaves first: `authoring_command_audit`, `wamn_run.gate_reports` (`delete.rs::CONTROL_TABLES`; the other control tables were dropped by wamn-vavs4, wamn-unffv, wamn-t7gif and wamn-jqdja). Each immutable table gets `DISABLE TRIGGER`, the delete, and `ENABLE TRIGGER`.
+
+### Deletion refusals
+
+- The replication slot is active: a reader still streams from it.
+
+### Resources kept after deletion
+
+- The org, the project, `identity.project_roles` and every user principal.
+- The control-family generation roles and their `author_login_tenants` rows. They belong to the triple, not the instance, and a new provision of the triple uses the same names.
+
 ## Organization membership and administration
 
 A principal is global. Membership of an org is explicit.

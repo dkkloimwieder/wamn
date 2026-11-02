@@ -480,6 +480,8 @@ A second caller waits at step 2 for the whole of the first caller's work. A lock
 
 8. Resolved 2026-10-20: under A5 the component handles a batched request. The entry loops over the items and calls `begin-operation` and `commit` per item; the host sees single operations and never knows a batch exists. Per-item claims and transactions stay as today (an item failing does not roll back the others; a retry replays only unfinished keys). Whole-batch atomicity, if an operation wants it, is one begin with one key, declared by that operation's contract. Owner: batch semantics and error handling belong to the application, not the host; the response shapes (per-item errors in a 200, partial completion on a run failure) stay as the entry builds them today, and validate-all-before-run is kept.
 
+The cloud write log has no resolution state and no operator verb. A two-step claim that never finished answers `intent-uncertain` for its key for good. The caller decides with a new key, because only the caller knows whether the SQL-free work may run again (owner ruling on `wamn-bn35`, 2026-09-29).
+
 ## Numbering
 
 A document number is a rendered text, such as `P-00000017`.

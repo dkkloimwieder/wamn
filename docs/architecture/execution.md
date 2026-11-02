@@ -541,6 +541,14 @@ The WMS workflow `movement_label` is the first example.
 A `packaging` update starts it when the registration condition `old.location_id != new.location_id` holds, so only a move starts it.
 It stores one packaging label for each move, keyed by `{packaging_id}/{row_version}`, at the object path `wms/{key}`.
 
+- A wiring is data with edges. Versioned. Swapped by version with no rebuild. `wamn-router` walks it: frontier, ports, error edges, retry, hop budget, terminal verdict. Unchanged.
+
+| Operation | Behavior |
+| --- | --- |
+| `list` | Returns the runs of one tenant and environment, newest first, with a limit. Each row gives the run id, the wiring, the trigger, the status, and whether the run is parked. |
+
+The owner ruled on 2026-09-26 that the host admits event runs (`wamn-upl3.6`). The executor role gains a column-exact INSERT on `runs` and `run_queue` for the event run grain, and the run-plane grain check gains an event arm. `list` shows the run, and `park` and `release` act on it.
+
 ### Environment workflows
 
 An environment workflow is a wiring that an operator authors in one environment instead of in a package.

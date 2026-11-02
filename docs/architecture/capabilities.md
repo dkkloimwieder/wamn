@@ -377,3 +377,5 @@ The host gets its registry token from the GKE metadata server: `GET http://metad
 A ConfigMap mounted at `DOCKER_CONFIG` holds `{"credHelpers":{"us-central1-docker.pkg.dev":"wamn"}}`. The ConfigMap holds no credential. wash-runtime runs the helper at each pull.
 
 - The host's existing Google service account, `wamn-blob`, gets `roles/artifactregistry.reader` on repository `wamn`. A pod has one Workload Identity binding, and the host needs both roles. The name `wamn-blob` now understates the account. Renaming it is not this finding.
+
+- `wamn-edge`. It pulls nothing from a registry.

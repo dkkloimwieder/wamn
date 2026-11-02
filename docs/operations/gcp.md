@@ -352,6 +352,8 @@ rm -rf $HOME/.cache/wamn-install
 
 ## 4. Install
 
+The [platform publication owner](../../crates/control/lib/src/platform/job.rs) creates the Jobs.
+
 ### 4.1 Work directory and binaries
 
 The install keeps its files in the private work directory `$HOME/.cache/wamn-install`. `platform apply` creates it if it is missing and reuses it if it exists. Each step that uses it sets `W` to it, or reads the platform file of section 4.10, which sets `W`. Run every step from a checkout of `main`:
@@ -850,6 +852,10 @@ kubectl -n hosts run identity-check --restart=Never --rm -i --quiet \
   --image=curlimages/curl@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777 \
   --overrides='{"spec":{"volumes":[{"name":"ca","configMap":{"name":"identity-ca"}}],"containers":[{"name":"identity-check","image":"curlimages/curl@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777","command":["curl","-sS","-w","\\nHTTP %{http_code}\\n","--cacert","/ca/ca.crt","https://identity.identity.svc.cluster.local/.well-known/jwks.json"],"volumeMounts":[{"name":"ca","mountPath":"/ca"}]}]}}'
 ```
+
+| Subject | Contract |
+| --- | --- |
+| Identity address | Service `identity` in namespace `identity`, port 443 to container port 8443. The serving certificate names only `identity.identity.svc.cluster.local` (`deploy/gcp/identity-certificate.yaml:12-13`). Its CA is `ca.crt` of the Secret `identity-tls`. |
 
 ### 4.13 Packages
 
