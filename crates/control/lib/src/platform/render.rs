@@ -735,6 +735,7 @@ mod tests {
         let objects = &render.objects;
         assert_eq!(render.documents.len(), 2);
         assert_eq!(render.fixtures.releases.len(), 2);
+        assert_eq!(render.owner_inputs.len(), 1);
         // Owner and local-build steps apply no Kubernetes objects.
         for step in [
             "4.3", "4.4", "4.4.1", "4.5", "4.7", "4.8", "4.9", "4.11", "4.12", "4.13", "4.14",

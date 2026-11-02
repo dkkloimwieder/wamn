@@ -429,15 +429,14 @@ pub(super) fn collector_objects(
     repository: &Path,
     document: &ClusterDocument,
 ) -> anyhow::Result<Vec<Value>> {
-    let mut rendered = Vec::new();
+    let mut rendered = objects(
+        repository,
+        "deploy/gcp/otel-collector-values.yaml",
+        document,
+    )?;
     rendered.extend(objects(
         repository,
         "deploy/platform/otel-collector.yaml",
-        document,
-    )?);
-    rendered.extend(objects(
-        repository,
-        "deploy/gcp/otel-collector-values.yaml",
         document,
     )?);
     Ok(rendered)

@@ -14,6 +14,7 @@ pub(super) struct Render {
     pub cluster: ClusterDocument,
     pub documents: Vec<(PathBuf, EnvironmentDocument)>,
     pub fixtures: Fixtures,
+    pub owner_inputs: Vec<Value>,
     pub objects: Vec<(&'static str, Value)>,
 }
 
@@ -388,6 +389,9 @@ fn build() -> anyhow::Result<Render> {
         .collect::<Vec<_>>();
     let objects = install(&cluster, &compiled, &repository, &fixtures)?;
     Ok(Render {
+        owner_inputs: vec![
+            json!({"apiVersion":"v1","kind":"Secret","metadata":{"name":"identity-resend","namespace":"identity"},"stringData":{"api-key":"fixture-resend-key"}}),
+        ],
         cluster,
         documents,
         fixtures,

@@ -167,3 +167,190 @@ fn install_service_accounts_reject_a_missing_rendered_reference() -> anyhow::Res
     );
     Ok(())
 }
+
+#[derive(Debug)]
+struct InputReference<'a> {
+    field: String,
+    kind: &'static str,
+    name: &'a str,
+    key: Option<&'a str>,
+    optional: bool,
+}
+
+fn input_references(spec: &serde_json::Value) -> Vec<InputReference<'_>> {
+    let mut references = Vec::new();
+    for (index, volume) in spec["volumes"].as_array().into_iter().flatten().enumerate() {
+        let sources = std::iter::once((format!("volumes[{index}]"), volume)).chain(
+            volume["projected"]["sources"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .enumerate()
+                .map(move |(source, value)| {
+                    (
+                        format!("volumes[{index}].projected.sources[{source}]"),
+                        value,
+                    )
+                }),
+        );
+        for (field, source) in sources {
+            for (member, kind) in [("secret", "Secret"), ("configMap", "ConfigMap")] {
+                let source = &source[member];
+                let Some(name) = source["secretName"]
+                    .as_str()
+                    .or_else(|| source["name"].as_str())
+                else {
+                    continue;
+                };
+                let keys = source["items"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|item| item["key"].as_str())
+                    .map(Some)
+                    .collect::<Vec<_>>();
+                for key in if keys.is_empty() { vec![None] } else { keys } {
+                    references.push(InputReference {
+                        field: format!("{field}.{member}"),
+                        kind,
+                        name,
+                        key,
+                        optional: source["optional"] == true,
+                    });
+                }
+            }
+        }
+    }
+    for group in ["containers", "initContainers"] {
+        for (index, container) in spec[group].as_array().into_iter().flatten().enumerate() {
+            for (member, key_member) in [("env", "valueFrom"), ("envFrom", "")] {
+                for (variable, entry) in container[member]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .enumerate()
+                {
+                    let source = if key_member.is_empty() {
+                        entry
+                    } else {
+                        &entry[key_member]
+                    };
+                    for (name, kind) in [
+                        ("secretKeyRef", "Secret"),
+                        ("configMapKeyRef", "ConfigMap"),
+                        ("secretRef", "Secret"),
+                        ("configMapRef", "ConfigMap"),
+                    ] {
+                        if let Some(target) = source[name]["name"].as_str() {
+                            references.push(InputReference {
+                                field: format!("{group}[{index}].{member}[{variable}].{name}"),
+                                kind,
+                                name: target,
+                                key: source[name]["key"].as_str(),
+                                optional: source[name]["optional"] == true,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    references
+}
+
+fn produces_input(object: &serde_json::Value, namespace: &str, input: &InputReference<'_>) -> bool {
+    if object["metadata"]["namespace"] != namespace {
+        return false;
+    }
+    if object["kind"] == input.kind && object["metadata"]["name"] == input.name {
+        return input.key.is_none_or(|key| {
+            object["data"].get(key).is_some() || object["stringData"].get(key).is_some()
+        });
+    }
+    if input.kind != "Secret" {
+        return false;
+    }
+    if object["kind"] == "Certificate" && object["spec"]["secretName"] == input.name {
+        return input
+            .key
+            .is_none_or(|key| ["ca.crt", "tls.crt", "tls.key"].contains(&key));
+    }
+    if object["kind"] == "Cluster"
+        && object["apiVersion"]
+            .as_str()
+            .is_some_and(|version| version.starts_with("postgresql.cnpg.io/"))
+    {
+        let name = object["spec"]["superuserSecret"]["name"]
+            .as_str()
+            .map_or_else(
+                || format!("{}-superuser", object["metadata"]["name"].as_str().unwrap()),
+                str::to_owned,
+            );
+        return object["spec"]["enableSuperuserAccess"] == true
+            && name == input.name
+            && input.key.is_none_or(|key| {
+                [
+                    "username", "password", "uri", "dbname", "host", "port", "pgpass", "jdbc-uri",
+                ]
+                .contains(&key)
+            });
+    }
+    false
+}
+
+fn input_failures(
+    objects: &[(&str, serde_json::Value)],
+    owner_inputs: &[serde_json::Value],
+) -> Vec<String> {
+    let mut failures = Vec::new();
+    for (index, (step, object)) in objects.iter().enumerate() {
+        let Some(spec) = pod(object) else { continue };
+        let namespace = object["metadata"]["namespace"].as_str().unwrap();
+        for input in input_references(spec) {
+            if input.optional
+                || owner_inputs
+                    .iter()
+                    .any(|object| produces_input(object, namespace, &input))
+            {
+                continue;
+            }
+            let producer = objects
+                .iter()
+                .position(|(_, object)| produces_input(object, namespace, &input));
+            if producer.is_some_and(|producer| producer < index) {
+                continue;
+            }
+            let target_step = producer.map_or_else(
+                || "absent".into(),
+                |index| format!("{}:{index}", objects[index].0),
+            );
+            failures.push(format!("{} step {step}:{index} field {} -> {}/{namespace}/{} key {} producer step {target_step}", identity(object), input.field, input.kind, input.name, input.key.unwrap_or("*")));
+        }
+    }
+    failures
+}
+
+#[test]
+fn install_secret_and_configmap_inputs_precede_consumers() -> anyhow::Result<()> {
+    let render = platform_install::render()?;
+    let failures = input_failures(&render.objects, &render.owner_inputs);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    Ok(())
+}
+
+#[test]
+fn install_inputs_reject_a_missing_rendered_key() -> anyhow::Result<()> {
+    let render = platform_install::render()?;
+    let mut objects = render.objects.clone();
+    let (_, object) = objects
+        .iter_mut()
+        .find(|(_, object)| {
+            object["kind"] == "Deployment" && object["metadata"]["name"] == "identity"
+        })
+        .unwrap();
+    object["spec"]["template"]["spec"]["containers"][0]["env"].as_array_mut().unwrap().push(json!({"name":"MISSING", "valueFrom":{"secretKeyRef":{"name":"identity-resend","key":"missing-key"}}}));
+    let failures = input_failures(&objects, &render.owner_inputs);
+    assert_eq!(failures.len(), 1, "{}", failures.join("\n"));
+    assert!(failures[0].contains("identity-resend key missing-key producer step absent"));
+    Ok(())
+}
