@@ -153,7 +153,7 @@ END
 $$;
 
 -- Admission pins, including the release's `manifest_digest`, never change
--- (docs/plan/platform-deploy.md R1). A claiming pod shows it carries that
+-- (docs/architecture/overview.md#release-identity). A claiming pod shows it carries that
 -- release by its digest. A candidate run carries no release pin.
 CREATE FUNCTION wamn_run.guard_run_admission_pins_immutable()
 RETURNS trigger

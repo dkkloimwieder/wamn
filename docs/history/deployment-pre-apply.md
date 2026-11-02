@@ -158,7 +158,7 @@ The same application schema rule applies to the base and overlays.
 Set `BASE_PREDECESSOR` and `OVERLAY_PREDECESSOR` to the installed package roots.
 Set `BASE_SUCCESSOR` and `OVERLAY_SUCCESSOR` to their prepared direct successor roots.
 Set `BASE_COMPONENT` to the exact built successor base artifact named by each overlay pin.
-Use the owner connection from [upgrade prerequisites](../operations/deployment.md#upgrade-prerequisites).
+Use the owner connection from [upgrade prerequisites](../operations/deployment.md#prerequisites).
 Repeat `--predecessor-package` for the complete original root set, including unchanged packages.
 Repeat `--presented-package` for the complete successor root set in both commands.
 

@@ -893,7 +893,7 @@ fn validate_request(request: &DevActivationRequest<'_>) -> Result<(), DevActivat
     Ok(())
 }
 
-/// The host namespace of the local host (docs/plan/platform-deploy.md §16):
+/// The host namespace of the local host (docs/architecture/overview.md#environment-lifecycle):
 /// what it reads from `WASMCLOUD_HOST_ENVIRONMENT`, names in its heartbeat,
 /// and where its workloads are placed. A local session has no Kubernetes
 /// namespace of its own, so its workloads take the environment name.

@@ -13,6 +13,19 @@ The existing head sampler controls request span creation as well as trace export
 An unsampled request creates only its upstream `handle_http_request` entry span, where the sampler decides.
 See [execution observability](../architecture/execution.md) for context propagation and behavior without an active trace.
 
+
+**The backend is object storage. No per-event-priced service receives platform telemetry.**
+
+**One OpenTelemetry Collector per cluster, in `platform`, is the only thing the hosts talk to.**
+
+The host samples 10% of new traces at their start and keeps sampled parents. The collector does not sample traces.
+
+**The host's OTLP endpoint is chart-owned: the `release` chart sets `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_SERVICE_NAME` on every host it renders; the control host group file sets the same two.**
+
+**The bucket has a 30-day lifecycle. Nothing deletes objects by hand.**
+
+**Batch 60 s or 50,000 items, whichever first; a persistent sending queue; a memory limiter.**
+
 ## Query one hour
 
 Reading the objects needs `storage.objectViewer` on the bucket. Copy the hour to a local directory, and load its spans into DuckDB:

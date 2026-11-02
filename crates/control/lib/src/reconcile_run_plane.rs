@@ -711,7 +711,7 @@ async fn converge_env_key_identity(
 /// `expected_environment` is the environment's name, which the run plane
 /// and publish compare with the scope. The policy the environment row names
 /// supplies the durability class and the source identity
-/// (docs/plan/platform-deploy.md R2).
+/// (docs/architecture/overview.md#environment-lifecycle).
 pub(crate) async fn converge_environment_policy(
     client: &mut tokio_postgres::Client,
     schema: &BareSchemaName,

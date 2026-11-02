@@ -8,7 +8,7 @@ that order. A default here is an authoring default: it fills a value that the
 author did not write, and the compiled JSON states it. An author who sets an
 optional key to None leaves the key out of the compiled JSON.
 
-The author states a fact once (docs/plan/platform-deploy.md §6, R9). The SQL
+The author states a fact once (docs/architecture/data-access.md#manifest-declarations). The SQL
 owns what a statement reads and writes, so no schema here has a relations key:
 the generator derives each custom operation's relations from its statements
 and writes them into generated/wamn.json. A command's envelope bounds and

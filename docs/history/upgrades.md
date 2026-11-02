@@ -1,7 +1,7 @@
 # Remaining package-upgrade design
 
 [Package upgrade](../plan/package-upgrade.md) defines the accepted scope and governance.
-[Deployment](../operations/deployment.md#package-upgrades) describes additive package upgrades, coordinated overlay successors, and retained-schema rollback.
+[Deployment](../operations/deployment.md#platform-schema-upgrades) describes additive package upgrades, coordinated overlay successors, and retained-schema rollback.
 Epic 1 is complete. The owner opened Epic 2 after reviewing Epic 1.
 
 ## Epic 2: a base package under an overlay

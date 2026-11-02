@@ -7,7 +7,7 @@
 //! Manual starts use the host route. A park holds a queued run that no replica holds, and a
 //! release returns it to the queue. Park acts on the queue row only, so a
 //! parked run keeps the status `dispatched`. A park inside a walk belongs to
-//! approvals, which this contract does not cover (docs/history/README.md#workflow-feature).
+//! approvals, which this contract does not cover (docs/architecture/execution.md#environment-workflows).
 
 mod postgres;
 

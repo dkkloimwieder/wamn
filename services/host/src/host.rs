@@ -1824,7 +1824,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         host_builder = host_builder.with_plugin_bindings(bindings);
     }
     // The heartbeat carries the release so that `hostSelector` can tell this
-    // host from a host of another release in the same group (platform-deploy.md §9.2).
+    // host from a host of another release in the same group (docs/architecture/naming.md#environment-names).
     if let Some(digest) = &args.release_manifest_digest {
         let label =
             release_label(digest).context("--release-manifest-digest is not a sha256 digest")?;

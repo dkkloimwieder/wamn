@@ -36,7 +36,7 @@ use crate::{FailType, RunStatus, sql as run_sql};
 /// host, which always carries a digest, selects exactly its own release's
 /// runs, and a run pinned to another release never becomes its head. While two
 /// releases coexist, FIFO is per release and a draining host claims only its
-/// own backlog (platform-deploy.md R20). A candidate run carries no pin, so
+/// own backlog (docs/architecture/execution.md#process-lifecycle). A candidate run carries no pin, so
 /// only a host with no release selects it: candidate selection keeps its own
 /// path. [`grant_production_claim_sql`] rechecks the pin.
 pub fn select_production_claim_sql() -> String {

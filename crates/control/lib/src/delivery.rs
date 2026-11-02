@@ -100,7 +100,7 @@ pub const CANDIDATE_ENV: &str = "WAMN_DELIVERY_CANDIDATE";
 /// The package and component repositories beside the release repository
 /// `<registry>/<path>/releases`: `<registry>/<path>/packages` and
 /// `<registry>/<path>/components`. Qualification reads the release's
-/// packages and components there (docs/plan/platform-deploy.md §8.2).
+/// packages and components there (docs/operations/delivery.md#release-qualification).
 ///
 /// # Errors
 ///

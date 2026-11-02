@@ -571,8 +571,8 @@ fn run_state_live() {
         ),
     );
 
-    // The admission pin is the release's manifest digest (platform-deploy.md
-    // R1). A claim verifies that the claiming pod carries the pinned release,
+    // The admission pin is the release's manifest digest (docs/architecture/overview.md#release-identity
+    // ). A claim verifies that the claiming pod carries the pinned release,
     // on the EXISTING claim write, and never writes the pin. Covered here
     // against the INSTALLED DDL, which is the guard the composed statements
     // actually meet.

@@ -127,7 +127,7 @@ pub async fn load_applied_package(
 
 /// A package tree and the digest of the verified package artifact it was
 /// opened from. The opener holds the digest in memory and passes it here; no
-/// file in the tree carries it (docs/plan/platform-deploy.md R2, R3). `None`
+/// file in the tree carries it (docs/operations/building.md#reading-a-pushed-package). `None`
 /// is a working tree, which only `wamn dev` applies.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageRoot {

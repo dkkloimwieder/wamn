@@ -19,7 +19,7 @@ use wamn_schema_control::{ReplicaIdentity, ReplicaIdentityPlan};
 /// Apply the immutable pending suffix from one package artifact.
 ///
 /// No verb applies a checkout directory, so the installed artifact digest is
-/// the digest the registry records (docs/plan/platform-deploy.md R3).
+/// the digest the registry records (docs/operations/building.md#reading-a-pushed-package).
 #[derive(Debug, Args)]
 pub struct ApplyPackageArgs {
     /// Repository of the component binaries that package descriptors name.

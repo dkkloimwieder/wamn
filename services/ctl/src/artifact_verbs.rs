@@ -1,5 +1,5 @@
 //! `wamn inspect` and `wamn diff`: read layer 0 of pushed package artifacts
-//! (docs/plan/platform-deploy.md §7.2).
+//! (docs/operations/building.md#reading-a-pushed-package).
 //!
 //! Layer 0 of a package artifact is the canonical `wamn.json` of the package.
 //! Both verbs take a full package artifact digest or the tag

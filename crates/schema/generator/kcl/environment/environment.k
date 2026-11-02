@@ -1,8 +1,8 @@
 """
-The schema module of an environment document (docs/plan/platform-deploy.md §10.1, R21).
+The schema module of an environment document (docs/architecture/overview.md#environment-lifecycle).
 
 An environment file imports this module, and `wamn-ctl env apply` compiles it
-to canonical JSON. The schema has exactly the fields R21 names: the
+to canonical JSON. The schema has exactly the fields the reference page names: the
 coordinate, the release digest or "none", the route host, the policy name, the
 applications (docs/plan/platform-config.md), the target, the connection names and
 the floors.

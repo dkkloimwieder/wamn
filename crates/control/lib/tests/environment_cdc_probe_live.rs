@@ -1,5 +1,5 @@
-//! Live test of the CDC ensure's observation (docs/plan/platform-deploy.md
-//! §10.1 step 4, `wamn-1d3gr`): the publication alone is the observation, so
+//! Live test of the CDC ensure's observation (docs/architecture/overview.md#environment-lifecycle,
+//! `wamn-1d3gr`): the publication alone is the observation, so
 //! a reader row that a failed apply left behind does not make the next apply
 //! skip CDC, and recording the reader on every apply leaves one row.
 

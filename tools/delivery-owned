@@ -24,7 +24,7 @@ if [[ $action == build-native ]]; then
       -p wamn-host -p wamn-ctl -p wamn-identity -p wamn-cdc-reader -p wamn-scenario-worker
 fi
 # The delivery cases run on one kept cluster that WAMN_DELIVERY_CLUSTER names
-# (docs/plan/platform-deploy.md §17.2). Receiving first, then WMS, which checks
+# (docs/operations/cluster-tests.md). Receiving first, then WMS, which checks
 # the two applications side by side.
 if [[ $action == receiving || $action == wms ]]; then
   # An optional existing parent directory for the test result directory.

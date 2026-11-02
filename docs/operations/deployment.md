@@ -139,6 +139,14 @@ Postgres keeps their references and display hints.
 The baseline schema owns fresh installations.
 [Integration and connection schema](../plan/integration-schema.md) defines administration, bindings, and version selection.
 
+The control routes use project administrator authority.
+The `external_system.*`, `integration.*`, and `connection.*` routes manage their respective identities.
+The matching `wamn-ctl` verbs call these routes with a session token.
+Each verb reads its JSON request from `--file`.
+The request names the project, and connection requests also name the environment in `env`.
+The first connection write reads the credential value from `--credential-file`, except for authentication type `none`.
+`connection set-credential` reads later values from that flag too.
+
 ### Integration write interfaces
 
 Publish a typed integration with one `--write-interface <interface>` flag for each export that permits writes.
@@ -287,6 +295,12 @@ File requests keep the full path. Other API requests lose the `/api` prefix.
 
 The Rust edge reads the live release and serves its bucket files.
 In kind, the Receiving edge case uses the command. [Cluster tests](cluster-tests.md) describes that case.
+
+- An application never learns a deployment fact at build time. The same static files serve every environment.
+
+Ruled: keep `max-age=10, stale-while-revalidate=60`, because no shared cache stores an authenticated list under option 3.3 A. Revisit them with a measurement from the real deployment.
+
+Ruled: the files under `assets/` carry a content hash in their names, so they are `public, max-age=31536000, immutable`. `index.html` is `no-cache`, so a new release reaches the browser at the next load.
 
 ## Platform UI files
 

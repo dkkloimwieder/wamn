@@ -145,7 +145,7 @@ role_name
 permission
 ```
 
-There is no `required_by` column, self-referencing key or regex CHECK ([the ACL ruling](../plan/trx-pkg-plan.md#mechanism) (owner ruling 2026-10-11)).
+There is no `required_by` column, self-referencing key or regex CHECK ([the ACL ruling](../architecture/execution.md#caller-authentication) (owner ruling 2026-10-11)).
 
 CLI operations:
 
@@ -173,7 +173,7 @@ The application schema gains the corresponding CHECK so storage cannot contain a
 
 ### Release reconciliation
 
-There is no closure to reconcile ([the ACL ruling](../plan/trx-pkg-plan.md#mechanism) (owner ruling 2026-10-11)). One rule stays: a stored reference that the serving release does not serve grants nothing. The row is kept. History already records who granted it and when (`wamn_record_history_stamp`). `permission.list` marks it deprecated. The admin removes it when they choose.
+There is no closure to reconcile ([the ACL ruling](../architecture/execution.md#caller-authentication) (owner ruling 2026-10-11)). One rule stays: a stored reference that the serving release does not serve grants nothing. The row is kept. History already records who granted it and when (`wamn_record_history_stamp`). `permission.list` marks it deprecated. The admin removes it when they choose.
 
 Acceptance:
 
@@ -709,7 +709,7 @@ one toggle per operation
 deprecated rows that the release does not serve
 ```
 
-Nothing is derived, so each row is the role's own grant ([the ACL ruling](../plan/trx-pkg-plan.md#mechanism) (owner ruling 2026-10-11)).
+Nothing is derived, so each row is the role's own grant ([the ACL ruling](../architecture/execution.md#caller-authentication) (owner ruling 2026-10-11)).
 
 ### User grid
 
@@ -1332,7 +1332,7 @@ The epic closes on one kind run after B13 of the cutover.
 
 ## 8. Accepted decisions
 
-1. **Permission model — superseded 2026-10-11** by [trx-pkg-plan.md](../plan/trx-pkg-plan.md#mechanism): required = {entry}, held = the role's rows, nothing derived. Original text: **Permission model — accepted.** Stable operation references are stored for application roles, with directly selected roots and their released permission closure materialized as provenance-bearing rows. Candidate-release reconciliation updates that closure before activation. Request admission resolves the resulting stored effective references to exact sealed ids. `authorize_released_operation` remains unchanged. Removing a direct selection does not remove authority still required by another selected root.
+1. **Permission model — superseded 2026-10-11** by [trx-pkg-plan.md](../architecture/execution.md#caller-authentication): required = {entry}, held = the role's rows, nothing derived. Original text: **Permission model — accepted.** Stable operation references are stored for application roles, with directly selected roots and their released permission closure materialized as provenance-bearing rows. Candidate-release reconciliation updates that closure before activation. Request admission resolves the resulting stored effective references to exact sealed ids. `authorize_released_operation` remains unchanged. Removing a direct selection does not remove authority still required by another selected root.
 
 2. **Hierarchy — accepted.** `org-admin → project-admin → admin` is materialized as real grants. Higher-level role revocation removes subordinate administrative grants; org-user deactivation removes all lower access; lower-level changes never revoke higher authority.
 

@@ -580,6 +580,48 @@ The host reads these grants again before each node, so a role revoked during a r
 A run with no role is an automation or schedule run.
 Its principal must be an active `service`, and it holds the permissions of every role of the principal.
 
+Every workflow is a graph run by the router and the run queue under a run row. A single-operation workflow is a one-node graph. The in-process walk with no row (`RegistrationDelivery::Walk`) is removed.
+
+A workflow is keyed `(env_key, environment, application, workflow_id, version)`; a package version is not part of its identity. A version row is immutable (graph, hash, trigger, `execution_type`, `execution_role`); `enabled` is its one mutable field, and at most one version of a workflow is enabled at a time — a partial unique index on `(env_key, environment, application, workflow_id) WHERE enabled`; enabling a version disables the previous one in the same transaction. A start selects the enabled version. Disabling stops new starts only; queued and running runs finish under the version they pinned. Its graph names operations as `package.operation`; admission resolves them against the release the run pins. A package upgrade that keeps those operations does not touch the workflow; one that drops or changes them is refused at `env apply` by workflow and node.
+
+Enable, disable and change of a workflow take the environment's lifecycle lock (`environment/lock.rs::LifecycleLock`, `pg_try_advisory_lock`, shared with `env apply`): while an apply holds it, enable is refused with "apply in progress" and the caller retries; the lock does not queue. So no workflow becomes enabled between the apply's check and its Helm write. Authority lifetime: the enabler's authority is checked at enable and change. An enabled workflow belongs to the environment, not to a session. Revoking the execution role's permission refuses the next protected call under the existing per-operation check. No author query on every start. Deploying logic that runs on every record change is an admin act; a tenant that wants a narrower publisher makes a role holding the enable operation.
+
+- One invocation function serves both. The route calls it once. The router calls it per node.
+
+3. A workflow calls application operations. It never touches a component, a table, or SQL directly. Same grant, intent, and never-replay rules as any client.
+
+4. One invocation path. `invoke_operation(component, operation, input) -> Outcome`. Routes, workflow nodes, and the edge all call it.
+
+5. Composition (`wac`) makes one component out of several at build time. A composed component is still one component behind one route. Composition and the router are unrelated.
+
+6. Expression nodes (JSONata, templates, and so on) are platform node components compiled to wasm. The expression is config. It runs in the guest sandbox, never in the host.
+
+7. The base platform and the edge do not link the router.
+
+Every layer exposes an interface and depends only on layers below it: base platform, then run-state store, then workflow crate. Nothing depends on a UI.
+
+- The WMS `inventory_move_and_label` graph runs as a registered workflow, off the request path.
+
+- A workflow calls operations through `invoke_operation`, with the same grant, intent, and never-replay rules as any client.
+
+- The base platform and the edge do not link the workflow crate. The dependency tests keep this rule.
+
+Park acts on the queue row only. The run status stays `dispatched`, so the retired run-level `parked` status does not come back. A park inside a walk needs a saved walk and is part of approvals, which are out of scope.
+
+The node is a std guest at `apps/platform/execution/jsonata`. It exports `wamn:node/handler@0.1.0`, like `label-render`. Its one parameter, `expression`, holds the JSONata text. The node evaluates the expression on the input and emits the result. An input that is not JSON is an `invalid-input` error. An expression that does not parse, or an evaluation that fails, is a `terminal` error, because a retry gives the same result.
+
+The `shape` node turns the row event into the item array that `label-render` takes, with `packaging_id` and `location_id`, and the label key `{packaging_id}/{row_version}`. Epic 25 (`docs/history/wms-inventory-spec.md`) moved the trigger from the movement insert to the packaging update. One move therefore stores one label, and a redelivered event overwrites it. The graph has no `respond` terminal, because no caller waits. The WMS cluster cases read the label from the blob store after the run completes. They no longer read it from the move response.
+
+A PAT-authenticated service can start an invoker workflow with its own held role.
+The host derives that role from current grants, with the existing single-role or held-admin selection rule.
+A service never borrows a user's active role. User sessions with a service role or any unheld role still refuse.
+
+An event trigger is a row: `source_package` and `entity` (one captured model; the package qualifies the name, as today's registrations do), `ops` (a subset of `insert`, `update`, `delete`, today's vocabulary), optional `condition` over the old and new image. Consumers are a property of the application's captured entities, created at env apply from the installed schema, one per entity; nothing in JetStream is created or removed for a workflow. The materializer is one per environment, always rendered, reads enabled trigger rows and filters each message by package, entity, op and condition. Two workflows on one entity are two rows, one consumer. Fan-out: for one message the materializer admits one run per matching trigger in one host-owned transaction — a batch admission that is new; today's `admit_event_run` admits one run per call — each with idempotency key `(workflow_id, delivery_id)`, and acks after that transaction commits; a redelivery re-admits idempotently, so a partial failure repeats nothing. Enable boundary: enable reads the entity stream's last published sequence (stream tail, not a consumer's position) and writes it into the trigger row in the enabling transaction; the materializer matches only messages whose stream sequence is greater. The read and the commit are not atomic: a message published between them has a greater sequence and starts the workflow, which is the safe side. This is publication order, not commit order: a change committed before enable but published after it (CDC lag) does start the workflow, and a change published before enable never does. Stated and accepted; a commit-ordered boundary would need the history position on the message and is not proposed. An operation that today declares a `registration` in its package (a custom operation declared as an event handler) is an operation like any other; the trigger that starts it is a workflow row authored in the environment.
+
+A package ships no workflows and no triggers; a custom operation's `registration` leaves `wamn.k`, and the operation stays. The two shipped today (WMS label, NetSuite pull) become environment data authored in their environments.
+
+Interim exception: `publication/wirings` selects node build inputs and connection aliases only. Tests read those files to author environment workflows. These files never supply released workflows, catalog wirings, attachments or runs.
+
 ## Results and effects
 
 A wiring edge carries the declared route envelope.
@@ -858,6 +900,64 @@ Renewal stays automatic during active use and never extends the absolute login d
 
 The identity reader needs SELECT on `identity.password_logins` in addition to its existing identity tables.
 Session-only hosts also require their scoped `WAMN_SYSTEM_URL` identity reader.
+
+Server authorization is authoritative. The UI may hide unavailable actions, but the router or host handler always enforces authority.
+
+Every admin write runs in the host. `wamn_app` remains SELECT-only on:
+
+```text
+platform."user"
+platform.role
+platform.user_role
+platform.permission
+```
+
+No guest component writes an authorization relation. No guest component receives a `wamn_system` connection.
+
+`operator` is removed.
+
+`permission.grant X` requires an existing authored role and an operation `X` that the current serving release serves. It inserts one row. The operation is idempotent.
+
+`permission.revoke X` deletes that row.
+
+No row is derived from another, so no revoke keeps or refuses a derived row.
+
+The fixed application-administration operations are **not grantable** to authored roles.
+
+`permission.grant` refuses them.
+
+`admin` receives them because `admin` holds every operation the release serves.
+
+`permission.mine` is the exception: it is readable by any authenticated application session and is not itself an authored permission.
+
+`admin` is the only built-in application role.
+
+The host refuses a session when any signed role is absent from the user's current grants.
+It also refuses a service principal presented as a user session.
+A service principal has no user active role, even when it holds an application permission.
+Principal and grant writes record `AuthDrops`, and their callers publish the deletions after commit.
+A failed deletion is logged without retry. The auth cache TTL bounds stale access.
+
+A session with an unknown or unheld signed role, or a disabled principal, receives 401. A failure to read the database receives 503.
+
+Every other role:
+
+- is authored per tenant;
+- starts empty;
+- is identified by a role slug;
+- contains stable operation references, not package-version-sealed operation ids;
+- may contain several directly selected permissions;
+- may be held alongside other roles.
+
+A user may hold no application role.
+
+For a user session:
+
+- permission-row changes take effect on the next request;
+- role revocation takes effect on the next request because current `user_role` still intersects the signed role names;
+- role grant takes effect at renewal or new sign-in because the new role name is not in the existing token.
+
+For a PAT caller, current roles are read per request, so grant and revoke both take effect on the next request.
 
 ## Password enrollment foundation
 
@@ -1206,6 +1306,12 @@ Process restart prevents old responses from reaching the new session.
 
 The generated client contains no endpoint, host, or token.
 Development supplies them from the served target.
+
+Labels come from a `label` member on operations and fields in `wamn.k`, optional, defaulting to the field path.
+
+Generated operation components remain the primitive UI. Composite screens may be hand-authored over those generated operations; they do not bypass the operation contracts.
+
+No new route. `wamn-control:environment/status@0.9.0` gains three additive answer members: `users_with_role`, `roles`, `memberships` (nullable `int32`). A failed count read returns null without failing status. Additive members do not bump 0.9.0.
 
 ## Process lifecycle
 

@@ -1,5 +1,5 @@
 //! Statement types from SQLx's PostgreSQL describe path
-//! (docs/plan/platform-deploy.md §7.1 step 3).
+//! (docs/operations/building.md#wamn-build).
 //!
 //! PostgreSQL's RowDescription carries no nullability. SQLx infers it from the
 //! catalog and from `EXPLAIN VERBOSE` for outer joins, so this module calls

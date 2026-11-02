@@ -800,7 +800,7 @@ fn only_identity_receives_issuer_credentials_and_other_consumers_keep_their_clas
 /// the wrong environment.
 /// The release-namespace files state no namespace: the install applies them
 /// with `-n <release namespace>`, `wamn-system` on kind and `hosts` on GKE
-/// (docs/plan/platform-deploy.md R6).
+/// (docs/architecture/overview.md#environment-lifecycle).
 /// Platform-namespace files state no namespace because the install supplies
 /// `-n platform` on both kind and GKE.
 const RELEASE_NAMESPACE_FILES: [&str; 2] =

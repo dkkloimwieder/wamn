@@ -2,7 +2,7 @@
 
 ## Mechanism
 
-One mechanism for everything the platform provides to an application: the platform owns schema `platform` in each project database (today's `app_system`, renamed), the control host writes it, the application reads it. The application role has `SELECT` on the listed tables (the tables below, plus roles, permissions and `environment`), `EXECUTE` on `platform.bump_counter`, `platform.assign_counter` and `platform.set_counter`, and no other grant; `platform.write_log`, the engine's claim record, keeps its existing grants. No history table is readable. Platform routes that change platform rows (`file.put`, `set_counter`, settings) are operations in the application's ACL, granted per role like any other.
+See [platform data authority](../architecture/data-access.md#actors).
 
 Each section carries the dependency it waits on, so it can be ruled and filed as that dependency lands.
 
@@ -17,46 +17,41 @@ Each section carries the dependency it waits on, so it can be ruled and filed as
 - Rows in `platform` are runtime data, edited through platform routes (the UI). They are never declared.
 - A package declares what it needs from `platform` in `wamn.k`: relations it reads, sequences it fills, connections it binds. Declarations carry defaults; rows carry values.
 - `environment.k` binds a package's declared connection names to connection rows by name, pins the connector digests the application runs, and names the target it runs on. It holds no values.
-- Four words, one meaning each: an **integration** is connector code; a **connection** is a configured instance of an integration — communication, never provenance; an external system is the persistent identity of a system outside wamn (one NetSuite account, one plant's MES) with the configuration its connections share; a **target** is a runtime wamn deploys an application to — the cloud cluster or a local box. A target is deployment configuration in the control plane, never a row an application reads.
+
+See [integration identity and bindings](integration-schema.md).
+
 - Connectors deploy per application: a connector is a dependency of the application, pinned per environment like a package, and runs inside that application's isolation on its target.
 - Three levels, each already present in the platform: org, project, application per environment. Environments are isolated: nothing in one environment's database reaches another.
 - A project database holds only the org rows that project uses: every user and the connections it has enabled.
 - No network call inside a database transaction. Once `begin-operation` is open, a storage put, a connection call or anything that waits on the network is a host refusal; inside the transaction there is only SQL. Storage and connections are called before the transaction opens, and their results enter it as values.
-- An **operation** is one exported entry point of an application (`get`, `query`, `list`, `command`): the unit the ACL grants and a route calls. A **transaction** is a window a command may open inside its run with `begin-operation` … `commit`; reads usually open none. Code before and after the window may call the network; code inside may not.
+See [operation transactions](../architecture/data-access.md#inputs-queries-and-transactions).
 
 ## Tables
 
 Every table below lives in `platform` in the project environment's database. Credentials and targets are control-plane data and are never materialized into an application database: the application cannot read what is not there.
 
-One database per (org, project, environment) is the org boundary. No table below has a tenant column, and no row policy or tenant key index separates its rows; each key is the table's own columns, such as `id` or `(scope_type, scope_id, key)`, and a foreign key is one column (owner ruling 2026-10-23).
+See [environment database authority](../architecture/data-access.md#actors).
 
 | level | table | columns | written by | application reads |
 | --- | --- | --- | --- | --- |
 | org | `user` | id, name, email, type (`user`, `service`, `platform`), active | platform routes | yes |
-| application, per env | `file` | id, application, connection\_id, connection\_generation, name, media\_type, size, sha256, blob key, exposure (`application`, `private`, `public`), url, width, height, standard stamps | the host, in the `file.put` route, in its own commit before any application operation | yes; no INSERT |
 | application, per env | `setting` | scope\_type, scope\_id, key, value (jsonb), locked | platform routes, per environment | no (UI reads via routes) |
 
 Control plane only, reached through platform routes and the host:
 
 | table | columns | note |
 | --- | --- | --- |
-| `credential` | id, connection\_id, secret or secret-manager reference | read by the host's connection plugin; no application grant because no application copy |
 | `target` | id, name, type (`local`, `cloud`), status, last\_seen\_at | identity and check-in of a runtime; named in `environment.k`; the cloud cluster is one row |
 | `target_application` | target\_id, application, environment, bundle\_digest, status; PK (target\_id, application, environment) | what each target runs, written by env apply and confirmed at check-in; null digest on the cloud target, which runs a release |
 
 - `user` is a projection: identity in the system database is authoritative, and the control host writes the projection (as it writes `app_system.users` today) and propagates deactivation on the admin-hierarchy path. It holds every org user, not only users with a role on the project, so `created_by` / `updated_by` FKs never dangle. Deactivation is `active = false`; rows are never deleted.
 - Application rows that name a user (`created_by`, `updated_by`, `employee.user_id`) carry a uuid FK to `platform.user`. The host fills `created_by` and `updated_by` from the operation caller; the payload cannot supply them.
-- `integration_type` and `integration_type_version` hold the platform catalog. A project integration selects its type and authentication scheme. Each environment connection carries that integration's parameters and credential reference. The environment document binds declared application names to project integrations.
 - C4 covers `gcs` and `s3`. C10 owns disk stores and eviction.
-- `file` is the only file table. An image is a file with an image media type; `width` and `height` are nullable. `connection_id` names the store. Each row pins its application and the connection generation that stored its bytes. Reads and deletes use that generation's bucket and prefix. The application links `file_id` from its own table (which record, which purpose). No generic attachment-by-(table, id) table.
-- Storing is two short calls: `file.put(binding, bytes)` streams the bytes to the store the binding names, inserts the row in its own commit and returns `file_id`; the application operation then carries `file_id` like any reference. No transaction waits on the store. A store is a connection with a store integration (`s3` or `gcs`), declared by the package and bound by name in `environment.k` with `mode = write`.
+See [file storage and access](../architecture/data-access.md#files).
+
 - A `file` row is a file. A row nothing references is kept; deleting it is the user's job through the normal delete. No sweep of unreferenced rows: a file uploaded on purpose and linked to nothing is a normal file, and a list that hides unlinked files is a screen filter, not a deletion policy. Uploads use `<environment>/_wamn_files/staging/<uuid>` under the binding prefix. The host commits the row, copies staging to `<environment>/_wamn_files/live/<uuid>`, then deletes staging. An age rule removes staged objects only. Live objects never expire by age. A read repairs a missing live object from staging. If object deletion fails after row deletion commits, the host logs the key without retry. The collector removes aged orphans only under this environment's segment, including stores that other environments share. Clean up pre-change objects outside environment segments by hand once.
-- `exposure` is per file: `application` (default; the session holds `file.get` on the owning application, at `/api/<app>/files/<id>`), `private` (only an operation that returns a short-lived signed url; so the roles holding that operation), `public` (anyone with the link, no login). `url` is stored only for `public`, so old links survive a CDN change. Another application never serves the row.
+
 - A local `disk` store has `max_bytes` and `max_age` parameters: a box has a disk, so retention is the admin's explicit choice on that row, and an evicted blob takes its `file` row with it — the one place a row is removed by the platform. The box serves its own files; nothing on it is `public`. Forwarding a file to the cloud is an application decision carried over a `wamn` connection (a new row in a cloud store, same `sha256`); the platform never forwards on its own.
-
-- An integration's name identifies it within its project and never changes. Each environment holds at most one connection for that integration. The integration selects its optional `external_system_id`. A connection uses the target of its environment.
-
-- `external_system` identifies one external account within a project. Its name never changes. It carries no type, parameters, or credentials. Several integrations can share that identity. Connections hold credentials separately for each environment. A binding grants application use without separate project enablement.
 
 - Record provenance is the application's: a record that came from outside carries `external_system_id` (FK to the relation) and `external_id` (the record's identity in that system's namespace), never a connection id, with `UQ (external_system_id, external_id)` on the model. Which connection imported it is a fact about the run, not about the record. For a `wamn` connection the external system is the peer environment, one row per peer, created with the connection; it gives `project/environment/application` one home.
 
@@ -64,7 +59,7 @@ Control plane only, reached through platform routes and the host:
 
 A package declares each platform thing it uses by name. The declaration is the only place a default lives.
 
-The proposed `relations` declaration still needs an owner decision. See [application bindings](../architecture/data-access.md#application-connection-bindings) for connection declarations.
+The proposed `relations` declaration still needs an owner decision. See [integration and connection schema](integration-schema.md) for connection declarations.
 
 
 ```kcl
@@ -84,48 +79,20 @@ environment = {
 
 - `targets`: the target types a package may run on, `cloud` by default. A package with models is `cloud` only; env apply refuses a package not allowed on its environment's target type.
 - `relations`: platform tables the package reads. A relation is read-only by construction; a write statement, command claim or history trigger against it is a build refusal.
-- `sequences`: name plus default pattern. Env apply creates the `number_sequence` row when absent and never overwrites an existing pattern; after that the admin owns the pattern. A sequence is independent of the records: it needs no model field and no declared caller, and its keys need not be fields of any model (owner ruling 2026-10-24).
+See [sequence declarations](../architecture/data-access.md#numbering).
 - `connectors` in `environment.k`: the digest of each connector the application's connections need; `host` for a `form = host` capability. Apply refuses a connection whose integration has no pin. A bump is an edit to this line and an apply, the same as a package bump.
 - A `wamn` connection's external system is the peer environment; its `parameters` carry `project/environment/application`. The connection adds transport and exchange only.
-- Every sequence a package declares is callable from any of its commands (`sequences::<name>::next` and `peek`). No build refusal depends on whether a field or a command uses it.
+See [sequence declarations](../architecture/data-access.md#numbering).
 
 ## Numbering
 
-See [numbering](../architecture/data-access.md#numbering) for the application name, counter calls, pattern tokens, rendering, and key rules.
-
-The renderer is Rust in the `wamn:postgres` plugin, not a SQL function: the plugin already owns the session, admits every statement and will run on SQLite for local targets, so one implementation serves both engines with no second parser and no custom Postgres image. `next_number` is a plugin call inside the operation transaction:
-
-```
-next_number(name, keys) -> text          // plugin call; application from host state, never from a claim
-peek_number(name, keys) -> text          // plugin call; the last number issued, no lock, no advance
-platform.bump_counter(sequence, counter, key) -> bigint   // Postgres only: SECURITY DEFINER, lock-insert-increment, no pattern, no parsing
-platform.assign_counter(sequence, counter, key) -> bigint // Postgres only: SECURITY DEFINER, per= mapping: return it, or allocate from '' and insert it
-platform.set_counter(sequence, counter, key, value)       // Postgres only: SECURITY DEFINER, the set_counter route's write, under the row lock
-```
-
-On Postgres the three platform functions, `bump_counter`, `assign_counter` and `set_counter`, are the only writers of `number_counter`, so the application role keeps no `UPDATE` on `number_counter`. Each runs on the sequence id alone and refuses an id that is not a sequence. None reads the `app.application` claim, because guest SQL can rewrite it. The plugin knows the operation's application from host state. It resolves the application and the sequence name to the sequence id, and it passes that id to the function. An application guest runs only the statements its package declares: the raw `wamn:postgres/client` interface is denied to applications. So component admission is the guard. It parses each declared statement with PostgreSQL's own grammar (`pg_query`) and walks the whole parse tree. It refuses a statement that names `bump_counter`, `assign_counter` or `set_counter` (in any quoting, case or schema), that writes a `platform.*` relation, that holds a `DO` block, a function body, a SQL `EXECUTE`, `SET`, `RESET`, `set_config`, `pg_logical_emit_message`, `query_to_xml*`, `cursor_to_xml*` or a `U&` identifier or string, or that does not parse (owner ruling 2026-10-24). Publish runs the same check on the statements of each pushed descriptor. The host still runs its text guard on every statement it runs, declared or raw, so a release admitted before the parsed check, or a forged descriptor, is refused too. So only the plugin reaches the functions. SQLite needs the same rule, because it has no roles. The claim stays set, for logging only. The rejected alternative — the renderer as a Postgres function via `pgrx` plus a registered SQLite function — kept the grant invariant but needed a custom Postgres image and ruled out managed Postgres.
-
-### Function
-
-   - `per=`: look up `(counter, key_value)` with no lock — mappings are immutable, so a hit is safe to render. On a miss, `assign_counter(sequence, counter, key_value)` takes a per-key `pg_advisory_xact_lock`, looks again, and returns the existing mapping or allocates from the `''` allocator and inserts the key row with that value. Two concurrent misses for one key allocate once, so `per=` has no gaps. The first line of a batch pays the allocator lock; every later line pays only its own counter (owner ruling 2026-10-23).
+See [numbering and counter authority](../architecture/data-access.md#numbering).
 
 - Rendering, preview and validation all go through the plugin's one renderer (preview in a rolled-back transaction). No second parser, in SQL or anywhere. `set_counter` renders nothing.
-- Name-order locking within one call means two patterns on one sequence cannot deadlock each other. Two operations that insert into two models in opposite order can still deadlock on two sequences; Postgres detects it and one retries. The plugin guarantees no more than that.
-A Postgres sequence was rejected: non-blocking but gaps on rollback.
-### Administration
-
-One platform route, `set_counter(application, sequence, counter, key_value, value)`. It answers the value the counter renders next:
-
-- advance: set higher (go-live at `P-00100000`, skip a block). The next call renders `value` and increments.
-- reset: set 1 on that `(counter, key_value)` row; for `per=` the `''` allocator row.
-- downward is allowed. The set reads and writes counter rows only: it renders no number and reads no application table. A set that gives a number a record already carries is caught by that model's `UQ` on the insert that renders it (owner ruling 2026-10-24). No flag.
-- `per=` mappings are never edited or deleted: that would rewrite history on records that carry them. Correct the records instead.
-- a set goes through `bump_counter`'s lock, so it serializes with concurrent inserts; it is a platform-route write and lands in the write log with the actor.
-- not provided: renumbering existing records (an application command if wanted); scheduled resets (`reset=date:…` covers calendars; anything else is a workflow).
 
 ## Connections
 
-Everything outside an application — a vendor system, a bucket, a PLC, a printer, another wamn application — is reached the same way: a connection, configured once at the org, enabled per project, bound by name per environment, run by the connector the application carries.
+See [integration identity, generations, credentials, and bindings](integration-schema.md).
 
 - The host's connection plugin opens the connection and reads `credential` from the control plane. No application database holds a credential; there is nothing to grant.
 - A connector instance belongs to the application that binds the connection and runs on that application's target. A connection bound by two applications is two instances, each inside its own application's isolation. No connector is shared across applications.
@@ -136,7 +103,6 @@ Everything outside an application — a vendor system, a bucket, a PLC, a printe
 - An operation calls a `wamn` connection like any other connection, before its transaction: `request` waits with a bounded timeout, `event` does not. Approval rules and other logic that decide a record's status run inside the operation as composed packages; a trigger (cron, an event from a box) invokes an operation the same way a request does.
 - The hierarchy is org → project → environment → application: an environment belongs to a project, runs on exactly one target, and applications are deployed into it. An application present in a cloud environment and in a local environment of the same project runs a different package in each (`wms.core` in the cloud, `wms.station` on the box); each environment has its own database, settings and counters, and the two talk through a `wamn` connection like any other pair.
 - An integration package holds configuration and logging rows only; domain tables belong to the consuming application.
-- An application sees none of this by default: it sees its bindings (`documents`, `line3`, `mes`). `platform.connection` is a readable relation for a screen; where a connection runs and when a target last checked in are control-plane facts, read through platform routes.
 
 ### Local environments
 
@@ -163,15 +129,8 @@ projections = {
 
 ### Connections as principals
 
-Every connection has a principal: a `user` row with `type = service`, created with the connection. Inbound calls arrive as that principal; it holds roles on the target application like any user, in the same ACL, chosen in the same role picker. There is no table-level grant and no separate integration-permission surface.
+See [integration identity and credentials](integration-schema.md).
 
-| direction | what checks | where declared |
-| --- | --- | --- |
-| inbound: the ERP pushes a purchase order | the connection's principal holds a role granting the operation | ACL rows, like a user |
-| outbound: the application writes to S3 or calls the ERP | the binding exists with `mode = write` | `wamn.k` `connections`, `environment.k` binding |
-
-- "Connection A may write purchase orders and nothing else" is a role granted `erp.upsert_purchase_order` only. What that operation touches is its effect profile, shown to the admin at grant time; the profile informs the grant and never is the grant.
-- A connection that needs to write a table needs an operation that writes it. If none exists, the application author adds one. The application decides what an external system may do by what it exports.
 - A sync that runs as its own service application needs no inbound grant: its members write their own tables, and the interactive application reads them as relations.
 - `wamn` connections store no credential. The calling target signs a short-lived token for the service principal with the key it already holds; the issuer gains service-principal signing. External connections hold the vendor's credential in the control plane for as long as the vendor's policy says; the credential authenticates the integration user, and per-operator attribution is the application's to carry.
 - Local device connections (serial, Modbus, OPC UA) authenticate the target, not a user; their secrets live in the target's key file, never the cloud.
@@ -331,16 +290,16 @@ Each rule has one check that runs in the platform test set.
 
 C3 requires the ruling 18 kind check unless the owner rules otherwise.
 
-The rules of `platform-deploy.md` "How this plan is worked" apply (worktree lane, ≤3 issues per epic, build+clippy+fmt+unit per issue, fast-forward merge after review, report ≤10 lines at merge). Plus:
+See [standing repository rules](../../CLAUDE.md#standing-repository-rules), [platform version procedure](../operations/building.md#platform-version-procedure), and [cloud prerequisites](../operations/gcp.md#cloud-credentials-and-prerequisites). Plus:
 
 - The spec's invariants table is the test set. Each epic lands the checks for the invariants it makes true; a check asserts a fact, never a stored literal.
 - Receiving and WMS change only where the spec makes today's shape non-conforming (`number =`, `role = "actor"`, `relations`, connection bindings). Nothing else in them moves.
 - One agent per lane that touches `crates/control`. Epics C1–C4 run in sequence in the integrations agent; the UI agent and platform-install agent keep their own epics.
-- Platform version bumps as rule 6 says. C1 and C2 are host-plugin changes, so they are image bumps; plan the build with the cloud path.
+- Platform version bumps follow the [platform version procedure](../operations/building.md#platform-version-procedure). C1 and C2 are host-plugin changes, so they are image bumps; plan the build with the cloud path.
 
 ### Architecture references
 
-See [numbering](../architecture/data-access.md#numbering), [org connections](../architecture/data-access.md#org-connections-and-credentials), and [application bindings](../architecture/data-access.md#application-connection-bindings).
+See [numbering](../architecture/data-access.md#numbering) and [integration and connection schema](integration-schema.md).
 
 The application role reads `setting`, and `scope_id` is text. These differences still need the owner decisions below.
 
@@ -392,16 +351,16 @@ Owner rulings of 2026-10-25 on the C3 scoping questions. They replace the text b
 
 1. C3.1 removes `tenant_id` only from `role`, `user_role`, `permission`, `api_key` and `environment`, with their history tables, policies and indexes. The shared control, catalog and run tables keep the environment key (`org--project--env`). `wamn-8yflb` renames that key to `env_key`, including its wire fields. The separate `environment` field keeps the short name.
 2. The event field is `env_key`, and credential hashes frame `"env_key"`. No format number changes.
-3. The system database owns project-scoped `external_system` and `integration` identities and environment-scoped `connection` rows. The control host writes read-only `platform.*` projections for each environment. The integration schema in `wamn-kjncn` replaces the earlier org scope.
-4. Connection generations and immutable bindings stay. The connection row points to its current generation.
-5. The connection row has a unique `service_principal_id` column.
+3. See [integration and connection schema](integration-schema.md).
+4. See [integration and connection schema](integration-schema.md).
+5. See [integration and connection schema](integration-schema.md).
 6. Both principal kinds stay, and nothing migrates. The application principal runs schedules and integrations, as ruled earlier. The connection principal is only for inbound calls, and it holds the roles that an admin grants it.
 8. A failed auth deletion is logged, and the TTL limits the stale fact. A durable retry is `wamn-3gqi1`.
-9. Credentials enter through the UI or API and stay in the credential store. Rotation appends a connection generation. The integration schema in `wamn-kjncn` removes the import command.
-10. `registry.integration_type` and `registry.integration_type_version` hold the platform catalog. The host types include `http`, `gcs`, and `s3`, all shared. `blobstore` names an interface. Each new implementation supplies its type and version rows.
-12. For HTTP, `mode = read` permits only GET and HEAD. The rule for `wamn` is set in the epic that builds that capability.
+9. See [integration and connection schema](integration-schema.md).
+10. See [integration and connection schema](integration-schema.md).
+12. See [integration and connection schema](integration-schema.md).
 13. An exclusive medium allows one binding per target, readers included, because a physical port has one owner.
-14. An environment's target never changes. To move an environment, the operator deletes it and creates it again.
+14. See [integration and connection schema](integration-schema.md).
 15. C3 creates only the target identity. `target_application` and the target's platform connection are `wamn-ztxg2`.
 16. C3 builds inbound authentication only for the principals of external connections. The `wamn` connection records, peer external identity, inbound authentication, and request and event capability belong to `wamn-ym204`. The platform catalog gains a `wamn` type and version when that implementation is available.
 18. The final kind check is the REST connection from `rest_connector` to `rest_consumer_fixture` in the WMS dev document.
@@ -430,8 +389,16 @@ The docs audit ([docs-audit.md](../history/README.md#docs-audit), 2026-10-24) li
 - Items 10 to 14: connector pins against node pins, service principals in workflows, org-wide name uniqueness, the A5 tags and the target refusal, and the terms.
 - `wamn-o1hwr`: who may author package backfill SQL.
 
+Deferred lifecycle proposal from the retired deployment plan.
+
+Not now. When continuous drift detection or a pull-based deploy is wanted, add Flux and point a HelmRelease at the `release` chart with the values file committed to a repository; the `Database` CR becomes a manifest under a Flux Kustomization. The environment documents are already files, so B is: commit them, and `apply` commits the rendered values in step 6 instead of running `helm upgrade`. How writes are serialized and how convergence is awaited once Git owns the desired state is deferred with B; a process-local advisory lock cannot order Git writers, so option A's lock is not promised there. Nothing in option A is redone: the documents, the chart, the values and the readers are what B consumes. Two facts shape the choice. The chart version selects the image set (R15), so it needs no cluster read under Flux or Argo CD; Flux keeps standard Helm release storage and Argo CD does not, which matters only to `rollback`'s read of `helm history` (R8). A hand edit of the committed values bypasses the stage and the predicate exactly as a hand `helm upgrade` does today; the rule for B is that only `apply` writes that path, and nothing in the cluster enforces it. If a guard is wanted later, the host refusing to start when the installed stage is behind what its release needs is the place; not Postgres.
+
+The proposal has no owning bead in the retired plan.
+
+Left open and not scheduled: `provision-project-env` stays outside `env apply` (R21), because the session-target Secret goes to identity's namespace, which no `env apply` input names, the gate logins are local port-forward files, and the mint-pat Job, `tools/identity-jwks-journey-run` and three live tests call it (`wamn-7yse3`, reason on `wamn-r3qqf.3`).
+
 ### Out of this plan
 
-- Choosing which connectors to build: `integrations.md` candidate list, owner's pick, after C3.
+- Choosing which connectors to build: [integration history](../history/README.md#integrations) candidate list, owner's pick, after C3.
 - The edge plan's bundle format, pull and restart: C9 depends on it, does not define it.
 - OIDC, SAML: identity plan.

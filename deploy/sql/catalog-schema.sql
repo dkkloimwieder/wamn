@@ -103,7 +103,7 @@ CREATE TRIGGER wamn_record_history_stamp
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
--- One installed release (docs/plan/platform-deploy.md R1). The manifest
+-- One installed release (docs/architecture/overview.md#release-identity). The manifest
 -- digest is the release; this row is an immutable cache of the canonical
 -- manifest bytes, and the bytes must hash to the digest. env_key is the RLS
 -- scope of the row, not part of the release identity. Package membership and

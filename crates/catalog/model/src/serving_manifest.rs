@@ -3,8 +3,8 @@
 //! Format 11 closes over exact package membership, component digests, routes,
 //! the permission and SQL statements of each export, and route attachments.
 //! Each component is its package, its admitted descriptor (the bytes of the
-//! descriptor layer of its package artifact, docs/plan/platform-deploy.md
-//! §7.2, contract A) and its released operations. The descriptor is the one
+//! descriptor layer of its package artifact, docs/operations/building.md#reading-a-pushed-package
+//! ) and its released operations. The descriptor is the one
 //! owner of the component name, interface version and digest. An
 //! application's components compose at build into one component. A route
 //! calls one component export. Workflows belong to the environment.

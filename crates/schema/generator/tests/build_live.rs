@@ -1,4 +1,4 @@
-//! Live PostgreSQL 18 tests of `wamn build` (docs/plan/platform-deploy.md §7.1, R10).
+//! Live PostgreSQL 18 tests of `wamn build` (docs/operations/building.md#wamn-build).
 //!
 //! Each test copies the platform fixture, without its committed `generated/`,
 //! into a directory of its own and builds it against the server of the test

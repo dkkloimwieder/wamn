@@ -1,6 +1,6 @@
 //! Package artifacts: the `push-package` verb and the package source of
-//! `apply-package` and `publish-release` (docs/plan/platform-deploy.md §7.2,
-//! contract A).
+//! `apply-package` and `publish-release` (docs/operations/building.md#reading-a-pushed-package
+//! ).
 //!
 //! `push-package` verifies an authored package before it pushes anything:
 //! the policy contract of `generated/wamn.json` is satisfied, the migrations
@@ -384,7 +384,7 @@ fn digest_refusal(path: &Path, recorded: &str, tag: &str, digest: &str) -> anyho
 }
 
 /// The package artifact digest of the package at `root`, the key of its stage
-/// evidence and stage progress (docs/plan/platform-deploy.md §10.2): the
+/// evidence and stage progress (docs/operations/building.md#reading-a-pushed-package): the
 /// offline manifest digest of the tree as it is ([`pack_package`]).
 pub fn package_artifact_digest(root: &Path) -> anyhow::Result<String> {
     Ok(pack_package(root)?.digest)

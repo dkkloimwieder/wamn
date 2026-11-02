@@ -42,7 +42,7 @@
 //!   row and its slot. It resumes in the same process when the slot is healthy
 //!   and that row has `resync_at` set. Recovery is operator-driven:
 //!   `wamn-ctl recover-capture-gap`, the resync, `wamn-ctl close-capture-gap`
-//!   (docs/history/README.md#cdc-reader-slot 4.3).
+//!   (docs/operations/gcp.md#57-cdc-slot-lost).
 //! - **The reader captures only the declared shape** (wamn-0h0g.19.19). Before
 //!   every session it reads the server version, the publication, and the slot,
 //!   and compares them against the provisioning declaration in
@@ -624,7 +624,7 @@ pub const CAPTURE_GAP_EVENT: &str = "CDC_CAPTURE_GAP";
 const GAP_POLL: Duration = Duration::from_secs(30);
 
 /// Why capture cannot run: the slot is lost, or the newest gap row of the
-/// registration waits for its resync (docs/history/README.md#cdc-reader-slot 4.3).
+/// registration waits for its resync (docs/operations/gcp.md#57-cdc-slot-lost).
 #[derive(Debug)]
 struct CaptureGap {
     slot: String,

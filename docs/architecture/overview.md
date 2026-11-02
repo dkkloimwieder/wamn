@@ -190,6 +190,20 @@ In order, it does these steps:
 The `Database` resource keeps `databaseReclaimPolicy: retain`, so the database stays on the cluster.
 With `--data`, the verb drops the database and the instance roles. It reads the coordinate again from a terminal first.
 
+The platform UI reads status through a control operation with a read-only ServiceAccount over Pods, Deployments and WorkloadDeployments in the release namespace `hosts`: the digest from the host Deployment's pod-template annotations, the rollout from its status, the workload conditions, the live set. Who selected and who approved are not there: they are in the Helm revision (§11.3), read with `helm history`, not by the UI. Current state only; no history of checks; no Secrets; no verb runs from a browser. The project screen that reads the saga today reads this instead.
+
+- Every step is safe to run twice. A missing object is a finished step, not a refusal.
+
+- The registry rows go last. Until they go, a second run can still read the instance suffix and the tenant.
+
+- The database and its CDC objects go before any role. The control rows go before the registry rows.
+
+- The verb turns off an immutability trigger for its one delete statement only, inside one transaction, and turns it on again before the commit. No other session sees the trigger off.
+
+- The source stream and the advisory stream are deleted by name, not purged. No NATS permission is added: the provisioning user of the stream already holds `STREAM.DELETE` and `CONSUMER.DELETE` (`test-support/infrastructure/event_broker.rs:101-131`).
+
+- The verb prints each step with its result on one line. It prints no credential.
+
 ## Organization membership and administration
 
 A principal is global. Membership of an org is explicit.

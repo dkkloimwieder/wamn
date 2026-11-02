@@ -411,7 +411,7 @@ pub(super) fn journey_package_registry(
 
 /// Push the verified package artifact of every released journey package and
 /// return each root with the digest the registry records, the one
-/// apply-package installs (docs/plan/platform-deploy.md R3). The gate,
+/// apply-package installs (docs/operations/building.md#reading-a-pushed-package). The gate,
 /// authorship and publish read component facts from these artifacts.
 pub(super) async fn push_journey_packages(
     inputs: &JourneyDocument,

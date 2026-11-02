@@ -1,4 +1,4 @@
-//! The kept delivery cluster (docs/plan/platform-deploy.md §17.2: the cluster
+//! The kept delivery cluster (docs/operations/cluster-tests.md: the cluster
 //! stage of Epic 6).
 //!
 //! The Receiving and WMS delivery cases run on one kind cluster that

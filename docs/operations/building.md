@@ -24,6 +24,10 @@ Cargo writes its output to `CARGO_TARGET_DIR`, so commands in this repository us
 Platform installations use the full schema files under `deploy/sql/`.
 These files own each schema.
 
+## Platform version procedure
+
+Every merged PR that changes a file that `wamn-ctl build-platform` reads bumps the platform patch version once, not once per commit (owner ruling 2026-10-20): `version` and `appVersion` of `deploy/platform/release/Chart.yaml`, its one owner (owner ruling 2026-10-14, `wamn-i69qo`, R15). `wamn-ctl` reads it at run time from the chart it uses, so no binary or image input changes with it (owner ruling 2026-10-23, `wamn-6qo7v`). A stale version is a findings-first failure.
+
 ## Compile cache
 
 Cargo runs `rustc` through `kache`, because `~/.cargo/config.toml` sets `rustc-wrapper = "kache"`.
@@ -350,6 +354,10 @@ The generator runs the script itself, so you do not install KCL by hand.
 If the repository is absent, set `WAMN_KCL` to a `kcl` binary of the pinned version.
 The schema module that `wamn.k` imports as `manifest` is [`crates/schema/generator/kcl/manifest`](../../crates/schema/generator/kcl/manifest/manifest.k).
 
+- Plain English names in the schema module; `type` never `kind`; no plurals that the manifest does not already use.
+
+An overlay's `wamn.k` imports nothing from its base; `base_dependencies` stays a declaration (package, version, digest, operations) as today, because the pin is the contract and a language-level import would let the overlay drift from the sealed base. The language adds comments and defaults to the overlay; it does not compose the two packages.
+
 ## wamn build
 
 `wamn build` builds packages in two passes.
@@ -460,6 +468,25 @@ They take the registry flags of `wamn-ctl apply-package`: `--artifact-base`, `--
   --artifact-base <registry>/wamn/packages \
   --registry-auth-file <auth file>
 ```
+
+**Contract A** (`wamn-vavs4.1`, `crates/control/lib/src/package_artifact.rs`). A component artifact is the object `push-package` pushes for each component. `push-component` is gone (`wamn-vavs4.7`). Its tag is the 64 hex digits of the component digest. Its image manifest has media type `application/vnd.oci.image.manifest.v1+json`, `schemaVersion` 2 and no `artifactType`. Its config is `application/vnd.wamn.component.config.v1+json`, the canonical JSON `{format-version: "0.1", component-digest, imports, imports-fingerprint}` (`component_artifact_config_bytes`). It has one layer, `application/vnd.wamn.component.v1+wasm`, with the exact wasm bytes. These media types live in `crates/platform/engine/src/component_artifact.rs`.
+
+A package artifact has the tag `<package_id>-<version>`. Its image manifest has media type `application/vnd.oci.image.manifest.v1+json` and `artifactType` `application/vnd.wamn.package.v2` (a v1 reader requires exactly one layer). Its config is `application/vnd.oci.empty.v1+json` with the bytes `{}`. Its layers are always present, in this order; `title` is the annotation `org.opencontainers.image.title`:
+
+| Layer | Media type | Title | Content |
+|---|---|---|---|
+| 0 | `application/vnd.wamn.package.manifest.v1+json` | `wamn.json` | the exact bytes of the canonical `wamn.json` in `apps/target/wamn/<package>/`, not re-encoded |
+| 1 | `application/vnd.wamn.package.v1.tar` | `migrations` | `migrations/` |
+| 2 | `application/vnd.wamn.package.v1.tar` | `publication` | `publication/`: `attachments.json`, `wirings/`, `components/<name>.json.in`, including the declaration of each palette component a wiring names |
+| 3 | `application/vnd.wamn.package.v1.tar` | `sources` | `wamn.k`, `command/`, `query/`, `generated/platform-policy/data-access.json`, `generated/contracts/`, `generated/required-schema-contract.json`, `generated/sql/`, `generated/publication/`, `generated/routes/` |
+| 4 | `application/vnd.wamn.package.v1.tar` | `web` | `web/dist/`: the files of the web client build in `apps/target/wamn/<package>/web/` (§7.1 step 8), under their logical `web/dist/` paths; an empty tar when there is none |
+| 5..n | `application/vnd.wamn.component.descriptor.v1+json` | none | one descriptor per component, owned or palette, sorted by name, with the annotations `wamn.component.name` and `wamn.component.digest` |
+
+The `generated/` paths of layer 3 are logical paths. `wamn build` writes those files below `apps/target/wamn/<package>/` without the `generated/` prefix, and pack reads them from there.
+
+A tar has GNU headers, sorted package-relative paths, mode 0644, uid and gid 0 and mtime 0. A descriptor is the canonical JSON of `ComponentDescriptor` (`crates/catalog/model/src/component_facts.rs`, `deny_unknown_fields`): `{component, interface-version, component-digest, operations, imports, imports-fingerprint, effects, connections: [{store-alias, requirement-type}]}`, which is `AdmittedComponent` without its scope plus its connections. The reader supplies the scope. A palette component's store alias comes from the `params.store_alias` of the wiring nodes that name it, and two aliases refuse. The manifest annotations are `wamn.package.id`, `wamn.package.version` and one `wamn.component.<name>` = `sha256:...` per component. Nothing carries a timestamp. The manifest is canonical JSON.
+
+The artifact digest is the SHA-256 of the image manifest bytes. The registry records it, and it is what `artifact_digest` means. An unpacked artifact is not build output. It keeps the logical paths: the tars in place, except that the `web/dist/` entries go to `generated/web/`; layer 0 at `generated/wamn.json`; and each descriptor at `descriptors/<name>.json`. It packs again offline to the pushed digest. `package_artifact_digest(root)` is that offline digest of a tree as it is. A source tree has no `descriptors/`, so its digest differs from the pushed digest. Only an unpacked tree packs to it.
 
 ## Host route clients
 

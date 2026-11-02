@@ -393,7 +393,7 @@ CREATE TRIGGER wamn_record_history_log
     EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
 
 -- ---------------------------------------------------------------------------
--- THE WRITE LOG (`docs/history/README.md#write-log`, wamn-z7uv). One idempotency record
+-- THE WRITE LOG (`docs/architecture/data-access.md#inputs-queries-and-transactions`, wamn-z7uv). One idempotency record
 -- for every create and command in this database. For an operation with SQL,
 -- the engine inserts the claim in the item's host transaction, the guest does
 -- the work in it, and the engine stores the result and commits, so the row

@@ -184,7 +184,7 @@ fn queue_delivery_span(
 /// Take queue turns until `stopping`, then drain: keep taking turns while
 /// `pinned_backlog` reports a run pinned to this host's release that is still
 /// dispatched or running, and return once it reports none
-/// (platform-deploy.md R20). The pod's `terminationGracePeriodSeconds` bounds
+/// (docs/architecture/execution.md#process-lifecycle). The pod's `terminationGracePeriodSeconds` bounds
 /// the drain. Kubernetes owns that clock, so the loop adds no timer.
 async fn serve_queue(
     mut stopping: tokio::sync::watch::Receiver<bool>,

@@ -1,5 +1,5 @@
 //! `build.json`, the build record of one package build
-//! (docs/plan/platform-deploy.md §7.1 step 9, §7.2).
+//! (docs/operations/building.md#wamn-build).
 //!
 //! The build record names the build's inputs, the exact dependency packages, the
 //! generator and toolchain identity, and the digest of every output. Its bytes

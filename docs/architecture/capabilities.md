@@ -365,3 +365,15 @@ A `config.json` that names it under `credHelpers` holds no credential.
 
 Client certificate loading and OCI transfer retain their WAMN artifact contracts.
 The [native alignment page](native-alignment.md) names the conditions for replacing those native adapters.
+
+- The kind clusters keep the projected docker configuration file for their in-cluster registry. Only the GKE host changes.
+
+- The operator verbs of `wamn-ctl` (`push-package`, `publish-release`, the delivery verbs) keep `--registry-auth-file`. They run by hand, outside the cluster.
+
+- A host that is set up for the metadata server and cannot get a token refuses the pull with a named outcome. It never falls back to an anonymous pull.
+
+The host gets its registry token from the GKE metadata server: `GET http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token` with `Metadata-Flavor: Google`. The token is the `access_token` field. The registry credential is `oauth2accesstoken` and that token, the form Artifact Registry accepts and the CronJob writes today. The token is read for each pull and is never written to a file or a log.
+
+A ConfigMap mounted at `DOCKER_CONFIG` holds `{"credHelpers":{"us-central1-docker.pkg.dev":"wamn"}}`. The ConfigMap holds no credential. wash-runtime runs the helper at each pull.
+
+- The host's existing Google service account, `wamn-blob`, gets `roles/artifactregistry.reader` on repository `wamn`. A pod has one Workload Identity binding, and the host needs both roles. The name `wamn-blob` now understates the account. Renaming it is not this finding.

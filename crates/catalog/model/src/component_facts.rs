@@ -387,7 +387,7 @@ fn imports_fingerprint(
 }
 
 /// The admitted facts of one component as a package artifact carries them
-/// (docs/plan/platform-deploy.md §7.2, contract A): an [`AdmittedComponent`]
+/// (docs/operations/building.md#reading-a-pushed-package, contract A): an [`AdmittedComponent`]
 /// without its scope, plus its connections. A package artifact is tenant-free,
 /// so the reader supplies the scope.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

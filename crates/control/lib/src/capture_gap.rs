@@ -1,5 +1,5 @@
 //! The `recover-capture-gap` and `close-capture-gap` verbs (`wamn-59z6`,
-//! docs/history/README.md#cdc-reader-slot 4.3).
+//! docs/operations/gcp.md#57-cdc-slot-lost).
 //!
 //! A CDC reader whose slot is missing or invalidated stays running and stopped.
 //! `recover-capture-gap` drops the lost slot, creates it again under the same

@@ -225,31 +225,7 @@ A5 is the direction; A1 is kept in the table only as the fallback if the spike f
 
 ### A5: application as the HTTP workload
 
-wasmCloud's HTTP workload assumes the guest is the application: the request enters once over wasi-http, the guest calls imports for effects, the guest answers. The application component already has that shape when the host invokes it. What breaks the model is the second guest in front and the host orchestrating between the two.
-
-Per get under A5: wasi-http in, one `authenticate` import, one `wamn:postgres` statement, wasi-http out. One fresh Store from the pool, no delivery report, no outcome JSON parsed by the host, no `validate_input` (the guest parses its own contract once).
-
-What moves:
-
-| Today | Under A5 |
-| --- | --- |
-| `http-route` is its own workload; `deliver` crosses to the host, which dispatches the application | publish composes the route layer (the `http-route` rlib or its generated equivalent) with the application packages into one component exporting `wasi:http/handler` and the operation exports |
-| the host opens the transaction before it calls the export, from the admitted operation's declaration | the composed entry calls `begin-operation(sealed-operation-id, idempotency-key)` and `commit`; the host checks the id against the release's admitted facts and the caller's grant, pipelines the claims, writes the write-log claim and finish, emits the causation message, and holds the transaction for the Store's lifetime |
-| `intent.rs`, `native_call.rs` interpret the outcome; the bridge builds the delivery report | the guest answers HTTP; the host reads nothing of the payload |
-| a routed read's ETag comes from a platform query in the bridge | an import on the Postgres instance returns the WAL position inside the same trip |
-| `deliver-stream` carries rows from the application guest to the ingress guest | the guest writes rows to the wasi-http body as they arrive from `run-stream` |
-| warm reuse trusts the `http-route` digest | no trusted-warm list; every Store is fresh, which the law already requires for application code |
-
-Invariants A5 must keep (each is already a ruling or a refusal today):
-
-- `begin-operation` and `commit` exist only on the entry's import instance. No package member imports them: "read access but no transaction access" applied to the entry/member split. Publish refuses a member that imports them, and refuses an application that supplies its own `wasi:http/handler` export.
-- The transaction is keyed by Store, never by member instance. Base and overlay share one invocation, one connection, one commit, and the overlay still sequences base-exported steps before, between and after its own as component-model calls. A package with its own database (analytics) gets its own connection and transaction, as today. A cross-application call is host-mediated through the router with no shared transaction, as today.
-- `run` / `run-stream` stay refused inside a host transaction.
-- Authorization stays at publish; the only runtime check is the entry's grant, once, at `begin-operation` or at `authenticate`.
-- The composed component's digest is a function of source bytes only; `wac` is deterministic, and the route layer's bytes are pinned like any member.
-- The guest supplies no trust data (ruled 2026-10-20 from the spike, `wamn-cbqzl`). The host mints the delivery id at `begin-operation`. `authenticate` returns an opaque caller handle, and `begin-operation` checks it. The request hash and the result are the application's idempotency data, which the host stores without interpreting.
-
-Cost: a contract change across publish, the generator, the Postgres plugin's transaction surface, the edge host, and the flow tests. Weeks, not days. It touches the security model, so it gets the review the composition spec got.
+See [the composed entry transaction boundary](../architecture/data-access.md#inputs-queries-and-transactions).
 
 ### A3 (H8): taps, what they are, who reads them, and the options
 
@@ -319,5 +295,5 @@ No function on the list is lost under A5 or A2. Batched requests: a request can 
 5. Is `commit_delay` acceptable as a cluster parameter (P7), given it trades p50 for throughput? Owner 2026-10-20: not decidable without measurement; M6 runs in wamn-c8a5v.3 with the other Postgres tests, decision after.
 6. mimalloc stays deferred (`wamn-9jvm1.1`)?
 7. Closed 2026-10-29 as not needed (`docs/plan/alignment.md`, Kept as is): one release, one host Deployment and operator placement per environment stay. At 1 to 3 applications per environment, a shared host saves at most one pod per org, and it mixes environments that the rulings keep isolated.
-8. Resolved 2026-10-20: under A5 the component handles a batched request. The entry loops over the items and calls `begin-operation` and `commit` per item; the host sees single operations and never knows a batch exists. Per-item claims and transactions stay as today (an item failing does not roll back the others; a retry replays only unfinished keys). Whole-batch atomicity, if an operation wants it, is one begin with one key, declared by that operation's contract. Owner: batch semantics and error handling belong to the application, not the host; the response shapes (per-item errors in a 200, partial completion on a run failure) stay as the entry builds them today, and validate-all-before-run is kept.
+8. See [batch inputs and transactions](../architecture/data-access.md#inputs-queries-and-transactions).
 9. Which of M1–M8 and the two spikes run first. Suggested: the A5 spike, M4, M5.

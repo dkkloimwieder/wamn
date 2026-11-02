@@ -11,3 +11,5 @@ This page lists retired plans and pages. Git holds the deleted text.
 - <a id="write-log"></a>write-log.md: wamn-z7uv, landed at 970f44bb6. One platform write log stores operation claims and retry results.
 - <a id="docs-audit"></a>docs-audit.md: October 24 documentation audit, landed at dfcc84105. The audit compared documentation with the source.
 - <a id="observability"></a>observability.md: wamn-22lsr, landed at b54a29ceb. Hosts export telemetry to a collector that writes compressed OTLP JSON to object storage.
+- <a id="platform-deploy"></a>platform-deploy.md: wamn-jqdja, landed at 5d224710a. One environment document drives package installation and release deployment.
+- <a id="integrations"></a>integrations.md: superseded by integration-schema.md. The integration schema owns project integrations and environment connections.

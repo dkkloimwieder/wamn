@@ -1,5 +1,5 @@
 # The status and credential access of the control host
-# (docs/plan/platform-deploy.md section 11.4, owner ruling 2026-10-13,
+# (docs/architecture/overview.md#environment-lifecycle, owner ruling 2026-10-13,
 # wamn-esnu9). Applied once per cluster by the platform install, into the
 # release namespace (`hosts` on GKE, `wamn-system` on kind):
 #

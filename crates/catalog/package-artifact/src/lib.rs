@@ -1,4 +1,4 @@
-//! Read package artifacts (docs/plan/platform-deploy.md §7.2, R2, R11).
+//! Read package artifacts (docs/operations/building.md#reading-a-pushed-package).
 //!
 //! A package artifact is the one owner of the component facts of its package,
 //! and the OCI registry is the one owner of package facts: no database holds a

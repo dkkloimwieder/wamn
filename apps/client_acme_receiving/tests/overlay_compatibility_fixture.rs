@@ -19,7 +19,7 @@ use super::identity;
 /// project database of `project_url`, where the candidate is installed, and
 /// write the evidence to the new file `evidence_file`. The overlay is the
 /// candidate's package artifact and its component the digest the release
-/// manifest names (docs/plan/platform-deploy.md §8.2).
+/// manifest names (docs/operations/delivery.md#release-qualification).
 pub(super) async fn unchanged_overlay(
     evidence_file: &Path,
     project_url: &str,

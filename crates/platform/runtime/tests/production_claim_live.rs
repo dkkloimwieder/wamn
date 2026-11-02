@@ -269,7 +269,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     );
     assert_terminal_status_dequeued(admin, "grant-refused", "infrastructure-failure").await?;
 
-    // ---- the admission pin (platform-deploy.md R1) ------------------------
+    // ---- the admission pin (docs/architecture/overview.md#release-identity) ------------------------
     //
     // Admission pins the release by its manifest digest. A matching pod claims
     // the run and never writes the pin.

@@ -455,6 +455,31 @@ Unbounded JSON materialization is not a streaming or export interface.
 Arbitrary tenant SQL remains subject to runtime authority and execution limits.
 Compile-time checking for arbitrary tenant components remains demand-gated.
 
+1. A member's instance binds to the union of its own operations' declared statements. This is wider than today's per-entry binding (`operation.rs:661`): Receiving's record\_receipt code could name void\_receipt's statement, and a Receiving read could too. Accepted: a package trusts its own code, as a crate does; a read that writes is its author's bug, and the profile screen shows it. Composition never widens a set to another package.
+2. Mutating base-owned business state goes through the base's exports (`data-access.md:61-62`). Reading or locking base relations within a member's own admitted statements is allowed; Acme already locks `purchase_order` for its overlay-owned fields.
+3. Exports re-check their preconditions from the database. A sibling in the same store can forge any record it passes (separate memories, shared data), so typestate from a sibling is not proof.
+4. Members never share host resources. Each obtains its own from its own import instance; none crosses an export (`components.md:44`).
+5. Authorization is the ACL row for the entry, on both sides: required = {entry}, held = the role's rows. The call graph never adds to or subtracts from either. What the entry reaches is the author's responsibility and the admin's information.
+
+Two ways to do it wrong: define the linker per request instead of per digest; or let members import different `wamn:postgres` versions, which would mean N ABIs. One version per release is the rule.
+
+wamn has one way to compose packages inside an application: the caller sequences the callee's exported operations, and a callee joins the invocation's host-owned transaction by asking the host for it with operation-transaction(). Existing read exports that open their own guest transaction do not join; inside a command their begin refuses, as today. Converting them is listed in [Deferred](../plan/trx-pkg-plan.md#deferred--build-when-a-consumer-exists). No transaction handle crosses a component boundary. No platform participant or pre-commit mechanism exists; base-declared WIT imports remain as ordinary dependencies.
+
+Idempotency (ruled 2026-10-12): a key identifies one request to one operation. Acme's `record_receipt` has SQL of its own (the inspection statement), so it claims under its own operation, `acme.record_receipt`, as an ordinary `idempotent_by = claim` command with `transaction = explicit_per_input`. It no longer inherits Receiving's claim: `idempotent_by = {inherited = …}` (wamn.k:55,104) existed for the participant-era SQL-free orchestrator, and dies with it (Cleanup). Consequences, all accepted: (1) a key recorded through `receiving.record_receipt` and resubmitted through `acme.record_receipt` is a second request to a second operation — it runs, Acme's rules apply, and Receiving's row rules decide whether a second receipt exists; the base write entry in a client application is therefore not a routed target (authoring rule; ACL after C). (2) Participant-era keys stored under `receiving.record_receipt` are not replayed by Acme's entry at all; a retry through Acme runs again. Receiving and Acme are portfolio applications on wamn-dev with no production data. The request hash drops the participation term (intent.rs:139-147) and is the canonical item alone. `write_log` stays keyed (operation, idempotency\_key), operation versionless (app-schema.sql:630-632), so a retry across a release of the same operation answers the stored result. Cached replay across two entry points with different business rules is exactly what own-operation claims rule out.
+
+The database is the tenant, so the log carries no `tenant_id` and no row policy. `wamn_app` gets `INSERT`, `SELECT` and `UPDATE (result)`, nothing else. No `user_id`: record history stamps the rows the work writes.
+
+A second caller waits at step 2 for the whole of the first caller's work. A lock or statement timeout there ends the second caller's transaction; its item outcome is the platform's timeout refusal, and the client retries.
+
+- `begin-operation` and `commit` exist only on the entry's import instance. No package member imports them: "read access but no transaction access" applied to the entry/member split. Publish refuses a member that imports them, and refuses an application that supplies its own `wasi:http/handler` export.
+- The transaction is keyed by Store, never by member instance. Base and overlay share one invocation, one connection, one commit, and the overlay still sequences base-exported steps before, between and after its own as component-model calls. A package with its own database (analytics) gets its own connection and transaction, as today. A cross-application call is host-mediated through the router with no shared transaction, as today.
+- `run` / `run-stream` stay refused inside a host transaction.
+- Authorization stays at publish; the only runtime check is the entry's grant, once, at `begin-operation` or at `authenticate`.
+- The composed component's digest is a function of source bytes only; `wac` is deterministic, and the route layer's bytes are pinned like any member.
+- The guest supplies no trust data (ruled 2026-10-20 from the spike, `wamn-cbqzl`). The host mints the delivery id at `begin-operation`. `authenticate` returns an opaque caller handle, and `begin-operation` checks it. The request hash and the result are the application's idempotency data, which the host stores without interpreting.
+
+8. Resolved 2026-10-20: under A5 the component handles a batched request. The entry loops over the items and calls `begin-operation` and `commit` per item; the host sees single operations and never knows a batch exists. Per-item claims and transactions stay as today (an item failing does not roll back the others; a retry replays only unfinished keys). Whole-batch atomicity, if an operation wants it, is one begin with one key, declared by that operation's contract. Owner: batch semantics and error handling belong to the application, not the host; the response shapes (per-item errors in a 200, partial completion on a run failure) stay as the entry builds them today, and validate-all-before-run is kept.
+
 ## Numbering
 
 A document number is a rendered text, such as `P-00000017`.
@@ -571,6 +596,16 @@ It refuses when a record of the application already carries that number.
 The records are the single-column unique text columns of the application's schemas.
 It also refuses a `per=` counter, whose values never change.
 The route answers `invalid_input`, `sequence_not_found`, `counter_not_found`, `counter_assigned_per_key`, `number_live`, or `idempotency_conflict`.
+
+On Postgres the three platform functions, `bump_counter`, `assign_counter` and `set_counter`, are the only writers of `number_counter`, so the application role keeps no `UPDATE` on `number_counter`. Each runs on the sequence id alone and refuses an id that is not a sequence. None reads the `app.application` claim, because guest SQL can rewrite it. The plugin knows the operation's application from host state. It resolves the application and the sequence name to the sequence id, and it passes that id to the function. An application guest runs only the statements its package declares: the raw `wamn:postgres/client` interface is denied to applications. So component admission is the guard. It parses each declared statement with PostgreSQL's own grammar (`pg_query`) and walks the whole parse tree. It refuses a statement that names `bump_counter`, `assign_counter` or `set_counter` (in any quoting, case or schema), that writes a `platform.*` relation, that holds a `DO` block, a function body, a SQL `EXECUTE`, `SET`, `RESET`, `set_config`, `pg_logical_emit_message`, `query_to_xml*`, `cursor_to_xml*` or a `U&` identifier or string, or that does not parse (owner ruling 2026-10-24). Publish runs the same check on the statements of each pushed descriptor. The host still runs its text guard on every statement it runs, declared or raw, so a release admitted before the parsed check, or a forged descriptor, is refused too. So only the plugin reaches the functions. SQLite needs the same rule, because it has no roles. The claim stays set, for logging only. The rejected alternative — the renderer as a Postgres function via `pgrx` plus a registered SQLite function — kept the grant invariant but needed a custom Postgres image and ruled out managed Postgres.
+
+- `per=`: look up `(counter, key_value)` with no lock — mappings are immutable, so a hit is safe to render. On a miss, `assign_counter(sequence, counter, key_value)` takes a per-key `pg_advisory_xact_lock`, looks again, and returns the existing mapping or allocates from the `''` allocator and inserts the key row with that value. Two concurrent misses for one key allocate once, so `per=` has no gaps. The first line of a batch pays the allocator lock; every later line pays only its own counter (owner ruling 2026-10-23).
+
+- Name-order locking within one call means two patterns on one sequence cannot deadlock each other. Two operations that insert into two models in opposite order can still deadlock on two sequences; Postgres detects it and one retries. The plugin guarantees no more than that.
+
+- `sequences`: name plus default pattern. Env apply creates the `number_sequence` row when absent and never overwrites an existing pattern; after that the admin owns the pattern. A sequence is independent of the records: it needs no model field and no declared caller, and its keys need not be fields of any model (owner ruling 2026-10-24).
+
+- Every sequence a package declares is callable from any of its commands (`sequences::<name>::next` and `peek`). No build refusal depends on whether a field or a command uses it.
 
 ## Record history
 
@@ -980,6 +1015,12 @@ Collector follow-up belongs to `wamn-2wdsf.4`.
 
 The full schema files own the platform schemas and build fresh installations.
 
+- `file` is the only file table. An image is a file with an image media type; `width` and `height` are nullable. `connection_id` names the store. Each row pins its application and the connection generation that stored its bytes. Reads and deletes use that generation's bucket and prefix. The application links `file_id` from its own table (which record, which purpose). No generic attachment-by-(table, id) table.
+
+- Storing is two short calls: `file.put(binding, bytes)` streams the bytes to the store the binding names, inserts the row in its own commit and returns `file_id`; the application operation then carries `file_id` like any reference. No transaction waits on the store. A store is a connection with a store integration (`s3` or `gcs`), declared by the package and bound by name in `environment.k` with `mode = write`.
+
+- `exposure` is per file: `application` (default; the session holds `file.get` on the owning application, at `/api/<app>/files/<id>`), `private` (only an operation that returns a short-lived signed url; so the roles holding that operation), `public` (anyone with the link, no login). `url` is stored only for `public`, so old links survive a CDN change. Another application never serves the row.
+
 ### System database
 
 The system database owns the integration catalog, `registry.integration_type` and `registry.integration_type_version`.
@@ -1181,46 +1222,7 @@ Test database isolation has one definition in [running tests](../operations/runn
 
 ### Project integrations and credentials
 
-The system database owns project integrations and environment connections.
-An integration selects its published type, authentication scheme, and optional external system.
-Each environment keeps its own connection generations and service principal.
-Names stay fixed after creation.
-[Integration and connection schema](../plan/integration-schema.md) defines these contracts.
-
-The control routes use project administrator authority.
-The `external_system.*`, `integration.*`, and `connection.*` routes manage their respective identities.
-The matching `wamn-ctl` verbs call these routes with a session token.
-Each verb reads its JSON request from `--file`.
-The request names the project, and connection requests also name the environment in `env`.
-The first connection write reads the credential value from `--credential-file`, except for authentication type `none`.
-`connection set-credential` reads later values from that flag too.
-
-`connection authorize` starts authorization code access under the same project administrator authority.
-The host returns an authorization URL, and `connection.get` returns the public `redirect_uri`.
-The callback stores both tokens in encrypted JSON after a successful exchange.
-A secret-only rotation retains the refresh token and makes the access token due for refresh.
-
-Responses and credential audit metadata contain the last four characters as a hint.
-Postgres stores the reference and never stores the value.
-
-A parameter edit appends an immutable generation in the target environment.
-`connection copy` copies parameters from `source_env` and preserves the target credential.
-Integration publication records a version with its parameter schema and operations.
-The publisher refuses invalid field transitions, reserved authentication fields, incompatible authentication interfaces, and missing artifact digests.
-
-Disabling an integration or connection stops its service.
-Deletion requires the absence of all system and environment references.
-The control host holds each environment lifecycle lock during deletion.
-It removes projected identities and destroys stored credentials after the system deletion.
-A deleted connection leaves its service principal disabled for audit history.
-
-The host refuses a session when any signed role is absent from the user's current grants.
-It also refuses a service principal presented as a user session.
-A service principal has no user active role, even when it holds an application permission.
-Principal and grant writes record `AuthDrops`, and their callers publish the deletions after commit.
-A failed deletion is logged without retry. The auth cache TTL bounds stale access.
-
-A session with an unknown or unheld signed role, or a disabled principal, receives 401. A failure to read the database receives 503.
+See [integration and connection schema](../plan/integration-schema.md).
 
 The control role keeps its existing table grants. Connection administration uses `registry.configure_connection` and the scoped `registry.connection_*` read functions.
 These functions return only non-secret authority. The write function creates a service principal only with its connection and returns its id for `AuthDrops`.
@@ -1231,44 +1233,9 @@ Each function is `SECURITY DEFINER`, is owned by `wamn_system`, and pins `search
 PUBLIC holds no execute grant. Only the control or administration role receives the execute grant that it needs.
 Registry reads and writes remain unavailable through direct control table grants.
 
-A PAT-authenticated service can start an invoker workflow with its own held role.
-The host derives that role from current grants, with the existing single-role or held-admin selection rule.
-A service never borrows a user's active role. User sessions with a service role or any unheld role still refuse.
-
 ### Application connection bindings
 
-A package declares `connections` in `wamn.k`. Each name declares WIT interfaces and a mode, `read` or `write`.
-The build refuses malformed declarations without reading a registry.
-Component PostgreSQL capabilities remain in `components.<name>.connections` as `postgres`.
-
-An environment names its target with `target`.
-Its `applications.<app>.connections` map binds package names to project integrations.
-Its `integrations` map selects each integration's published version.
-Two packages in one application can bind different names to one shared connection.
-The document holds no endpoint, parameter, or credential values. Apply refuses inline connection definitions.
-
-Environment apply resolves declarations against `registry.integration_type_version` and the active integration and connection rows.
-It refuses an unbound name, an unknown integration, an inactive connection or integration, and a version that lacks a required interface.
-The connection belongs to the project. Its binding supplies application access without a separate enablement or allow policy.
-An exclusive resource permits one active connection per target and resource key.
-The unique index on `registry.connection` enforces that rule during connection writes.
-The environment cannot change an assigned target. The operator must delete and recreate it to move it.
-
-The project catalog stores declarations in `catalog.connection_requirement`, with each package's names, interfaces, and modes.
-`catalog.connection_binding` maps a component, package, and name to a connection for one release.
-Applications can bind identical component bytes to different connections.
-`catalog.release_connection` selects each connection's version for that release.
-The HTTP host permits only GET and HEAD through a read declaration.
-The object-store host refuses put, delete, and clear through a read declaration.
-GCS uses the pod identity. S3 and HTTP resolve credentials through the environment store.
-The system database supplies the active connection generation for runtime and candidate calls.
-
-Connection-only edits do not change the application membership sent to Helm.
-`env show` reads the release's versions and bindings from the project catalog.
-Apply writes versions and bindings before rollout and removes rows for drained releases afterward.
-Apply never creates, disables, or retires a connection.
-A new binding requires a package declaration. Apply refuses an undeclared name.
-Dry-run analysis reads release package declarations, but it does not pull floor artifacts or write connection rows.
+See [integration and connection schema](../plan/integration-schema.md).
 
 Environment apply and local activation read connection projections through scoped system functions.
 They do not add table grants to the control or administration roles.

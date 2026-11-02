@@ -643,7 +643,7 @@ pub async fn publish(
         minio_endpoint,
     } = *artifacts;
     // The package is applied as the artifact it is pushed as, so publish
-    // reads one digest for it (docs/plan/platform-deploy.md R3).
+    // reads one digest for it (docs/operations/building.md#reading-a-pushed-package).
     let pushed = push_package(&PushPackageRequest {
         package: package_root(),
         registry: package_registry(inputs)?,

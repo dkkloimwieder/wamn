@@ -202,8 +202,8 @@ impl ComponentAdmission {
         &self.statement_instances
     }
 
-    /// The admitted descriptor (docs/plan/platform-deploy.md §7.2, contract
-    /// A): the facts without their scope, and the declared connections sorted
+    /// The admitted descriptor (docs/operations/building.md#reading-a-pushed-package
+    /// ): the facts without their scope, and the declared connections sorted
     /// by store alias, as `push-package` writes it.
     pub fn descriptor(&self) -> ComponentDescriptor {
         ComponentDescriptor::new(self.component.clone(), self.connections.to_vec())

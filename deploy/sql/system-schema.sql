@@ -295,7 +295,7 @@ CREATE TABLE registry.env_policies (
         CONSTRAINT env_policies_durability_class_check
         CHECK (durability_class IN ('standard')),
     -- The readiness budget and drain bound of `env apply`
-    -- (docs/plan/platform-deploy.md §10.1).
+    -- (docs/architecture/overview.md#environment-lifecycle).
     readiness_budget_seconds int NOT NULL DEFAULT 600
         CONSTRAINT env_policies_readiness_budget_check CHECK (readiness_budget_seconds > 0),
     drain_bound_seconds int NOT NULL DEFAULT 300
@@ -756,9 +756,9 @@ CREATE TABLE registry.project_envs (
     instance_suffix  text NOT NULL,
     disposable       boolean NOT NULL DEFAULT false,
     status           text NOT NULL DEFAULT 'active',
-    -- The policy name the environment document declares (docs/plan/platform-deploy.md R2, R21).
+    -- The policy name the environment document declares (docs/architecture/overview.md#environment-lifecycle).
     policy_name      text NOT NULL,
-    -- The route host the environment document declares (docs/plan/platform-deploy.md §10.1).
+    -- The route host the environment document declares (docs/architecture/overview.md#environment-lifecycle).
     route_host       text
         CONSTRAINT project_envs_route_host_check
         CHECK (route_host IS NULL OR route_host ~ '^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$'),
@@ -914,7 +914,7 @@ CREATE TABLE registry.event_readers (
 );
 
 -- ---------------------------------------------------------------------------
--- Capture gaps (wamn-59z6, docs/history/README.md#cdc-reader-slot section 4.3): one row
+-- Capture gaps (wamn-59z6, docs/operations/gcp.md#57-cdc-slot-lost): one row
 -- per lost slot of a CDC reader registration. `wamn-ctl recover-capture-gap`
 -- writes it, and `wamn-ctl close-capture-gap` sets `resync_at`. The reader
 -- captures only while the newest row of its registration has `resync_at` set,

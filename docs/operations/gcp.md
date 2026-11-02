@@ -11,6 +11,10 @@ export KUBECONFIG=$HOME/.kube/wamn-dev
 
 Do not run `gcloud config configurations activate`. Do not read or write `~/.config/gcloud` or `~/.kube/config`. The billing commands and the API enables are the owner's, and no step on this page runs them.
 
+## Cloud credentials and prerequisites
+
+Never run `gcloud` or `kubectl` without `CLOUDSDK_CONFIG=~/.config/gcloud-wamn-agent` and `KUBECONFIG=~/.kube/wamn-dev` set, reads included. The owner's `~/.config/gcloud` and `~/.kube/config` are never used (owner ruling 2026-10-19).
+
 ## 1. Owner inputs
 
 The owner supplies these inputs. The install stops at the first step that reads a missing one.
@@ -1265,6 +1269,24 @@ An unchanged rerun reads the current state and skips the invitation.
 
 Other users receive invitations through the platform UI.
 
+- The operator image carries `wamn-ctl` and `wamn-ctl-ops` and nothing else of the workspace. It is pinned by digest, as the host and identity images are.
+
+- The operator certificate reaches the Job only as a mounted Secret. It never passes through the owner's machine.
+
+- The Job reaches identity by its Service name on port 443, and it trusts only the CA of the serving certificate.
+
+- No credential goes to a Job log. A verb that writes a credential writes it to a mode 0600 file, as today.
+
+- A Job's log is saved to the scratchpad before the Job is deleted.
+
+3. The private copy of the manifest is in the scratchpad, at mode 0600, and is removed after the apply.
+
+4. The pod waits with a bound. The file comes out with `kubectl exec cat` into a 0600 file, as the journey tool does.
+
+7. `ttlSecondsAfterFinished` is 600 seconds for both Jobs.
+
+8. The `mint-pat` pod waits at most 300 seconds. The wait ends as soon as the file is read, so on the normal path the pod exits early.
+
 ### 5.4 Rotate the Resend key
 
 The owner makes the new key in Resend, writes it to a new mode 0600 file, and adds it as a new version. The first command removes the line end of the file:
@@ -1313,6 +1335,57 @@ After the resync, or on the owner's word while no resync exists, run `close-capt
 . $HOME/.cache/wamn-install/platform.sh
 $CARGO_TARGET_DIR/debug/wamn-ctl close-capture-gap --org dkk --project wms --env dev
 ```
+
+1. The reader stops capture and does not open a session. It stays running and does not exit.
+2. It logs one structured event `CDC_CAPTURE_GAP` per process. The event names the slot and the reason (`missing`, or the `invalidation_reason`). Its log line carries the detection time.
+3. Every 30 seconds, on the cadence of the slot monitor, it reads the newest `registry.capture_gap` row of its own `registry.event_readers` row. That read logs nothing.
+4. Two conditions let it capture: its slot is healthy, and that row has `resync_at` set or no row exists. It then resumes on the slot that the registry names, with no restart. A new slot alone does not start capture again.
+
+The reader has no readiness probe, and this spec adds none. The reader stays running and stopped. The gap shows in the `CDC_CAPTURE_GAP` event and in `pg_replication_slots`, and `recover-capture-gap` writes the row. The reader keeps its `SELECT` credential.
+
+The gap record is one row per gap in `registry.capture_gap`. Its key is the `registry.event_readers` row (`org`, `project`, `env`) and its own `created_at`. That `created_at` carries the time of the recovery verb. Its fields:
+
+| Field | Value |
+| --- | --- |
+| `slot` | The name of the lost slot. |
+| `start_lsn` | The invalidated slot's `confirmed_flush_lsn`. For a missing slot, the LSN in the `Nats-Msg-Id` of the last CDC event on the source stream. A stream with no CDC event gives null, which means "from registration". |
+| `start_at` | The `commit_ts` of the last CDC event on the source stream. When the stream has no CDC event, the `created_at` of the `registry.event_readers` row. |
+| `reason` | `missing`, or the `invalidation_reason`. |
+| `end_lsn` | The first position of the new slot. |
+| `resync_at` | Null until `close-capture-gap` sets it. |
+
+The last CDC event is the newest event whose `Nats-Msg-Id` is `<project>_<env>:<lsn>`. Derived events share the source stream with the id `derived:<hash>` and carry no LSN, so the verb skips them.
+
+After issue 1, the confirmed position can sit past the last commit, so `start_at` is an earlier bound than the true gap start. The resync then reads more rows than the gap changed, and misses none.
+
+Two verbs write the row with the control credential:
+
+- `wamn-ctl recover-capture-gap --org --project --env` drops the lost slot and creates it again under the same name, `cdc_object_name(org, project, env, instance)`. The publication and the replication role keep that name and stay untouched. The verb writes the row with its end position. It reads the last CDC event with the observer credential, through the three NATS flags of `enable-cdc-project-env`. It takes `--system-database-url` as `enable-cdc-project-env` does, and `--admin-database-url` as `reconcile-replica-identity` does. It refuses a healthy slot, an active slot, and a connection to any database other than the project-env database.
+- `wamn-ctl close-capture-gap --org --project --env` sets `resync_at` on the newest row. It refuses when no row exists and when the newest row already has `resync_at`. Until the resync exists, the operator runs it on the owner's word.
+
+- A lost slot is not recoverable. A new slot starts at the current WAL position, and the WAL between the old confirmed position and that point is removed. The rows written in that interval produce no events.
+
+- The reader never creates a slot. `enable-cdc-project-env` creates it with `create_failover_slot_sql` (`crates/control/provision/src/sql/cdc.rs:93`).
+
+- No automatic re-slot. No component creates a slot again without an operator.
+
+- On invalidation the reader stops, reports the gap boundaries, and requires a full resync of the materialized set before capture resumes.
+
+- Keeping a slot alive is never an operator's job. The reader keeps its slot moving, and the limit covers only a reader that is down.
+
+The fix has two parts. The fork `dkkloimwieder/pg-walstream` changes only so that `next_event` returns a keepalive as an event with its `wal_end`. The reader applies the rule, because only the reader knows that every publish was acknowledged. With no transaction open and the last returned commit acknowledged, the reader confirms the keepalive's `wal_end`. Up to that position, the reader published every change of this database. The rule "the position advances only past acknowledged events" therefore still holds. One live test: an idle environment's slot follows the writes of another database.
+
+When Postgres stops or moves, as on 2026-09-28 in `wamn-fwzc`, the slot stays on the volume and no WAL is written. The reader's preflight fails to connect, the reader exits, and Kubernetes restarts it with a back-off of up to 5 minutes. When Postgres returns, the reader resumes at `confirmed_flush_lsn`, and no row is lost. The only cost is delay. On 2026-09-28 both slots survived the full disk and the volume resize.
+
+A true gap has one of three causes: a slot limit passed, a slot dropped by hand, or a restore that does not carry the slot. In each case the slot is missing or invalidated. The reader tells the two apart already. A connection failure is a restart, and a missing or invalidated slot is `CAPTURE GAP`. The reader reports the gap and stops capture. A reader that restarts after a Postgres move does not report a gap.
+
+- The gap row (2026-09-29): `start_lsn` and `start_at` come as the gap record states, with a null `start_lsn` only for an empty stream. No `detected_at`: the reader's event carries the detection time, and the row's `created_at` carries the verb's time. The reader stays `SELECT` only. The row is keyed by the `registry.event_readers` row and keeps the lost slot's name as a field. One `CDC_CAPTURE_GAP` per process, then a silent read every 30 seconds.
+
+- The slot name (2026-09-29): the slot keeps `cdc_object_name(org, project, env, instance)`, which the publication and the role share. The row stays keyed by the `registry.event_readers` row and keeps the slot name as a field, because an instance change renames the slot.
+
+- The keepalive confirm is split (2026-09-29). The fork returns a keepalive from `next_event` as an event with its `wal_end`, and nothing more. The reader applies the confirm rule. The new fork rev is pinned in `Cargo.toml`. A reader that raises its flushed position while idle and relies on the library's cap is out.
+
+- The verbs (2026-09-29). `start_lsn` and `start_at` come from the newest CDC event, and a `derived:<hash>` event is skipped. The verb reads the stream with the observer credential, because reading a stream is the observer's job. Provisioning gets no new permission. The flag and variable names follow `enable-cdc-project-env` and `reconcile-replica-identity`. An active slot means a reader that still streams, because a reader stopped on a gap holds no session. Each refusal names its reason on one line.
 
 ### 5.8 Benchmark
 

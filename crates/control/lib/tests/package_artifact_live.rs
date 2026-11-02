@@ -1,5 +1,5 @@
 //! Live test of `push-package` and `apply-package --package-artifact`
-//! (wamn-vavs4.1, docs/plan/platform-deploy.md section 7.2) against a local
+//! (wamn-vavs4.1, docs/operations/building.md#reading-a-pushed-package) against a local
 //! `registry:2` that each test starts and removes. No database is read or
 //! written, and no `DATABASE_URL` is needed: the registry is the one owner of
 //! package facts (R2, R11). The packages are the built packages under

@@ -16,7 +16,7 @@
 //! `crates/platform/runtime/wit/deps/wamn-postgres-0.4/package.wit`.
 
 mod authoring;
-/// `wamn build`: the two-pass package build (docs/plan/platform-deploy.md §7.1).
+/// `wamn build`: the two-pass package build (docs/operations/building.md#wamn-build).
 pub mod build;
 /// `build.json`, the build record of one package build.
 pub mod build_record;

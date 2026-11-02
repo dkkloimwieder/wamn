@@ -1,4 +1,4 @@
-//! `wamn build`: the two-pass package build (docs/plan/platform-deploy.md §7.1).
+//! `wamn build`: the two-pass package build (docs/operations/building.md#wamn-build).
 //!
 //! Pass one compiles `wamn.k` to its authored form, migrates a fresh
 //! verification database, describes every authored statement through SQLx,

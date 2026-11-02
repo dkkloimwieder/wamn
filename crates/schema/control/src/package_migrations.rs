@@ -55,7 +55,7 @@ pub struct PackageDirectory {
     pub manifest_bytes: Vec<u8>,
     pub migrations: Vec<MigrationSource>,
     /// The digest of the verified package artifact these bytes come from
-    /// (docs/plan/platform-deploy.md R3). The caller supplies it. `None` is a
+    /// (docs/operations/building.md#reading-a-pushed-package). The caller supplies it. `None` is a
     /// working tree, which only `wamn dev` applies.
     pub artifact_digest: Option<String>,
 }

@@ -1,4 +1,4 @@
-# Defaults of the `release` chart (docs/plan/platform-deploy.md §9.2).
+# Defaults of the `release` chart (docs/architecture/naming.md#environment-names).
 #
 # The platform part is here: the host-only subchart settings, the platform
 # image set and the qualification images. Each has one source, these defaults

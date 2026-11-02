@@ -2,7 +2,7 @@
 
 ## How this plan is worked
 
-The rules of `platform-deploy.md` "How this plan is worked" apply unchanged, plus rule 7 (never run `gcloud` or `kubectl` outside `CLOUDSDK_CONFIG=~/.config/gcloud-wamn-agent` and `KUBECONFIG=~/.kube/wamn-dev`).
+See [standing repository rules](../../CLAUDE.md#standing-repository-rules), [platform version procedure](../operations/building.md#platform-version-procedure), and [cloud prerequisites](../operations/gcp.md#cloud-credentials-and-prerequisites).
 
 ## 1. Goal
 
@@ -92,6 +92,6 @@ The owner inputs of §1 are project-level resources that need IAM. They leave in
 3. DNS from the cluster through external-dns with a DNS-scoped GSA. The edge Service carries the hostname; the record is derived from `cluster.k`.
 4. Teardown by policy: `env_policies.destroy` is `auto` for dev and `never` for prod. Prod data loss stays a human act.
 
-Authored formats stay one: KCL. `wamn.k`, `environment.k`, `cluster.k`, `project.k`. JSON, YAML and `.tf.json` are derived and never committed (platform-deploy R10). Config Connector was considered and set aside: it puts a project-level identity inside the cluster.
+Authored formats stay one: KCL. `wamn.k`, `environment.k`, `cluster.k`, `project.k`. JSON, YAML and `.tf.json` are derived and never committed ([package manifests](../operations/building.md#package-manifests)). Config Connector was considered and set aside: it puts a project-level identity inside the cluster.
 
 After that the human acts are: approve a project-layer diff, and prod-destructive operations. `platform apply` reads these resources by name (P3) whether the owner or OpenTofu made them, so this plan needs no change when they arrive.

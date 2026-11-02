@@ -267,7 +267,7 @@ RUN mkdir /wit-output \
 
 # ---- runner image: the qualification runner FROM ctl -----------------------
 # ctl is unchanged; the runner adds what `qualify-release` runs the cases with
-# (docs/plan/platform-deploy.md §8.2, R15): the case executables, the
+# (docs/operations/delivery.md#release-qualification): the case executables, the
 # repository files they read, and the cluster tools, each pinned by version
 # and its published sha256 (the Docker CLI by the sha256 of its archive).
 FROM ctl AS runner

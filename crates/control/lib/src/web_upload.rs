@@ -1,4 +1,4 @@
-//! Web client files in a bucket (docs/history/README.md#web-deployment).
+//! Web client files in a bucket (docs/operations/deployment.md#web-client-files).
 //!
 //! `wamn web upload` writes the built client of each package of the release
 //! an environment serves, under `<prefix>/<package_id>/<release hex>/`, every
@@ -6,7 +6,7 @@
 //! must be the one the newest successful revision of the environment's release
 //! chart installed, and the built files are the `web` layer of each package
 //! artifact, which unpacks to the web build of its output root
-//! (docs/plan/platform-deploy.md §13, §7.2, §7.1 step 8).
+//! (docs/operations/building.md#wamn-build step 8).
 
 use std::path::{Path, PathBuf};
 

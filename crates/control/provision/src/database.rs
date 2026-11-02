@@ -96,7 +96,7 @@ pub fn render_project_env_database(
                 "wamn.env": triple.env.as_str(),
             },
             // The full coordinate, as every object of the environment carries
-            // it (docs/plan/platform-deploy.md §9.1).
+            // it (docs/architecture/naming.md#environment-names).
             "annotations": {
                 "wamn.environment":
                     format!("{}/{}/{}", triple.org, triple.project, triple.env.as_str()),

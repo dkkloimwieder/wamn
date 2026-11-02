@@ -1917,7 +1917,7 @@ The tier table is in section 6.1 of [the deployment plan](../history/gcp-deploym
 
 ### 6.7 Tear down an environment
 
-`wamn-ctl env delete <org/project/env> [--data]` deletes one environment, so that the next `env apply` of its document mints a new suffix (docs/plan/platform-deploy.md §12.3). Under the lifecycle lock it uninstalls the release chart and waits for the host pods to drain, refuses if a run is pinned to a release with no pod, revokes the provisioning PATs, deletes the credential Secrets, removes the environment's key of `wamn-control-administration-<org>`, deletes the source and advisory streams, drops the slot, deletes the CloudNativePG `Database`, deletes the control rows of the tenant and deletes the registry rows. The `Database` keeps `databaseReclaimPolicy: retain`, so the database and its owner roles stay on the cluster. With `--data` it drops the database and the instance roles too, and asks for the coordinate again at a terminal. It reads the platform inputs of `env apply`; set `WAMN_EVENT_NATS_URL`, `WAMN_EVENT_NATS_USERNAME` and `WAMN_EVENT_NATS_PASSWORD_FILE` when the environment captures events:
+`wamn-ctl env delete <org/project/env> [--data]` deletes one environment, so that the next `env apply` of its document mints a new suffix (../architecture/overview.md#environment-lifecycle §12.3). Under the lifecycle lock it uninstalls the release chart and waits for the host pods to drain, refuses if a run is pinned to a release with no pod, revokes the provisioning PATs, deletes the credential Secrets, removes the environment's key of `wamn-control-administration-<org>`, deletes the source and advisory streams, drops the slot, deletes the CloudNativePG `Database`, deletes the control rows of the tenant and deletes the registry rows. The `Database` keeps `databaseReclaimPolicy: retain`, so the database and its owner roles stay on the cluster. With `--data` it drops the database and the instance roles too, and asks for the coordinate again at a terminal. It reads the platform inputs of `env apply`; set `WAMN_EVENT_NATS_URL`, `WAMN_EVENT_NATS_USERNAME` and `WAMN_EVENT_NATS_PASSWORD_FILE` when the environment captures events:
 
 ```bash
 target/debug/wamn-ctl env delete $ORG/$PROJECT/$ENV
@@ -2126,7 +2126,7 @@ tools/build-components app apps/wamn_wms
 
 This record predates `wamn build`. The `materialize_package` and `sqlx_metadata` examples no longer exist: `wamn build apps/wamn_wms` now generates the package into `apps/target/wamn/wamn_wms`, outside Git ([building](../operations/building.md#wamn-build)).
 
-Review generated changes and require both generation and SQLx checks to pass before building. Then follow [package upgrades](../operations/deployment.md#package-upgrades) for live qualification, evidence-bound application, privilege reconciliation, release qualification, publication, selection, and rollout. Record the actual workload schema and identities, retained-row checks, authenticated WMS operation results, and release digests for each stage. Rollback selects the immediate predecessor on the upgraded database; it does not reverse the migration. None of these final-cycle results is claimed here.
+Review generated changes and require both generation and SQLx checks to pass before building. Then follow [package upgrades](../operations/deployment.md#platform-schema-upgrades) for live qualification, evidence-bound application, privilege reconciliation, release qualification, publication, selection, and rollout. Record the actual workload schema and identities, retained-row checks, authenticated WMS operation results, and release digests for each stage. Rollback selects the immediate predecessor on the upgraded database; it does not reverse the migration. None of these final-cycle results is claimed here.
 
 The generated client exposed finding `wamn-xvu5.5.2`. The nullable `description` field replaces `location_code` as the inferred location label and removes selector search. Existing rows then display `"null"`. Generated model queries have no supported display override in the current manifest. The owner requires an explicit label field, with the record ID as the fallback because it always exists. The implementation retains `description`, adds an explicit `location_code` label, and removes first-text-field inference. Regeneration and targeted label tests follow this ruling. No production change occurred.
 
@@ -2213,7 +2213,7 @@ Leave `WAMN_IDENTITY_URL` unset. The identity certificate names only `identity.i
 
 Make the service account `wamn-host`, its annotation and its binding, and the Secret `identity-resend`, as section 3.23 says. On 2026-10-13 the account and the binding were made before section 3.23 existed, from a copy of the same manifest.
 
-Apply the read-only access of the control operation `environment.status` (section 11.4 of docs/plan/platform-deploy.md, `wamn-esnu9`) into the release namespace `hosts`. The manifest states no namespace:
+Apply the read-only access of the control operation `environment.status` (section 11.4 of ../architecture/overview.md#environment-lifecycle, `wamn-esnu9`) into the release namespace `hosts`. The manifest states no namespace:
 
 ```bash
 kubectl -n hosts apply -f deploy/platform/control-status-rbac.yaml
