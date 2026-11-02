@@ -339,6 +339,44 @@ pub fn install(
             );
         }
     }
+    for environment in environments {
+        let key = environment_key(environment);
+        let packages = fixtures.packages.get(&key).context("package fixtures")?;
+        let coordinates = packages
+            .iter()
+            .map(|package| (package.id.clone(), package.version.clone()))
+            .collect::<Vec<_>>();
+        let artifacts = packages
+            .iter()
+            .map(|package| &package.digest)
+            .collect::<Vec<_>>();
+        let request = super::releases::publish_request(
+            &key,
+            &environment.to_kcl(),
+            &fixtures.runner_image,
+            &fixtures.registry,
+            &coordinates,
+        )?;
+        let secrets = super::packages::credentials_from(
+            &admin,
+            fixtures
+                .environment_urls
+                .get(&key)
+                .context("environment URL fixture")?,
+        )?;
+        let database = url::Url::parse(&secrets[1].value)?;
+        append(
+            &mut objects,
+            "4.14",
+            job_objects(
+                &request,
+                "platform",
+                &json!({"artifacts":artifacts,"database":database.path()}),
+                &secrets,
+                fixtures,
+            )?,
+        );
+    }
     Ok(objects)
 }
 
@@ -464,6 +502,11 @@ mod tests {
                 WorkloadRoleFamily, WorkloadRoleScope, WorkloadSecretBody,
             };
             let key = environment_key(environment);
+            fixtures.outputs.insert(
+                format!("platform-release-{key}"),
+                environment.release.to_string(),
+            );
+
             let id = environment
                 .applications
                 .keys()
@@ -526,7 +569,7 @@ mod tests {
         let objects = install(&cluster, &documents, &repository, &fixtures)?;
         // This list grows as each install file gains its shared batch builders.
         for step in [
-            "4.3", "4.4", "4.4.1", "4.5", "4.7", "4.8", "4.9", "4.11", "4.12", "4.13",
+            "4.3", "4.4", "4.4.1", "4.5", "4.7", "4.8", "4.9", "4.11", "4.12", "4.13", "4.14",
         ] {
             assert!(
                 objects.iter().any(|(number, _)| *number == step),

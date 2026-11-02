@@ -33,12 +33,7 @@ pub(super) async fn apply(
             &environment.project,
             &environment.env,
         );
-        let mut request = request(
-            &env_key,
-            &std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?,
-            &image,
-            registry,
-        )?;
+        let mut coordinates = Vec::new();
         let mut artifacts = Vec::new();
         for package in packages::read(repository, &path)? {
             let identity = &package.manifest.package;
@@ -48,16 +43,20 @@ pub(super) async fn apply(
             })
             .await?;
             artifacts.push(opened.package_root().artifact_digest);
-            request.arguments.extend([
-                "--package".into(),
-                format!("{}@{}", identity.id, identity.version),
-            ]);
+            coordinates.push((identity.id.clone(), identity.version.clone()));
         }
         ensure!(
             !artifacts.is_empty(),
             "environment {} names no package",
             path.display()
         );
+        let request = publish_request(
+            &env_key,
+            &std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?,
+            &image,
+            registry,
+            &coordinates,
+        )?;
         prepared.push((path, environment, request, artifacts));
     }
     let mut published = Published {
@@ -120,5 +119,21 @@ pub(super) fn request(
         "WAMN_COMPONENT_ARTIFACT_BASE".into(),
         packages::artifact_base(registry, "components")?,
     );
+    Ok(request)
+}
+
+pub(super) fn publish_request(
+    env_key: &str,
+    document: &str,
+    image: &str,
+    registry: &wamn_package_artifact::PackageRegistry,
+    packages: &[(String, String)],
+) -> anyhow::Result<JobRequest> {
+    let mut request = request(env_key, document, image, registry)?;
+    for (id, version) in packages {
+        request
+            .arguments
+            .extend(["--package".into(), format!("{id}@{version}")]);
+    }
     Ok(request)
 }
