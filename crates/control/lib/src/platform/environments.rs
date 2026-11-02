@@ -40,13 +40,7 @@ pub(super) async fn apply(
     )
     .await?
     .context("missing apply credential")?;
-    let apply = super::job::JobSecret {
-        name: "wamn-env-apply".into(),
-        key: "url".into(),
-        value: secret_text(&apply_secret, "url")?,
-        environment: "WAMN_APPLY_DATABASE_URL".into(),
-    };
-    let secrets = [admin, apply];
+    let apply_url = secret_text(&apply_secret, "url")?;
     let auth: SecretData = kubectl::get(
         &target.kubeconfig,
         &target.context,
@@ -64,15 +58,15 @@ pub(super) async fn apply(
             if released(target, &environment).await? {
                 continue;
             }
-            environment.release = DeclaredRelease::None;
         }
-        let mut request = apply_request(
+        let (mut request, secrets) = apply_request(
             document,
-            &environment,
+            &mut environment,
             &image,
             initial,
             &auth,
             &directory.join("release-chart"),
+            (&admin, &apply_url),
         )?;
         if let Some(registry) = registry {
             release_inputs(
@@ -125,24 +119,38 @@ pub(super) async fn apply(
     Ok(changed)
 }
 
-/// Whether the release apply of 4.17 completed for `environment`.
+/// Build the environment apply request and its temporary credentials.
 pub(super) fn apply_request(
     document: &ClusterDocument,
-    environment: &crate::environment::document::EnvironmentDocument,
+    environment: &mut crate::environment::document::EnvironmentDocument,
     image: &str,
     initial: bool,
     auth: &SecretData,
     chart: &Path,
-) -> anyhow::Result<JobRequest> {
+    credentials: (&super::job::JobSecret, &str),
+) -> anyhow::Result<(JobRequest, [super::job::JobSecret; 2])> {
+    if initial {
+        environment.release = DeclaredRelease::None;
+    }
+    let secrets = [
+        credentials.0.clone(),
+        super::job::JobSecret {
+            name: "wamn-env-apply".into(),
+            key: "url".into(),
+            value: credentials.1.into(),
+            environment: "WAMN_APPLY_DATABASE_URL".into(),
+        },
+    ];
     let mut request = request(document, environment, image, initial, auth)?;
     for name in ["Chart.yaml", "values.yaml"] {
         request
             .files
             .insert(name.into(), std::fs::read_to_string(chart.join(name))?);
     }
-    Ok(request)
+    Ok((request, secrets))
 }
 
+/// Whether the release apply of 4.17 completed for `environment`.
 async fn released(
     target: &Target,
     environment: &crate::environment::document::EnvironmentDocument,

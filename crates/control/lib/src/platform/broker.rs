@@ -245,7 +245,6 @@ pub(super) fn objects(
     keep_user(&mut authorization, control);
     let mut objects = vec![certificate];
     for document in environments {
-        ensure!(document.org == org, "environment names another org");
         objects.extend(render(&document.triple(), &mut authorization));
     }
     // Preserve the original bytes when the user set did not change. Formatting

@@ -411,26 +411,18 @@ pub(super) fn runtime_certificates(
     repository: &Path,
     document: &ClusterDocument,
 ) -> anyhow::Result<Vec<Value>> {
-    let mut rendered = Vec::new();
-    rendered.extend(objects(
-        repository,
-        "deploy/infra/nats-certificates.yaml",
-        document,
-    )?);
-    Ok(rendered)
+    objects(repository, "deploy/infra/nats-certificates.yaml", document)
 }
 
 pub(super) fn runtime_events(
     repository: &Path,
     document: &ClusterDocument,
 ) -> anyhow::Result<Vec<Value>> {
-    let mut rendered = Vec::new();
-    rendered.extend(objects(
+    objects(
         repository,
         "deploy/platform/runtime-operator-events-rbac.example.yaml",
         document,
-    )?);
-    Ok(rendered)
+    )
 }
 
 pub(super) fn collector_objects(
@@ -455,26 +447,14 @@ pub(super) fn postgres_operator_objects(
     repository: &Path,
     document: &ClusterDocument,
 ) -> anyhow::Result<Vec<Value>> {
-    let mut rendered = Vec::new();
-    rendered.extend(objects(
-        repository,
-        "deploy/infra/cnpg-operator.yaml",
-        document,
-    )?);
-    Ok(rendered)
+    objects(repository, "deploy/infra/cnpg-operator.yaml", document)
 }
 
 pub(super) fn postgres_cluster_objects(
     repository: &Path,
     document: &ClusterDocument,
 ) -> anyhow::Result<Vec<Value>> {
-    let mut rendered = Vec::new();
-    rendered.extend(objects(
-        repository,
-        "deploy/gcp/cnpg-cluster.yaml",
-        document,
-    )?);
-    Ok(rendered)
+    objects(repository, "deploy/gcp/cnpg-cluster.yaml", document)
 }
 
 pub(super) fn identity_certificate_objects(
@@ -976,8 +956,11 @@ async fn nats(
         super::broker::AUTHORIZATION,
     )
     .await?;
-    for object in nats_objects(repository, document, authorization.is_some())? {
-        if object["kind"] == "Secret" {
+    for (index, object) in nats_objects(repository, document, authorization.is_some())?
+        .into_iter()
+        .enumerate()
+    {
+        if authorization.is_none() && index == 0 {
             kubectl::apply(&target.kubeconfig, &target.context, "platform", &object).await?;
             changed = true;
         } else {
@@ -1213,12 +1196,12 @@ async fn install_operator(
             "wamn".as_ref(),
             operator["chart"]
                 .as_str()
-                .expect("operator chart input")
+                .context("operator chart input")?
                 .as_ref(),
             "--version".as_ref(),
             operator["version"]
                 .as_str()
-                .expect("operator chart version")
+                .context("operator chart version")?
                 .as_ref(),
             "-f".as_ref(),
             values_path.as_os_str(),

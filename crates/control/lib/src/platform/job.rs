@@ -359,6 +359,7 @@ struct ServiceAccount {
 }
 
 /// One temporary Secret key exposed as an environment variable to the Job.
+#[derive(Clone)]
 pub struct JobSecret {
     pub name: String,
     pub key: String,

@@ -130,22 +130,16 @@ pub fn install(
         super::manifests::platform_inputs(repository, document)?,
     );
     let auth = serde_json::from_value(fixtures.ctl_nats.clone())?;
-    let apply = JobSecret {
-        name: "wamn-env-apply".into(),
-        key: "url".into(),
-        value: fixtures.apply_url.clone(),
-        environment: "WAMN_APPLY_DATABASE_URL".into(),
-    };
     for environment in environments {
         let mut environment = environment.clone();
-        environment.release = crate::environment::document::DeclaredRelease::None;
-        let request = super::environments::apply_request(
+        let (request, secrets) = super::environments::apply_request(
             document,
-            &environment,
+            &mut environment,
             &fixtures.runner_image,
             true,
             &auth,
             &fixtures.directory.join("release-chart"),
+            (&admin, &fixtures.apply_url),
         )?;
         append(
             &mut objects,
@@ -154,20 +148,7 @@ pub fn install(
                 &request,
                 "platform",
                 &json!({"environment": environment}),
-                &[
-                    JobSecret {
-                        name: admin.name.clone(),
-                        key: admin.key.clone(),
-                        value: admin.value.clone(),
-                        environment: admin.environment.clone(),
-                    },
-                    JobSecret {
-                        name: apply.name.clone(),
-                        key: apply.key.clone(),
-                        value: apply.value.clone(),
-                        environment: apply.environment.clone(),
-                    },
-                ],
+                &secrets,
                 fixtures,
             )?,
         );
