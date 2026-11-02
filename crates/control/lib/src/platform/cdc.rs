@@ -63,7 +63,7 @@ pub(super) async fn apply(
     Ok(changed)
 }
 
-fn account() -> Value {
+pub(super) fn account() -> Value {
     json!({
         "apiVersion": "v1", "kind": "ServiceAccount",
         "metadata": {"name": "event-reader", "namespace": "hosts"},
@@ -75,7 +75,7 @@ fn env_key(environment: &EnvironmentDocument) -> String {
     wamn_control_registry::project_env_key(&environment.org, &environment.project, &environment.env)
 }
 
-fn deployment(environment: &EnvironmentDocument, image: &str) -> Value {
+pub(super) fn deployment(environment: &EnvironmentDocument, image: &str) -> Value {
     let env_key = env_key(environment);
     let name = format!("cdc-reader-{env_key}");
     json!({

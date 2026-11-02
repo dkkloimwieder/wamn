@@ -20,6 +20,8 @@ pub struct Package {
 #[derive(Debug)]
 pub struct Fixtures {
     pub identity_tls: Value,
+    pub cdc_credentials: BTreeMap<String, Value>,
+    pub gates_image: String,
     pub releases: BTreeMap<String, wamn_catalog::ServingManifest>,
     pub web_clients: BTreeMap<String, BTreeMap<String, String>>,
     pub applied: BTreeMap<String, Vec<Value>>,
@@ -511,6 +513,19 @@ pub fn install(
             )?,
         );
     }
+    append(&mut objects, "4.18", vec![super::cdc::account()]);
+    for environment in environments {
+        if fixtures
+            .cdc_credentials
+            .contains_key(&environment_key(environment))
+        {
+            append(
+                &mut objects,
+                "4.18",
+                vec![super::cdc::deployment(environment, &fixtures.gates_image)],
+            );
+        }
+    }
     Ok(objects)
 }
 
@@ -644,6 +659,8 @@ mod tests {
         let mut fixtures = Fixtures {
             identity_tls: json!({"data": {"ca.crt": "Zml4dHVyZS1jYQ=="}}),
             broker_authorization_exists: false,
+            cdc_credentials:BTreeMap::new(),
+            gates_image:format!("registry.invalid/wamn/gates@sha256:{}","1".repeat(64)),
             releases:BTreeMap::new(),
             web_clients:BTreeMap::new(),
             applied:BTreeMap::new(),
@@ -696,6 +713,17 @@ mod tests {
                 WorkloadRoleFamily, WorkloadRoleScope, WorkloadSecretBody,
             };
             let key = environment_key(environment);
+            let cdc = wamn_control_provision::render_project_env_cdc_secret_manifest(
+                &environment.triple(),
+                "render01",
+                "hosts",
+                &format!("postgresql://fixture:fixture@database/wamn-db-{key}--render01"),
+            );
+            fixtures.cdc_credentials.insert(key.clone(), cdc.clone());
+            fixtures
+                .applied
+                .insert(format!("platform-apply-{key}"), vec![cdc]);
+
             fixtures.releases.insert(key.clone(), manifest.clone());
             fixtures.web_clients.insert(key.clone(), BTreeMap::new());
 
