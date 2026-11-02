@@ -4,7 +4,6 @@ set -euo pipefail
 action=${1:?lifecycle action}
 cluster=${2:?cluster or container name}
 case "$cluster" in wamn) printf 'The kind-wamn cluster is frozen.\n' >&2; exit 64 ;; esac
-chart=oci://ghcr.io/wasmcloud/charts/runtime-operator
 case "$action" in
   registry-password) docker run --rm -i --entrypoint htpasswd httpd:2-alpine -Bni "$cluster" ;;
   docker-version) docker info --format '{{json .ServerVersion}}' ;;
@@ -77,12 +76,6 @@ case "$action" in
       --volume "$work/registry/htpasswd:/auth/htpasswd:ro" registry:2
     docker run --detach --name "$cluster-minio" --network kind --env-file "$work/minio.env" \
       minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
-    ;;
-  install-operator)
-    work=${3:?work directory}; values=${4:?operator values}
-    helm upgrade --install --create-namespace --kubeconfig "$work/kubeconfig" \
-      --kube-context "kind-$cluster" --namespace wamn-system wamn "$chart" --version 2.11.0 \
-      -f "$work/operator-base.yaml" -f "$values" --wait --timeout 5m
     ;;
   image-labels) docker image inspect --format '{{json .Config.Labels}}' "$cluster" ;;
   image-layers) docker image inspect --format '{{json .RootFS.Layers}}' "$cluster" ;;

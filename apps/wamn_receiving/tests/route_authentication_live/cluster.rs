@@ -127,26 +127,23 @@ async fn start(evidence: &Path, gates_image: bool) -> anyhow::Result<ReceivingCl
     let registry_auth_file =
         resources::registry_auth(&cluster, &authority, &registry_password).await?;
     // The platform, with the one NATS, installs before the streams.
-    let operator_values = cluster.work.join("operator-values.yaml");
-    fs::write(
-        &operator_values,
-        serde_json::to_vec(&json!({"operator":{
-            "watchNamespaces":[NAMESPACE],"hostNamespaces":[NAMESPACE],"allowSharedHosts":false,
-        }}))?,
+    let platform = wamn_control::platform::journey::cluster(
+        &cluster.repository,
+        &wamn_control::platform::journey::ClusterInput {
+            operator_namespace: NAMESPACE,
+            host_namespace: NAMESPACE,
+            org: scope.org.as_str(),
+            environments: std::slice::from_ref(&scope),
+        },
     )?;
     wamn_test_infrastructure::platform::install(
         &cluster.repository,
-        &cluster.lifecycle,
         &cluster.name,
         &cluster.work,
         NAMESPACE,
-        &operator_values,
-        &wamn_control::platform::kind_nats(
-            &cluster.repository,
-            NAMESPACE,
-            scope.org.as_str(),
-            std::slice::from_ref(&scope),
-        )?,
+        &platform.prerequisites,
+        &platform.nats,
+        &platform.operator,
     )
     .await?;
     let nats = wamn_test_infrastructure::platform::cluster_nats(

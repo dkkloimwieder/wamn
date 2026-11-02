@@ -142,12 +142,19 @@ async fn run(
             .arg(&work),
     )
     .await?;
+    let database_inputs = wamn_control::platform::journey::delivery_database(
+        repository,
+        DATABASE_NAMESPACE,
+        crate::environment::CLUSTER,
+    )?;
     let database = ensure_database(
         kept,
         repository,
         DATABASE_NAMESPACE,
         crate::environment::CLUSTER,
         &format!("{owner}-postgres"),
+        &database_inputs.objects,
+        &database_inputs.fixture_objects,
     )
     .await?;
     let admin_url = database.url("postgres");

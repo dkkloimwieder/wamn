@@ -4,7 +4,6 @@ set -euo pipefail
 action=${1:?lifecycle action}
 cluster=${2:?cluster or container name}
 case "$cluster" in wamn) printf 'The kind-wamn cluster is frozen.\n' >&2; exit 64 ;; esac
-chart=oci://ghcr.io/wasmcloud/charts/runtime-operator
 case "$action" in
   docker-version) docker info --format '{{json .ServerVersion}}' ;;
   clusters) kind get clusters ;;
@@ -73,12 +72,6 @@ case "$action" in
     docker run --detach --name "$cluster-registry" --network kind --env REGISTRY_AUTH=htpasswd \
       --env 'REGISTRY_AUTH_HTPASSWD_REALM=WAMN Receiving cluster journey' --env REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd \
       --volume "$work/registry/htpasswd:/auth/htpasswd:ro" registry:2
-    ;;
-  install-operator)
-    work=${3:?work directory}; values=${4:?operator values}
-    helm upgrade --install --create-namespace --kubeconfig "$work/kubeconfig" \
-      --kube-context "kind-$cluster" --namespace wamn-system wamn "$chart" --version 2.11.0 \
-      -f "$work/operator-base.yaml" -f "$values" --wait --timeout 5m
     ;;
   helm-releases) helm list --kubeconfig "${3:?work directory}/kubeconfig" --kube-context "kind-$cluster" --all-namespaces -o json ;;
   inspect) docker container inspect --format '{{json .NetworkSettings}}' "$cluster" ;;

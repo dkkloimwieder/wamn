@@ -10,11 +10,13 @@ pub mod document;
 mod edge;
 mod environments;
 pub use environments::render_host_group;
-mod identity;
+pub mod identity;
 pub mod install;
 mod invite;
 pub mod job;
 pub mod job_contract;
+#[cfg(feature = "test-util")]
+pub mod journey;
 pub mod lock;
 pub mod manifests;
 pub(crate) mod oauth;

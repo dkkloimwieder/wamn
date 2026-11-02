@@ -117,3 +117,7 @@ wat = "=1.254.2"
 
 [lints]
 workspace = true
+
+[[example]]
+name = "identity-chart-input"
+required-features = ["test-util"]

@@ -13,7 +13,7 @@ use tokio::process::Command;
 use crate::kubectl;
 use crate::release_chart::Target;
 
-use super::document::ClusterDocument;
+use super::document::{ClusterDocument, Provider};
 use super::job::{self, JobRequest, JobSecret};
 use super::manifests::{already_applied, objects, operator_values};
 use super::steps::{InstallStep, install_steps};
@@ -414,15 +414,28 @@ pub(super) fn runtime_certificates(
     objects(repository, "deploy/infra/nats-certificates.yaml", document)
 }
 
-pub(super) fn runtime_events(
+/// Render operator event grants in the watched namespace.
+///
+/// # Errors
+/// Returns an error when the manifest cannot be read or decoded.
+pub fn runtime_events(
     repository: &Path,
-    document: &ClusterDocument,
+    namespace: &str,
+    operator_namespace: &str,
 ) -> anyhow::Result<Vec<Value>> {
-    objects(
+    let mut objects = super::manifests::read_objects(
         repository,
         "deploy/platform/runtime-operator-events-rbac.example.yaml",
-        document,
-    )
+    )?;
+    for object in &mut objects {
+        object["metadata"]["namespace"] = namespace.into();
+        if let Some(subjects) = object.get_mut("subjects").and_then(Value::as_array_mut) {
+            for subject in subjects {
+                subject["namespace"] = operator_namespace.into();
+            }
+        }
+    }
+    Ok(objects)
 }
 
 pub(super) fn collector_objects(
@@ -442,18 +455,49 @@ pub(super) fn collector_objects(
     Ok(rendered)
 }
 
-pub(super) fn postgres_operator_objects(
+/// Render prerequisite objects with the provider's placement rules.
+///
+/// # Errors
+/// Returns an error when the manifest cannot be read or decoded.
+pub fn postgres_operator_objects(
     repository: &Path,
-    document: &ClusterDocument,
+    provider: Provider,
 ) -> anyhow::Result<Vec<Value>> {
-    objects(repository, "deploy/infra/cnpg-operator.yaml", document)
+    super::manifests::prerequisite_objects(repository, "deploy/infra/cnpg-operator.yaml", provider)
 }
 
 pub(super) fn postgres_cluster_objects(
     repository: &Path,
     document: &ClusterDocument,
 ) -> anyhow::Result<Vec<Value>> {
-    objects(repository, "deploy/gcp/cnpg-cluster.yaml", document)
+    postgres_cluster_inputs(
+        repository,
+        "deploy/gcp/cnpg-cluster.yaml",
+        document.provider,
+        "wamn-pg",
+        "platform",
+    )
+}
+
+/// Render a PostgreSQL Cluster at its owning name and namespace.
+///
+/// # Errors
+/// Returns an error when the manifest cannot be read or decoded.
+pub fn postgres_cluster_inputs(
+    repository: &Path,
+    manifest: &str,
+    provider: Provider,
+    name: &str,
+    namespace: &str,
+) -> anyhow::Result<Vec<Value>> {
+    let mut objects = super::manifests::prerequisite_objects(repository, manifest, provider)?;
+    for object in &mut objects {
+        if object["kind"] == "Cluster" {
+            object["metadata"]["name"] = name.into();
+            object["metadata"]["namespace"] = namespace.into();
+        }
+    }
+    Ok(objects)
 }
 
 pub(super) fn identity_certificate_objects(
@@ -510,11 +554,18 @@ pub(super) fn operator_objects(
     repository: &Path,
     document: &ClusterDocument,
 ) -> anyhow::Result<Vec<Value>> {
-    Ok(vec![
-        json!({"chart": "oci://ghcr.io/wasmcloud/charts/runtime-operator", "version": OPERATOR_VERSION,
-        "name":"wamn", "namespace":"platform", "render_chart": repository.join(format!("deploy/platform/release/charts/runtime-operator-{OPERATOR_VERSION}.tgz")),
-        "values": operator_values(repository, document)?}),
-    ])
+    Ok(vec![operator_entry(
+        repository,
+        "platform",
+        &operator_values(repository, document)?,
+    )])
+}
+
+/// Keep the pinned operator chart and its values in one install input.
+pub fn operator_entry(repository: &Path, namespace: &str, values: &Value) -> Value {
+    json!({"chart": "oci://ghcr.io/wasmcloud/charts/runtime-operator", "version": OPERATOR_VERSION,
+        "name":"wamn", "namespace":namespace, "render_chart": repository.join(format!("deploy/platform/release/charts/runtime-operator-{OPERATOR_VERSION}.tgz")),
+        "values": values})
 }
 
 async fn provisioning(
@@ -594,11 +645,12 @@ async fn platform_inputs(
     Ok(changed)
 }
 
-pub(super) fn cert_manager_objects(
-    repository: &Path,
-    document: &ClusterDocument,
-) -> anyhow::Result<Vec<Value>> {
-    objects(repository, "deploy/infra/cert-manager.yaml", document)
+/// Render prerequisite objects with the provider's placement rules.
+///
+/// # Errors
+/// Returns an error when the manifest cannot be read or decoded.
+pub fn cert_manager_objects(repository: &Path, provider: Provider) -> anyhow::Result<Vec<Value>> {
+    super::manifests::prerequisite_objects(repository, "deploy/infra/cert-manager.yaml", provider)
 }
 
 pub(super) fn edge_certificate_objects(
@@ -615,7 +667,7 @@ async fn certificates(
     step: &InstallStep,
 ) -> anyhow::Result<bool> {
     let mut changed = false;
-    for object in cert_manager_objects(repository, document)? {
+    for object in cert_manager_objects(repository, document.provider)? {
         changed |= apply_object(target, &object)
             .await
             .context("apply manifest deploy/infra/cert-manager.yaml")?;
@@ -703,7 +755,7 @@ async fn runtime(
     let values_path = work_directory.join("values-operator.yaml");
     write_operator_values(&values_path, &operator[0]["values"])?;
     changed |= install_operator(target, &values_path, &operator[0]).await?;
-    for object in runtime_events(repository, document)? {
+    for object in runtime_events(repository, "hosts", "platform")? {
         changed |= apply_object(target, &object)
             .await
             .context("apply manifest deploy/platform/runtime-operator-events-rbac.example.yaml")?;
@@ -901,7 +953,7 @@ async fn postgres(
     step: &InstallStep,
 ) -> anyhow::Result<bool> {
     let mut changed = false;
-    for object in postgres_operator_objects(repository, document)? {
+    for object in postgres_operator_objects(repository, document.provider)? {
         changed |= apply_object(target, &object)
             .await
             .context("apply manifest deploy/infra/cnpg-operator.yaml")?;
@@ -1212,7 +1264,11 @@ async fn install_operator(
     Ok(true)
 }
 
-pub(super) fn helm_template(entry: &serde_json::Value) -> anyhow::Result<Vec<serde_json::Value>> {
+/// Render a local chart input without a cluster or network pull.
+///
+/// # Errors
+/// Returns an error when the chart version differs or Helm fails.
+pub fn helm_template(entry: &serde_json::Value) -> anyhow::Result<Vec<serde_json::Value>> {
     use serde::Deserialize as _;
     use std::io::Write as _;
     use std::process::Command;
@@ -1294,7 +1350,8 @@ pub(super) async fn helm(
     Ok(output.stdout)
 }
 
-pub(super) fn namespace_object(namespace: &str) -> Value {
+/// Build a namespace prerequisite.
+pub fn namespace_object(namespace: &str) -> Value {
     json!({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": namespace}})
 }
 
@@ -1471,7 +1528,6 @@ mod tests {
             &published
         ));
     }
-    use crate::platform::document::Provider;
 
     #[test]
     fn first_authorization_holds_only_certificate_users() {

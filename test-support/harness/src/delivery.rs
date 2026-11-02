@@ -720,16 +720,23 @@ pub fn coordinate_name(name: &str, triple: &Triple) -> String {
 /// When the name is missing or refused, or the platform cannot be ensured.
 pub async fn kept_cluster(repository: &Path, triple: &Triple) -> anyhow::Result<KeptCluster> {
     delivery_cluster::ensure(
-        repository,
         &delivery_cluster::name_from_env()?,
         triple,
         |environments| {
-            wamn_control::platform::kind_nats(
+            let inputs = wamn_control::platform::journey::delivery(
                 repository,
-                delivery_cluster::NAMESPACE,
-                triple.org.as_str(),
-                environments,
-            )
+                &wamn_control::platform::journey::ClusterInput {
+                    operator_namespace: delivery_cluster::NAMESPACE,
+                    host_namespace: delivery_cluster::NAMESPACE,
+                    org: triple.org.as_str(),
+                    environments,
+                },
+            )?;
+            Ok(delivery_cluster::PlatformInputs {
+                prerequisites: inputs.prerequisites,
+                nats: inputs.nats,
+                operator: inputs.operator,
+            })
         },
     )
     .await

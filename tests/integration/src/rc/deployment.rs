@@ -45,36 +45,32 @@ fn validate_source(source: &stream::Config) -> anyhow::Result<()> {
 /// (docs/plan/alignment.md R5).
 pub(super) async fn install_platform(resources: &Resources) -> anyhow::Result<()> {
     checked(kubectl(resources).args(["create", "namespace", NAMESPACE])).await?;
-    let operator = resources.work.join("operator-values.yaml");
-    write_private(
-        &operator,
-        &serde_json::to_vec(
-            &json!({"operator":{"watchNamespaces":[NAMESPACE],"hostNamespaces":[NAMESPACE],"allowSharedHosts":false}}),
-        )?,
-    )?;
-    let mut nats = wamn_control::platform::kind_nats(
+    let mut inputs = wamn_control::platform::journey::cluster(
         &resources.repository,
-        "wamn-system",
-        "rc",
-        &[Triple::new("rc", "app", "dev")],
+        &wamn_control::platform::journey::ClusterInput {
+            operator_namespace: "wamn-system",
+            host_namespace: NAMESPACE,
+            org: "rc",
+            environments: &[Triple::new("rc", "app", "dev")],
+        },
     )?;
     let certificate = format!(
         "wamn-nats-{}",
         wamn_control_registry::project_env_key("rc", "app", "dev")
     );
-    for object in &mut nats {
+    for object in &mut inputs.nats {
         if object["kind"] == "Certificate" && object["metadata"]["name"] == certificate.as_str() {
             object["metadata"]["namespace"] = json!(NAMESPACE);
         }
     }
     platform::install(
         &resources.repository,
-        &resources.lifecycle,
         CLUSTER,
         &resources.work,
         NAMESPACE,
-        &operator,
-        &nats,
+        &inputs.prerequisites,
+        &inputs.nats,
+        &inputs.operator,
     )
     .await
 }

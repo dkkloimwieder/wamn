@@ -23,16 +23,8 @@ pub fn objects(
         "deploy/platform/wamn-host-serviceaccount.yaml"
             | "deploy/platform/control-status-rbac.yaml"
     );
-    let path = repository.join(path);
-    let source = std::fs::read_to_string(&path)
-        .with_context(|| format!("read manifest {}", path.display()))?;
-    let mut objects = Vec::new();
-    for yaml in serde_yaml::Deserializer::from_str(&source) {
-        let mut object = Value::deserialize(yaml)
-            .with_context(|| format!("decode manifest {}", path.display()))?;
-        if object.is_null() {
-            continue;
-        }
+    let mut objects = read_objects(repository, path)?;
+    for object in &mut objects {
         // These are the two substitutions in the runbook's environment templates.
         if hosts || object["metadata"]["namespace"] == "__ENVIRONMENT_NAMESPACE__" {
             object["metadata"]["namespace"] = "hosts".into();
@@ -46,9 +38,43 @@ pub fn objects(
                 }
             }
         }
-        provider_edits(&mut object, document)
-            .with_context(|| format!("render manifest {}", path.display()))?;
-        objects.push(apply_namespace(object, "platform"));
+        provider_edits(object, document).with_context(|| format!("render manifest {path}"))?;
+        *object = apply_namespace(object.take(), "platform");
+    }
+    Ok(objects)
+}
+
+/// Read Kubernetes objects without namespace or provider substitutions.
+///
+/// # Errors
+/// Returns an error when a manifest cannot be read or decoded.
+pub(super) fn read_objects(repository: &Path, path: &str) -> anyhow::Result<Vec<Value>> {
+    let path = repository.join(path);
+    let source = std::fs::read_to_string(&path)
+        .with_context(|| format!("read manifest {}", path.display()))?;
+    serde_yaml::Deserializer::from_str(&source)
+        .map(|yaml| {
+            Value::deserialize(yaml).with_context(|| format!("decode manifest {}", path.display()))
+        })
+        .filter(|value| !matches!(value, Ok(value) if value.is_null()))
+        .collect()
+}
+
+/// Read prerequisites with the provider's placement rules.
+///
+/// # Errors
+/// Returns an error when a manifest cannot be read or decoded.
+pub(super) fn prerequisite_objects(
+    repository: &Path,
+    path: &str,
+    provider: Provider,
+) -> anyhow::Result<Vec<Value>> {
+    let mut objects = read_objects(repository, path)?;
+    for object in &mut objects {
+        if provider == Provider::Kind {
+            kind_placement(object);
+        }
+        *object = apply_namespace(object.take(), "platform");
     }
     Ok(objects)
 }
@@ -98,18 +124,35 @@ pub fn in_namespace(mut object: Value, namespace: &str) -> anyhow::Result<Value>
     Ok(serde_json::from_str(&text)?)
 }
 
+/// Render the platform-owned host account in its release namespace.
+///
+/// # Errors
+/// Returns an error when the manifest cannot be read or decoded.
+pub fn host_account_objects(repository: &Path, namespace: &str) -> anyhow::Result<Vec<Value>> {
+    Ok(
+        read_objects(repository, "deploy/platform/wamn-host-serviceaccount.yaml")?
+            .into_iter()
+            .map(|object| apply_namespace(object, namespace))
+            .collect(),
+    )
+}
+
 pub(super) fn platform_inputs(
     repository: &Path,
     document: &ClusterDocument,
 ) -> anyhow::Result<Vec<Value>> {
     let mut inputs = Vec::new();
-    for path in [
+    inputs.extend(objects(
+        repository,
         "deploy/gcp/registry-helper.yaml",
-        "deploy/platform/wamn-host-serviceaccount.yaml",
+        document,
+    )?);
+    inputs.extend(host_account_objects(repository, "hosts")?);
+    inputs.extend(objects(
+        repository,
         "deploy/platform/control-status-rbac.yaml",
-    ] {
-        inputs.extend(objects(repository, path, document)?);
-    }
+        document,
+    )?);
     if document.provider == Provider::Gcp {
         inputs.extend(objects(
             repository,
@@ -126,6 +169,16 @@ pub(super) fn platform_inputs(
 ///
 /// Returns an error naming an unreadable or invalid values file.
 pub fn operator_values(repository: &Path, document: &ClusterDocument) -> anyhow::Result<Value> {
+    let mut values = operator_base_values(repository)?;
+    provider_edits(&mut values, document)?;
+    Ok(values)
+}
+
+/// Read the shared operator values before namespace and provider substitutions.
+///
+/// # Errors
+/// Returns an error when a values file cannot be read or decoded.
+pub fn operator_base_values(repository: &Path) -> anyhow::Result<Value> {
     let mut values = json!({});
     for relative in [
         "deploy/infra/values-wamn.yaml",
@@ -138,7 +191,6 @@ pub fn operator_values(repository: &Path, document: &ClusterDocument) -> anyhow:
             .with_context(|| format!("decode operator values {}", path.display()))?;
         merge(&mut values, overlay);
     }
-    provider_edits(&mut values, document)?;
     Ok(values)
 }
 

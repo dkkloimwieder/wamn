@@ -11,6 +11,7 @@ use wamn_control::platform::render::{Fixtures, Package, install};
 
 #[derive(Debug)]
 pub(super) struct Render {
+    _work: wamn_test_infrastructure::scratch::ScratchRoot,
     pub cluster: ClusterDocument,
     pub documents: Vec<(PathBuf, EnvironmentDocument)>,
     pub fixtures: Fixtures,
@@ -55,7 +56,7 @@ fn fixture_release(package: &str) -> anyhow::Result<wamn_catalog::ServingManifes
     .0)
 }
 
-fn build() -> anyhow::Result<Render> {
+pub(super) fn build() -> anyhow::Result<Render> {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let cluster = ClusterDocument::from_json(&serde_json::to_vec(&json!({
         "provider":"kind", "project_id":"", "zone":"", "cluster_name":"render",
@@ -389,6 +390,7 @@ fn build() -> anyhow::Result<Render> {
         .collect::<Vec<_>>();
     let objects = install(&cluster, &compiled, &repository, &fixtures)?;
     Ok(Render {
+        _work: work,
         owner_inputs: vec![
             json!({"apiVersion":"v1","kind":"Secret","metadata":{"name":"identity-resend","namespace":"identity"},"stringData":{"api-key":"fixture-resend-key"}}),
         ],

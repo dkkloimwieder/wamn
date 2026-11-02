@@ -25,21 +25,16 @@ pub const NATS_URL: &str = "nats://wamn-nats.wamn-system.svc.cluster.local:4222"
 /// the caller to retain.
 pub async fn install(
     repository: &Path,
-    lifecycle: &Path,
     cluster: &str,
     work: &Path,
     namespace: &str,
-    operator_values: &Path,
+    prerequisites: &[serde_json::Value],
     nats: &[serde_json::Value],
+    operator: &serde_json::Value,
 ) -> anyhow::Result<()> {
     let kubeconfig = work.join("kubeconfig");
     let context = format!("kind-{cluster}");
-    checked(
-        kubectl(&kubeconfig, &context)
-            .args(["apply", "-f"])
-            .arg(repository.join("deploy/infra/cert-manager.yaml")),
-    )
-    .await?;
+    apply_objects(&kubeconfig, &context, work, "prerequisites", prerequisites).await?;
     checked(kubectl(&kubeconfig, &context).args([
         "-n",
         "cert-manager",
@@ -51,27 +46,7 @@ pub async fn install(
     ]))
     .await?;
     install_nats(&kubeconfig, &context, work, nats).await?;
-    // The operator and every host group reach the one NATS.
-    let mut base: Value = serde_yaml::from_str(
-        &std::fs::read_to_string(repository.join("deploy/infra/values-wamn.yaml"))
-            .context("read operator base values")?,
-    )?;
-    base["global"]["nats"] = serde_yaml::from_str(&format!(
-        "{{schedulerUrl: \"{NATS_URL}\", dataUrl: \"{NATS_URL}\"}}"
-    ))?;
-    std::fs::write(
-        work.join("operator-base.yaml"),
-        serde_yaml::to_string(&base)?,
-    )
-    .context("write operator base values")?;
-    checked(
-        Command::new(lifecycle)
-            .arg("install-operator")
-            .arg(cluster)
-            .arg(work)
-            .arg(operator_values),
-    )
-    .await?;
+    install_chart(&kubeconfig, &context, work, operator).await?;
 
     let deployment = checked(kubectl(&kubeconfig, &context).args([
         "-n",
@@ -89,21 +64,6 @@ pub async fn install(
         &serde_json::from_slice(&deployment).context("parse operator deployment")?,
     )?;
 
-    let rbac = render_event_rbac(
-        &std::fs::read_to_string(
-            repository.join("deploy/platform/runtime-operator-events-rbac.example.yaml"),
-        )
-        .context("read operator event permissions template")?,
-        namespace,
-    )?;
-    let rbac_path = work.join("runtime-operator-events-rbac.yaml");
-    std::fs::write(&rbac_path, rbac).context("write operator event permissions")?;
-    checked(
-        kubectl(&kubeconfig, &context)
-            .args(["apply", "-f"])
-            .arg(&rbac_path),
-    )
-    .await?;
     let role = checked(kubectl(&kubeconfig, &context).args([
         "-n",
         namespace,
@@ -136,14 +96,6 @@ pub async fn install(
         &serde_json::from_slice(&binding).context("parse operator event RoleBinding")?,
         namespace,
     )?;
-    // The platform-owned ServiceAccount every release chart host runs as.
-    checked(
-        kubectl(&kubeconfig, &context)
-            .args(["-n", namespace, "apply", "-f"])
-            .arg(repository.join("deploy/platform/wamn-host-serviceaccount.yaml")),
-    )
-    .await?;
-
     let collector = crate::telemetry::render_collector(repository, work)?;
     checked(
         kubectl(&kubeconfig, &context)
@@ -193,6 +145,65 @@ pub async fn install(
         "certificate/wasmcloud-runtime-tls",
         "--timeout=120s",
     ]))
+    .await?;
+    Ok(())
+}
+
+/// Apply objects supplied by the caller's production render adapter.
+pub(crate) async fn apply_objects(
+    kubeconfig: &Path,
+    context: &str,
+    work: &Path,
+    name: &str,
+    objects: &[serde_json::Value],
+) -> anyhow::Result<()> {
+    let path = work.join(format!("{name}.json"));
+    write_private(
+        &path,
+        &serde_json::to_vec(&serde_json::json!({"apiVersion":"v1","kind":"List","items":objects}))?,
+    )?;
+    checked(
+        kubectl(kubeconfig, context)
+            .args(["apply", "--server-side", "-f"])
+            .arg(path),
+    )
+    .await?;
+    Ok(())
+}
+
+/// Install the caller's chart entry without constructing chart values here.
+pub(crate) async fn install_chart(
+    kubeconfig: &Path,
+    context: &str,
+    work: &Path,
+    entry: &serde_json::Value,
+) -> anyhow::Result<()> {
+    let text = |key: &str| {
+        entry[key]
+            .as_str()
+            .with_context(|| format!("chart entry {key}"))
+    };
+    let values = work.join(format!("values-{}.yaml", text("name")?));
+    write_private(&values, serde_yaml::to_string(&entry["values"])?.as_bytes())?;
+    checked(
+        Command::new("helm")
+            .args([
+                "upgrade",
+                "--install",
+                text("name")?,
+                text("chart")?,
+                "--version",
+                text("version")?,
+                "--namespace",
+                text("namespace")?,
+                "--create-namespace",
+                "--kubeconfig",
+            ])
+            .arg(kubeconfig)
+            .args(["--kube-context", context, "-f"])
+            .arg(values)
+            .args(["--wait", "--timeout", "5m"]),
+    )
     .await?;
     Ok(())
 }
@@ -454,26 +465,6 @@ fn write_private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
         .with_context(|| format!("write private CA file {}", path.display()))
 }
 
-fn render_event_rbac(template: &str, namespace: &str) -> anyhow::Result<String> {
-    let mut documents = serde_yaml::Deserializer::from_str(template)
-        .map(EventRbac::deserialize)
-        .collect::<Result<Vec<_>, _>>()
-        .context("parse operator event permissions")?;
-    for document in &mut documents {
-        match document {
-            EventRbac::Role(role) => namespace.clone_into(&mut role.metadata.namespace),
-            EventRbac::RoleBinding(binding) => {
-                namespace.clone_into(&mut binding.metadata.namespace);
-            }
-        }
-    }
-    Ok(documents
-        .iter()
-        .map(serde_yaml::to_string)
-        .collect::<Result<Vec<_>, _>>()?
-        .join("---\n"))
-}
-
 fn validate_operator_deployment(deployment: &OperatorDeployment) -> anyhow::Result<()> {
     ensure!(
         deployment.metadata.name == "runtime-operator"
@@ -545,6 +536,7 @@ struct Metadata {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind")]
+#[cfg(test)]
 enum EventRbac {
     Role(EventRole),
     RoleBinding(EventBinding),
@@ -628,9 +620,15 @@ mod tests {
         include_str!("../../deploy/platform/runtime-operator-events-rbac.example.yaml");
 
     fn rbac() -> Vec<EventRbac> {
-        serde_yaml::Deserializer::from_str(&render_event_rbac(RBAC, "test-warehouse").unwrap())
-            .map(|document| EventRbac::deserialize(document).unwrap())
-            .collect()
+        wamn_control::platform::install::runtime_events(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."),
+            "test-warehouse",
+            SYSTEM_NAMESPACE,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|object| serde_json::from_value(object).unwrap())
+        .collect()
     }
 
     #[test]
@@ -650,9 +648,9 @@ mod tests {
         let before = serde_yaml::Deserializer::from_str(RBAC)
             .map(|document| Value::deserialize(document).unwrap())
             .collect::<Vec<_>>();
-        let output = render_event_rbac(RBAC, "test-warehouse").unwrap();
-        let after = serde_yaml::Deserializer::from_str(&output)
-            .map(|document| Value::deserialize(document).unwrap())
+        let after = rbac()
+            .iter()
+            .map(|object| serde_yaml::to_value(object).unwrap())
             .collect::<Vec<_>>();
         for (mut expected, actual) in before.into_iter().zip(after) {
             expected["metadata"]["namespace"] = Value::String("test-warehouse".into());

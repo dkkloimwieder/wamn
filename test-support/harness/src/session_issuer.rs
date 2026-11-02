@@ -259,22 +259,27 @@ pub async fn prepare(
             )),
     )
     .await?;
-    let chart = cluster.repository.join("deploy/platform/identity");
-    let tagged = identity_image
-        .split('@')
-        .next()
-        .context("identity image name")?;
-    let (repository, _) = tagged.rsplit_once(':').context("identity image tag")?;
-    let tag = &identity_image[repository.len() + 1..];
-    let args = [
-        format!("issuer={issuer}"),
-        "databaseSecret=host-session-identity-db".to_owned(),
-        "tlsSecret=host-session-identity-tls".to_owned(),
-        format!("image.repository={repository}"),
-        format!("image.tag={tag}"),
-        "image.pullPolicy=Never".to_owned(),
-        format!("sessionTargetSecrets[0]={target_name}"),
-    ];
+    let entry =
+        wamn_control::platform::journey::identity(&wamn_control::platform::identity::ChartInput {
+            chart: &cluster.repository.join("deploy/platform/identity"),
+            name: IDENTITY,
+            namespace: cluster.namespace,
+            image: identity_image,
+            pull_policy: "Never",
+            issuer: &issuer,
+            database_secret: "host-session-identity-db",
+            tls_secret: "host-session-identity-tls",
+            operator_ca_secret: "",
+            resend_secret: "",
+            resend_from: "",
+            invite_url: "",
+            mode: wamn_control::platform::identity::Mode::Session {
+                targets: vec![target_name],
+                nats: None,
+            },
+        })?;
+    let values = cluster.work.join("session-identity-values.yaml");
+    fs::write(&values, serde_yaml::to_string(&entry["values"])?)?;
     for install in [false, true] {
         let mut command = Command::new("helm");
         if install {
@@ -284,15 +289,13 @@ pub async fn prepare(
         }
         command
             .arg(IDENTITY)
-            .arg(&chart)
+            .arg(entry["chart"].as_str().context("identity chart")?)
             .arg("--kubeconfig")
             .arg(cluster.work.join("kubeconfig"))
             .arg("--kube-context")
             .arg(format!("kind-{}", cluster.name))
             .args(["--namespace", cluster.namespace]);
-        for value in &args {
-            command.arg("--set-string").arg(value);
-        }
+        command.arg("-f").arg(&values);
         if install {
             command.args(["--wait", "--timeout", "180s"]);
         }

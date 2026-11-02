@@ -35,9 +35,6 @@ use tokio::process::Command;
 pub const NAMESPACE: &str = "wamn-system";
 /// The Secret every host mounts for the registry: `.dockerconfigjson` and `ca.crt`.
 pub const REGISTRY_SECRET: &str = "delivery-registry";
-const OPERATOR_CHART: &str = "oci://ghcr.io/wasmcloud/charts/runtime-operator";
-/// The pin of tests/conformance/tests/chart_seam_governance.rs.
-const OPERATOR_VERSION: &str = "2.11.0";
 const REGISTRY_USER: &str = "delivery";
 /// socat on Alpine, the database proxy. Unpinned, as the journeys' service
 /// images are.
@@ -162,17 +159,25 @@ pub fn name_from_env() -> anyhow::Result<String> {
     Ok(name)
 }
 
+/// Platform inputs rendered by the caller through the production builders.
+#[derive(Debug)]
+pub struct PlatformInputs {
+    pub prerequisites: Vec<Value>,
+    pub nats: Vec<Value>,
+    pub operator: Value,
+}
+
 /// Create the kept cluster and its platform, or attach to them. Every step is
 /// an ensure, so a second case changes nothing the first made.
 ///
-/// `nats` renders the one NATS with a user for each environment it gets:
+/// `render` supplies prerequisites, NATS objects, and the operator chart entry.
+/// It renders a NATS user for each environment it gets:
 /// `scope` and the environments of the earlier cases, which the private
 /// directory lists (docs/plan/alignment.md R1-R5).
 pub async fn ensure(
-    repository: &Path,
     name: &str,
     scope: &wamn_control_registry::Triple,
-    nats: impl FnOnce(&[wamn_control_registry::Triple]) -> anyhow::Result<Vec<Value>>,
+    render: impl FnOnce(&[wamn_control_registry::Triple]) -> anyhow::Result<PlatformInputs>,
 ) -> anyhow::Result<KeptCluster> {
     ensure!(name != "wamn", "the kind-wamn cluster is frozen");
     let work = std::env::temp_dir().join(name);
@@ -208,18 +213,29 @@ pub async fn ensure(
         ca: work.join("registry/ca.crt"),
     };
 
-    // cert-manager and CloudNativePG, then the operator release.
-    for manifest in [
-        "deploy/infra/cert-manager.yaml",
-        "deploy/infra/cnpg-operator.yaml",
-    ] {
-        checked(
-            kept.kubectl()
-                .args(["apply", "--server-side", "-f"])
-                .arg(repository.join(manifest)),
-        )
-        .await?;
+    let listed = work.join("nats-environments.json");
+    let mut environments: Vec<wamn_control_registry::Triple> = match fs::read(&listed) {
+        Ok(bytes) => serde_json::from_slice(&bytes).context("parse the kept NATS environments")?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => return Err(error).context("read the kept NATS environments"),
+    };
+    if !environments.contains(scope) {
+        environments.push(scope.clone());
     }
+    write_private(&listed, &serde_json::to_vec(&environments)?)?;
+    let PlatformInputs {
+        prerequisites,
+        nats,
+        operator,
+    } = render(&environments)?;
+    crate::platform::apply_objects(
+        &kubeconfig,
+        &kept.context(),
+        &work,
+        "prerequisites",
+        &prerequisites,
+    )
+    .await?;
     for namespace in ["cert-manager", "cnpg-system"] {
         checked(kept.kubectl().args([
             "-n",
@@ -232,28 +248,8 @@ pub async fn ensure(
         ]))
         .await?;
     }
-    let listed = work.join("nats-environments.json");
-    let mut environments: Vec<wamn_control_registry::Triple> = match fs::read(&listed) {
-        Ok(bytes) => serde_json::from_slice(&bytes).context("parse the kept NATS environments")?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(error) => return Err(error).context("read the kept NATS environments"),
-    };
-    if !environments.contains(scope) {
-        environments.push(scope.clone());
-    }
-    write_private(&listed, &serde_json::to_vec(&environments)?)?;
-    crate::platform::install_nats(&kubeconfig, &kept.context(), &work, &nats(&environments)?)
-        .await?;
-    let operator_nats = work.join("operator-nats.yaml");
-    write_private(
-        &operator_nats,
-        format!(
-            "global: {{nats: {{schedulerUrl: \"{url}\", dataUrl: \"{url}\"}}}}\n",
-            url = crate::platform::NATS_URL
-        )
-        .as_bytes(),
-    )?;
-    let operator = Command::new("helm")
+    crate::platform::install_nats(&kubeconfig, &kept.context(), &work, &nats).await?;
+    let status = Command::new("helm")
         .args(["status", "wamn", "-n", NAMESPACE, "--kubeconfig"])
         .arg(&kubeconfig)
         .args(["--kube-context", &kept.context()])
@@ -261,29 +257,8 @@ pub async fn ensure(
         .output()
         .await
         .context("start helm status")?;
-    if !operator.status.success() {
-        checked(
-            Command::new("helm")
-                .args([
-                    "upgrade",
-                    "--install",
-                    "wamn",
-                    OPERATOR_CHART,
-                    "--version",
-                    OPERATOR_VERSION,
-                    "-n",
-                    NAMESPACE,
-                    "--create-namespace",
-                    "--kubeconfig",
-                ])
-                .arg(&kubeconfig)
-                .args(["--kube-context", &kept.context(), "-f"])
-                .arg(repository.join("deploy/infra/values-wamn.yaml"))
-                .arg("-f")
-                .arg(&operator_nats)
-                .args(["--wait", "--timeout", "5m"]),
-        )
-        .await?;
+    if !status.status.success() {
+        crate::platform::install_chart(&kubeconfig, &kept.context(), &work, &operator).await?;
     }
 
     // The registry, its HTTP twin, and the Secret every host mounts.
@@ -463,16 +438,12 @@ pub async fn ensure_database(
     namespace: &str,
     cluster: &str,
     proxy: &str,
+    objects: &[Value],
+    fixture_objects: &[Value],
 ) -> anyhow::Result<Database> {
-    kept.apply(&json!({"apiVersion":"v1","kind":"Namespace","metadata":{"name":namespace}}))
-        .await?;
-    let mut definition: Value = serde_yaml::from_str(
-        &fs::read_to_string(repository.join("deploy/infra/cnpg-cluster.yaml"))
-            .context("read the CNPG Cluster")?,
-    )?;
-    definition["metadata"]["name"] = json!(cluster);
-    definition["metadata"]["namespace"] = json!(namespace);
-    kept.apply(&definition).await?;
+    for object in objects {
+        kept.apply(object).await?;
+    }
     checked(kept.kubectl().args([
         "-n",
         namespace,
@@ -483,12 +454,9 @@ pub async fn ensure_database(
     ]))
     .await?;
     let service = format!("{cluster}-node");
-    kept.apply(&json!({"apiVersion":"v1","kind":"Service",
-        "metadata":{"name":service,"namespace":namespace},
-        "spec":{"type":"NodePort",
-            "selector":{"cnpg.io/cluster":cluster,"cnpg.io/instanceRole":"primary"},
-            "ports":[{"port":5432,"targetPort":5432}]}}))
-        .await?;
+    for object in fixture_objects {
+        kept.apply(object).await?;
+    }
     let observed: Value = serde_json::from_slice(
         &checked(
             kept.kubectl()

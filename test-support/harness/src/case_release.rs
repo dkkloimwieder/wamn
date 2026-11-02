@@ -837,22 +837,27 @@ pub async fn install(
         None,
         &at.work.join("release-chart"),
     )?;
-    let name = release_chart::release_name(&input.org, &input.project, &input.env)?;
+    let bundle =
+        wamn_control::platform::journey::release(&wamn_control::platform::journey::ReleaseInput {
+            chart: &chart,
+            namespace: NAMESPACE,
+            values: input,
+            nats_url: wamn_test_infrastructure::platform::NATS_URL,
+            otlp_endpoint: KIND_OTLP_ENDPOINT,
+            insecure_registry: true,
+        })?;
+    let name = bundle.chart["name"]
+        .as_str()
+        .context("release name")?
+        .to_owned();
     let path = at.work.join(format!("values-{name}.yaml"));
-    fs::write(&path, serde_yaml::to_string(&render(input)?)?)?;
+    fs::write(&path, serde_yaml::to_string(&bundle.chart["values"])?)?;
     let target = Target {
         kubeconfig: at.work.join("kubeconfig"),
         context: format!("kind-{}", at.cluster),
         namespace: NAMESPACE.to_owned(),
     };
-    let account = wamn_credential_store::kubernetes::service_account_name(
-        &input.org,
-        &input.project,
-        &input.env,
-    );
-    let secret =
-        wamn_credential_store::kubernetes::secret_name(&input.org, &input.project, &input.env);
-    for (_, object) in wamn_control::environment::ensure::credential_access(&account, &secret) {
+    for object in bundle.objects {
         wamn_control::kubectl::kubectl(
             &target.kubeconfig,
             &target.context,
@@ -884,23 +889,14 @@ pub async fn install(
 /// export to the kind cluster's own collector and reach its one NATS in
 /// `wamn-system`, where the release chart's default names `platform`.
 pub fn render(input: &ValuesInput) -> anyhow::Result<Value> {
-    let mut values = release_chart::values(input)?;
-    let group = &mut values["runtime-operator"]["runtime"]["hostGroups"][0];
-    for key in ["schedulerNatsUrl", "dataNatsUrl"] {
-        group[key] = wamn_test_infrastructure::platform::NATS_URL.into();
-    }
-    group["extraArgs"]
-        .as_sequence_mut()
-        .context("the release chart renders the host group's arguments")?
-        .push("--allow-insecure-registries".into());
-    let endpoint = group["env"]
-        .as_sequence_mut()
-        .context("the release chart renders the host group's variables")?
-        .iter_mut()
-        .find(|variable| variable["name"] == "OTEL_EXPORTER_OTLP_ENDPOINT")
-        .context("the release chart renders the OTLP endpoint")?;
-    endpoint["value"] = KIND_OTLP_ENDPOINT.into();
-    Ok(values)
+    Ok(serde_yaml::to_value(
+        wamn_control::platform::journey::release_values(
+            input,
+            wamn_test_infrastructure::platform::NATS_URL,
+            KIND_OTLP_ENDPOINT,
+            true,
+        )?,
+    )?)
 }
 
 #[cfg(test)]

@@ -44,7 +44,7 @@ bytes = { workspace = true }
 futures-util = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-wamn-control = { workspace = true }
+wamn-control = { workspace = true, features = ["test-util"] }
 wamn-platform-identity = { workspace = true }
 wamn-project-state = { workspace = true }
 wamn-control-provision = { workspace = true, features = ["ops"] }

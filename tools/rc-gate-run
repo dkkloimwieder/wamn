@@ -28,12 +28,6 @@ case "${1-}" in
   image-labels) docker image inspect --format '{{json .Config.Labels}}' "$2" ;;
   nodes) kind get nodes --name "$2" ;;
   node-image) docker exec "$2" crictl inspecti -o json "$3" ;;
-  install-operator)
-    cluster=$2; work=$3; values=$4
-    helm upgrade --install --create-namespace --kubeconfig "$work/kubeconfig" --kube-context "kind-$cluster" \
-      --namespace wamn-system wamn oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.11.0 \
-      -f "$work/operator-base.yaml" -f "$values" --wait --timeout 5m
-    ;;
   install-host)
     cluster=$2; work=$3; namespace=$4; values=$5
     helm upgrade --install --kubeconfig "$work/kubeconfig" --kube-context "kind-$cluster" \
@@ -55,6 +49,6 @@ case "${1-}" in
     done
     exit "$status"
     ;;
-  --help|-h) printf '%s\n' 'RC lifecycle actions: build-images, create, install-operator, install-host, inspect, image-labels, nodes, node-image, helm-releases, remove.' ;;
+  --help|-h) printf '%s\n' 'RC lifecycle actions: build-images, create, install-host, inspect, image-labels, nodes, node-image, helm-releases, remove.' ;;
   *) printf '%s\n' 'Use wamn-gates rc for the RC test run.' >&2; exit 2 ;;
 esac

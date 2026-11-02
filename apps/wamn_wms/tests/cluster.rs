@@ -377,26 +377,23 @@ async fn run_created(
             .arg(work),
     )
     .await?;
-    let operator_values = work.join("operator-values.json");
-    fs::write(
-        &operator_values,
-        serde_json::to_vec_pretty(&json!({"operator":{
-            "watchNamespaces":[NAMESPACE],"hostNamespaces":[NAMESPACE],"allowSharedHosts":false,
-        }}))?,
+    let platform_inputs = wamn_control::platform::journey::cluster(
+        repository,
+        &wamn_control::platform::journey::ClusterInput {
+            operator_namespace: NAMESPACE,
+            host_namespace: NAMESPACE,
+            org: scope.org.as_str(),
+            environments: std::slice::from_ref(scope),
+        },
     )?;
     platform::install(
         repository,
-        lifecycle,
         cluster,
         work,
         NAMESPACE,
-        &operator_values,
-        &wamn_control::platform::kind_nats(
-            repository,
-            NAMESPACE,
-            scope.org.as_str(),
-            std::slice::from_ref(scope),
-        )?,
+        &platform_inputs.prerequisites,
+        &platform_inputs.nats,
+        &platform_inputs.operator,
     )
     .await?;
     let nats = platform::cluster_nats(

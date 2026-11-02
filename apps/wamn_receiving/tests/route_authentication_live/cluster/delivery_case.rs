@@ -112,12 +112,19 @@ async fn run(repository: &Path, kept: &KeptCluster, evidence: &Path) -> anyhow::
         &consumers,
     )
     .await?;
+    let database_inputs = wamn_control::platform::journey::delivery_database(
+        repository,
+        DATABASE_NAMESPACE,
+        DATABASE_CLUSTER,
+    )?;
     let database = ensure_database(
         kept,
         repository,
         DATABASE_NAMESPACE,
         DATABASE_CLUSTER,
         &format!("{owner}-postgres"),
+        &database_inputs.objects,
+        &database_inputs.fixture_objects,
     )
     .await?;
     let (admin, task) = connect(&database.url("postgres")).await?;

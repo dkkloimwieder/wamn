@@ -3,7 +3,6 @@
 use std::path::Path;
 
 use anyhow::{Context as _, ensure};
-use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::{kubectl, release_chart::Target};
@@ -18,34 +17,60 @@ const RESEND_SECRET_MANAGER: &str = "gcloud secrets versions access latest --sec
 const CURL_IMAGE: &str =
     "curlimages/curl@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777";
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Values {
-    image: Image,
-    issuer: &'static str,
-    database_secret: &'static str,
-    tls_secret: &'static str,
-    operator_ca_secret: &'static str,
-    resend_secret: &'static str,
-    resend_from: String,
-    invite_url: String,
-    auth_nats: PlatformNats,
-    session_target_secrets: Vec<String>,
+/// The identity endpoints enabled by this chart input.
+#[derive(Debug)]
+pub enum Mode {
+    /// Key discovery without NATS or session exchange.
+    Foundation,
+    /// Session exchange with explicit targets and optional revocation transport.
+    Session {
+        targets: Vec<String>,
+        nats: Option<(String, String)>,
+    },
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Image {
-    repository: String,
-    tag: String,
-    pull_policy: &'static str,
+/// Identity chart inputs shared by platform apply and cluster journeys.
+#[derive(Debug)]
+pub struct ChartInput<'a> {
+    pub chart: &'a Path,
+    pub name: &'a str,
+    pub namespace: &'a str,
+    pub image: &'a str,
+    pub pull_policy: &'a str,
+    pub issuer: &'a str,
+    pub database_secret: &'a str,
+    pub tls_secret: &'a str,
+    pub operator_ca_secret: &'a str,
+    pub resend_secret: &'a str,
+    pub resend_from: &'a str,
+    pub invite_url: &'a str,
+    pub mode: Mode,
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PlatformNats {
-    url: &'static str,
-    tls_secret: &'static str,
+/// Build the chart entry used by platform apply and local rendering.
+///
+/// # Errors
+/// Returns an error when the image lacks a tag or digest, or the chart lacks a version.
+pub fn chart_input(input: &ChartInput<'_>) -> anyhow::Result<Value> {
+    let (repository, tag) = input
+        .image
+        .rsplit_once(':')
+        .context("identity image has no tag or digest")?;
+    let (targets, nats) = match &input.mode {
+        Mode::Foundation => (Vec::new(), None),
+        Mode::Session { targets, nats } => (targets.clone(), nats.as_ref()),
+    };
+    let (nats_url, nats_secret) =
+        nats.map_or(("", ""), |(url, secret)| (url.as_str(), secret.as_str()));
+    Ok(
+        json!({"chart":input.chart, "version":super::steps::read_platform_version(&input.chart.join("Chart.yaml"))?,
+        "name":input.name, "namespace":input.namespace,
+        "values": {"image":{"repository":repository,"tag":tag,"pullPolicy":input.pull_policy},
+            "issuer":input.issuer,"databaseSecret":input.database_secret,"tlsSecret":input.tls_secret,
+            "operatorCaSecret":input.operator_ca_secret,"resendSecret":input.resend_secret,
+            "resendFrom":input.resend_from,"inviteUrl":input.invite_url,
+            "authNats":{"url":nats_url,"tlsSecret":nats_secret},"sessionTargetSecrets":targets}}),
+    )
 }
 
 fn valid_key(key: &str) -> bool {
@@ -265,36 +290,27 @@ pub(super) fn chart_objects(
     image: &str,
     targets: Vec<String>,
 ) -> anyhow::Result<Vec<Value>> {
-    let chart = repository.join("deploy/platform/identity");
-    let version = super::steps::read_platform_version(&chart.join("Chart.yaml"))?;
-    Ok(vec![
-        json!({"chart":chart,"version":version,"name":"identity","namespace":"identity","values":values(document,image,targets)?}),
-    ])
-}
-
-fn values(document: &ClusterDocument, image: &str, targets: Vec<String>) -> anyhow::Result<Values> {
-    let (repository, tag) = image
-        .rsplit_once(':')
-        .context("identity image has no digest")?;
-    Ok(Values {
-        image: Image {
-            repository: repository.into(),
-            tag: tag.into(),
-            pull_policy: "IfNotPresent",
-        },
+    Ok(vec![chart_input(&ChartInput {
+        chart: &repository.join("deploy/platform/identity"),
+        name: "identity",
+        namespace: "identity",
+        image,
+        pull_policy: "IfNotPresent",
         issuer: ISSUER,
         database_secret: "wamn-identity-db",
         tls_secret: "identity-tls",
         operator_ca_secret: "identity-operator-ca",
         resend_secret: "identity-resend",
-        resend_from: document.resend_from.clone(),
-        invite_url: format!("https://{}", document.route_hosts.control),
-        auth_nats: PlatformNats {
-            url: "nats://wamn-nats.platform.svc.cluster.local:4222",
-            tls_secret: "wamn-identity-nats",
+        resend_from: &document.resend_from,
+        invite_url: &format!("https://{}", document.route_hosts.control),
+        mode: Mode::Session {
+            targets,
+            nats: Some((
+                "nats://wamn-nats.platform.svc.cluster.local:4222".into(),
+                "wamn-identity-nats".into(),
+            )),
         },
-        session_target_secrets: targets,
-    })
+    })?])
 }
 
 async fn install(target: &Target, directory: &Path, entry: &Value) -> anyhow::Result<bool> {

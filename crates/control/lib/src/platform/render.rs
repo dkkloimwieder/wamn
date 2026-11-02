@@ -68,7 +68,7 @@ pub fn install(
     append(
         &mut objects,
         "4.3",
-        super::install::cert_manager_objects(repository, document)?,
+        super::install::cert_manager_objects(repository, document.provider)?,
     );
     append(
         &mut objects,
@@ -94,7 +94,7 @@ pub fn install(
     append(
         &mut objects,
         "4.4",
-        super::install::runtime_events(repository, document)?,
+        super::install::runtime_events(repository, "hosts", "platform")?,
     );
     append(
         &mut objects,
@@ -104,7 +104,7 @@ pub fn install(
     append(
         &mut objects,
         "4.5",
-        super::install::postgres_operator_objects(repository, document)?,
+        super::install::postgres_operator_objects(repository, document.provider)?,
     );
     append(
         &mut objects,
