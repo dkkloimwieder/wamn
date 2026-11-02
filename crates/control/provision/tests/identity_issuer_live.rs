@@ -195,6 +195,9 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
         assert_eq!(
             acl,
             [
+                "column|identity|org_memberships.org|SELECT|f",
+                "column|identity|org_memberships.principal_id|SELECT|f",
+                "column|identity|org_memberships.status|SELECT|f",
                 "column|identity|org_roles.org|SELECT|f",
                 "column|identity|org_roles.principal_id|SELECT|f",
                 "column|identity|org_roles.role|SELECT|f",

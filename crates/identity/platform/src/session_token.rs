@@ -152,7 +152,8 @@ pub async fn session_is_active(
             "SELECT EXISTS (SELECT 1 FROM identity.principals p \
          JOIN identity.project_env_memberships m ON m.principal_id=p.id \
          WHERE p.id=$1::text::uuid AND p.type='user' AND p.status='active' \
-         AND m.org=$2 AND m.project=$3 AND m.env=$4 AND ( \
+         AND m.org=$2 AND m.project=$3 AND m.env=$4 \
+         AND EXISTS (SELECT 1 FROM identity.org_memberships om WHERE om.principal_id=p.id AND om.org=$2 AND om.status='active') AND ( \
          EXISTS (SELECT 1 FROM identity.password_logins l WHERE l.id=$5::text::uuid \
          AND l.principal_id=p.id AND l.issuer=$7 AND l.audience=$8 AND l.revoked_at IS NULL \
          AND l.expires_at>clock_timestamp() AND l.renewal_expires_at>clock_timestamp()) OR \

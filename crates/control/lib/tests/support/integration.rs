@@ -21,7 +21,6 @@ use wamn_control::environment::{self, Platform};
 use wamn_control::package_artifact::{PackageRegistry, PushPackageRequest, push_package};
 use wamn_control::publish_release::{PublishReleaseRequest, assemble_local_release};
 use wamn_control::release_chart::ImageSet;
-use wamn_control::user_role::grant_role_on;
 use wamn_control::workflow_lifecycle::{WorkflowVersion, disable_workflow, enable_workflow};
 use wamn_control_provision::events::source_stream_config;
 use wamn_control_provision::workload_role::WorkloadRoleFamily;
@@ -613,7 +612,33 @@ pub async fn enable_trigger(
         format!("schedule-enabler@{}", super::PLATFORM_DOMAIN),
         format!("workflow@{}", super::PLATFORM_DOMAIN),
     ] {
-        grant_role_on(&mut project, env_key, &user, role, environment.auth).await?;
+        async {
+            let tx = project.transaction().await?;
+            let user_id: String = tx
+                .query_one(
+                    "SELECT id::text FROM platform.\"user\" WHERE email=$1",
+                    &[&user],
+                )
+                .await?
+                .get(0);
+            let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
+            let outcome = wamn_platform_identity::application::mutate_grant(
+                &tx,
+                env_key,
+                wamn_platform_identity::application::GrantAuthority::Provisioning,
+                wamn_platform_identity::application::GrantChange::UserRole {
+                    user_id: &user_id,
+                    role,
+                    grant: true,
+                },
+                &mut drops,
+            )
+            .await?;
+            tx.commit().await?;
+            environment.auth.publish(drops).await;
+            anyhow::Ok(outcome)
+        }
+        .await?;
     }
     let (control, control_task) = connect_owned(environment.system_url).await?;
     control

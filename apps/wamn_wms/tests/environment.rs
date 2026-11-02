@@ -328,8 +328,13 @@ pub async fn prepare_project(
 /// `package`, after its installation. The label workflow's condition reads
 /// the old packaging row, so the operator's replica identity verb runs the
 /// table with REPLICA IDENTITY FULL.
-async fn after_install(route: &ProvisionedRoute, package: PathBuf) -> anyhow::Result<()> {
+async fn after_install(
+    system_url: &str,
+    route: &ProvisionedRoute,
+    package: PathBuf,
+) -> anyhow::Result<()> {
     wamn_control::dev::environment::grant_operator_admin_role(
+        system_url,
         &route.database_url,
         identity().org.as_str(),
         identity().project.as_str(),
@@ -376,7 +381,7 @@ pub async fn install(
     )
     .await?;
     for package in packages {
-        after_install(route, package.root().to_path_buf()).await?;
+        after_install(&inputs.system_pg_url, route, package.root().to_path_buf()).await?;
     }
     let (manifest, digest) = candidate.manifest()?;
     bind_labels(inputs, route, &manifest, digest.as_str(), minio_endpoint).await?;
@@ -684,7 +689,7 @@ pub async fn publish(
         environment: identity().environment.clone(),
     })
     .await?;
-    after_install(route, package_root()).await?;
+    after_install(&inputs.system_pg_url, route, package_root()).await?;
     let package = package_coordinate()?;
     let root = package_root();
     let repository = repository_root();

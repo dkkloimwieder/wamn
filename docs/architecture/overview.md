@@ -196,8 +196,15 @@ Each grant writes the lower rows:
 - `org-admin` writes the `identity.org_roles` row, `project-admin` in every project of the org, and a membership of every environment of the org.
 - `project-admin` writes the `identity.project_roles` row and a membership of every environment of the project.
 - The `admin` role row of the user is written in the database of each environment.
+Application admin comes only from committed org-admin or project-admin authority.
+Direct application admin grants and revokes refuse.
+A service derives admin from its project role without user org membership.
 
-A new project or environment receives the rows of the existing administrators when it is created.
+A new project or environment receives the rows of the existing active administrators when it is created.
+System writers lock the org membership row before changing user authority.
+Projection takes that same lock and reads committed authority again.
+It commits each application write before releasing the system lock.
+The next system mutation or `env apply` repairs an interrupted projection.
 
 Revocation flows downward.
 Revoking `org-admin` removes `project-admin` in the org and the application `admin` rows.

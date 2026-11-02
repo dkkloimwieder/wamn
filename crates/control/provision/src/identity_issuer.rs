@@ -30,7 +30,7 @@ pub const IDENTITY_ISSUER_PAT_INSERT_COLUMNS: [&str; 6] = [
     "expires_at",
 ];
 /// Fresh exchange inputs and non-secret metadata returned by PAT issuance.
-pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 7] = [
+pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 8] = [
     (
         "identity",
         "principals",
@@ -70,6 +70,11 @@ pub const IDENTITY_ISSUER_READ_COLUMNS: [(&str, &str, &[&str]); 7] = [
     ),
     ("registry", "orgs", &["id"]),
     ("identity", "org_roles", &["principal_id", "org", "role"]),
+    (
+        "identity",
+        "org_memberships",
+        &["principal_id", "org", "status"],
+    ),
 ];
 
 /// Narrow password and invitation endpoint column grants. Identity creates a
@@ -495,6 +500,8 @@ mod tests {
              GRANT SELECT (\"id\") ON TABLE \"registry\".\"orgs\" TO \"wamn_identity_issuer\"; \
              GRANT SELECT (\"principal_id\", \"org\", \"role\") \
              ON TABLE \"identity\".\"org_roles\" TO \"wamn_identity_issuer\"; \
+             GRANT SELECT (\"principal_id\", \"org\", \"status\") \
+             ON TABLE \"identity\".\"org_memberships\" TO \"wamn_identity_issuer\"; \
              GRANT INSERT (\"principal_id\", \"principal_type\", \"token_prefix\", \"token_hash\", \"label\", \"expires_at\") \
              ON TABLE identity.pats TO \"wamn_identity_issuer\";"
         );

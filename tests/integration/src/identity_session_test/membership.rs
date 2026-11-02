@@ -77,6 +77,12 @@ async fn run(
         let mut drops = AuthDrops::default();
         match action {
             Action::Grant => {
+                wamn_platform_identity::org::activate_org_membership(
+                    &transaction,
+                    &principal_id,
+                    &args.org,
+                )
+                .await?;
                 grant_project_env_membership(
                     &transaction,
                     &principal_id,

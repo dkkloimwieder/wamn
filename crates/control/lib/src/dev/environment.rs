@@ -688,10 +688,9 @@ pub async fn install_journey_platform_floor(
         .context("leave the project database owner")
 }
 
-/// Give the operator service of one environment the `admin` role, as an
-/// operator does with `wamn-ctl grant-role` after the first publish. The
-/// service's `user` row must exist, which `reconcile-run-plane` writes.
+/// Grant system project-admin to the operator service and project its admin row.
 pub async fn grant_operator_admin_role(
+    system_url: &str,
     project_url: &str,
     org: &str,
     project: &str,
@@ -699,24 +698,64 @@ pub async fn grant_operator_admin_role(
     env_key: &str,
     platform_domain: &str,
 ) -> anyhow::Result<()> {
-    let subject = wamn_platform_identity::operator_subject(org, project, environment)
-        .context("derive the operator subject")?;
-    let (mut client, connection) = tokio_postgres::connect(project_url, NoTls)
-        .await
-        .context("connect to grant the admin role")?;
-    let connection = tokio::spawn(connection);
-    let granted = crate::user_role::grant_role_on(
-        &mut client,
-        env_key,
-        &format!("{subject}@{platform_domain}"),
-        wamn_project_state::ADMIN_ROLE,
-        // A journey writes the role before its host serves.
-        &wamn_platform_identity::auth_changes::AuthChanges::default(),
-    )
+    let subject = wamn_platform_identity::operator_subject(org, project, environment)?;
+    let (mut system, system_connection) = tokio_postgres::connect(system_url, NoTls).await?;
+    let system_connection = tokio::spawn(system_connection);
+    let (mut target, target_connection) = tokio_postgres::connect(project_url, NoTls).await?;
+    let target_connection = tokio::spawn(target_connection);
+    let result = async {
+        let principal = wamn_platform_identity::resolve_subject(
+            &system,
+            wamn_platform_identity::PrincipalType::Service,
+            &subject,
+        )
+        .await?
+        .context("the operator service does not exist")?;
+        let authority = provision_project_env::provisioning_transaction(&mut system).await?;
+        let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
+        wamn_platform_identity::assign_project_role(
+            &authority,
+            principal.id(),
+            org,
+            project,
+            wamn_platform_identity::control::PROJECT_ADMIN_ROLE,
+            &mut drops,
+        )
+        .await?;
+        authority.commit().await?;
+        let authority = system.transaction().await?;
+        let transaction = target.transaction().await?;
+        transaction
+            .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+                wamn_control_provision::PlatformComponent::Provisioning,
+            ))
+            .await?;
+        let scope = wamn_platform_identity::application::ApplicationScope {
+            org,
+            project,
+            env: environment,
+            env_key,
+        };
+        wamn_platform_identity::application::project_authority(
+            &authority,
+            &transaction,
+            scope,
+            principal.id(),
+            &mut drops,
+        )
+        .await?;
+        transaction.commit().await?;
+        authority.commit().await?;
+        anyhow::Ok(())
+    }
     .await;
-    drop(client);
-    let _ = connection.await;
-    granted.map(drop).context("grant the admin role")
+    drop(target);
+    drop(system);
+    let _ = target_connection.await;
+    let _ = system_connection.await;
+    result.with_context(|| {
+        format!("grant system administration to {subject}@{platform_domain} in {env_key}")
+    })
 }
 
 pub async fn reconcile_journey_run_plane(

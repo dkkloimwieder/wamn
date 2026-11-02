@@ -220,6 +220,9 @@ async fn exercise(fixture: &Fixture, https: &Https) {
 
     // Tenant data and a management role are insufficient without an explicit
     // membership. The second principal's membership cannot admit Alice either.
+    wamn_platform_identity::org::activate_org_membership(system, alice.id(), "demo")
+        .await
+        .expect_redacted("active org membership for the management-role control");
     wamn_platform_identity::assign_project_role(
         system,
         alice.id(),
@@ -1181,6 +1184,9 @@ async fn seed_user(client: &Client, principal: &Principal, role: &str) {
 }
 
 async fn grant(system: &Client, principal: &Principal, org: &str, env: &str) {
+    wamn_platform_identity::org::activate_org_membership(system, principal.id(), org)
+        .await
+        .expect_redacted("active org membership fixture");
     grant_project_env_membership(system, principal.id(), org, "widgets", env)
         .await
         .expect_redacted("explicit environment grant");

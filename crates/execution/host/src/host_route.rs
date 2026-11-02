@@ -80,6 +80,8 @@ impl fmt::Debug for HostRouteHandlers {
 /// Serves the host routes of a loaded release.
 pub struct HostRouteDelivery {
     release: Arc<LoadedRelease>,
+    #[cfg(feature = "test-util")]
+    projection_pause: Option<Arc<crate::control_route::ProjectionPause>>,
     handlers: HostRouteHandlers,
     next: Option<Arc<dyn RouteDelivery>>,
     files: Option<Arc<crate::file_route::FileRoutes>>,
@@ -107,11 +109,22 @@ impl HostRouteDelivery {
         Self {
             release,
             handlers,
+            #[cfg(feature = "test-util")]
+            projection_pause: None,
             next,
             files: None,
             connection_health: None,
             oauth: None,
         }
+    }
+
+    #[cfg(feature = "test-util")]
+    pub fn with_projection_pause(
+        mut self,
+        pause: Arc<crate::control_route::ProjectionPause>,
+    ) -> Self {
+        self.projection_pause = Some(pause);
+        self
     }
 
     /// Use the process-owned artifact and transport resources for candidate tests.
@@ -284,6 +297,8 @@ impl HostRouteDelivery {
                 },
             ) => {
                 ControlRoutes {
+                    #[cfg(feature = "test-util")]
+                    projection_pause: self.projection_pause.as_deref(),
                     control,
                     writer,
                     identity: identity.as_ref(),

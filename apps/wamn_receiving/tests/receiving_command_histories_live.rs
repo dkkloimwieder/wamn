@@ -18,7 +18,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio_postgres::Client;
 use uuid::Uuid;
-use wamn_control::user_role::{grant_role_on, revoke_role_on};
 use wamn_platform_identity::auth_changes::AuthChanges;
 use wamn_platform_identity::nats::PlatformNats;
 
@@ -975,13 +974,32 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
         inputs.caller_role
     );
     for user in &holders {
-        revoke_role_on(
-            &mut writer.client,
-            &inputs.env_key,
-            user,
-            &inputs.caller_role,
-            &auth,
-        )
+        async {
+            let tx = writer.client.transaction().await?;
+            let user_id: String = tx
+                .query_one(
+                    "SELECT id::text FROM platform.\"user\" WHERE email=$1",
+                    &[user],
+                )
+                .await?
+                .get(0);
+            let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
+            let outcome = wamn_platform_identity::application::mutate_grant(
+                &tx,
+                &inputs.env_key,
+                wamn_platform_identity::application::GrantAuthority::Provisioning,
+                wamn_platform_identity::application::GrantChange::UserRole {
+                    user_id: &user_id,
+                    role: &inputs.caller_role,
+                    grant: false,
+                },
+                &mut drops,
+            )
+            .await?;
+            tx.commit().await?;
+            auth.publish(drops).await;
+            anyhow::Ok(outcome)
+        }
         .await?;
     }
     let denied = async {
@@ -994,13 +1012,32 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
     let denied_state = snapshot(db, &fixture).await;
     let mut restored = Ok(());
     for user in &holders {
-        let result = grant_role_on(
-            &mut writer.client,
-            &inputs.env_key,
-            user,
-            &inputs.caller_role,
-            &auth,
-        )
+        let result = async {
+            let tx = writer.client.transaction().await?;
+            let user_id: String = tx
+                .query_one(
+                    "SELECT id::text FROM platform.\"user\" WHERE email=$1",
+                    &[user],
+                )
+                .await?
+                .get(0);
+            let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
+            let outcome = wamn_platform_identity::application::mutate_grant(
+                &tx,
+                &inputs.env_key,
+                wamn_platform_identity::application::GrantAuthority::Provisioning,
+                wamn_platform_identity::application::GrantChange::UserRole {
+                    user_id: &user_id,
+                    role: &inputs.caller_role,
+                    grant: true,
+                },
+                &mut drops,
+            )
+            .await?;
+            tx.commit().await?;
+            auth.publish(drops).await;
+            anyhow::Ok(outcome)
+        }
         .await;
         restored = restored.and(result.map(|_| ()));
     }

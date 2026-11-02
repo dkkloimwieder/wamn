@@ -65,6 +65,7 @@ mod tests {
             ASSERT current_user = 'wamn_apply';
         END $role_denial$;
         SELECT registry.connection_projection('absent','absent','dev');
+        SELECT principal_id FROM identity.org_memberships ORDER BY principal_id FOR UPDATE;
         SELECT * FROM registry.resolve_environment_connection('absent','absent','dev','cloud','absent',1);
         RESET SESSION AUTHORIZATION;
     "]).unwrap();

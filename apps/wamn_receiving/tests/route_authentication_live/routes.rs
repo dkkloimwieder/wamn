@@ -157,6 +157,7 @@ pub(super) async fn install_candidate_release(
     )
     .await?;
     wamn_control::dev::environment::grant_operator_admin_role(
+        &system_url,
         &route.database_url,
         identity().org.as_str(),
         identity().project.as_str(),
@@ -192,6 +193,7 @@ pub(super) async fn publish_receiving_release(
     verify_journey_operation_grants(project.as_ref()).await?;
     reconcile_journey_run_plane(&scope(), &system_url, &route.database_url).await?;
     wamn_control::dev::environment::grant_operator_admin_role(
+        &system_url,
         &route.database_url,
         identity().org.as_str(),
         identity().project.as_str(),

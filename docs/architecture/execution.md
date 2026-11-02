@@ -125,7 +125,7 @@ Any other payload answers 400 `delivery-invalid-payload`.
 | `wamn-control:permission/grant@0.9.0` | Takes `role` and `operation`, and writes one permission row. Answers `rows_added`. |
 | `wamn-control:permission/revoke@0.9.0` | Takes `role` and `operation`, and removes that permission row. Answers an empty object. |
 | `wamn-control:user-role/grant@0.9.0` | Takes `user_id` of an application user and `role`, and gives the role. Answers `granted`. |
-| `wamn-control:user-role/revoke@0.9.0` | Takes `user_id` and `role`, and takes the role. An `admin` revoke refuses while the user holds `project-admin` in the project. Answers `revoked`. |
+| `wamn-control:user-role/revoke@0.9.0` | Takes `user_id` and `role`, and takes the role. Direct `admin` grants and revokes refuse. Administration comes from the system project or org role. Answers `revoked`. |
 | `wamn-control:number-counter/set@0.9.0` | Authority `Granted`. Takes `application`, `sequence`, `counter`, `key` and the `int64` `value`, and sets that counter. Answers `next_number`. Refusals: `invalid_input`, `sequence_not_found`, `counter_not_found`, `counter_assigned_per_key`, `number_live` and `idempotency_conflict`. |
 | `wamn-control:workflow/start@0.9.0` | Authority `Granted`. Takes `workflow_id`, `input_json` and `idempotency_key`, and admits one run of the enabled version of that [environment workflow](#environment-workflows). Answers `run_id`. Refusals: `invalid_input`, `active_role_required`, `workflow_not_enabled`, `workflow_not_served` and `idempotency_conflict`. |
 | `wamn-control:connection/authorize@0.9.0` | ProjectAdmin authority. Takes `project`, `env`, and `name`. Returns `authorization_url` for an authorization code connection. |
@@ -202,9 +202,12 @@ The writes are the functions of [`wamn_platform_identity::org`](../../crates/ide
 A refusal is a declared error of its route, with the input member it names in `field`: `invalid_input`, `project_not_found`, `environment_not_found`, `user_not_active`, `user_not_found`, `admin_covered` or `user_refused`.
 A write that changes administrative authority or membership also changes the application rows of each environment it covers, one transaction per environment, with the environment's `wamn_administration` login.
 The control host reads that login from the mounted Secret `wamn-control-administration-<org>`, one file per `<project>--<env>`, at each write (`--control-administration-dir`, `WAMN_CONTROL_ADMINISTRATION_DIR`).
-A grant commits its system rows first, and then writes the `user` row, with `admin` for `org-admin` and `project-admin`.
-A revoke or a deactivation removes the application rows first, and commits its system rows only when every environment is done.
-If an environment fails, the route answers `application_write_incomplete` with that `environment` and the environments that completed, and the system rows of a revoke stay as they were.
+Every authority mutation commits its system rows before application projection.
+Projection locks `identity.org_memberships` for the principal and org, then reads current authority.
+It commits the application write before releasing that system lock.
+If an environment fails, the route answers `application_write_incomplete` with that environment and the environments that completed.
+The system mutation remains committed.
+The next system mutation or `env apply` repairs application rows from current authority.
 The four status routes need `org-admin`, and they write `registry.project_envs.status` through the `control` family, which holds `UPDATE` on that column only.
 Each status route also writes the status into the one row of `platform.environment` in each environment, with the same administration login.
 An inactivation writes the environments first and commits its system rows last, and an activation commits its system rows first.

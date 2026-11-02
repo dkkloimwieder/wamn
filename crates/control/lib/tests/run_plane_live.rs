@@ -112,6 +112,8 @@ const SYSTEM_IDENTITY_FIXTURE_SQL: &str = "DROP SCHEMA IF EXISTS identity CASCAD
        id uuid PRIMARY KEY, type text NOT NULL, subject text NOT NULL, \
        email text, display_name text NOT NULL, \
        status text NOT NULL DEFAULT 'active'); \
+     CREATE TABLE identity.org_memberships (principal_id uuid, org text, status text, PRIMARY KEY(principal_id,org)); \
+     CREATE TABLE identity.org_roles (principal_id uuid, org text, role text); \
      CREATE TABLE identity.project_roles ( \
        principal_id uuid NOT NULL REFERENCES identity.principals (id), \
        org text NOT NULL, project text NOT NULL, role text NOT NULL, \
@@ -129,6 +131,9 @@ const SYSTEM_IDENTITY_FIXTURE_SQL: &str = "DROP SCHEMA IF EXISTS identity CASCAD
        ('33333333-3333-4333-8333-333333333333', 'user', \
         'other-env@example.invalid', 'other-env@example.invalid', \
         'A user in another environment'); \
+     INSERT INTO identity.org_memberships VALUES \
+       ('22222222-2222-4222-8222-222222222222','acme','active'), \
+       ('33333333-3333-4333-8333-333333333333','acme','active'); \
      INSERT INTO identity.project_roles (principal_id, org, project, role) VALUES \
        ('11111111-1111-4111-8111-111111111111', 'acme', 'billing', 'project-author'), \
        ('22222222-2222-4222-8222-222222222222', 'acme', 'billing', 'project-author'), \
@@ -352,12 +357,21 @@ async fn stale_user_leg(su: &Client, system_su: &Client, system_url: &str, targe
         )
         .await
         .expect("remove the fixture project admin");
-    su.execute(
-        "DELETE FROM platform.user_role WHERE user_id = $1::text::uuid",
-        &[&FIXTURE_USER_ID],
-    )
-    .await
-    .expect("remove the fixture admin row");
+    reconcile().await;
+    let stale: i64 = su.query_one("SELECT count(*) FROM platform.user_role WHERE user_id=$1::text::uuid AND role_name='admin'", &[&FIXTURE_USER_ID]).await.expect("read projected admin").get(0);
+    assert_eq!(
+        stale, 0,
+        "recovery removes stale admin while ordinary membership remains"
+    );
+    assert!(
+        su.query_opt(
+            "SELECT id FROM platform.\"user\" WHERE id=$1::text::uuid",
+            &[&FIXTURE_USER_ID]
+        )
+        .await
+        .expect("read retained member")
+        .is_some()
+    );
 }
 
 fn schema() -> BareSchemaName {
@@ -775,7 +789,6 @@ async fn environment_identity_leg(
     // A second apply writes no second copy of any identity row.
     env_key_identity_leg(su).await;
     stale_user_leg(su, system_su, system_url, target_url).await;
-    user_role_email_refusal_leg(target_url).await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
            (env_key,run_id,flow_id,flow_version,package_id, \
@@ -811,83 +824,6 @@ async fn environment_identity_leg(
         .await
         .expect("re-plan");
     assert!(again.is_noop(), "re-run is a no-op: {:#?}", again.actions);
-}
-
-async fn user_role_email_refusal_leg(target_url: &str) {
-    use wamn_control::user_role::{grant_role_on, revoke_role_on};
-
-    let mut client = connect(target_url).await;
-    let env_key = "acme--billing--dev";
-    let auth = AuthChanges::default();
-    let before: i64 = client
-        .query_one("SELECT count(*) FROM platform.user_role", &[])
-        .await
-        .unwrap()
-        .get(0);
-    for grant in [true, false] {
-        let result = if grant {
-            grant_role_on(
-                &mut client,
-                env_key,
-                "missing-role-user@example.invalid",
-                "admin",
-                &auth,
-            )
-            .await
-        } else {
-            revoke_role_on(
-                &mut client,
-                env_key,
-                "missing-role-user@example.invalid",
-                "admin",
-                &auth,
-            )
-            .await
-        };
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("no user with email")
-        );
-    }
-    client
-        .batch_execute(
-            "INSERT INTO platform.\"user\" (id, type, email) VALUES
-         ('e5500000-0000-4000-8000-000000000001', 'user', 'role-gap@example.invalid'),
-         ('e5500000-0000-4000-8000-000000000002', 'user', 'ROLE-GAP@example.invalid')",
-        )
-        .await
-        .unwrap();
-    for grant in [true, false] {
-        let result = if grant {
-            grant_role_on(
-                &mut client,
-                env_key,
-                "Role-Gap@example.invalid",
-                "admin",
-                &auth,
-            )
-            .await
-        } else {
-            revoke_role_on(
-                &mut client,
-                env_key,
-                "Role-Gap@example.invalid",
-                "admin",
-                &auth,
-            )
-            .await
-        };
-        assert!(result.unwrap_err().to_string().contains("names 2 users"));
-    }
-    let after: i64 = client
-        .query_one("SELECT count(*) FROM platform.user_role", &[])
-        .await
-        .unwrap()
-        .get(0);
-    assert_eq!(after, before);
-    client.batch_execute("DELETE FROM platform.\"user\" WHERE id IN ('e5500000-0000-4000-8000-000000000001', 'e5500000-0000-4000-8000-000000000002')").await.unwrap();
 }
 
 /// Manifestations 3 + 5 + 6 (the ephemeral-fixture wipe): a database with no

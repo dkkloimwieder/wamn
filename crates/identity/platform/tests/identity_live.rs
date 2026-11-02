@@ -72,6 +72,9 @@ async fn platform_identity_round_trip_on_postgres() {
     )
     .await
     .expect("create user principal");
+    wamn_platform_identity::org::activate_org_membership(&client, user.id(), "demo")
+        .await
+        .expect("active org membership fixture");
     assert_eq!(user.principal_type(), PrincipalType::User);
     assert_eq!(user.subject(), "author@example.com");
     assert_eq!(user.status(), PrincipalStatus::Active);
@@ -324,6 +327,11 @@ async fn project_environment_membership_round_trip(
     )
     .await
     .expect("create another user");
+    for (principal, org) in [(user, "demo"), (user, "other"), (&other_user, "demo")] {
+        wamn_platform_identity::org::activate_org_membership(client, principal.id(), org)
+            .await
+            .expect("active org membership fixture");
+    }
     assert!(
         !has_project_env_membership(client, user.id(), "demo", "widgets", "dev")
             .await

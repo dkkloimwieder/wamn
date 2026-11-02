@@ -929,8 +929,7 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
     );
     assert_eq!(application_rows(&billing, ann).await, ["user"]);
 
-    // A failed environment refuses with the completed ones named, and the
-    // system rows of the deactivation stay uncommitted.
+    // A failed projection names completed environments after system authority commits.
     let shop_key = logins.join("shop--dev");
     let shop_login = std::fs::read_to_string(&shop_key)?;
     std::fs::write(&shop_key, "postgres://nobody:wrong@127.0.0.1:1/none")?;
@@ -945,15 +944,8 @@ async fn admin_writes_reach_the_application_rows_of_every_environment() -> anyho
     assert_eq!(application_rows(&shop, ann).await, ["user"]);
     assert_eq!(
         grants(&admin, ann).await,
-        [
-            "env billing/dev".to_owned(),
-            "env shop/dev".to_owned(),
-            format!(
-                "member active {}",
-                PlatformComponent::Provisioning.principal_id()
-            ),
-        ],
-        "the system rows stay until every environment is done"
+        [format!("member inactive {boss}")],
+        "committed deactivation remains authoritative after a projection failure"
     );
 
     // With the login back, the deactivation completes.
@@ -1923,3 +1915,124 @@ mod connection_test;
 
 #[path = "support/oauth_authorization.rs"]
 mod oauth_authorization;
+
+#[cfg(feature = "test-util")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
+async fn delayed_grant_cannot_restore_revoked_admin() -> anyhow::Result<()> {
+    use wamn_execution_host::ProjectionPause;
+    wamn_test_postgres::require_prerequisites(&["WAMN_NATIVE_C_NATS_BIN"]);
+    let mut postgres = wamn_test_postgres::start(&[])?;
+    let database = postgres.create_database("grant_projection_order")?;
+    let admin = connect(database.url()).await?;
+    let control_url = install(&admin, database.url()).await?;
+    let (logins, billing, _shop) =
+        environments(&admin, database.url(), "grant_projection_order").await?;
+    admin.execute("SELECT set_config('app.user_id',$1,false), set_config('app.operation','wamn:provisioning',false)", &[&PlatformComponent::Provisioning.principal_id().to_string()]).await?;
+    let boss = create_or_reuse_user(&admin, "boss-order@example.test", "Boss")
+        .await?
+        .principal_id;
+    let user = create_or_reuse_user(&admin, "member-order@example.test", "Member")
+        .await?
+        .principal_id;
+    invite_member(
+        &admin,
+        &boss,
+        ORG,
+        &MemberGrants {
+            org_admin: true,
+            ..MemberGrants::default()
+        },
+    )
+    .await?;
+    invite_member(&admin, &user, ORG, &MemberGrants::default()).await?;
+    let (_server, broker) = wamn_runtime::auth_cache::test_util::nats().await;
+    let changes = AuthChanges::new(broker.clone());
+    let bucket = wamn_platform_identity::auth_changes::auth_bucket(&broker).await?;
+    let delivery = async || -> anyhow::Result<HostRouteDelivery> {
+        Ok(HostRouteDelivery::new(
+            Arc::new(LoadedRelease::control_root()),
+            HostRouteHandlers::Control {
+                status: Arc::new(wamn_execution_host::environment_status::KubernetesSource),
+                administration: Some(logins.clone()),
+                control: Arc::new(connect(&control_url).await?),
+                writer: Arc::new(tokio::sync::Mutex::new(connect(&control_url).await?)),
+                identity: None,
+                org: ORG.to_owned(),
+                changes: changes.clone(),
+            },
+            None,
+        ))
+    };
+    let second = delivery().await?;
+    for after_lock in [false, true] {
+        let pause = Arc::new(ProjectionPause::new(user.clone(), after_lock));
+        let first = delivery().await?.with_projection_pause(Arc::clone(&pause));
+        let caller = boss.as_str().to_owned();
+        let principal = user.as_str().to_owned();
+        let grant = tokio::spawn(async move {
+            call(
+                &first,
+                "project-admin/grant",
+                &caller,
+                json!({"project":"billing","principal_id":principal}),
+            )
+            .await
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(10), pause.entered()).await?;
+        let env_key = wamn_control_registry::project_env_key(ORG, "billing", "dev");
+        bucket
+            .put(
+                wamn_platform_identity::auth_changes::principal_key(&env_key, user.as_str()),
+                "stale".into(),
+            )
+            .await?;
+        let payload = json!({"project":"billing","principal_id":user.as_str()});
+        let revoke = call(&second, "project-admin/revoke", boss.as_str(), payload);
+        tokio::pin!(revoke);
+        if after_lock {
+            let blocked = async {
+                loop {
+                    let waiting: bool = admin.query_one(
+                        "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND cardinality(pg_blocking_pids(pid))>0)", &[],
+                    ).await?.get(0);
+                    if waiting {
+                        return anyhow::Ok(());
+                    }
+                    tokio::task::yield_now().await;
+                }
+            };
+            tokio::select! {
+                result = &mut revoke => panic!("revocation bypassed the held system lock: {result:?}"),
+                result = tokio::time::timeout(std::time::Duration::from_secs(10), blocked) => result??,
+            }
+            pause.resume();
+            revoke.await.map_err(anyhow::Error::msg)?;
+        } else {
+            revoke.await.map_err(anyhow::Error::msg)?;
+            let count: i64 = billing.query_one("SELECT count(*) FROM platform.user_role WHERE user_id=$1::text::uuid AND role_name='admin'", &[&user.as_str()]).await?.get(0);
+            assert_eq!(
+                count, 0,
+                "the second host completes revocation while the grant waits"
+            );
+            pause.resume();
+        }
+        grant.await?.map_err(anyhow::Error::msg)?;
+        let rows = application_rows(&billing, user.as_str()).await;
+        assert!(rows.iter().all(|row| !row.contains("admin")), "{rows:?}");
+        let count: i64 = admin.query_one("SELECT count(*) FROM identity.project_roles WHERE principal_id=$1::text::uuid AND role='project-admin'", &[&user.as_str()]).await?.get(0);
+        assert_eq!(count, 0);
+        let env_key = wamn_control_registry::project_env_key(ORG, "billing", "dev");
+        assert!(
+            bucket
+                .get(wamn_platform_identity::auth_changes::principal_key(
+                    &env_key,
+                    user.as_str()
+                ))
+                .await?
+                .is_none()
+        );
+    }
+    std::fs::remove_dir_all(logins)?;
+    Ok(())
+}

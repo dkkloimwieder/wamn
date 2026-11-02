@@ -370,16 +370,18 @@ Every other role is authored in the tenant, and it holds the stable operation re
 A user or a service reaches no route and no environment at sign-in until it holds a role.
 
 Give a role with `wamn-ctl grant-role`, and take it away with `wamn-ctl revoke-role`.
-Both verbs name the environment in the registry, as `env apply` does, and the user by email:
+Both verbs use the application host URL and the caller's session token.
+The target user is named by principal UUID:
 
 ```bash
-wamn-ctl grant-role --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$WAMN_PG_ADMIN_URL" \
-  --org <org> --project <project> --env <env> --user <email> --role admin
+wamn-ctl grant-role --host-url "$WAMN_CONTROL_URL" --token "$WAMN_TOKEN" \
+  --user-id <principal UUID> --role <authored role>
 ```
 
-The admin URL must be SUPERUSER or BYPASSRLS.
-The verbs refuse a role that does not exist in the tenant, an unknown email, and an email that names more than one user.
-The user needs its tenant `users` row, which `wamn-ctl env apply` writes, so apply the environment after a new principal and before `grant-role`.
+The verbs refuse direct assignment or removal of `admin`.
+Grant or revoke system project-admin or org-admin to change application administration.
+The target needs an existing application user or service row.
+The HTTP owner refuses unknown users. A grant also refuses a missing role.
 The operator service of an environment, `wamn-operator-<org>--<project>--<env>`, has the email `<subject>@<platform domain>`.
 `env apply` writes its PAT Secret when it can reach identity. When it cannot, mint the PAT with the Job of [Google Cloud releases](gcp.md#414-releases).
 
@@ -387,15 +389,16 @@ The operator service of an environment, `wamn-operator-<org>--<project>--<env>`,
 
 Create an authored role with `wamn-ctl create-role`, and delete it with `wamn-ctl delete-role`.
 The delete also removes the role's assignments and permissions.
-The verbs take the same environment flags as `grant-role`, and `--role` names the role.
+The verbs take the same host and session arguments as `grant-role`.
+The `--role` argument names the role.
 A role name has lowercase letters, digits, and hyphens after the first character, and at most 64 bytes.
 The verbs refuse `admin`.
 
 Select an operation for an authored role with `wamn-ctl grant-permission`:
 
 ```bash
-wamn-ctl grant-permission --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$WAMN_PG_ADMIN_URL" \
-  --org <org> --project <project> --env <env> --role <role> \
+wamn-ctl grant-permission --host-url "$WAMN_CONTROL_URL" --token "$WAMN_TOKEN" \
+  --role <role> \
   --operation <package>:<interface>/<operation>
 ```
 

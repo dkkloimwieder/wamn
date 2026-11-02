@@ -451,6 +451,7 @@ impl ProductionDevStageRunner {
     async fn grant_operator_admin_role(&self) -> Result<(), ProductionDevStageError> {
         let identity = self.config.activation_identity();
         super::environment::grant_operator_admin_role(
+            self.config.system_database_url(),
             self.config.target_database_url(),
             &identity.org,
             &identity.project,

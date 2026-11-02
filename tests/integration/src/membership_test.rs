@@ -241,13 +241,32 @@ async fn exercise(
         request(case, 200).await?;
     }
     let user = format!("{role}@example.test");
-    let removed = wamn_control::user_role::revoke_role_on(
-        project,
-        &wamn_control_registry::project_env_key(&args.org, &args.project, &args.env),
-        &user,
-        role,
-        auth,
-    )
+    let removed = async {
+        let tx = project.transaction().await?;
+        let user_id: String = tx
+            .query_one(
+                "SELECT id::text FROM platform.\"user\" WHERE email=$1",
+                &[&user],
+            )
+            .await?
+            .get(0);
+        let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
+        let outcome = wamn_platform_identity::application::mutate_grant(
+            &tx,
+            &wamn_control_registry::project_env_key(&args.org, &args.project, &args.env),
+            wamn_platform_identity::application::GrantAuthority::Provisioning,
+            wamn_platform_identity::application::GrantChange::UserRole {
+                user_id: &user_id,
+                role,
+                grant: false,
+            },
+            &mut drops,
+        )
+        .await?;
+        tx.commit().await?;
+        auth.publish(drops).await;
+        anyhow::Ok(outcome)
+    }
     .await
     .context("remove this user's permission-bearing role")?;
     ensure!(
@@ -255,13 +274,32 @@ async fn exercise(
         "test role assignment was missing before removal"
     );
     request("role_removed", 403).await?;
-    wamn_control::user_role::grant_role_on(
-        project,
-        &wamn_control_registry::project_env_key(&args.org, &args.project, &args.env),
-        &user,
-        role,
-        auth,
-    )
+    async {
+        let tx = project.transaction().await?;
+        let user_id: String = tx
+            .query_one(
+                "SELECT id::text FROM platform.\"user\" WHERE email=$1",
+                &[&user],
+            )
+            .await?
+            .get(0);
+        let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
+        let outcome = wamn_platform_identity::application::mutate_grant(
+            &tx,
+            &wamn_control_registry::project_env_key(&args.org, &args.project, &args.env),
+            wamn_platform_identity::application::GrantAuthority::Provisioning,
+            wamn_platform_identity::application::GrantChange::UserRole {
+                user_id: &user_id,
+                role,
+                grant: true,
+            },
+            &mut drops,
+        )
+        .await?;
+        tx.commit().await?;
+        auth.publish(drops).await;
+        anyhow::Ok(outcome)
+    }
     .await
     .context("restore this user's tenant role")?;
     request("role_restored", 200).await?;
@@ -309,20 +347,28 @@ async fn seed_env_key_role(
     )
     .await
     .context("seed the dedicated test role")?;
-    application::grant_permission(
+    wamn_platform_identity::application::mutate_grant(
         &tx,
         &wamn_control_registry::project_env_key(&args.org, &args.project, &args.env),
-        role,
-        &operation_grant()?,
+        wamn_platform_identity::application::GrantAuthority::Provisioning,
+        wamn_platform_identity::application::GrantChange::Permission {
+            role,
+            reference: &operation_grant()?,
+            grant: true,
+        },
         &mut drops,
     )
     .await
     .context("grant only the canonical purchase-order/get operation to the test role")?;
-    application::grant_user_role(
+    wamn_platform_identity::application::mutate_grant(
         &tx,
         &wamn_control_registry::project_env_key(&args.org, &args.project, &args.env),
-        principal.as_str(),
-        role,
+        wamn_platform_identity::application::GrantAuthority::Provisioning,
+        wamn_platform_identity::application::GrantChange::UserRole {
+            user_id: principal.as_str(),
+            role,
+            grant: true,
+        },
         &mut drops,
     )
     .await

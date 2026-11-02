@@ -74,6 +74,7 @@ pub enum IntegrationTypeCommand {
 pub fn route(operation: &str) -> anyhow::Result<&'static HostAttachment> {
     HostRouteSet::Control
         .attachments()
+        .chain(HostRouteSet::Application.attachments())
         .map(|(_, attachment)| attachment)
         .find(|attachment| attachment.route.operation == operation)
         .with_context(|| format!("control route {operation} is absent"))

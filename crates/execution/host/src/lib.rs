@@ -32,3 +32,6 @@ pub use readiness::{
 pub use router_delivery::{DeadlineAdjustment, RouterDeliveryBridge};
 
 pub mod credential_cleanup;
+
+#[cfg(feature = "test-util")]
+pub use control_route::ProjectionPause;

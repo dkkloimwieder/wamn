@@ -83,8 +83,9 @@ const GRANT_PROJECT_ENV_MEMBERSHIP_SQL: &str = "INSERT INTO identity.project_env
     (principal_id, org, project, env) VALUES ($1::text::uuid, $2, $3, $4) \
     ON CONFLICT DO NOTHING";
 const SELECT_PROJECT_ENV_MEMBERSHIP_SQL: &str = "SELECT EXISTS (\
-    SELECT 1 FROM identity.project_env_memberships \
-    WHERE principal_id = $1::text::uuid AND org = $2 AND project = $3 AND env = $4)";
+    SELECT 1 FROM identity.project_env_memberships m \
+    JOIN identity.org_memberships om USING (principal_id, org) \
+    WHERE m.principal_id = $1::text::uuid AND m.org = $2 AND m.project = $3 AND m.env = $4 AND om.status='active')";
 const REVOKE_PROJECT_ENV_MEMBERSHIP_SQL: &str = "DELETE FROM identity.project_env_memberships \
     WHERE principal_id = $1::text::uuid AND org = $2 AND project = $3 AND env = $4";
 // Every stored token instant crosses this API as second-resolution RFC 3339 UTC
@@ -114,7 +115,8 @@ const SELECT_ROUTE_PAT_SQL: &str = "SELECT p.id::text, p.type, p.subject, \
         WHEN 'service' THEN EXISTS (SELECT 1 FROM identity.project_roles r \
             WHERE r.principal_id = p.id AND r.org = $2 AND r.project = $3 AND r.role = ANY($5::text[])) \
         WHEN 'user' THEN EXISTS (SELECT 1 FROM identity.project_env_memberships m \
-            WHERE m.principal_id = p.id AND m.org = $2 AND m.project = $3 AND m.env = $4) \
+            WHERE m.principal_id = p.id AND m.org = $2 AND m.project = $3 AND m.env = $4 \
+            AND EXISTS (SELECT 1 FROM identity.org_memberships om WHERE om.principal_id=p.id AND om.org=m.org AND om.status='active')) \
         ELSE false END";
 const SELECT_PATS_SQL: &str = "SELECT id::text, token_prefix, label, \
         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
@@ -839,6 +841,14 @@ pub async fn assign_project_role(
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     let org = checked_scope_segment("org", org)?;
+    let service: bool = client.query_one(
+        "SELECT EXISTS (SELECT 1 FROM identity.principals WHERE id=$1::text::uuid AND type='service')",
+        &[&principal_id.as_str()],
+    ).await.map_err(|error| database_error(&error))?.get(0);
+    if !service {
+        org::active_member(client, principal_id, &org).await?;
+    }
+
     let project = checked_scope_segment("project", project)?;
     let role = canonical_role(role)?;
     let written = client
@@ -893,7 +903,7 @@ pub async fn grant_project_env_membership(
     project: &str,
     env: &str,
 ) -> Result<(), IdentityError> {
-    let org = checked_scope_segment("org", org)?;
+    let org = org::active_member(client, principal_id, org).await?;
     let project = checked_scope_segment("project", project)?;
     let env = checked_scope_segment("env", env)?;
     client
@@ -941,6 +951,7 @@ pub async fn revoke_project_env_membership(
     drops: &mut AuthDrops,
 ) -> Result<bool, IdentityError> {
     let org = checked_scope_segment("org", org)?;
+    org::lock_membership(client, principal_id, &org).await?;
     let project = checked_scope_segment("project", project)?;
     let env = checked_scope_segment("env", env)?;
     let removed = client

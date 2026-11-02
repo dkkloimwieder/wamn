@@ -420,11 +420,15 @@ async fn sessions_read_permissions_per_request_and_preserve_the_signed_identity(
 
     // A grant stores a reference the loaded release does not serve. It holds
     // on a host whose release serves it, with no write in between.
-    let granted = wamn_platform_identity::application::grant_permission(
+    let granted = wamn_platform_identity::application::mutate_grant(
         &admin,
         ENV_KEY,
-        "purchase-writer",
-        "session-test:purchase/approve",
+        wamn_platform_identity::application::GrantAuthority::Provisioning,
+        wamn_platform_identity::application::GrantChange::Permission {
+            role: "purchase-writer",
+            reference: "session-test:purchase/approve",
+            grant: true,
+        },
         &mut AuthDrops::default(),
     )
     .await?;

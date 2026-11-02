@@ -118,19 +118,18 @@ Add one application `netsuite` to the environment document of the wamn-dev NetSu
 
 `env apply` refuses a release package that no application lists, a package that two applications list, and a listed package that the release does not carry.
 Do these steps once, after that apply, as an environment admin.
-Set `WAMN_SYSTEM_ADMIN_URL`, `WAMN_PG_ADMIN_URL`, the coordinate `<org>/<project>/<env>`, its composed environment key, and your `platform."user"` id as `$ADMIN_ID`.
+Set `WAMN_CONTROL_URL` to the application host and `WAMN_TOKEN` to your session token.
+Set the coordinate `<org>/<project>/<env>`, its composed environment key, and your application user ID as `$ADMIN_ID`.
 
 1. Create the role the pull executes with. It holds exactly the consumer command that the pull's `record` node calls:
 
    ```bash
-   wamn-ctl create-role --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$WAMN_PG_ADMIN_URL" \
-     --org <org> --project <project> --env <env> --role netsuite-pull
-   wamn-ctl grant-permission --system-database-url "$WAMN_SYSTEM_ADMIN_URL" --admin-database-url "$WAMN_PG_ADMIN_URL" \
-     --org <org> --project <project> --env <env> --role netsuite-pull \
+   wamn-ctl create-role --host-url "$WAMN_CONTROL_URL" --token "$WAMN_TOKEN" --role netsuite-pull
+   wamn-ctl grant-permission --host-url "$WAMN_CONTROL_URL" --token "$WAMN_TOKEN" --role netsuite-pull \
      --operation <consumer package>:<interface>/<operation>
    ```
 
-2. Grant the role to the `workflow` user, whose email is `workflow@<platform domain>`, with `wamn-ctl grant-role --role netsuite-pull`.
+2. Grant the role to the `workflow` user, whose email is `workflow@<platform domain>`, with `wamn-ctl grant-role --host-url "$WAMN_CONTROL_URL" --token "$WAMN_TOKEN" --user-id <workflow UUID> --role netsuite-pull`.
    The enabler must also hold the role, or hold `admin`.
 3. Author the released wiring `apps/netsuite/publication/wirings/netsuite_pull.json` as a schedule workflow of the application `netsuite`:
 

@@ -8,9 +8,8 @@ use std::time::Duration;
 use tokio_postgres::Client;
 use wamn_control_provision::{PlatformComponent, platform_principals_sql, test_database};
 use wamn_platform_identity::application::{
-    ApplicationUser, create_role, delete_role, grant_permission, grant_user_role, remove_admin,
-    remove_user, revoke_permission, revoke_user_role, write_admin, write_environment_status,
-    write_service, write_user,
+    ApplicationUser, create_role, delete_role, remove_admin, remove_user, write_admin,
+    write_environment_status, write_service, write_user,
 };
 use wamn_platform_identity::auth_changes::{AuthChange, AuthDrops};
 use wamn_platform_identity::org::{
@@ -143,6 +142,9 @@ async fn every_identity_writer_records_a_drop_of_its_principal() {
         "deactivate_org_membership"
     );
 
+    activate_org_membership(&client, &alice, "acme")
+        .await
+        .unwrap();
     grant_project_env_membership(&client, &alice, "acme", "billing", "dev")
         .await
         .unwrap();
@@ -318,27 +320,67 @@ async fn every_application_writer_records_a_drop_of_its_env_key_or_principal() {
     assert_eq!(changes(&drops), env_key, "create_role");
 
     let mut drops = AuthDrops::default();
-    grant_permission(&client, "t1", "clerk", "acme:receipts/create", &mut drops)
-        .await
-        .unwrap();
+    wamn_platform_identity::application::mutate_grant(
+        &client,
+        "t1",
+        wamn_platform_identity::application::GrantAuthority::Provisioning,
+        wamn_platform_identity::application::GrantChange::Permission {
+            role: "clerk",
+            reference: "acme:receipts/create",
+            grant: true,
+        },
+        &mut drops,
+    )
+    .await
+    .unwrap();
     assert_eq!(changes(&drops), env_key, "grant_permission");
 
     let mut drops = AuthDrops::default();
-    revoke_permission(&client, "t1", "clerk", "acme:receipts/create", &mut drops)
-        .await
-        .unwrap();
+    wamn_platform_identity::application::mutate_grant(
+        &client,
+        "t1",
+        wamn_platform_identity::application::GrantAuthority::Provisioning,
+        wamn_platform_identity::application::GrantChange::Permission {
+            role: "clerk",
+            reference: "acme:receipts/create",
+            grant: false,
+        },
+        &mut drops,
+    )
+    .await
+    .unwrap();
     assert_eq!(changes(&drops), env_key, "revoke_permission");
 
     let mut drops = AuthDrops::default();
-    grant_user_role(&client, "t1", bob.as_str(), "clerk", &mut drops)
-        .await
-        .unwrap();
+    wamn_platform_identity::application::mutate_grant(
+        &client,
+        "t1",
+        wamn_platform_identity::application::GrantAuthority::Provisioning,
+        wamn_platform_identity::application::GrantChange::UserRole {
+            user_id: bob.as_str(),
+            role: "clerk",
+            grant: true,
+        },
+        &mut drops,
+    )
+    .await
+    .unwrap();
     assert_eq!(changes(&drops), principal(&bob), "grant_user_role");
 
     let mut drops = AuthDrops::default();
-    revoke_user_role(&client, "t1", bob.as_str(), "clerk", &mut drops)
-        .await
-        .unwrap();
+    wamn_platform_identity::application::mutate_grant(
+        &client,
+        "t1",
+        wamn_platform_identity::application::GrantAuthority::Provisioning,
+        wamn_platform_identity::application::GrantChange::UserRole {
+            user_id: bob.as_str(),
+            role: "clerk",
+            grant: false,
+        },
+        &mut drops,
+    )
+    .await
+    .unwrap();
     assert_eq!(changes(&drops), principal(&bob), "revoke_user_role");
 
     let mut drops = AuthDrops::default();
@@ -365,6 +407,9 @@ async fn every_application_grant_write_deletes_exactly_its_auth_keys() {
     use wamn_platform_identity::auth_changes::{AuthChanges, auth_bucket};
     wamn_test_postgres::require_prerequisites(&["WAMN_NATS_URL"]);
     let broker = async_nats::connect(std::env::var("WAMN_NATS_URL").unwrap())
+        .await
+        .unwrap();
+    wamn_platform_identity::kv_memory::create_buckets(&broker)
         .await
         .unwrap();
     let bucket = auth_bucket(&broker).await.unwrap();
@@ -417,24 +462,64 @@ async fn every_application_grant_write_deletes_exactly_its_auth_keys() {
                     .unwrap();
             }
             "grant_permission" => {
-                grant_permission(&client, "t1", "clerk", "acme:receipts/create", &mut drops)
-                    .await
-                    .unwrap();
+                wamn_platform_identity::application::mutate_grant(
+                    &client,
+                    "t1",
+                    wamn_platform_identity::application::GrantAuthority::Provisioning,
+                    wamn_platform_identity::application::GrantChange::Permission {
+                        role: "clerk",
+                        reference: "acme:receipts/create",
+                        grant: true,
+                    },
+                    &mut drops,
+                )
+                .await
+                .unwrap();
             }
             "revoke_permission" => {
-                revoke_permission(&client, "t1", "clerk", "acme:receipts/create", &mut drops)
-                    .await
-                    .unwrap();
+                wamn_platform_identity::application::mutate_grant(
+                    &client,
+                    "t1",
+                    wamn_platform_identity::application::GrantAuthority::Provisioning,
+                    wamn_platform_identity::application::GrantChange::Permission {
+                        role: "clerk",
+                        reference: "acme:receipts/create",
+                        grant: false,
+                    },
+                    &mut drops,
+                )
+                .await
+                .unwrap();
             }
             "grant_user_role" => {
-                grant_user_role(&client, "t1", bob.as_str(), "clerk", &mut drops)
-                    .await
-                    .unwrap();
+                wamn_platform_identity::application::mutate_grant(
+                    &client,
+                    "t1",
+                    wamn_platform_identity::application::GrantAuthority::Provisioning,
+                    wamn_platform_identity::application::GrantChange::UserRole {
+                        user_id: bob.as_str(),
+                        role: "clerk",
+                        grant: true,
+                    },
+                    &mut drops,
+                )
+                .await
+                .unwrap();
             }
             "revoke_user_role" => {
-                revoke_user_role(&client, "t1", bob.as_str(), "clerk", &mut drops)
-                    .await
-                    .unwrap();
+                wamn_platform_identity::application::mutate_grant(
+                    &client,
+                    "t1",
+                    wamn_platform_identity::application::GrantAuthority::Provisioning,
+                    wamn_platform_identity::application::GrantChange::UserRole {
+                        user_id: bob.as_str(),
+                        role: "clerk",
+                        grant: false,
+                    },
+                    &mut drops,
+                )
+                .await
+                .unwrap();
             }
             "delete_role" => {
                 delete_role(&client, "t1", "clerk", &mut drops)

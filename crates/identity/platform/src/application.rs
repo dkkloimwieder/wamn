@@ -2,14 +2,10 @@
 //! database
 //! (docs/architecture/overview.md#organization-membership-and-administration).
 //!
-//! The control host calls these with the environment's `wamn_administration`
-//! login, in one transaction per environment that binds the caller and the
-//! route's sealed operation id. A grant writes them after its system
-//! transaction, and a revoke or a deactivation removes them before its system
-//! transaction commits.
-//!
-//! It also holds the role, permission and user role writes of §4.6, which
-//! `wamn-ctl` and the application host routes share.
+//! System writers commit authority before projection. Projection reads current
+//! authority under the org membership lock and commits application data before
+//! releasing that lock. Authored grants use `mutate_grant` inside the application
+//! transaction. The CLI calls the HTTP routes.
 
 use std::fmt;
 
@@ -369,17 +365,13 @@ pub async fn require_role(
 /// Grant `reference` to the authored `role`: store it as a row. The grant
 /// stores any reference that `permission_reference_check` accepts, whether a
 /// release serves it or not.
-pub async fn grant_permission(
+async fn grant_permission(
     client: &(impl GenericClient + Sync),
     env_key: &str,
     role: &str,
     reference: &str,
     drops: &mut AuthDrops,
 ) -> Result<PermissionGrantOutcome, AdministrationError> {
-    if role == ADMIN_ROLE {
-        return Err(AdministrationRefusal::AdminTakesNoPermission.into());
-    }
-    require_role(client, role).await?;
     let rows_added = client
         .execute(PERMISSION_SQL, &[&role, &reference])
         .await
@@ -390,14 +382,13 @@ pub async fn grant_permission(
 
 /// Remove the row `reference` from `role`. A revoke of a reference the role
 /// does not hold refuses.
-pub async fn revoke_permission(
+async fn revoke_permission(
     client: &(impl GenericClient + Sync),
     env_key: &str,
     role: &str,
     reference: &str,
     drops: &mut AuthDrops,
 ) -> Result<(), AdministrationError> {
-    require_role(client, role).await?;
     let removed = client
         .execute(DROP_PERMISSION_SQL, &[&role, &reference])
         .await
@@ -415,14 +406,13 @@ pub async fn revoke_permission(
 
 /// Give the existing role `role` to the user `user_id`. A second grant
 /// changes nothing.
-pub async fn grant_user_role(
+async fn grant_user_role(
     client: &(impl GenericClient + Sync),
     env_key: &str,
     user_id: &str,
     role: &str,
     drops: &mut AuthDrops,
 ) -> Result<bool, AdministrationError> {
-    require_role(client, role).await?;
     let written = client
         .execute(USER_ROLE_SQL, &[&user_id, &role])
         .await
@@ -433,7 +423,7 @@ pub async fn grant_user_role(
 
 /// Take the role `role` from the user `user_id`. A revoke of a role the user
 /// does not hold changes nothing.
-pub async fn revoke_user_role(
+async fn revoke_user_role(
     client: &(impl GenericClient + Sync),
     env_key: &str,
     user_id: &str,
@@ -449,7 +439,7 @@ pub async fn revoke_user_role(
 }
 
 const USER_EXISTS_SQL: &str = "SELECT 1 FROM platform.\"user\" \
-    WHERE id = $1::text::uuid AND type = 'user'";
+    WHERE id = $1::text::uuid AND type IN ('user', 'service')";
 
 const USER_LIST_SQL: &str = "SELECT u.id::text, u.email, u.display_name, \
     COALESCE(array_agg(r.role_name ORDER BY r.role_name) \
@@ -537,4 +527,286 @@ pub async fn permission_rows(
         .iter()
         .map(|row| row.get(0))
         .collect())
+}
+
+/// Rebuild one principal's application authority from a locked system transaction.
+/// The caller locks membership before opening the application transaction and
+/// commits the application transaction before ending the system transaction.
+pub async fn project_authority(
+    system: &tokio_postgres::Transaction<'_>,
+    target: &(impl GenericClient + Sync),
+    scope: ApplicationScope<'_>,
+    principal: &PrincipalId,
+    drops: &mut AuthDrops,
+) -> Result<(), IdentityError> {
+    crate::org::lock_membership(system, principal, scope.org).await?;
+    let row = system.query_opt(
+        "SELECT p.type, p.status, p.email, p.display_name, p.subject, \
+         EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.status='active'), \
+         EXISTS (SELECT 1 FROM identity.project_env_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.project=$3 AND m.env=$4), \
+         EXISTS (SELECT 1 FROM identity.project_roles r WHERE r.principal_id=p.id AND r.org=$2 AND r.project=$3 AND r.role='project-admin') \
+         OR EXISTS (SELECT 1 FROM identity.org_roles r WHERE r.principal_id=p.id AND r.org=$2 AND r.role='org-admin') \
+         FROM identity.principals p WHERE p.id=$1::text::uuid",
+        &[&principal.as_str(), &scope.org, &scope.project, &scope.env],
+    ).await.map_err(|error| database_error(&error))?;
+    let Some(row) = row else {
+        return remove_user(target, scope.env_key, principal, drops).await;
+    };
+    let type_: String = row.get(0);
+    let active = row.get::<_, String>(1) == "active";
+    let admin: bool = row.get(7);
+    if type_ == "service" {
+        // Services derive administration from their project role, without user membership.
+        let present = target
+            .query_opt(
+                "SELECT 1 FROM platform.\"user\" WHERE id=$1::text::uuid",
+                &[&principal.as_str()],
+            )
+            .await
+            .map_err(|error| database_error(&error))?
+            .is_some();
+        if active && admin && !present {
+            let domain: String = system
+                .query_one("SELECT platform_domain FROM registry.meta", &[])
+                .await
+                .map_err(|error| database_error(&error))?
+                .get(0);
+            let email = format!("{}@{domain}", row.get::<_, String>(4));
+            write_service(
+                target,
+                scope.env_key,
+                ApplicationUser {
+                    principal_id: principal,
+                    email: &email,
+                    display_name: &row.get::<_, String>(3),
+                },
+                drops,
+            )
+            .await?;
+        }
+        if active && admin {
+            target
+                .execute(ROLE_SQL, &[&ADMIN_ROLE])
+                .await
+                .map_err(|error| database_error(&error))?;
+            target
+                .execute(USER_ROLE_SQL, &[&principal.as_str(), &ADMIN_ROLE])
+                .await
+                .map_err(|error| database_error(&error))?;
+            drops.principal(scope.env_key, principal.as_str());
+        } else {
+            remove_admin(target, scope.env_key, principal, drops).await?;
+        }
+        return Ok(());
+    }
+    if type_ != "user" || !active || !row.get::<_, bool>(5) || !row.get::<_, bool>(6) {
+        return remove_user(target, scope.env_key, principal, drops).await;
+    }
+    let email: String = row.get(2);
+    let display_name: String = row.get(3);
+    let user = ApplicationUser {
+        principal_id: principal,
+        email: &email,
+        display_name: &display_name,
+    };
+    if admin {
+        write_admin(target, scope.env_key, user, drops).await
+    } else {
+        write_user(target, scope.env_key, user, drops).await?;
+        remove_admin(target, scope.env_key, principal, drops).await
+    }
+}
+
+/// The explicit environment of one authority projection.
+#[derive(Debug, Clone, Copy)]
+pub struct ApplicationScope<'a> {
+    pub org: &'a str,
+    pub project: &'a str,
+    pub env: &'a str,
+    pub env_key: &'a str,
+}
+
+/// The authenticated actor of an authored application grant.
+#[derive(Debug, Clone, Copy)]
+pub enum GrantAuthority<'a> {
+    User(&'a PrincipalId),
+    Provisioning,
+}
+
+/// One authored role assignment or operation permission mutation.
+#[derive(Debug, Clone, Copy)]
+pub enum GrantChange<'a> {
+    UserRole {
+        user_id: &'a str,
+        role: &'a str,
+        grant: bool,
+    },
+    Permission {
+        role: &'a str,
+        reference: &'a str,
+        grant: bool,
+    },
+}
+
+/// The rows changed by an authorized application mutation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GrantOutcome {
+    pub changed: bool,
+    pub rows_added: u64,
+}
+
+/// Whether an authored permission can name this operation.
+pub fn permission_is_grantable(reference: &str) -> bool {
+    !wamn_catalog::is_host_route_operation(reference)
+        || wamn_catalog::is_granted_host_route_operation(reference)
+}
+
+/// Mutate an authored grant inside the caller's application transaction.
+/// The caller serializes role and permission writes with the application lock.
+pub async fn mutate_grant(
+    client: &(impl GenericClient + Sync),
+    env_key: &str,
+    authority: GrantAuthority<'_>,
+    change: GrantChange<'_>,
+    drops: &mut AuthDrops,
+) -> Result<GrantOutcome, GrantError> {
+    let result: Result<GrantOutcome, AdministrationError> = async {
+    let (role, grant) = match change {
+        GrantChange::UserRole { role, grant, .. } | GrantChange::Permission { role, grant, .. } => {
+            (role, grant)
+        }
+    };
+    if role == ADMIN_ROLE {
+        return Err(match change {
+            GrantChange::UserRole { user_id, .. } => AdministrationRefusal::AdminCovered {
+                user_id: user_id.to_owned(),
+            },
+            GrantChange::Permission { .. } => AdministrationRefusal::AdminTakesNoPermission,
+        }
+        .into());
+    }
+    if !matches!(change, GrantChange::UserRole { grant: false, .. }) {
+        require_role(client, role).await?;
+    }
+    if let GrantChange::Permission {
+        reference,
+        grant: true,
+        ..
+    } = change
+        && !permission_is_grantable(reference)
+    {
+            return Err(AdministrationRefusal::NotGrantable {
+                reference: reference.to_owned(),
+            }
+            .into());
+    }
+    if grant && let GrantAuthority::User(actor) = authority {
+            let admin: bool = client.query_one(
+                "SELECT EXISTS (SELECT 1 FROM platform.user_role WHERE user_id=$1::text::uuid AND role_name='admin')",
+                &[&actor.as_str()],
+            ).await.map_err(|error| database_error(&error))?.get(0);
+            if !admin {
+                let required = match change {
+                    GrantChange::Permission { reference, .. } => vec![reference.to_owned()],
+                    GrantChange::UserRole { role, .. } => permission_rows(client, role).await?,
+                };
+                for reference in required {
+                    let held: bool = client.query_one(
+                        "SELECT EXISTS (SELECT 1 FROM platform.user_role r JOIN platform.permission p ON p.role_name=r.role_name \
+                         WHERE r.user_id=$1::text::uuid AND p.permission=$2)",
+                        &[&actor.as_str(), &reference],
+                    ).await.map_err(|error| database_error(&error))?.get(0);
+                    if !held || !permission_is_grantable(&reference) {
+                        return Err(AdministrationRefusal::NotGrantable { reference }.into());
+                    }
+                }
+            }
+    }
+    let rows_added = match change {
+        GrantChange::UserRole {
+            user_id,
+            role,
+            grant,
+        } => {
+            if matches!(authority, GrantAuthority::User(_)) {
+                require_user(client, user_id).await?;
+            }
+            let changed = if grant {
+                grant_user_role(client, env_key, user_id, role, drops).await?
+            } else {
+                revoke_user_role(client, env_key, user_id, role, drops).await?
+            };
+            return Ok(GrantOutcome {
+                changed,
+                rows_added: u64::from(grant && changed),
+            });
+        }
+        GrantChange::Permission {
+            role,
+            reference,
+            grant: true,
+        } => {
+            grant_permission(client, env_key, role, reference, drops)
+                .await?
+                .rows_added
+        }
+        GrantChange::Permission {
+            role,
+            reference,
+            grant: false,
+        } => {
+            revoke_permission(client, env_key, role, reference, drops).await?;
+            return Ok(GrantOutcome {
+                changed: true,
+                rows_added: 0,
+            });
+        }
+    };
+    Ok(GrantOutcome {
+        changed: rows_added != 0,
+        rows_added,
+    })
+    }.await;
+    result.map_err(|source| GrantError {
+        env_key: env_key.to_owned(),
+        source,
+    })
+}
+
+/// A failed application mutation with its environment and original error.
+#[derive(Debug)]
+pub struct GrantError {
+    env_key: String,
+    source: AdministrationError,
+}
+
+impl GrantError {
+    pub fn refusal(&self) -> Option<&AdministrationRefusal> {
+        match &self.source {
+            AdministrationError::Refused(refusal) => Some(refusal),
+            AdministrationError::Failed(_) => None,
+        }
+    }
+}
+
+impl fmt::Display for GrantError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "application grant in {}: {}",
+            self.env_key, self.source
+        )
+    }
+}
+
+impl std::error::Error for GrantError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+impl From<GrantError> for AdministrationError {
+    fn from(error: GrantError) -> Self {
+        error.source
+    }
 }

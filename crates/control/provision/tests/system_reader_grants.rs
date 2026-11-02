@@ -455,6 +455,9 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
     assert_eq!(
         load_role_grants(&admin_url, WorkloadRoleFamily::IdentityReader.acl_role()),
         vec![
+            "column|identity|org_memberships.org|SELECT|false".to_owned(),
+            "column|identity|org_memberships.principal_id|SELECT|false".to_owned(),
+            "column|identity|org_memberships.status|SELECT|false".to_owned(),
             "relation|identity|password_logins|SELECT|false".to_owned(),
             "relation|identity|pats|SELECT|false".to_owned(),
             "relation|identity|principals|SELECT|false".to_owned(),
@@ -463,7 +466,7 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
             "schema|identity|identity|USAGE|false".to_owned(),
         ],
         "the stable identity-reader role's aclexplode grants are not exactly \
-         USAGE on identity plus SELECT on the five relations it reads"
+         USAGE on identity plus its identity reads and membership columns"
     );
     // The registry reader is untouched by the identity reader's convergence —
     // neither batch may narrow or widen the other.
@@ -509,6 +512,27 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
         Some("42501".to_owned()),
         "the connection reader cannot change connection rows"
     );
+
+    let identity_url = &reader_url[0].1;
+    let (ok, _, error) = psql_tuples(
+        identity_url,
+        "SELECT principal_id, org, status FROM identity.org_memberships",
+    );
+    assert!(
+        ok,
+        "the identity reader can read active membership: {error}"
+    );
+    for denied in [
+        "SELECT updated_by FROM identity.org_memberships",
+        "SELECT status FROM identity.org_memberships FOR UPDATE",
+        "UPDATE identity.org_memberships SET status='active'",
+    ] {
+        assert_eq!(
+            reader_sqlstate(identity_url, denied),
+            Some("42501".to_owned()),
+            "{denied}"
+        );
+    }
 
     let identity_role = &reader_url[0].2;
     let mut probes = format!(

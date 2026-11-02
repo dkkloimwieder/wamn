@@ -1801,3 +1801,9 @@ DO $$ BEGIN
         GRANT SELECT, INSERT, UPDATE, DELETE ON identity.oauth_token, identity.oauth_authorization TO wamn_conn_reader;
     END IF;
 END $$;
+
+DO $identity_membership_read$ BEGIN
+    IF to_regrole('wamn_identity_reader') IS NOT NULL THEN
+        GRANT SELECT (principal_id, org, status) ON identity.org_memberships TO wamn_identity_reader;
+    END IF;
+END $identity_membership_read$;

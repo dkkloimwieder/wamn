@@ -711,13 +711,34 @@ async fn sessions(
             .await?;
     }
     for role in ["file-access", "file-denied"] {
-        wamn_control::user_role::grant_role_on(
-            project,
-            env_key,
-            &email,
-            role,
-            &wamn_platform_identity::auth_changes::AuthChanges::default(),
-        )
+        async {
+            let tx = project.transaction().await?;
+            let user_id: String = tx
+                .query_one(
+                    "SELECT id::text FROM platform.\"user\" WHERE email=$1",
+                    &[&email],
+                )
+                .await?
+                .get(0);
+            let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
+            let outcome = wamn_platform_identity::application::mutate_grant(
+                &tx,
+                env_key,
+                wamn_platform_identity::application::GrantAuthority::Provisioning,
+                wamn_platform_identity::application::GrantChange::UserRole {
+                    user_id: &user_id,
+                    role,
+                    grant: true,
+                },
+                &mut drops,
+            )
+            .await?;
+            tx.commit().await?;
+            wamn_platform_identity::auth_changes::AuthChanges::default()
+                .publish(drops)
+                .await;
+            anyhow::Ok(outcome)
+        }
         .await?;
     }
     let audience = wamn_control_provision::session_target::session_audience(

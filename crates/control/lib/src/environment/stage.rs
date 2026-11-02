@@ -204,6 +204,12 @@ pub async fn materialize_application_principals(
     let mut project = super::analyse::connect_project(project_url).await?;
     let transaction = project.transaction().await?;
     transaction
+        .query_one(
+            wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL,
+            &[&env_key],
+        )
+        .await?;
+    transaction
         .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
             PlatformComponent::Provisioning,
         ))
@@ -237,25 +243,34 @@ pub async fn materialize_application_principals(
             drops.principal(env_key, principal.id().as_str());
         }
         let role = format!("application-{}", package.package.id.replace('_', "-"));
-        crate::role_permission::create_role(&transaction, env_key, &role, &mut drops).await?;
+        wamn_platform_identity::application::create_role(&transaction, env_key, &role, &mut drops)
+            .await?;
         for permission in crate::publish_release::application_dependency_permissions(
             package,
             &dependency_manifests,
         )? {
-            crate::role_permission::grant_permission(
+            wamn_platform_identity::application::mutate_grant(
                 &transaction,
                 env_key,
-                &role,
-                &permission,
+                wamn_platform_identity::application::GrantAuthority::Provisioning,
+                wamn_platform_identity::application::GrantChange::Permission {
+                    role: &role,
+                    reference: &permission,
+                    grant: true,
+                },
                 &mut drops,
             )
             .await?;
         }
-        wamn_platform_identity::application::grant_user_role(
+        wamn_platform_identity::application::mutate_grant(
             &transaction,
             env_key,
-            principal.id().as_str(),
-            &role,
+            wamn_platform_identity::application::GrantAuthority::Provisioning,
+            wamn_platform_identity::application::GrantChange::UserRole {
+                user_id: principal.id().as_str(),
+                role: &role,
+                grant: true,
+            },
             &mut drops,
         )
         .await?;

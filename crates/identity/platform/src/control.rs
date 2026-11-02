@@ -22,6 +22,7 @@ const CONTROL_PROJECTS_SQL: &str = "SELECT r.project FROM identity.project_roles
     JOIN identity.principals p ON p.id = r.principal_id \
     WHERE r.principal_id = $1::text::uuid AND r.org = $2 AND r.role = $3 \
     AND p.type = 'user' AND p.status = 'active' \
+    AND EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.status='active') \
     AND ($4::text IS NULL OR r.project > $4) ORDER BY r.project LIMIT $5";
 
 const ORG_PROJECTS_SQL: &str = "SELECT p.id, CASE WHEN EXISTS (SELECT 1 FROM registry.project_envs e \
@@ -32,16 +33,19 @@ const ORG_PROJECTS_SQL: &str = "SELECT p.id, CASE WHEN EXISTS (SELECT 1 FROM reg
 const ORG_ADMIN_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.org_roles r \
     JOIN identity.principals p ON p.id = r.principal_id \
     WHERE r.principal_id = $1::text::uuid AND r.org = $2 AND r.role = $3 \
-    AND p.type = 'user' AND p.status = 'active')";
+    AND p.type = 'user' AND p.status = 'active' \
+    AND EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.status='active'))";
 
 const PROJECT_ADMIN_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.project_roles r \
     JOIN identity.principals p ON p.id = r.principal_id \
     WHERE r.principal_id = $1::text::uuid AND r.org = $2 AND r.project = $3 AND r.role = $4 \
-    AND p.type = 'user' AND p.status = 'active')";
+    AND p.type = 'user' AND p.status = 'active' \
+    AND EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.status='active'))";
 
 const CONTROL_ORGS_SQL: &str = "SELECT o.id FROM registry.orgs o \
     JOIN identity.principals p ON p.id = $1::text::uuid \
     WHERE p.type = 'user' AND p.status = 'active' \
+    AND EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=o.id AND m.status='active') \
     AND (EXISTS (SELECT 1 FROM identity.project_roles r \
     WHERE r.principal_id = p.id AND r.org = o.id AND r.role = $2) \
     OR EXISTS (SELECT 1 FROM identity.org_roles r \
@@ -51,6 +55,7 @@ const CONTROL_ORGS_SQL: &str = "SELECT o.id FROM registry.orgs o \
 
 const CONTROL_SESSION_ACTIVE_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.principals p \
     WHERE p.id = $1::text::uuid AND p.type = 'user' AND p.status = 'active' \
+    AND EXISTS (SELECT 1 FROM identity.org_memberships m WHERE m.principal_id=p.id AND m.org=$2 AND m.status='active') \
     AND (EXISTS (SELECT 1 FROM identity.project_roles r \
     WHERE r.principal_id = p.id AND r.org = $2 AND r.role = $3) \
     OR EXISTS (SELECT 1 FROM identity.org_roles r \

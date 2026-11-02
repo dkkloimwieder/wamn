@@ -570,16 +570,6 @@ async fn a_control_session_follows_the_admin_roles_of_its_org() {
         .system
         .client
         .execute(
-            "INSERT INTO identity.org_memberships (principal_id, org, status) \
-             VALUES ($1::text::uuid, 'demo', 'active')",
-            &[&user.id().as_str()],
-        )
-        .await
-        .expect_redacted("org membership");
-    fixture
-        .system
-        .client
-        .execute(
             "INSERT INTO identity.org_roles (principal_id, org, role) \
              VALUES ($1::text::uuid, 'demo', 'org-admin')",
             &[&user.id().as_str()],

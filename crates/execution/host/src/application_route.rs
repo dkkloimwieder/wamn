@@ -24,17 +24,15 @@ use serde_json::{Value, json};
 use tokio_postgres::Client;
 use wamn_catalog::{
     HostAttachment, HostHandler, HostRouteAuthority, gate_workflow_document,
-    is_granted_host_route_operation, is_host_route_operation, resolve_workflow_components,
-    sealed_operation_reference,
+    resolve_workflow_components, sealed_operation_reference,
 };
 use wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL;
 use wamn_engine::flow_http_routing::AuthenticatedCaller;
 use wamn_engine::release_manifest::LoadedRelease;
 use wamn_platform_identity::PrincipalId;
 use wamn_platform_identity::application::{
-    AdministrationError, AdministrationRefusal, application_users, create_role, delete_role,
-    grant_permission, grant_user_role, permission_rows, require_user, revoke_permission,
-    revoke_user_role, role_names,
+    AdministrationError, AdministrationRefusal, GrantAuthority, GrantChange, application_users,
+    create_role, delete_role, mutate_grant, permission_is_grantable, permission_rows, role_names,
 };
 use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
 use wamn_platform_identity::control::is_project_admin;
@@ -102,6 +100,12 @@ struct CounterSetRequest {
 struct UserRoleRequest {
     user_id: String,
     role: String,
+}
+
+impl From<wamn_platform_identity::application::GrantError> for Refusal {
+    fn from(error: wamn_platform_identity::application::GrantError) -> Self {
+        AdministrationError::from(error).into()
+    }
 }
 
 impl From<AdministrationError> for Refusal {
@@ -362,20 +366,19 @@ impl ApplicationRoutes<'_> {
             }
             HostHandler::PermissionGrant => {
                 let request: PermissionRequest = parse(payload)?;
-                if is_host_route_operation(&request.operation)
-                    && !is_granted_host_route_operation(&request.operation)
-                {
-                    return Err(
-                        AdministrationError::from(AdministrationRefusal::NotGrantable {
-                            reference: request.operation,
-                        })
-                        .into(),
-                    );
-                }
                 self.run(attachment, principal, true, async |client| {
-                    let outcome =
-                        grant_permission(client, env_key, &request.role, &request.operation, drops)
-                            .await?;
+                    let outcome = mutate_grant(
+                        client,
+                        env_key,
+                        GrantAuthority::User(principal),
+                        GrantChange::Permission {
+                            role: &request.role,
+                            reference: &request.operation,
+                            grant: true,
+                        },
+                        drops,
+                    )
+                    .await?;
                     Ok(json!({ "rows_added": outcome.rows_added }))
                 })
                 .await
@@ -383,8 +386,18 @@ impl ApplicationRoutes<'_> {
             HostHandler::PermissionRevoke => {
                 let request: PermissionRequest = parse(payload)?;
                 self.run(attachment, principal, true, async |client| {
-                    revoke_permission(client, env_key, &request.role, &request.operation, drops)
-                        .await?;
+                    mutate_grant(
+                        client,
+                        env_key,
+                        GrantAuthority::User(principal),
+                        GrantChange::Permission {
+                            role: &request.role,
+                            reference: &request.operation,
+                            grant: false,
+                        },
+                        drops,
+                    )
+                    .await?;
                     Ok(json!({}))
                 })
                 .await
@@ -393,34 +406,41 @@ impl ApplicationRoutes<'_> {
                 let request: UserRoleRequest = parse(payload)?;
                 let user: PrincipalId = request.user_id.parse()?;
                 let user_id = user.as_str();
-                self.run(attachment, principal, false, async |client| {
-                    require_user(client, user_id).await?;
-                    let granted =
-                        grant_user_role(client, env_key, user_id, &request.role, drops).await?;
-                    Ok(json!({ "granted": granted }))
+                self.run(attachment, principal, true, async |client| {
+                    let granted = mutate_grant(
+                        client,
+                        env_key,
+                        GrantAuthority::User(principal),
+                        GrantChange::UserRole {
+                            user_id,
+                            role: &request.role,
+                            grant: true,
+                        },
+                        drops,
+                    )
+                    .await?;
+                    Ok(json!({ "granted": granted.changed }))
                 })
                 .await
             }
             HostHandler::UserRoleRevoke => {
                 let request: UserRoleRequest = parse(payload)?;
                 let user: PrincipalId = request.user_id.parse()?;
-                if request.role == ADMIN_ROLE {
-                    let (identity, org) = self.identity_reader()?;
-                    if is_project_admin(identity, &user, org, self.project).await? {
-                        return Err(AdministrationError::from(
-                            AdministrationRefusal::AdminCovered {
-                                user_id: user.as_str().to_owned(),
-                            },
-                        )
-                        .into());
-                    }
-                }
                 let user_id = user.as_str();
-                self.run(attachment, principal, false, async |client| {
-                    require_user(client, user_id).await?;
-                    let revoked =
-                        revoke_user_role(client, env_key, user_id, &request.role, drops).await?;
-                    Ok(json!({ "revoked": revoked }))
+                self.run(attachment, principal, true, async |client| {
+                    let revoked = mutate_grant(
+                        client,
+                        env_key,
+                        GrantAuthority::User(principal),
+                        GrantChange::UserRole {
+                            user_id,
+                            role: &request.role,
+                            grant: false,
+                        },
+                        drops,
+                    )
+                    .await?;
+                    Ok(json!({ "revoked": revoked.changed }))
                 })
                 .await
             }
@@ -537,8 +557,7 @@ impl ApplicationRoutes<'_> {
                 json!({
                     "operation": operation,
                     "served": served.contains(operation) || authority.is_some(),
-                    "grantable": (served.contains(operation) && authority.is_none())
-                        || authority == Some(&HostRouteAuthority::Granted),
+                    "grantable": permission_is_grantable(operation),
                     "admin_only": authority == Some(&HostRouteAuthority::Admin),
                     "selected": rows.iter().any(|row| row == operation),
                 })

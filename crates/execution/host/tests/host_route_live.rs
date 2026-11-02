@@ -496,6 +496,15 @@ async fn application_routes_write_the_rows_of_section_4_6() -> anyhow::Result<()
     );
 
     // User roles: a known user only, and admin stays under project-admin.
+    for reference in [
+        "wamn-control:user-role/grant",
+        "wamn-control:user-role/revoke",
+    ] {
+        assert_eq!(
+            refusal(reference, json!({"user_id": MEMBER, "role": "admin"})).await,
+            json!({"code":"admin_covered","detail":{"field":"user_id"}})
+        );
+    }
     assert_eq!(
         answer(
             "wamn-control:user-role/grant",
@@ -1027,6 +1036,119 @@ async fn a_session_without_file_grants_cannot_call_any_file_operation() -> anyho
             other => panic!("a valid session without {reference} must receive 403: {other:?}"),
         }
     }
+    host.server.stop().await;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires: WAMN_SESSION_EXCHANGE_CTL_BIN"]
+async fn cli_admin_revoke_reaches_the_same_http_refusal() -> anyhow::Result<()> {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    wamn_test_postgres::require_prerequisites(&["WAMN_SESSION_EXCHANGE_CTL_BIN"]);
+    let mut host = application_host("cli_admin_revoke").await?;
+    host.admin
+        .execute(
+            "INSERT INTO identity.project_roles VALUES($1::text::uuid,$2,$3,'project-admin')",
+            &[&host.first, &ORG, &PROJECT],
+        )
+        .await?;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let host_url = format!("http://{}", listener.local_addr()?);
+    let delivery = Arc::clone(&host.delivery);
+    let routing = Arc::clone(&host.routing);
+    let server = tokio::spawn(async move {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().await?;
+            let mut request = Vec::new();
+            let mut buffer = [0u8; 4096];
+            let header_end = loop {
+                let count = stream.read(&mut buffer).await?;
+                anyhow::ensure!(count != 0, "HTTP request ended before headers");
+                request.extend_from_slice(&buffer[..count]);
+                if let Some(offset) = request.windows(4).position(|value| value == b"\r\n\r\n") {
+                    break offset + 4;
+                }
+            };
+            let headers = String::from_utf8(request[..header_end].to_vec())?;
+            assert!(headers.starts_with("POST /wamn_control/user_role/revoke "));
+            let header = |name: &str| {
+                headers.lines().find_map(|line| {
+                    line.split_once(':')
+                        .filter(|(key, _)| key.eq_ignore_ascii_case(name))
+                        .map(|(_, value)| value.trim().to_owned())
+                })
+            };
+            let length: usize = header("content-length").expect("body length").parse()?;
+            while request.len() < header_end + length {
+                let count = stream.read(&mut buffer).await?;
+                anyhow::ensure!(count != 0, "HTTP request ended before its body");
+                request.extend_from_slice(&buffer[..count]);
+            }
+            let route = route_of("wamn-control:user-role/revoke");
+            let authorization = header("authorization").expect("session authorization");
+            let caller = routing
+                .authenticate_authorization_for_test(&route, Some(&authorization))
+                .await
+                .expect("real session admission");
+            let report = delivery
+                .deliver(
+                    DeliveryRequest {
+                        source: Source::Attachment(route),
+                        delivery_id: "cli-parity".to_owned(),
+                        payload: String::from_utf8(
+                            request[header_end..header_end + length].to_vec(),
+                        )?,
+                        caller: None,
+                        trace: None,
+                        parent_causation: None,
+                        if_none_match: None,
+                    },
+                    caller,
+                )
+                .await;
+            let Ok(DeliveryOutcome::Respond(body)) = report.outcome else {
+                panic!("the route must answer");
+            };
+            stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await?;
+        }
+        anyhow::Ok(())
+    });
+    let mut session = claims();
+    session["roles"] = json!(["admin"]);
+    let token = signed(&header(), &session);
+    let direct: Value = reqwest::Client::new()
+        .post(format!("{host_url}/wamn_control/user_role/revoke"))
+        .bearer_auth(&token)
+        .json(
+            &json!([{"request_id":"direct-parity","value":{"user_id":host.first,"role":"admin"}}]),
+        )
+        .send()
+        .await?
+        .json()
+        .await?;
+    assert_eq!(direct[0]["error"]["code"], "admin_covered");
+    let output = tokio::process::Command::new(
+        std::env::var_os("WAMN_SESSION_EXCHANGE_CTL_BIN").expect("built CLI"),
+    )
+    .args([
+        "revoke-role",
+        "--host-url",
+        &host_url,
+        "--token",
+        &token,
+        "--user-id",
+        &host.first,
+        "--role",
+        "admin",
+    ])
+    .output()
+    .await?;
+    assert!(!output.status.success());
+    let error = String::from_utf8(output.stderr)?;
+    assert!(error.contains("admin_covered"), "{error}");
+    server.await??;
+    let still_admin: bool = host.admin.query_one("SELECT EXISTS (SELECT 1 FROM platform.user_role WHERE user_id=$1::text::uuid AND role_name='admin')", &[&host.first]).await?.get(0);
+    assert!(still_admin);
     host.server.stop().await;
     Ok(())
 }

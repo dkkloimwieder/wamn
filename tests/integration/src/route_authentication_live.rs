@@ -10,8 +10,6 @@ use tokio_postgres::Client;
 use wamn_catalog::SERVING_MANIFEST_FORMAT_VERSION;
 use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::provision_project_env::{self, secret_value};
-use wamn_control::role_permission;
-use wamn_control::user_role::{self, EnvironmentTarget, UserRoleRequest};
 use wamn_control_provision::{SystemReader, WorkloadRoleFamily, parse_system_reader_url};
 use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
 use wamn_engine::release_manifest::LoadedRelease;
@@ -92,12 +90,11 @@ async fn reset_and_install_control(admin: &Client) -> anyhow::Result<()> {
 }
 
 /// Write the operator service's tenant `user` row, as `reconcile-run-plane`
-/// does, and give it the authored role [`ITEM_READER`] with the `grant-role`
-/// library call.
+/// does, and grant its authored role through the application mutation owner.
 async fn grant_service_operator(
     system_url: &str,
     project: &Client,
-    project_url: &str,
+    _project_url: &str,
     subject: &str,
 ) -> anyhow::Result<()> {
     let (system, system_task) = connect(system_url).await?;
@@ -115,18 +112,20 @@ async fn grant_service_operator(
         )
         .await
         .context("write the operator service's user row")?;
-    let request = UserRoleRequest {
-        system_database_url: system_url.to_owned(),
-        admin_database_url: project_url.to_owned(),
-        org: ORG.to_owned(),
-        project: PROJECT.to_owned(),
-        env: ENVIRONMENT.to_owned(),
-        user: email,
-        role: ITEM_READER.to_owned(),
-    };
-    let outcome = user_role::grant_role(&request, &AuthChanges::default())
-        .await
-        .context("grant the authored role")?;
+    project.batch_execute("BEGIN").await?;
+    let outcome = wamn_platform_identity::application::mutate_grant(
+        project,
+        ENV_KEY,
+        wamn_platform_identity::application::GrantAuthority::Provisioning,
+        wamn_platform_identity::application::GrantChange::UserRole {
+            user_id: principal.id().as_str(),
+            role: ITEM_READER,
+            grant: true,
+        },
+        &mut AuthDrops::default(),
+    )
+    .await?;
+    project.batch_execute("COMMIT").await?;
     anyhow::ensure!(outcome.changed, "the first grant wrote no row");
     Ok(())
 }
@@ -540,6 +539,7 @@ async fn assert_user_environment_membership(
     drop(other_project);
     other_connection.await?;
     // A project-wide role and another environment's membership cannot authorize this route.
+    wamn_platform_identity::org::activate_org_membership(admin, user.id(), ORG).await?;
     assign_project_role(
         admin,
         user.id(),
@@ -1247,216 +1247,6 @@ async fn production_operator_authentication(root: &Path) {
     admin_task.abort();
 }
 
-/// `grant-role` and `revoke-role` against a provisioned environment: `admin`
-/// and an authored role, the refusal of a role that does not exist, and a
-/// registry target that names another database.
-#[tokio::test]
-#[ignore = "requires:"]
-async fn role_verbs_grant_and_revoke_existing_roles() {
-    wamn_test_postgres::require_prerequisites(&[]);
-    wamn_control::dev::pat_issuer::identity_binary().expect("find the wamn-identity binary");
-    let mut server =
-        wamn_test_infrastructure::postgres::start(&[]).expect("start the test PostgreSQL server");
-    let admin_url = server
-        .create_database("wamn_system")
-        .expect("create the wamn_system database")
-        .url()
-        .to_owned();
-    let scratch = ScratchRoot::create().expect("create role verb test directory");
-    let (admin, admin_task) = connect(&admin_url).await.expect("connect admin");
-    reset_and_install_control(&admin)
-        .await
-        .expect("install the control plane");
-    let route = provision_route(
-        &JourneyScope::receiving(),
-        &admin_url,
-        &admin,
-        scratch.path(),
-        None,
-    )
-    .await
-    .expect("provision the environment");
-    let (project, project_task) = connect(&route.database_url)
-        .await
-        .expect("connect project database");
-    install_project_and_reconcile(&project, &route.database_url)
-        .await
-        .expect("publish the fixture package");
-    for (email, kind) in [
-        ("person@example.invalid", "user"),
-        ("twin@example.invalid", "user"),
-        ("TWIN@example.invalid", "user"),
-        ("service@example.invalid", "service"),
-    ] {
-        project
-            .execute(
-                "INSERT INTO platform.\"user\" (id, type, email) \
-                 VALUES (gen_random_uuid(), $1, $2)",
-                &[&kind, &email],
-            )
-            .await
-            .expect("write a user row");
-    }
-    let request = |user: &str, role: &str| UserRoleRequest {
-        system_database_url: admin_url.clone(),
-        admin_database_url: route.database_url.clone(),
-        org: ORG.to_owned(),
-        project: PROJECT.to_owned(),
-        env: ENVIRONMENT.to_owned(),
-        user: user.to_owned(),
-        role: role.to_owned(),
-    };
-    let held = |email: &'static str| {
-        let project = &project;
-        async move {
-            project
-                .query(
-                    "SELECT r.role_name FROM platform.user_role r \
-                     JOIN platform.\"user\" u ON u.id = r.user_id \
-                     WHERE u.email = $1 ORDER BY r.role_name",
-                    &[&email],
-                )
-                .await
-                .expect("read held roles")
-                .into_iter()
-                .map(|row| row.get::<_, String>(0))
-                .collect::<Vec<_>>()
-        }
-    };
-
-    for (user, role) in [
-        ("person@example.invalid", ADMIN_ROLE),
-        ("service@example.invalid", ITEM_READER),
-        ("Person@Example.invalid", ITEM_READER),
-    ] {
-        let outcome = user_role::grant_role(&request(user, role), &AuthChanges::default())
-            .await
-            .unwrap_or_else(|error| panic!("grant {role} to {user}: {error:#}"));
-        assert!(
-            outcome.changed,
-            "the grant of {role} to {user} wrote no row"
-        );
-    }
-    let again = user_role::grant_role(
-        &request("service@example.invalid", ITEM_READER),
-        &AuthChanges::default(),
-    )
-    .await
-    .expect("a repeated grant succeeds");
-    assert!(!again.changed, "a repeated grant wrote a second row");
-    assert_eq!(
-        held("person@example.invalid").await,
-        [ADMIN_ROLE, ITEM_READER]
-    );
-    assert_eq!(held("service@example.invalid").await, [ITEM_READER]);
-
-    for (user, role, refusal) in [
-        ("person@example.invalid", "reader", "does not exist"),
-        ("person@example.invalid", "operator", "does not exist"),
-        ("nobody@example.invalid", ITEM_READER, "env apply"),
-        ("twin@example.invalid", ITEM_READER, "names 2 users"),
-    ] {
-        let error = user_role::grant_role(&request(user, role), &AuthChanges::default())
-            .await
-            .expect_err("the grant must refuse");
-        assert!(
-            format!("{error:#}").contains(refusal),
-            "the refusal of {role} for {user} does not say {refusal:?}: {error:#}"
-        );
-    }
-    let mut wrong_env = request("person@example.invalid", ITEM_READER);
-    wrong_env.env = OTHER_ENVIRONMENT.to_owned();
-    assert!(
-        user_role::grant_role(&wrong_env, &AuthChanges::default())
-            .await
-            .is_err(),
-        "a registry target without a recorded instance was accepted"
-    );
-
-    let revoked = user_role::revoke_role(
-        &request("person@example.invalid", ADMIN_ROLE),
-        &AuthChanges::default(),
-    )
-    .await
-    .expect("revoke admin");
-    assert!(revoked.changed);
-    let revoked = user_role::revoke_role(
-        &request("service@example.invalid", ITEM_READER),
-        &AuthChanges::default(),
-    )
-    .await
-    .expect("revoke the authored role");
-    assert!(revoked.changed);
-    let unchanged = user_role::revoke_role(
-        &request("service@example.invalid", ITEM_READER),
-        &AuthChanges::default(),
-    )
-    .await
-    .expect("a repeated revoke succeeds");
-    assert!(!unchanged.changed, "a repeated revoke removed a row");
-    assert_eq!(held("person@example.invalid").await, [ITEM_READER]);
-    assert!(held("service@example.invalid").await.is_empty());
-
-    // The authored-role verbs reach the same registry-checked database.
-    let target = EnvironmentTarget {
-        system_database_url: admin_url.clone(),
-        admin_database_url: route.database_url.clone(),
-        org: ORG.to_owned(),
-        project: PROJECT.to_owned(),
-        env: ENVIRONMENT.to_owned(),
-    };
-    assert!(
-        role_permission::create_role_in(&target, "clerk", &AuthChanges::default())
-            .await
-            .expect("create an authored role")
-    );
-    user_role::grant_role(
-        &request("service@example.invalid", "clerk"),
-        &AuthChanges::default(),
-    )
-    .await
-    .expect("grant the created role");
-    // R18 (4): a grant stores the root with no serving release to check.
-    let granted = role_permission::grant_permission_in(
-        &target,
-        "clerk",
-        OPERATION_REFERENCE,
-        &AuthChanges::default(),
-    )
-    .await
-    .expect("a grant stores the root");
-    assert_eq!(granted.rows_added, 1);
-    role_permission::revoke_permission_in(
-        &target,
-        "clerk",
-        OPERATION_REFERENCE,
-        &AuthChanges::default(),
-    )
-    .await
-    .expect("revoke the stored root");
-    let error = role_permission::revoke_permission_in(
-        &target,
-        "clerk",
-        OPERATION_REFERENCE,
-        &AuthChanges::default(),
-    )
-    .await
-    .expect_err("a revoke of an unheld permission refuses");
-    assert!(format!("{error:#}").contains("does not hold"), "{error:#}");
-    assert!(
-        role_permission::delete_role_in(&target, "clerk", &AuthChanges::default())
-            .await
-            .expect("delete the authored role")
-    );
-    assert!(
-        held("service@example.invalid").await.is_empty(),
-        "the deleted role kept its assignment"
-    );
-
-    drop(project);
-    project_task.abort();
-    admin_task.abort();
-}
 /// Checked-in schema generated from [`JourneyDocument`], relative to this
 /// crate's manifest. Regenerate it with the command beside its drift test.
 const JOURNEY_SCHEMA_PATH: &str = "schema/wamn-journey.schema.json";

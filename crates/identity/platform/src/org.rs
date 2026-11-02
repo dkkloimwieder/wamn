@@ -24,8 +24,8 @@ const ACTIVATE_MEMBERSHIP_SQL: &str = "INSERT INTO identity.org_memberships \
     ON CONFLICT (principal_id, org) DO UPDATE SET status = 'active' \
     WHERE identity.org_memberships.status <> 'active'";
 
-const ACTIVE_MEMBER_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.org_memberships \
-    WHERE principal_id = $1::text::uuid AND org = $2 AND status = 'active')";
+const ACTIVE_MEMBER_SQL: &str = "SELECT status FROM identity.org_memberships \
+    WHERE principal_id = $1::text::uuid AND org = $2 FOR UPDATE";
 
 const PROJECT_IN_ORG_SQL: &str =
     "SELECT EXISTS (SELECT 1 FROM registry.projects WHERE org = $1 AND id = $2)";
@@ -180,6 +180,7 @@ pub async fn revoke_member(
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     let org = checked_scope_segment("org", org)?;
+    lock_membership(client, principal_id, &org).await?;
     let project = checked_scope_segment("project", project)?;
     refuse_under_org_admin(client, principal_id, &org).await?;
     let covered: bool = client
@@ -222,6 +223,7 @@ pub async fn revoke_project_admin(
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     let org = checked_scope_segment("org", org)?;
+    lock_membership(client, principal_id, &org).await?;
     let project = checked_scope_segment("project", project)?;
     refuse_under_org_admin(client, principal_id, &org).await?;
     drops.identity(principal_id.as_str());
@@ -271,7 +273,8 @@ async fn refuse_under_org_admin(
 const ORG_ADMINS_PROJECT_ADMIN_SQL: &str = "INSERT INTO identity.project_roles \
     (principal_id, org, project, role) \
     SELECT r.principal_id, r.org, $2, $3 FROM identity.org_roles r \
-    WHERE r.org = $1 AND r.role = $4 \
+    WHERE r.org = $1 AND r.role = $4 AND EXISTS (SELECT 1 FROM identity.org_memberships m \
+    WHERE m.principal_id=r.principal_id AND m.org=r.org AND m.status='active') \
     ON CONFLICT DO NOTHING";
 
 /// A membership in the environment for every holder of `project-admin` in
@@ -279,7 +282,8 @@ const ORG_ADMINS_PROJECT_ADMIN_SQL: &str = "INSERT INTO identity.project_roles \
 const PROJECT_ADMINS_MEMBERSHIP_SQL: &str = "INSERT INTO identity.project_env_memberships \
     (principal_id, org, project, env) \
     SELECT r.principal_id, r.org, r.project, $3 FROM identity.project_roles r \
-    WHERE r.org = $1 AND r.project = $2 AND r.role = $4 \
+    WHERE r.org = $1 AND r.project = $2 AND r.role = $4 AND EXISTS (SELECT 1 FROM identity.org_memberships m \
+    WHERE m.principal_id=r.principal_id AND m.org=r.org AND m.status='active') \
     ON CONFLICT DO NOTHING";
 
 /// Give a new project, or a new environment, the rows of the current
@@ -294,6 +298,7 @@ pub async fn materialize_admin_grants(
     env: &str,
 ) -> Result<(), IdentityError> {
     let org = checked_scope_segment("org", org)?;
+    lock_org_memberships(client, &org).await?;
     let project = checked_scope_segment("project", project)?;
     let env = checked_scope_segment("env", env)?;
     client
@@ -329,6 +334,7 @@ pub async fn create_project(
     project: &str,
 ) -> Result<(), IdentityError> {
     let org = checked_scope_segment("org", org)?;
+    lock_org_memberships(client, &org).await?;
     let project = checked_scope_segment("project", project)?;
     let created = client
         .execute(CREATE_PROJECT_SQL, &[&org, &project])
@@ -357,17 +363,15 @@ pub async fn create_project(
 }
 
 /// The checked org, when the principal is an active member of it.
-async fn active_member(
+pub(crate) async fn active_member(
     client: &(impl GenericClient + Sync),
     principal_id: &PrincipalId,
     org: &str,
 ) -> Result<String, IdentityError> {
     let org = checked_scope_segment("org", org)?;
-    let active: bool = client
-        .query_one(ACTIVE_MEMBER_SQL, &[&principal_id.as_str(), &org])
-        .await
-        .map_err(|error| database_error(&error))?
-        .get(0);
+    let active = lock_membership(client, principal_id, &org)
+        .await?
+        .is_some_and(|status| status == "active");
     if !active {
         return Err(IdentityError::refused(
             IdentityErrorType::NotFound,
@@ -380,9 +384,6 @@ async fn active_member(
 
 const REACTIVATE_MEMBERSHIP_SQL: &str = "UPDATE identity.org_memberships SET status = 'active' \
     WHERE principal_id = $1::text::uuid AND org = $2 AND status <> 'active'";
-
-const MEMBER_SQL: &str = "SELECT EXISTS (SELECT 1 FROM identity.org_memberships \
-    WHERE principal_id = $1::text::uuid AND org = $2)";
 
 const DROP_ENV_MEMBERSHIPS_SQL: &str = "DELETE FROM identity.project_env_memberships \
     WHERE principal_id = $1::text::uuid AND org = $2";
@@ -495,6 +496,7 @@ pub async fn revoke_org_admin(
     drops: &mut AuthDrops,
 ) -> Result<(), IdentityError> {
     let org = checked_scope_segment("org", org)?;
+    lock_membership(client, principal_id, &org).await?;
     let principal = principal_id.as_str();
     drops.identity(principal);
     client
@@ -853,11 +855,7 @@ async fn member(
     org: &str,
 ) -> Result<String, IdentityError> {
     let org = checked_scope_segment("org", org)?;
-    let found: bool = client
-        .query_one(MEMBER_SQL, &[&principal_id.as_str(), &org])
-        .await
-        .map_err(|error| database_error(&error))?
-        .get(0);
+    let found = lock_membership(client, principal_id, &org).await?.is_some();
     if !found {
         return Err(IdentityError::refused(
             IdentityErrorType::NotFound,
@@ -866,4 +864,28 @@ async fn member(
         ));
     }
     Ok(org)
+}
+
+/// Lock a user's org membership until the caller's system transaction ends.
+/// An absent row grants no authority. Services have no org membership.
+pub async fn lock_membership(
+    client: &(impl GenericClient + Sync),
+    principal: &PrincipalId,
+    org: &str,
+) -> Result<Option<String>, IdentityError> {
+    client
+        .query_opt(ACTIVE_MEMBER_SQL, &[&principal.as_str(), &org])
+        .await
+        .map(|row| row.map(|row| row.get(0)))
+        .map_err(|error| database_error(&error))
+}
+
+/// Lock existing memberships in principal order before bulk authority writes.
+pub async fn lock_org_memberships(
+    client: &(impl GenericClient + Sync),
+    org: &str,
+) -> Result<(), IdentityError> {
+    client.query("SELECT principal_id FROM identity.org_memberships WHERE org=$1 ORDER BY principal_id FOR UPDATE", &[&org])
+        .await.map_err(|error| database_error(&error))?;
+    Ok(())
 }

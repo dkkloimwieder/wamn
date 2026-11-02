@@ -265,21 +265,41 @@ pub async fn reconcile_run_plane(
         .await?;
         // After the catalog schema, because app-schema.sql's stamp triggers
         // call the record-history function that composition installs.
-        let identity_source = read_env_key_identity_source(
-            &args.system_database_url,
-            &args.org,
-            &args.project,
-            &args.env,
-        )
-        .await?;
-        let env_key_identity = converge_env_key_identity(
-            &mut client,
-            &args.env_key(),
-            &identity_source,
-            !args.dry_run,
-            &args.changes,
-        )
-        .await?;
+        let (mut system, connection) =
+            tokio_postgres::connect(&args.system_database_url, NoTls).await?;
+        let connection = tokio::spawn(connection);
+        let identity_result = async {
+            let authority = system.transaction().await?;
+            if !args.dry_run {
+                wamn_platform_identity::org::lock_org_memberships(&authority, &args.org).await?;
+            }
+            let identity_source =
+                read_env_key_identity_source(&authority, &args.org, &args.project, &args.env)
+                    .await?;
+            let env_key = args.env_key();
+            let scope = wamn_platform_identity::application::ApplicationScope {
+                org: &args.org,
+                project: &args.project,
+                env: &args.env,
+                env_key: &env_key,
+            };
+            let outcome = converge_env_key_identity(
+                &mut client,
+                &env_key,
+                &identity_source,
+                !args.dry_run,
+                &args.changes,
+                &authority,
+                scope,
+            )
+            .await?;
+            authority.commit().await?;
+            anyhow::Ok(outcome)
+        }
+        .await;
+        drop(system);
+        let _ = connection.await;
+        let env_key_identity = identity_result?;
         Ok::<_, anyhow::Error>((plan, policy_changed, durability_class, env_key_identity))
     }
     .await;
@@ -302,16 +322,10 @@ struct ServicePrincipal {
     display_name: String,
 }
 
-/// One user principal with a membership in the project environment being
-/// reconciled (`wamn-0h0g.9.18`).
-///
-/// A user carries a real address, so this holds `identity.principals.email`
-/// and never the subject, which only authenticates.
+/// One user principal with active org and environment memberships.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct UserPrincipal {
     id: String,
-    email: String,
-    display_name: String,
 }
 
 /// The deployment and registry facts a tenant's identity rows are built from.
@@ -325,9 +339,7 @@ struct EnvKeyIdentitySource {
     platform_domain: Option<String>,
     services: Vec<ServicePrincipal>,
     users: Vec<UserPrincipal>,
-    /// The members of `users` who hold `project-admin` in the project, which
-    /// every `org-admin` of the org holds too
-    /// (docs/architecture/overview.md#organization-membership-and-administration).
+    /// The committed user and service principals that derive application admin.
     admins: BTreeSet<String>,
 }
 
@@ -353,82 +365,69 @@ const ENV_KEY_IDENTITY_USERS_SQL: &str = "SELECT p.id::text, p.email, p.display_
      JOIN identity.principals AS p ON p.id = m.principal_id \
      WHERE m.org = $1 AND m.project = $2 AND m.env = $3 \
        AND p.type = 'user' AND p.status = 'active' \
+       AND EXISTS (SELECT 1 FROM identity.org_memberships om WHERE om.principal_id=p.id AND om.org=m.org AND om.status='active') \
      ORDER BY p.email";
 
 /// Every user member of ONE project environment who holds `project-admin` in
 /// its project.
-const ENV_KEY_IDENTITY_ADMINS_SQL: &str = "SELECT p.id::text \
-     FROM identity.project_roles AS r \
-     JOIN identity.principals AS p ON p.id = r.principal_id \
-     JOIN identity.project_env_memberships AS m \
-       ON m.principal_id = r.principal_id AND m.org = r.org AND m.project = r.project \
-     WHERE r.org = $1 AND r.project = $2 AND m.env = $3 AND r.role = $4 \
-       AND p.type = 'user' AND p.status = 'active'";
+const ENV_KEY_IDENTITY_ADMINS_SQL: &str = "SELECT p.id::text FROM identity.principals p \
+    WHERE p.status='active' AND (EXISTS (SELECT 1 FROM identity.project_roles r \
+    WHERE r.principal_id=p.id AND r.org=$1 AND r.project=$2 AND r.role=$4) \
+    OR EXISTS (SELECT 1 FROM identity.org_roles r WHERE r.principal_id=p.id AND r.org=$1 AND r.role='org-admin')) \
+    AND (p.type='service' OR (p.type='user' \
+    AND EXISTS (SELECT 1 FROM identity.org_memberships om WHERE om.principal_id=p.id AND om.org=$1 AND om.status='active') \
+    AND EXISTS (SELECT 1 FROM identity.project_env_memberships m WHERE m.principal_id=p.id AND m.org=$1 AND m.project=$2 AND m.env=$3)))";
 
 async fn read_env_key_identity_source(
-    system_database_url: &str,
+    client: &tokio_postgres::Transaction<'_>,
     org: &str,
     project: &str,
     env: &str,
 ) -> anyhow::Result<EnvKeyIdentitySource> {
-    let (client, connection) = tokio_postgres::connect(system_database_url, NoTls)
+    let platform_domain: Option<String> = client
+        .query_one("SELECT platform_domain FROM registry.meta", &[])
         .await
-        .context("connect to the system registry for tenant identity")?;
-    let connection_task = tokio::spawn(connection);
-    let read = async {
-        let platform_domain: Option<String> = client
-            .query_one("SELECT platform_domain FROM registry.meta", &[])
-            .await
-            .context("read the deployment platform domain")?
-            .get(0);
-        let services = client
-            .query(ENV_KEY_IDENTITY_SOURCE_SQL, &[&org, &project])
-            .await
-            .context("read the project's service principals")?
-            .into_iter()
-            .map(|row| ServicePrincipal {
-                id: row.get(0),
-                subject: row.get(1),
-                display_name: row.get(2),
-            })
-            .collect();
-        let users = client
-            .query(ENV_KEY_IDENTITY_USERS_SQL, &[&org, &project, &env])
-            .await
-            .context("read the project environment's user members")?
-            .into_iter()
-            .map(|row| UserPrincipal {
-                id: row.get(0),
-                email: row.get(1),
-                display_name: row.get(2),
-            })
-            .collect();
-        let admins = client
-            .query(
-                ENV_KEY_IDENTITY_ADMINS_SQL,
-                &[
-                    &org,
-                    &project,
-                    &env,
-                    &wamn_platform_identity::control::PROJECT_ADMIN_ROLE,
-                ],
-            )
-            .await
-            .context("read the project environment's administrators")?
-            .into_iter()
-            .map(|row| row.get(0))
-            .collect();
-        Ok::<_, anyhow::Error>(EnvKeyIdentitySource {
-            platform_domain,
-            services,
-            users,
-            admins,
+        .context("read the deployment platform domain")?
+        .get(0);
+    let services = client
+        .query(ENV_KEY_IDENTITY_SOURCE_SQL, &[&org, &project])
+        .await
+        .context("read the project's service principals")?
+        .into_iter()
+        .map(|row| ServicePrincipal {
+            id: row.get(0),
+            subject: row.get(1),
+            display_name: row.get(2),
         })
-    }
-    .await;
-    drop(client);
-    let _ = connection_task.await;
-    read
+        .collect();
+    let users = client
+        .query(ENV_KEY_IDENTITY_USERS_SQL, &[&org, &project, &env])
+        .await
+        .context("read the project environment's user members")?
+        .into_iter()
+        .map(|row| UserPrincipal { id: row.get(0) })
+        .collect();
+    let admins = client
+        .query(
+            ENV_KEY_IDENTITY_ADMINS_SQL,
+            &[
+                &org,
+                &project,
+                &env,
+                &wamn_platform_identity::control::PROJECT_ADMIN_ROLE,
+            ],
+        )
+        .await
+        .context("read the project environment's administrators")?
+        .into_iter()
+        .map(|row| row.get(0))
+        .collect();
+    Ok::<_, anyhow::Error>(EnvKeyIdentitySource {
+        platform_domain,
+        services,
+        users,
+        admins,
+    })
 }
 
 /// What one env_keyentity convergence did, or would do under a dry run.
@@ -486,6 +485,8 @@ async fn converge_env_key_identity(
     source: &EnvKeyIdentitySource,
     apply: bool,
     changes: &wamn_platform_identity::auth_changes::AuthChanges,
+    system: &tokio_postgres::Transaction<'_>,
+    scope: wamn_platform_identity::application::ApplicationScope<'_>,
 ) -> anyhow::Result<EnvKeyIdentityOutcome> {
     anyhow::ensure!(!env_key.is_empty(), "tenant must not be empty");
     let mut outcome = EnvKeyIdentityOutcome::default();
@@ -589,7 +590,8 @@ async fn converge_env_key_identity(
         .iter()
         .filter(|user| source.admins.contains(&user.id) && !present_admins.contains(&user.id))
         .collect();
-    outcome.admin_rows_written = missing_admins.len();
+    outcome.admin_rows_written = source.admins.difference(&present_admins).count();
+    let stale_admins: Vec<_> = present_admins.difference(&source.admins).collect();
     if !apply
         || (app_schema_present
             && missing_platform.is_empty()
@@ -597,7 +599,9 @@ async fn converge_env_key_identity(
             && missing_services.is_empty()
             && missing_users.is_empty()
             && stale_users.is_empty()
-            && missing_admins.is_empty())
+            && missing_admins.is_empty()
+            && stale_admins.is_empty()
+            && source.admins.is_subset(&present_admins))
     {
         return Ok(outcome);
     }
@@ -652,6 +656,8 @@ async fn converge_env_key_identity(
         || !missing_users.is_empty()
         || !stale_users.is_empty()
         || !missing_admins.is_empty()
+        || !stale_admins.is_empty()
+        || !source.admins.is_subset(&present_admins)
     {
         transaction
             .batch_execute(&bind_platform_principal_sql(
@@ -659,17 +665,6 @@ async fn converge_env_key_identity(
             ))
             .await
             .context("bind wamn:provisioning for the service and user rows")?;
-        for id in &stale_users {
-            let principal_id: wamn_platform_identity::PrincipalId = id.parse()?;
-            wamn_platform_identity::application::remove_user(
-                &transaction,
-                env_key,
-                &principal_id,
-                &mut drops,
-            )
-            .await
-            .with_context(|| format!("remove the user row of principal {id}"))?;
-        }
         for service in &missing_services {
             let principal_id: wamn_platform_identity::PrincipalId = service.id.parse()?;
             wamn_platform_identity::application::write_service(
@@ -682,38 +677,22 @@ async fn converge_env_key_identity(
                 },
                 &mut drops,
             )
-            .await
-            .with_context(|| format!("write the service row of principal {:?}", service.subject))?;
+            .await?;
         }
-        for user in &missing_users {
-            let principal_id: wamn_platform_identity::PrincipalId = user.id.parse()?;
-            wamn_platform_identity::application::write_user(
+        let mut principals = present_user_type.clone();
+        principals.extend(source.users.iter().map(|user| user.id.clone()));
+        principals.extend(source.services.iter().map(|service| service.id.clone()));
+        principals.extend(present_admins.iter().cloned());
+        for id in principals {
+            let principal = id.parse()?;
+            wamn_platform_identity::application::project_authority(
+                system,
                 &transaction,
-                env_key,
-                wamn_platform_identity::application::ApplicationUser {
-                    principal_id: &principal_id,
-                    email: &user.email,
-                    display_name: &user.display_name,
-                },
+                scope,
+                &principal,
                 &mut drops,
             )
-            .await
-            .with_context(|| format!("write the user row of principal {}", user.id))?;
-        }
-        for user in &missing_admins {
-            let principal_id: wamn_platform_identity::PrincipalId = user.id.parse()?;
-            wamn_platform_identity::application::write_admin(
-                &transaction,
-                env_key,
-                wamn_platform_identity::application::ApplicationUser {
-                    principal_id: &principal_id,
-                    email: &user.email,
-                    display_name: &user.display_name,
-                },
-                &mut drops,
-            )
-            .await
-            .with_context(|| format!("write the admin row of principal {}", user.id))?;
+            .await?;
         }
     }
     transaction

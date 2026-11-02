@@ -930,11 +930,13 @@ pub fn grant_registry_reader_surface_sql() -> String {
 /// `the_identity_reader_grants_no_insert_and_no_update`, so the fourth drift
 /// fails a test instead of landing.
 pub fn grant_identity_reader_surface_sql() -> String {
-    grant_system_reader_surface_sql(
+    let mut sql = grant_system_reader_surface_sql(
         WorkloadRoleFamily::IdentityReader,
         "identity",
         &IDENTITY_READER_RELATIONS,
-    )
+    );
+    sql.push_str(" GRANT SELECT (principal_id, org, status) ON identity.org_memberships TO wamn_identity_reader;");
+    sql
 }
 
 /// Grant the host its environment readers and encrypted OAuth storage.
@@ -1520,7 +1522,8 @@ mod tests {
              GRANT SELECT ON TABLE \"identity\".\"principals\" TO \"wamn_identity_reader\"; \
              GRANT SELECT ON TABLE \"identity\".\"project_env_memberships\" TO \"wamn_identity_reader\"; \
              GRANT SELECT ON TABLE \"identity\".\"project_roles\" TO \"wamn_identity_reader\"; \
-             GRANT SELECT ON TABLE \"identity\".\"password_logins\" TO \"wamn_identity_reader\";"
+             GRANT SELECT ON TABLE \"identity\".\"password_logins\" TO \"wamn_identity_reader\"; \
+             GRANT SELECT (principal_id, org, status) ON identity.org_memberships TO wamn_identity_reader;"
         );
     }
 
@@ -1545,7 +1548,7 @@ mod tests {
         }
         assert_eq!(
             sql.matches("GRANT SELECT").count(),
-            IDENTITY_READER_RELATIONS.len(),
+            IDENTITY_READER_RELATIONS.len() + 1,
         );
         // The other half of the premise — that neither consuming statement takes
         // a row lock, which would need UPDATE that SELECT alone cannot serve —
