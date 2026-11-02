@@ -15,9 +15,11 @@ use super::{
 };
 
 #[tokio::test]
-#[ignore = "requires: docker, kind, kubectl, helm"]
+#[ignore = "requires: bin:docker, bin:kind, bin:kubectl, bin:helm"]
 async fn baseline_overlay_and_materializer_progress() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm"]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:docker, bin:kind, bin:kubectl, bin:helm",
+    );
     let evidence = super::evidence_directory()?;
     Box::pin(super::with_signals(&evidence, run(&evidence))).await
 }

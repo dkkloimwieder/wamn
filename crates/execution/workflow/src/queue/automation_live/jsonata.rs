@@ -204,16 +204,23 @@ async fn event_run(
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: wamn build apps/wamn_wms (the virtualized jsonata node)"]
+#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_JSONATA_COMPONENT"]
 async fn the_jsonata_node_shapes_a_row_through_the_queue() -> anyhow::Result<()> {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../../apps/target/wamn/wamn_wms/components/jsonata.wasm"
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_JSONATA_COMPONENT",
+    );
+    let path = std::path::PathBuf::from(
+        std::env::var_os("WAMN_JSONATA_COMPONENT")
+            .expect("set WAMN_JSONATA_COMPONENT to the built jsonata component"),
     );
     wamn_schema_generator::build_record::check_current(
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_wms"),
     )?;
-    let bytes = std::fs::read(path)
-        .map_err(|error| anyhow::anyhow!("read {path}; run wamn build apps/wamn_wms: {error}"))?;
+    let bytes = std::fs::read(&path).map_err(|error| {
+        anyhow::anyhow!(
+            "read {}; run wamn build apps/wamn_wms: {error}",
+            path.display()
+        )
+    })?;
     super::run_automation(super::Mode::Jsonata(bytes)).await
 }

@@ -213,9 +213,11 @@ fn names(index: &Value, digest: &str) -> Vec<String> {
 }
 
 #[test]
-#[ignore = "requires: docker, kind, curl, openssl, tar"]
+#[ignore = "requires: bin:docker, bin:kind, bin:curl, bin:openssl, bin:tar"]
 fn kind_nodes_import_the_pinned_digest_and_hold_no_credential() {
-    wamn_test_postgres::require_prerequisites(&["docker", "kind", "curl", "openssl", "tar"]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:docker, bin:kind, bin:curl, bin:openssl, bin:tar",
+    );
     let root = repository_root();
     let nonce = random_hex(8);
     let cluster = format!("wamn-registry-archive-{nonce}");

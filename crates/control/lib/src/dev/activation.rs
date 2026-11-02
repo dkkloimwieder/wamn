@@ -2061,7 +2061,7 @@ mod tests {
 
     /// Render locally with Helm: no cluster, release install, or registry access.
     #[test]
-    #[ignore = "wamn-bjs11"]
+    #[ignore = "requires: bin:helm"]
     fn local_host_matches_the_deployed_host_contract() {
         use crate::release_chart;
         use serde::Deserialize as _;
@@ -2099,6 +2099,7 @@ mod tests {
             }
             result
         }
+        wamn_test_postgres::require_ignored_prerequisites("requires: bin:helm");
 
         let directory = host_log_fixture();
         let chart = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy/platform/release");
@@ -2239,6 +2240,12 @@ mod tests {
 
         let mut deployed = settings(&deployed_env, &deployed_args);
         let mut local = settings(&local.env, &local.args);
+        // The deployed release exposes file transfers. Local applications use staged files.
+        assert_eq!(
+            deployed.remove("--files-addr").as_deref(),
+            Some("0.0.0.0:8082")
+        );
+        assert!(!local.contains_key("--files-addr"));
         assert_eq!(
             local.remove("WAMN_CREDENTIAL_DIR"),
             std::env::var("WAMN_CREDENTIAL_DIR").ok()
@@ -2266,6 +2273,7 @@ mod tests {
             "--release-manifest-digest", // Deployed releases use a registry.
             "--local-application", // Local releases use staged files.
             "--local-application-digest", // Local releases use staged files.
+            "--user-config", // Local sessions store host configuration in their own directory.
             "DOCKER_CONFIG", // Local releases require no registry credentials.
             "WAMN_COMPONENT_ARTIFACT_BASE", // Local components use staged files.
             "WAMN_REGISTRY_TOKEN_METADATA", // Local releases require no registry token.

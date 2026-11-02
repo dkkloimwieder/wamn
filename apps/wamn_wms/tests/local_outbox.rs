@@ -17,20 +17,29 @@ use wamn_test_infrastructure::scratch::ScratchRoot;
 use crate::business_fixture::{LOCATION_A_ID, PACKAGING_ID};
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN, node"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, bin:node"]
 async fn offline_creates_survive_reload_and_follow_the_feed() -> anyhow::Result<()> {
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, bin:node",
+    );
     run("offline").await
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN, node"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, bin:node"]
 async fn a_refused_create_succeeds_after_correction() -> anyhow::Result<()> {
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, bin:node",
+    );
     run("refusal").await
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN, node"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, bin:node"]
 async fn a_lost_create_reply_replays_without_another_row() -> anyhow::Result<()> {
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, bin:node",
+    );
     run("lost-reply").await
 }
 

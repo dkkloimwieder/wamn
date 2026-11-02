@@ -4,7 +4,10 @@
 
 /// The final reload keeps the 60 s wait for worker activation, wfe gap wamn-c361p.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN, node, Chrome"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, bin:node, bin:google-chrome"]
 async fn case2_offline_reopens_upload_three_rows_across_a_release() -> anyhow::Result<()> {
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, bin:node, bin:google-chrome",
+    );
     super::local_outbox::run("case2").await
 }

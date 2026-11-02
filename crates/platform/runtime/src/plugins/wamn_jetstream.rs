@@ -1578,9 +1578,11 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[tokio::test]
-    #[ignore = "requires: WAMN_NATS_URL, WAMN_NATS_TLS_CA, WAMN_NATS_TLS_CERT, WAMN_NATS_TLS_KEY"]
+    #[ignore = "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY"]
     async fn live_derived_publish_replay_converges_through_jetstream_dedup() {
-        wamn_test_postgres::require_prerequisites(&["WAMN_NATS_URL"]);
+        wamn_test_postgres::require_ignored_prerequisites(
+            "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY",
+        );
         let client = wamn_platform_identity::nats::PlatformNats::from_env()
             .expect("set WAMN_NATS_URL and its certificate to this test's disposable broker")
             .connect()

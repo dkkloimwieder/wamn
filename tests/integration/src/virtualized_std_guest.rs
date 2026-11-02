@@ -372,12 +372,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires: WAMN_STD_VIRTUALIZATION_COMPONENT_WASM, WAMN_STD_VIRTUALIZATION_RECEIVING_DIRECTORY"]
+    #[ignore = "requires: env:WAMN_STD_VIRTUALIZATION_COMPONENT_WASM, env:WAMN_STD_VIRTUALIZATION_RECEIVING_DIRECTORY"]
     fn virtualized_artifacts_have_exact_imports_and_receiving_exports() -> anyhow::Result<()> {
-        wamn_test_postgres::require_prerequisites(&[
-            "WAMN_STD_VIRTUALIZATION_COMPONENT_WASM",
-            "WAMN_STD_VIRTUALIZATION_RECEIVING_DIRECTORY",
-        ]);
+        wamn_test_postgres::require_ignored_prerequisites(
+            "requires: env:WAMN_STD_VIRTUALIZATION_COMPONENT_WASM, env:WAMN_STD_VIRTUALIZATION_RECEIVING_DIRECTORY",
+        );
         let probe = PathBuf::from(required("WAMN_STD_VIRTUALIZATION_COMPONENT_WASM")?);
         let receiving_directory =
             PathBuf::from(required("WAMN_STD_VIRTUALIZATION_RECEIVING_DIRECTORY")?);
@@ -603,15 +602,12 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires: WAMN_STD_VIRTUALIZATION_SENTINEL, WAMN_STD_VIRTUALIZATION_ARTIFACT_BASE, WAMN_STD_VIRTUALIZATION_COMPONENT_WASM, WAMN_STD_VIRTUALIZATION_FLOW_HTTP_WASM"]
+    #[ignore = "requires: env:WAMN_STD_VIRTUALIZATION_SENTINEL, env:WAMN_STD_VIRTUALIZATION_ARTIFACT_BASE, env:WAMN_STD_VIRTUALIZATION_COMPONENT_WASM, env:WAMN_STD_VIRTUALIZATION_FLOW_HTTP_WASM"]
     async fn virtualized_std_guest_hides_the_sentinel_and_maps_a_panic_to_a_typed_refusal()
     -> anyhow::Result<()> {
-        wamn_test_postgres::require_prerequisites(&[
-            "WAMN_STD_VIRTUALIZATION_SENTINEL",
-            "WAMN_STD_VIRTUALIZATION_ARTIFACT_BASE",
-            "WAMN_STD_VIRTUALIZATION_COMPONENT_WASM",
-            "WAMN_STD_VIRTUALIZATION_FLOW_HTTP_WASM",
-        ]);
+        wamn_test_postgres::require_ignored_prerequisites(
+            "requires: env:WAMN_STD_VIRTUALIZATION_SENTINEL, env:WAMN_STD_VIRTUALIZATION_ARTIFACT_BASE, env:WAMN_STD_VIRTUALIZATION_COMPONENT_WASM, env:WAMN_STD_VIRTUALIZATION_FLOW_HTTP_WASM",
+        );
         required(SENTINEL_KEY)?;
         let artifact_base = required("WAMN_STD_VIRTUALIZATION_ARTIFACT_BASE")?;
         let component_wasm = PathBuf::from(required("WAMN_STD_VIRTUALIZATION_COMPONENT_WASM")?);

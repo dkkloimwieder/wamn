@@ -3478,12 +3478,11 @@ mod manifest_push {
         }
 
         #[tokio::test]
-        #[ignore = "requires: WAMN_RELEASE_MANIFEST_ARTIFACT_BASE, WAMN_REGISTRY_AUTH_FILE"]
+        #[ignore = "requires: env:WAMN_RELEASE_MANIFEST_ARTIFACT_BASE, env:WAMN_REGISTRY_AUTH_FILE"]
         async fn pushing_same_bytes_uploads_nothing() {
-            wamn_test_postgres::require_prerequisites(&[
-                "WAMN_RELEASE_MANIFEST_ARTIFACT_BASE",
-                "WAMN_REGISTRY_AUTH_FILE",
-            ]);
+            wamn_test_postgres::require_ignored_prerequisites(
+                "requires: env:WAMN_RELEASE_MANIFEST_ARTIFACT_BASE, env:WAMN_REGISTRY_AUTH_FILE",
+            );
             let artifact_base = std::env::var("WAMN_RELEASE_MANIFEST_ARTIFACT_BASE")
                 .expect("set WAMN_RELEASE_MANIFEST_ARTIFACT_BASE to a disposable repository");
             let registry_auth_file = std::env::var("WAMN_REGISTRY_AUTH_FILE")

@@ -194,9 +194,10 @@ mod tests {
     // The exclusion diagnostics example supplies actual PostgreSQL diagnostics,
     // and generates the fixture again with the exclusion the diagnostics name.
     #[test]
-    #[ignore = "requires: WAMN_EXCLUSION_DIAGNOSTICS"]
+    #[ignore = "requires: env:WAMN_EXCLUSION_DIAGNOSTICS"]
     fn generated_update_exclusion_from_postgres() {
         let path = std::env::var_os("WAMN_EXCLUSION_DIAGNOSTICS")
+            .filter(|value| !value.is_empty())
             .expect("WAMN_EXCLUSION_DIAGNOSTICS must name the disposable PostgreSQL diagnostics");
         let diagnostics: serde_json::Value =
             serde_json::from_slice(&std::fs::read(path).expect("read the diagnostics"))

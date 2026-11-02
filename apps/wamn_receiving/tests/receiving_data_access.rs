@@ -166,7 +166,7 @@ mod tests {
 
     /// Run alone on a quiet machine after rebuilding Receiving.
     #[tokio::test]
-    #[ignore = "requires PostgreSQL 18 and a quiet machine for feed measurements"]
+    #[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres"]
     async fn open_receipt_lines_feed_measurement() -> Result<()> {
         use std::time::Instant;
 
@@ -177,6 +177,9 @@ mod tests {
             include_str!("../../../apps/wamn_receiving/query/load_open_receipt_lines.sql");
         const RUNS: usize = 7;
         const PAGE: usize = 100;
+        wamn_test_postgres::require_ignored_prerequisites(
+            "requires: bin:/usr/lib/postgresql/18/bin/postgres",
+        );
         let mut server = wamn_test_infrastructure::postgres::start(&[])?;
         let url = server
             .create_database("receiving_feed_measurement")?

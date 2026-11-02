@@ -112,8 +112,11 @@ async fn provision_browser_environment(
 
 /// The existing fixture supplies isolated scheduler, events and telemetry services.
 #[tokio::test]
-#[ignore = "requires: delivery_timings fixture, built native binaries, platform UI, flow-http, materializer, Chrome"]
+#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, bin:node, bin:pnpm, bin:google-chrome, env:WAMN_PLATFORM_UI_DIST, env:WAMN_TIMINGS_ROOT, env:WAMN_RECEIVING_DEV_BIN, env:WAMN_RECEIVING_DEV_HOST_BIN, env:WAMN_RECEIVING_DEV_NATS_URL, env:WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, env:WAMN_ROUTE_HOST"]
 async fn local_control_projects_and_membership() -> anyhow::Result<()> {
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:/usr/lib/postgresql/18/bin/postgres, bin:node, bin:pnpm, bin:google-chrome, env:WAMN_PLATFORM_UI_DIST, env:WAMN_TIMINGS_ROOT, env:WAMN_RECEIVING_DEV_BIN, env:WAMN_RECEIVING_DEV_HOST_BIN, env:WAMN_RECEIVING_DEV_NATS_URL, env:WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, env:WAMN_ROUTE_HOST",
+    );
     let started = Instant::now();
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -131,7 +134,7 @@ async fn local_control_projects_and_membership() -> anyhow::Result<()> {
         .args(["dev", "up", "--root"])
         .arg(&root)
         .arg("--platform-ui")
-        .arg(repository.join("apps/platform_ui/dist"))
+        .arg(required("WAMN_PLATFORM_UI_DIST")?)
         .arg("--package")
         .arg(repository.join("apps/wamn_receiving"))
         .env("WAMN_DEV_ENV_SYSTEM_DATABASE_URL", system.url())

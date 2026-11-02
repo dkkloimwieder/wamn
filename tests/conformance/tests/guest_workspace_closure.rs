@@ -340,9 +340,11 @@ fn virtualized_digests(directory: &Path) -> Vec<(String, String)> {
 /// full guest builds; the structural guards above run every time and are what
 /// catch a regression early.
 #[test]
-#[ignore = "requires: WAMN_DIGEST_REPRO_A, WAMN_DIGEST_REPRO_B"]
+#[ignore = "requires: env:WAMN_DIGEST_REPRO_A, env:WAMN_DIGEST_REPRO_B"]
 fn one_commit_built_in_two_checkouts_yields_identical_guest_digests() {
-    wamn_test_postgres::require_prerequisites(&["WAMN_DIGEST_REPRO_A", "WAMN_DIGEST_REPRO_B"]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_DIGEST_REPRO_A, env:WAMN_DIGEST_REPRO_B",
+    );
     let a = std::env::var(REPRO_A_ENV)
         .unwrap_or_else(|_| panic!("{REPRO_A_ENV} must name the first checkout's artifacts"));
     let b = std::env::var(REPRO_B_ENV)

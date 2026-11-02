@@ -16,9 +16,11 @@ const AUTH_NATS_NAMESPACE: &str = "wamn-system";
 const AUTH_NATS_SERVER_NAME: &str = "wamn-nats.wamn-system.svc.cluster.local";
 
 #[tokio::test]
-#[ignore = "requires: docker, kind, kubectl, helm"]
+#[ignore = "requires: bin:docker, bin:kind, bin:kubectl, bin:helm"]
 async fn command_histories() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm"]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:docker, bin:kind, bin:kubectl, bin:helm",
+    );
     let evidence = evidence_directory()?;
     Box::pin(super::with_signals(&evidence, run_histories(&evidence))).await
 }
@@ -139,9 +141,11 @@ async fn auth_nats_tls(cluster: &ReceivingCluster) -> anyhow::Result<Value> {
 }
 
 #[tokio::test]
-#[ignore = "requires: docker, kind, kubectl, helm"]
+#[ignore = "requires: bin:docker, bin:kind, bin:kubectl, bin:helm"]
 async fn user_membership_and_permission_revocation() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm"]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:docker, bin:kind, bin:kubectl, bin:helm",
+    );
     let evidence = evidence_directory()?;
     Box::pin(super::with_signals(&evidence, run_membership(&evidence))).await
 }

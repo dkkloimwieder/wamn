@@ -611,11 +611,14 @@ async fn event_authorship_requires_a_captured_application_model() {
 
 /// The supplied broker credential needs stream management and event publication.
 #[tokio::test]
-#[ignore = "requires: WAMN_NATS_URL, WAMN_NATS_TLS_CA, WAMN_NATS_TLS_CERT, WAMN_NATS_TLS_KEY"]
+#[ignore = "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY"]
 async fn event_enable_records_stream_tail_and_requires_admin() {
     use std::time::Duration;
     use wamn_control::environment::EventBroker;
     use wamn_control_provision::events::{materializer_consumer_config, source_stream_config};
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY",
+    );
     let _lock = wamn_test_postgres::lock();
     let mut fixture = fixture().await;
     capture_orders(&fixture).await;

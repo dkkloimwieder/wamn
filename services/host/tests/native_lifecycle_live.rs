@@ -513,12 +513,11 @@ async fn assert_missing_first_beat(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires: WAMN_HOST_LIVE_NATS_SERVER_BIN, WAMN_HOST_LIVE_EVIDENCE_DIR"]
+#[ignore = "requires: env:WAMN_HOST_LIVE_NATS_SERVER_BIN, env:WAMN_HOST_LIVE_EVIDENCE_DIR"]
 async fn rebuilt_host_probes_signals_and_scheduler_recovery() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "WAMN_HOST_LIVE_NATS_SERVER_BIN",
-        "WAMN_HOST_LIVE_EVIDENCE_DIR",
-    ]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_HOST_LIVE_NATS_SERVER_BIN, env:WAMN_HOST_LIVE_EVIDENCE_DIR",
+    );
     let nats_binary = PathBuf::from(
         std::env::var_os("WAMN_HOST_LIVE_NATS_SERVER_BIN")
             .context("set WAMN_HOST_LIVE_NATS_SERVER_BIN to the real NATS server binary")?,

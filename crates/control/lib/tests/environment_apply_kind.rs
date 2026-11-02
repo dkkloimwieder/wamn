@@ -526,8 +526,11 @@ impl Run {
 }
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires: docker, kind, helm 4, kubectl, openssl, debug ctl and CDC reader, built packages, debug blob-put input, stamped chart, HTTP fixture env; epic closeout only"]
+#[ignore = "requires: bin:docker, bin:kind, bin:helm, bin:kubectl, bin:openssl, bin:cargo, bin:rustc, bin:wamn-ctl, bin:wamn-cdc-reader, bin:wamn-component-virtualizer, env:WAMN_BLOB_PUT_COMPONENT, env:WAMN_RELEASE_CHART"]
 async fn environment_apply_kind() -> anyhow::Result<()> {
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:docker, bin:kind, bin:helm, bin:kubectl, bin:openssl, bin:cargo, bin:rustc, bin:wamn-ctl, bin:wamn-cdc-reader, bin:wamn-component-virtualizer, env:WAMN_BLOB_PUT_COMPONENT, env:WAMN_RELEASE_CHART",
+    );
     let keep = keep_on_failure(std::env::var("WAMN_KIND_KEEP").ok().as_deref())?;
     let reuse = std::env::var("WAMN_KIND_REUSE").ok();
     let checks = std::env::var("WAMN_KIND_CHECKS").ok();

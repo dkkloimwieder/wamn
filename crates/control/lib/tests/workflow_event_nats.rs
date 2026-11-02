@@ -7,9 +7,12 @@ mod event_batch {
     use super::*;
     /// One durable consumes the entity message, even when two rows match it.
     #[tokio::test(flavor = "multi_thread")]
-    #[ignore = "requires: WAMN_NATS_URL, WAMN_NATS_TLS_CA, WAMN_NATS_TLS_CERT, WAMN_NATS_TLS_KEY"]
+    #[ignore = "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY"]
     async fn one_entity_message_fans_out_once_and_acknowledges_once() {
         use futures_util::StreamExt as _;
+        wamn_test_postgres::require_ignored_prerequisites(
+            "requires: env:WAMN_NATS_URL, env:WAMN_NATS_TLS_CA, env:WAMN_NATS_TLS_CERT, env:WAMN_NATS_TLS_KEY",
+        );
         let _lock = wamn_test_postgres::lock();
         let fixture = fixture().await;
         fixture.grant_workflow_user("reader").await;

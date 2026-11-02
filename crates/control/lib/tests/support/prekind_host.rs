@@ -349,15 +349,11 @@ async fn outcome(project: &tokio_postgres::Client, run: &str) -> anyhow::Result<
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires: WAMN_HOST_BINARY, WAMN_NATIVE_C_NATS_BIN, WAMN_FLOW_HTTP_COMPONENT, WAMN_MATERIALIZER_COMPONENT, built edge_device and debug HTTP guests, helm"]
+#[ignore = "requires: env:WAMN_HOST_BINARY, env:WAMN_NATIVE_C_NATS_BIN, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_MATERIALIZER_COMPONENT, env:WAMN_EDGE_DEVICE_COMPONENT, bin:helm"]
 async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "WAMN_HOST_BINARY",
-        "WAMN_NATIVE_C_NATS_BIN",
-        "WAMN_FLOW_HTTP_COMPONENT",
-        "WAMN_MATERIALIZER_COMPONENT",
-        "helm",
-    ]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_HOST_BINARY, env:WAMN_NATIVE_C_NATS_BIN, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_MATERIALIZER_COMPONENT, env:WAMN_EDGE_DEVICE_COMPONENT, bin:helm",
+    );
     let started = Instant::now();
     let _lock = wamn_test_postgres::lock();
     let work = ScratchRoot::create()?;
@@ -561,8 +557,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
     std::fs::write(
         local_component_path(directory, device.component_digest())?,
         std::fs::read(
-            wamn_schema_generator::output_root(&repository.join("apps").join(PACKAGE))
-                .join("components/device.wasm"),
+            std::env::var_os("WAMN_EDGE_DEVICE_COMPONENT").context("WAMN_EDGE_DEVICE_COMPONENT")?,
         )?,
     )?;
     let target = PathBuf::from(std::env::var_os("CARGO_TARGET_DIR").context("CARGO_TARGET_DIR")?);

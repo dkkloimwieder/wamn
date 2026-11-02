@@ -45,9 +45,9 @@ use application_fixture::{ApplicationHost, MEMBER, PROJECT, application_host};
 mod control_fixture;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires: WAMN_FLOW_HTTP_COMPONENT"]
+#[ignore = "requires: env:WAMN_FLOW_HTTP_COMPONENT"]
 async fn application_routes_answer_through_the_generated_client() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&["WAMN_FLOW_HTTP_COMPONENT"]);
+    wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_FLOW_HTTP_COMPONENT");
     let flow_http_wasm = std::env::var("WAMN_FLOW_HTTP_COMPONENT")?;
     let mut host = application_host("control_client").await?;
     let ApplicationHost {
@@ -134,9 +134,9 @@ async fn vitest(file: &str, env: &[(&str, String)]) -> anyhow::Result<()> {
 /// application rows need the administration logins, so this test calls the
 /// writes that refuse before them; `control_route_live` covers the rest.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires: WAMN_FLOW_HTTP_COMPONENT"]
+#[ignore = "requires: env:WAMN_FLOW_HTTP_COMPONENT"]
 async fn control_routes_answer_through_the_generated_client() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&["WAMN_FLOW_HTTP_COMPONENT"]);
+    wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_FLOW_HTTP_COMPONENT");
     let flow_http_wasm = std::env::var("WAMN_FLOW_HTTP_COMPONENT")?;
     let mut postgres = wamn_test_postgres::start(&[])?;
     let test_database = postgres.create_database("control_client")?;

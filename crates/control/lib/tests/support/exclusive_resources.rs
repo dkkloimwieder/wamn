@@ -271,9 +271,11 @@ async fn read(imports: &IntegrationImports, interface: &str) -> anyhow::Result<(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "requires: PostgreSQL 18, NATS, docker, wasm32-wasip2"]
+#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN, bin:docker, bin:rustc"]
 async fn exclusive_calls_wait_serialize_and_transfer_to_replacement() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&["docker", "WAMN_NATIVE_C_NATS_BIN"]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN, bin:docker, bin:rustc",
+    );
     let _lock = wamn_test_postgres::lock();
     let gate = Arc::new(tokio::sync::Semaphore::new(1));
     let (authority, requests, server) = simulator_with_gate(Some(Arc::clone(&gate))).await?;

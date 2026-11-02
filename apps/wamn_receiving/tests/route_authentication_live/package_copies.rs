@@ -137,9 +137,9 @@ fn copy_tree(source: &Path, target: &Path) -> anyhow::Result<()> {
 /// An edited copy of the base builds its component in the test-owned
 /// workspace, and push-package's stale check accepts its build record.
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires: cargo, rustc"]
+#[ignore = "requires: bin:cargo, bin:rustc"]
 async fn an_edited_copy_builds_in_the_test_owned_workspace() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&["cargo", "rustc"]);
+    wamn_test_postgres::require_ignored_prerequisites("requires: bin:cargo, bin:rustc");
     let scratch = super::ScratchRoot::create()?;
     let root = scratch.path().join("copies");
     create(&root, &[super::package_root()])?;

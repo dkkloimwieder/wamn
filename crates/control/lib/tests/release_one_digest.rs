@@ -47,7 +47,10 @@ fn repository() -> PathBuf {
 fn device_component() -> PathBuf {
     wamn_schema_generator::build_record::check_current(&repository().join("apps/edge_device"))
         .unwrap_or_else(|error| panic!("{error:#}"));
-    let path = repository().join("apps/target/wamn/edge_device/components/device.wasm");
+    let path = PathBuf::from(
+        std::env::var_os("WAMN_EDGE_DEVICE_COMPONENT")
+            .expect("set WAMN_EDGE_DEVICE_COMPONENT to the built edge_device component"),
+    );
     assert!(path.is_file(), "run wamn build apps/edge_device first");
     path
 }
@@ -96,9 +99,11 @@ fn publish(
 }
 
 #[test]
-#[ignore = "requires: WAMN_FLOW_HTTP_COMPONENT, built edge_device package"]
+#[ignore = "requires: env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_EDGE_DEVICE_COMPONENT"]
 fn one_release_published_for_two_environments_has_one_digest() {
-    wamn_test_postgres::require_prerequisites(&["WAMN_FLOW_HTTP_COMPONENT"]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_EDGE_DEVICE_COMPONENT",
+    );
     let component = device_component();
     let root = PathBuf::from(env!("CARGO_TARGET_TMPDIR"))
         .join(format!("release-one-digest-{}", std::process::id()));
@@ -222,9 +227,11 @@ async fn publish_through_publish_release(
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_FLOW_HTTP_COMPONENT, docker, built edge_device package"]
+#[ignore = "requires: env:WAMN_FLOW_HTTP_COMPONENT, bin:docker, env:WAMN_EDGE_DEVICE_COMPONENT"]
 async fn one_release_through_publish_release_for_two_environments_has_one_digest() {
-    wamn_test_postgres::require_prerequisites(&["WAMN_FLOW_HTTP_COMPONENT", "docker"]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_FLOW_HTTP_COMPONENT, bin:docker, env:WAMN_EDGE_DEVICE_COMPONENT",
+    );
     // The build writes the index that push-package reads the component from.
     device_component();
     let Ok(address) = std::env::var("WAMN_RELEASE_ONE_DIGEST_REGISTRY") else {

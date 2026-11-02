@@ -129,25 +129,11 @@ async fn docker(args: &[&str]) -> anyhow::Result<String> {
 }
 
 #[tokio::test]
-#[ignore = "requires: WAMN_RECEIVING_DEV_BIN, WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, WAMN_DEV_ENV_MATERIALIZER_COMPONENT, WAMN_RECEIVING_DEV_HOST_BIN, WAMN_RECEIVING_DEV_NATS_URL, WAMN_DEV_ENV_NATS_TLS_CA, WAMN_DEV_ENV_NATS_TLS_CERT, WAMN_DEV_ENV_NATS_TLS_KEY, WAMN_EVT_STREAM_REPLICAS, WAMN_EVT_DUP_WINDOW_SECS, WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, WAMN_ROUTE_HOST, cargo-sqlx, jq, docker"]
+#[ignore = "requires: env:WAMN_RECEIVING_DEV_BIN, env:WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, env:WAMN_DEV_ENV_MATERIALIZER_COMPONENT, env:WAMN_RECEIVING_DEV_HOST_BIN, env:WAMN_RECEIVING_DEV_NATS_URL, env:WAMN_DEV_ENV_NATS_TLS_CA, env:WAMN_DEV_ENV_NATS_TLS_CERT, env:WAMN_DEV_ENV_NATS_TLS_KEY, env:WAMN_EVT_STREAM_REPLICAS, env:WAMN_EVT_DUP_WINDOW_SECS, env:WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, env:WAMN_ROUTE_HOST, bin:cargo-sqlx, bin:jq, bin:docker"]
 async fn routes_answer_during_a_scheduler_outage_and_recover() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "WAMN_RECEIVING_DEV_BIN",
-        "WAMN_DEV_ENV_FLOW_HTTP_COMPONENT",
-        "WAMN_DEV_ENV_MATERIALIZER_COMPONENT",
-        "WAMN_RECEIVING_DEV_HOST_BIN",
-        "WAMN_RECEIVING_DEV_NATS_URL",
-        "WAMN_DEV_ENV_NATS_TLS_CA",
-        "WAMN_DEV_ENV_NATS_TLS_CERT",
-        "WAMN_DEV_ENV_NATS_TLS_KEY",
-        "WAMN_EVT_STREAM_REPLICAS",
-        "WAMN_EVT_DUP_WINDOW_SECS",
-        "WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT",
-        "WAMN_ROUTE_HOST",
-        "cargo-sqlx",
-        "jq",
-        "docker",
-    ]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_RECEIVING_DEV_BIN, env:WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, env:WAMN_DEV_ENV_MATERIALIZER_COMPONENT, env:WAMN_RECEIVING_DEV_HOST_BIN, env:WAMN_RECEIVING_DEV_NATS_URL, env:WAMN_DEV_ENV_NATS_TLS_CA, env:WAMN_DEV_ENV_NATS_TLS_CERT, env:WAMN_DEV_ENV_NATS_TLS_KEY, env:WAMN_EVT_STREAM_REPLICAS, env:WAMN_EVT_DUP_WINDOW_SECS, env:WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, env:WAMN_ROUTE_HOST, bin:cargo-sqlx, bin:jq, bin:docker",
+    );
     let repository = super::super::repository_root()?;
     let scheduler = Scheduler::start().await?;
     // The environment resets the control store of the whole server, so the test starts its own.

@@ -1632,12 +1632,11 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires: WAMN_COMPONENT_ARTIFACT_BASE, WAMN_REGISTRY_AUTH_FILE"]
+    #[ignore = "requires: env:WAMN_COMPONENT_ARTIFACT_BASE, env:WAMN_REGISTRY_AUTH_FILE"]
     async fn production_publisher_and_puller_round_trip_exact_bytes() {
-        wamn_test_postgres::require_prerequisites(&[
-            "WAMN_COMPONENT_ARTIFACT_BASE",
-            "WAMN_REGISTRY_AUTH_FILE",
-        ]);
+        wamn_test_postgres::require_ignored_prerequisites(
+            "requires: env:WAMN_COMPONENT_ARTIFACT_BASE, env:WAMN_REGISTRY_AUTH_FILE",
+        );
         let artifact_base = std::env::var("WAMN_COMPONENT_ARTIFACT_BASE")
             .expect("set WAMN_COMPONENT_ARTIFACT_BASE to a disposable registry/repository");
         let registry_auth_file = std::env::var("WAMN_REGISTRY_AUTH_FILE")

@@ -10,13 +10,11 @@ use wamn_integration_tests::local_application::{
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn command_histories() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "WAMN_APPLICATION_COMPONENTS",
-        "WAMN_FLOW_HTTP_COMPONENT",
-        "WAMN_NATIVE_C_NATS_BIN",
-    ]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
+    );
     let _lock = wamn_test_postgres::lock();
     let system = wamn_test_postgres::database();
     let project = wamn_test_postgres::database();
@@ -34,13 +32,11 @@ async fn command_histories() -> anyhow::Result<()> {
 
 /// Both screen reads return view lines, and closing an order removes its open lines.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn receipt_screen_feeds_follow_open_orders() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "WAMN_APPLICATION_COMPONENTS",
-        "WAMN_FLOW_HTTP_COMPONENT",
-        "WAMN_NATIVE_C_NATS_BIN",
-    ]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
+    );
     let _lock = wamn_test_postgres::lock();
     let system = wamn_test_postgres::database();
     let project = wamn_test_postgres::database();
@@ -118,13 +114,11 @@ async fn receipt_screen_feeds_follow_open_orders() -> anyhow::Result<()> {
 /// record_receipt. The same role calling Receiving's record_receipt directly is
 /// refused, because nothing derives that grant from the entry it holds.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "WAMN_APPLICATION_COMPONENTS",
-        "WAMN_FLOW_HTTP_COMPONENT",
-        "WAMN_NATIVE_C_NATS_BIN",
-    ]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
+    );
     let _lock = wamn_test_postgres::lock();
     let system = wamn_test_postgres::database();
     let project = wamn_test_postgres::database();
@@ -266,13 +260,11 @@ async fn an_entry_grant_runs_the_entry_and_grants_nothing_it_calls() -> anyhow::
 /// creates, for the composing application and for Receiving; the application in
 /// host state selects one.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "WAMN_APPLICATION_COMPONENTS",
-        "WAMN_FLOW_HTTP_COMPONENT",
-        "WAMN_NATIVE_C_NATS_BIN",
-    ]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
+    );
     let _lock = wamn_test_postgres::lock();
     let system = wamn_test_postgres::database();
     let project = wamn_test_postgres::database();
@@ -403,13 +395,11 @@ async fn a_purchase_order_create_takes_the_next_number_and_the_caller() -> anyho
 /// that carries the first one's write-log row and none of its business rows: a
 /// replay that ran again would find no purchase order.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn an_acme_key_replays_across_a_release() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "WAMN_APPLICATION_COMPONENTS",
-        "WAMN_FLOW_HTTP_COMPONENT",
-        "WAMN_NATIVE_C_NATS_BIN",
-    ]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
+    );
     let _lock = wamn_test_postgres::lock();
     let scratch = ScratchRoot::create()?;
     for name in ["first", "second"] {

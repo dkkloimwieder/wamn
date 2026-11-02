@@ -97,8 +97,11 @@ const STEP_TITLES: [&str; 12] = [
 ];
 
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires: docker, kind, helm, kubectl, pnpm, debug CLI binaries, package build tools, stamped chart, public registry access; no image builds"]
+#[ignore = "requires: bin:docker, bin:kind, bin:helm, bin:kubectl, bin:pnpm, bin:cargo, bin:rustc, bin:wamn, bin:wamn-ctl, env:WAMN_RELEASE_CHART"]
 async fn platform_apply_kind() -> anyhow::Result<()> {
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:docker, bin:kind, bin:helm, bin:kubectl, bin:pnpm, bin:cargo, bin:rustc, bin:wamn, bin:wamn-ctl, env:WAMN_RELEASE_CHART",
+    );
     let mut failures = Failures::default();
     let result = scenario(&mut failures).await;
     failures.record("required setup", result);

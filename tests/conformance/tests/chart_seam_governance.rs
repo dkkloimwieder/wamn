@@ -352,9 +352,9 @@ fn assert_events_overlay_remains_namespace_scoped(root: &Path) {
 }
 
 #[test]
-#[ignore = "requires: helm"]
+#[ignore = "requires: bin:helm"]
 fn the_host_tier_renders_the_native_host_controls() {
-    wamn_test_postgres::require_prerequisites(&["helm"]);
+    wamn_test_postgres::require_ignored_prerequisites("requires: bin:helm");
     let root = repository_root();
     let (base, base_policy) = render_host_objects(&root, &[HOST_VALUES]);
     assert_native_host_controls(&base, &base_policy, "4", "2", "6");

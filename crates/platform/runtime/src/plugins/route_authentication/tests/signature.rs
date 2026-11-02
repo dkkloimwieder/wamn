@@ -332,7 +332,7 @@ async fn missing_credentials_wrong_project_and_bad_secret_shapes_refuse() {
 }
 
 #[tokio::test]
-#[ignore = "requires: PostgreSQL 18, WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete() {
     use crate::auth_cache::test_util::{nats, until};
     use crate::connection_memory::replicate;
@@ -341,7 +341,9 @@ async fn rotation_refuses_the_old_signature_on_the_first_call_after_the_delete()
     use wamn_platform_identity::connections::administration;
 
     const ENV_KEY: &str = "acme--host-project--dev";
-    wamn_test_postgres::require_prerequisites(&["WAMN_NATIVE_C_NATS_BIN"]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN",
+    );
     let _lock = wamn_test_postgres::lock();
     let (_server, client) = nats().await;
     let mut fixture = Fixture::new().await;

@@ -159,13 +159,11 @@ async fn counts(database: &tokio_postgres::Client, key: &str) -> anyhow::Result<
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn a_create_claims_its_key_in_the_write_log() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "WAMN_APPLICATION_COMPONENTS",
-        "WAMN_FLOW_HTTP_COMPONENT",
-        "WAMN_NATIVE_C_NATS_BIN",
-    ]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
+    );
     let _lock = wamn_test_postgres::lock();
     let system = wamn_test_postgres::database();
     let project = wamn_test_postgres::database();
@@ -291,13 +289,11 @@ async fn a_create_claims_its_key_in_the_write_log() -> anyhow::Result<()> {
 /// another amount is another request (`docs/history/host-transaction.md` 7,
 /// ruling (a)).
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn a_retry_with_reordered_lines_is_the_same_request() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "WAMN_APPLICATION_COMPONENTS",
-        "WAMN_FLOW_HTTP_COMPONENT",
-        "WAMN_NATIVE_C_NATS_BIN",
-    ]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
+    );
     let _lock = wamn_test_postgres::lock();
     let system = wamn_test_postgres::database();
     let project = wamn_test_postgres::database();

@@ -293,9 +293,9 @@ fn key_of(e: &Envelope) -> (Op, String) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "requires: WAMN_READER_NATS_URL"]
+#[ignore = "requires: env:WAMN_READER_NATS_URL"]
 async fn reader_streams_one_project_env_to_the_evt_stream() {
-    wamn_test_postgres::require_prerequisites(&["WAMN_READER_NATS_URL"]);
+    wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_READER_NATS_URL");
     let nats_url = std::env::var("WAMN_READER_NATS_URL")
         .expect("set WAMN_READER_NATS_URL to a throwaway JetStream-enabled NATS");
     let postgres = wamn_test_postgres::start(&[("wal_level", "logical")])

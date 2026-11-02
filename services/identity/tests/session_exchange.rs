@@ -109,9 +109,11 @@ impl Drop for Https {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "requires: WAMN_SESSION_EXCHANGE_CTL_BIN"]
+#[ignore = "requires: env:WAMN_SESSION_EXCHANGE_CTL_BIN"]
 async fn session_exchange_uses_fresh_scoped_authority_without_session_state() {
-    wamn_test_postgres::require_prerequisites(&["WAMN_SESSION_EXCHANGE_CTL_BIN"]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_SESSION_EXCHANGE_CTL_BIN",
+    );
     compiled_ctl_binary();
     let mut postgres =
         wamn_test_postgres::start(&[]).expect_redacted("start the test PostgreSQL server");

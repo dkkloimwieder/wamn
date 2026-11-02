@@ -105,9 +105,11 @@ async fn assert_postgres_read(fixture: &Fixture, facts: &ConnectionFacts, id: &u
 }
 
 #[tokio::test]
-#[ignore = "requires: PostgreSQL 18, WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn a_committed_write_serves_the_new_generation_after_the_delete() {
-    wamn_test_postgres::require_prerequisites(&["WAMN_NATIVE_C_NATS_BIN"]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN",
+    );
     let _lock = wamn_test_postgres::lock();
     let (_server, client) = nats().await;
     let memory = Arc::new(ConnectionMemory::default());
@@ -143,9 +145,11 @@ async fn a_committed_write_serves_the_new_generation_after_the_delete() {
 }
 
 #[tokio::test]
-#[ignore = "requires: PostgreSQL 18, WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn a_suppressed_delete_serves_the_new_generation_when_the_ttl_expires() {
-    wamn_test_postgres::require_prerequisites(&["WAMN_NATIVE_C_NATS_BIN"]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN",
+    );
     let _lock = wamn_test_postgres::lock();
     let (_server, client) = nats().await;
     let ttl = Duration::from_secs(1);
@@ -169,9 +173,11 @@ async fn a_suppressed_delete_serves_the_new_generation_when_the_ttl_expires() {
 }
 
 #[tokio::test]
-#[ignore = "requires: PostgreSQL 18, WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn a_stopped_broker_reads_each_generation_without_keeping_a_fact() {
-    wamn_test_postgres::require_prerequisites(&["WAMN_NATIVE_C_NATS_BIN"]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN",
+    );
     let _lock = wamn_test_postgres::lock();
     let (server, client) = nats().await;
     let memory = Arc::new(ConnectionMemory::default());

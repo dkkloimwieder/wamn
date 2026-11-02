@@ -620,8 +620,11 @@ fn samples_where(directory: &Path, condition: &str) -> i64 {
 /// and the platform must accept each again. The test prints the frame tag, and
 /// the caller counts the platform rows with that tag: one row per frame.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_EDGE_LIVE_URL, WAMN_EDGE_LIVE_TOKEN_FILE, WAMN_EDGE_LIVE_CA_FILE"]
+#[ignore = "requires: env:WAMN_EDGE_LIVE_URL, env:WAMN_EDGE_LIVE_TOKEN_FILE, env:WAMN_EDGE_LIVE_CA_FILE"]
 async fn samples_reach_a_live_platform_once_across_kills() {
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_EDGE_LIVE_URL, env:WAMN_EDGE_LIVE_TOKEN_FILE, env:WAMN_EDGE_LIVE_CA_FILE",
+    );
     let live = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("{name} is not set"));
     let url = live("WAMN_EDGE_LIVE_URL");
     let token = std::fs::read_to_string(live("WAMN_EDGE_LIVE_TOKEN_FILE"))

@@ -5729,6 +5729,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "proc-macro2",
  "ring",
  "rust_decimal",
  "serde",
@@ -5946,6 +5947,7 @@ dependencies = [
  "wamn-run-state-sqlite",
  "wamn-schema-generator",
  "wamn-session",
+ "wamn-test-postgres",
  "wash-runtime",
 ]
 

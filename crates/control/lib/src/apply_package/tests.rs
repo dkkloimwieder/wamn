@@ -146,7 +146,7 @@ async fn auth_drops_ensure_admin_role_records_only_changed_grants() {
 }
 
 #[tokio::test]
-#[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
 async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop() {
     use std::sync::Arc;
     use std::time::Duration;
@@ -154,8 +154,8 @@ async fn auth_drops_apply_package_publishes_the_committed_admin_role_drop() {
         AuthCache, PrincipalGrants,
         test_util::{nats, until, watched},
     };
+    wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
 
-    wamn_test_postgres::require_prerequisites(&["WAMN_NATIVE_C_NATS_BIN"]);
     let _lock = wamn_test_postgres::lock();
     let database = wamn_project_state::test_database::tenant_platform();
     database.execute(&[

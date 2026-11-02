@@ -258,12 +258,11 @@ async fn publish(
 }
 
 #[tokio::test]
-#[ignore = "requires: WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM, WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM"]
+#[ignore = "requires: env:WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM, env:WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM"]
 async fn fresh_base_and_overlay_publish_byte_identically_and_refuse_drift() {
-    wamn_test_postgres::require_prerequisites(&[
-        "WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM",
-        "WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM",
-    ]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM, env:WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM",
+    );
     let inputs = packages();
     let _lock = wamn_test_postgres::lock();
     let project_database = wamn_test_postgres::database();

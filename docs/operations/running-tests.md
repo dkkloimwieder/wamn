@@ -408,15 +408,9 @@ The native host case lives in `wamn-control --test native_host` and takes live-n
 
 ## Ignored tests
 
-An ignore reason records prerequisites. The target tier determines selection.
-Its ignore reason starts with `requires:` and lists the prerequisites, as in `#[ignore = "requires: <name>, <name>"]`.
-A name in upper case is an environment variable that must be set and not empty.
-Any other name is a program that must be on `PATH`.
-The first statement of the test calls `wamn_test_postgres::require_prerequisites` with the names of the upper case and program entries.
-When a prerequisite is missing, the test fails before it does any work, and the message names every missing prerequisite.
-Some inputs do not fit this form, such as a binary beside the test executable, one of two inputs, or a built component.
-The reason describes such an input in words, and the test checks it directly.
-An ignored test does not return early or skip.
+An ignore reason lists only prerequisites in the fixed form `requires: bin:<program>, env:<VARIABLE>`, with comma-separated entries.
+The test checks every listed program and nonempty environment variable before setup, and missing prerequisites fail the test.
+The tier lives only in `tests/selection.toml`.
 
 To run kind targets in selected packages, use `tools/test-changes --tier kind`.
 They run one at a time.

@@ -80,9 +80,9 @@ async fn build_digest_tracks_source_bytes_and_survives_another_checkout() {
 }
 
 #[tokio::test]
-#[ignore = "requires: docker"]
+#[ignore = "requires: bin:docker"]
 async fn publish_pushes_by_digest_and_records_the_catalog_as_control() {
-    wamn_test_postgres::require_prerequisites(&["docker"]);
+    wamn_test_postgres::require_ignored_prerequisites("requires: bin:docker");
     let _lock = wamn_test_postgres::lock();
     let database = wamn_control_provision::test_database::system();
     database.execute(&["SET ROLE wamn_system; INSERT INTO registry.integration_type(code,runtime_type,exclusive) VALUES ('fixture','wasm',false)"]).unwrap();
@@ -163,9 +163,9 @@ async fn publish_pushes_by_digest_and_records_the_catalog_as_control() {
 }
 
 #[tokio::test]
-#[ignore = "requires: docker"]
+#[ignore = "requires: bin:docker"]
 async fn publish_refuses_an_unknown_integration_without_creating_catalog_rows() {
-    wamn_test_postgres::require_prerequisites(&["docker"]);
+    wamn_test_postgres::require_ignored_prerequisites("requires: bin:docker");
     let _lock = wamn_test_postgres::lock();
     let database = wamn_control_provision::test_database::system();
     let fixture = fixture();

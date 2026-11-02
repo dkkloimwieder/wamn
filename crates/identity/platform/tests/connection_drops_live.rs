@@ -74,9 +74,9 @@ const CREDENTIAL: &str = r#"{"username":"fixture","password":"private"}"#;
 
 /// The broker must be private to this test run.
 #[tokio::test]
-#[ignore = "requires: WAMN_NATS_URL (private JetStream)"]
+#[ignore = "requires: env:WAMN_NATS_URL"]
 async fn every_connection_writer_deletes_exactly_its_connection_keys() {
-    wamn_test_postgres::require_prerequisites(&["WAMN_NATS_URL"]);
+    wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATS_URL");
     let _lock = wamn_test_postgres::lock();
     let broker = async_nats::connect(std::env::var("WAMN_NATS_URL").unwrap())
         .await

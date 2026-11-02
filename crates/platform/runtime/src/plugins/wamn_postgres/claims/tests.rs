@@ -2561,9 +2561,10 @@ async fn live_a_bind_refuses_a_principal_with_no_user_row() {
 /// bucket, and a raw SQL write publishes no drop, so the memory answers until
 /// it clears or its TTL ends (`wamn-f2qud`).
 #[tokio::test]
-#[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
 async fn live_a_removed_user_row_is_refused_once_the_auth_memory_clears() {
     const ENV_KEY: &str = "removed";
+    wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     let admin_url = database.url();
@@ -2631,9 +2632,10 @@ async fn live_a_removed_user_row_is_refused_once_the_auth_memory_clears() {
 /// the memory, and the next bind reads again and refuses before the TTL ends
 /// (`wamn-f2qud`).
 #[tokio::test]
-#[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
 async fn live_a_drop_refuses_a_removed_user_row_on_the_next_bind() {
     const ENV_KEY: &str = "dropped";
+    wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     let admin_url = database.url();
@@ -3718,12 +3720,12 @@ async fn live_an_unchecked_declared_statement_is_refused_when_it_runs() {
 /// A cached PAT remains accepted after the database revoke until its identity
 /// drop arrives. The long TTL cannot expire during this test.
 #[tokio::test]
-#[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
 async fn live_a_drop_refuses_a_revoked_pat_on_the_next_request() {
     use crate::plugins::route_authentication::{PlatformRouteAuthenticator, RouteAuthentication};
     use wamn_platform_identity::{assign_project_role, create_service, issue_pat, revoke_pat};
+    wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
 
-    wamn_test_postgres::require_prerequisites(&["WAMN_NATIVE_C_NATS_BIN"]);
     let _lock = wamn_test_postgres::lock();
     let system = wamn_control_provision::test_database::system();
     let project = wamn_project_state::test_database::tenant_platform();

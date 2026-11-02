@@ -42,9 +42,11 @@ async fn reads(admin: &Client) -> anyhow::Result<i64> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires: PostgreSQL 18, WAMN_NATS_URL (private JetStream)"]
+#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATS_URL"]
 async fn cluster_effect_snapshot_as_http_admitter() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&["WAMN_NATS_URL"]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATS_URL",
+    );
     let _lock = wamn_test_postgres::lock();
     let mut server =
         wamn_test_postgres::start(&[("shared_preload_libraries", "pg_stat_statements")])?;

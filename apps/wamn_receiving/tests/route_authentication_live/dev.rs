@@ -365,26 +365,11 @@ pub(super) async fn current_database_acl(
 }
 
 #[tokio::test]
-#[ignore = "requires: test-util identity binary, RESEND_API_KEY, RESEND_FROM, WAMN_RECEIVING_DEV_BIN, WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, WAMN_DEV_ENV_MATERIALIZER_COMPONENT, WAMN_RECEIVING_DEV_HOST_BIN, WAMN_RECEIVING_DEV_NATS_URL, WAMN_DEV_ENV_NATS_TLS_CA, WAMN_DEV_ENV_NATS_TLS_CERT, WAMN_DEV_ENV_NATS_TLS_KEY, WAMN_EVT_STREAM_REPLICAS, WAMN_EVT_DUP_WINDOW_SECS, WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, WAMN_ROUTE_HOST, cargo-sqlx, jq"]
+#[ignore = "requires: env:WAMN_IDENTITY_BINARY, env:RESEND_API_KEY, env:RESEND_FROM, env:WAMN_RECEIVING_DEV_BIN, env:WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, env:WAMN_DEV_ENV_MATERIALIZER_COMPONENT, env:WAMN_RECEIVING_DEV_HOST_BIN, env:WAMN_RECEIVING_DEV_NATS_URL, env:WAMN_DEV_ENV_NATS_TLS_CA, env:WAMN_DEV_ENV_NATS_TLS_CERT, env:WAMN_DEV_ENV_NATS_TLS_KEY, env:WAMN_EVT_STREAM_REPLICAS, env:WAMN_EVT_DUP_WINDOW_SECS, env:WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, env:WAMN_ROUTE_HOST, bin:cargo-sqlx, bin:jq"]
 async fn product_dev_command_owns_the_clean_ten_stage_output_and_cleanup() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "RESEND_API_KEY",
-        "RESEND_FROM",
-        "WAMN_RECEIVING_DEV_BIN",
-        "WAMN_DEV_ENV_FLOW_HTTP_COMPONENT",
-        "WAMN_DEV_ENV_MATERIALIZER_COMPONENT",
-        "WAMN_RECEIVING_DEV_HOST_BIN",
-        "WAMN_RECEIVING_DEV_NATS_URL",
-        "WAMN_DEV_ENV_NATS_TLS_CA",
-        "WAMN_DEV_ENV_NATS_TLS_CERT",
-        "WAMN_DEV_ENV_NATS_TLS_KEY",
-        "WAMN_EVT_STREAM_REPLICAS",
-        "WAMN_EVT_DUP_WINDOW_SECS",
-        "WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT",
-        "WAMN_ROUTE_HOST",
-        "cargo-sqlx",
-        "jq",
-    ]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_IDENTITY_BINARY, env:RESEND_API_KEY, env:RESEND_FROM, env:WAMN_RECEIVING_DEV_BIN, env:WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, env:WAMN_DEV_ENV_MATERIALIZER_COMPONENT, env:WAMN_RECEIVING_DEV_HOST_BIN, env:WAMN_RECEIVING_DEV_NATS_URL, env:WAMN_DEV_ENV_NATS_TLS_CA, env:WAMN_DEV_ENV_NATS_TLS_CERT, env:WAMN_DEV_ENV_NATS_TLS_KEY, env:WAMN_EVT_STREAM_REPLICAS, env:WAMN_EVT_DUP_WINDOW_SECS, env:WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, env:WAMN_ROUTE_HOST, bin:cargo-sqlx, bin:jq",
+    );
     // The environment resets the control store of the whole server, so the test starts its own.
     let mut server = wamn_test_infrastructure::postgres::start(&[])?;
     let system_url = server.create_database("wamn_system")?.url().to_owned();

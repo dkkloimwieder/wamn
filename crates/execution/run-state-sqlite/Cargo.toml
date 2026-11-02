@@ -5,6 +5,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "intent-store-child"
+path = "tests/support/intent_store_child.rs"
+test = false
+bench = false
+
 [dependencies]
 # The trait and its types. wamn-run-state stays adapter-free.
 wamn-run-state = { workspace = true }

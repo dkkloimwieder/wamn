@@ -792,10 +792,13 @@ async fn assert_user_environment_membership(
 }
 
 #[tokio::test]
-#[ignore = "requires:"]
+#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_IDENTITY_BINARY"]
 async fn production_operator_authentication_and_operation_authorization() {
     use futures_util::FutureExt as _;
     use std::os::unix::fs::DirBuilderExt as _;
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_IDENTITY_BINARY",
+    );
 
     let results = std::env::var_os("TMPDIR")
         .map_or_else(|| PathBuf::from("/var/tmp"), PathBuf::from)
@@ -847,7 +850,6 @@ async fn production_operator_authentication_and_operation_authorization() {
 }
 
 async fn production_operator_authentication(root: &Path) {
-    wamn_test_postgres::require_prerequisites(&[]);
     wamn_control::dev::pat_issuer::identity_binary().expect("find the wamn-identity binary");
     // Provisioning changes roles and database grants of the whole server, so
     // the test starts its own.

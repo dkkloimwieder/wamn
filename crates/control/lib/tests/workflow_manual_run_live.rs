@@ -178,12 +178,16 @@ fn jsonata_bytes() -> Vec<u8> {
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_wms"),
     )
     .unwrap_or_else(|error| panic!("{error:#}"));
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../../apps/target/wamn/wamn_wms/components/jsonata.wasm"
+    let path = std::path::PathBuf::from(
+        std::env::var_os("WAMN_JSONATA_COMPONENT")
+            .expect("set WAMN_JSONATA_COMPONENT to the built jsonata component"),
     );
-    std::fs::read(path)
-        .unwrap_or_else(|error| panic!("read {path}; run wamn build apps/wamn_wms: {error}"))
+    std::fs::read(&path).unwrap_or_else(|error| {
+        panic!(
+            "read {}; run wamn build apps/wamn_wms: {error}",
+            path.display()
+        )
+    })
 }
 
 /// The workflow `read -> shape` at `version`, reading through `operation`.
@@ -780,8 +784,11 @@ impl Fixture {
 /// `workflow.start` as a session user with one role, drain with the real
 /// queue, and read the run row.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: wamn build apps/wamn_wms (the virtualized jsonata node)"]
+#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_JSONATA_COMPONENT"]
 async fn a_manual_run_reads_and_shapes_as_its_invoker_with_one_role() {
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_JSONATA_COMPONENT",
+    );
     let _lock = wamn_test_postgres::lock();
     let mut fixture = fixture().await;
     let before = fixture.application_rows().await;
@@ -852,8 +859,11 @@ async fn a_manual_run_reads_and_shapes_as_its_invoker_with_one_role() {
 /// whose hash is not its graph's refuse at `workflow.start`, and a run whose hash is not the stored row's refuses at
 /// `resolve_workflow`: the queue fails it.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: wamn build apps/wamn_wms (the virtualized jsonata node)"]
+#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_JSONATA_COMPONENT"]
 async fn a_wrong_hash_refuses_at_start_and_fails_the_run_at_resolution() {
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_JSONATA_COMPONENT",
+    );
     let _lock = wamn_test_postgres::lock();
     let mut fixture = fixture().await;
 
@@ -946,8 +956,11 @@ async fn a_wrong_hash_refuses_at_start_and_fails_the_run_at_resolution() {
 /// workflow enabled against a release refuses at admission once the serving
 /// release no longer carries its operation.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: wamn build apps/wamn_wms (the virtualized jsonata node)"]
+#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_JSONATA_COMPONENT"]
 async fn an_operation_not_in_the_release_refuses_at_author_and_at_admission() {
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_JSONATA_COMPONENT",
+    );
     let _lock = wamn_test_postgres::lock();
     let mut fixture = fixture().await;
 
@@ -982,8 +995,11 @@ async fn an_operation_not_in_the_release_refuses_at_author_and_at_admission() {
 /// Check 7: a user whose one role lacks the read starts the workflow, and the
 /// run fails at its first node with `permission_denied`.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: wamn build apps/wamn_wms (the virtualized jsonata node)"]
+#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_JSONATA_COMPONENT"]
 async fn a_start_by_a_role_without_the_read_fails_at_the_first_node() {
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_JSONATA_COMPONENT",
+    );
     let _lock = wamn_test_postgres::lock();
     let mut fixture = fixture().await;
     fixture.enabled().await;
@@ -1008,8 +1024,11 @@ async fn a_start_by_a_role_without_the_read_fails_at_the_first_node() {
 /// Check 8: the role's grant on the read is revoked between enable and
 /// start, and the run fails at its first node with `permission_denied`.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: wamn build apps/wamn_wms (the virtualized jsonata node)"]
+#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_JSONATA_COMPONENT"]
 async fn a_grant_revoked_between_enable_and_start_fails_the_first_node() {
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_JSONATA_COMPONENT",
+    );
     let _lock = wamn_test_postgres::lock();
     let mut fixture = fixture().await;
     fixture.enabled().await;
@@ -1031,8 +1050,11 @@ async fn a_grant_revoked_between_enable_and_start_fails_the_first_node() {
 /// Check 9: a queue service of another release leaves the run queued, and
 /// the service of the run's release takes it.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: wamn build apps/wamn_wms (the virtualized jsonata node)"]
+#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_JSONATA_COMPONENT"]
 async fn a_host_of_another_release_cannot_claim_the_run() {
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_JSONATA_COMPONENT",
+    );
     let _lock = wamn_test_postgres::lock();
     let mut fixture = fixture().await;
     fixture.enabled().await;
@@ -1076,8 +1098,11 @@ async fn a_host_of_another_release_cannot_claim_the_run() {
 /// Check 10: author, enable and start change neither the release row nor
 /// the environment row nor its policy.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: wamn build apps/wamn_wms (the virtualized jsonata node)"]
+#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_JSONATA_COMPONENT"]
 async fn author_enable_and_start_leave_the_release_and_the_environment_unchanged() {
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_JSONATA_COMPONENT",
+    );
     let _lock = wamn_test_postgres::lock();
     let mut fixture = fixture().await;
     let before = fixture.environment_facts().await;

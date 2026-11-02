@@ -1041,10 +1041,12 @@ async fn a_session_without_file_grants_cannot_call_any_file_operation() -> anyho
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires: WAMN_SESSION_EXCHANGE_CTL_BIN"]
+#[ignore = "requires: env:WAMN_SESSION_EXCHANGE_CTL_BIN"]
 async fn cli_admin_revoke_reaches_the_same_http_refusal() -> anyhow::Result<()> {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-    wamn_test_postgres::require_prerequisites(&["WAMN_SESSION_EXCHANGE_CTL_BIN"]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_SESSION_EXCHANGE_CTL_BIN",
+    );
     let mut host = application_host("cli_admin_revoke").await?;
     host.admin
         .execute(

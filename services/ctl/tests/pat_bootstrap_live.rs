@@ -20,9 +20,11 @@ impl Drop for Files {
 }
 
 #[tokio::test]
-#[ignore = "requires:"]
+#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_IDENTITY_BINARY"]
 async fn cli_bootstrap_mints_first_service_pats_over_https() {
-    wamn_test_postgres::require_prerequisites(&[]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_IDENTITY_BINARY",
+    );
     wamn_control::dev::pat_issuer::identity_binary().expect("find the wamn-identity binary");
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
@@ -221,7 +223,7 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
 }
 
 #[tokio::test]
-#[ignore = "requires: RESEND_API_KEY, RESEND_FROM"]
+#[ignore = "requires: env:RESEND_API_KEY, env:RESEND_FROM"]
 #[expect(
     clippy::ok_expect,
     reason = "do not print credential-bearing upstream errors in fixture assertions"
@@ -252,7 +254,9 @@ async fn development_identity_survives_target_recreation_and_owned_teardown() {
         );
         task.abort();
     }
-    wamn_test_postgres::require_prerequisites(&["RESEND_API_KEY", "RESEND_FROM"]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:RESEND_API_KEY, env:RESEND_FROM",
+    );
     let mut postgres = wamn_test_postgres::start(&[]).expect("start owned PostgreSQL");
     let system = postgres
         .create_database("wamn_system")

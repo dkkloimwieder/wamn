@@ -23,14 +23,11 @@ use wamn_test_infrastructure::scratch::ScratchRoot;
 use crate::business_fixture::{LOCATION_A_ID, PACKAGING_ID};
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN, node"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, bin:node"]
 async fn the_packaging_screen_follows_a_write_and_a_delete() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "WAMN_APPLICATION_COMPONENTS",
-        "WAMN_FLOW_HTTP_COMPONENT",
-        "WAMN_NATIVE_C_NATS_BIN",
-        "node",
-    ]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, bin:node",
+    );
     let _lock = wamn_test_postgres::lock();
     let system = wamn_test_postgres::database();
     let project = wamn_test_postgres::database();

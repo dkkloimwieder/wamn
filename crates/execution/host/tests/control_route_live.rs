@@ -1627,9 +1627,9 @@ async fn assert_definer_grantees(client: &Client) -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
 async fn connection_routes_refuse_mismatches_and_project_only_enabled_rows() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&["WAMN_NATIVE_C_NATS_BIN"]);
+    wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
     let mut postgres = wamn_test_postgres::start(&[])?;
     let database = postgres.create_database("connection_routes")?;
     let admin = connect(database.url()).await?;
@@ -1918,10 +1918,10 @@ mod oauth_authorization;
 
 #[cfg(feature = "test-util")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
 async fn delayed_grant_cannot_restore_revoked_admin() -> anyhow::Result<()> {
     use wamn_execution_host::ProjectionPause;
-    wamn_test_postgres::require_prerequisites(&["WAMN_NATIVE_C_NATS_BIN"]);
+    wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
     let mut postgres = wamn_test_postgres::start(&[])?;
     let database = postgres.create_database("grant_projection_order")?;
     let admin = connect(database.url()).await?;

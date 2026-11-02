@@ -49,23 +49,29 @@ use deployment::{checked, kubectl};
 const DRAIN_BOUND_SECONDS: u32 = 70;
 
 #[tokio::test]
-#[ignore = "requires: docker, kind, kubectl, helm, openssl"]
+#[ignore = "requires: bin:docker, bin:kind, bin:kubectl, bin:helm, bin:openssl"]
 async fn released_wms_routes() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "openssl"]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:docker, bin:kind, bin:kubectl, bin:helm, bin:openssl",
+    );
     run_case(Case::Routes).await
 }
 
 #[tokio::test]
-#[ignore = "requires: docker, kind, kubectl, helm, openssl"]
+#[ignore = "requires: bin:docker, bin:kind, bin:kubectl, bin:helm, bin:openssl"]
 async fn released_wms_routes_retain_committed_work_after_label_failure() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "openssl"]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:docker, bin:kind, bin:kubectl, bin:helm, bin:openssl",
+    );
     run_case(Case::PartialCompletion).await
 }
 
 #[tokio::test]
-#[ignore = "requires: docker, kind, kubectl, helm, openssl"]
+#[ignore = "requires: bin:docker, bin:kind, bin:kubectl, bin:helm, bin:openssl"]
 async fn restarted_wms_host_retains_compiled_code_and_serves_requests() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "openssl"]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:docker, bin:kind, bin:kubectl, bin:helm, bin:openssl",
+    );
     run_case(Case::Startup).await
 }
 

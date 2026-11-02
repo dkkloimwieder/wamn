@@ -218,10 +218,11 @@ fn publication_records_the_exact_entry_and_members() {
 }
 
 #[test]
-#[ignore = "requires: WAMN_FLOW_HTTP_COMPONENT built from the http-route guest"]
+#[ignore = "requires: env:WAMN_FLOW_HTTP_COMPONENT"]
 fn publication_composes_only_the_application_that_covers_the_routes() {
     use wamn_catalog::{PackageCoordinate, ServingComponent, ServingManifest, ServingRelease};
     use wamn_control::publish_release::{PublishedRelease, compose_release_entry};
+    wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_FLOW_HTTP_COMPONENT");
 
     let app_bytes = application("");
     // A released workflow node is larger than the application in WMS, and
@@ -459,8 +460,9 @@ fn composition_refuses_a_wrapper_that_forwards_sql_to_the_wrong_leaf() {
 }
 
 #[test]
-#[ignore = "requires: WAMN_FLOW_HTTP_COMPONENT built from the http-route guest"]
+#[ignore = "requires: env:WAMN_FLOW_HTTP_COMPONENT"]
 fn publication_composes_the_built_http_route_guest() {
+    wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_FLOW_HTTP_COMPONENT");
     let path = PathBuf::from(
         std::env::var_os("WAMN_FLOW_HTTP_COMPONENT")
             .expect("set WAMN_FLOW_HTTP_COMPONENT to the debug http-route guest"),
@@ -469,8 +471,9 @@ fn publication_composes_the_built_http_route_guest() {
 }
 
 #[test]
-#[ignore = "requires: WAMN_FLOW_HTTP_COMPONENT built from the http-route guest"]
+#[ignore = "requires: env:WAMN_FLOW_HTTP_COMPONENT"]
 fn platform_control_entry_resolves_dispatch_and_requires_the_route_pin() {
+    wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_FLOW_HTTP_COMPONENT");
     let path = std::env::var_os("WAMN_FLOW_HTTP_COMPONENT").expect("built route guest");
     let mut route = std::fs::read(path).expect("read the built HTTP route guest");
     let bytes = wamn_component_composer::compose_control_entry(route.clone())

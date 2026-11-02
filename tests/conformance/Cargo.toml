@@ -35,6 +35,7 @@ wasmtime-wasi = { workspace = true }
 wasm-encoder = { workspace = true }
 
 [dev-dependencies]
+proc-macro2 = { version = "1.0.107", features = ["span-locations"] }
 chrono = { workspace = true, features = ["std"] }
 rust_decimal = { workspace = true, features = ["std"] }
 serde_yaml = { workspace = true }

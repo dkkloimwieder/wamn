@@ -213,9 +213,9 @@ fn kind_name(document: &Value) -> (String, String) {
 }
 
 #[tokio::test]
-#[ignore = "requires: helm"]
+#[ignore = "requires: bin:helm"]
 async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
-    wamn_test_postgres::require_prerequisites(&["helm"]);
+    wamn_test_postgres::require_ignored_prerequisites("requires: bin:helm");
     let scratch = Scratch::new("objects");
     let chart = stamped_chart(&scratch);
     let name = release_name("acme", "wms", "prod").expect("valid coordinate");
@@ -457,9 +457,9 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
 }
 
 #[test]
-#[ignore = "requires: helm"]
+#[ignore = "requires: bin:helm"]
 fn an_unstamped_chart_does_not_render() {
-    wamn_test_postgres::require_prerequisites(&["helm"]);
+    wamn_test_postgres::require_ignored_prerequisites("requires: bin:helm");
     let scratch = Scratch::new("unstamped");
     let chart = scratch.0.join("chart");
     let status = Command::new("cp")
@@ -477,9 +477,9 @@ fn an_unstamped_chart_does_not_render() {
 }
 
 #[test]
-#[ignore = "requires: helm"]
+#[ignore = "requires: bin:helm"]
 fn two_environments_in_one_namespace_share_no_object_name() {
-    wamn_test_postgres::require_prerequisites(&["helm"]);
+    wamn_test_postgres::require_ignored_prerequisites("requires: bin:helm");
     let scratch = Scratch::new("names");
     let chart = stamped_chart(&scratch);
     // Two envs, and two whose first 24 characters are equal (one slug).

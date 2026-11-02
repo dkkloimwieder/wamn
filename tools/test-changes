@@ -394,7 +394,11 @@ wamn_suite_arguments() {
 # Inputs are built before any test. A failed input stops dependent tests.
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$WAMN_REPOSITORY_ROOT/target}"
 [[ "$CARGO_TARGET_DIR" == /* ]] || export CARGO_TARGET_DIR="$WAMN_REPOSITORY_ROOT/$CARGO_TARGET_DIR"
+export PATH="$CARGO_TARGET_DIR/debug:$PATH"
 export WAMN_APPLICATION_COMPONENTS="$CARGO_TARGET_DIR/virtualized/std-empty-environment"
+export WAMN_EDGE_DEVICE_COMPONENT="$WAMN_REPOSITORY_ROOT/apps/target/wamn/edge_device/components/device.wasm"
+export WAMN_PLATFORM_UI_DIST="$WAMN_REPOSITORY_ROOT/apps/platform_ui/dist"
+export WAMN_JSONATA_COMPONENT="$WAMN_REPOSITORY_ROOT/apps/target/wamn/wamn_wms/components/jsonata.wasm"
 need_edge=false
 need_packages=false
 need_fixture=false

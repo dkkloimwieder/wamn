@@ -235,13 +235,11 @@ async fn start(
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn health_head_needs_no_credential() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "WAMN_APPLICATION_COMPONENTS",
-        "WAMN_FLOW_HTTP_COMPONENT",
-        "WAMN_NATIVE_C_NATS_BIN",
-    ]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
+    );
     let _lock = wamn_test_postgres::lock();
     let system = wamn_test_postgres::database();
     let project = wamn_test_postgres::database();
@@ -261,13 +259,11 @@ async fn health_head_needs_no_credential() -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn a_route_answers_every_operation_kind_consistently_across_aliases() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "WAMN_APPLICATION_COMPONENTS",
-        "WAMN_FLOW_HTTP_COMPONENT",
-        "WAMN_NATIVE_C_NATS_BIN",
-    ]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
+    );
     let _lock = wamn_test_postgres::lock();
     let system = wamn_test_postgres::database();
     let project = wamn_test_postgres::database();
@@ -573,13 +569,11 @@ async fn a_route_answers_every_operation_kind_consistently_across_aliases() -> a
 /// runs (wamn-cg5e4). The entry refuses it with the limit refusal, whose
 /// maximum is the ceiling. A query's declared maximum of 100 refuses first.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn a_read_of_100000_rows_refuses_at_the_ceiling() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "WAMN_APPLICATION_COMPONENTS",
-        "WAMN_FLOW_HTTP_COMPONENT",
-        "WAMN_NATIVE_C_NATS_BIN",
-    ]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
+    );
     let _lock = wamn_test_postgres::lock();
     let system = wamn_test_postgres::database();
     let project = wamn_test_postgres::database();
@@ -634,13 +628,11 @@ fn names(answer: &Value, member: &str) -> anyhow::Result<Vec<String>> {
 /// days until the request sends one, and its search finds a part of the name
 /// in any case.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn each_filter_mode_the_search_and_the_band_read_their_rows() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "WAMN_APPLICATION_COMPONENTS",
-        "WAMN_FLOW_HTTP_COMPONENT",
-        "WAMN_NATIVE_C_NATS_BIN",
-    ]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
+    );
     let _lock = wamn_test_postgres::lock();
     let system = wamn_test_postgres::database();
     let project = wamn_test_postgres::database();
@@ -727,14 +719,12 @@ async fn each_filter_mode_the_search_and_the_band_read_their_rows() -> anyhow::R
 
 /// A composed read adds no transaction statements (wamn-5x0tt).
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn composed_reads_use_one_statement_plus_optional_wal() -> anyhow::Result<()> {
     const REQUESTS: i64 = 10;
-    wamn_test_postgres::require_prerequisites(&[
-        "WAMN_APPLICATION_COMPONENTS",
-        "WAMN_FLOW_HTTP_COMPONENT",
-        "WAMN_NATIVE_C_NATS_BIN",
-    ]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
+    );
     let mut server = wamn_test_postgres::start(&[
         ("shared_preload_libraries", "pg_stat_statements"),
         ("pg_stat_statements.track", "all"),
@@ -938,13 +928,11 @@ async fn note_widget(paths: &Paths, id: &Value, version: i64, note: &str) -> any
 /// retention, the first cursor is older than the oldest entry kept, and the
 /// feed refuses it with `cursor_expired`.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn the_feed_of_a_list_read_follows_its_snapshot() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "WAMN_APPLICATION_COMPONENTS",
-        "WAMN_FLOW_HTTP_COMPONENT",
-        "WAMN_NATIVE_C_NATS_BIN",
-    ]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
+    );
     let _lock = wamn_test_postgres::lock();
     let system = wamn_test_postgres::database();
     let project = wamn_test_postgres::database();
@@ -1165,13 +1153,11 @@ fn screen_ids(changes: &Value, expected: &[&str], deleted: bool) -> anyhow::Resu
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn an_authored_view_feed_maps_joined_changes_moves_and_expiry() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "WAMN_APPLICATION_COMPONENTS",
-        "WAMN_FLOW_HTTP_COMPONENT",
-        "WAMN_NATIVE_C_NATS_BIN",
-    ]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
+    );
     let _lock = wamn_test_postgres::lock();
     let system = wamn_test_postgres::database();
     let project = wamn_test_postgres::database();
@@ -1286,13 +1272,11 @@ async fn an_authored_view_feed_maps_joined_changes_moves_and_expiry() -> anyhow:
 /// A held transaction leaves room for one page of visible commits above xmin.
 /// Replacing the priority row keeps the fixture's two-code constraint intact.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn the_feed_delivers_visible_rows_while_a_transaction_stays_open() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "WAMN_APPLICATION_COMPONENTS",
-        "WAMN_FLOW_HTTP_COMPONENT",
-        "WAMN_NATIVE_C_NATS_BIN",
-    ]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
+    );
     let _lock = wamn_test_postgres::lock();
     let system = wamn_test_postgres::database();
     let project = wamn_test_postgres::database();
@@ -1469,13 +1453,11 @@ async fn the_feed_delivers_visible_rows_while_a_transaction_stays_open() -> anyh
 /// A PAT route admits only a project admin, so the caller starts as `admin`
 /// and then holds the application role `reader`, which has no permission row.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn a_role_without_the_list_permission_is_refused_the_feed() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "WAMN_APPLICATION_COMPONENTS",
-        "WAMN_FLOW_HTTP_COMPONENT",
-        "WAMN_NATIVE_C_NATS_BIN",
-    ]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
+    );
     let _lock = wamn_test_postgres::lock();
     let system = wamn_test_postgres::database();
     let project = wamn_test_postgres::database();
@@ -1521,13 +1503,11 @@ async fn a_role_without_the_list_permission_is_refused_the_feed() -> anyhow::Res
 /// A PAT route admits only a project admin, so the caller starts as `admin`
 /// and then holds the application role `reader`, which has no permission row.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn a_role_without_the_permission_is_refused_an_authored_feed() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "WAMN_APPLICATION_COMPONENTS",
-        "WAMN_FLOW_HTTP_COMPONENT",
-        "WAMN_NATIVE_C_NATS_BIN",
-    ]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
+    );
     let _lock = wamn_test_postgres::lock();
     let system = wamn_test_postgres::database();
     let project = wamn_test_postgres::database();
@@ -1598,13 +1578,11 @@ fn seed_number_sequences(database: &wamn_test_postgres::Database) -> anyhow::Res
 
 /// Generated sequence bindings run in a guest command without any record.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn a_command_numbers_without_a_record_and_with_a_key_map() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "WAMN_APPLICATION_COMPONENTS",
-        "WAMN_FLOW_HTTP_COMPONENT",
-        "WAMN_NATIVE_C_NATS_BIN",
-    ]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
+    );
     let _lock = wamn_test_postgres::lock();
     let system = wamn_test_postgres::database();
     let project = wamn_test_postgres::database();
@@ -1643,13 +1621,11 @@ async fn a_command_numbers_without_a_record_and_with_a_key_map() -> anyhow::Resu
 
 /// An overlay with no field declarations inherits the numbered insert and actors.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: WAMN_APPLICATION_COMPONENTS, WAMN_FLOW_HTTP_COMPONENT, WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn an_overlay_insert_inherits_numbering_and_actor_stamps() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&[
-        "WAMN_APPLICATION_COMPONENTS",
-        "WAMN_FLOW_HTTP_COMPONENT",
-        "WAMN_NATIVE_C_NATS_BIN",
-    ]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN",
+    );
     let _lock = wamn_test_postgres::lock();
     let system = wamn_test_postgres::database();
     let project = wamn_test_postgres::database();

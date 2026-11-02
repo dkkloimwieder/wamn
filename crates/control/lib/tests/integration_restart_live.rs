@@ -422,9 +422,11 @@ async fn apply(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires: docker, PostgreSQL 18, NATS, wasm32-wasip2"]
+#[ignore = "requires: bin:docker, bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN, bin:rustc"]
 async fn published_modbus_versions_link_before_the_next_call() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&["docker"]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:docker, bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN, bin:rustc",
+    );
     let _lock = wamn_test_postgres::lock();
     let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
     fixture(scratch.path())?;

@@ -12,10 +12,6 @@ use wamn_run_state::intent_cases::{self, CaseStores, IntentStoreFixture};
 use wamn_run_state::intent_store::{Begun, Intent, IntentId, StoreErrorType};
 use wamn_run_state_sqlite::{SqliteIntentStore, TextBegun};
 
-/// The child reads the database path from this variable.
-const CHILD_DATABASE: &str = "WAMN_INTENT_STORE_CHILD_DATABASE";
-const CHILD_TEST: &str = "child_begins_an_intent_and_waits_to_be_killed";
-
 /// A new database path under Cargo's temporary directory for this test target.
 fn database(name: &str) -> PathBuf {
     static NEXT: AtomicU32 = AtomicU32::new(0);
@@ -37,13 +33,6 @@ fn intent<'a>(key: &'a str, input_hash: &'a str) -> Intent<'a> {
         idempotency_key: key,
         input_hash,
         deadline_ms: 5_000,
-    }
-}
-
-fn new_id(begun: Begun) -> IntentId {
-    match begun {
-        Begun::New(id) => id,
-        other => panic!("expected a new intent, got {other:?}"),
     }
 }
 
@@ -159,9 +148,8 @@ async fn closed_resolves_when_the_last_clone_drops() {
 #[tokio::test]
 async fn reopen_after_kill_finds_the_uncertain_intent() {
     let path = database("killed");
-    let mut child = Command::new(std::env::current_exe().expect("the test binary"))
-        .args([CHILD_TEST, "--exact", "--ignored", "--nocapture"])
-        .env(CHILD_DATABASE, &path)
+    let mut child = Command::new(env!("CARGO_BIN_EXE_intent-store-child"))
+        .arg(&path)
         .stdout(Stdio::piped())
         .spawn()
         .expect("start the child");
@@ -192,19 +180,4 @@ async fn reopen_after_kill_finds_the_uncertain_intent() {
             .expect("begin again"),
         Begun::Uncertain(open[0].id.clone())
     );
-}
-
-#[tokio::test]
-#[ignore = "the child process of reopen_after_kill_finds_the_uncertain_intent"]
-async fn child_begins_an_intent_and_waits_to_be_killed() {
-    // The child process of the kill test, not a test. A run with
-    // `--include-ignored` selects it without the kill test's variable, and
-    // then it has nothing to do.
-    let Some(path) = std::env::var_os(CHILD_DATABASE) else {
-        return;
-    };
-    let store = SqliteIntentStore::open(path).expect("open");
-    let id = new_id(store.begin(&intent("k-killed", "h1")).await.expect("begin"));
-    println!("begun {}", id.0);
-    std::thread::sleep(std::time::Duration::from_secs(600));
 }

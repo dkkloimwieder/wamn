@@ -65,9 +65,9 @@ fn refusal(result: anyhow::Result<impl std::fmt::Debug>) -> String {
 }
 
 #[tokio::test]
-#[ignore = "requires: WAMN_READER_NATS_URL"]
+#[ignore = "requires: env:WAMN_READER_NATS_URL"]
 async fn recover_and_close_record_each_capture_gap() {
-    wamn_test_postgres::require_prerequisites(&["WAMN_READER_NATS_URL"]);
+    wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_READER_NATS_URL");
     let nats_url = std::env::var("WAMN_READER_NATS_URL").expect("WAMN_READER_NATS_URL");
     validate_project_env_cdc(ORG, PROJECT, ENV).expect("valid names");
     let postgres = wamn_test_postgres::start(&[("wal_level", "logical")])

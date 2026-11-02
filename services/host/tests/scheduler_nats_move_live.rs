@@ -592,8 +592,11 @@ const PAUSE_DETECT_BUDGET: Duration = Duration::from_secs(240);
 /// case measures when the client notices, what its attempts meet, and whether
 /// it connects again on unpause. Last, NATS moves.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires: Docker, nats:2.12.8-alpine, debian:trixie-slim, WAMN_HOST_LIVE_EVIDENCE_DIR"]
+#[ignore = "requires: bin:docker, env:WAMN_HOST_LIVE_EVIDENCE_DIR"]
 async fn host_connects_again_through_scheduler_nats_outages() -> anyhow::Result<()> {
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:docker, env:WAMN_HOST_LIVE_EVIDENCE_DIR",
+    );
     let mut case = start_case("outages").await?;
     let disconnects = |log: &str| {
         log.lines()

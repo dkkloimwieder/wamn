@@ -42,9 +42,11 @@ use crate::wms_runtime_live::write_result;
 const DATABASE_NAMESPACE: &str = "wms-pg";
 
 #[tokio::test]
-#[ignore = "requires: docker, kind, kubectl, helm, openssl, WAMN_DELIVERY_CLUSTER"]
+#[ignore = "requires: bin:docker, bin:kind, bin:kubectl, bin:helm, bin:openssl, env:WAMN_DELIVERY_CLUSTER"]
 async fn owned_release_delivery() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "openssl"]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:docker, bin:kind, bin:kubectl, bin:helm, bin:openssl, env:WAMN_DELIVERY_CLUSTER",
+    );
     ensure!(
         std::env::var_os(wamn_control::delivery::CANDIDATE_ENV).is_none(),
         "the owned setup mints its own candidate"

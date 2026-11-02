@@ -13,11 +13,16 @@ fn repository() -> PathBuf {
 }
 
 #[test]
-#[ignore = "requires: WAMN_FLOW_HTTP_COMPONENT, built edge_device package"]
+#[ignore = "requires: env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_EDGE_DEVICE_COMPONENT"]
 fn the_bundle_pins_the_entry_composed_from_the_route_guest_and_the_application() {
-    wamn_test_postgres::require_prerequisites(&["WAMN_FLOW_HTTP_COMPONENT"]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_EDGE_DEVICE_COMPONENT",
+    );
     let route = PathBuf::from(std::env::var_os("WAMN_FLOW_HTTP_COMPONENT").unwrap());
-    let component = repository().join("apps/target/wamn/edge_device/components/device.wasm");
+    let component = PathBuf::from(
+        std::env::var_os("WAMN_EDGE_DEVICE_COMPONENT")
+            .expect("set WAMN_EDGE_DEVICE_COMPONENT to the built edge_device component"),
+    );
     wamn_schema_generator::build_record::check_current(&repository().join("apps/edge_device"))
         .unwrap_or_else(|error| panic!("{error:#}"));
     assert!(component.is_file(), "run wamn build apps/edge_device first");

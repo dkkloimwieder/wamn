@@ -65,9 +65,11 @@ async fn ready(address: SocketAddr) -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "requires: PostgreSQL 18, WAMN_NATIVE_C_NATS_BIN"]
+#[ignore = "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN"]
 async fn sigterm_drains_calls_then_hands_the_lease_to_a_ready_host() -> anyhow::Result<()> {
-    wamn_test_postgres::require_prerequisites(&["WAMN_NATIVE_C_NATS_BIN"]);
+    wamn_test_postgres::require_ignored_prerequisites(
+        "requires: bin:/usr/lib/postgresql/18/bin/postgres, env:WAMN_NATIVE_C_NATS_BIN",
+    );
     let database = wamn_test_postgres::database();
     let (admin, driver) = tokio_postgres::connect(database.url(), NoTls).await?;
     let driver = tokio::spawn(driver);
