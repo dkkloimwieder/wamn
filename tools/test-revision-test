@@ -10,6 +10,14 @@ cp "$tools/test-changes" "$tools/require-test-result" \
   "$tools/test-revision" "$fixture/repo/tools/"
 mkdir -p "$fixture/repo/tests"
 cp "$tools/../tests/selection.toml" "$fixture/repo/tests/"
+# This fixture tests the default tiers and supplies no cluster packages.
+python3 - "$fixture/repo/tests/selection.toml" <<'PYTHON'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+head, *suites = path.read_text().split("[[suites]]")
+path.write_text(head + "".join("[[suites]]" + suite for suite in suites if 'tier = "kind"' not in suite))
+PYTHON
 # Substitute storage roots only, so the test never uses the real revision paths.
 sed -e "s|/var/tmp/wamn-test-revision/worktree|$fixture/revision-worktree|g" \
   -e 's|$HOME/.cache/wamn-target/revision|$FAKE_STATE/revision-target|g' \
@@ -73,7 +81,11 @@ elif [[ $1 == metadata ]]; then
        targets: [{name: (.[0] | gsub("-"; "_")), kind: ["lib"]},
          {name: "package_digest", kind: ["test"]},
          {name: "environment_apply_kind", kind: ["test"]},
-         {name: "platform_apply_kind", kind: ["test"]}]}]
+         {name: "platform_apply_kind", kind: ["test"]},
+         {name: "environment_render", kind: ["test"]},
+         {name: "platform_render", kind: ["test"]},
+         {name: "release_chart_render", kind: ["test"]},
+         {name: "native_host", kind: ["test"]}]}]
     | {workspace_root: $root, packages: ., workspace_members: [.[].id],
        resolve: {nodes: [.[] | {id, deps: []}]}}'
 elif [[ $1 == test ]]; then
@@ -146,12 +158,12 @@ run_case deploy/sql/catalog.sql
 grep -q '^suites:.*ctl-ops' "$fixture/output"
 grep -q '^root (full: "deploy/sql/catalog.sql").*--features wamn-control/ops' "$fixture/output"
 run_case deploy/platform/release/values.yaml
-grep -q '^prekind:.*--test environment_apply_kind --test platform_apply_kind --features ops prekind$' "$fixture/output"
+grep -q '^prekind:.*--test environment_render --test platform_render --features ops$' "$fixture/output"
 grep -q '^native host:.*--exact --test-threads=1 --ignored$' "$fixture/output"
 ! grep -q -- '--skip' "$fixture/output"
 grep -q 'target/no-std' "$fixture/output"
 grep -q 'target/apps' "$fixture/output"
-printf 'path rules, prekind filters, isolated guest paths: PASS\n'
+printf 'path rules, render targets, isolated guest paths: PASS\n'
 
 export FAKE_FAIL_INPUT=true
 if run_case crates/control/lib/src/change.rs run; then exit 1; fi

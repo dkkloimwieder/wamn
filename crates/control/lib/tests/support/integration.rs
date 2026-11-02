@@ -9,9 +9,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 use tokio::process::{Child, Command};
 use wamn_catalog::{ComponentPackageScope, PackageCoordinate, WiringDocument};
-use wamn_control::author_workflow::{
-    AuthorWorkflowRequest, WorkflowExecution, WorkflowTrigger, author_workflow_in_databases,
-};
+use wamn_control::author_workflow::WorkflowTrigger;
 use wamn_control::component_admission::{AdmitComponentRequest, admit_component};
 use wamn_control::component_declaration::{
     authored_base_digests, render_declaration_document, render_palette_declaration,
@@ -21,54 +19,21 @@ use wamn_control::environment::{self, Platform};
 use wamn_control::package_artifact::{PackageRegistry, PushPackageRequest, push_package};
 use wamn_control::publish_release::{PublishReleaseRequest, assemble_local_release};
 use wamn_control::release_chart::ImageSet;
-use wamn_control::workflow_lifecycle::{WorkflowVersion, disable_workflow, enable_workflow};
 use wamn_control_provision::events::source_stream_config;
 use wamn_control_provision::workload_role::WorkloadRoleFamily;
 use wamn_platform_identity::auth_changes::AuthChanges;
 use wamn_platform_identity::nats::PlatformNats;
 use wamn_test_infrastructure::event_broker;
 
-use super::{
-    DeclaredRelease, EnvironmentDocument, NAMESPACE, ORG, POLICY, PROJECT, Run, http_connection,
-    qualification_artifact,
-};
+use wamn_control::environment::document::DeclaredRelease;
+
+use super::{NAMESPACE, ORG, PROJECT, Run, http_connection, qualification_artifact};
 
 const ENVIRONMENT: &str = "integration";
 const CONSUMER: &str = "rest_consumer_fixture";
 /// The execution role of the connector's pull: exactly the consumer command
 /// its graph calls.
 pub const PULL_ROLE: &str = "connector-pull";
-/// The user who authors and enables schedule workflows, as an environment
-/// admin does. It holds each execution role it assigns.
-const ENABLER: &str = "00000000-0000-4000-8000-0000000000e1";
-
-/// One kind environment in which a test authors workflows.
-pub struct WorkflowEnvironment<'a> {
-    pub system_url: &'a str,
-    pub project_url: &'a str,
-    pub scope: &'a wamn_control_registry::Triple,
-    pub env_key: &'a str,
-    /// The release the environment serves.
-    pub digest: &'a str,
-    /// The applications the environment declares, as the serving Helm
-    /// revision keeps them.
-    pub applications: &'a wamn_catalog::EnvironmentApplications,
-    pub auth: &'a AuthChanges,
-}
-
-impl WorkflowEnvironment<'_> {
-    fn version<'a>(&'a self, application: &'a str, workflow_id: &'a str) -> WorkflowVersion<'a> {
-        WorkflowVersion {
-            org: &self.scope.org,
-            project: &self.scope.project,
-            environment: &self.scope.env,
-            application,
-            workflow_id,
-            version: 1,
-        }
-    }
-}
-
 /// The wiring of the connector's scheduled pull.
 fn pull_wiring(connector: &str) -> &'static str {
     if connector == "netsuite" {
@@ -79,16 +44,6 @@ fn pull_wiring(connector: &str) -> &'static str {
 }
 
 /// One owned connection, as the workflow verbs take it.
-async fn connect_owned(
-    url: &str,
-) -> anyhow::Result<(tokio_postgres::Client, tokio::task::JoinHandle<()>)> {
-    let (client, connection) = tokio_postgres::connect(url, tokio_postgres::NoTls).await?;
-    let task = tokio::spawn(async move {
-        let _ = connection.await;
-    });
-    Ok((client, task))
-}
-
 /// Publish fixture role changes on the scheduler NATS that the hosts watch.
 pub async fn auth_changes(run: &Run) -> anyhow::Result<(AuthChanges, Child)> {
     let (connection, forward) = nats_forward(run, "wamn-ctl-nats").await?;
@@ -281,429 +236,6 @@ async fn cluster_broker(run: &Run) -> anyhow::Result<ClusterBroker> {
         }
     }
     Ok(broker)
-}
-
-/// Admit a manual fixture run through the application host route.
-pub async fn start_workflow(
-    work: &Path,
-    environment: &WorkflowEnvironment<'_>,
-    application: &str,
-    workflow_id: &str,
-    input: &Value,
-    key: &str,
-) -> anyhow::Result<String> {
-    let (project, task) = connect_owned(environment.project_url).await?;
-    let result = wamn_gate_harness::run_check::check(
-        work,
-        "start_workflow",
-        &project,
-        start_workflow_inner(&project, environment, application, workflow_id, input, key),
-    )
-    .await;
-    task.abort();
-    result
-}
-
-async fn start_workflow_inner(
-    project: &tokio_postgres::Client,
-    environment: &WorkflowEnvironment<'_>,
-    application: &str,
-    workflow_id: &str,
-    input: &Value,
-    key: &str,
-) -> anyhow::Result<String> {
-    use std::sync::Arc;
-    use wamn_engine::router_delivery::{
-        DeliveryOutcome, DeliveryRequest, RouteDelivery as _, Source,
-    };
-    use wamn_runtime::plugins::wamn_postgres::{
-        AuthorityClass, ClassCredentials, WamnPostgres, WamnPostgresConfig,
-    };
-
-    project
-        .execute(
-            "SELECT set_config('app.user_id', $1, false), \
-                    set_config('app.operation', 'admin:schedule-fixture', false)",
-            &[&wamn_project_state::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string()],
-        )
-        .await?;
-    project.execute(
-        "INSERT INTO platform.user_role (user_id, role_name) VALUES ($1::text::uuid, 'admin') ON CONFLICT DO NOTHING",
-        &[&ENABLER],
-    ).await?;
-    let bytes: Vec<u8> = project
-        .query_one(
-            "SELECT canonical_bytes FROM catalog.releases WHERE env_key=$1 AND manifest_digest=$2",
-            &[&environment.env_key, &environment.digest],
-        )
-        .await?
-        .get(0);
-    let release = Arc::new(
-        wamn_engine::release_manifest::LoadedRelease::load_canonical_bytes(
-            &bytes,
-            "manual fixture workflow",
-            wamn_engine::release_manifest::ReleaseScope::new(
-                environment.env_key,
-                environment.scope.env.as_str(),
-            )
-            .with_applications(environment.applications.clone()),
-        )?,
-    );
-    let postgres = Arc::new(WamnPostgres::new(WamnPostgresConfig {
-        credentials: Some(
-            ClassCredentials::default()
-                .with_class(
-                    AuthorityClass::ExecutorPlatform,
-                    environment.project_url.to_owned(),
-                )
-                .with_class(
-                    AuthorityClass::Administration,
-                    environment.project_url.to_owned(),
-                )
-                .with_class(
-                    AuthorityClass::CallableHttp,
-                    environment.project_url.to_owned(),
-                ),
-        ),
-        guest_pool_max_size: 2,
-        platform_pool_max_size: 2,
-        wait_timeout_ms: 5_000,
-        statement_timeout_ms: 10_000,
-        row_limit: 10_000,
-    })?);
-    let held = postgres
-        .session_operation_permissions(
-            "default",
-            environment.env_key,
-            &["admin".to_owned()],
-            &ENABLER.parse()?,
-        )
-        .await?;
-    let attachment = wamn_catalog::HostRouteSet::Application
-        .attachments()
-        .find(|(_, attachment)| attachment.reference == "wamn-control:workflow/start")
-        .map(|(id, _)| id.to_owned())
-        .context("workflow.start attachment")?;
-    let caller = wamn_engine::flow_http_routing::AuthenticatedCaller::new(
-        attachment.clone(),
-        ENABLER,
-        wamn_engine::flow_http_routing::CredentialType::Session,
-        held.admin,
-        held.references.iter().cloned().collect(),
-        held.active_role(),
-    );
-    let host = wamn_execution_host::HostRouteDelivery::new(
-        release,
-        wamn_execution_host::HostRouteHandlers::Application {
-            postgres,
-            project: "default".to_owned(),
-            identity: None,
-            changes: wamn_platform_identity::auth_changes::AuthChanges::default(),
-        },
-        None,
-    );
-    let report = host.deliver(DeliveryRequest {
-        source: Source::Attachment(attachment), delivery_id: key.to_owned(),
-        payload: json!([{"request_id":key, "value":{
-            "application":application,"workflow_id":workflow_id,"input_json":input,"idempotency_key":key
-        }}]).to_string(),
-        caller: None, trace: None, parent_causation: None, if_none_match: None,
-    }, Some(caller)).await;
-    let Ok(DeliveryOutcome::Respond(body)) = report.outcome else {
-        anyhow::bail!("workflow.start failed: {:?}", report.outcome);
-    };
-    let body: Value =
-        serde_json::from_str(&body).with_context(|| format!("workflow.start response: {body}"))?;
-    body[0]["value"]["run_id"]
-        .as_str()
-        .map(str::to_owned)
-        .with_context(|| format!("workflow.start refused: {body}"))
-}
-
-/// Admit a manual fixture run as `workflow.start` admits it, for a release
-/// that serves no application host routes. The HTTP environment has no
-/// session issuer, so its release cannot serve them. The run records the
-/// served release, so the deployed executor claims it.
-pub async fn admit_workflow(
-    work: &Path,
-    environment: &WorkflowEnvironment<'_>,
-    application: &str,
-    workflow_id: &str,
-    input: &Value,
-    key: &str,
-) -> anyhow::Result<String> {
-    let (project, task) = connect_owned(environment.project_url).await?;
-    let result = wamn_gate_harness::run_check::check(
-        work,
-        "admit_workflow",
-        &project,
-        admit_workflow_inner(&project, environment, application, workflow_id, input, key),
-    )
-    .await;
-    task.abort();
-    result
-}
-
-async fn admit_workflow_inner(
-    project: &tokio_postgres::Client,
-    environment: &WorkflowEnvironment<'_>,
-    application: &str,
-    workflow_id: &str,
-    input: &Value,
-    key: &str,
-) -> anyhow::Result<String> {
-    use wamn_runtime::plugins::wamn_postgres::{
-        AuthorityClass, ClassCredentials, ManualRunAdmission, ManualRunAdmitted, WamnPostgres,
-        WamnPostgresConfig,
-    };
-
-    let bytes: Vec<u8> = project
-        .query_one(
-            "SELECT canonical_bytes FROM catalog.releases WHERE env_key=$1 AND manifest_digest=$2",
-            &[&environment.env_key, &environment.digest],
-        )
-        .await?
-        .get(0);
-    let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
-    let postgres = WamnPostgres::new(WamnPostgresConfig {
-        credentials: Some(ClassCredentials::default().with_class(
-            AuthorityClass::ExecutorPlatform,
-            environment.project_url.to_owned(),
-        )),
-        guest_pool_max_size: 2,
-        platform_pool_max_size: 2,
-        wait_timeout_ms: 5_000,
-        statement_timeout_ms: 10_000,
-        row_limit: 10_000,
-    })?;
-    let workflow = postgres
-        .enabled_workflow(
-            "default",
-            environment.env_key,
-            environment.scope.env.as_str(),
-            application,
-            workflow_id,
-        )
-        .await?
-        .context("the workflow is enabled")?;
-    let role = workflow
-        .execution_role
-        .as_deref()
-        .context("the fixture workflow runs with a role")?;
-    let packages = &environment
-        .applications
-        .get(application)
-        .context("the environment declares the application")?
-        .packages;
-    let node_digests: serde_json::Map<String, Value> = wamn_catalog::resolve_workflow_components(
-        environment.env_key,
-        packages,
-        &manifest,
-        &workflow.graph,
-    )
-    .map_err(|error| anyhow::anyhow!("{error:?}"))?
-    .into_iter()
-    .map(|(node, component)| (node, Value::String(component.component_digest)))
-    .collect();
-    let admitted = postgres
-        .admit_manual_run(
-            "default",
-            environment.env_key,
-            &ManualRunAdmission {
-                package_id: application,
-                manifest_digest: environment.digest,
-                environment: environment.scope.env.as_str(),
-                workflow_id,
-                workflow_version: workflow.version,
-                wiring_hash: &workflow.wiring_hash,
-                execution_principal_id: &wamn_project_state::workflow_user_id().to_string(),
-                execution_role: role,
-                invoked_by_user_id: ENABLER,
-                node_digests: &Value::Object(node_digests),
-                idempotency_key: &format!("manual:{ENABLER}:{workflow_id}:{key}"),
-                input,
-            },
-        )
-        .await
-        .map_err(|error| anyhow::anyhow!("{error:?}"))?;
-    let ManualRunAdmitted::Queued { run_id } = admitted else {
-        anyhow::bail!("the fixture key {key} admitted no new run: {admitted:?}");
-    };
-    Ok(run_id)
-}
-
-/// The first minute boundary strictly after `after`.
-pub fn next_minute(after: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
-    chrono::DateTime::from_timestamp(after.timestamp().div_euclid(60) * 60 + 60, 0)
-        .expect("a minute boundary after a valid time is a valid time")
-}
-
-/// Author `document` as a minutely schedule workflow of `application` and
-/// enable it, as an environment admin does with
-/// `wamn-ctl workflow author --schedule '* * * * *'` and `enable`. The admin
-/// first creates `role` with exactly `operations` and grants it to the
-/// `workflow` user and to itself, so the runs execute as the `workflow` user
-/// with `role`. A green gate report under the graph's hash stands in for the
-/// gate.
-pub async fn enable_schedule(
-    environment: &WorkflowEnvironment<'_>,
-    application: &str,
-    document: &WiringDocument,
-    role: &str,
-    operations: &[&str],
-) -> anyhow::Result<()> {
-    enable_trigger(
-        environment,
-        application,
-        document,
-        role,
-        operations,
-        WorkflowTrigger::Schedule("* * * * *"),
-        None,
-    )
-    .await
-}
-
-pub async fn enable_trigger(
-    environment: &WorkflowEnvironment<'_>,
-    application: &str,
-    document: &WiringDocument,
-    role: &str,
-    operations: &[&str],
-    trigger: WorkflowTrigger<'_>,
-    events: Option<&environment::EventBroker>,
-) -> anyhow::Result<()> {
-    let env_key = environment.env_key;
-    let (mut project, project_task) = connect_owned(environment.project_url).await?;
-    project
-        .execute(
-            "SELECT set_config('app.user_id', $1, false), \
-                    set_config('app.operation', 'admin:schedule-fixture', false)",
-            &[&wamn_project_state::PlatformComponent::Provisioning
-                .principal_id()
-                .to_string()],
-        )
-        .await?;
-    project
-        .execute(
-            "INSERT INTO platform.\"user\" (id, type, email) \
-             VALUES ($1::text::uuid, 'user', $2) ON CONFLICT (id) DO NOTHING",
-            &[
-                &ENABLER,
-                &format!("schedule-enabler@{}", super::PLATFORM_DOMAIN),
-            ],
-        )
-        .await?;
-    project
-        .execute("INSERT INTO platform.role (name) VALUES ($1)", &[&role])
-        .await?;
-    for operation in operations {
-        project
-            .execute(
-                "INSERT INTO platform.permission (role_name, permission) \
-                 VALUES ($1, $2)",
-                &[&role, operation],
-            )
-            .await?;
-    }
-    for user in [
-        format!("schedule-enabler@{}", super::PLATFORM_DOMAIN),
-        format!("workflow@{}", super::PLATFORM_DOMAIN),
-    ] {
-        async {
-            let tx = project.transaction().await?;
-            let user_id: String = tx
-                .query_one(
-                    "SELECT id::text FROM platform.\"user\" WHERE email=$1",
-                    &[&user],
-                )
-                .await?
-                .get(0);
-            let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
-            let outcome = wamn_platform_identity::application::mutate_grant(
-                &tx,
-                env_key,
-                wamn_platform_identity::application::GrantAuthority::Provisioning,
-                wamn_platform_identity::application::GrantChange::UserRole {
-                    user_id: &user_id,
-                    role,
-                    grant: true,
-                },
-                &mut drops,
-            )
-            .await?;
-            tx.commit().await?;
-            environment.auth.publish(drops).await;
-            anyhow::Ok(outcome)
-        }
-        .await?;
-    }
-    let (control, control_task) = connect_owned(environment.system_url).await?;
-    control
-        .execute(
-            "SELECT set_config('app.env_key', $1, false), set_config('app.user_id', $2, false)",
-            &[&env_key, &ENABLER],
-        )
-        .await?;
-    control
-        .execute(
-            "INSERT INTO wamn_run.gate_reports (env_key, wiring_hash, passed, summary) \
-             VALUES ($1, $2, true, '{}'::jsonb) ON CONFLICT DO NOTHING",
-            &[&env_key, &document.wiring_hash().as_str()],
-        )
-        .await?;
-    control_task.abort();
-    author_workflow_in_databases(
-        environment.project_url,
-        environment.system_url,
-        &AuthorWorkflowRequest {
-            org: &environment.scope.org,
-            project: &environment.scope.project,
-            environment: &environment.scope.env,
-            application,
-            declared: environment.applications,
-            document,
-            trigger,
-            execution: WorkflowExecution::Role(role),
-            created_by: ENABLER,
-            manifest_digest: environment.digest,
-        },
-    )
-    .await?;
-    enable_workflow(
-        environment.system_url,
-        environment.scope,
-        &mut project,
-        &environment.version(application, &document.wiring_id),
-        ENABLER,
-        environment.digest,
-        environment.applications,
-        events,
-    )
-    .await?;
-    project_task.abort();
-    Ok(())
-}
-
-/// Disable the schedule workflow `workflow_id` of `application`, as an
-/// environment admin does with `wamn-ctl workflow disable`.
-pub async fn disable_schedule(
-    environment: &WorkflowEnvironment<'_>,
-    application: &str,
-    workflow_id: &str,
-) -> anyhow::Result<()> {
-    let (mut project, project_task) = connect_owned(environment.project_url).await?;
-    disable_workflow(
-        environment.system_url,
-        environment.scope,
-        &mut project,
-        &environment.version(application, workflow_id),
-    )
-    .await?;
-    project_task.abort();
-    Ok(())
 }
 
 pub async fn exercise(
@@ -1172,68 +704,6 @@ fn event_host_group(
     Ok(file)
 }
 
-pub(super) fn fixture_document(connector: &str) -> EnvironmentDocument {
-    EnvironmentDocument {
-        integrations: std::collections::BTreeMap::new(),
-        target: "cloud".into(),
-        org: ORG.into(),
-        project: PROJECT.into(),
-        env: ENVIRONMENT.into(),
-        release: DeclaredRelease::None,
-        route_host: "integration.orders.example".into(),
-        client_package: None,
-        policy: POLICY.into(),
-        // The existing consumer and integration packages put this application's
-        // models in two schemas. The connector supplies the workflow components.
-        applications: BTreeMap::from([(
-            connector.to_owned(),
-            wamn_catalog::ApplicationDefinition {
-                connections: std::collections::BTreeMap::new(),
-                packages: [connector, "wamn_integration", CONSUMER]
-                    .map(str::to_owned)
-                    .into(),
-            },
-        )]),
-        floors: BTreeMap::new(),
-    }
-}
-
-pub(super) fn event_host_values(
-    mut group: Value,
-    issuer: &str,
-    suffix: &str,
-) -> anyhow::Result<Value> {
-    group["env"]
-        .as_array_mut()
-        .context("host environment")?
-        .extend(
-            [
-                ("WAMN_SESSION_ISSUER", issuer),
-                ("WAMN_SESSION_JWKS_CA", "/integration-session/ca.crt"),
-                ("WAMN_SESSION_INSTANCE_SUFFIX", suffix),
-                ("WAMN_EVT_ORG", ORG),
-                ("WAMN_EVT_PROJECT", PROJECT),
-                ("WAMN_EVT_ENV", ENVIRONMENT),
-                ("WAMN_EVT_STREAM_REPLICAS", "1"),
-                ("WAMN_EVT_DUP_WINDOW_SECS", "120"),
-            ]
-            .map(|(name, value)| json!({"name":name, "value":value})),
-        );
-    group["volumes"]
-        .as_array_mut()
-        .context("host volumes")?
-        .extend([
-            json!({"name":"integration-session","configMap":{"name":"integration-session-ca"}}),
-        ]);
-    group["volumeMounts"]
-        .as_array_mut()
-        .context("host mounts")?
-        .extend([
-            json!({"name":"integration-session","mountPath":"/integration-session","readOnly":true}),
-        ]);
-    Ok(group)
-}
-
 fn binary(repository: &Path, name: &str) -> PathBuf {
     repository
         .join(std::env::var_os("CARGO_TARGET_DIR").unwrap_or_else(|| "target".into()))
@@ -1617,3 +1087,8 @@ async fn assertions_inner(
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
+
+pub use super::release_documents::workflow::{
+    ENABLER, WorkflowEnvironment, admit_workflow, disable_schedule, enable_schedule,
+    enable_trigger, event_host_values, fixture_document, next_minute, start_workflow,
+};

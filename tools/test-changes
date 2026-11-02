@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly WAMN_USAGE='usage: tools/test-changes [--base REF] [--cluster [--name FILTER]] [run|dry-run]'
+readonly WAMN_USAGE='usage: tools/test-changes [--base REF] [--tier T[,T] [--name FILTER]] [run|dry-run]'
 
 wamn_fail() {
   local -r exit_code="$1"
@@ -31,7 +31,9 @@ readonly -a WAMN_WORKSPACES=(root apps no-std)
 readonly -a WAMN_MANIFESTS=(Cargo.toml apps/Cargo.toml apps/platform/no-std/Cargo.toml)
 
 WAMN_BASE=''
-WAMN_CLUSTER=false
+WAMN_KIND=false
+WAMN_EXPLICIT_TIER=false
+WAMN_TIERS='unit,contract,live-postgres,live-nats'
 WAMN_NAME=''
 WAMN_COMMAND=''
 while (($# > 0)); do
@@ -41,9 +43,11 @@ while (($# > 0)); do
       WAMN_BASE="$2"
       shift 2
       ;;
-    --cluster)
-      WAMN_CLUSTER=true
-      shift
+    --tier)
+      (($# >= 2)) || wamn_usage_error '--tier requires one or more tiers'
+      WAMN_EXPLICIT_TIER=true
+      WAMN_TIERS="$2"
+      shift 2
       ;;
     --name)
       (($# >= 2)) || wamn_usage_error '--name requires a test name filter'
@@ -61,9 +65,20 @@ while (($# > 0)); do
   esac
 done
 readonly WAMN_COMMAND="${WAMN_COMMAND:-run}"
-readonly WAMN_CLUSTER WAMN_NAME
-if [[ -n "$WAMN_NAME" && "$WAMN_CLUSTER" != true ]]; then
-  wamn_usage_error '--name requires --cluster'
+[[ "$WAMN_TIERS" != ,* && "$WAMN_TIERS" != *, && "$WAMN_TIERS" != *,,* ]] ||
+  wamn_usage_error '--tier requires nonempty tier names'
+IFS=',' read -ra requested_tiers <<<"$WAMN_TIERS"
+((${#requested_tiers[@]} > 0)) || wamn_usage_error '--tier requires one or more tiers'
+for tier in "${requested_tiers[@]}"; do
+  case "$tier" in
+    unit | contract | live-postgres | live-nats) ;;
+    kind) WAMN_KIND=true ;;
+    *) wamn_usage_error "unknown tier '$tier'" ;;
+  esac
+done
+readonly WAMN_KIND WAMN_TIERS WAMN_NAME WAMN_EXPLICIT_TIER
+if [[ -n "$WAMN_NAME" && "$WAMN_KIND" != true ]]; then
+  wamn_usage_error '--name requires --tier kind'
 fi
 
 cd -- "$WAMN_REPOSITORY_ROOT"
@@ -168,9 +183,8 @@ selector_errors="$(printf '%s\n' "${WAMN_METADATA[@]}" | jq -rs --argjson policy
 # One line per workspace with work: index, full (true or false), the first input
 # that forced a full run as JSON, and the selected packages and features.
 # A package selects its dependents in every workspace that resolves it: normal
-# and build edges transitively, then one dev edge. With --cluster only the root
-# workspace has work, and each selected package that declares a cluster feature
-# gets it. Guest ignored tests need their separate workspace command.
+# and build edges transitively, then one dev edge. Kind selection enables
+# each selected package's cluster feature.
 # Shared WIT paths have direct bindgen readers outside Cargo dependency edges.
 readonly WAMN_SELECTION='
 def rel($root): ltrimstr($root + "/");
@@ -185,7 +199,7 @@ def graph($md; $kinds):
     | select(any(.dep_kinds[]; (.kind // "normal") | IN($kinds[])))
     | {from: .pkg, $to}) as $edge ({}; .[$edge.from] += [$edge.to]);
 def features($package):
-  [$package.targets[] | .["required-features"][]?] | unique
+  [$package.targets[] | .["required-features"][]? | select(. != "cluster" or $cluster)] | unique
   | map(if contains("/") then . else "\($package.name)/\(.)" end);
 
 $metadata[0].workspace_root as $root
@@ -217,7 +231,6 @@ $metadata[0].workspace_root as $root
 | [$selections[] | .package // empty] | unique as $changed
 | ([$selections[] | select(.unknown) | .path] | first) as $unknown
 | {unknown: ($unknown != null), workspaces: [range(0; $metadata | length) as $index
-| select(($cluster | not) or $index == 0)
 | $metadata[$index] as $md
 | ($unknown // ([$selections[] | select(.full == $index) | .path] | first)) as $full
 | ($md.workspace_members) as $workspace
@@ -226,7 +239,10 @@ $metadata[0].workspace_root as $root
 | [$md.packages[] | select(.manifest_path | IN($changed[])) | .id]
 | closure($linked) | (. + [.[] | $dev[.][]?]) | unique as $dependents
 | [$md.packages[] | select(.id | IN($workspace[]))
-    | select($full != null or (.id | IN($dependents[])))] as $selected
+    | select($full != null or (.id | IN($dependents[])))
+    | . as $package
+    | select(($explicit | not) or any($policy.targets[]; .workspace == $workspaces[$index]
+        and .package == $package.name and (.tier | IN($tiers[]))))] as $selected
 | select($selected != [])
 | [$index, ($full != null), ($full | tojson),
    ([$selected[].name] | sort | join(" ")),
@@ -244,9 +260,35 @@ WAMN_DISCOVERY="$(
   printf '%s\n' "${WAMN_METADATA[@]}" | jq -rs --argjson relevant "$WAMN_RELEVANT" \
     --argjson policy "$WAMN_POLICY" \
     --argjson workspaces "$(printf '%s\n' "${WAMN_WORKSPACES[@]}" | jq -Rsc 'split("\n")[:-1]')" \
-    --argjson cluster "$WAMN_CLUSTER" '. as $metadata | '"$WAMN_SELECTION"
+    --argjson cluster "$WAMN_KIND" --argjson explicit "$WAMN_EXPLICIT_TIER" --arg tiers "$WAMN_TIERS" '($tiers | split(",")) as $tiers | . as $metadata | '"$WAMN_SELECTION"
 )" || wamn_fail 65 'could not select packages from Cargo metadata'
-WAMN_PLAN="$(jq -r '.workspaces[] | @tsv' <<<"$WAMN_DISCOVERY")"
+# Keep an empty feature column from shifting the target column in Bash.
+if [[ "$WAMN_EXPLICIT_TIER" == false ]]; then
+  WAMN_PLAN="$(jq -r '.workspaces[] | @tsv' <<<"$WAMN_DISCOVERY")"
+else
+WAMN_PLAN="$(printf '%s\n' "${WAMN_METADATA[@]}" | jq -rs \
+  --argjson discovery "$WAMN_DISCOVERY" --argjson policy "$WAMN_POLICY" \
+  --arg tiers "$WAMN_TIERS" '
+  ($tiers | split(",")) as $tiers
+  | . as $metadata | $discovery.workspaces[]
+  | . as $plan | .[0] as $index
+  | (["root", "apps", "no-std"][$index]) as $workspace
+  | [.[3] | split(" ")[] | . as $package
+      | [$policy.targets[] | select(.workspace == $workspace and .package == $package)] as $all
+      | {package: $package, all: $all, selected: [$all[] | select(.tier | IN($tiers[]))]}] as $packages
+  | if all($packages[]; .all == .selected)
+      and ($plan[1] == false or
+        all($metadata[$index].packages[] | select(.id | IN($metadata[$index].workspace_members[]));
+          .name | IN($packages[].package)))
+    then $plan | @tsv
+    else $packages[] | select(.selected != [])
+      | . as $package
+      | [$index, false, $plan[2], .package,
+          ($plan[4] | split(" ") | map(select(startswith($package.package + "/")))
+            | join(" ") | if . == "" then " " else . end),
+          (.selected | map(.target) | join(" "))] | @tsv
+    end')"
+fi
 readonly WAMN_PLAN
 
 printf 'working-directory: %q\n' "$WAMN_REPOSITORY_ROOT"
@@ -279,10 +321,10 @@ mapfile -t guests < <(
 ((${#guests[@]} > 0)) ||
   wamn_fail 65 "the Dockerfile stage $WAMN_GUEST_STAGE names no guest package"
 WAMN_SUITES="$(jq -r --argjson paths "$WAMN_RELEVANT" --argjson selected "$WAMN_SELECTED" \
-  --argjson discovery "$WAMN_DISCOVERY" --argjson cluster "$WAMN_CLUSTER" \
+  --argjson discovery "$WAMN_DISCOVERY" --arg tiers "$WAMN_TIERS" \
   --argjson guests "$(printf '%s\n' "${guests[@]}" | jq -Rsc 'split("\n")[:-1]')" '
   .suites[] | . as $suite
-  | select(.mode == "always" or ($cluster | not))
+  | select(.mode == "always" or (.tier | IN($tiers | split(",") | .[])))
   | select($discovery.unknown or .always == true
       or any($paths[]; . as $path | any($suite.inputs[]; . as $pattern | $path | test($pattern)))
       or any($selected[].packages[]; IN($suite.select_packages[]?))
@@ -498,6 +540,9 @@ wamn_run_suite() {
       filter="$(jq -r '.filter // ""' <<<"$suite")"
       if [[ "$(jq '.tests | length' <<<"$suite")" == 0 ]]; then
         [[ -z "$filter" ]] || suite_argv+=("$filter")
+        if [[ "$(jq -r '.ignored // false' <<<"$suite")" == true ]]; then
+          suite_argv+=(-- --ignored --test-threads=1)
+        fi
         result_flags=()
         if [[ "$(jq '.target | length' <<<"$suite")" != 0 ]]; then result_flags+=(--each-target); fi
         wamn_test "$label" "${result_flags[@]}" "${suite_argv[@]}" || :
@@ -523,7 +568,7 @@ while IFS= read -r suite; do wamn_run_suite "$suite"; done < <(
     | select(.id | IN($suites | split("\n") | .[]))' <<<"$WAMN_POLICY"
 )
 
-while IFS=$'\t' read -r index full trigger packages features; do
+while IFS=$'\t' read -r index full trigger packages features targets; do
   [[ -n "$index" ]] || continue
   argv=(test --manifest-path "$WAMN_REPOSITORY_ROOT/${WAMN_MANIFESTS[$index]}"
     --locked --offline --no-fail-fast)
@@ -547,12 +592,21 @@ while IFS=$'\t' read -r index full trigger packages features; do
   if [[ -n "$features" ]]; then
     argv+=(--features "${features// /,}")
   fi
+  for target in $targets; do
+    case "$target" in
+      lib:* | cdylib:* | staticlib:* | rlib:* | dylib:*) argv+=(--lib) ;;
+      test:* | bin:* | example:* | bench:*) argv+=("--${target%%:*}" "${target#*:}") ;;
+      *) wamn_fail 65 "invalid target: $target" ;;
+    esac
+  done
   if [[ -n "$WAMN_NAME" ]]; then
     argv+=("$WAMN_NAME")
   fi
-  if [[ "$WAMN_CLUSTER" == true ]]; then
-    # Ignored tests start clusters, brokers, and registries, so they run one at a time.
+  if [[ "$WAMN_TIERS" == kind ]]; then
+    # Kind tests run one at a time.
     argv+=(-- --ignored --test-threads=1)
+  elif [[ "$WAMN_KIND" == true ]]; then
+    argv+=(-- --include-ignored --test-threads=1)
   fi
   if [[ "$WAMN_COMMAND" == dry-run ]]; then
     printf '%s:' "$label"

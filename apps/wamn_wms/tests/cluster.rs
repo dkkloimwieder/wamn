@@ -4,13 +4,21 @@
 //! installs the candidate's packages through the package stage and publishes
 //! nothing (docs/architecture/overview.md#environment-lifecycle).
 
+#[path = "cluster/application.rs"]
 mod application;
+#[path = "cluster/bootstrap.rs"]
 mod bootstrap;
+#[path = "cluster/build.rs"]
 mod build;
+#[path = "cluster/delivery_case.rs"]
 mod delivery_case;
+#[path = "cluster/demo.rs"]
 mod demo;
+#[path = "cluster/deployment.rs"]
 mod deployment;
+#[path = "cluster/reader.rs"]
 mod reader;
+#[path = "cluster/startup.rs"]
 mod startup;
 
 use std::fs::{self, DirBuilder};

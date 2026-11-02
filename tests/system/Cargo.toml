@@ -18,7 +18,6 @@ tracing = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 wamn-run-state = { workspace = true }
 wamn-runtime = { workspace = true }
-wash-runtime = { workspace = true }
 
 [dev-dependencies]
 opentelemetry_sdk = { workspace = true }

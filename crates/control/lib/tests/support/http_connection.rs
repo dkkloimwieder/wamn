@@ -1,6 +1,5 @@
 //! The real HTTP connection guest and its in-cluster recording peer.
 
-use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Duration;
 
@@ -8,22 +7,17 @@ use anyhow::{Context as _, ensure};
 use chrono::Utc;
 use serde_json::{Value, json};
 
-use super::{NAMESPACE, ORG, PACKAGE, PASSWORD, PROJECT, Run, USER};
-use wamn_catalog::{
-    ComponentDescriptor, ComponentPackageScope, ServingComponent, ServingManifest, WiringDocument,
+pub use super::release_documents::http::{
+    API_KEY_HANDLE, AWS_HANDLE, INBOUND_HANDLE, INBOUND_SECRET, ORIGIN, OUTBOUND_HANDLE,
+    OUTBOUND_SECRET, SCHEDULE, SERVICE, admit_guest, assert_observed_request,
+    authentication_wirings, declaration, paged_wiring, release, request_records, scheduled_wiring,
+    signed_wiring, wiring,
 };
 
-pub(super) const NETSUITE_PRIVATE_KEY: &str = include_str!("http-fixture/fixtures/p256.pem");
+use super::{NAMESPACE, ORG, PACKAGE, PASSWORD, PROJECT, Run, USER};
+use wamn_catalog::ComponentDescriptor;
 
-pub const SERVICE: &str = "http-fixture";
-pub const ORIGIN: &str = "http://http-fixture:8080";
-pub const INBOUND_HANDLE: &str = "inbound-signature";
-pub const INBOUND_SECRET: &str = "fixture-inbound-key";
-pub const OUTBOUND_HANDLE: &str = "signed-upstream";
-pub const OUTBOUND_SECRET: &str = "fixture-outbound-key";
-pub const SCHEDULE: &str = "http-minute";
-pub const API_KEY_HANDLE: &str = "api-key-upstream";
-pub const AWS_HANDLE: &str = "aws-upstream";
+pub(super) const NETSUITE_PRIVATE_KEY: &str = include_str!("http-fixture/fixtures/p256.pem");
 
 pub(super) fn netsuite_auth() -> Value {
     json!({
@@ -111,7 +105,10 @@ pub async fn deploy(run: &mut Run, repository: &Path, system_url: &str) -> anyho
     Ok(())
 }
 
+pub use super::release_documents::http::bindings_match;
 /// Admit the actual debug guest bytes and upload the production artifact layout.
+use super::release_documents::http::credential_secret;
+
 pub async fn configure(run: &Run, system_url: &str, environment: &str) -> anyhow::Result<()> {
     let mut references: serde_json::Map<String, Value> = serde_json::from_slice(&std::fs::read(
         run.work.join("http-credential-reference.json"),
@@ -172,80 +169,6 @@ pub async fn configure(run: &Run, system_url: &str, environment: &str) -> anyhow
     tx.commit().await?;
     driver.abort();
     Ok(())
-}
-
-fn credential_secret(
-    environment: &str,
-    values: &Value,
-    references: &mut serde_json::Map<String, Value>,
-) -> anyhow::Result<Value> {
-    let name = wamn_credential_store::kubernetes::secret_name(ORG, PROJECT, environment);
-    let mut data = serde_json::Map::new();
-    for reference in references.values_mut() {
-        let version = reference["version"].as_str().context("fixture version")?;
-        let material = values["items"]
-            .as_array()
-            .context("fixture resources")?
-            .iter()
-            .find_map(|item| item["stringData"].get(version))
-            .context("fixture credential reference")?;
-        data.insert(version.to_owned(), material.clone());
-        // The host's Role permits only its own environment's Secret.
-        reference["reference"] = name.clone().into();
-    }
-    Ok(json!({
-        "apiVersion": "v1", "kind": "Secret",
-        "metadata": {"name": name, "namespace": NAMESPACE},
-        "stringData": data,
-    }))
-}
-
-#[test]
-fn scheduled_credentials_stay_within_the_environment_secret_grant() {
-    use wamn_credential_store::kubernetes::{secret_name, service_account_name};
-
-    let source_secret = secret_name(ORG, PROJECT, "http");
-    let values = json!({"items":[{
-        "metadata":{"name":source_secret,"namespace":NAMESPACE},
-        "stringData":{
-            "00000000-0000-4000-8000-000000000001":r#"{"username":"fixture","password":"fixture-password"}"#,
-            "00000000-0000-4000-8000-000000000002":json!({"private_key":NETSUITE_PRIVATE_KEY}).to_string(),
-        },
-    }]});
-    let mut references = serde_json::Map::new();
-    for (name, version) in [
-        ("rest-fixture", "00000000-0000-4000-8000-000000000001"),
-        ("netsuite", "00000000-0000-4000-8000-000000000002"),
-    ] {
-        references.insert(
-            name.into(),
-            json!({"store":"k8s","reference":source_secret,"version":version}),
-        );
-    }
-    let secret = credential_secret("integration", &values, &mut references).unwrap();
-    let grants = wamn_control::environment::ensure::credential_access(
-        &service_account_name(ORG, PROJECT, "integration"),
-        &secret_name(ORG, PROJECT, "integration"),
-    );
-    assert_eq!(secret["metadata"]["namespace"], NAMESPACE);
-    for (name, reference) in &references {
-        assert_eq!(
-            reference["reference"],
-            grants[1].1["rules"][0]["resourceNames"][0]
-        );
-        assert_eq!(reference["reference"], secret["metadata"]["name"]);
-        let version = reference["version"].as_str().unwrap();
-        let material: Value =
-            serde_json::from_str(secret["stringData"][version].as_str().unwrap()).unwrap();
-        assert_eq!(
-            material,
-            if name == "netsuite" {
-                json!({"private_key":NETSUITE_PRIVATE_KEY})
-            } else {
-                json!({"username":"fixture","password":"fixture-password"})
-            }
-        );
-    }
 }
 
 pub async fn component(
@@ -329,250 +252,6 @@ pub async fn component(
         admitted.component,
         admitted.connections,
     ))
-}
-
-/// Admit the built bytes with the declarations used by the kind fixture.
-pub fn admit_guest(
-    repository: &Path,
-    version: &str,
-    package: &str,
-    name: &str,
-    bytes: &[u8],
-) -> anyhow::Result<wamn_catalog::AdmittedComponentFacts> {
-    let template = std::fs::read_to_string(
-        repository.join(format!("apps/platform/no-std/{name}/declaration.json.in")),
-    )?;
-    let declaration = serde_json::from_value(declaration(
-        &template
-            .replace(
-                "__ENV_KEY__",
-                &wamn_control_registry::project_env_key(ORG, PROJECT, "http"),
-            )
-            .replace("__PACKAGE_ID__", package)
-            .replace("__PACKAGE_VERSION__", version),
-    )?)?;
-    let engine = wamn_engine::build_engine(&[])?;
-    let admitted = wamn_engine::component_admission::validate_component_admission(
-        &engine,
-        bytes,
-        wamn_engine::component_admission::ComponentAdmissionRequest {
-            declaration,
-            admitted_platform_packages: ["wamn:node".to_owned(), "wamn:connection".to_owned()]
-                .into(),
-            base_digests: BTreeSet::new(),
-        },
-    )?;
-    Ok(admitted)
-}
-
-/// Declare the outbound handles before admission for ordinary binding.
-pub fn declaration(template: &str) -> anyhow::Result<Value> {
-    let mut declaration: Value = serde_json::from_str(template)?;
-    if declaration["component"] == "http-request" {
-        for handle in [OUTBOUND_HANDLE, API_KEY_HANDLE, AWS_HANDLE] {
-            declaration["connections"]
-                .as_array_mut()
-                .expect("HTTP requirements")
-                .push(json!({"store-alias": handle, "requirement-type": "http"}));
-        }
-    }
-    Ok(declaration)
-}
-
-pub fn wiring() -> anyhow::Result<WiringDocument> {
-    Ok(serde_json::from_value(json!({
-        "format-version": "0.1", "wiring-id": "http-send", "version": 1,
-        "entry": "input",
-        "nodes": {
-            "input": {"component": "transform", "interface-version": "0.1.0",
-                "operation": "wamn:node/handler@0.1.0", "params": {"pointer": ""}},
-            "send": {"component": "http-request", "interface-version": "0.1.0",
-                "operation": "wamn:node/async-handler@0.1.0",
-                "params": {"requirement": "upstream", "method": "POST", "path-and-query": "/reuse"}}
-        },
-        "edges": [{"from": "input", "to": "send"}]
-    }))?)
-}
-
-pub fn signed_wiring() -> anyhow::Result<WiringDocument> {
-    let mut graph = serde_json::to_value(wiring()?)?;
-    graph["wiring-id"] = json!("http-signed-send");
-    graph["nodes"]["send"]["params"]["requirement"] = json!(OUTBOUND_HANDLE);
-    graph["nodes"]["send"]["params"]["path-and-query"] = json!("/signed");
-    Ok(serde_json::from_value(graph)?)
-}
-
-pub fn authentication_wirings() -> anyhow::Result<Vec<WiringDocument>> {
-    [
-        ("http-api-key", API_KEY_HANDLE, "/api-key"),
-        ("http-aws", AWS_HANDLE, "/aws?z=a%2Bb&x=hello%20world&x=two"),
-    ]
-    .into_iter()
-    .map(|(id, handle, path)| {
-        let mut graph = serde_json::to_value(wiring()?)?;
-        graph["wiring-id"] = json!(id);
-        graph["nodes"]["send"]["params"] = json!({
-            "requirement":handle, "method":"GET", "path-and-query":path
-        });
-        Ok(serde_json::from_value(graph)?)
-    })
-    .collect()
-}
-
-pub fn paged_wiring() -> anyhow::Result<WiringDocument> {
-    let mut graph = serde_json::to_value(wiring()?)?;
-    graph["wiring-id"] = json!("http-pages");
-    graph["nodes"]["send"]["component"] = json!("http-page");
-    graph["nodes"]["send"]["params"] = json!({
-        "requirement": "upstream", "path-and-query": "/pages?limit=2",
-        "page": {"style": "offset", "limit": "limit", "offset": "offset"},
-        "items": "/items"
-    });
-    Ok(serde_json::from_value(graph)?)
-}
-
-pub fn scheduled_wiring() -> anyhow::Result<WiringDocument> {
-    let mut graph = serde_json::to_value(wiring()?)?;
-    graph["wiring-id"] = json!(SCHEDULE);
-    graph["nodes"]["send"]["params"]["path-and-query"] = json!("/scheduled");
-    Ok(serde_json::from_value(graph)?)
-}
-
-pub fn release(
-    h: &[u8],
-    _version: &str,
-    components: Vec<ComponentDescriptor>,
-) -> anyhow::Result<Vec<u8>> {
-    let scope = ComponentPackageScope {
-        env_key: wamn_control_registry::project_env_key(ORG, PROJECT, "http"),
-        package_id: "http_fixture".to_owned(),
-        package_version: "1.0.0".to_owned(),
-    };
-    let facts: Vec<_> = components
-        .iter()
-        .cloned()
-        .map(|descriptor| descriptor.into_admitted(scope.clone()).component)
-        .collect();
-    let (mut manifest, _) = ServingManifest::from_canonical_bytes(h)?;
-    manifest
-        .components
-        .retain(|component| component.package_id != "label_fixture");
-    manifest
-        .release
-        .packages
-        .retain(|package| package.package_id() != "label_fixture");
-    manifest
-        .release
-        .packages
-        .insert(wamn_catalog::PackageCoordinate::new(
-            "http_fixture",
-            "1.0.0",
-        )?);
-    for (descriptor, fact) in components.into_iter().zip(&facts) {
-        manifest
-            .components
-            .insert(ServingComponent::project(fact, descriptor.connections)?);
-    }
-    let bytes = manifest.canonical_bytes();
-    ServingManifest::from_canonical_bytes(&bytes)?;
-    Ok(bytes)
-}
-
-pub fn assert_observed_request(status: u16, body: &str, log: &str) -> anyhow::Result<()> {
-    ensure!(status == 200, "route returned {status}: {body}");
-    let response: Value = serde_json::from_str(body)?;
-    ensure!(response["status"] == 200, "guest response: {response}");
-    ensure!(
-        response["body"] == json!({"id": 1}),
-        "guest body: {response}"
-    );
-    let records = route_requests(log)?;
-    let requests: Vec<_> = records
-        .iter()
-        .map(|record| record["head"].as_str().unwrap_or_default())
-        .collect();
-    ensure!(
-        requests.len() == 1,
-        "fixture saw {} requests",
-        requests.len()
-    );
-    ensure!(
-        requests[0].lines().next() == Some("POST /reuse HTTP/1.1"),
-        "fixture received the wrong target or protocol"
-    );
-    ensure!(
-        records[0]["body"] == json!(br#"{"id":1}"#.as_slice()),
-        "fixture received the wrong body"
-    );
-    let headers: Vec<_> = requests[0]
-        .lines()
-        .skip(1)
-        .filter_map(|line| line.split_once(':'))
-        .collect();
-    let authorization: Vec<_> = headers
-        .iter()
-        .filter(|(name, _)| name.eq_ignore_ascii_case("authorization"))
-        .map(|(_, value)| value.trim())
-        .collect();
-    ensure!(
-        authorization == ["Basic Zml4dHVyZTpmaXh0dXJlLXBhc3N3b3Jk"],
-        "wrong credential reached the wire"
-    );
-    ensure!(
-        headers
-            .iter()
-            .any(|(name, value)| name.eq_ignore_ascii_case("idempotency-key")
-                && value.trim().ends_with(":send:0")),
-        "effect omitted its delivery idempotency key"
-    );
-    Ok(())
-}
-
-pub fn request_records(log: &str) -> anyhow::Result<Vec<Value>> {
-    log.lines()
-        .filter(|line| !line.is_empty())
-        .map(|line| serde_json::from_str(line).map_err(Into::into))
-        .collect()
-}
-
-fn route_requests(log: &str) -> anyhow::Result<Vec<Value>> {
-    Ok(request_records(log)?
-        .into_iter()
-        .filter(|record| {
-            // The schedule has its own target, so its traffic cannot count as a route request.
-            record["head"].as_str().is_some_and(|head| {
-                head.starts_with("POST /reuse HTTP/1.1\r\n")
-                    || head.starts_with("POST /signed HTTP/1.1\r\n")
-            })
-        })
-        .collect())
-}
-
-pub fn bindings_match(rows: &Value, document: &super::EnvironmentDocument, digest: &str) -> bool {
-    rows["versions"]
-        .as_array()
-        .is_some_and(|rows| rows.len() == 4 && rows.iter().all(|row| row["version"] == 1))
-        && rows["bindings"]
-            .as_array()
-            .is_some_and(|rows| rows.len() == 5)
-        && ["upstream", OUTBOUND_HANDLE, API_KEY_HANDLE, AWS_HANDLE]
-            .iter()
-            .all(|handle| {
-                let bindings: Vec<_> = rows["bindings"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .filter(|row| row["name"] == *handle)
-                    .collect();
-                bindings.len() == if *handle == "upstream" { 2 } else { 1 }
-                    && bindings.iter().all(|row| {
-                        row["manifest_digest"] == digest
-                            && row["package_id"] == "http_fixture"
-                            && row["mode"] == "write"
-                            && row["integration_name"]
-                                == document.applications[PACKAGE].connections[*handle]
-                    })
-            })
 }
 
 pub async fn request_log(run: &Run) -> anyhow::Result<String> {
@@ -973,58 +652,4 @@ pub async fn prepare_image(run: &mut Run, repository: &Path) -> anyhow::Result<(
         run.kept.fixture_source = digest;
     }
     run.load_image(&image).await
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn release_bindings_accept_shared_names_across_components_and_refuse_wrong_scope() {
-        let digest = format!("sha256:{}", "a".repeat(64));
-        let mut document = super::super::fixture_document("http", "http.orders.example", &digest);
-        let handles = ["upstream", OUTBOUND_HANDLE, API_KEY_HANDLE, AWS_HANDLE];
-        document.applications.get_mut(PACKAGE).unwrap().connections = handles
-            .iter()
-            .map(|handle| (handle.to_string(), handle.to_string()))
-            .collect();
-        let mut rows = json!({"versions": [], "bindings": []});
-        for handle in handles {
-            rows["versions"].as_array_mut().unwrap().push(json!({
-                "manifest_digest": digest, "connection_id": handle, "version": 1
-            }));
-            for component in if handle == "upstream" {
-                ["http-request", "http-page"].as_slice()
-            } else {
-                ["http-request"].as_slice()
-            } {
-                rows["bindings"].as_array_mut().unwrap().push(json!({
-                    "manifest_digest": digest, "component_digest": component,
-                    "package_id": "http_fixture", "name": handle,
-                    "connection_id": handle, "mode": "write", "integration_name": handle
-                }));
-            }
-        }
-        assert!(bindings_match(&rows, &document, &digest));
-        for (field, value) in [
-            ("package_id", "other_fixture"),
-            ("manifest_digest", "other-release"),
-            ("mode", "read"),
-            ("integration_name", "other-integration"),
-        ] {
-            let mut wrong = rows.clone();
-            wrong["bindings"][0][field] = value.into();
-            assert!(!bindings_match(&wrong, &document, &digest), "{field}");
-        }
-        rows["bindings"].as_array_mut().unwrap().remove(0);
-        assert!(!bindings_match(&rows, &document, &digest));
-    }
-
-    #[test]
-    fn page_items_pointer_selects_the_peer_response_array() {
-        let graph = serde_json::to_value(paged_wiring().unwrap()).unwrap();
-        let pointer = graph["nodes"]["send"]["params"]["items"].as_str().unwrap();
-        let response = json!({"items": [{"id":"one","name":"First"}]});
-        assert_eq!(response.pointer(pointer), Some(&response["items"]));
-    }
 }

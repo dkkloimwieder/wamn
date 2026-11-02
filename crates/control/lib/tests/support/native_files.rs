@@ -2,8 +2,7 @@
 use super::{NAMESPACE, ORG, PROJECT, Run};
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 use tokio::process::{Child, Command};
 use wamn_control::environment::{
@@ -12,7 +11,8 @@ use wamn_control::environment::{
 };
 use wamn_control::package_artifact::{PackageRegistry, PushPackageRequest, push_package};
 
-pub const COMPONENT_INPUT: &str = "WAMN_BLOB_PUT_COMPONENT";
+pub use super::native_file_fixture::COMPONENT_INPUT;
+use super::native_file_fixture::{build_fixture, release_request};
 
 /// Docker Hub no longer serves the pinned MinIO images. The scenario loads the
 /// local copies into kind after their repository digests match these pins.
@@ -157,193 +157,6 @@ async fn assertions(run: &Run, fixture: &Fixture) -> anyhow::Result<()> {
     result
 }
 
-async fn build_fixture(
-    run: &Run,
-    repository: &Path,
-    database_url: &str,
-) -> anyhow::Result<(
-    PathBuf,
-    Vec<wamn_control::component_admission::ComponentAdmission>,
-)> {
-    use wamn_schema_generator::{
-        build::{BuildRequest, build_package},
-        build_record::{BUILD_RECORD_FILE, BuildComponent},
-    };
-    let source = repository.join("crates/control/lib/tests/support/file_package");
-    let package = run.work.join("file-package/file_fixture");
-    for directory in ["publication/components", "publication/wirings"] {
-        std::fs::create_dir_all(package.join(directory))?;
-    }
-    std::fs::copy(source.join("kind.wamn.k.in"), package.join("wamn.k"))?;
-    // This authored route starts the HTTP role for file.expose metadata calls.
-    // Transfers use the separate native file listener.
-    let definition = json!({
-        "id":"fixture-run-http", "type":"http", "route":{"path":"/fixture/run"},
-        "input-schema":{
-            "type":"array", "minItems":1, "maxItems":100,
-            "items":{"type":"object", "required":["request_id"],
-                "additionalProperties":false,
-                "properties":{"request_id":{"type":"string", "minLength":1}}}
-        },
-        "raw-body-bytes":{"maximum":1_048_576}
-    });
-    std::fs::write(
-        package.join("publication/attachments.json"),
-        serde_json::to_vec(&json!({"fixture-run-http":{
-            "type":"http", "package-id":"file_fixture", "component":"fixture",
-            "operation":"file-fixture:fixture/run",
-            "definition-hash":wamn_execution_contract::canonical_json_sha256(&definition),
-            "definition":definition, "auth-policy":{"modes":["session"]},
-            "registered-operation":"file-fixture:fixture/run"
-        }}))?,
-    )?;
-    std::fs::write(
-        package.join("publication/components/fixture.json.in"),
-        serde_json::to_vec(&json!({
-            "scope":{"env_key":"__ENV_KEY__", "package-id":"file_fixture"},
-            "component":"fixture", "interface-version":"0.1.0",
-            "operations":{"file-fixture:fixture/run":{
-                "registered-operation":"file-fixture:fixture/run",
-                "input-ports":[], "output-ports":[], "parameters":[]}},
-            "connections":[]
-        }))?,
-    )?;
-    let palette = run.work.join("file-package/platform/execution/blob-put");
-    std::fs::create_dir_all(&palette)?;
-    std::fs::copy(
-        source.join("publication/components/blob-put.json.in"),
-        palette.join("declaration.json.in"),
-    )?;
-    std::fs::write(
-        package.join("publication/wirings/blob-put.json"),
-        serde_json::to_vec(&json!({
-            "format-version":"0.1", "wiring-id":"blob-put", "version":1, "entry":"put",
-            "nodes":{"put":{"component":"blob-put", "interface-version":"0.1.0",
-                "operation":"wamn:node/async-handler@0.1.0",
-                "params":{"store_alias":"files", "key_field":"/key", "body_field":"/body"}}},
-            "edges":[]
-        }))?,
-    )?;
-    let mut build_record = Box::pin(build_package(&BuildRequest::new(
-        &package,
-        &run.work.join("file-package/target/wamn"),
-        database_url,
-    )))
-    .await?;
-    let output = wamn_schema_generator::output_root(&package);
-    let mut resolve = wit_parser::Resolve::new();
-    resolve.push_str(
-        "node.wit",
-        include_str!("../../../../../crates/execution/workflow/router/wit/package.wit"),
-    )?;
-    let (wit_package, _) = resolve.push_dir(output.join("wit"))?;
-    let world = resolve.select_world(&[wit_package], Some("generated"))?;
-    let mut module =
-        wit_component::dummy_module(&resolve, world, wit_parser::ManglingAndAbi::Standard32);
-    wit_component::embed_component_metadata(
-        &mut module,
-        &resolve,
-        world,
-        wit_component::StringEncoding::UTF8,
-    )?;
-    let fixture = wit_component::ComponentEncoder::default()
-        .module(&module)?
-        .validate(true)
-        .encode()?;
-    // Match wamn build: remove the ambient WASI CLI imports of the raw std guest.
-    let target =
-        repository.join(std::env::var_os("CARGO_TARGET_DIR").unwrap_or_else(|| "target".into()));
-    let blob = run.work.join("blob-put.wasm");
-    run.run(
-        &target
-            .join("debug/wamn-component-virtualizer")
-            .to_string_lossy(),
-        &[
-            "--input",
-            &std::env::var(COMPONENT_INPUT).context(COMPONENT_INPUT)?,
-            "--output",
-            &blob.to_string_lossy(),
-        ],
-    )
-    .await?;
-    let components = [("fixture", fixture), ("blob-put", std::fs::read(blob)?)];
-    std::fs::create_dir_all(output.join("components"))?;
-    for (name, bytes) in components {
-        let path = format!("components/{name}.wasm");
-        std::fs::write(output.join(&path), &bytes)?;
-        build_record.outputs.components.push(BuildComponent {
-            name: name.into(),
-            path,
-            sha256: wamn_engine::component_admission::component_digest(&bytes),
-        });
-    }
-    std::fs::write(output.join(BUILD_RECORD_FILE), build_record.to_bytes())?;
-    let scope = wamn_catalog::ComponentPackageScope::new(
-        wamn_control_registry::project_env_key(ORG, PROJECT, "files"),
-        "file_fixture",
-        "0.1.0",
-    )?;
-    let mut admissions = Vec::new();
-    for name in ["fixture", "blob-put"] {
-        let (declaration, platform_packages) = if name == "fixture" {
-            (
-                wamn_control::component_declaration::render_declaration_document(
-                    &package.join("publication/components/fixture.json.in"),
-                    &scope.env_key,
-                )?,
-                vec!["wamn:node".into(), "wamn:postgres".into()],
-            )
-        } else {
-            let template = palette.join("declaration.json.in");
-            let declaration = wamn_control::component_declaration::render_palette_declaration(
-                &template, &scope, None,
-            )?;
-            let packages = wamn_control::component_declaration::declared_platform_packages(
-                &template,
-                &declaration,
-            )?;
-            (declaration, packages)
-        };
-        let declaration_path = run.work.join(format!("file-{name}-declaration.json"));
-        std::fs::write(&declaration_path, serde_json::to_vec(&declaration)?)?;
-        admissions.push(wamn_control::component_admission::admit_component(
-            wamn_control::component_admission::AdmitComponentRequest {
-                package: package.clone(),
-                component_bytes: output.join(format!("components/{name}.wasm")),
-                declaration: declaration_path,
-                admitted_platform_packages: platform_packages,
-                base_digests: BTreeSet::new(),
-            },
-        )?);
-    }
-    Ok((package, admissions))
-}
-
-fn release_request() -> anyhow::Result<wamn_control::publish_release::PublishReleaseRequest> {
-    Ok(wamn_control::publish_release::PublishReleaseRequest {
-        applications: [(
-            "files".into(),
-            wamn_catalog::ApplicationDefinition {
-                packages: ["file_fixture".into()].into(),
-                connections: BTreeMap::new(),
-            },
-        )]
-        .into(),
-        application: None,
-        database_url: String::new(),
-        control_database_url: String::new(),
-        org: ORG.into(),
-        project: PROJECT.into(),
-        environment: "files".into(),
-        verified_publisher_principal: "kind-fixture".into(),
-        run_schema: "wamn_run".into(),
-        packages: vec![wamn_catalog::PackageCoordinate::new(
-            "file_fixture",
-            "0.1.0",
-        )?],
-    })
-}
-
 /// Build and push the authored file package and its palette component.
 async fn publish(
     run: &Run,
@@ -351,7 +164,13 @@ async fn publish(
     registry: &PackageRegistry,
     database_url: &str,
 ) -> anyhow::Result<wamn_control::publish_release::PublishedRelease> {
-    let (package, admissions) = Box::pin(build_fixture(run, repository, database_url)).await?;
+    let (package, admissions) = Box::pin(build_fixture(
+        &run.work,
+        &run.kept.kubeconfig,
+        repository,
+        database_url,
+    ))
+    .await?;
     let component_base = format!(
         "{}/wamn/components",
         registry
@@ -779,45 +598,6 @@ async fn sessions(
     tokens
         .try_into()
         .map_err(|_| anyhow::anyhow!("two file fixture sessions"))
-}
-
-/// The file fixture release must have an http role, so that file.expose has a
-/// workload on port 80. This needs no kind cluster.
-#[tokio::test]
-#[ignore = "requires: PostgreSQL binaries, WAMN_BLOB_PUT_COMPONENT, debug component virtualizer"]
-async fn file_fixture_assembles_an_http_role_without_kind() -> anyhow::Result<()> {
-    let mut postgres = wamn_test_postgres::start(&[])?;
-    let database = postgres.create_database("file_http_role")?;
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../..")
-        .canonicalize()?;
-    let work = std::env::temp_dir().join(format!("file-http-role-proof-{}", std::process::id()));
-    let run = Run::new(work.clone(), String::new());
-    let (package, admissions) = Box::pin(build_fixture(&run, &repository, database.url())).await?;
-    let published = wamn_control::publish_release::assemble_local_release(
-        &release_request()?,
-        &[package],
-        &admissions,
-    )?
-    .published;
-    let roles = wamn_control::release_chart::roles(&published.manifest, ORG, PROJECT, "files");
-    assert!(
-        roles
-            .iter()
-            .any(|role| role.name == wamn_control::release_chart::RoleName::Http),
-        "the file fixture release has an http role"
-    );
-    let (_, attachment) = published
-        .manifest
-        .every_attachment()
-        .find(|(id, _)| *id == "fixture-run-http")
-        .expect("authored fixture route");
-    assert_eq!(
-        attachment.attachment_type(),
-        wamn_catalog::AttachmentType::Http
-    );
-    std::fs::remove_dir_all(work)?;
-    Ok(())
 }
 
 pub async fn prepare_images(run: &mut Run) -> anyhow::Result<()> {

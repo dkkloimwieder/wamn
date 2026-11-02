@@ -130,13 +130,11 @@
 //! `WAMN_BLOB_PUT_COMPONENT` to the resulting `blob_put.wasm`.
 //! `WAMN_RELEASE_CHART=<chart> cargo test --locked --offline -p wamn-control --test environment_apply_kind -- --ignored --nocapture`
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, ensure};
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::AsyncReadExt as _;
 use tokio::process::{Child, Command};
@@ -149,9 +147,11 @@ use wamn_control::environment::{self, Platform};
 use wamn_control::package_artifact::{PackageRegistry, PushPackageRequest, push_package};
 use wamn_control::pat_client::PatIssuerConfig;
 use wamn_control::provision_org::{OrgRecord, ProvisionOrgRequest, provision_org};
-use wamn_control::publish_release::{
-    PublishedRelease, compose_application, push_manifest_bytes, record_composed_entry,
-};
+use wamn_control::publish_release::{PublishedRelease, push_manifest_bytes, record_composed_entry};
+#[path = "support/environment_checks.rs"]
+pub mod environment_checks;
+use environment_checks::{Kept, cluster_name, keep_on_failure, require_phases, reuse_checks};
+use release_documents::host_report_release;
 use wamn_control::release_chart::{ImageSet, Target, image_set, release_name, stamp};
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
@@ -164,6 +164,8 @@ use wamn_gate_harness::Failures;
 mod http_connection;
 #[path = "support/integration.rs"]
 mod integration;
+#[path = "support/native_file_fixture.rs"]
+pub mod native_file_fixture;
 #[path = "support/native_files.rs"]
 mod native_files;
 #[path = "support/netsuite.rs"]
@@ -175,9 +177,6 @@ mod platform_images;
 #[path = "support/session_issuer.rs"]
 mod session_issuer;
 
-const NAMESPACE: &str = "wamn-system";
-/// The one NATS of the test cluster.
-const NATS_URL: &str = "nats://wamn-nats.wamn-system.svc.cluster.local:4222";
 /// Every environment the checks apply, which the NATS users cover.
 const KIND_ENVIRONMENTS: [&str; 8] = [
     "dev",
@@ -193,66 +192,25 @@ const OPERATOR_CHART: &str = "oci://ghcr.io/wasmcloud/charts/runtime-operator";
 /// The pin of tests/conformance/tests/chart_seam_governance.rs.
 const OPERATOR_VERSION: &str = "2.11.0";
 const PG_CLUSTER: &str = "wamn-pg";
-const PLATFORM_DOMAIN: &str = "example.invalid";
 const USER: &str = "apply";
 const PASSWORD: &str = "apply-password";
-const ORG: &str = "acme";
-const PROJECT: &str = "orders";
-/// The policy provision-org stamps for the trials template.
-const POLICY: &str = "dev";
 /// The fixture package. Its version is the one `wamn build` wrote.
 #[path = "support/org_bindings.rs"]
 mod org_bindings;
 
 #[path = "support/release_documents.rs"]
-mod release_documents;
-use release_documents::{MANIFEST, MANIFEST_B, MANIFEST_H, PACKAGE, release};
+pub mod release_documents;
+use release_documents::{
+    MANIFEST, MANIFEST_B, MANIFEST_H, NAMESPACE, NATS_URL, ORG, PACKAGE, PLATFORM_DOMAIN, POLICY,
+    PROJECT, event_overlay, fixture_document, fixture_host_group, fixture_http_entry, release,
+    rollback_host_group,
+};
 /// The route guest's refusal of a path the release does not serve.
 const ROUTE_NOT_FOUND: &str = r#"{"error":{"code":"route-not-found"}}"#;
 /// Capture crash logs during rollout, before Helm can remove the pods.
 const ROLLOUT_SNAPSHOT: Duration = Duration::from_secs(30);
 /// An image that the deliberately unplaced probe never pulls.
 const UNPULLED: &str = "registry.invalid/wamn/unpulled@sha256:2222222222222222222222222222222222222222222222222222222222222222";
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct Kept {
-    cluster: String,
-    kubeconfig: PathBuf,
-    registry: String,
-    work: PathBuf,
-    secret_work: PathBuf,
-    failed: Vec<String>,
-    phases: Vec<String>,
-    images: BTreeMap<String, String>,
-    role_inputs: BTreeMap<String, String>,
-    image_set: Option<ImageSet>,
-    registry_address: String,
-    release_digest: String,
-    releases: BTreeMap<String, Vec<u8>>,
-    file_setup_error: Option<String>,
-    identity_ready: bool,
-    fixture_source: String,
-    brokers: BTreeMap<String, PathBuf>,
-    cleanup: String,
-}
-
-fn keep_on_failure(value: Option<&str>) -> anyhow::Result<bool> {
-    match value {
-        None | Some("") => Ok(true),
-        Some("never") => Ok(false),
-        Some(value) => {
-            anyhow::bail!("invalid WAMN_KIND_KEEP={value:?}: accepted value is never (or unset)")
-        }
-    }
-}
-
-fn cluster_name(repository: &Path) -> String {
-    let digest = ring::digest::digest(
-        &ring::digest::SHA256,
-        repository.as_os_str().as_encoded_bytes(),
-    );
-    format!("wamn-apply-{}", &hex::encode(digest.as_ref())[..8])
-}
-
 struct CheckContext {
     repository: PathBuf,
     platform: Platform,
@@ -266,98 +224,18 @@ struct CheckContext {
 }
 
 type CheckFuture<'a> = Pin<Box<dyn Future<Output = anyhow::Result<()>> + 'a>>;
-struct Check {
-    name: &'static str,
-    phase: &'static str,
-    run: for<'a> fn(&'a mut Run, &'a CheckContext) -> CheckFuture<'a>,
-}
+type CheckRun = for<'a> fn(&'a mut Run, &'a CheckContext) -> CheckFuture<'a>;
+type Check = environment_checks::Check<CheckRun>;
 
-const CHECKS: [Check; 7] = [
-    Check {
-        name: "4 rest_connector",
-        phase: "environment",
-        run: |run, context| Box::pin(connector_check(run, context, "rest_connector")),
-    },
-    Check {
-        name: "4 netsuite",
-        phase: "environment",
-        run: |run, context| Box::pin(connector_check(run, context, "netsuite")),
-    },
-    Check {
-        name: "native files on kind MinIO",
-        phase: "environment",
-        run: |run, context| Box::pin(files_check(run, context)),
-    },
-    Check {
-        name: "14 / A1 heartbeat labels",
-        phase: "release",
-        run: |run, context| Box::pin(heartbeat_check(run, context)),
-    },
-    Check {
-        name: "15 wrong release placement",
-        phase: "release",
-        run: |run, context| Box::pin(placement_check(run, context)),
-    },
-    Check {
-        name: "F2 failed host report",
-        phase: "release",
-        run: |run, context| Box::pin(host_report_check(run, context)),
-    },
-    Check {
-        name: "4 show reapply",
-        phase: "bindings",
-        run: |run, context| Box::pin(async { show_check(run, context).await.map(|_| ()) }),
-    },
-];
-
-fn select_checks(value: &str) -> anyhow::Result<Vec<&'static Check>> {
-    let mut selected = Vec::new();
-    for name in value.split(',').map(str::trim) {
-        let check = CHECKS
-            .iter()
-            .find(|check| check.name == name)
-            .with_context(|| {
-                format!(
-                    "unknown or empty WAMN_KIND_CHECKS name {name:?}: known names: {}",
-                    CHECKS
-                        .iter()
-                        .map(|check| check.name)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            })?;
-        if !selected.iter().any(|entry: &&Check| entry.name == name) {
-            selected.push(check);
-        }
-    }
-    Ok(selected)
-}
-
-fn require_phases(checks: &[&Check], phases: &[String]) -> anyhow::Result<()> {
-    for check in checks {
-        ensure!(
-            phases.iter().any(|phase| phase == check.phase),
-            "check {} needs missing phase {}",
-            check.name,
-            check.phase
-        );
-    }
-    Ok(())
-}
-
-fn reuse_checks<'a>(
-    reuse: Option<&'a str>,
-    checks: Option<&str>,
-) -> anyhow::Result<Option<(&'a str, Vec<&'static Check>)>> {
-    match (reuse, checks) {
-        (None, None) => Ok(None),
-        (Some(path), Some(names)) => {
-            ensure!(!path.is_empty(), "WAMN_KIND_REUSE must name kept.json");
-            Ok(Some((path, select_checks(names)?)))
-        }
-        _ => anyhow::bail!("set WAMN_KIND_REUSE and WAMN_KIND_CHECKS together"),
-    }
-}
+const CHECKS: [Check; 7] = environment_checks::checks([
+    |run, context| Box::pin(connector_check(run, context, "rest_connector")),
+    |run, context| Box::pin(connector_check(run, context, "netsuite")),
+    |run, context| Box::pin(files_check(run, context)),
+    |run, context| Box::pin(heartbeat_check(run, context)),
+    |run, context| Box::pin(placement_check(run, context)),
+    |run, context| Box::pin(host_report_check(run, context)),
+    |run, context| Box::pin(async { show_check(run, context).await.map(|_| ()) }),
+]);
 
 struct Run {
     work: PathBuf,
@@ -653,7 +531,7 @@ async fn environment_apply_kind() -> anyhow::Result<()> {
     let keep = keep_on_failure(std::env::var("WAMN_KIND_KEEP").ok().as_deref())?;
     let reuse = std::env::var("WAMN_KIND_REUSE").ok();
     let checks = std::env::var("WAMN_KIND_CHECKS").ok();
-    let selection = reuse_checks(reuse.as_deref(), checks.as_deref())?;
+    let selection = reuse_checks(&CHECKS, reuse.as_deref(), checks.as_deref())?;
     let previous: Option<Kept> = selection
         .as_ref()
         .map(|(path, selected)| {
@@ -2383,82 +2261,6 @@ async fn scenario(run: &mut Run, repository: &Path, source: &Path) -> anyhow::Re
     Ok(())
 }
 
-fn fixture_host_group(local: &str) -> Value {
-    json!({
-        "replicas": 1,
-        "schedulerNatsUrl": NATS_URL,
-        "dataNatsUrl": NATS_URL,
-        "http": {"enabled": true, "port": 80},
-        "env": [
-            {"name": "WAMN_REGISTRY_AUTH_FILE", "value": "/apply-registry/config.json"},
-            {"name": "DOCKER_CONFIG", "value": "/apply-registry"},
-            {"name": "WAMN_COMPONENT_ARTIFACT_BASE", "value": format!("{local}/wamn/components")},
-            {"name": "WAMN_ALLOWED_HOSTS", "value": http_connection::ORIGIN},
-        ],
-        "ociCaPaths": ["/apply-registry/ca.crt"],
-        "volumes": [
-            {"name": "apply-registry", "secret": {"secretName": "apply-registry"}},
-
-        ],
-        "volumeMounts": [
-            {"name": "apply-registry", "mountPath": "/apply-registry", "readOnly": true},
-        ],
-    })
-}
-
-fn fixture_document(env: &str, route_host: &str, digest: &str) -> EnvironmentDocument {
-    EnvironmentDocument {
-        integrations: [(
-            format!("labels-{env}"),
-            environment::document::Integration { version: 1 },
-        )]
-        .into(),
-        target: "cloud".into(),
-        client_package: None,
-        org: ORG.to_owned(),
-        project: PROJECT.to_owned(),
-        env: env.to_owned(),
-        release: DeclaredRelease::Digest(digest.to_owned()),
-        route_host: route_host.to_owned(),
-        policy: POLICY.to_owned(),
-        applications: std::collections::BTreeMap::from([(
-            PACKAGE.to_owned(),
-            wamn_catalog::ApplicationDefinition {
-                connections: [("labels".to_owned(), format!("labels-{env}"))].into(),
-                packages: std::collections::BTreeSet::from([
-                    PACKAGE.to_owned(),
-                    "label_fixture".to_owned(),
-                ]),
-            },
-        )]),
-        floors: std::collections::BTreeMap::new(),
-    }
-}
-
-/// The host group of `document` with its event coordinates. The release
-/// chart declares the materializer's binding, which inherits the host's data
-/// connection and the environment's certificate (docs/plan/alignment.md R5, R6).
-fn event_overlay(document: &EnvironmentDocument, mut group: Value) -> anyhow::Result<Value> {
-    group["env"]
-        .as_array_mut()
-        .context("host environment")?
-        .extend(
-            [
-                ("WAMN_EVT_ORG", document.org.as_str()),
-                ("WAMN_EVT_PROJECT", document.project.as_str()),
-                ("WAMN_EVT_ENV", document.env.as_str()),
-                ("WAMN_EVT_STREAM_REPLICAS", "1"),
-                ("WAMN_EVT_DUP_WINDOW_SECS", "120"),
-            ]
-            .map(|(name, value)| json!({"name":name,"value":value})),
-        );
-    Ok(group)
-}
-
-fn rollback_host_group(work: &Path) -> PathBuf {
-    work.join("dev-event-host-group.yaml")
-}
-
 /// What a failed run keeps before its cluster goes: every event, a
 /// description of the Deployments, WorkloadDeployments, Workloads and pods of
 /// the operator namespace, and the last 80 lines of every container's log
@@ -2611,162 +2413,6 @@ async fn compose_http_releases(
     Ok(manifests)
 }
 
-/// Compose the same pinned entry for the kind and local host paths.
-fn fixture_http_entry(
-    work: &Path,
-    repository: &Path,
-) -> anyhow::Result<(
-    wamn_control::component_admission::ComponentAdmission,
-    wamn_control::publish_release::ComposedApplication,
-)> {
-    let package = repository.join("apps").join(PACKAGE);
-    let output = wamn_schema_generator::output_root(&package);
-    let build_record = wamn_schema_generator::build_record::read_current(&package, &output)?;
-    let component = build_record
-        .outputs
-        .components
-        .iter()
-        .find(|component| component.name == "device")
-        .context("the fixture build contains its device component")?;
-    let declaration = wamn_control::component_declaration::render_declaration_document(
-        &package.join("publication/components/device.json.in"),
-        &wamn_control_registry::project_env_key(ORG, PROJECT, "http"),
-    )?;
-    let declaration_path = work.join("device-declaration.json");
-    std::fs::write(&declaration_path, serde_json::to_vec(&declaration)?)?;
-    let admission = wamn_control::component_admission::admit_component(
-        wamn_control::component_admission::AdmitComponentRequest {
-            package,
-            component_bytes: output.join(&component.path),
-            declaration: declaration_path,
-            admitted_platform_packages: vec!["wamn:node".to_owned(), "wamn:postgres".to_owned()],
-            base_digests: std::collections::BTreeSet::new(),
-        },
-    )?;
-    let route_path = std::env::var_os("WAMN_FLOW_HTTP_COMPONENT").map_or_else(
-        || repository.join("apps/target/wasm32-wasip2/release/http_route.wasm"),
-        PathBuf::from,
-    );
-    let route = std::fs::read(&route_path)
-        .with_context(|| format!("read the pinned HTTP route guest {}", route_path.display()))?;
-    let pin = format!(
-        "sha256:{}",
-        include_str!("../../../../apps/platform/ingress/http-route/http_route.wasm.sha256")
-            .split_whitespace()
-            .next()
-            .context("the HTTP route guest has a digest pin")?
-    );
-    let entry = compose_application(&admission, &route, &pin)?;
-    Ok((admission, entry))
-}
-
-fn fixture_releases() -> anyhow::Result<[Vec<u8>; 4]> {
-    let [a, b, h] = release_documents::fixture_releases()?;
-    let (h, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&h)?;
-    let device = &h
-        .components
-        .first()
-        .context("the device component")?
-        .descriptor;
-    let components = [
-        include_str!("../../../../apps/platform/no-std/transform/declaration.json.in"),
-        include_str!("../../../../apps/platform/no-std/http-request/declaration.json.in"),
-        include_str!("../../../../apps/platform/no-std/http-page/declaration.json.in"),
-    ]
-    .into_iter()
-    .map(|template| {
-        let declaration = http_connection::declaration(template).expect("a guest declaration");
-        let mut descriptor = serde_json::to_value(device).expect("a descriptor");
-        for field in [
-            "component",
-            "interface-version",
-            "operations",
-            "connections",
-        ] {
-            descriptor[field] = declaration[field].clone();
-        }
-        for operation in descriptor["operations"]
-            .as_object_mut()
-            .expect("guest operations")
-            .values_mut()
-        {
-            for field in ["input-ports", "output-ports", "parameters"] {
-                for item in operation[field].as_array_mut().expect("operation facts") {
-                    item["schema"] = json!({"schema": item["schema"]});
-                }
-            }
-        }
-        serde_json::from_value(descriptor).expect("a fake guest descriptor")
-    })
-    .collect();
-    let bytes = http_connection::release(&h.canonical_bytes(), "2.1.0", components)
-        .expect("the HTTP fixture release is canonical");
-    let (http, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)
-        .expect("the HTTP fixture release");
-    Ok([a, b, h.canonical_bytes(), http.canonical_bytes()])
-}
-
-#[test]
-fn the_fixture_releases_are_canonical_manifests() {
-    for template in [MANIFEST, MANIFEST_B] {
-        release(template, "2.1.0", None).expect("a fixture release");
-    }
-    let [_, _, h, bytes] = fixture_releases().unwrap();
-    let (h, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&h).unwrap();
-    let device = release_documents::fixture_device().unwrap();
-    let served = &h
-        .components
-        .first()
-        .expect("the device component")
-        .operations["edge-device:sample/read@2.1.0"];
-    assert!(
-        served.carries(&device.operations["edge-device:sample/read@2.1.0"]),
-        "release H carries the admitted device operation"
-    );
-
-    let (http, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes).unwrap();
-    assert_eq!(
-        http.components
-            .iter()
-            .map(|component| component.descriptor.component.as_str())
-            .collect::<Vec<_>>(),
-        ["device", "http-page", "http-request", "transform"]
-    );
-    assert_eq!(http.routes, h.routes);
-    assert_eq!(http.attachments, h.attachments);
-    assert!(
-        serde_json::to_value(&http)
-            .unwrap()
-            .get("workflow")
-            .is_none()
-    );
-    let scheduled = serde_json::to_value(http_connection::scheduled_wiring().unwrap()).unwrap();
-    assert_eq!(scheduled["nodes"].as_object().unwrap().len(), 2);
-    assert!(
-        scheduled["nodes"]
-            .as_object()
-            .unwrap()
-            .values()
-            .all(|node| node.get("terminal").is_none())
-    );
-    let request = http
-        .components
-        .iter()
-        .find(|component| component.descriptor.component == "http-request")
-        .unwrap();
-    assert_eq!(request.descriptor.connections.len(), 4);
-    let signed = serde_json::to_value(http_connection::signed_wiring().unwrap()).unwrap();
-    assert_eq!(
-        signed["nodes"]["send"]["params"],
-        json!({
-            "requirement": http_connection::OUTBOUND_HANDLE, "method": "POST", "path-and-query": "/signed"
-        })
-    );
-    let text = std::str::from_utf8(&bytes).unwrap();
-    assert!(!text.contains(http_connection::INBOUND_SECRET));
-    assert!(!text.contains(http_connection::OUTBOUND_SECRET));
-}
-
 /// GET `url` from a pod in the namespace with `Host: route_host`, and return
 /// the status and the body.
 async fn route_probe(run: &Run, url: &str, route_host: &str) -> anyhow::Result<(u16, String)> {
@@ -2835,12 +2481,6 @@ async fn route_probe_request(
         body.to_owned(),
     ))
 }
-
-#[path = "support/prekind_render.rs"]
-mod prekind_render;
-
-#[path = "support/prekind_host.rs"]
-mod prekind_host;
 
 fn shell_quote(path: &Path) -> String {
     format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
@@ -3050,55 +2690,6 @@ async fn host_report_check(run: &mut Run, context: &CheckContext) -> anyhow::Res
     );
     restored?;
     deleted?;
-    Ok(())
-}
-
-/// The broken release of F2: release H with its route served as an internal
-/// attachment. A synchronous route makes the host preload its component from
-/// the missing base, and without an HTTP attachment the chart renders no http
-/// role, which would need a composed entry.
-fn host_report_release(
-    version: &str,
-    device: &wamn_catalog::ComponentDescriptor,
-) -> anyhow::Result<Vec<u8>> {
-    let internal = MANIFEST_H.replace(r#""type":"http""#, r#""type":"internal""#);
-    let bytes = release(&internal, version, Some(device))?;
-    let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
-    ensure!(
-        manifest.composed_entry.is_none()
-            && wamn_execution_host::synchronous_route_count(&manifest) > 0
-            && !wamn_control::release_chart::roles(&manifest, ORG, PROJECT, "broken")
-                .iter()
-                .any(|role| role.name == wamn_control::release_chart::RoleName::Http),
-        "the failed-start fixture requires direct component preload and no http role"
-    );
-    Ok(bytes)
-}
-
-#[test]
-fn host_report_release_requires_component_preload() -> anyhow::Result<()> {
-    let device = release_documents::fixture_device()?;
-    let bytes = host_report_release("2.1.0", &device)?;
-    let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
-    assert!(manifest.composed_entry.is_none());
-    assert_eq!(wamn_execution_host::synchronous_route_count(&manifest), 1);
-    let component = manifest.components.first().context("the served device")?;
-    assert_eq!(
-        component.descriptor.component_digest,
-        device.component_digest
-    );
-    assert_eq!(component.descriptor.component, "device");
-    assert!(manifest.routes.iter().all(|route| {
-        route.component == component.descriptor.component
-            && component.operations.contains_key(&route.operation)
-    }));
-    let roles = wamn_control::release_chart::roles(&manifest, ORG, PROJECT, "broken");
-    assert!(
-        roles
-            .iter()
-            .all(|role| role.name != wamn_control::release_chart::RoleName::Http),
-        "an http role needs a composed entry that the preload would skip"
-    );
     Ok(())
 }
 
@@ -3502,102 +3093,4 @@ async fn rerun(
         run.collect(check.name, result);
     }
     Ok(())
-}
-
-#[test]
-fn check_selection_trims_and_deduplicates() -> anyhow::Result<()> {
-    let selected = select_checks(" 4 netsuite,4 show reapply, 4 netsuite ")?;
-    assert_eq!(
-        selected.iter().map(|check| check.name).collect::<Vec<_>>(),
-        ["4 netsuite", "4 show reapply"]
-    );
-    for names in ["", " ", "4 netsuite,", "unknown"] {
-        let error = select_checks(names)
-            .err()
-            .context("selection must fail")?
-            .to_string();
-        for check in &CHECKS {
-            assert!(error.contains(check.name), "{error}");
-        }
-    }
-    Ok(())
-}
-
-#[test]
-fn reuse_requires_both_inputs() -> anyhow::Result<()> {
-    assert!(reuse_checks(None, None)?.is_none());
-    assert!(reuse_checks(Some("kept.json"), None).is_err());
-    assert!(reuse_checks(None, Some("4 netsuite")).is_err());
-    assert!(reuse_checks(Some(""), Some("4 netsuite")).is_err());
-    assert!(reuse_checks(Some("kept.json"), Some("4 netsuite"))?.is_some());
-    Ok(())
-}
-
-#[test]
-fn checks_refuse_missing_phases() -> anyhow::Result<()> {
-    let selected = select_checks("4 show reapply")?;
-    let mut phases = vec!["environment".into(), "release".into()];
-    let error = require_phases(&selected, &phases).unwrap_err().to_string();
-    assert!(error.contains("bindings") && error.contains("4 show reapply"));
-    phases.push("bindings".into());
-    require_phases(&selected, &phases)
-}
-
-#[test]
-fn kept_metadata_round_trips() -> anyhow::Result<()> {
-    let kept = Kept {
-        cluster: "wamn-apply-01234567".into(),
-        kubeconfig: "/tmp/original/kubeconfig".into(),
-        registry: "wamn-apply-01234567-registry".into(),
-        work: "/tmp/rerun".into(),
-        secret_work: "/tmp/original".into(),
-        failed: vec!["4 netsuite".into()],
-        phases: vec!["environment".into()],
-        images: [("host".into(), "sha256:abc".into())].into(),
-        role_inputs: [("http".into(), "sha256:def".into())].into(),
-        image_set: Some(ImageSet {
-            host: "host@sha256:abc".into(),
-            http: "http@sha256:def".into(),
-            materializer: "materializer@sha256:123".into(),
-        }),
-        registry_address: "172.18.0.2:5000".into(),
-        release_digest: "sha256:456".into(),
-        releases: [("files".into(), b"manifest".to_vec())].into(),
-        file_setup_error: None,
-        identity_ready: true,
-        fixture_source: "abcdef".into(),
-        brokers: [("events".into(), "/tmp/original/rest_connector".into())].into(),
-        cleanup: "tools/kind-kept-delete '/tmp/rerun/kept.json'".into(),
-    };
-    assert_eq!(
-        kept,
-        serde_json::from_slice(&serde_json::to_vec_pretty(&kept)?)?
-    );
-    Ok(())
-}
-
-#[test]
-fn keep_policy_accepts_only_never_or_unset() -> anyhow::Result<()> {
-    assert!(keep_on_failure(None)?);
-    assert!(keep_on_failure(Some(""))?);
-    assert!(!keep_on_failure(Some("never"))?);
-    let error = keep_on_failure(Some("always")).unwrap_err().to_string();
-    assert!(error.contains("WAMN_KIND_KEEP") && error.contains("never"));
-    Ok(())
-}
-
-#[test]
-fn cluster_names_use_the_checkout_path() {
-    let path = Path::new("/tmp/checkout");
-    let name = cluster_name(path);
-    assert_eq!(name, cluster_name(path));
-    assert_ne!(name, cluster_name(Path::new("/tmp/other-checkout")));
-    assert_eq!(name.len(), "wamn-apply-".len() + 8);
-    assert!(name.starts_with("wamn-apply-"));
-    assert!(
-        name["wamn-apply-".len()..]
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit())
-    );
-    assert_eq!(name, "wamn-apply-69901e25");
 }

@@ -5,6 +5,7 @@
 //! Cargo test commands the tool selects for a change set. It shows nothing about
 //! whether those tests pass.
 
+use std::fmt::Write as _;
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
@@ -126,7 +127,10 @@ impl Fixture {
         );
         let policy = fs::read_to_string(repository_root().join("tests/selection.toml")).unwrap();
         let mut sections = policy.split("[[suites]]");
-        let mut policy = sections.next().unwrap().to_owned();
+        let prefix = sections.next().unwrap();
+        let start = prefix.find("targets = [").unwrap();
+        let end = start + prefix[start..].find("\n]\n").unwrap() + 3;
+        let mut policy = format!("{}targets = []\n{}", &prefix[..start], &prefix[end..]);
         for section in sections.filter(|section| section.contains("package = \"\"")) {
             policy.push_str("[[suites]]");
             policy.push_str(section);
@@ -178,6 +182,24 @@ impl Fixture {
         fs::write(path, contents).expect("write a fixture file");
     }
 
+    fn kind_targets(&self) {
+        let path = self.root.join("tests/selection.toml");
+        let policy = fs::read_to_string(&path).unwrap();
+        let policy = policy
+            .lines()
+            .map(|line| {
+                if line.contains("workspace=\"root\"") {
+                    line.replace("tier=\"unit\"", "tier=\"kind\"")
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(path, policy).unwrap();
+        self.commit("fixture tiers");
+    }
+
     fn add_suite(&self, suite: &str) {
         let path = self.root.join("tests/selection.toml");
         let policy = fs::read_to_string(&path).unwrap();
@@ -203,11 +225,12 @@ impl Fixture {
 
     fn package(&self, directory: &str, name: &str, required_features: &[&str]) -> Value {
         let manifest = self.root.join(directory).join("Cargo.toml");
-        let mut targets = vec![json!({"name": name, "kind": ["lib"]})];
+        let mut targets = vec![json!({"name": name, "kind": ["lib"], "test": true})];
         if !required_features.is_empty() {
             targets.push(json!({
                 "name": format!("{name}_live"),
                 "kind": ["test"],
+                "test": true,
                 "required-features": required_features,
             }));
         }
@@ -287,6 +310,31 @@ impl Fixture {
         members: &[&Value],
         nodes: &[Value],
     ) {
+        let workspace_name = match workspace {
+            "" => "root",
+            "/apps" => "apps",
+            "/apps/platform/no-std" => "no-std",
+            _ => unreachable!(),
+        };
+        let mut rows = String::new();
+        for package in members {
+            for target in package["targets"].as_array().unwrap() {
+                writeln!(
+                    rows,
+                    "{{workspace={workspace_name:?}, package={}, target=\"{}:{}\", tier=\"unit\"}},",
+                    package["name"],
+                    target["kind"][0].as_str().unwrap(),
+                    target["name"].as_str().unwrap(),
+                ).unwrap();
+            }
+        }
+        let path = self.root.join("tests/selection.toml");
+        let policy = fs::read_to_string(&path).unwrap().replacen(
+            "targets = [",
+            &format!("targets = [\n{rows}"),
+            1,
+        );
+        fs::write(path, policy).unwrap();
         let document = json!({
             "packages": packages,
             "workspace_members": members.iter().map(|package| package["id"].clone()).collect::<Vec<_>>(),
@@ -622,7 +670,7 @@ fn unknown_paths_select_every_applicable_suite() {
         assert!(stdout.contains("root (full:"), "{stdout}");
         assert!(stdout.contains("apps (full:"), "{stdout}");
         assert!(stdout.contains("no-std (full:"), "{stdout}");
-        let output = fixture.tool(&["--cluster", "dry-run"]);
+        let output = fixture.tool(&["--tier", "kind", "dry-run"]);
         let stdout = String::from_utf8(output.stdout).unwrap();
         assert!(output.status.success());
         assert!(stdout.contains("suites: quality\n"), "{stdout}");
@@ -705,16 +753,17 @@ fn dry_run_prints_the_commands_without_running_tests() {
 }
 
 #[test]
-fn cluster_runs_the_root_ignored_tests_one_at_a_time() {
+fn kind_runs_the_root_ignored_tests_one_at_a_time() {
     let fixture = Fixture::new();
+    fixture.kind_targets();
     fixture.write("apps/demo/command/record.sql", "SELECT 1;\n");
     for (arguments, ending) in [
         (
-            &["--cluster", "dry-run"][..],
+            &["--tier", "kind", "dry-run"][..],
             " --no-fail-fast -p demo-tests --features demo-tests/cluster -- --ignored --test-threads=1",
         ),
         (
-            &["--cluster", "--name", "journey", "dry-run"][..],
+            &["--tier", "kind", "--name", "journey", "dry-run"][..],
             " --no-fail-fast -p demo-tests --features demo-tests/cluster journey -- --ignored --test-threads=1",
         ),
     ] {
@@ -733,7 +782,7 @@ fn cluster_runs_the_root_ignored_tests_one_at_a_time() {
     }
     // A full root run keeps the cluster feature beside the root features.
     fixture.write("Cargo.lock", "changed\n");
-    let output = fixture.tool(&["--cluster", "dry-run"]);
+    let output = fixture.tool(&["--tier", "kind", "dry-run"]);
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(
@@ -746,16 +795,17 @@ fn cluster_runs_the_root_ignored_tests_one_at_a_time() {
 }
 
 #[test]
-fn a_name_filter_needs_cluster_and_a_matching_ignored_test() {
+fn a_name_filter_needs_kind_and_a_matching_ignored_test() {
     let fixture = Fixture::new();
+    fixture.kind_targets();
     fixture.write("crates/core/src/lib.rs", "changed\n");
     let output = fixture.tool(&["--name", "journey", "dry-run"]);
     assert_eq!(output.status.code(), Some(64));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("--name requires --cluster"), "{stderr}");
+    assert!(stderr.contains("--name requires --tier kind"), "{stderr}");
 
     // The fake Cargo lists no test, so no ignored test matches and none runs.
-    let output = fixture.tool(&["--cluster", "--name", "journey", "run"]);
+    let output = fixture.tool(&["--tier", "kind", "--name", "journey", "run"]);
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -790,7 +840,8 @@ fn a_name_filter_needs_cluster_and_a_matching_ignored_test() {
 #[test]
 fn a_name_filter_fails_when_the_change_set_selects_no_package() {
     let fixture = Fixture::new();
-    // An unchanged tree selects nothing. Under --cluster, a no-std change selects
+    fixture.kind_targets();
+    // An unchanged tree selects nothing. Under --tier kind, a no-std change selects
     // no root package.
     for (change, command) in [
         (None, "dry-run"),
@@ -799,7 +850,7 @@ fn a_name_filter_fails_when_the_change_set_selects_no_package() {
         if let Some(file) = change {
             fixture.write(file, "changed\n");
         }
-        let output = fixture.tool(&["--cluster", "--name", "journey", command]);
+        let output = fixture.tool(&["--tier", "kind", "--name", "journey", command]);
         assert_eq!(output.status.code(), Some(1));
         let stdout = String::from_utf8(output.stdout).unwrap();
         assert_eq!(stdout.lines().last(), Some("selected: nothing"), "{stdout}");
@@ -924,10 +975,7 @@ fn runtime_changes_select_the_native_host_reader() {
     let host = host
         .replace("crates/platform/runtime/", "crates/far/")
         .replace("package = \"wamn-control\"", "package = \"user\"")
-        .replace(
-            "target = [\"test:environment_apply_kind\"]",
-            "target = [\"lib:user\"]",
-        )
+        .replace("target = [\"test:native_host\"]", "target = [\"lib:user\"]")
         .replace("features = [\"ops\"]", "features = []")
         .replace(
             "prerequisites = [\"fixture\", \"edge\", \"nats\", \"route\"]",
@@ -969,7 +1017,7 @@ fn a_change_that_selects_an_image_guest_builds_the_guests_both_ways() {
     // The cluster run starts no guest build.
     let fixture = Fixture::new();
     fixture.write("apps/platform/wire/src/lib.rs", "changed\n");
-    let output = fixture.tool(&["--cluster", "run"]);
+    let output = fixture.tool(&["--tier", "kind", "run"]);
     assert!(output.status.success());
     assert_eq!(fixture.guest_calls(), Vec::<Vec<String>>::new());
 }
@@ -1003,5 +1051,140 @@ fn a_dry_run_prints_the_guest_builds_and_a_failed_build_fails_the_run() {
     assert!(
         stderr.contains("FAIL: guests (Dockerfile component-builder) (exit 29)"),
         "{stderr}"
+    );
+}
+
+#[test]
+fn tiers_limit_targets_inside_selected_packages() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("tests/selection.toml");
+    let policy = fs::read_to_string(&path).unwrap().replace(
+        "target=\"test:user_live\", tier=\"unit\"",
+        "target=\"test:user_live\", tier=\"live-postgres\"",
+    );
+    fs::write(path, policy).unwrap();
+    fixture.commit("fixture tiers");
+    fixture.write("crates/user/src/lib.rs", "changed\n");
+    let output = fixture.tool(&["--tier", "unit", "dry-run"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("--lib"), "{stdout}");
+    assert!(!stdout.contains("--test user_live"), "{stdout}");
+    let output = fixture.tool(&["--tier", "live-postgres", "dry-run"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("--test user_live"), "{stdout}");
+    assert!(!stdout.contains("--lib"), "{stdout}");
+    assert!(!stdout.contains("-p checker"), "{stdout}");
+    let output = fixture.tool(&["--tier", "unit,live-postgres", "dry-run"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let path = fixture.directory.join("metadata/Cargo.toml.json");
+    let mut metadata: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    let user = metadata["packages"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|package| package["name"] == "user")
+        .unwrap();
+    user["targets"][1]["required-features"] = json!([]);
+    fs::write(path, serde_json::to_string(&metadata).unwrap()).unwrap();
+    let output = fixture.tool(&["--tier", "live-postgres", "dry-run"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("--test user_live"), "{stdout}");
+    assert!(!stdout.contains("--features test:user_live"), "{stdout}");
+}
+
+#[test]
+fn explicit_default_tiers_exclude_kind_targets() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("tests/selection.toml");
+    let policy = fs::read_to_string(&path).unwrap().replace(
+        "target=\"lib:core\", tier=\"unit\"",
+        "target=\"lib:core\", tier=\"kind\"",
+    );
+    fs::write(path, policy).unwrap();
+    fixture.commit("fixture tiers");
+    fixture.write("crates/core/src/lib.rs", "changed\n");
+    let output = fixture.tool(&["--tier", "unit,contract,live-postgres,live-nats", "dry-run"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(!stdout.contains("-p core"), "{stdout}");
+    assert!(stdout.contains("-p user"), "{stdout}");
+}
+
+#[test]
+fn unknown_tiers_fail_before_metadata() {
+    let fixture = Fixture::new();
+    let output = fixture.tool(&["--tier", "absent", "dry-run"]);
+    assert_eq!(output.status.code(), Some(64));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unknown tier 'absent'"));
+    for tiers in ["", "unit,", ",unit", "unit,,contract"] {
+        let output = fixture.tool(&["--tier", tiers, "dry-run"]);
+        assert_eq!(output.status.code(), Some(64), "{tiers}");
+    }
+}
+
+#[test]
+fn an_ignored_target_suite_runs_without_exact_names() {
+    let fixture = Fixture::new();
+    fixture.add_suite(
+        &EXACT_SUITE.replace("tests = [\"fixture::case\"]", "tests = []\nignored = true"),
+    );
+    fixture.write("crates/core/src/lib.rs", "changed\n");
+    let calls = fixture.selected(&[]);
+    assert!(
+        calls.iter().any(|call| call.ends_with(&[
+            "--".to_owned(),
+            "--ignored".to_owned(),
+            "--test-threads=1".to_owned(),
+        ])),
+        "{calls:?}"
+    );
+}
+
+#[test]
+fn an_unknown_path_keeps_one_default_command_per_workspace() {
+    let fixture = Fixture::new();
+    let path = fixture.root.join("tests/selection.toml");
+    let policy = fs::read_to_string(&path).unwrap().replace(
+        "target=\"test:user_live\", tier=\"unit\"",
+        "target=\"test:user_live\", tier=\"kind\"",
+    );
+    fs::write(path, policy).unwrap();
+    fixture.commit("fixture mixed target tiers");
+    fixture.write("unowned/code.rs", "changed\n");
+    let calls = fixture.selected(&[]);
+    assert_eq!(
+        calls,
+        vec![
+            fixture.command(
+                "Cargo.toml",
+                &["--workspace", "--features", "wamn-control/ops,wamn-ctl/ops"]
+            ),
+            fixture.command("apps/Cargo.toml", &["--workspace"]),
+            fixture.command("apps/platform/no-std/Cargo.toml", &["--workspace"]),
+        ]
     );
 }

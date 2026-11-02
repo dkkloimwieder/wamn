@@ -20,6 +20,8 @@ Run one installation at a time when cases share fixed management ports.
 
 ### Receiving and WMS application cases
 
+Each application owns a `cluster` integration target with the required `cluster` feature.
+The library targets keep local business cases.
 `qualify-release` runs the cases of the release's package set:
 
 | Package set | Cases |

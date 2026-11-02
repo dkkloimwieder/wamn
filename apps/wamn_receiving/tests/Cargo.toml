@@ -10,6 +10,11 @@ autotests = false
 [lib]
 path = "lib.rs"
 
+[[test]]
+name = "cluster"
+path = "cluster_tests.rs"
+required-features = ["cluster"]
+
 [features]
 # Compiles the kind cluster tests. A plain workspace run leaves them out.
 cluster = []

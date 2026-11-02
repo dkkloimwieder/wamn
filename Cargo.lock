@@ -6670,7 +6670,6 @@ dependencies = [
  "tracing-subscriber",
  "wamn-run-state",
  "wamn-runtime",
- "wash-runtime",
 ]
 
 [[package]]

@@ -1,34 +1,23 @@
 //! Application integration tests.
 
 #[cfg(test)]
-#[cfg_attr(
-    not(feature = "cluster"),
-    expect(
-        dead_code,
-        reason = "the cluster tests use these helpers, and a build without the cluster feature leaves them out; the clippy run with the feature checks them"
-    )
+#[expect(
+    dead_code,
+    reason = "The local cases share fixtures with the cluster target."
 )]
 mod wms_runtime_live;
 
-#[cfg(all(test, feature = "cluster"))]
-mod cluster;
 #[cfg(test)]
-#[cfg_attr(
-    not(feature = "cluster"),
-    expect(
-        dead_code,
-        unused_imports,
-        reason = "the cluster tests use these helpers, and a build without the cluster feature leaves them out; the clippy run with the feature checks them"
-    )
+#[expect(
+    dead_code,
+    unused_imports,
+    reason = "The local cases share fixtures with the cluster target."
 )]
 mod delivery;
 #[cfg(test)]
-#[cfg_attr(
-    not(feature = "cluster"),
-    expect(
-        dead_code,
-        reason = "the cluster tests use these helpers, and a build without the cluster feature leaves them out; the clippy run with the feature checks them"
-    )
+#[expect(
+    dead_code,
+    reason = "The local cases share fixtures with the cluster target."
 )]
 mod environment;
 
@@ -55,3 +44,8 @@ mod local_take_offline;
 
 #[cfg(test)]
 mod inventory_commands_live;
+
+#[cfg(test)]
+mod startup_checks;
+#[cfg(test)]
+mod startup_support;

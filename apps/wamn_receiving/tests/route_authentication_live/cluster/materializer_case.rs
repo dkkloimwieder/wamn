@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use wamn_control::provision_project_env::secret_value;
 use wamn_gate_harness::journey::MaterializerPhase;
 
+use super::super::case_execution::validate_response;
 use super::{ReceivingCluster, apply, checked, kubectl, resources};
 
 /// Mirror the HTTP Service `service` to a NodePort Service `name`, and return
@@ -159,16 +160,6 @@ async fn ready(cluster: &ReceivingCluster, name: &str, endpoint: &str) -> anyhow
     result
 }
 
-fn validate_response(status: u16, content_type: &str, body: &[u8]) -> anyhow::Result<()> {
-    ensure!(
-        status == 404
-            && content_type == "application/json"
-            && body == br#"{"error":{"code":"route-not-found"}}"#,
-        "the owned NodePort must return the released route's exact HTTP 404 response"
-    );
-    Ok(())
-}
-
 /// The untouched purchase order that one trigger updates and receives against.
 pub(super) struct TriggerOrder {
     pub order_id: String,
@@ -277,20 +268,4 @@ pub(super) async fn trigger(
         })
     }).await.context("the materializer HTTP commands exceeded 90 seconds")?
         .map(|phase| (phase, update_trace, receipt_trace))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn readiness_requires_the_released_route_response() {
-        let body = br#"{"error":{"code":"route-not-found"}}"#;
-        validate_response(404, "application/json", body).unwrap();
-        assert!(validate_response(200, "application/json", body).is_err());
-        assert!(validate_response(404, "text/html", b"<h1>Not Found</h1>").is_err());
-        assert!(
-            validate_response(404, "application/json", br#"{"error":{"code":"other"}}"#).is_err()
-        );
-    }
 }

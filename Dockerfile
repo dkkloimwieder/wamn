@@ -240,13 +240,14 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,id=wamn-root-target-cases-${WAMN_CHECKOUT_KEY},target=/build/target,sharing=locked \
     test -n "$WAMN_CHECKOUT_KEY" \
- && cargo test --locked --no-run --message-format=json --features cluster \
+ && cargo test --locked --no-run --message-format=json --features cluster --test cluster \
       -p wamn-wms-tests -p wamn-receiving-tests > /tmp/cases.json \
  && install -d /cases \
  && for package in wamn-wms-tests wamn-receiving-tests; do \
       target="$(printf '%s' "$package" | tr - _)"; \
       executable="$(grep '"reason":"compiler-artifact"' /tmp/cases.json \
-        | grep "\"name\":\"$target\"" \
+        | grep "\"manifest_path\":\"/build/apps/${target%_tests}/tests/Cargo.toml\"" \
+        | grep '"name":"cluster"' \
         | grep -o '"executable":"[^"]*"' | cut -d'"' -f4)"; \
       test "$(printf '%s\n' "$executable" | grep -c .)" -eq 1 \
         && install -m 0755 "$executable" "/cases/$package" || exit 1; \

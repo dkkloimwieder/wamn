@@ -37,7 +37,11 @@ It includes committed, staged, unstaged, deleted, and untracked files.
   `tests/selection.toml` defines documentation as `docs/`, `.beads/`, and root Markdown files.
   A Markdown file below another directory also follows the package rules above.
 
-Selected packages run their default tests with the required features of their targets.
+Without `--tier`, Cargo runs once per selected workspace.
+Kind cases stay ignored, and application cluster targets require the `cluster` feature.
+An explicit `--tier` filters executable targets within each selected package.
+Without `--tier`, the tool selects unit, contract, live-postgres, and live-nats.
+Use `--tier T[,T]` to select one or more tiers.
 The tool builds the guests that selected suites need.
 `tools/repo-lint` also compiles guest targets that disable Cargo tests.
 A passing workspace test result does not establish compilation of those guest targets.
@@ -45,14 +49,15 @@ If the change set selects a guest of the host image, `tools/test-changes` also r
 These guests are the packages that the Dockerfile `component-builder` stage builds, so a shared WIT root or a platform crate that a guest links selects them.
 The stage checks the router pin, as the guest build of `wamn build` does.
 Control-client tests compose this pinned raw guest with an empty dispatcher and link operation calls without authority.
-`tools/test-changes --cluster` runs no guest build.
+`tools/test-changes --tier kind` runs no guest build.
 `tests/selection.toml` owns suite commands, tiers, prerequisites, and inputs beyond Cargo dependencies.
 Generator changes select `package_digest` in `wamn-control`.
 Platform fixture and catalog changes select `wamn-control-provision`.
 SQL changes select `wamn-ctl` with `ops`, including `protected_relations_live`.
 Control and platform deployment changes select prekind rendering and the exact native host case.
-The prekind command uses one `prekind` filter across both test targets.
-It does not use `--skip kind`, which also skips prekind cases.
+The prekind suite runs `environment_render` and `platform_render` in `wamn-control`.
+The release-chart-render suite runs the ignored Helm cases in `release_chart_render`.
+These contract targets compile separately from the kind cases.
 Web changes select repository web lint, runtime tests, and platform UI checks, tests, and build.
 Every change outside documentation selects `tools/repo-lint run`, including root formatting and Clippy for every target.
 
@@ -104,13 +109,12 @@ After failure, it prints the retained worktree path and keeps its logs and build
 It uses committed files from `REF`, so commit tool changes before testing them through this runner.
 Run `tools/test-revision-test` for offline self-tests with fake external commands.
 
-`tools/test-changes --cluster` runs the [ignored tests](#ignored-tests) of the selected packages instead of their default tests.
-It uses only the root workspace.
-It adds `-- --ignored --test-threads=1` to the root workspace command, so the tests run one at a time.
+`tools/test-changes --tier kind` selects the kind targets of affected packages.
+It enables their `cluster` feature and runs ignored cases one at a time.
 The generated exclusion tests in `apps/Cargo.toml` need PostgreSQL diagnostics, so each runs through its own example.
 The `exclusion_diagnostics` example of `wamn-test-infrastructure` runs the platform fixture test, and the `exclusion_diagnostics` example of `wamn-receiving-tests` runs the Receiving test.
 [Ignored tests](#ignored-tests) gives the commands.
-`--name FILTER` is valid only with `--cluster`.
+`--name FILTER` requires `--tier kind`.
 The tool passes the filter to Cargo as the test name filter, which selects the tests whose full names contain it.
 The filter matches only tests in the packages that the change set selects.
 If the change set selects no package, `run` and `dry-run` fail and name the filter.
@@ -308,7 +312,7 @@ export WAMN_HOST_BINARY="$CARGO_TARGET_DIR/debug/wamn-host"
 export WAMN_NATIVE_C_NATS_BIN="$(command -v nats-server)"
 export WAMN_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/release/http_route.wasm"
 export WAMN_MATERIALIZER_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/debug/materializer.wasm"
-cargo test --locked --offline -p wamn-control --test environment_apply_kind \
+cargo test --locked --offline -p wamn-control --test native_host \
   prekind_host::prekind_http_host_runs_and_rejects_respond_without_caller \
   -- --ignored --exact --nocapture --test-threads=1
 ```
@@ -323,13 +327,13 @@ Its old `respond` terminal must fail with `respond-without-caller` after the suc
 That failure proves that rendering alone cannot establish workflow success.
 The case prints its elapsed time and removes its temporary databases, processes, and component files.
 
-Run the phase 1 cases by their full names:
+Run the environment render cases by their full names:
 
 ```bash
 for name in prekind_environment_renders prekind_rejects_old_missing_conn_reader \
   prekind_receiving_pat_renders prekind_wms_pat_renders; do
-  cargo test --locked --offline -p wamn-control --test environment_apply_kind \
-    "prekind_render::$name" -- --exact --nocapture --test-threads=1 || exit "$?"
+  cargo test --locked --offline -p wamn-control --test environment_render \
+    "$name" -- --exact --nocapture --test-threads=1 || exit "$?"
 done
 ```
 
@@ -379,9 +383,32 @@ It starts a server, creates the named database, and optionally applies migration
 It removes inherited PostgreSQL variables, sets each `--url-env` variable to the database URL, and runs the command.
 It stops the command's process group and removes its server on completion, failure, or handled interruption.
 
+## Execution tiers
+
+`tests/selection.toml` assigns every executable Cargo target to exactly one tier.
+Cargo metadata defines executable targets through `test = true`.
+The strongest boundary in a target determines its tier.
+A target with no tests takes unit.
+
+- Unit covers pure decisions and controlled time. It uses no database, broker, network service, subprocess, or component runtime.
+- Contract covers serialized values, WIT, generated artifacts, rendered objects, files, command-line tools, and owned loopback fixtures.
+- Live-postgres requires private PostgreSQL behavior.
+- Live-nats requires a real NATS broker. A test that also requires PostgreSQL takes this tier.
+- Kind requires Kubernetes.
+
+Unit and contract run per issue, live tiers run per merge, and kind runs per epic.
+The timeout in the selection file stops a stage after 30 minutes of silence.
+It gives no expected duration.
+The epoch interruption case lives in `wamn-engine --test deadline`.
+Paused-time scheduling decisions live in `wamn-workflow --test schedule_decisions`.
+Admission authority stays in `wamn-run-state --test admission_live`.
+Schedule storage stays in `wamn-control --test workflow_schedule_live`.
+Broker acknowledgement lives in `wamn-control --test workflow_event_nats`.
+The native host case lives in `wamn-control --test native_host` and takes live-nats.
+
 ## Ignored tests
 
-An ignored test needs built components, Docker, a cluster, a broker, or a registry.
+An ignore reason records prerequisites. The target tier determines selection.
 Its ignore reason starts with `requires:` and lists the prerequisites, as in `#[ignore = "requires: <name>, <name>"]`.
 A name in upper case is an environment variable that must be set and not empty.
 Any other name is a program that must be on `PATH`.
@@ -391,7 +418,7 @@ Some inputs do not fit this form, such as a binary beside the test executable, o
 The reason describes such an input in words, and the test checks it directly.
 An ignored test does not return early or skip.
 
-To run the ignored tests of the selected packages, use `tools/test-changes --cluster`.
+To run kind targets in selected packages, use `tools/test-changes --tier kind`.
 They run one at a time.
 To select tests by name, add `--name FILTER`, as [select the relevant tests](#select-the-relevant-tests) describes.
 
@@ -466,12 +493,13 @@ The cluster stage command is:
 
 ```bash
 cargo test --locked --offline -p wamn-receiving-tests -p wamn-wms-tests \
-  --features wamn-receiving-tests/cluster,wamn-wms-tests/cluster --lib cluster:: \
-  -- --include-ignored --nocapture --test-threads=1 \
+  --features wamn-receiving-tests/cluster,wamn-wms-tests/cluster --test cluster cluster:: \
+  -- --ignored --nocapture --test-threads=1 \
   > "$WAMN_RESULTS/cluster.log" 2>&1
 ```
 
-The filter `cluster::` selects the cluster journeys and the plain tests of the cluster modules, which also compile only with the feature.
+The `cluster` integration targets require the `cluster` feature and contain only ignored kind cases.
+The library targets keep the local business cases in live-nats.
 [Cluster tests](cluster-tests.md) describes the cases.
 
 Record the start and end time of each run, and time its build apart from its tests.
@@ -529,11 +557,11 @@ Do not infer execution from the aggregate Cargo pass count.
 | `[RUN-PLANE-RECONCILE]` | `crates/control/lib/tests/run_plane_live.rs`: covers creation, current no-op, two-plane residency, platform configuration, and current security behavior under the process lock |
 | `[CLAIMS-LIVE]` | Runtime `plugins::wamn_postgres::claims::tests` `live_*` cases: run by default on the test server, and the cases that create fixed roles hold the process lock |
 | `[EFFECT-SNAPSHOT]` | `crates/platform/runtime/tests/effect_snapshot_live.rs`: ignored, starts its own server with `pg_stat_statements`, and needs `WAMN_NATS_URL`. It runs the production cluster snapshot as a provisioned HTTP admitter, holds the process lock, and makes sure that a repeated snapshot sends no statement. || `[R18-NEG]` | Runtime `plugins::wamn_postgres::claims::tests::live_scs_off_server_fails_checkout_closed`: runs by default on a separate server started with `standard_conforming_strings=off` |
-| `[EVT-READER]` | `services/cdc-reader/tests/event_reader_live.rs`: ignored and selected by `tools/test-changes --cluster`, starts its own server with `wal_level=logical`, and needs `WAMN_READER_NATS_URL` |
+| `[EVT-READER]` | `services/cdc-reader/tests/event_reader_live.rs`: ignored in live-nats, starts its own server with `wal_level=logical`, and needs `WAMN_READER_NATS_URL` |
 | `[CAPTURE-GAP]` | `crates/control/lib/tests/capture_gap_live.rs`: ignored, starts its own server with `wal_level=logical`, and needs `WAMN_READER_NATS_URL`. It does not test the refusal of an active slot, because only a streaming reader holds a slot active |
-| `[SQLX-TRANSACTION]` | `crates/platform/runtime/tests/sqlx_transaction_live.rs`: ignored and selected by `tools/test-changes --cluster`, takes its database from the test server, and needs `WAMN_SQLX_TRANSACTION_COMPONENT` |
+| `[SQLX-TRANSACTION]` | `crates/platform/runtime/tests/sqlx_transaction_live.rs`: ignored in live-postgres, takes its database from the test server, and needs `WAMN_SQLX_TRANSACTION_COMPONENT` |
 | `[MGMT-LIVE]` | `services/scenario-worker/tests/management_live.rs`: runs by default on the test server and holds the process lock |
-| `[STD-GUEST-VIRTUALIZATION]` | `tests/integration/src/virtualized_std_guest.rs`: ignored and selected by `tools/test-changes --cluster`, and needs built guest files and its explicit `WAMN_STD_VIRTUALIZATION_*` inputs |
+| `[STD-GUEST-VIRTUALIZATION]` | `tests/integration/src/virtualized_std_guest.rs`: ignored in live-nats, and needs built guest files and its explicit `WAMN_STD_VIRTUALIZATION_*` inputs |
 | `[EVT-C-CDC]` | `tests/integration/src/cdcbench.rs`: runs through `wamn-gates cdcbench`, starts its own server with `wal_level=logical`, and needs a JetStream NATS at `--nats-url` |
 
 The source owners declare additional credentials, artifact paths, and selected assertions.
@@ -964,7 +992,7 @@ Before a kind run, make sure that the fixture release has an http role.
 This test builds and assembles the fixture package on a disposable PostgreSQL, without kind:
 
 ```bash
-cargo test --locked --offline -p wamn-control --test environment_apply_kind \
+cargo test --locked --offline -p wamn-control --test file_fixture_live \
   native_files::file_fixture_assembles_an_http_role_without_kind -- --ignored --exact
 ```
 
@@ -1394,7 +1422,7 @@ Use the application delivery journeys for deployed startup, readiness, authentic
 The schedule task's unit tests run with paused time: the first tick after a restart, a row enabled or disabled between ticks, and ticks missed during a slow admission.
 
 ```bash
-cargo test -p wamn-workflow --lib schedule::
+cargo test --locked --offline -p wamn-workflow --test schedule_decisions
 ```
 
 The live test authors schedule workflows on a disposable PostgreSQL 18 database, admits due moments, and drains the runs through the real queue.

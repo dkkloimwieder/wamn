@@ -1,4 +1,4 @@
-//! Tests for bounded host effect waits.
+//! Epoch interruption and engine reuse.
 
 #[cfg(test)]
 mod tests {
@@ -7,8 +7,8 @@ mod tests {
     use wash_runtime::engine::Engine;
     use wash_runtime::wasmtime::{Instance, Module, Store, Trap};
 
-    // `(module (func (export "run") (loop br 0)))`. Keeping the tiny module
-    // encoded here avoids adding a test-only WAT parser to this test crate.
+    // `(module (func (export "run") (loop br 0)))`. The encoded module
+    // exercises the engine ticker without a component fixture.
     const SPIN_MODULE: &[u8] = &[
         0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x04, 0x01, 0x60, 0x00, 0x00, 0x03,
         0x02, 0x01, 0x00, 0x07, 0x07, 0x01, 0x03, 0x72, 0x75, 0x6e, 0x00, 0x00, 0x0a, 0x09, 0x01,
