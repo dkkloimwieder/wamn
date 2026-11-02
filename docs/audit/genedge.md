@@ -11,7 +11,7 @@ Every pin below refers to that branch head, `ca82acc13`.
 | `.1` Generator out of serving code | B1-1, B3-1 | `b763b86c3`, `ca82acc13` | The package manifest, its declaration types, the release profile and the SQL lexer live in `crates/catalog/model`. Provisioning, schema control and the execution host have no generator dependency. |
 | `.2` Declared qualification cases | B2-6, F3-5 | `c743606fb` | Each package declares its cases in `tests/qualification.json`. `qualify-release` runs the union of the declarations of the release packages. |
 | `.3` Infrastructure is not permission denial | A3-1 | `796a398b0` | An unavailable principal database gives `ConnectionUnavailable`. A missing principal gives `PermissionDenied`. |
-| `.4` Secret-free command help | E2-6 | `0469c8b82` | Help hides the values of 36 secret-bearing environment inputs in `services/ctl`, `services/cdc-reader` and `services/scenario-worker`. |
+| `.4` Secret-free command help | E2-6 | `0469c8b82` | Help hides the values of 39 secret-bearing environment inputs in `services/ctl`, `services/cdc-reader` and `services/scenario-worker`. Issue 4 hides 27 of them, and 12 were hidden before. |
 
 After issue 1, `cargo tree -e normal` of `wamn-host`, `wamn-runtime` and `wamn-control-provision` shows no `wamn-schema-generator` and no `wamn-schema-introspection`.
 A generator edit then does not rebuild the host image.
