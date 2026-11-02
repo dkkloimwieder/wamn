@@ -22,5 +22,6 @@ pub mod pools;
 pub mod project;
 pub mod provider;
 mod releases;
+pub mod render;
 pub mod steps;
 mod web;

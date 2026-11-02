@@ -407,6 +407,136 @@ fn identity_ca(secret: &SecretData) -> anyhow::Result<[CaConfigMap; 2]> {
     }))
 }
 
+pub(super) fn runtime_certificates(
+    repository: &Path,
+    document: &ClusterDocument,
+) -> anyhow::Result<Vec<Value>> {
+    let mut rendered = Vec::new();
+    rendered.extend(objects(
+        repository,
+        "deploy/infra/nats-certificates.yaml",
+        document,
+    )?);
+    Ok(rendered)
+}
+
+pub(super) fn runtime_events(
+    repository: &Path,
+    document: &ClusterDocument,
+) -> anyhow::Result<Vec<Value>> {
+    let mut rendered = Vec::new();
+    rendered.extend(objects(
+        repository,
+        "deploy/platform/runtime-operator-events-rbac.example.yaml",
+        document,
+    )?);
+    Ok(rendered)
+}
+
+pub(super) fn collector_objects(
+    repository: &Path,
+    document: &ClusterDocument,
+) -> anyhow::Result<Vec<Value>> {
+    let mut rendered = Vec::new();
+    rendered.extend(objects(
+        repository,
+        "deploy/platform/otel-collector.yaml",
+        document,
+    )?);
+    rendered.extend(objects(
+        repository,
+        "deploy/gcp/otel-collector-values.yaml",
+        document,
+    )?);
+    Ok(rendered)
+}
+
+pub(super) fn postgres_operator_objects(
+    repository: &Path,
+    document: &ClusterDocument,
+) -> anyhow::Result<Vec<Value>> {
+    let mut rendered = Vec::new();
+    rendered.extend(objects(
+        repository,
+        "deploy/infra/cnpg-operator.yaml",
+        document,
+    )?);
+    Ok(rendered)
+}
+
+pub(super) fn postgres_cluster_objects(
+    repository: &Path,
+    document: &ClusterDocument,
+) -> anyhow::Result<Vec<Value>> {
+    let mut rendered = Vec::new();
+    rendered.extend(objects(
+        repository,
+        "deploy/gcp/cnpg-cluster.yaml",
+        document,
+    )?);
+    Ok(rendered)
+}
+
+pub(super) fn identity_certificate_objects(
+    repository: &Path,
+    document: &ClusterDocument,
+) -> anyhow::Result<Vec<Value>> {
+    let mut rendered = Vec::new();
+    rendered.extend(objects(
+        repository,
+        "deploy/gcp/identity-certificate.yaml",
+        document,
+    )?);
+    rendered.extend(objects(
+        repository,
+        "deploy/gcp/identity-operator-ca.yaml",
+        document,
+    )?);
+    Ok(rendered)
+}
+
+pub(super) fn runtime_namespaces() -> Vec<Value> {
+    ["platform", "identity", "hosts"]
+        .map(namespace_object)
+        .into()
+}
+
+pub(super) fn identity_ca_objects(secret: &SecretData) -> anyhow::Result<Vec<Value>> {
+    identity_ca(secret)?
+        .into_iter()
+        .map(|object| serde_json::to_value(object).map_err(Into::into))
+        .collect()
+}
+
+pub(super) fn nats_objects(
+    repository: &Path,
+    document: &ClusterDocument,
+    authorization_exists: bool,
+) -> anyhow::Result<Vec<Value>> {
+    let mut rendered = Vec::new();
+    if !authorization_exists {
+        rendered.push(authorization_secret());
+    }
+    rendered.extend(objects(
+        repository,
+        "deploy/gcp/nats-jetstream.yaml",
+        document,
+    )?);
+    Ok(rendered)
+}
+
+// The operator path uses Helm upgrade, not a local template. Keep its chart
+// and values together so the offline install records the same Helm input.
+pub(super) fn operator_objects(
+    repository: &Path,
+    document: &ClusterDocument,
+) -> anyhow::Result<Vec<Value>> {
+    Ok(vec![
+        json!({"chart": "oci://ghcr.io/wasmcloud/charts/runtime-operator", "version": OPERATOR_VERSION,
+        "values": operator_values(repository, document)?}),
+    ])
+}
+
 async fn provisioning(
     target: &Target,
     document: &ClusterDocument,
@@ -432,25 +562,20 @@ async fn provisioning(
     for request in provisioning_jobs(document, &image) {
         changed |= job::run(target, directory, &request, &inputs, &secrets).await?;
     }
-    for path in [
-        "deploy/gcp/identity-certificate.yaml",
-        "deploy/gcp/identity-operator-ca.yaml",
-    ] {
-        for object in objects(repository, path, document)? {
-            changed |= apply_object(target, &object).await?;
-            if object["kind"] == "Certificate" {
-                ready(
-                    target,
-                    step,
-                    "identity",
-                    "certificate",
-                    object["metadata"]["name"]
-                        .as_str()
-                        .context("identity Certificate has no name")?,
-                    "120s",
-                )
-                .await?;
-            }
+    for object in identity_certificate_objects(repository, document)? {
+        changed |= apply_object(target, &object).await?;
+        if object["kind"] == "Certificate" {
+            ready(
+                target,
+                step,
+                "identity",
+                "certificate",
+                object["metadata"]["name"]
+                    .as_str()
+                    .context("identity Certificate has no name")?,
+                "120s",
+            )
+            .await?;
         }
     }
     let secret = kubectl::get(
@@ -462,8 +587,8 @@ async fn provisioning(
     )
     .await?
     .context("missing Secret identity/identity-tls")?;
-    for configmap in identity_ca(&secret)? {
-        changed |= apply_object(target, &serde_json::to_value(configmap)?).await?;
+    for configmap in identity_ca_objects(&secret)? {
+        changed |= apply_object(target, &configmap).await?;
     }
     Ok(changed)
 }
@@ -491,19 +616,32 @@ async fn platform_inputs(
     Ok(changed)
 }
 
+pub(super) fn cert_manager_objects(
+    repository: &Path,
+    document: &ClusterDocument,
+) -> anyhow::Result<Vec<Value>> {
+    objects(repository, "deploy/infra/cert-manager.yaml", document)
+}
+
+pub(super) fn edge_certificate_objects(
+    repository: &Path,
+    document: &ClusterDocument,
+) -> anyhow::Result<Vec<Value>> {
+    objects(repository, "deploy/gcp/letsencrypt.yaml", document)
+}
+
 async fn certificates(
     target: &Target,
     document: &ClusterDocument,
     repository: &Path,
     step: &InstallStep,
 ) -> anyhow::Result<bool> {
-    let mut changed = apply_file(
-        target,
-        document,
-        repository,
-        "deploy/infra/cert-manager.yaml",
-    )
-    .await?;
+    let mut changed = false;
+    for object in cert_manager_objects(repository, document)? {
+        changed |= apply_object(target, &object)
+            .await
+            .context("apply manifest deploy/infra/cert-manager.yaml")?;
+    }
     kubectl::kubectl(
         &target.kubeconfig,
         &target.context,
@@ -519,7 +657,7 @@ async fn certificates(
     )
     .await
     .map_err(|error| wait_error(step, error))?;
-    let edge = objects(repository, "deploy/gcp/letsencrypt.yaml", document)?;
+    let edge = edge_certificate_objects(repository, document)?;
     for object in &edge {
         changed |= apply_object(target, object).await?;
     }
@@ -550,17 +688,15 @@ async fn runtime(
     step: &InstallStep,
 ) -> anyhow::Result<bool> {
     let mut changed = false;
-    for namespace in ["platform", "identity", "hosts"] {
-        changed |= apply_object(target, &namespace_object(namespace)).await?;
+    for namespace in runtime_namespaces() {
+        changed |= apply_object(target, &namespace).await?;
     }
     changed |= remove_event_nats(target).await?;
-    changed |= apply_file(
-        target,
-        document,
-        repository,
-        "deploy/infra/nats-certificates.yaml",
-    )
-    .await?;
+    for object in runtime_certificates(repository, document)? {
+        changed |= apply_object(target, &object)
+            .await
+            .context("apply manifest deploy/infra/nats-certificates.yaml")?;
+    }
     ready(
         target,
         step,
@@ -585,17 +721,15 @@ async fn runtime(
     }
     changed |= keep_chart_secrets(target).await?;
     changed |= nats(target, document, repository, step).await?;
-    let values = operator_values(repository, document)?;
+    let operator = operator_objects(repository, document)?;
     let values_path = work_directory.join("values-operator.yaml");
-    write_operator_values(&values_path, &values)?;
-    changed |= install_operator(target, &values_path, &values).await?;
-    changed |= apply_file(
-        target,
-        document,
-        repository,
-        "deploy/platform/runtime-operator-events-rbac.example.yaml",
-    )
-    .await?;
+    write_operator_values(&values_path, &operator[0]["values"])?;
+    changed |= install_operator(target, &values_path, &operator[0]).await?;
+    for object in runtime_events(repository, document)? {
+        changed |= apply_object(target, &object)
+            .await
+            .context("apply manifest deploy/platform/runtime-operator-events-rbac.example.yaml")?;
+    }
     Ok(changed)
 }
 
@@ -774,20 +908,10 @@ async fn collector(
     repository: &Path,
     step: &InstallStep,
 ) -> anyhow::Result<bool> {
-    let mut changed = apply_file(
-        target,
-        document,
-        repository,
-        "deploy/platform/otel-collector.yaml",
-    )
-    .await?;
-    changed |= apply_file(
-        target,
-        document,
-        repository,
-        "deploy/gcp/otel-collector-values.yaml",
-    )
-    .await?;
+    let mut changed = false;
+    for object in collector_objects(repository, document)? {
+        changed |= apply_object(target, &object).await?;
+    }
     rollout(target, step, "platform", "deploy/otel-collector", "300s").await?;
     Ok(changed)
 }
@@ -798,13 +922,12 @@ async fn postgres(
     repository: &Path,
     step: &InstallStep,
 ) -> anyhow::Result<bool> {
-    let mut changed = apply_file(
-        target,
-        document,
-        repository,
-        "deploy/infra/cnpg-operator.yaml",
-    )
-    .await?;
+    let mut changed = false;
+    for object in postgres_operator_objects(repository, document)? {
+        changed |= apply_object(target, &object)
+            .await
+            .context("apply manifest deploy/infra/cnpg-operator.yaml")?;
+    }
     rollout(
         target,
         step,
@@ -813,7 +936,11 @@ async fn postgres(
         "180s",
     )
     .await?;
-    changed |= apply_file(target, document, repository, "deploy/gcp/cnpg-cluster.yaml").await?;
+    for object in postgres_cluster_objects(repository, document)? {
+        changed |= apply_object(target, &object)
+            .await
+            .context("apply manifest deploy/gcp/cnpg-cluster.yaml")?;
+    }
     ready(target, step, "platform", "cluster", "wamn-pg", "600s").await?;
     Ok(changed)
 }
@@ -849,30 +976,15 @@ async fn nats(
         super::broker::AUTHORIZATION,
     )
     .await?;
-    if authorization.is_none() {
-        let secret = authorization_secret();
-        kubectl::apply(&target.kubeconfig, &target.context, "platform", &secret).await?;
-        changed = true;
-    }
-    for object in objects(repository, "deploy/gcp/nats-jetstream.yaml", document)? {
-        changed |= apply_object(target, &object).await?;
+    for object in nats_objects(repository, document, authorization.is_some())? {
+        if object["kind"] == "Secret" {
+            kubectl::apply(&target.kubeconfig, &target.context, "platform", &object).await?;
+            changed = true;
+        } else {
+            changed |= apply_object(target, &object).await?;
+        }
     }
     rollout(target, step, "platform", "statefulset/wamn-nats", "300s").await?;
-    Ok(changed)
-}
-
-async fn apply_file(
-    target: &Target,
-    document: &ClusterDocument,
-    repository: &Path,
-    path: &str,
-) -> anyhow::Result<bool> {
-    let mut changed = false;
-    for object in objects(repository, path, document)? {
-        changed |= apply_object(target, &object)
-            .await
-            .with_context(|| format!("apply manifest {path}"))?;
-    }
     Ok(changed)
 }
 
@@ -1043,8 +1155,9 @@ fn skip_operator(releases: &Value, live_values: Option<&Value>, desired: &Value)
 async fn install_operator(
     target: &Target,
     values_path: &Path,
-    values: &Value,
+    operator: &Value,
 ) -> anyhow::Result<bool> {
+    let values = &operator["values"];
     let releases: Value = serde_json::from_slice(
         &helm(
             target,
@@ -1098,9 +1211,15 @@ async fn install_operator(
             "--namespace".as_ref(),
             "platform".as_ref(),
             "wamn".as_ref(),
-            "oci://ghcr.io/wasmcloud/charts/runtime-operator".as_ref(),
+            operator["chart"]
+                .as_str()
+                .expect("operator chart input")
+                .as_ref(),
             "--version".as_ref(),
-            OPERATOR_VERSION.as_ref(),
+            operator["version"]
+                .as_str()
+                .expect("operator chart version")
+                .as_ref(),
             "-f".as_ref(),
             values_path.as_os_str(),
             "--wait".as_ref(),
