@@ -113,13 +113,16 @@ mapfile -d '' -t WAMN_CHANGED < "$changed_file"
 rm -f -- "$changed_file"
 readonly WAMN_CHANGED
 
-WAMN_POLICY="$(python3 - "$WAMN_REPOSITORY_ROOT/tests/selection.toml" <<'PYTHON'
+WAMN_POLICY_DATA="$(python3 - "$WAMN_REPOSITORY_ROOT/tests/selection.toml" "$WAMN_BASE" "${WAMN_CHANGED[@]}" <<'PYTHON'
 import json
+import re
+import subprocess
 import sys
 import tomllib
 
-with open(sys.argv[1], "rb") as source:
-    policy = tomllib.load(source)
+with open(sys.argv[1], encoding="utf-8") as source:
+    text = source.read()
+policy = tomllib.loads(text)
 if policy["version"] != 1:
     sys.exit("unsupported selection schema version")
 identifiers = set()
@@ -138,9 +141,54 @@ for suite in policy["suites"]:
         sys.exit(f"suite {identifier}: invalid mode")
     if suite["timeout"] != 1800 or not isinstance(suite["resource_lock"], str):
         sys.exit(f"suite {identifier}: use the shared 30-minute silent-stage limit and a resource lock string")
-print(json.dumps(policy))
+def shared_header(text, policy):
+    # TOML drops comments. Keep comments outside suite tables and inline rows.
+    comments = []
+    suite = False
+    braces = 0
+    tokens = r'"""[\s\S]*?"""|\x27\x27\x27[\s\S]*?\x27\x27\x27|"(?:\\.|[^"\\])*"|\x27[^\x27]*\x27|^[ \t]*(?:\[\[[\w.-]+\]\]|\[[\w.-]+\])[ \t]*(?=#|$)|#[^\n]*|[{}]'
+    for match in re.finditer(tokens, text, re.MULTILINE):
+        token = match.group().lstrip()
+        if token.startswith("["):
+            suite = token.strip("[] ") == "suites" or token.startswith("[suites.")
+        elif token == "{":
+            braces += 1
+        elif token == "}":
+            braces -= 1
+        elif token.startswith("#") and not suite and braces == 0:
+            comments.append(token)
+    return ({key: value for key, value in policy.items()
+             if key not in ("suites", "targets", "exclusions")}, comments)
+
+rows = None
+removed = []
+if "tests/selection.toml" in sys.argv[3:]:
+    base_text = subprocess.check_output(
+        ["git", "show", f"{sys.argv[2]}:tests/selection.toml"], text=True)
+    base = tomllib.loads(base_text)
+    before = {suite["id"]: suite for suite in base["suites"]}
+    after = {suite["id"]: suite for suite in policy["suites"]}
+    removed = sorted(before.keys() - after.keys())
+    if ("tools/test-changes" not in sys.argv[3:]
+            and shared_header(base_text, base) == shared_header(text, policy)):
+        changed = [identifier for identifier, suite in after.items()
+                   if before.get(identifier) != suite]
+        rows = {"suites": changed, "tests": bool(changed or removed
+                or base.get("targets") != policy.get("targets")
+                or base.get("exclusions") != policy.get("exclusions"))}
+print(json.dumps({"policy": policy, "rows": rows, "removed": removed}))
 PYTHON
 )" || wamn_fail 65 'cannot read tests/selection.toml'
+WAMN_POLICY="$(jq -c '.policy' <<<"$WAMN_POLICY_DATA")"
+WAMN_ROWS="$(jq -c '.rows' <<<"$WAMN_POLICY_DATA")"
+while IFS= read -r suite; do
+  references=''
+  status=0
+  references="$(git grep -w -l -F -e "$suite" -- . ':!tests/selection.toml' ':!docs/history/**' ':!docs/audit/**')" || status=$?
+  ((status <= 1)) || wamn_fail 65 "cannot find references to removed suite '$suite'"
+  [[ -z "$references" ]] || wamn_fail 65 "removed suite '$suite' is still named in: $references"
+done < <(jq -r '.removed[]' <<<"$WAMN_POLICY_DATA")
+readonly WAMN_ROWS
 readonly WAMN_POLICY
 if [[ -n "$WAMN_REQUESTED_SUITES" ]]; then
   IFS=',' read -ra requested_suites <<<"$WAMN_REQUESTED_SUITES"
@@ -150,14 +198,15 @@ if [[ -n "$WAMN_REQUESTED_SUITES" ]]; then
   done
 fi
 WAMN_RELEVANT="$(
-  jq -n --argjson policy "$WAMN_POLICY" '$ARGS.positional | unique
+  jq -n --argjson policy "$WAMN_POLICY" --argjson rows "$WAMN_ROWS" '$ARGS.positional | unique
+    | map(select(. != "tests/selection.toml" or $rows == null))
     | map(select(. as $path | any($policy.documentation[];
         . as $pattern | $path | test($pattern)) | not))' \
     --args -- "${WAMN_CHANGED[@]}"
 )"
 readonly WAMN_RELEVANT
 
-if [[ "$WAMN_RELEVANT" == '[]' && -z "$WAMN_REQUESTED_SUITES" ]]; then
+if [[ "$WAMN_RELEVANT" == '[]' && -z "$WAMN_REQUESTED_SUITES" && "$(jq '.tests // false' <<<"$WAMN_ROWS")" == false ]]; then
   printf 'working-directory: %q\n' "$WAMN_REPOSITORY_ROOT"
   printf 'base: %s\n' "$WAMN_BASE"
   printf 'selected: nothing\n'
@@ -305,6 +354,10 @@ WAMN_PLAN="$(printf '%s\n' "${WAMN_METADATA[@]}" | jq -rs \
     end')"
 fi
 if [[ -n "$WAMN_REQUESTED_SUITES" ]]; then WAMN_PLAN=''; fi
+if [[ "$(jq '.tests // false' <<<"$WAMN_ROWS")" == true && ",$WAMN_TIERS," == *,contract,* ]] &&
+  ! jq -e '.workspaces[] | select(.[0] == 0) | .[3] | split(" ") | index("wamn-conformance-tests")' <<<"$WAMN_DISCOVERY" >/dev/null; then
+  WAMN_PLAN+="${WAMN_PLAN:+$'\n'}"$'0\tfalse\tnull\twamn-conformance-tests\t \ttest:test_changes test:test_tiers'
+fi
 readonly WAMN_PLAN
 
 printf 'working-directory: %q\n' "$WAMN_REPOSITORY_ROOT"
@@ -338,12 +391,13 @@ mapfile -t guests < <(
 ((${#guests[@]} > 0)) ||
   wamn_fail 65 "the Dockerfile stage $WAMN_GUEST_STAGE names no guest package"
 WAMN_SUITES="$(jq -r --argjson paths "$WAMN_RELEVANT" --argjson selected "$WAMN_SELECTED" \
+  --argjson rows "$WAMN_ROWS" \
   --argjson discovery "$WAMN_DISCOVERY" --arg tiers "$WAMN_TIERS" --arg requested "$WAMN_REQUESTED_SUITES" \
   --argjson guests "$(printf '%s\n' "${guests[@]}" | jq -Rsc 'split("\n")[:-1]')" '
   .suites[] | . as $suite
   | if $requested != "" then select(.id | IN($requested | split(",") | .[])) else
     select(.mode == "always" or (.tier | IN($tiers | split(",") | .[])))
-  | select($discovery.unknown or .always == true
+  | select((.id | IN($rows.suites[]?)) or $discovery.unknown or (.always == true and $paths != [])
       or any($paths[]; . as $path | any($suite.inputs[]; . as $pattern | $path | test($pattern)))
       or any($selected[].packages[]; IN($suite.select_packages[]?))
       or (.execution == "docker-guests" and any($selected[] | select(.index == 1) | .packages[]; IN($guests[]))))

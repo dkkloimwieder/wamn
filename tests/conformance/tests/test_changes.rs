@@ -270,6 +270,11 @@ impl Fixture {
         let user = self.package("crates/user", "user", &["ops"]);
         let checker = self.package("crates/checker", "checker", &[]);
         let far = self.package("crates/far", "far", &[]);
+        let mut conformance = self.package("tests/conformance", "wamn-conformance-tests", &[]);
+        conformance["targets"] = json!([
+            {"name": "test_changes", "kind": ["test"], "test": true},
+            {"name": "test_tiers", "kind": ["test"], "test": true},
+        ]);
         let mut demo_tests = self.package("apps/demo/tests", "demo-tests", &[]);
         demo_tests["features"] = json!({"cluster": []});
         let wire = self.package("apps/platform/wire", "wire", &[]);
@@ -277,11 +282,19 @@ impl Fixture {
         let component = self.package("apps/demo/component", "demo-component", &[]);
         let guest = self.package("apps/platform/no-std/guest", "guest", &[]);
 
-        let root_members = [&core, &user, &checker, &far, &demo_tests];
+        let root_members = [&core, &user, &checker, &far, &demo_tests, &conformance];
         self.metadata(
             "Cargo.toml",
             "",
-            &[&core, &user, &checker, &far, &demo_tests, &wire],
+            &[
+                &core,
+                &user,
+                &checker,
+                &far,
+                &demo_tests,
+                &conformance,
+                &wire,
+            ],
             &root_members,
             &[
                 node(&core, &[]),
@@ -289,6 +302,7 @@ impl Fixture {
                 node(&checker, &[(&user, Some("dev"))]),
                 node(&far, &[(&checker, None)]),
                 node(&demo_tests, &[]),
+                node(&conformance, &[]),
                 node(&wire, &[]),
             ],
         );
@@ -470,6 +484,20 @@ impl Fixture {
         ];
         command.extend(selection.iter().map(|argument| (*argument).to_owned()));
         command
+    }
+
+    fn selector_tests(&self) -> Vec<String> {
+        self.command(
+            "Cargo.toml",
+            &[
+                "-p",
+                "wamn-conformance-tests",
+                "--test",
+                "test_changes",
+                "--test",
+                "test_tiers",
+            ],
+        )
     }
 }
 
@@ -755,6 +783,164 @@ fn unknown_paths_select_every_applicable_suite() {
         assert!(stdout.contains("suites: quality\n"), "{stdout}");
         assert!(!stdout.contains("apps (full:"), "{stdout}");
     }
+}
+
+#[test]
+fn suite_row_edits_select_only_the_suite_and_selector_tests() {
+    for existing in [false, true] {
+        let fixture = Fixture::new();
+        if existing {
+            fixture.add_suite(EXACT_SUITE);
+        }
+        let path = "tests/selection.toml";
+        let policy = fs::read_to_string(fixture.root.join(path)).unwrap();
+        let changed = if existing {
+            policy.replace("fixture::case", "fixture::changed")
+        } else {
+            format!(
+                "{policy}\n[[suites]]\n{}",
+                EXACT_SUITE.replace("fixture::case", "fixture::changed")
+            )
+        };
+        fixture.write(path, &changed);
+        let calls = fixture.selected(&[]);
+        assert_eq!(calls.len(), 2, "{calls:?}");
+        assert_eq!(calls[0], fixture.selector_tests());
+        assert!(
+            calls[1].ends_with(&[
+                "-p".into(),
+                "core".into(),
+                "--lib".into(),
+                "fixture::changed".into(),
+                "--".into(),
+                "--exact".into(),
+                "--test-threads=1".into(),
+            ]),
+            "{calls:?}"
+        );
+        assert!(fixture.guest_calls().is_empty());
+        assert!(!fixture.directory.join("quality calls").exists());
+        assert!(fixture.selected(&["--tier", "live-postgres"]).is_empty());
+
+        fixture.write(
+            path,
+            &changed.replace(
+                "id = \"fixture-exact\"\ntier = \"contract\"",
+                "id = \"fixture-exact\"\ntier = \"kind\"",
+            ),
+        );
+        assert_eq!(fixture.selected(&[]), vec![fixture.selector_tests()]);
+        assert_eq!(
+            fixture.selected(&["--tier", "kind"]),
+            vec![calls[1].clone()]
+        );
+        assert!(fixture.guest_calls().is_empty());
+        assert!(!fixture.directory.join("quality calls").exists());
+    }
+}
+
+#[test]
+fn row_formatting_is_ignored_and_target_or_exclusion_edits_select_selector_tests() {
+    let fixture = Fixture::new();
+    fixture.add_suite(EXACT_SUITE);
+    let path = "tests/selection.toml";
+    let policy = fs::read_to_string(fixture.root.join(path)).unwrap();
+    fixture.write(
+        path,
+        &policy.replace(
+            "id = \"fixture-exact\"",
+            "id= 'fixture-exact' # row comment",
+        ),
+    );
+    assert_nothing_selected(&fixture);
+
+    for changed in [
+        policy.replace("target=\"lib:core\", tier=\"unit\"", "target=\"lib:core\", tier=\"contract\""),
+        policy.replace("exclusions = [", "exclusions = [\n{workspace='root', package='core', test='fixture::case', bead='fixture'},"),
+    ] {
+        fixture.write(path, &changed);
+        assert_eq!(fixture.selected(&[]), vec![fixture.selector_tests()]);
+        assert!(fixture.guest_calls().is_empty());
+        assert!(!fixture.directory.join("quality calls").exists());
+    }
+}
+
+#[test]
+fn shared_header_and_selector_edits_select_everything() {
+    let fixture = Fixture::new();
+    let path = "tests/selection.toml";
+    let policy = fs::read_to_string(fixture.root.join(path)).unwrap();
+    let tool = fs::read_to_string(fixture.root.join(TOOL)).unwrap();
+    for (changed_policy, changed_tool) in [
+        (
+            policy.replacen("[[rules]]", "[[rules]]\nextra = true", 1),
+            tool.clone(),
+        ),
+        (format!("# shared comment\n{policy}"), tool.clone()),
+        (
+            policy.replace("id = \"web\"", "id = \"web\"\nlabel = 'changed'"),
+            format!("{tool}\n# selector edit\n"),
+        ),
+    ] {
+        fixture.write(path, &changed_policy);
+        fixture.write(TOOL, &changed_tool);
+        let output = fixture.tool(&["dry-run"]);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            stdout.contains("suites: quality packages-alone web docker-guests\n"),
+            "{stdout}"
+        );
+        for workspace in ["root", "apps", "no-std"] {
+            assert!(stdout.contains(&format!("{workspace} (full:")), "{stdout}");
+        }
+    }
+}
+
+#[test]
+fn package_and_suite_row_edits_select_the_union() {
+    let fixture = Fixture::new();
+    fixture.add_suite(EXACT_SUITE);
+    let path = "tests/selection.toml";
+    let policy = fs::read_to_string(fixture.root.join(path)).unwrap();
+    fixture.write(path, &policy.replace("fixture::case", "fixture::changed"));
+    fixture.write("crates/far/src/lib.rs", "changed\n");
+    let calls = fixture.selected(&[]);
+    assert_eq!(calls.len(), 3, "{calls:?}");
+    assert_eq!(calls[0], fixture.command("Cargo.toml", &["-p", "far"]));
+    assert_eq!(calls[1], fixture.selector_tests());
+    assert!(calls[2].contains(&"fixture::changed".into()), "{calls:?}");
+    assert!(fixture.guest_calls().is_empty());
+    assert!(fixture.directory.join("quality calls").exists());
+}
+
+#[test]
+fn removed_suite_rows_require_no_remaining_references() {
+    let fixture = Fixture::new();
+    let path = "tests/selection.toml";
+    let policy = fs::read_to_string(fixture.root.join(path)).unwrap();
+    fixture.add_suite(EXACT_SUITE);
+    for file in ["docs/history/old.md", "docs/audit/report.md"] {
+        fixture.write(file, "fixture-exact\n");
+    }
+    fixture.write("docs/readme.md", "fixture-exactSuffix\n");
+    fixture.git(&["add", "."]);
+    fixture.commit("fixture archived references");
+    fixture.write(path, &policy);
+    assert_eq!(fixture.selected(&[]), vec![fixture.selector_tests()]);
+    assert!(fixture.guest_calls().is_empty());
+    assert!(!fixture.directory.join("quality calls").exists());
+
+    fixture.write("docs/readme.md", "fixture-exact\n");
+    let output = fixture.tool(&["dry-run"]);
+    assert_eq!(output.status.code(), Some(65));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("removed suite 'fixture-exact'"), "{stderr}");
+    assert!(stderr.contains("docs/readme.md"), "{stderr}");
 }
 
 #[test]
