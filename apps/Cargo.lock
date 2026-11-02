@@ -344,7 +344,6 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
- "wamn-execution-contract",
  "wamn-platform-fixture-data-access",
  "wamn-postgres-statements",
  "wit-bindgen",
@@ -975,7 +974,6 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
- "wamn-execution-contract",
  "wamn-postgres-statements",
  "wamn-receiving-data-access",
  "wit-bindgen",
@@ -1056,7 +1054,6 @@ dependencies = [
  "serde_json",
  "uuid",
  "wamn-edge-samples-data-access",
- "wamn-execution-contract",
  "wamn-postgres-statements",
  "wit-bindgen",
 ]
@@ -1462,9 +1459,6 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "wamn-client-acme-receiving-data-access"
 version = "0.1.0"
 dependencies = [
- "futures-executor",
- "serde",
- "serde_json",
  "uuid",
  "wamn-data-access",
  "wamn-postgres-statements",
@@ -1475,7 +1469,6 @@ name = "wamn-data-access"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
- "chrono",
  "serde_json",
  "uuid",
  "wamn-execution-contract",
@@ -1488,7 +1481,6 @@ version = "0.1.0"
 dependencies = [
  "serde_json",
  "wamn-data-access",
- "wamn-execution-contract",
  "wamn-postgres-statements",
 ]
 
@@ -1849,7 +1841,6 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
- "wamn-execution-contract",
  "wamn-postgres-statements",
  "wamn-wms-data-access",
  "wit-bindgen",

@@ -8,7 +8,6 @@ license = "Apache-2.0"
 [dependencies]
 serde_json.workspace = true
 wamn-data-access = { workspace = true }
-wamn-execution-contract = { workspace = true }
 wamn-postgres-statements = { workspace = true }
 
 [lints]
