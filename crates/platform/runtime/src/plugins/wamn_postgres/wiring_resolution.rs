@@ -84,15 +84,6 @@ pub struct ResolvedActiveWiring {
     pub components: Arc<[AdmittedComponent]>,
 }
 
-impl ResolvedActiveWiring {
-    /// The admitted fact whose digest selects one wiring node.
-    pub fn component_by_digest(&self, digest: &str) -> Option<&AdmittedComponent> {
-        self.components
-            .iter()
-            .find(|component| component.component_digest == digest)
-    }
-}
-
 impl WamnPostgres {
     /// Read the interfaces declared by the exact package and component.
     pub async fn declared_connection_interfaces(
@@ -122,24 +113,6 @@ impl WamnPostgres {
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         Ok(connection.query("SELECT name FROM catalog.connection_requirement WHERE env_key=$1 AND package_id=$2 AND component_digest=$3",&[&env_key,&package,&digest]).await?.into_iter().map(|row|row.get(0)).collect())
-    }
-
-    /// Read the names and versions of the loaded release from its environment catalog.
-    pub async fn released_connection_bindings(
-        &self,
-        project: &str,
-        env_key: &str,
-        digest: &str,
-        authority: AuthorityClass,
-    ) -> anyhow::Result<Vec<tokio_postgres::Row>> {
-        let (connection, _) = self
-            .checkout_platform(project, authority)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        Ok(connection.query(
-            "SELECT DISTINCT b.package_id,b.name,c.id::text,r.version,i.name,c.integration_type,q.mode FROM catalog.connection_binding b JOIN catalog.connection_requirement q USING(env_key,component_digest,package_id,name) JOIN catalog.release_connection r USING(env_key,manifest_digest,connection_id) JOIN platform.connection c ON c.id=b.connection_id JOIN platform.integration i ON i.id=c.integration_id WHERE b.env_key=$1 AND b.manifest_digest=$2 AND c.status='active' AND i.status='active'",
-            &[&env_key,&digest],
-        ).await?)
     }
 
     /// Read the connection map of release `digest` for the connection

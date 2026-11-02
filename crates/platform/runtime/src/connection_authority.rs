@@ -82,11 +82,6 @@ impl HttpConnectionAuthority {
         &self.authority
     }
 
-    /// Canonical configured proxy authority, when present.
-    pub fn proxy_authority(&self) -> Option<&CanonicalAuthority> {
-        self.proxy.as_ref().map(|proxy| &proxy.authority)
-    }
-
     /// Canonical configured proxy URL, when present.
     pub fn canonical_proxy_url(&self) -> Option<&str> {
         self.proxy.as_ref().map(|proxy| proxy.url.as_str())

@@ -147,24 +147,12 @@ impl WamnPostgres {
         Ok(w.entry(key).or_insert(pp).clone())
     }
 
-    /// Number of live (built) project/lifecycle pools — gate observability.
-    pub fn project_pool_count(&self) -> usize {
-        self.guest_pools
-            .read()
-            .expect("guest pools lock poisoned")
-            .len()
-            + self
-                .platform_pools
-                .read()
-                .expect("platform pools lock poisoned")
-                .len()
-    }
-
     /// Connections destroyed instead of repooled since startup.
     pub fn destroyed_connections(&self) -> u64 {
         self.destroyed.load(Ordering::Relaxed)
     }
 
+    #[cfg(test)]
     pub(super) fn pool_status_all_by_lifecycle(
         &self,
     ) -> Vec<(PoolLifecycle, String, (usize, usize, usize))> {
@@ -173,10 +161,6 @@ impl WamnPostgres {
             (PoolLifecycle::Guest, &self.guest_pools),
             (PoolLifecycle::Platform, &self.platform_pools),
         ] {
-            // Aggregated BY PROJECT on purpose: the observable gauge labels are
-            // a scraped surface, and wamn-0h0g.22.8.2 re-keys the cache without
-            // renaming a metric. Splitting these by class is observability work
-            // with its own owner.
             statuses.extend(
                 pools
                     .read()
@@ -193,85 +177,6 @@ impl WamnPostgres {
             );
         }
         statuses
-    }
-
-    /// Aggregate (size, available, waiting) across a project's built lifecycle pools.
-    pub fn pool_status_of(&self, project: &str) -> Option<(usize, usize, usize)> {
-        self.pool_status_all_by_lifecycle()
-            .into_iter()
-            .filter(|(_, candidate, _)| candidate == project)
-            .map(|(_, _, status)| status)
-            .reduce(|left, right| (left.0 + right.0, left.1 + right.1, left.2 + right.2))
-    }
-
-    /// Default-project pool status (single-DB benches).
-    pub fn pool_status(&self) -> Option<(usize, usize, usize)> {
-        self.pool_status_of(DEFAULT_PROJECT)
-    }
-
-    /// `(project, (size, available, waiting))` aggregated across every built
-    /// lifecycle pool. The observable gauges use the unaggregated private view.
-    pub fn pool_status_all(&self) -> Vec<(String, (usize, usize, usize))> {
-        let mut aggregate = HashMap::<String, (usize, usize, usize)>::new();
-        for (_, project, status) in self.pool_status_all_by_lifecycle() {
-            let total = aggregate.entry(project).or_insert((0, 0, 0));
-            total.0 += status.0;
-            total.1 += status.1;
-            total.2 += status.2;
-        }
-        aggregate.into_iter().collect()
-    }
-
-    /// [9.8] Register the `wamn.postgres.pool.{size,available,waiting}` observable
-    /// gauges (deadpool `Pool::status()`), keyed by `wamn.project` and
-    /// `wamn.pool.lifecycle`. The callbacks hold a `Weak` back to the plugin so
-    /// registration never keeps it alive, and they observe every currently-built
-    /// pool at export time. Call ONCE per process (observable instruments warn on
-    /// duplicate registration); a no-op until the global meter provider is
-    /// installed (`OTEL_*`).
-    pub fn register_pool_metrics(self: &std::sync::Arc<Self>) {
-        use opentelemetry::KeyValue;
-        type PoolStatus = (usize, usize, usize);
-        type MetricSpec = (&'static str, &'static str, fn(&PoolStatus) -> u64);
-
-        let meter = opentelemetry::global::meter("wamn-postgres");
-        let specs: [MetricSpec; 3] = [
-            (
-                "wamn.postgres.pool.size",
-                "deadpool connections currently allocated for a project's pool",
-                |s| s.0 as u64,
-            ),
-            (
-                "wamn.postgres.pool.available",
-                "deadpool connections idle + ready to check out",
-                |s| s.1 as u64,
-            ),
-            (
-                "wamn.postgres.pool.waiting",
-                "tasks queued waiting for a pool checkout (saturation signal)",
-                |s| s.2 as u64,
-            ),
-        ];
-        for (name, desc, read) in specs {
-            let weak = std::sync::Arc::downgrade(self);
-            let _ = meter
-                .u64_observable_gauge(name)
-                .with_description(desc)
-                .with_callback(move |o| {
-                    if let Some(plugin) = weak.upgrade() {
-                        for (lifecycle, project, status) in plugin.pool_status_all_by_lifecycle() {
-                            o.observe(
-                                read(&status),
-                                &[
-                                    KeyValue::new("wamn.project", project),
-                                    KeyValue::new("wamn.pool.lifecycle", lifecycle.label()),
-                                ],
-                            );
-                        }
-                    }
-                })
-                .build();
-        }
     }
 
     /// Check out a raw connection from the default project and report its state

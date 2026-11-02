@@ -236,9 +236,6 @@ pub struct ResolvedCredential {
 /// Resolves a project id to its database connection + policy. This is the seam
 /// that separates *which project am I* (a host-injected claim, non-spoofable)
 /// from *where does that project's data live* (a deployment/secret concern).
-/// v0 ships [`StaticCredentialProvider`]; [`K8sSecretProvider`] (2.2b,
-/// wamn-5x0.1) fills in live per-project Secret reads once 2.3 provisioning
-/// fixes the layout.
 pub trait CredentialProvider: Send + Sync {
     /// `Ok(Some)` = resolved; `Ok(None)` = unknown project (the caller returns
     /// `connection-unavailable`); `Err` = provider failure (also surfaced as
@@ -447,30 +444,6 @@ impl CredentialProvider for StaticCredentialProvider {
     }
 }
 
-/// Seam for 2.2b (wamn-5x0.1): resolve `wamn-db-<project>` Secrets from the
-/// namespace via a K8s client. Deferred until 2.3 provisioning fixes the Secret
-/// layout — defined so the [`CredentialProvider`] wiring is real, but not yet
-/// functional (hence unconstructed in v0).
-#[allow(dead_code)]
-#[derive(Debug)]
-pub struct K8sSecretProvider {
-    pub namespace: String,
-}
-
-impl CredentialProvider for K8sSecretProvider {
-    fn resolve(
-        &self,
-        _project: &str,
-        _class: AuthorityClass,
-        _env_key: Option<&str>,
-    ) -> anyhow::Result<Option<ResolvedCredential>> {
-        anyhow::bail!(
-            "K8sSecretProvider (namespace {:?}) is not implemented yet — see wamn-5x0.1 [2.2b]; use StaticCredentialProvider",
-            self.namespace
-        )
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Plugin
 // ---------------------------------------------------------------------------
@@ -503,6 +476,7 @@ impl PoolKey {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn project(&self) -> &str {
         &self.project
     }

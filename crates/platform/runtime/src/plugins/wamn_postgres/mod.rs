@@ -103,8 +103,8 @@ pub use event_batch::EventBatchAdmission;
 pub use numbering::{CounterSet, CounterSetError, CounterSetRefusal};
 pub use operation_transaction::{OperationTransaction, PgCommitFailure};
 pub use pool::{
-    CheckoutProbe, ClassCredentials, CredentialProvider, K8sSecretProvider, ProjectConfig,
-    ResolvedCredential, StaticCredentialProvider, WamnPostgresConfig,
+    CheckoutProbe, ClassCredentials, CredentialProvider, ProjectConfig, ResolvedCredential,
+    StaticCredentialProvider, WamnPostgresConfig,
 };
 pub use production_claim::{
     ProductionCallerOutcome, ProductionCandidate, ProductionClaimError, ProductionClaimErrorType,
