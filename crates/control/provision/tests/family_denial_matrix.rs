@@ -350,6 +350,7 @@ const CONTROL_MATRIX: [FamilyReach; 3] = [
     FamilyReach {
         family: WorkloadRoleFamily::IdentityReader,
         relations: &[
+            "identity.org_memberships|SELECT|column",
             "identity.password_logins|SELECT|table",
             "identity.pats|SELECT|table",
             "identity.principals|SELECT|table",
@@ -1054,6 +1055,28 @@ fn the_registry_reader_family_is_refused_the_other_control_families_operations()
 #[test]
 fn the_identity_reader_family_is_refused_the_other_control_families_operations() {
     assert_family_row(&control_plane(), WorkloadRoleFamily::IdentityReader);
+}
+
+/// The identity reader reads exactly the three org membership columns that a
+/// user route PAT needs, `SELECT_ROUTE_PAT_SQL` (`wamn-191yv`). The matrix pins
+/// only the column grain, so a fourth column would pass it.
+#[test]
+fn the_identity_reader_reads_exactly_three_org_membership_columns() {
+    let login = generation(WorkloadRoleFamily::IdentityReader);
+    assert_eq!(
+        rows(
+            &fixture().control_url,
+            &format!(
+                "SELECT attname::text FROM pg_catalog.pg_attribute \
+                  WHERE attrelid = 'identity.org_memberships'::regclass \
+                    AND attnum > 0 AND NOT attisdropped \
+                    AND has_column_privilege('{login}', attrelid, attnum, 'SELECT') \
+                  ORDER BY attname COLLATE \"C\""
+            ),
+        ),
+        ["org", "principal_id", "status"],
+        "the identity reader reads other identity.org_memberships columns"
+    );
 }
 
 #[test]
