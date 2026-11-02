@@ -191,25 +191,7 @@ pub(super) async fn apply(
     )
     .await?
     .context("missing Secret identity/identity-tls")?;
-    let check = JobRequest {
-        name: "platform-identity-check".into(),
-        image: CURL_IMAGE.into(),
-        command: vec!["curl".into()],
-        arguments: [
-            "--fail",
-            "--silent",
-            "--show-error",
-            "--cacert",
-            "/inputs/ca.crt",
-            "https://identity.identity.svc.cluster.local/.well-known/jwks.json",
-        ]
-        .map(str::to_owned)
-        .into(),
-        files: [("ca.crt".into(), secret_text(&ca, "ca.crt")?)].into(),
-        capture_output: true,
-        run_as_user: Some(0),
-        ..JobRequest::default()
-    };
+    let check = check_request(&secret_text(&ca, "ca.crt")?);
     let hosts = Target {
         namespace: "hosts".into(),
         ..identity
@@ -345,16 +327,7 @@ async fn keys(
     let image = cluster["spec"]["imageName"]
         .as_str()
         .context("the PostgreSQL Cluster has no image")?;
-    let probe = JobRequest {
-        name: "platform-session-key-state".into(), image: image.into(),
-        command: vec!["psql".into()],
-        arguments: ["--no-psqlrc", "--tuples-only", "--no-align", "--command",
-            "SELECT json_build_object('kid', (SELECT active_kid::text FROM identity.session_signing_state WHERE issuer = 'https://identity.identity.svc.cluster.local'))"].map(str::to_owned).into(),
-        environment: [("PGHOST".into(), DATABASE_HOST.into()), ("PGUSER".into(), "postgres".into()),
-            ("PGDATABASE".into(), "wamn_system".into())].into(),
-        capture_output: true,
-        ..JobRequest::default()
-    };
+    let probe = key_state_request(image);
     let mut changed = job::run(
         target,
         directory,
@@ -388,15 +361,7 @@ async fn keys(
         value: secret_text(&credential, "url")?,
         environment: "WAMN_IDENTITY_DATABASE_URL".into(),
     };
-    let publish = JobRequest {
-        name: "platform-session-key-publish".into(),
-        image: identity_image.into(),
-        command: vec!["/usr/local/bin/wamn-identity".into()],
-        arguments: vec!["publish".into()],
-        environment: [("WAMN_IDENTITY_ISSUER".into(), ISSUER.into())].into(),
-        capture_output: true,
-        ..JobRequest::default()
-    };
+    let publish = key_publish_request(identity_image);
     changed |= job::run(
         identity,
         directory,
@@ -411,14 +376,7 @@ async fn keys(
         .as_str()
         .context("the published session key has no kid")?
         .to_owned();
-    let activate = JobRequest {
-        name: "platform-session-key-activate".into(),
-        image: identity_image.into(),
-        command: vec!["/usr/local/bin/wamn-identity".into()],
-        arguments: vec!["activate".into(), "--kid".into(), kid.clone()],
-        environment: [("WAMN_IDENTITY_ISSUER".into(), ISSUER.into())].into(),
-        ..JobRequest::default()
-    };
+    let activate = key_activate_request(identity_image, &kid);
     changed |= job::run(
         identity,
         directory,
@@ -463,6 +421,64 @@ pub(super) fn session_request(
         .map(str::to_owned)
         .into(),
         emits_secret: true,
+        ..JobRequest::default()
+    }
+}
+
+pub(super) fn check_request(ca: &str) -> JobRequest {
+    JobRequest {
+        name: "platform-identity-check".into(),
+        image: CURL_IMAGE.into(),
+        command: vec!["curl".into()],
+        arguments: [
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--cacert",
+            "/inputs/ca.crt",
+            "https://identity.identity.svc.cluster.local/.well-known/jwks.json",
+        ]
+        .map(str::to_owned)
+        .into(),
+        files: [("ca.crt".into(), ca.into())].into(),
+        capture_output: true,
+        run_as_user: Some(0),
+        ..JobRequest::default()
+    }
+}
+
+pub(super) fn key_state_request(image: &str) -> JobRequest {
+    JobRequest {
+        name: "platform-session-key-state".into(), image: image.into(),
+        command: vec!["psql".into()],
+        arguments: ["--no-psqlrc", "--tuples-only", "--no-align", "--command",
+            "SELECT json_build_object('kid', (SELECT active_kid::text FROM identity.session_signing_state WHERE issuer = 'https://identity.identity.svc.cluster.local'))"].map(str::to_owned).into(),
+        environment: [("PGHOST".into(), DATABASE_HOST.into()), ("PGUSER".into(), "postgres".into()),
+            ("PGDATABASE".into(), "wamn_system".into())].into(),
+        capture_output: true,
+        ..JobRequest::default()
+    }
+}
+
+pub(super) fn key_publish_request(identity_image: &str) -> JobRequest {
+    JobRequest {
+        name: "platform-session-key-publish".into(),
+        image: identity_image.into(),
+        command: vec!["/usr/local/bin/wamn-identity".into()],
+        arguments: vec!["publish".into()],
+        environment: [("WAMN_IDENTITY_ISSUER".into(), ISSUER.into())].into(),
+        capture_output: true,
+        ..JobRequest::default()
+    }
+}
+
+pub(super) fn key_activate_request(identity_image: &str, kid: &str) -> JobRequest {
+    JobRequest {
+        name: "platform-session-key-activate".into(),
+        image: identity_image.into(),
+        command: vec!["/usr/local/bin/wamn-identity".into()],
+        arguments: vec!["activate".into(), "--kid".into(), kid.into()],
+        environment: [("WAMN_IDENTITY_ISSUER".into(), ISSUER.into())].into(),
         ..JobRequest::default()
     }
 }

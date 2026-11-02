@@ -135,31 +135,7 @@ pub(super) async fn credentials(
         !version.is_empty(),
         "operator Secret has no resource version"
     );
-    let request = JobRequest {
-        name: format!("platform-control-operator-{}", document.org),
-        image,
-        command: vec!["/bin/sh".into(), "-ec".into()],
-        arguments: vec![COPY_OPERATOR.into()],
-        calls_kubernetes: true,
-        environment: [("OPERATOR".into(), operator.clone())].into(),
-        files: [(
-            "metadata.json".into(),
-            serde_json::to_string(&[MetadataPatch {
-                op: "replace",
-                path: "/metadata",
-                value: SecretMetadata {
-                    name: &operator,
-                    namespace: "hosts",
-                },
-            }])?,
-        )]
-        .into(),
-        permissions: vec![
-            secret_access("identity", &["get"]),
-            secret_access("hosts", &["get", "create", "patch"]),
-        ],
-        ..JobRequest::default()
-    };
+    let request = operator_request(document, &image)?;
     changed |= job::run(
         target,
         directory,
@@ -387,6 +363,38 @@ async fn registry_ca(
         }),
     )
     .await
+}
+
+pub(super) fn operator_request(
+    document: &ClusterDocument,
+    image: &str,
+) -> anyhow::Result<JobRequest> {
+    let operator = format!("operator-{}", document.org);
+    Ok(JobRequest {
+        name: format!("platform-control-operator-{}", document.org),
+        image: image.into(),
+        command: vec!["/bin/sh".into(), "-ec".into()],
+        arguments: vec![COPY_OPERATOR.into()],
+        calls_kubernetes: true,
+        environment: [("OPERATOR".into(), operator.clone())].into(),
+        files: [(
+            "metadata.json".into(),
+            serde_json::to_string(&[MetadataPatch {
+                op: "replace",
+                path: "/metadata",
+                value: SecretMetadata {
+                    name: &operator,
+                    namespace: "hosts",
+                },
+            }])?,
+        )]
+        .into(),
+        permissions: vec![
+            secret_access("identity", &["get"]),
+            secret_access("hosts", &["get", "create", "patch"]),
+        ],
+        ..JobRequest::default()
+    })
 }
 
 #[cfg(test)]

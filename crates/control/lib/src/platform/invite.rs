@@ -60,23 +60,12 @@ pub(super) async fn apply(
     )
     .await?
     .context("missing Cluster platform/wamn-pg")?;
-    let probe = JobRequest {
-        name: format!("platform-owner-state-{}", document.org),
-        image: cluster["spec"]["imageName"].as_str().context("PostgreSQL Cluster has no image")?.into(),
-        command: vec!["/bin/sh".into(), "-ec".into()],
-        arguments: vec!["export PGPASSWORD=\"$(cat /etc/wamn/postgres/password)\"; exec psql --no-psqlrc --tuples-only --no-align --set ON_ERROR_STOP=1 --set owner=\"$OWNER_EMAIL\" --file /inputs/state.sql".into()],
-        environment: [
-            ("PGHOST".into(), super::install::DATABASE_HOST.into()),
-            ("PGUSER".into(), "postgres".into()), ("PGDATABASE".into(), "wamn_system".into()),
-            ("OWNER_EMAIL".into(), document.owner_email.clone()),
-        ].into(),
-        files: [("state.sql".into(), STATE.into())].into(),
-        secret_mounts: vec![postgres_mount()],
-        capture_output: true,
-        refresh: true,
-        run_as_user: Some(0),
-        ..JobRequest::default()
-    };
+    let probe = state_request(
+        document,
+        cluster["spec"]["imageName"]
+            .as_str()
+            .context("PostgreSQL Cluster has no image")?,
+    );
     job::run(
         target,
         directory,
@@ -152,6 +141,26 @@ pub(super) fn request(
     };
     job::auth_nats_inputs(&mut request, auth)?;
     Ok(request)
+}
+
+pub(super) fn state_request(document: &ClusterDocument, image: &str) -> JobRequest {
+    JobRequest {
+        name: format!("platform-owner-state-{}", document.org),
+        image: image.into(),
+        command: vec!["/bin/sh".into(), "-ec".into()],
+        arguments: vec!["export PGPASSWORD=\"$(cat /etc/wamn/postgres/password)\"; exec psql --no-psqlrc --tuples-only --no-align --set ON_ERROR_STOP=1 --set owner=\"$OWNER_EMAIL\" --file /inputs/state.sql".into()],
+        environment: [
+            ("PGHOST".into(), super::install::DATABASE_HOST.into()),
+            ("PGUSER".into(), "postgres".into()), ("PGDATABASE".into(), "wamn_system".into()),
+            ("OWNER_EMAIL".into(), document.owner_email.clone()),
+        ].into(),
+        files: [("state.sql".into(), STATE.into())].into(),
+        secret_mounts: vec![postgres_mount()],
+        capture_output: true,
+        refresh: true,
+        run_as_user: Some(0),
+        ..JobRequest::default()
+    }
 }
 
 #[cfg(test)]

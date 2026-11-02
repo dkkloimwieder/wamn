@@ -716,20 +716,7 @@ pub async fn run(
         for access in &request.permissions {
             // A namespaced Job cannot own objects in another namespace. These
             // Roles and bindings are deleted explicitly with the Job.
-            let role = Role {
-                api_version: "rbac.authorization.k8s.io/v1",
-                kind: "Role",
-                metadata: metadata(&request.name, &access.namespace),
-                rules: access
-                    .rules
-                    .iter()
-                    .map(|rule| PolicyRule {
-                        api_groups: rule.api_groups.clone(),
-                        resources: rule.resources.clone(),
-                        verbs: rule.verbs.clone(),
-                    })
-                    .collect(),
-            };
+            let role = role(request, access);
             kubectl::apply(
                 &target.kubeconfig,
                 &target.context,
@@ -737,25 +724,7 @@ pub async fn run(
                 &role,
             )
             .await?;
-            let binding = RoleBinding {
-                api_version: "rbac.authorization.k8s.io/v1",
-                kind: "RoleBinding",
-                metadata: metadata(&request.name, &access.namespace),
-                role_ref: RoleRef {
-                    api_group: "rbac.authorization.k8s.io",
-                    kind: "Role",
-                    name: request.name.clone(),
-                },
-                subjects: vec![Subject {
-                    kind: "ServiceAccount",
-                    name: request
-                        .service_account
-                        .as_ref()
-                        .unwrap_or(&request.name)
-                        .clone(),
-                    namespace: target.namespace.clone(),
-                }],
-            };
+            let binding = role_binding(request, access, &target.namespace);
             kubectl::apply(
                 &target.kubeconfig,
                 &target.context,
@@ -774,29 +743,7 @@ pub async fn run(
             .await?;
         }
         if !request.files.is_empty() || !request.binary_files.is_empty() {
-            let secret = Secret {
-                api_version: "v1".into(),
-                kind: "Secret".into(),
-                metadata: owned_metadata(&format!("{}-files", request.name), &created.metadata)?,
-                string_data: request
-                    .files
-                    .values()
-                    .enumerate()
-                    .map(|(index, value)| (format!("file-{index}"), value.clone()))
-                    .collect(),
-                data: request
-                    .binary_files
-                    .values()
-                    .enumerate()
-                    .map(|(index, bytes)| {
-                        (
-                            format!("file-{}", request.files.len() + index),
-                            STANDARD.encode(bytes),
-                        )
-                    })
-                    .collect(),
-                content_type: "Opaque".into(),
-            };
+            let secret = files_secret(request, &created.metadata)?;
             kubectl::apply(
                 &target.kubeconfig,
                 &target.context,
@@ -916,23 +863,92 @@ pub async fn run(
         let log = std::fs::read_to_string(&path).unwrap_or_default();
         format!("install Job log saved at {}:\n{log}", path.display())
     })?;
-    let mut data: BTreeMap<_, _> = [("digest".into(), digest)].into();
-    if request.capture_output {
-        data.insert("output".into(), output);
-    }
     kubectl::apply(
         &target.kubeconfig,
         &target.context,
         "platform",
-        &Completion {
-            api_version: "v1".into(),
-            kind: "ConfigMap".into(),
-            metadata: metadata(&marker, "platform"),
-            data,
-        },
+        &completion(request, &digest, output),
     )
     .await?;
     Ok(true)
+}
+
+fn role(request: &JobRequest, access: &Access) -> Role {
+    Role {
+        api_version: "rbac.authorization.k8s.io/v1",
+        kind: "Role",
+        metadata: metadata(&request.name, &access.namespace),
+        rules: access
+            .rules
+            .iter()
+            .map(|rule| PolicyRule {
+                api_groups: rule.api_groups.clone(),
+                resources: rule.resources.clone(),
+                verbs: rule.verbs.clone(),
+            })
+            .collect(),
+    }
+}
+
+fn role_binding(request: &JobRequest, access: &Access, namespace: &str) -> RoleBinding {
+    RoleBinding {
+        api_version: "rbac.authorization.k8s.io/v1",
+        kind: "RoleBinding",
+        metadata: metadata(&request.name, &access.namespace),
+        role_ref: RoleRef {
+            api_group: "rbac.authorization.k8s.io",
+            kind: "Role",
+            name: request.name.clone(),
+        },
+        subjects: vec![Subject {
+            kind: "ServiceAccount",
+            name: request
+                .service_account
+                .as_ref()
+                .unwrap_or(&request.name)
+                .clone(),
+            namespace: namespace.into(),
+        }],
+    }
+}
+
+fn files_secret(request: &JobRequest, owner: &Metadata) -> anyhow::Result<Secret> {
+    Ok(Secret {
+        api_version: "v1".into(),
+        kind: "Secret".into(),
+        metadata: owned_metadata(&format!("{}-files", request.name), owner)?,
+        string_data: request
+            .files
+            .values()
+            .enumerate()
+            .map(|(index, value)| (format!("file-{index}"), value.clone()))
+            .collect(),
+        data: request
+            .binary_files
+            .values()
+            .enumerate()
+            .map(|(index, bytes)| {
+                (
+                    format!("file-{}", request.files.len() + index),
+                    STANDARD.encode(bytes),
+                )
+            })
+            .collect(),
+        content_type: "Opaque".into(),
+    })
+}
+
+fn completion(request: &JobRequest, digest: &str, output: String) -> Completion {
+    let mut data: BTreeMap<_, _> = [("digest".into(), digest.into())].into();
+    if request.capture_output {
+        data.insert("output".into(), output);
+    }
+    Completion {
+        api_version: "v1".into(),
+        kind: "ConfigMap".into(),
+        metadata: metadata(&format!("wamn-install-{}", request.name), "platform"),
+        data,
+    }
 }
 
 async fn finish(target: &Target, directory: &Path, request: &JobRequest) -> anyhow::Result<String> {

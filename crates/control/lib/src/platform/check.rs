@@ -291,40 +291,7 @@ async fn kind_check(
     method: &str,
     path: &str,
 ) -> anyhow::Result<(u16, String)> {
-    let key = job::input_digest(&json!([host, method, path]));
-    let request = JobRequest {
-        name: format!("platform-https-{}", &key[..16]),
-        image: CURL.into(),
-        command: vec!["curl".into()],
-        capture_output: true,
-        refresh: true,
-        arguments: vec![
-            "--silent".into(),
-            "--show-error".into(),
-            "--max-time".into(),
-            "30".into(),
-            "--noproxy".into(),
-            "*".into(),
-            "--cacert".into(),
-            "/etc/edge/tls.crt".into(),
-            "--connect-to".into(),
-            format!("{host}:443:wamn-edge.edge.svc.cluster.local:443"),
-            "--request".into(),
-            method.into(),
-            "--output".into(),
-            "/dev/null".into(),
-            "--write-out".into(),
-            "%{json}".into(),
-            format!("https://{host}{path}"),
-        ],
-        secret_mounts: vec![SecretMount {
-            name: "wamn-edge-tls".into(),
-            path: "/etc/edge".into(),
-            keys: vec!["tls.crt".into()],
-        }],
-        run_as_user: Some(0),
-        ..JobRequest::default()
-    };
+    let request = kind_request(host, method, path);
     let edge = Target {
         namespace: "edge".into(),
         ..target.clone()
@@ -401,6 +368,43 @@ fn serial(der: &[u8]) -> anyhow::Result<String> {
     ensure!(!number.is_empty(), "empty certificate serial");
     let number = number.strip_prefix(&[0]).unwrap_or(number);
     Ok(hex::encode(number))
+}
+
+pub(super) fn kind_request(host: &str, method: &str, path: &str) -> JobRequest {
+    let key = job::input_digest(&json!([host, method, path]));
+    JobRequest {
+        name: format!("platform-https-{}", &key[..16]),
+        image: CURL.into(),
+        command: vec!["curl".into()],
+        capture_output: true,
+        refresh: true,
+        arguments: vec![
+            "--silent".into(),
+            "--show-error".into(),
+            "--max-time".into(),
+            "30".into(),
+            "--noproxy".into(),
+            "*".into(),
+            "--cacert".into(),
+            "/etc/edge/tls.crt".into(),
+            "--connect-to".into(),
+            format!("{host}:443:wamn-edge.edge.svc.cluster.local:443"),
+            "--request".into(),
+            method.into(),
+            "--output".into(),
+            "/dev/null".into(),
+            "--write-out".into(),
+            "%{json}".into(),
+            format!("https://{host}{path}"),
+        ],
+        secret_mounts: vec![SecretMount {
+            name: "wamn-edge-tls".into(),
+            path: "/etc/edge".into(),
+            keys: vec!["tls.crt".into()],
+        }],
+        run_as_user: Some(0),
+        ..JobRequest::default()
+    }
 }
 
 #[cfg(test)]

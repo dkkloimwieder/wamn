@@ -551,13 +551,7 @@ async fn runtime(
 ) -> anyhow::Result<bool> {
     let mut changed = false;
     for namespace in ["platform", "identity", "hosts"] {
-        changed |= apply_object(
-            target,
-            &json!({
-                "apiVersion": "v1", "kind": "Namespace", "metadata": {"name": namespace}
-            }),
-        )
-        .await?;
+        changed |= apply_object(target, &namespace_object(namespace)).await?;
     }
     changed |= remove_event_nats(target).await?;
     changed |= apply_file(
@@ -856,11 +850,7 @@ async fn nats(
     )
     .await?;
     if authorization.is_none() {
-        let secret = json!({
-            "apiVersion": "v1", "kind": "Secret", "type": "Opaque",
-            "metadata": {"name": super::broker::AUTHORIZATION, "namespace": "platform"},
-            "data": {"authorization.conf": STANDARD.encode(super::broker::initial_authorization())}
-        });
+        let secret = authorization_secret();
         kubectl::apply(&target.kubeconfig, &target.context, "platform", &secret).await?;
         changed = true;
     }
@@ -1148,6 +1138,18 @@ pub(super) async fn helm(
         String::from_utf8_lossy(&output.stderr).trim()
     );
     Ok(output.stdout)
+}
+
+pub(super) fn namespace_object(namespace: &str) -> Value {
+    json!({"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": namespace}})
+}
+
+pub(super) fn authorization_secret() -> Value {
+    json!({
+        "apiVersion": "v1", "kind": "Secret", "type": "Opaque",
+        "metadata": {"name": super::broker::AUTHORIZATION, "namespace": "platform"},
+        "data": {"authorization.conf": STANDARD.encode(super::broker::initial_authorization())}
+    })
 }
 
 #[cfg(test)]

@@ -311,17 +311,7 @@ pub(super) async fn check(
     let image = chart["platform"]["edge"]["image"]
         .as_str()
         .context("edge image")?;
-    let request = JobRequest {
-        name: "platform-edge-check".into(),
-        image: image.into(),
-        refresh: true,
-        command: vec!["/usr/local/bin/wamn-edge".into()],
-        arguments: ["--config", "/inputs/web.json", "web-check"]
-            .map(str::to_owned)
-            .into(),
-        files: [("web.json".into(), configuration.to_string())].into(),
-        ..JobRequest::default()
-    };
+    let request = check_request(&configuration, image);
     let edge = Target {
         namespace: "edge".into(),
         ..target.clone()
@@ -332,6 +322,20 @@ pub(super) async fn check(
         "4.20 Edge bucket check: done {:.1}s",
         started.elapsed().as_secs_f64()
     ))
+}
+
+pub(super) fn check_request(configuration: &Value, image: &str) -> JobRequest {
+    JobRequest {
+        name: "platform-edge-check".into(),
+        image: image.into(),
+        refresh: true,
+        command: vec!["/usr/local/bin/wamn-edge".into()],
+        arguments: ["--config", "/inputs/web.json", "web-check"]
+            .map(str::to_owned)
+            .into(),
+        files: [("web.json".into(), configuration.to_string())].into(),
+        ..JobRequest::default()
+    }
 }
 
 #[cfg(test)]
