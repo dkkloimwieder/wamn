@@ -11,6 +11,22 @@ pub struct Permission {
     pub resources: &'static [&'static str],
     pub verbs: &'static [&'static str],
 }
+/// The source of a variable exported by an exact install script.
+#[derive(Debug)]
+pub enum Source {
+    File(&'static str),
+    Secret {
+        namespace: &'static str,
+        name: &'static str,
+        key: &'static str,
+    },
+}
+/// A script export and the input that supplies it.
+#[derive(Debug)]
+pub struct Export {
+    pub variable: &'static str,
+    pub source: Source,
+}
 /// One command's Kubernetes access and required environment.
 #[derive(Debug)]
 pub struct Contract {
@@ -19,6 +35,8 @@ pub struct Contract {
     pub access: &'static [Permission],
     pub required: &'static [&'static str],
     pub credential_stdout: bool,
+    pub files: &'static [&'static str],
+    pub exports: &'static [Export],
     script: Option<&'static str>,
 }
 const EMPTY: Contract = Contract {
@@ -27,6 +45,8 @@ const EMPTY: Contract = Contract {
     access: &[],
     required: &[],
     credential_stdout: false,
+    files: &[],
+    exports: &[],
     script: None,
 };
 const ALL: &[&str] = &[
@@ -176,6 +196,7 @@ const CONTRACTS: &[Contract] = &[
     Contract {
         program: "wamn-ctl",
         verb: "apply-package",
+        files: &["/inputs/registry.json"],
         required: &[
             "WAMN_PG_ADMIN_URL",
             "WAMN_COMPONENT_ARTIFACT_BASE",
@@ -189,18 +210,21 @@ const CONTRACTS: &[Contract] = &[
     Contract {
         program: "wamn-ctl",
         verb: "reconcile-package-data-access",
+        files: &["/inputs/registry.json"],
         required: &["WAMN_PG_ADMIN_URL"],
         ..EMPTY
     },
     Contract {
         program: "wamn-ctl",
         verb: "reconcile-replica-identity",
+        files: &["/inputs/package/wamn.json"],
         required: &["WAMN_PG_ADMIN_URL"],
         ..EMPTY
     },
     Contract {
         program: "wamn-ctl",
         verb: "publish-release",
+        files: &["/inputs/environment.k", "/inputs/registry.json"],
         required: &[
             "WAMN_PG_ADMIN_URL",
             "WAMN_SYSTEM_ADMIN_URL",
@@ -213,6 +237,13 @@ const CONTRACTS: &[Contract] = &[
     Contract {
         program: "wamn-ctl",
         verb: "env apply",
+        files: &[
+            "/inputs/environment.k",
+            "/inputs/kubeconfig",
+            "/inputs/registry.json",
+            "/inputs/Chart.yaml",
+            "/inputs/values.yaml",
+        ],
         required: &[
             "WAMN_APPLY_DATABASE_URL",
             "WAMN_SYSTEM_ADMIN_URL",
@@ -230,6 +261,11 @@ const CONTRACTS: &[Contract] = &[
     Contract {
         program: "wamn-ctl",
         verb: "env connections",
+        files: &[
+            "/inputs/environment.k",
+            "/inputs/kubeconfig",
+            "/inputs/registry.json",
+        ],
         required: &[
             "WAMN_CONTROL_DATABASE_URL",
             "WAMN_RELEASE_CHART",
@@ -246,6 +282,11 @@ const CONTRACTS: &[Contract] = &[
     Contract {
         program: "sh",
         verb: "control credentials",
+        exports: &[Export {
+            variable: "WAMN_SYSTEM_ADMIN_URL",
+            source: Source::File("/etc/wamn/postgres/uri"),
+        }],
+        files: &["/inputs/kubeconfig", "/etc/wamn/postgres/uri"],
         required: &[
             "WAMN_SYSTEM_ADMIN_URL",
             "ORG",
@@ -259,6 +300,7 @@ const CONTRACTS: &[Contract] = &[
     Contract {
         program: "sh",
         verb: "copy operator",
+        files: &["/inputs/metadata.json"],
         required: &["OPERATOR"],
         access: OPERATOR,
         script: Some(super::control::COPY_OPERATOR),
@@ -267,6 +309,37 @@ const CONTRACTS: &[Contract] = &[
     Contract {
         program: "sh",
         verb: "invite",
+        exports: &[
+            Export {
+                variable: "WAMN_SYSTEM_ADMIN_URL",
+                source: Source::File("/etc/wamn/postgres/uri"),
+            },
+            Export {
+                variable: "WAMN_PAT_CLIENT_CERT",
+                source: Source::Secret {
+                    namespace: "identity",
+                    name: "operator-$ORG",
+                    key: "tls.crt",
+                },
+            },
+            Export {
+                variable: "WAMN_PAT_CLIENT_KEY",
+                source: Source::Secret {
+                    namespace: "identity",
+                    name: "operator-$ORG",
+                    key: "tls.key",
+                },
+            },
+            Export {
+                variable: "WAMN_PAT_SERVER_CA",
+                source: Source::Secret {
+                    namespace: "identity",
+                    name: "identity-tls",
+                    key: "ca.crt",
+                },
+            },
+        ],
+        files: &["/inputs/kubeconfig"],
         required: &[
             "WAMN_SYSTEM_ADMIN_URL",
             "WAMN_PAT_ISSUER",
@@ -286,6 +359,16 @@ const CONTRACTS: &[Contract] = &[
     Contract {
         program: "sh",
         verb: "web upload",
+        exports: &[Export {
+            variable: "WAMN_CONTROL_DATABASE_URL",
+            source: Source::File("/etc/wamn/registry-reader/url"),
+        }],
+        files: &[
+            "/inputs/kubeconfig",
+            "/inputs/registry.json",
+            "/inputs/Chart.yaml",
+            "/inputs/values.yaml",
+        ],
         required: &[
             "WAMN_CONTROL_DATABASE_URL",
             "WAMN_RELEASE_CHART",
@@ -304,6 +387,12 @@ const CONTRACTS: &[Contract] = &[
     Contract {
         program: "sh",
         verb: "web upload --platform-ui",
+        files: &[
+            "/inputs/chart/Chart.yaml",
+            "/inputs/chart/platform-build.json",
+            "/inputs/deploy/platform/release/Chart.yaml",
+            "/inputs/apps/platform_ui/dist/index.html",
+        ],
         required: &["WAMN_RELEASE_CHART", "ORG", "BUCKET"],
         script: Some(super::web::PLATFORM_UI),
         ..EMPTY
@@ -311,6 +400,11 @@ const CONTRACTS: &[Contract] = &[
     Contract {
         program: "sh",
         verb: "owner state",
+        exports: &[Export {
+            variable: "PGPASSWORD",
+            source: Source::File("/etc/wamn/postgres/password"),
+        }],
+        files: &["/inputs/state.sql"],
         required: &[
             "PGHOST",
             "PGUSER",
@@ -342,16 +436,19 @@ const CONTRACTS: &[Contract] = &[
     Contract {
         program: "curl",
         verb: "--fail",
+        files: &["/inputs/ca.crt"],
         ..EMPTY
     },
     Contract {
         program: "curl",
         verb: "--silent",
+        files: &["/etc/edge/tls.crt"],
         ..EMPTY
     },
     Contract {
         program: "wamn-edge",
         verb: "--config",
+        files: &["/inputs/web.json"],
         ..EMPTY
     },
 ];
@@ -364,6 +461,10 @@ pub fn resolve(command: &[String], arguments: &[String]) -> anyhow::Result<&'sta
         .rsplit('/')
         .next()
         .unwrap();
+    ensure!(
+        command.len() <= 1 || (program == "sh" && command.len() == 2 && command[1] == "-ec"),
+        "unknown install executable arguments"
+    );
     if program == "sh"
         && arguments
             .first()

@@ -496,3 +496,299 @@ fn install_jobs_refuse_an_unknown_command() -> anyhow::Result<()> {
     assert!(failures[0].contains("no command contract"));
     Ok(())
 }
+
+fn available_input(
+    objects: &[(&str, serde_json::Value)],
+    owner_inputs: &[serde_json::Value],
+    consumer: usize,
+    namespace: &str,
+    input: &InputReference<'_>,
+) -> bool {
+    objects[..consumer]
+        .iter()
+        .any(|(_, object)| produces_input(object, namespace, input))
+        || owner_inputs
+            .iter()
+            .any(|object| produces_input(object, namespace, input))
+}
+
+fn mounted_input(
+    objects: &[(&str, serde_json::Value)],
+    owner_inputs: &[serde_json::Value],
+    index: usize,
+    spec: &serde_json::Value,
+    container: &serde_json::Value,
+    path: &str,
+) -> bool {
+    let namespace = objects[index].1["metadata"]["namespace"].as_str().unwrap();
+    container["volumeMounts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|mount| {
+            let Some(base) = mount["mountPath"].as_str() else {
+                return false;
+            };
+            let Some(relative) = path
+                .strip_prefix(base)
+                .filter(|relative| relative.is_empty() || relative.starts_with('/'))
+            else {
+                return false;
+            };
+            let Some(volume) = spec["volumes"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|volume| volume["name"] == mount["name"])
+            else {
+                return false;
+            };
+            for (member, kind) in [("secret", "Secret"), ("configMap", "ConfigMap")] {
+                let source = &volume[member];
+                let Some(name) = source["secretName"]
+                    .as_str()
+                    .or_else(|| source["name"].as_str())
+                else {
+                    continue;
+                };
+                let key = if relative.is_empty() {
+                    None
+                } else if let Some(items) = source["items"].as_array() {
+                    let entry = relative.trim_start_matches('/');
+                    if let Some(item) = items.iter().find(|item| item["path"] == entry) {
+                        item["key"].as_str()
+                    } else if items.iter().any(|item| {
+                        item["path"]
+                            .as_str()
+                            .is_some_and(|path| path.starts_with(&format!("{entry}/")))
+                    }) {
+                        None
+                    } else {
+                        continue;
+                    }
+                } else {
+                    Some(relative.trim_start_matches('/'))
+                };
+                if available_input(
+                    objects,
+                    owner_inputs,
+                    index,
+                    namespace,
+                    &InputReference {
+                        field: path.into(),
+                        kind,
+                        name,
+                        key,
+                        optional: false,
+                    },
+                ) {
+                    return true;
+                }
+            }
+            false
+        })
+}
+
+fn command_input_failures(
+    objects: &[(&str, serde_json::Value)],
+    owner_inputs: &[serde_json::Value],
+) -> Vec<String> {
+    use wamn_control::platform::job_contract::{self, Source};
+    let mut failures = Vec::new();
+    for (index, (step, object)) in objects.iter().enumerate() {
+        if object["kind"] != "Job" {
+            continue;
+        }
+        let Some(spec) = pod(object) else { continue };
+        let namespace = object["metadata"]["namespace"].as_str().unwrap();
+        for container in spec["containers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .chain(spec["initContainers"].as_array().into_iter().flatten())
+        {
+            let command: Vec<String> =
+                serde_json::from_value(container["command"].clone()).unwrap_or_default();
+            let arguments: Vec<String> =
+                serde_json::from_value(container["args"].clone()).unwrap_or_default();
+            let contract = match job_contract::resolve(&command, &arguments) {
+                Ok(contract) => contract,
+                Err(error) => {
+                    failures.push(format!("{} step {step}:{index} field command -> inputs producer step absent: {error}",identity(object)));
+                    continue;
+                }
+            };
+            let environment = container["env"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|entry| entry["name"].as_str().map(|name| (name, entry)))
+                .collect::<std::collections::BTreeMap<_, _>>();
+            let mut exported = std::collections::BTreeSet::new();
+            for export in contract.exports {
+                let (present, target) = match &export.source {
+                    Source::File(path) => (
+                        mounted_input(objects, owner_inputs, index, spec, container, path),
+                        (*path).to_owned(),
+                    ),
+                    Source::Secret {
+                        namespace,
+                        name,
+                        key,
+                    } => {
+                        let mut name = (*name).to_owned();
+                        for (variable, entry) in &environment {
+                            if let Some(value) = entry["value"].as_str() {
+                                name = name.replace(&format!("${variable}"), value);
+                            }
+                        }
+                        let present = available_input(
+                            objects,
+                            owner_inputs,
+                            index,
+                            namespace,
+                            &InputReference {
+                                field: export.variable.into(),
+                                kind: "Secret",
+                                name: &name,
+                                key: Some(key),
+                                optional: false,
+                            },
+                        );
+                        (present, format!("Secret/{namespace}/{name}/{key}"))
+                    }
+                };
+                if present {
+                    exported.insert(export.variable);
+                } else {
+                    failures.push(format!(
+                        "{} step {step}:{index} field export {} -> {target} producer step absent",
+                        identity(object),
+                        export.variable
+                    ));
+                }
+            }
+            let expansions = arguments
+                .iter()
+                .skip(usize::from(command.first().is_some_and(|program| {
+                    program.rsplit('/').next() == Some("sh")
+                })))
+                .flat_map(|argument| argument.split("$(").skip(1))
+                .filter_map(|part| part.split_once(')').map(|(name, _)| name))
+                .filter(|name| {
+                    !name.is_empty()
+                        && name
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+                });
+            let required = contract
+                .required
+                .iter()
+                .copied()
+                .chain(expansions)
+                .collect::<std::collections::BTreeSet<_>>();
+            for variable in required {
+                if exported.contains(variable) {
+                    continue;
+                }
+                let present = environment.get(variable).is_some_and(|entry| {
+                    if let Some(value) = entry["value"].as_str() {
+                        return !value.starts_with("/inputs")
+                            || mounted_input(objects, owner_inputs, index, spec, container, value);
+                    }
+                    let reference = &entry["valueFrom"]["secretKeyRef"];
+                    reference["name"].as_str().is_some_and(|name| {
+                        available_input(
+                            objects,
+                            owner_inputs,
+                            index,
+                            namespace,
+                            &InputReference {
+                                field: variable.into(),
+                                kind: "Secret",
+                                name,
+                                key: reference["key"].as_str(),
+                                optional: false,
+                            },
+                        )
+                    })
+                });
+                if !present {
+                    failures.push(format!("{} step {step}:{index} field env.{variable} -> required input producer step absent",identity(object)));
+                }
+            }
+            for path in contract.files {
+                if !mounted_input(objects, owner_inputs, index, spec, container, path) {
+                    failures.push(format!(
+                        "{} step {step}:{index} field volumeMounts -> {path} producer step absent",
+                        identity(object)
+                    ));
+                }
+            }
+        }
+    }
+    failures
+}
+
+#[test]
+fn install_job_commands_receive_required_inputs() -> anyhow::Result<()> {
+    let render = platform_install::render()?;
+    let failures = command_input_failures(&render.objects, &render.owner_inputs);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    Ok(())
+}
+
+#[test]
+fn install_job_commands_reject_a_missing_environment_input() -> anyhow::Result<()> {
+    let render = platform_install::render()?;
+    let mut objects = render.objects.clone();
+    let (_, job) = objects
+        .iter_mut()
+        .find(|(_, object)| {
+            object["kind"] == "Job"
+                && object["spec"]["suspend"] == false
+                && object["metadata"]["name"] == "platform-first-apply-test--wms--dev"
+        })
+        .unwrap();
+    job["spec"]["template"]["spec"]["containers"][0]["env"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|entry| entry["name"] != "WAMN_APPLY_DATABASE_URL");
+    let failures = command_input_failures(&objects, &render.owner_inputs);
+    assert_eq!(failures.len(), 1, "{}", failures.join("\n"));
+    assert!(
+        failures[0].contains("env.WAMN_APPLY_DATABASE_URL -> required input producer step absent")
+    );
+    Ok(())
+}
+
+#[test]
+fn install_job_commands_reject_an_unbacked_export() -> anyhow::Result<()> {
+    let render = platform_install::render()?;
+    let mut objects = render.objects.clone();
+    let (_, job) = objects
+        .iter_mut()
+        .find(|(_, object)| {
+            object["kind"] == "Job"
+                && object["spec"]["suspend"] == false
+                && object["metadata"]["name"] == "platform-control-credentials-test"
+        })
+        .unwrap();
+    let mounts = job["spec"]["template"]["spec"]["containers"][0]["volumeMounts"]
+        .as_array_mut()
+        .unwrap();
+    let mount = mounts
+        .iter_mut()
+        .find(|mount| mount["mountPath"] == "/etc/wamn/postgres")
+        .unwrap();
+    mount["mountPath"] = json!("/elsewhere");
+    let failures = command_input_failures(&objects, &render.owner_inputs);
+    assert!(
+        failures.iter().any(|failure| failure.contains(
+            "field export WAMN_SYSTEM_ADMIN_URL -> /etc/wamn/postgres/uri producer step absent"
+        )),
+        "{}",
+        failures.join("\n")
+    );
+    Ok(())
+}
