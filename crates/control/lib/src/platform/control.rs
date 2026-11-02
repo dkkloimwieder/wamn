@@ -202,7 +202,7 @@ pub(crate) fn host_values(org: &str) -> Value {
     values
 }
 
-fn service_objects(
+pub(super) fn service_objects(
     repository: &Path,
     document: &ClusterDocument,
     chart: &Value,
@@ -230,6 +230,29 @@ fn service_objects(
     Ok(objects)
 }
 
+pub(super) fn release_values(document: &ClusterDocument) -> anyhow::Result<Value> {
+    let mut desired = host_values(&document.org);
+    super::oauth::host_group(
+        &mut desired["runtime-operator"]["runtime"]["hostGroups"][0],
+        &super::oauth::configuration(document),
+    )?;
+    desired["runtime-operator"]["runtime"]["hostGroups"][0]["env"].as_array_mut().expect("host environment").push(
+        json!({"name":"WAMN_CONTROL_PUBLIC_ORIGIN","value":format!("https://{}", document.route_hosts.control)}));
+    desired["routeHost"] = document.route_hosts.control.clone().into();
+    desired["platformUi"] = true.into();
+    Ok(desired)
+}
+
+pub(super) fn chart_objects(
+    document: &ClusterDocument,
+    chart: &Path,
+    values: &Value,
+) -> anyhow::Result<Vec<Value>> {
+    Ok(vec![
+        json!({"chart":chart,"version":super::steps::read_platform_version(&chart.join("Chart.yaml"))?,"name":format!("c-{}",document.org),"namespace":"hosts","values":values}),
+    ])
+}
+
 pub(super) async fn release(
     target: &Target,
     document: &ClusterDocument,
@@ -239,37 +262,19 @@ pub(super) async fn release(
 ) -> anyhow::Result<bool> {
     let chart = directory.join("release-chart");
     let values = directory.join("values-control.yaml");
-    let mut desired = host_values(&document.org);
-    super::oauth::host_group(
-        &mut desired["runtime-operator"]["runtime"]["hostGroups"][0],
-        &super::oauth::configuration(document),
-    )?;
-    desired["runtime-operator"]["runtime"]["hostGroups"][0]["env"].as_array_mut().expect("host environment").push(
-        json!({"name":"WAMN_CONTROL_PUBLIC_ORIGIN","value":format!("https://{}", document.route_hosts.control)}));
+    let mut desired = release_values(document)?;
     let key_created = super::oauth::ensure_key(target, document).await?;
-    desired["routeHost"] = document.route_hosts.control.clone().into();
-    desired["platformUi"] = true.into();
     let mut changed =
         key_created | registry_ca(target, &document.org, registry, &mut desired).await?;
-    std::fs::write(&values, serde_yaml::to_string(&desired)?)?;
-    let name = format!("c-{}", document.org);
-    let rendered = super::install::helm(
-        target,
-        &[
-            "template".as_ref(),
-            name.as_ref(),
-            chart.as_os_str(),
-            "--namespace".as_ref(),
-            "hosts".as_ref(),
-            "-f".as_ref(),
-            values.as_os_str(),
-        ],
-    )
-    .await?;
-    let source = std::str::from_utf8(&rendered)?;
-    let objects = serde_yaml::Deserializer::from_str(source)
-        .map(Value::deserialize)
-        .collect::<Result<Vec<_>, _>>()?;
+    let entry = chart_objects(document, &chart, &desired)?;
+    std::fs::write(&values, serde_yaml::to_string(&entry[0]["values"])?)?;
+    let name = entry[0]["name"].as_str().context("control release name")?;
+    let chart = Path::new(
+        entry[0]["chart"]
+            .as_str()
+            .context("control chart reference")?,
+    );
+    let objects = super::environments::template_objects(&entry[0])?;
     let mut release_changed = false;
     for object in objects.iter().filter(|object| !object.is_null()) {
         let kind = object["kind"].as_str().context("control manifest kind")?;
@@ -294,11 +299,11 @@ pub(super) async fn release(
             ..target.clone()
         };
         // As environment apply does, a failed upgrade carries the host pods.
-        let poller = crate::environment::host_report::Poller::start(&hosts, &name);
+        let poller = crate::environment::host_report::Poller::start(&hosts, name);
         let upgraded = crate::release_chart::upgrade(
             &hosts,
-            &chart,
-            &name,
+            chart,
+            name,
             &values,
             std::time::Duration::from_secs(600),
             "platform control host",
@@ -334,8 +339,20 @@ async fn registry_ca(
     registry: &wamn_package_artifact::PackageRegistry,
     values: &mut Value,
 ) -> anyhow::Result<bool> {
+    let mut changed = false;
+    for object in registry_ca_objects(org, registry, values)? {
+        changed |= super::install::apply_object(target, &object).await?;
+    }
+    Ok(changed)
+}
+
+pub(super) fn registry_ca_objects(
+    org: &str,
+    registry: &wamn_package_artifact::PackageRegistry,
+    values: &mut Value,
+) -> anyhow::Result<Vec<Value>> {
     if registry.oci_ca_paths.is_empty() {
-        return Ok(false);
+        return Ok(Vec::new());
     }
     let name = format!("control-oci-ca-{org}");
     let mut data = serde_json::Map::new();
@@ -355,14 +372,10 @@ async fn registry_ca(
         .as_array_mut()
         .context("control mounts")?
         .push(json!({"name": "oci-ca", "mountPath": "/etc/wamn/oci-ca", "readOnly": true}));
-    super::install::apply_object(
-        target,
-        &json!({
-            "apiVersion": "v1", "kind": "ConfigMap",
-            "metadata": {"name": name, "namespace": "hosts"}, "data": data
-        }),
-    )
-    .await
+    Ok(vec![json!({
+        "apiVersion": "v1", "kind": "ConfigMap",
+        "metadata": {"name": name, "namespace": "hosts"}, "data": data
+    })])
 }
 
 pub(super) fn operator_request(

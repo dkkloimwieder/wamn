@@ -20,6 +20,7 @@ pub struct Package {
 #[derive(Debug)]
 pub struct Fixtures {
     pub identity_tls: Value,
+    pub control_operator: Value,
     pub platform_ui_files: BTreeMap<String, Vec<u8>>,
     pub cdc_credentials: BTreeMap<String, Value>,
     pub gates_image: String,
@@ -550,6 +551,63 @@ pub fn install(
             );
         }
     }
+    append(
+        &mut objects,
+        "4.19.1",
+        job_objects(
+            &super::control::provision_request(document, &fixtures.runner_image),
+            "platform",
+            &json!({"org":document.org}),
+            &[],
+            fixtures,
+        )?,
+    );
+    append(
+        &mut objects,
+        "4.19.1",
+        job_objects(
+            &super::control::operator_request(document, &fixtures.runner_image)?,
+            "platform",
+            &json!({"source_version":fixtures.control_operator["metadata"]["resourceVersion"]}),
+            &[],
+            fixtures,
+        )?,
+    );
+    if environments.is_empty() && !fixtures.oauth_exists {
+        append(
+            &mut objects,
+            "4.19.1",
+            super::oauth::key_objects(&fixtures.oauth_key),
+        );
+    }
+    let mut control_values = super::control::release_values(document)?;
+    append(
+        &mut objects,
+        "4.19.1",
+        super::control::registry_ca_objects(
+            &document.org,
+            &fixtures.registry,
+            &mut control_values,
+        )?,
+    );
+    let entry = super::control::chart_objects(
+        document,
+        &fixtures.directory.join("release-chart"),
+        &control_values,
+    )?;
+    append(
+        &mut objects,
+        "4.19.1",
+        super::environments::template_objects(&entry[0])?,
+    );
+    let chart: Value = serde_yaml::from_slice(&std::fs::read(
+        fixtures.directory.join("release-chart/values.yaml"),
+    )?)?;
+    append(
+        &mut objects,
+        "4.19.1",
+        super::control::service_objects(repository, document, &chart)?,
+    );
     // Control host credentials and release precede this upload.
     if !document.buckets.web.is_empty() {
         let request = super::web::platform_ui_with_files(
@@ -702,6 +760,7 @@ mod tests {
         let mut fixtures = Fixtures {
             identity_tls: json!({"data": {"ca.crt": "Zml4dHVyZS1jYQ=="}}),
             broker_authorization_exists: false,
+            control_operator:json!({"apiVersion":"v1","kind":"Secret","metadata":{"name":"operator-test","namespace":"identity","resourceVersion":"1"},"type":"kubernetes.io/tls","data":{"ca.crt":"Zml4dHVyZS1jYQ==","tls.crt":"Zml4dHVyZS1jcnQ=","tls.key":"Zml4dHVyZS1rZXk="}}),
             platform_ui_files:BTreeMap::new(),
             cdc_credentials:BTreeMap::new(),
             gates_image:format!("registry.invalid/wamn/gates@sha256:{}","1".repeat(64)),
@@ -755,6 +814,25 @@ mod tests {
             ),
         ]
         .into();
+        fixtures.applied.insert(
+            "platform-control-credentials-test".into(),
+            vec![
+                wamn_control_provision::render_org_workload_secret_manifest(
+                    wamn_control_provision::WorkloadRoleFamily::Control,
+                    "test",
+                    "hosts",
+                    "postgresql://control:fixture@database/wamn_system",
+                ),
+                wamn_control_provision::render_control_administration_secret_manifest(
+                    "test", "hosts",
+                ),
+            ],
+        );
+        let mut operator = fixtures.control_operator.clone();
+        operator["metadata"] = json!({"name":"operator-test","namespace":"hosts"});
+        fixtures
+            .applied
+            .insert("platform-control-operator-test".into(), vec![operator]);
         std::fs::write(&fixtures.registry.registry_auth_file, "{}")?;
         let mut manifest = fixture_release()?;
         let component = manifest.components.first().context("fixture component")?;
