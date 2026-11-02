@@ -1,7 +1,5 @@
-//! Per-project-env credential emission — the artifact 2.2b (`K8sSecretProvider`,
-//! wamn-5x0.1) will consume.
+//! Per-project-env credential emission.
 //!
-//! Provisioning **emits** the credential; the live in-cluster read stays 5x0.1.
 //! Each shape is a Kubernetes `Secret` manifest rendered as pure JSON, which
 //! `kubectl apply -f` accepts.
 
