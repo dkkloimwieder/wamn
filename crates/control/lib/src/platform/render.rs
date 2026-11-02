@@ -4,12 +4,17 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use super::job::{JobRequest, JobSecret};
+use anyhow::Context as _;
 use serde_json::{Value, json};
 
 /// Live values supplied to the install batches instead of reading a cluster.
 #[derive(Debug)]
 pub struct Fixtures {
     pub identity_tls: Value,
+    pub identity_database: Value,
+    pub identity_image: String,
+    pub postgres_image: String,
+    pub environment_urls: BTreeMap<String, String>,
     pub ctl_nats: Value,
     pub directory: PathBuf,
     pub apply_url: String,
@@ -153,7 +158,101 @@ pub fn install(
             )?,
         );
     }
+    let mut targets = Vec::new();
+    for environment in environments {
+        let key = environment_key(environment);
+        let url = fixtures
+            .environment_urls
+            .get(&key)
+            .context("environment URL fixture")?;
+        let (request, secrets, inputs) =
+            super::identity::session_inputs(environment, &fixtures.runner_image, &admin, url)?;
+        append(
+            &mut objects,
+            "4.12",
+            job_objects(&request, "identity", &inputs, &secrets, fixtures)?,
+        );
+        targets.push(format!("wamn-session-role-reader-{key}"));
+    }
+    let chart =
+        super::identity::chart_objects(repository, document, &fixtures.identity_image, targets)?;
+    let values = chart[0]["values"].clone();
+    append(&mut objects, "4.12", chart);
+    let (probe, secrets) = super::identity::key_probe(&fixtures.postgres_image, &superuser)?;
+    let issuer = super::identity::ISSUER;
+    append(
+        &mut objects,
+        "4.12",
+        job_objects(
+            &probe,
+            "platform",
+            &json!({"issuer":issuer,"identity_image":fixtures.identity_image}),
+            &secrets,
+            fixtures,
+        )?,
+    );
+    let state: Value = serde_json::from_str(
+        fixtures
+            .outputs
+            .get(&probe.name)
+            .context("session key state fixture")?,
+    )?;
+    let kid = if let Some(kid) = state["kid"].as_str() {
+        kid.to_owned()
+    } else {
+        let credential = serde_json::from_value(fixtures.identity_database.clone())?;
+        let (publish, secrets) =
+            super::identity::key_publish(&fixtures.identity_image, &credential)?;
+        append(
+            &mut objects,
+            "4.12",
+            job_objects(
+                &publish,
+                "identity",
+                &json!({"issuer":issuer}),
+                &secrets,
+                fixtures,
+            )?,
+        );
+        let public: Value = serde_json::from_str(
+            fixtures
+                .outputs
+                .get(&publish.name)
+                .context("published key fixture")?,
+        )?;
+        let kid = public["kid"]
+            .as_str()
+            .context("published kid fixture")?
+            .to_owned();
+        append(
+            &mut objects,
+            "4.12",
+            job_objects(
+                &super::identity::key_activate_request(&fixtures.identity_image, &kid),
+                "identity",
+                &json!({"issuer":issuer,"kid":kid}),
+                &secrets,
+                fixtures,
+            )?,
+        );
+        kid
+    };
+    append(
+        &mut objects,
+        "4.12",
+        job_objects(
+            &super::identity::check_request(&super::install::secret_text(&identity_tls, "ca.crt")?),
+            "hosts",
+            &json!({"kid":kid,"values":values}),
+            &[],
+            fixtures,
+        )?,
+    );
     Ok(objects)
+}
+
+fn environment_key(environment: &EnvironmentDocument) -> String {
+    wamn_control_registry::project_env_key(&environment.org, &environment.project, &environment.env)
 }
 
 fn job_objects(
@@ -239,9 +338,13 @@ mod tests {
             }),
             &work.path().join("release-chart"),
         )?;
-        let fixtures = Fixtures {
+        let mut fixtures = Fixtures {
             identity_tls: json!({"data": {"ca.crt": "Zml4dHVyZS1jYQ=="}}),
             broker_authorization_exists: false,
+            identity_database: json!({"data":{"url":"cG9zdGdyZXNxbDovL2lkZW50aXR5OmZpeHR1cmVAZGF0YWJhc2Uvd2Ftbl9zeXN0ZW0="}}),
+            identity_image: format!("registry.invalid/wamn/identity@sha256:{}", "1".repeat(64)),
+            postgres_image: "postgres:18".into(),
+            environment_urls: BTreeMap::new(),
             ctl_nats: json!({"data":{"ca.crt":"Zml4dHVyZS1jYQ==", "tls.crt":"Zml4dHVyZS1jcnQ=", "tls.key":"Zml4dHVyZS1rZXk="}}),
             directory: work.path().to_owned(),
             apply_url: "postgresql://wamn_apply:fixture@database/wamn_system".into(),
@@ -256,11 +359,58 @@ mod tests {
                     "metadata":{"name":"wamn-identity-db","namespace":"identity","labels":{"app.kubernetes.io/name":"wamn-identity","app.kubernetes.io/managed-by":"wamn"}},
                     "stringData":{"url":"postgresql://identity:fixture@database/wamn_system"}})),
             ].into(),
-            outputs: BTreeMap::new(),
+            outputs: [
+                ("platform-session-key-state".into(),r#"{"kid":null}"#.into()),
+                ("platform-session-key-publish".into(),r#"{"kid":"fixture-kid"}"#.into()),
+                ("platform-identity-check".into(),r#"{"keys":[{"kid":"fixture-kid"}]}"#.into()),
+            ].into(),
         };
+        for environment in &documents {
+            use wamn_control_provision::{
+                WorkloadRoleFamily, WorkloadRoleScope, WorkloadSecretBody,
+            };
+            let key = environment_key(environment);
+            let database = wamn_control_provision::project_env_database_name(
+                &environment.org,
+                &environment.project,
+                &environment.env,
+                "render01",
+            );
+            fixtures.environment_urls.insert(
+                key.clone(),
+                format!("postgresql://fixture:fixture@database/{database}"),
+            );
+            let role = wamn_control_provision::workload_generation_role(
+                WorkloadRoleFamily::SessionRoleReader,
+                WorkloadRoleScope::ProjectEnvironment {
+                    org: &environment.org,
+                    project: &environment.project,
+                    environment: &environment.env,
+                    database: &database,
+                },
+                wamn_run_state::CredentialGeneration::A,
+            )?;
+            let target = wamn_control_provision::session_target::SessionTarget::new(
+                &environment.triple(),
+                "render01",
+                "fixture",
+                &format!("postgresql://{role}:fixture@database/{database}"),
+            )?;
+            fixtures.emitted.insert(
+                format!("platform-session-{key}"),
+                wamn_control_provision::render_workload_secret_manifest(
+                    WorkloadRoleFamily::SessionRoleReader,
+                    &environment.triple(),
+                    "identity",
+                    WorkloadSecretBody::SessionTarget(&target),
+                ),
+            );
+        }
         let objects = install(&cluster, &documents, &repository, &fixtures)?;
         // This list grows as each install file gains its shared batch builders.
-        for step in ["4.3", "4.4", "4.4.1", "4.5", "4.7", "4.8", "4.9", "4.11"] {
+        for step in [
+            "4.3", "4.4", "4.4.1", "4.5", "4.7", "4.8", "4.9", "4.11", "4.12",
+        ] {
             assert!(
                 objects.iter().any(|(number, _)| *number == step),
                 "empty step {step}"

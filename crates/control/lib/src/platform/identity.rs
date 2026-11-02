@@ -12,7 +12,7 @@ use super::document::ClusterDocument;
 use super::install::{DATABASE_HOST, SecretData, administrator, helm, runner_image, secret_text};
 use super::job::{self, JobRequest, JobSecret};
 
-const ISSUER: &str = "https://identity.identity.svc.cluster.local";
+pub(super) const ISSUER: &str = "https://identity.identity.svc.cluster.local";
 const RESEND_COMMAND: &str = "kubectl -n identity create secret generic identity-resend --from-literal=api-key=\"$(tr -d '[:space:]' < <file>)\"";
 const RESEND_SECRET_MANAGER: &str = "gcloud secrets versions access latest --secret identity-resend --project <project> must print a nonempty key with no whitespace; see gcp.md section 1";
 const CURL_IMAGE: &str =
@@ -142,34 +142,8 @@ pub(super) async fn apply(
         .await?
         .context("missing environment application Secret")?;
         let raw = secret_text(&credential, "url")?;
-        let credential = url::Url::parse(&raw)
-            .map_err(|_| anyhow::anyhow!("parse the application database URL"))?;
-        let mut database = url::Url::parse(&admin.value)
-            .map_err(|_| anyhow::anyhow!("parse the administrator database URL"))?;
-        database.set_path(credential.path());
-        let request = session_request(&environment, &runner);
-        let secrets = [
-            JobSecret {
-                name: admin.name.clone(),
-                key: admin.key.clone(),
-                value: admin.value.clone(),
-                environment: admin.environment.clone(),
-            },
-            JobSecret {
-                name: "platform-session-admin".into(),
-                key: "url".into(),
-                value: database.into(),
-                environment: "WAMN_TARGET_ADMIN_DATABASE_URL".into(),
-            },
-        ];
-        changed |= job::run(
-            &identity,
-            directory,
-            &request,
-            &json!({"environment": environment, "database": credential.path()}),
-            &secrets,
-        )
-        .await?;
+        let (request, secrets, inputs) = session_inputs(&environment, &runner, &admin, &raw)?;
+        changed |= job::run(&identity, directory, &request, &inputs, &secrets).await?;
         targets.push(format!("wamn-session-role-reader-{env_key}"));
     }
     let chart: Value =
@@ -178,8 +152,9 @@ pub(super) async fn apply(
         .as_str()
         .filter(|image| image.contains("@sha256:"))
         .context("the chart has no pinned identity image")?;
-    let values = values(document, image, targets)?;
-    changed |= install(&identity, repository, directory, &values).await?;
+    let batch = chart_objects(repository, document, image, targets)?;
+    let values = &batch[0]["values"];
+    changed |= install(&identity, directory, &batch[0]).await?;
     let (keys_changed, kid) = keys(target, &identity, directory, &superuser, image).await?;
     changed |= keys_changed;
     let ca: SecretData = kubectl::get(
@@ -215,6 +190,74 @@ pub(super) async fn apply(
     Ok(changed)
 }
 
+pub(super) fn key_probe(
+    image: &str,
+    superuser: &SecretData,
+) -> anyhow::Result<(JobRequest, [JobSecret; 1])> {
+    Ok((
+        key_state_request(image),
+        [JobSecret {
+            name: "platform-key-probe".into(),
+            key: "password".into(),
+            value: secret_text(superuser, "password")?,
+            environment: "PGPASSWORD".into(),
+        }],
+    ))
+}
+pub(super) fn key_publish(
+    image: &str,
+    credential: &SecretData,
+) -> anyhow::Result<(JobRequest, [JobSecret; 1])> {
+    Ok((
+        key_publish_request(image),
+        [JobSecret {
+            name: "platform-key-identity".into(),
+            key: "url".into(),
+            value: secret_text(credential, "url")?,
+            environment: "WAMN_IDENTITY_DATABASE_URL".into(),
+        }],
+    ))
+}
+
+pub(super) fn session_inputs(
+    environment: &crate::environment::document::EnvironmentDocument,
+    image: &str,
+    admin: &JobSecret,
+    application_url: &str,
+) -> anyhow::Result<(JobRequest, [JobSecret; 2], Value)> {
+    let credential = url::Url::parse(application_url)
+        .map_err(|_| anyhow::anyhow!("parse the application database URL"))?;
+    let mut database = url::Url::parse(&admin.value)
+        .map_err(|_| anyhow::anyhow!("parse the administrator database URL"))?;
+    database.set_path(credential.path());
+    Ok((
+        session_request(environment, image),
+        [
+            admin.clone(),
+            JobSecret {
+                name: "platform-session-admin".into(),
+                key: "url".into(),
+                value: database.into(),
+                environment: "WAMN_TARGET_ADMIN_DATABASE_URL".into(),
+            },
+        ],
+        json!({"environment":environment,"database":credential.path()}),
+    ))
+}
+
+pub(super) fn chart_objects(
+    repository: &Path,
+    document: &ClusterDocument,
+    image: &str,
+    targets: Vec<String>,
+) -> anyhow::Result<Vec<Value>> {
+    let chart = repository.join("deploy/platform/identity");
+    let version = super::steps::read_platform_version(&chart.join("Chart.yaml"))?;
+    Ok(vec![
+        json!({"chart":chart,"version":version,"values":values(document,image,targets)?}),
+    ])
+}
+
 fn values(document: &ClusterDocument, image: &str, targets: Vec<String>) -> anyhow::Result<Values> {
     let (repository, tag) = image
         .rsplit_once(':')
@@ -240,14 +283,12 @@ fn values(document: &ClusterDocument, image: &str, targets: Vec<String>) -> anyh
     })
 }
 
-async fn install(
-    target: &Target,
-    repository: &Path,
-    directory: &Path,
-    values: &Values,
-) -> anyhow::Result<bool> {
-    let chart = repository.join("deploy/platform/identity");
-    let version = super::steps::read_platform_version(&chart.join("Chart.yaml"))?;
+async fn install(target: &Target, directory: &Path, entry: &Value) -> anyhow::Result<bool> {
+    let chart = Path::new(entry["chart"].as_str().context("identity chart input")?);
+    let version = entry["version"]
+        .as_str()
+        .context("identity chart version")?;
+    let values = &entry["values"];
     let releases: Vec<Value> = serde_json::from_slice(
         &helm(
             target,
@@ -327,18 +368,13 @@ async fn keys(
     let image = cluster["spec"]["imageName"]
         .as_str()
         .context("the PostgreSQL Cluster has no image")?;
-    let probe = key_state_request(image);
+    let (probe, probe_secrets) = key_probe(image, superuser)?;
     let mut changed = job::run(
         target,
         directory,
         &probe,
         &json!({"issuer": ISSUER, "identity_image": identity_image}),
-        &[JobSecret {
-            name: "platform-key-probe".into(),
-            key: "password".into(),
-            value: secret_text(superuser, "password")?,
-            environment: "PGPASSWORD".into(),
-        }],
+        &probe_secrets,
     )
     .await?;
     let state: Value = serde_json::from_str(&job::output(target, &probe).await?)
@@ -355,19 +391,13 @@ async fn keys(
     )
     .await?
     .context("missing Secret identity/wamn-identity-db")?;
-    let secret = JobSecret {
-        name: "platform-key-identity".into(),
-        key: "url".into(),
-        value: secret_text(&credential, "url")?,
-        environment: "WAMN_IDENTITY_DATABASE_URL".into(),
-    };
-    let publish = key_publish_request(identity_image);
+    let (publish, secrets) = key_publish(identity_image, &credential)?;
     changed |= job::run(
         identity,
         directory,
         &publish,
         &json!({"issuer": ISSUER}),
-        std::slice::from_ref(&secret),
+        &secrets,
     )
     .await?;
     let public: Value = serde_json::from_str(&job::output(identity, &publish).await?)
@@ -382,7 +412,7 @@ async fn keys(
         directory,
         &activate,
         &json!({"issuer": ISSUER, "kid": kid}),
-        &[secret],
+        &secrets,
     )
     .await?;
     Ok((changed, kid))
