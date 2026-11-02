@@ -1,7 +1,7 @@
 //! Render the platform install batches without a cluster.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::job::{JobRequest, JobSecret};
 use serde_json::{Value, json};
@@ -10,6 +10,9 @@ use serde_json::{Value, json};
 #[derive(Debug)]
 pub struct Fixtures {
     pub identity_tls: Value,
+    pub ctl_nats: Value,
+    pub directory: PathBuf,
+    pub apply_url: String,
     pub postgres_superuser: Value,
     pub runner_image: String,
     pub job_uid: String,
@@ -126,6 +129,49 @@ pub fn install(
         "4.9",
         super::manifests::platform_inputs(repository, document)?,
     );
+    let auth = serde_json::from_value(fixtures.ctl_nats.clone())?;
+    let apply = JobSecret {
+        name: "wamn-env-apply".into(),
+        key: "url".into(),
+        value: fixtures.apply_url.clone(),
+        environment: "WAMN_APPLY_DATABASE_URL".into(),
+    };
+    for environment in environments {
+        let mut environment = environment.clone();
+        environment.release = crate::environment::document::DeclaredRelease::None;
+        let request = super::environments::apply_request(
+            document,
+            &environment,
+            &fixtures.runner_image,
+            true,
+            &auth,
+            &fixtures.directory.join("release-chart"),
+        )?;
+        append(
+            &mut objects,
+            "4.11",
+            job_objects(
+                &request,
+                "platform",
+                &json!({"environment": environment}),
+                &[
+                    JobSecret {
+                        name: admin.name.clone(),
+                        key: admin.key.clone(),
+                        value: admin.value.clone(),
+                        environment: admin.environment.clone(),
+                    },
+                    JobSecret {
+                        name: apply.name.clone(),
+                        key: apply.key.clone(),
+                        value: apply.value.clone(),
+                        environment: apply.environment.clone(),
+                    },
+                ],
+                fixtures,
+            )?,
+        );
+    }
     Ok(objects)
 }
 
@@ -193,9 +239,31 @@ mod tests {
                 Ok(environment)
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
+        let work = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
+        let image = format!(
+            "registry.invalid/wamn/fixture:render@sha256:{}",
+            "1".repeat(64)
+        );
+        crate::release_chart::stamp(
+            &repository.join("deploy/platform/release"),
+            &crate::release_chart::ImageSet {
+                host: image.clone(),
+                http: image.clone(),
+                materializer: image.clone(),
+            },
+            Some(&crate::release_chart::QualificationImages {
+                runner: image.clone(),
+                gates: image.clone(),
+                identity: image,
+            }),
+            &work.path().join("release-chart"),
+        )?;
         let fixtures = Fixtures {
             identity_tls: json!({"data": {"ca.crt": "Zml4dHVyZS1jYQ=="}}),
             broker_authorization_exists: false,
+            ctl_nats: json!({"data":{"ca.crt":"Zml4dHVyZS1jYQ==", "tls.crt":"Zml4dHVyZS1jcnQ=", "tls.key":"Zml4dHVyZS1rZXk="}}),
+            directory: work.path().to_owned(),
+            apply_url: "postgresql://wamn_apply:fixture@database/wamn_system".into(),
             postgres_superuser: json!({"data":{"password":"cGFzc3dvcmQ="}}),
             runner_image: format!("registry.invalid/wamn/runner@sha256:{}", "1".repeat(64)),
             job_uid: "00000000-0000-0000-0000-000000000001".into(),
@@ -211,7 +279,7 @@ mod tests {
         };
         let objects = install(&cluster, &documents, &repository, &fixtures)?;
         // This list grows as each install file gains its shared batch builders.
-        for step in ["4.3", "4.4", "4.4.1", "4.5", "4.7", "4.8", "4.9"] {
+        for step in ["4.3", "4.4", "4.4.1", "4.5", "4.7", "4.8", "4.9", "4.11"] {
             assert!(
                 objects.iter().any(|(number, _)| *number == step),
                 "empty step {step}"

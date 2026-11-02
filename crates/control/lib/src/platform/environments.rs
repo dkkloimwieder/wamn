@@ -66,13 +66,14 @@ pub(super) async fn apply(
             }
             environment.release = DeclaredRelease::None;
         }
-        let mut request = request(document, &environment, &image, initial, &auth)?;
-        for name in ["Chart.yaml", "values.yaml"] {
-            request.files.insert(
-                name.into(),
-                std::fs::read_to_string(directory.join("release-chart").join(name))?,
-            );
-        }
+        let mut request = apply_request(
+            document,
+            &environment,
+            &image,
+            initial,
+            &auth,
+            &directory.join("release-chart"),
+        )?;
         if let Some(registry) = registry {
             release_inputs(
                 target,
@@ -125,6 +126,23 @@ pub(super) async fn apply(
 }
 
 /// Whether the release apply of 4.17 completed for `environment`.
+pub(super) fn apply_request(
+    document: &ClusterDocument,
+    environment: &crate::environment::document::EnvironmentDocument,
+    image: &str,
+    initial: bool,
+    auth: &SecretData,
+    chart: &Path,
+) -> anyhow::Result<JobRequest> {
+    let mut request = request(document, environment, image, initial, auth)?;
+    for name in ["Chart.yaml", "values.yaml"] {
+        request
+            .files
+            .insert(name.into(), std::fs::read_to_string(chart.join(name))?);
+    }
+    Ok(request)
+}
+
 async fn released(
     target: &Target,
     environment: &crate::environment::document::EnvironmentDocument,
