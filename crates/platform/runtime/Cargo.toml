@@ -14,7 +14,6 @@ wasm_component_model_implements = [
 
 [dependencies]
 wamn-credential-store = { workspace = true }
-percent-encoding = { workspace = true }
 # Activation compares the native broker declarations from this library.
 wamn-control-provision = { workspace = true }
 object_store = { workspace = true, features = ["gcp"] }
@@ -67,7 +66,6 @@ tracing-opentelemetry = { workspace = true }
 opentelemetry_sdk = { workspace = true, features = ["logs"] }
 opentelemetry-otlp = { workspace = true, features = ["grpc-tonic", "logs"] }
 oci-client = { workspace = true }
-rand_core = { workspace = true }
 reqwest = { workspace = true, features = ["rustls"] }
 ring = { workspace = true }
 zeroize = { workspace = true }

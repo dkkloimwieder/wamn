@@ -11,13 +11,8 @@ path = "src/benchmark.rs"
 
 [dependencies]
 anyhow = { workspace = true }
-bytes = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }
-http-body-util = { workspace = true }
-hyper = { workspace = true }
-hyper-util = { workspace = true, features = ["tokio"] }
 hex = { workspace = true }
-ring = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
@@ -25,22 +20,16 @@ syn = { workspace = true, features = ["full", "visit"] }
 tokio = { workspace = true, features = ["net", "time", "rt", "macros"] }
 url = { workspace = true }
 wamn-component-policy = { workspace = true }
-wamn-execution-contract = { workspace = true }
 wamn-gate-harness = { workspace = true }
-wamn-runtime = { workspace = true }
 wamn-engine = { workspace = true }
 wamn-run-state = { workspace = true }
 wash-runtime = { workspace = true }
-wasmtime-wasi = { workspace = true }
 wasm-encoder = { workspace = true }
 
 [dev-dependencies]
 proc-macro2 = { version = "1.0.107", features = ["span-locations"] }
-chrono = { workspace = true, features = ["std"] }
-rust_decimal = { workspace = true, features = ["std"] }
 serde_yaml = { workspace = true }
 sqlx = { workspace = true, features = ["chrono", "json", "macros", "postgres", "runtime-tokio", "rust_decimal", "uuid"] }
-uuid = { workspace = true }
 wamn-execution-host = { workspace = true }
 wamn-fixture-package = { workspace = true }
 wamn-schema-generator = { workspace = true }

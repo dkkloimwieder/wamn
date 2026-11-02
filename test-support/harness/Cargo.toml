@@ -36,10 +36,7 @@ tar = { workspace = true }
 wamn-schema-control = { workspace = true }
 
 [dev-dependencies]
-async-nats = { workspace = true, features = ["jetstream"] }
 tokio = { workspace = true, features = ["macros", "rt"] }
-wamn-event-wire = { workspace = true }
-wamn-test-postgres = { workspace = true }
 
 [lints]
 workspace = true

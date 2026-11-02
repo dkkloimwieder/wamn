@@ -50,7 +50,6 @@ ring = { workspace = true }
 hex = { workspace = true }
 rustix = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-chrono = { workspace = true, features = ["clock", "std"] }
 url = { workspace = true }
 tracing = { workspace = true }
 # The verbs are println!-style tools; this fmt layer exists so --log-level
@@ -85,7 +84,6 @@ tokio-postgres = { workspace = true }
 
 [dev-dependencies]
 async-nats = { workspace = true, features = ["jetstream"] }
-wamn-authoring-model = { workspace = true }
 wamn-fixture-package = { workspace = true }
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
 wamn-pg-core = { workspace = true }
@@ -96,7 +94,6 @@ wamn-project-state = { workspace = true, features = ["test-util"] }
 wamn-test-infrastructure = { workspace = true }
 wamn-test-postgres = { workspace = true }
 wit-component = { workspace = true, features = ["dummy-module"] }
-wit-parser = { workspace = true }
 
 [lints]
 workspace = true

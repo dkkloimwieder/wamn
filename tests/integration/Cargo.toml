@@ -42,7 +42,6 @@ wamn-control-registry = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-component-policy = { workspace = true }
 wamn-component-composer = { workspace = true }
-wamn-event-reg = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-execution-contract = { workspace = true }
 wamn-gate-harness = { workspace = true }
@@ -69,13 +68,6 @@ wamn-catalog = { workspace = true, features = ["test-util"] }
 base64 = { workspace = true }
 ring = { workspace = true }
 tokio-rustls = { workspace = true }
-wasm-encoder = { workspace = true, features = ["wasmparser"] }
-wasmparser = { workspace = true }
-async-trait = { workspace = true }
-proptest.workspace = true
-wamn-client = { workspace = true }
-wamn-schema-introspection = { workspace = true }
-wat = "=1.254.2"
 wamn-run-state = { workspace = true, features = ["test-util"] }
 wamn-test-postgres = { workspace = true }
 # `prune_record_history` is an `ops` verb; route_interface_live prunes history.
