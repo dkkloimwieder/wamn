@@ -80,6 +80,7 @@ ENGINE_ACCEPTED = {
     "wash-runtime": "the native runtime",
     "wasmparser": "component admission",
     "wasmtime": "the native runtime",
+    "wasmtime-wasi": "the WASI interfaces a declared world links",
     "wasmtime-wasi-http": "the expected-host router's native HTTP types"
 }
 
