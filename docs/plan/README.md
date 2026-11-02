@@ -1,8 +1,10 @@
 Each plan describes work or decisions for its subject. [Architecture](../architecture/README.md) describes current behavior. Beads records implementation status.
 
+- [Alignment](alignment.md): wasmCloud alignment and shared NATS ownership.
 - [Authored views](authored-views.md): views in package schemas for reports, narrow reads, and query feeds.
 - [Delivery](delivery.md): CI integration and conditional test extensions.
 - [Identity](identity.md): external login adapters.
+- [Integration schema](integration-schema.md): project integrations and environment connections.
 - [Manifest authoring](manifest-authoring.md): KCL package declarations.
 - [NATS outage](nats-outage.md): evidence and recovery requirements.
 - [Observability](observability.md): telemetry collection and export.

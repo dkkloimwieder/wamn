@@ -1,3 +1,5 @@
+# History
+
 This page lists retired plans and pages. Git holds the deleted text.
 
 - <a id="cdc-reader-slot"></a>cdc-reader-slot.md: wamn-59z6, landed at 6e1837f67. The reader keeps slots current and reports capture gaps.
@@ -17,3 +19,43 @@ This page lists retired plans and pages. Git holds the deleted text.
 - <a id="gcp-install-history"></a>gcp-install-history.md: deleted, held in git at bdc8c5530. Successor: [Google Cloud](../operations/gcp.md).
 - <a id="platform-ui-history"></a>platform-ui-history.md: deleted, held in git at bdc8c5530. Successors: [operator clients](../architecture/execution.md#operator-clients) and [organization membership and administration](../architecture/overview.md#organization-membership-and-administration).
 - <a id="deployment-pre-apply"></a>deployment-pre-apply.md: deleted, held in git at bdc8c5530. Successor: [deployment](../operations/deployment.md).
+
+- [2a-capability-registry.md](2a-capability-registry.md): Successor: [platform capabilities](../architecture/capabilities.md#import-admission).
+- [application-simplification-plan.md](application-simplification-plan.md): Successor: [components](../architecture/components.md), [data access](../architecture/data-access.md).
+- [authoring-stateless-gate-demolition.md](authoring-stateless-gate-demolition.md): No current successor.
+- [consolidation-findings.md](consolidation-findings.md): Successor: [hygiene audit](../audit/hygiene.md).
+- [ctl-split-plan.md](ctl-split-plan.md): Successor: [control and publication](../architecture/overview.md#control-and-publication).
+- [deterministic-testing-spec.md](deterministic-testing-spec.md): Successor: [deterministic tests](../testing/deterministic.md).
+- [dev-cycle-spec.md](dev-cycle-spec.md): Successor: [development loop](../operations/development-loop.md).
+- [edge-diagnostics-spec.md](edge-diagnostics-spec.md): Successor: [edge diagnostics](../operations/edge.md).
+- [edge.md](edge.md): Successor: [edge architecture](../architecture/edge.md), [edge operations](../operations/edge.md).
+- [gcp-deployment.md](gcp-deployment.md): Successor: [Google Cloud](../operations/gcp.md).
+- [generated-operations.md](generated-operations.md): Successor: [generated operations](../architecture/data-access.md).
+- [host-transaction.md](host-transaction.md): Successor: [transactions and the write log](../architecture/data-access.md).
+- [identity-plan.md](identity-plan.md): Successor: [caller authentication](../architecture/execution.md#caller-authentication), [federation plan](../plan/identity.md).
+- [kind-to-type.md](kind-to-type.md): Successor: [naming](../architecture/naming.md), [deployment](../operations/deployment.md).
+- [native-alignment-external-review-2026-09-10.md](native-alignment-external-review-2026-09-10.md): Successor: [native alignment](../architecture/native-alignment.md).
+- [operation-ids.md](operation-ids.md): Successor: [naming](../architecture/naming.md).
+- [operator-ui.md](operator-ui.md): Successor: [platform UI application](../plan/platform-ui-app.md).
+- [poc-application-portfolio.md](poc-application-portfolio.md): No current successor.
+- [poc-architecture-review.md](poc-architecture-review.md): No current successor.
+- [record-history-spec.md](record-history-spec.md): Successor: [record history](../architecture/data-access.md#record-history).
+- [release-qualification.md](release-qualification.md): Successor: [delivery](../operations/delivery.md).
+- [schema-upgrade.md](schema-upgrade.md): Successor: [platform schema upgrades](../operations/deployment.md#platform-schema-upgrades).
+- [seam-template.md](seam-template.md): Successor: [platform capabilities](../architecture/capabilities.md).
+- [table-adv-data.md](table-adv-data.md): Successor: [data access](../architecture/data-access.md), [operator clients](../architecture/execution.md#operator-clients).
+- [table-adv-ui.md](table-adv-ui.md): Successor: [platform UI application](../plan/platform-ui-app.md).
+- [test-review.md](test-review.md): Successor: [test audit](../audit/tests.md).
+- [testing-stabilization-plan.md](testing-stabilization-plan.md): Successor: [test strategy](../testing/strategy.md), [running tests](../operations/running-tests.md).
+- [upgrade-environment.md](upgrade-environment.md): Successor: [deployment](../operations/deployment.md).
+- [upgrades.md](upgrades.md): Successor: [platform schema upgrades](../operations/deployment.md#platform-schema-upgrades).
+- [wamn_base_application_poc_revised.md](wamn_base_application_poc_revised.md): Successor: [architecture overview](../architecture/overview.md), [naming](../architecture/naming.md).
+- [wamn_http_auth_proposal.md](wamn_http_auth_proposal.md): Successor: [outbound HTTP](../architecture/capabilities.md#outbound-http), [caller authentication](../architecture/execution.md#caller-authentication).
+- [wamn_native_alignment_plan.md](wamn_native_alignment_plan.md): Successor: [native alignment](../architecture/native-alignment.md), [alignment plan](../plan/alignment.md).
+- [wamn_production_counts_application_poc_scenario.md](wamn_production_counts_application_poc_scenario.md): No current successor.
+- [wamn_testing_spec.md](wamn_testing_spec.md): Successor: [test strategy](../testing/strategy.md), [application tests](../testing/application-tests.md).
+- [wamn_wasmcloud_2_9_cutover.md](wamn_wasmcloud_2_9_cutover.md): Successor: [native alignment](../architecture/native-alignment.md).
+- [web-cache-invalidation-spec.md](web-cache-invalidation-spec.md): Successor: [operator clients](../architecture/execution.md#operator-clients).
+- [web-operator-client.md](web-operator-client.md): Successor: [operator clients](../architecture/execution.md#operator-clients), [platform UI application](../plan/platform-ui-app.md).
+- [wms-inventory-spec.md](wms-inventory-spec.md): Successor: [WMS inventory scenario](../../apps/wamn_wms/inventory-scenario.md).
+- [wms-prep-spec.md](wms-prep-spec.md): Successor: [platform capabilities](../architecture/capabilities.md), [deterministic tests](../testing/deterministic.md).
