@@ -658,6 +658,75 @@ fn workspace_files_and_unowned_inputs_run_the_full_command() {
 }
 
 #[test]
+fn a_grant_sql_change_selects_the_family_denial_matrix() {
+    let fixture = Fixture::new();
+    let policy = fs::read_to_string(repository_root().join("tests/selection.toml")).unwrap();
+    let row = policy
+        .split("[[suites]]")
+        .next()
+        .unwrap()
+        .lines()
+        .find(|line| line.contains("target=\"test:family_denial_matrix\""))
+        .expect("family_denial_matrix must have a real targets row");
+    assert!(row.contains("tier=\"live-postgres\""), "{row}");
+
+    let mut provision = fixture.package("crates/control/provision", "wamn-control-provision", &[]);
+    provision["targets"] = json!([
+        {"name": "family_denial_matrix", "kind": ["test"], "test": true},
+        {"name": "other_unit", "kind": ["test"], "test": true},
+    ]);
+    fixture.metadata(
+        "Cargo.toml",
+        "",
+        &[&provision],
+        &[&provision],
+        &[json!({"id": provision["id"], "deps": []})],
+    );
+    let path = "tests/selection.toml";
+    let policy = fs::read_to_string(fixture.root.join(path)).unwrap().replace(
+        "{workspace=\"root\", package=\"wamn-control-provision\", target=\"test:family_denial_matrix\", tier=\"unit\"},",
+        row,
+    );
+    fixture.write(path, &policy);
+    fixture.write("deploy/sql/apply-grants.sql", "SELECT 1;\n");
+    fixture.git(&["add", "."]);
+    fixture.commit("fixture grant SQL and target tiers");
+
+    fixture.write("deploy/sql/apply-grants.sql", "SELECT 2;\n");
+    let output = fixture.tool(&["dry-run"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.lines().any(|line| {
+            line.starts_with("root (full: \"deploy/sql/apply-grants.sql\"): ")
+                && line.ends_with(
+                    " --no-fail-fast --workspace --features wamn-control/ops\\,wamn-ctl/ops",
+                )
+        }),
+        "{stdout}"
+    );
+    let output = fixture.tool(&["--tier", "live-postgres", "dry-run"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout
+            .lines()
+            .any(|line| line.contains("-p wamn-control-provision")
+                && line.contains("--test family_denial_matrix")),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("other_unit"), "{stdout}");
+}
+
+#[test]
 fn unknown_paths_select_every_applicable_suite() {
     for path in ["tools/new-input", "apps/unknown/schema.sql"] {
         let fixture = Fixture::new();
