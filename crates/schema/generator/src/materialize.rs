@@ -701,34 +701,24 @@ pub(crate) fn expected_files(package: &GeneratedPackage) -> Result<BTreeMap<Path
 /// (docs/architecture/execution.md#host-run-routes).
 ///
 /// The clients are build output, so Git does not hold them
-/// (docs/architecture/overview.md#application-ownership). The contract is the
-/// directory `crates/catalog/model/src/host_route`. The application set's
-/// authored `contracts/` hold one operation, input, result and errors file per
-/// route. The control set has the same layout under `control/`. The routes come
-/// from the catalog's set, so each operation reaches the path the host serves
-/// it at.
+/// (docs/architecture/overview.md#application-ownership). The contracts come
+/// from [`wamn_catalog::HostRouteSet::contract_files`], which resolves each
+/// set's shared shapes to one operation, input, result and errors file per
+/// route. The routes come from the catalog's set, so each operation reaches the
+/// path the host serves it at.
 ///
 /// `output_root` is a build output root, [`crate::host_route_client_output_root`]
 /// for the web packages. The application client goes to
 /// `<output_root>/wamn_control/client-ts` and the control client to
-/// `<output_root>/wamn_control/control/client-ts`. A file there that the
+/// `<output_root>/wamn_control/control/client-ts`. The resolved per-operation
+/// contract files go beside each client in `contracts/`. A file there that the
 /// contracts no longer generate is removed. When `output_root` lies in a pnpm
 /// workspace, each client is then copied to the packages that name it,
 /// `wamn_control` or `wamn_control_org`, in `"wamn": { "clients": [...] }`.
 pub fn materialize_host_route_client(output_root: &Path) -> Result<()> {
-    let contract_root =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../catalog/model/src/host_route");
     let output = output_root.join(wamn_catalog::host_route_package());
-    materialize_host_route_set(
-        &contract_root,
-        &output,
-        wamn_catalog::HostRouteSet::Application,
-    )?;
-    materialize_host_route_set(
-        &contract_root.join("control"),
-        &output.join("control"),
-        wamn_catalog::HostRouteSet::Control,
-    )?;
+    materialize_host_route_set(&output, wamn_catalog::HostRouteSet::Application)?;
+    materialize_host_route_set(&output.join("control"), wamn_catalog::HostRouteSet::Control)?;
     // `wamn build` does not make these clients, so they have no build record.
     copy_to_consumers(output_root, "wamn_control", &output.join("client-ts"))?;
     copy_to_consumers(
@@ -740,12 +730,17 @@ pub fn materialize_host_route_client(output_root: &Path) -> Result<()> {
 
 /// One set's client. The two sets share operation ids, such as `user.list`,
 /// so each set has its own contracts, output and package.
-fn materialize_host_route_set(
-    contract_root: &Path,
-    output: &Path,
-    set: wamn_catalog::HostRouteSet,
-) -> Result<()> {
-    let contracts = read_contract_files(&contract_root.join("contracts"))?;
+fn materialize_host_route_set(output: &Path, set: wamn_catalog::HostRouteSet) -> Result<()> {
+    let contracts = set
+        .contract_files()
+        .context("resolve the host route contracts")?;
+    write_build_output(
+        &output.join("contracts"),
+        &contracts
+            .iter()
+            .map(|(key, bytes)| (PathBuf::from(key), bytes.as_slice()))
+            .collect(),
+    )?;
     let routes = set
         .attachments()
         .map(|(_, attachment)| {
@@ -920,21 +915,6 @@ fn write_build_output(directory: &Path, expected: &BTreeMap<PathBuf, &[u8]>) -> 
             .with_context(|| format!("write build output {}", path.display()))?;
     }
     Ok(())
-}
-
-/// Every file under `root`, keyed by its path relative to `root`.
-fn read_contract_files(root: &Path) -> Result<BTreeMap<String, Vec<u8>>> {
-    let mut files = BTreeMap::new();
-    for relative in existing_files(root)? {
-        let key = relative
-            .to_str()
-            .with_context(|| format!("contract path is not UTF-8: {}", relative.display()))?
-            .to_owned();
-        let bytes = fs::read(root.join(&relative))
-            .with_context(|| format!("read contract {}", root.join(&relative).display()))?;
-        files.insert(key, bytes);
-    }
-    Ok(files)
 }
 
 /// Replace generated output, retaining SQLx metadata prepared after generation.

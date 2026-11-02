@@ -1,0 +1,42 @@
+{
+  "file.delete-put.result": [
+    "file/delete.result.json",
+    "file/put.result.json"
+  ],
+  "file.errors": [
+    "file/delete.errors.json",
+    "file/expose.errors.json",
+    "file/get.errors.json",
+    "file/put.errors.json"
+  ],
+  "file.expose-get.result": [
+    "file/expose.result.json",
+    "file/get.result.json"
+  ],
+  "list.errors": [
+    "permission/mine.errors.json",
+    "role/list.errors.json",
+    "user/list.errors.json"
+  ],
+  "list.input": [
+    "permission/mine.input.json",
+    "role/list.input.json",
+    "user/list.input.json"
+  ],
+  "permission.grant-revoke.input": [
+    "permission/grant.input.json",
+    "permission/revoke.input.json"
+  ],
+  "role.create-delete.errors": [
+    "role/create.errors.json",
+    "role/delete.errors.json"
+  ],
+  "role.create-delete.input": [
+    "role/create.input.json",
+    "role/delete.input.json"
+  ],
+  "user_role.grant-revoke.input": [
+    "user_role/grant.input.json",
+    "user_role/revoke.input.json"
+  ]
+}

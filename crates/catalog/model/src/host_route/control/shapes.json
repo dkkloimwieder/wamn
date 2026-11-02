@@ -1,0 +1,132 @@
+{
+  "admin.revoke.errors": [
+    "member/revoke.errors.json",
+    "project_admin/revoke.errors.json"
+  ],
+  "catalog-list.input": [
+    "external_system/list.input.json",
+    "integration/list.input.json",
+    "integration_type/list.input.json"
+  ],
+  "connection-integration.errors": [
+    "connection/authorize.errors.json",
+    "connection/copy.errors.json",
+    "connection/delete.errors.json",
+    "connection/disable.errors.json",
+    "connection/enable.errors.json",
+    "connection/get.errors.json",
+    "connection/list.errors.json",
+    "connection/set_credential.errors.json",
+    "external_system/delete.errors.json",
+    "external_system/list.errors.json",
+    "external_system/write.errors.json",
+    "integration/delete.errors.json",
+    "integration/disable.errors.json",
+    "integration/enable.errors.json",
+    "integration/get.errors.json",
+    "integration/list.errors.json",
+    "integration/write.errors.json",
+    "integration_type/list.errors.json"
+  ],
+  "connection.authorize-get.input": [
+    "connection/authorize.input.json",
+    "connection/get.input.json"
+  ],
+  "connection.state.input": [
+    "connection/delete.input.json",
+    "connection/disable.input.json",
+    "connection/enable.input.json"
+  ],
+  "connection.state.result": [
+    "connection/delete.result.json",
+    "connection/disable.result.json",
+    "connection/enable.result.json"
+  ],
+  "connection.write.result": [
+    "connection/copy.result.json",
+    "connection/set_credential.result.json",
+    "connection/write.result.json"
+  ],
+  "environment.state.errors": [
+    "environment/activate.errors.json",
+    "environment/inactivate.errors.json"
+  ],
+  "environment.state.input": [
+    "environment/activate.input.json",
+    "environment/inactivate.input.json"
+  ],
+  "environment.state.result": [
+    "environment/activate.result.json",
+    "environment/inactivate.result.json"
+  ],
+  "integration-name.input": [
+    "external_system/delete.input.json",
+    "external_system/write.input.json",
+    "integration/delete.input.json",
+    "integration/disable.input.json",
+    "integration/enable.input.json"
+  ],
+  "integration-name.result": [
+    "external_system/delete.result.json",
+    "external_system/write.result.json",
+    "integration/delete.result.json",
+    "integration/disable.result.json",
+    "integration/enable.result.json",
+    "integration/write.result.json"
+  ],
+  "list.errors": [
+    "control/mine.errors.json",
+    "environment/list.errors.json",
+    "member/list.errors.json",
+    "project/list.errors.json",
+    "user/list.errors.json"
+  ],
+  "list.input": [
+    "control/mine.input.json",
+    "project/list.input.json",
+    "user/list.input.json"
+  ],
+  "member.grant-revoke.input": [
+    "member/grant.input.json",
+    "member/revoke.input.json"
+  ],
+  "member.grant-revoke.result": [
+    "member/grant.result.json",
+    "member/revoke.result.json"
+  ],
+  "org_admin.grant-revoke.result": [
+    "org_admin/grant.result.json",
+    "org_admin/revoke.result.json"
+  ],
+  "principal.input": [
+    "org_admin/grant.input.json",
+    "org_admin/revoke.input.json",
+    "user/activate.input.json",
+    "user/deactivate.input.json"
+  ],
+  "project.input": [
+    "project/activate.input.json",
+    "project/create.input.json",
+    "project/inactivate.input.json"
+  ],
+  "project.state.errors": [
+    "project/activate.errors.json",
+    "project/inactivate.errors.json"
+  ],
+  "project.state.result": [
+    "project/activate.result.json",
+    "project/inactivate.result.json"
+  ],
+  "project_admin.grant-revoke.input": [
+    "project_admin/grant.input.json",
+    "project_admin/revoke.input.json"
+  ],
+  "project_admin.grant-revoke.result": [
+    "project_admin/grant.result.json",
+    "project_admin/revoke.result.json"
+  ],
+  "user.state.result": [
+    "user/activate.result.json",
+    "user/deactivate.result.json"
+  ]
+}

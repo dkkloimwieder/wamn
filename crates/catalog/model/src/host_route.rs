@@ -11,6 +11,8 @@
 //! Each route derives its operation token, path and attachment id from that
 //! file exactly as a generated package operation does.
 
+mod contract_files;
+
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
@@ -21,6 +23,8 @@ use crate::route_identity::{
     operation_token, route_attachment_id, route_path, sealed_operation_reference,
 };
 use crate::{AttachmentType, OperationType, PAT_AUTHENTICATION_MODE, SESSION_AUTHENTICATION_MODE};
+
+pub use contract_files::HostRouteContractError;
 
 /// The control contract's manifest: the one place its version is authored.
 #[derive(Deserialize)]

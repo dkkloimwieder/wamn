@@ -61,9 +61,9 @@ pub use environment_application::{
     ApplicationDefinition, EnvironmentApplications, application_for_package,
 };
 pub use host_route::{
-    HostAttachment, HostHandler, HostRoute, HostRouteAuthority, HostRouteSet, host_route_package,
-    host_route_path_prefix, host_route_version, is_granted_host_route_operation,
-    is_host_route_operation,
+    HostAttachment, HostHandler, HostRoute, HostRouteAuthority, HostRouteContractError,
+    HostRouteSet, host_route_package, host_route_path_prefix, host_route_version,
+    is_granted_host_route_operation, is_host_route_operation,
 };
 pub use manifest_error::{ManifestError, ManifestErrorType};
 pub use package::PackageCoordinate;
