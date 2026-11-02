@@ -20,4 +20,3 @@ The integration's event registration reads this package's item inserts.
 Change data capture (CDC) includes this schema alone.
 
 Build with `target/debug/wamn build apps/rest_consumer_fixture` after you set the [build database URL](../../docs/operations/building.md#wamn-build).
-Run its publication test with `cargo test -p wamn-control --test rest_consumer_fixture_publication`.

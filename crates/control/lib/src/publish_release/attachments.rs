@@ -138,21 +138,21 @@ fn read_authored_attachments(
     paths: &[PathBuf],
     owners: &BTreeMap<String, wamn_catalog::manifest::OperationOwners>,
 ) -> Result<BTreeMap<String, ServingAttachment>, PublishManifestError> {
-    if paths.is_empty() {
-        return Err(PublishManifestError::new(
-            PublishManifestErrorType::Document,
-            "publish-release requires at least one package-owned --attachments document",
-        ));
-    }
     let mut documents = Vec::new();
     for path in paths {
-        let bytes = std::fs::read(path).map_err(|error| {
-            PublishManifestError::with_source(
-                PublishManifestErrorType::Document,
-                format!("read package attachments {}", path.display()),
-                error,
-            )
-        })?;
+        // A missing authored document means the package authors no
+        // attachments. Its generated entries are still read below.
+        let mut document: BTreeMap<String, serde_json::Value> =
+            wamn_schema_generator::operation_reference::read_attachments_document(path)
+                .map_err(|error| {
+                    PublishManifestError::with_source(
+                        PublishManifestErrorType::Document,
+                        format!("read package attachments {}", path.display()),
+                        error,
+                    )
+                })?
+                .into_iter()
+                .collect();
         let parse = |error| {
             PublishManifestError::with_source(
                 PublishManifestErrorType::Document,
@@ -160,8 +160,6 @@ fn read_authored_attachments(
                 error,
             )
         };
-        let mut document: BTreeMap<String, serde_json::Value> =
-            serde_json::from_slice(&bytes).map_err(parse)?;
         // An authored entry names its operation by reference. The version
         // comes from the wamn.json the release presents for its package.
         for (attachment_id, entry) in &mut document {
@@ -477,6 +475,32 @@ mod tests {
     /// The rendered fixture declaration with its generated route entries.
     const FIXTURE_DECLARATION_DIGEST: &str =
         "sha256:350629cd2eaaac8a009f2fde7dbf062c1be7bad93a15dfbbf4e89ea77fe639ef";
+
+    /// The overlay authors no attachments file, and a publish still reads
+    /// every route entry that generation wrote beside the missing file.
+    #[test]
+    fn a_package_without_authored_attachments_publishes_its_generated_ones() {
+        let root = wamn_fixture_package::overlay_root();
+        let authored = root.join("publication/attachments.json");
+        assert!(!authored.exists(), "the overlay authors no attachments");
+        let attachments = read_package_attachments(
+            &[authored],
+            &[wamn_fixture_package::overlay_manifest_path()],
+        )
+        .expect("read the overlay attachments");
+        let generated: BTreeMap<String, serde_json::Value> = serde_json::from_slice(
+            &std::fs::read(
+                wamn_schema_generator::output_root(&root).join("publication/attachments.json"),
+            )
+            .expect("read the generated overlay attachments"),
+        )
+        .expect("parse the generated overlay attachments");
+        assert!(!generated.is_empty());
+        assert_eq!(
+            attachments.keys().collect::<Vec<_>>(),
+            generated.keys().collect::<Vec<_>>()
+        );
+    }
 
     /// A publish of the fixture reads the same routes and the same component
     /// declaration from the generated entries as from the authored ones they

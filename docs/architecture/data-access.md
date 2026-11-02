@@ -187,6 +187,7 @@ The authored world includes the generated one, and the reverse is not possible.
 
 The authored `publication/attachments.json` and component declaration carry only the custom operations.
 Publication, the declaration render, the client generator, and `materialize_package` read the authored file and the generated file together.
+A package with no authored `publication/attachments.json` authors no attachments, and its generated file is still read.
 An attachment id or an operation in both files refuses.
 A copy of an authored document outside its package reads the generated file beside it only when the copy keeps the package layout.
 

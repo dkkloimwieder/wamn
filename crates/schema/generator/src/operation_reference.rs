@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use wamn_catalog::manifest::{OperationOwners, resolve_operation_reference};
 use wamn_catalog::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
@@ -81,28 +81,68 @@ pub enum AuthoredDocument {
     Wiring,
 }
 
+/// Read an authored `publication/attachments.json` as its map of attachment id
+/// to entry, with references unresolved. A missing file means that the package
+/// authors no attachments, so it reads as an empty map. Every reader of the
+/// file reads it here.
+///
+/// # Errors
+///
+/// [`GenerateError`] when the file exists and is unreadable, is not JSON, or
+/// is not a JSON object.
+pub fn read_attachments_document(path: &Path) -> Result<Map<String, Value>, GenerateError> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Map::new()),
+        Err(error) => {
+            return Err(GenerateError::with_source(
+                GenerateErrorType::InvalidManifest,
+                format!("read {}", path.display()),
+                error,
+            ));
+        }
+    };
+    serde_json::from_slice(&bytes).map_err(|error| {
+        GenerateError::with_source(
+            GenerateErrorType::InvalidManifest,
+            format!("parse {}", path.display()),
+            error,
+        )
+    })
+}
+
 /// Read one authored publication file, with its references resolved against
-/// the current authored manifest of the package that holds it.
+/// the current authored manifest of the package that holds it. A missing
+/// attachments file reads as an empty map ([`read_attachments_document`]).
 ///
 /// # Errors
 ///
 /// [`GenerateError`] when the file is unreadable or not JSON, when it is
 /// outside a package, or when a reference refuses.
 pub fn read_authored_document(path: &Path, kind: AuthoredDocument) -> Result<Value, GenerateError> {
-    let bytes = std::fs::read(path).map_err(|error| {
-        GenerateError::with_source(
-            GenerateErrorType::InvalidManifest,
-            format!("read {}", path.display()),
-            error,
-        )
-    })?;
-    let mut document: Value = serde_json::from_slice(&bytes).map_err(|error| {
-        GenerateError::with_source(
-            GenerateErrorType::InvalidManifest,
-            format!("parse {}", path.display()),
-            error,
-        )
-    })?;
+    let mut document: Value = if kind == AuthoredDocument::Attachments {
+        let entries = read_attachments_document(path)?;
+        // No entry names a reference, so the package owners are not read.
+        if entries.is_empty() {
+            return Ok(Value::Object(entries));
+        }
+        Value::Object(entries)
+    } else {
+        let bytes = std::fs::read(path).map_err(|error| {
+            GenerateError::with_source(
+                GenerateErrorType::InvalidManifest,
+                format!("read {}", path.display()),
+                error,
+            )
+        })?;
+        serde_json::from_slice(&bytes).map_err(|error| {
+            GenerateError::with_source(
+                GenerateErrorType::InvalidManifest,
+                format!("parse {}", path.display()),
+                error,
+            )
+        })?
+    };
     let (_, owners) = package_owners_of(path)?;
     resolve_authored_document(&mut document, kind, &owners).map_err(|error| {
         GenerateError::new(
@@ -330,5 +370,40 @@ mod tests {
         let mut declaration = json!({"scope": {"package-id": "acme", "package-version": "3.0.0"}});
         let error = resolve_declaration_document(&mut declaration, &owners()).unwrap_err();
         assert!(error.context().contains("scope.package-version"), "{error}");
+    }
+
+    /// A missing attachments file reads as the empty map an empty file reads
+    /// as, and malformed JSON or a document that is not an object refuses.
+    #[test]
+    fn a_missing_attachments_file_reads_as_no_attachments() {
+        let root =
+            std::env::temp_dir().join(format!("wamn-attachments-document-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("attachments.json");
+
+        let missing = read_attachments_document(&path).unwrap();
+        assert!(missing.is_empty());
+        assert_eq!(
+            read_authored_document(&path, AuthoredDocument::Attachments).unwrap(),
+            json!({})
+        );
+
+        std::fs::write(&path, "{}\n").unwrap();
+        assert_eq!(read_attachments_document(&path).unwrap(), missing);
+        assert_eq!(
+            read_authored_document(&path, AuthoredDocument::Attachments).unwrap(),
+            json!({})
+        );
+
+        for malformed in ["{", "[]"] {
+            std::fs::write(&path, malformed).unwrap();
+            let error = read_attachments_document(&path).unwrap_err();
+            assert!(
+                error.context().starts_with("parse "),
+                "{malformed}: {error}"
+            );
+            read_authored_document(&path, AuthoredDocument::Attachments).unwrap_err();
+        }
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

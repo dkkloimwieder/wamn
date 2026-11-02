@@ -806,8 +806,10 @@ fn default_field_labels(fields: &mut [FieldIr]) {
 
 /// Read one release's published routes, or none when it publishes nothing.
 ///
-/// A package with no `publication/attachments.json` publishes no HTTP route at
-/// all, which is a real state and not a missing input: the emitted client then
+/// A package with no `publication/attachments.json` authors no attachment
+/// ([`crate::operation_reference::read_attachments_document`]). When
+/// generation wrote none either, it publishes no HTTP route at all, which is
+/// a real state and not a missing input: the emitted client then
 /// carries every operation's types and descriptors and no invoke function,
 /// which is what [`ClientContractIr::from_contract_directory`] already means.
 ///
@@ -824,15 +826,7 @@ pub fn published_routes(
     generated: &mut GeneratedRead<'_>,
     read: &mut SchemaRead<'_>,
 ) -> Result<BTreeMap<String, RouteIr>, ClientIrError> {
-    if attachments.exists()
-        || generated(crate::route_schema::GENERATED_ATTACHMENTS)
-            .map_err(|error| unreadable_projection(attachments, &error))?
-            .is_some()
-    {
-        route_index(attachments, generated, read)
-    } else {
-        Ok(BTreeMap::new())
-    }
+    route_index(attachments, generated, read)
 }
 
 /// Reads one generated publication file of a package, or `None` when
@@ -884,9 +878,9 @@ fn route_index(
     generated: &mut GeneratedRead<'_>,
     read: &mut SchemaRead<'_>,
 ) -> Result<BTreeMap<String, RouteIr>, ClientIrError> {
-    let mut published: BTreeMap<String, wamn_catalog::ServingAttachment> = if attachments.exists() {
-        serde_json::from_value(read_authored(attachments, AuthoredDocument::Attachments)?).map_err(
-            |error| {
+    let mut published: BTreeMap<String, wamn_catalog::ServingAttachment> =
+        serde_json::from_value(read_authored(attachments, AuthoredDocument::Attachments)?)
+            .map_err(|error| {
                 ClientIrError::new(
                     ClientIrErrorType::MalformedContract,
                     format!(
@@ -894,11 +888,7 @@ fn route_index(
                         attachments.display()
                     ),
                 )
-            },
-        )?
-    } else {
-        BTreeMap::new()
-    };
+            })?;
     let unreadable = |error| unreadable_projection(attachments, &error);
     crate::route_schema::merge_attachments(
         &mut published,

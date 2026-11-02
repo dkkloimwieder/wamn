@@ -1663,12 +1663,12 @@ fn descriptor_components(
 }
 
 /// The attachment documents and the `wamn.json` of the packages at `roots`. A
-/// package with no `publication/attachments.json` has no attachment document.
+/// package with no `publication/attachments.json` authors no attachments, and
+/// its generated attachments are read beside the missing document.
 fn package_files(roots: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>) {
     let attachments = roots
         .iter()
         .map(|root| root.join("publication/attachments.json"))
-        .filter(|path| path.is_file())
         .collect();
     let manifests = roots
         .iter()
