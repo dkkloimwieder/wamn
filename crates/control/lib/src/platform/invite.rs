@@ -33,7 +33,7 @@ const INVITE: &str = r#"invite_owner() {
   export WAMN_PAT_CLIENT_CERT="$scratch/tls.crt" WAMN_PAT_CLIENT_KEY="$scratch/tls.key" WAMN_PAT_SERVER_CA="$scratch/ca.crt"
   /usr/local/bin/wamn-ctl invite --org "$ORG" --email "$OWNER_EMAIL" --display-name "$OWNER_EMAIL" --org-admin
 }
-invite_owner >/dev/null 2>/dev/null || { echo 'invite owner failed' >&2; exit 1; }
+invite_owner >/dev/null || { echo 'invite owner failed' >&2; exit 1; }
 echo 'owner invitation accepted'
 "#;
 
