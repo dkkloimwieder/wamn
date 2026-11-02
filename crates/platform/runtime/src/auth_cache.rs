@@ -429,8 +429,8 @@ pub(crate) mod tests {
     #[tokio::test]
     #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
     async fn the_bucket_shares_kept_facts_and_every_drop_reaches_every_host() {
-        wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
         use wamn_platform_identity::auth_changes::AuthDrops;
+        wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
 
         let (_server, client) = nats().await;
         let a = Arc::new(AuthCache::default());
