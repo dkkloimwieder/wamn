@@ -17,14 +17,12 @@ pub mod local_application;
 pub mod measure;
 mod measurement_schema;
 pub mod membership_test;
-pub mod operator_recovery;
 pub mod rc;
 pub mod readerbench;
 #[cfg(test)]
 mod route_authentication_live;
 #[cfg(test)]
 mod route_interface_live;
-pub mod startup_burst;
 pub mod streambench;
 pub mod throughput_bench;
 pub mod trusted_http_route;
