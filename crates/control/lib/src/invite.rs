@@ -1,7 +1,9 @@
 //! Provision the first admin of an org through SQL
 //! (docs/architecture/overview.md#organization-membership-and-administration).
 //!
-//! An active org admin refuses this path and directs callers to user.invite.
+//! An active org admin with another email refuses this path and directs callers
+//! to user.invite. provision-org makes the owner the org admin without a
+//! password, so the owner's own invitation still passes.
 //! Identity creates or reuses the user by email. One system database
 //! transaction, as `wamn_system` bound to `wamn:provisioning`, then writes the
 //! org membership and the requested grants through the one write of each
@@ -83,8 +85,8 @@ pub async fn invite(
                  JOIN identity.org_memberships m USING (principal_id, org) \
                  JOIN identity.principals p ON p.id = r.principal_id \
                  WHERE r.org = $1 AND r.role = 'org-admin' AND m.status = 'active' \
-                 AND p.status = 'active')",
-                &[&request.org],
+                 AND p.status = 'active' AND p.email <> lower(btrim($2)))",
+                &[&request.org, &request.email],
             )
             .await
             .context("read the active org admin")?

@@ -70,6 +70,20 @@ async fn invite_refuses_an_org_with_an_active_admin_before_contacting_identity()
         .unwrap();
     assert_eq!(row.get::<_, i64>(0), 1);
 
+    // provision-org makes the owner the admin without a password, so the
+    // owner's own invitation passes the guard and reaches identity.
+    let owner = InviteRequest {
+        email: " Admin@Example.test".into(),
+        ..request
+    };
+    let error = invite(&owner, &AuthChanges::default()).await.unwrap_err();
+    assert!(
+        !error
+            .to_string()
+            .contains("already has an active org admin"),
+        "{error:#}"
+    );
+
     drop(client);
     connection.await.unwrap().unwrap();
 }
