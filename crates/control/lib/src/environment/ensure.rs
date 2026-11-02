@@ -123,51 +123,8 @@ pub async fn ensure(
     }
 
     // The run plane: the run schema the credentials are granted on.
-    let project_url = project_url(platform, &triple).await?;
-    crate::schema_baseline::compare_project_if_installed(&project_url).await?;
-    let mut project_admin = url::Url::parse(admin_url)?;
-    project_admin.set_path(url::Url::parse(&project_url)?.path());
-    let project_admin = project_admin.to_string();
-    connect(&project_admin)
-        .await?
-        .batch_execute(&wamn_control_provision::sql::install_platform_extensions_sql())
-        .await?;
-    admin
-        .batch_execute(&wamn_control_provision::sql::ensure_platform_group_role_sql())
-        .await?;
-    admin.batch_execute(&format!(
-        "GRANT CONNECT ON DATABASE {} TO wamn_apply; GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE;",
-        wamn_pg_core::quote_ident(url::Url::parse(&project_url)?.path().trim_start_matches('/')),
-    )).await?;
-    for package in &analysis.packages {
-        admin
-            .batch_execute(&wamn_control_provision::sql::ensure_package_owner_role_sql(
-                &package.package.id,
-            ))
-            .await?;
-        admin
-            .batch_execute(&format!(
-                "GRANT {} TO wamn_db_owner WITH ADMIN FALSE, INHERIT TRUE, SET TRUE",
-                wamn_pg_core::quote_ident(&wamn_control_provision::package_owner_role(
-                    &package.package.id
-                ))
-            ))
-            .await?;
-    }
-    crate::reconcile_run_plane::reconcile_run_plane(
-        crate::reconcile_run_plane::ReconcileRunPlaneRequest {
-            system_database_url: platform.system_database_url.clone(),
-            admin_database_url: project_admin.clone(),
-            org: document.org.clone(),
-            project: document.project.clone(),
-            env: document.env.clone(),
-            schema: RUN_SCHEMA.to_owned(),
-            dry_run: false,
-            changes: platform.auth_changes().await?,
-        },
-    )
-    .await
-    .context("reconcile the run plane")?;
+    let project_admin =
+        ensure_project_database(platform, document, &analysis.packages, &admin, admin_url).await?;
 
     // Generation a of each credential, only where its Secret is absent.
     for credential in HOST_CREDENTIALS {
@@ -242,6 +199,73 @@ pub async fn ensure(
     )
     .await?;
     Ok(())
+}
+
+/// Ensure the project database grants and run plane after its database exists.
+///
+/// The system URL uses `wamn_apply`. The administrator installs extensions,
+/// grants owner memberships, and reconciles with statements as the database owner.
+/// Returns the project administrator URL for credential preparation.
+///
+/// # Errors
+///
+/// Returns an error if a schema baseline differs or a database operation fails.
+pub async fn ensure_project_database(
+    platform: &Platform,
+    document: &EnvironmentDocument,
+    packages: &[wamn_schema_generator::PackageManifest],
+    admin: &tokio_postgres::Client,
+    admin_url: &str,
+) -> anyhow::Result<String> {
+    // apply_locked keeps its pre-analysis guard. This public entry also checks
+    // the system baseline for callers that run the database phase directly.
+    crate::schema_baseline::compare_system(&platform.system_database_url).await?;
+    let project_url = project_url(platform, &document.triple()).await?;
+    crate::schema_baseline::compare_project_if_installed(&project_url).await?;
+    let mut project_admin = url::Url::parse(admin_url)?;
+    project_admin.set_path(url::Url::parse(&project_url)?.path());
+    let project_admin = project_admin.to_string();
+    connect(&project_admin)
+        .await?
+        .batch_execute(&wamn_control_provision::sql::install_platform_extensions_sql())
+        .await?;
+    admin
+        .batch_execute(&wamn_control_provision::sql::ensure_platform_group_role_sql())
+        .await?;
+    admin.batch_execute(&format!(
+        "GRANT CONNECT ON DATABASE {} TO wamn_apply; GRANT wamn_platform TO wamn_db_owner WITH INHERIT TRUE, SET FALSE;",
+        wamn_pg_core::quote_ident(url::Url::parse(&project_url)?.path().trim_start_matches('/')),
+    )).await?;
+    for package in packages {
+        admin
+            .batch_execute(&wamn_control_provision::sql::ensure_package_owner_role_sql(
+                &package.package.id,
+            ))
+            .await?;
+        admin
+            .batch_execute(&format!(
+                "GRANT {} TO wamn_db_owner WITH ADMIN FALSE, INHERIT TRUE, SET TRUE",
+                wamn_pg_core::quote_ident(&wamn_control_provision::package_owner_role(
+                    &package.package.id
+                ))
+            ))
+            .await?;
+    }
+    crate::reconcile_run_plane::reconcile_run_plane(
+        crate::reconcile_run_plane::ReconcileRunPlaneRequest {
+            system_database_url: platform.system_database_url.clone(),
+            admin_database_url: project_admin.clone(),
+            org: document.org.clone(),
+            project: document.project.clone(),
+            env: document.env.clone(),
+            schema: RUN_SCHEMA.to_owned(),
+            dry_run: false,
+            changes: platform.auth_changes().await?,
+        },
+    )
+    .await
+    .context("reconcile the run plane")?;
+    Ok(project_admin)
 }
 
 /// Prepare the Secret and database selection of one environment credential.
