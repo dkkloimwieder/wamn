@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use wamn_control::platform::job::{JobRequest, JobSecret, install_job_requests};
 
-fn missing(_verb: &str, request: &JobRequest, secrets: &[JobSecret]) -> Vec<&'static str> {
+fn missing(request: &JobRequest, secrets: &[JobSecret]) -> Vec<&'static str> {
     let contract = wamn_control::platform::job_contract::request(request).unwrap();
     let mut available: BTreeSet<&str> = request
         .environment
@@ -55,7 +55,7 @@ fn requests() -> Vec<(&'static str, JobRequest, Vec<JobSecret>)> {
 fn install_jobs_supply_required_environment() {
     for (verb, request, secrets) in requests() {
         assert_eq!(
-            missing(verb, &request, &secrets),
+            missing(&request, &secrets),
             Vec::<&str>::new(),
             "{}",
             request.name
@@ -108,12 +108,12 @@ fn contract_refuses_package_0_1_115_and_original_invite_without_auth_nats() {
         if !matches!(verb, "apply-package" | "invite") {
             continue;
         }
-        assert!(missing(verb, &request, &secrets).is_empty());
+        assert!(missing(&request, &secrets).is_empty());
         request
             .environment
             .retain(|name, _| !name.starts_with("WAMN_NATS_"));
         assert_eq!(
-            missing(verb, &request, &secrets),
+            missing(&request, &secrets),
             [
                 "WAMN_NATS_URL",
                 "WAMN_NATS_TLS_CA",

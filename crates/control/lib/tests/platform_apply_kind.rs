@@ -971,13 +971,14 @@ cluster.Cluster {{
     failures.record("4.19.1 control release row", result);
     let invite_log_path = work.join("jobs/platform-invite-test.log");
     let invite_log = std::fs::read_to_string(&invite_log_path)?;
+    let mail = owner_mail(&kubeconfig, &context).await?;
     failures.record(
         "4.19.1",
         async {
             ensure!(
                 invite_log == format!(
                     "invited principal_id={} org={}: 201 {{\"status\":\"accepted_for_delivery\"}}\nowner invitation accepted",
-                    serde_json::from_str::<Value>(&owner_mail(&kubeconfig, &context).await?)
+                    serde_json::from_str::<Value>(&mail)
                         .map_err(|_| anyhow::anyhow!("invalid local invitation mail"))?["text"]
                         .as_str()
                         .context("invitation has no text")?
@@ -994,7 +995,6 @@ cluster.Cluster {{
         .await,
     );
     let invite_modified = std::fs::metadata(&invite_log_path)?.modified()?;
-    let mail = owner_mail(&kubeconfig, &context).await?;
     failures.record(
         "4.19.1",
         async {

@@ -715,7 +715,6 @@ pub async fn run(
                 .context("Job support namespace")?;
             kubectl::apply(&target.kubeconfig, &target.context, namespace, &object).await?;
         }
-        let resumed = resume_object(request, &target.namespace, secrets)?;
         kubectl::kubectl(
             &target.kubeconfig,
             &target.context,
@@ -726,7 +725,7 @@ pub async fn run(
                 &request.name,
                 "--type=merge",
                 "--patch",
-                &serde_json::to_string(&resumed)?,
+                r#"{"spec":{"suspend":false}}"#,
             ],
             None,
         )
