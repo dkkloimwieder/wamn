@@ -70,3 +70,25 @@ The logs are in `/var/tmp/wamn-test-revision.y0kwRD8N`, with `epic-run.log`, `bu
 - `wamn-kov6v.6`: the six deferred ignores above.
 - A clippy run over the whole apps workspace stops at `connection-http-standard` with a duplicate `panic_impl` lang item. This epic did not change that crate.
 - `wamn-bcplj` goes to `integration-schema-e1` after this epic lands.
+
+## Follow-up: selection and the deferred ignores
+
+Epic `wamn-91uih` (owner brief 2026-11-02) closes two items from this report. The branch is `worktree-select`, on main `489244477`.
+
+| Issue | Commit | Result |
+| --- | --- | --- |
+| `wamn-hpr8h` Selection gap | `0c9b7b93a` | The mapping did not miss. The new case `a_grant_sql_change_selects_the_family_denial_matrix` keeps the selection true. |
+| `wamn-kov6v.6` Deferred ignores | `c8ab95d24` | The broker.rs and edge.rs ignores use the fixed form. `tests/selection.toml` has no exclusion left. |
+
+### Cause of the selection gap
+
+`wamn-ms1sn.2` (`f4cbec305`) landed while `test:family_denial_matrix` failed. Root ran the selection runner of that commit over that commit. A change under `deploy/sql/` selected a full root workspace run, and the failing case was a plain `#[test]` in that run. On main, `--tier live-postgres` selects `-p wamn-control-provision --test family_denial_matrix` for the same change.
+
+The close run of `wamn-ms1sn.2` used a hand-picked target list ("provision live", "ten packages") and not `tools/test-changes`. Its logs are gone. The new conformance case reads the real targets row, so it fails if the row disappears or changes tier.
+
+### Test results
+
+- `test_changes` passed 32 of 32, and `test_tiers` passed 5 of 5 with zero exclusions.
+- The three broker.rs and edge.rs cases passed with `--ignored`, with `WAMN_NATIVE_C_NATS_BIN` and `helm` set.
+
+The logs are in `/var/tmp/wamn-docs`: `select-conformance.log` and `kov6v6-test.log`. The runs built no image and did not use kind.
