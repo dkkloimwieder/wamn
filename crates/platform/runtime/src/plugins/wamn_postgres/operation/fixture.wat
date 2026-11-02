@@ -168,6 +168,30 @@
       local.get $slashes i32.const 1 i32.ne if unreachable end)
     (func (export "callback") (param i32 i32 i32) (result i32) unreachable)
     (func (export "run") (param $caller i32) (param $mode i32) (result i32)
+      local.get $mode i32.const 23 i32.eq
+      local.get $mode i32.const 24 i32.eq i32.or if
+        local.get $caller call $begin-call i32.const 8 call $refused
+        i32.const 80 i32.load8_u
+        local.get $mode i32.const 23 i32.eq
+        if (result i32) i32.const 1 else i32.const 8 end
+        i32.ne if unreachable end
+        i32.const 1 call $return i32.const 0 return
+      end
+      local.get $mode i32.const 25 i32.eq if
+        i32.const 0 i32.const 0 i32.const 640 i32.const 21 i32.const 64 call $authorize
+        i32.const 64 i32.load8_u if unreachable end
+        ;; A bound read operation cannot run the update statement.
+        i32.const 576 i32.const 10 i32.const 0 i32.const 0
+        i32.const 0 i32.const 0 i32.const 192 call $read
+        i32.const 192 i32.load8_u i32.const 1 i32.ne if unreachable end
+        i32.const 200 i32.load8_u if unreachable end
+        i32.const 212 i32.load i32.const 10 i32.ne if unreachable end
+        i32.const 208 i32.load i64.load i64.const 0x732e657461647075 i64.ne if unreachable end
+        i32.const 208 i32.load i32.load16_u offset=8 i32.const 0x6c71 i32.ne if unreachable end
+        i32.const 64 call $finish-read
+        i32.const 64 i32.load8_u if unreachable end
+        i32.const 1 call $return i32.const 0 return
+      end
       local.get $mode i32.const 21 i32.eq if
         local.get $caller call $begin-call i32.const 3 call $refused
         call $commit-call i32.const 6 call $refused

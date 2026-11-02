@@ -401,8 +401,7 @@ async fn resolved_refusal_carries_its_basis_across_wit() {
     run_guest(postgres, Arc::new(LoadedRelease::control_root()), 22).await;
 }
 
-#[tokio::test]
-async fn anonymous_read_authorization_needs_no_database_credentials() {
+fn offline_fixture() -> (Arc<WamnPostgres>, Arc<LoadedRelease>) {
     let release = release();
     let postgres = Arc::new(
         WamnPostgres::new(WamnPostgresConfig {
@@ -428,6 +427,56 @@ async fn anonymous_read_authorization_needs_no_database_credentials() {
             },
         )
         .unwrap();
+    (postgres, release)
+}
+
+#[tokio::test]
+async fn unavailable_principal_database_returns_connection_unavailable() {
+    let (postgres, release) = offline_fixture();
+    let error = postgres
+        .bind_session_claims(
+            "unavailable-principal",
+            &SessionClaims {
+                env_key: ENV_KEY.into(),
+                user_id: Some(LIVE_PRINCIPAL.into()),
+                ..SessionClaims::default()
+            },
+        )
+        .await
+        .unwrap_err();
+    let error = error.downcast_ref::<super::ClaimError>().unwrap();
+    assert!(matches!(error.kind, super::ClaimErrorKind::Infrastructure));
+    assert!(matches!(
+        error.source.downcast_ref::<super::super::PgError>(),
+        Some(super::super::PgError::ConnectionUnavailable),
+    ));
+    run_guest(postgres, release, 23).await;
+
+    let _lock = wamn_test_postgres::lock();
+    let (database, postgres, release) = fixture().await;
+    database.execute(&["DROP TABLE platform.\"user\""]).unwrap();
+    run_guest(postgres, release, 23).await;
+}
+
+#[tokio::test]
+async fn missing_principal_returns_permission_denied() {
+    let _lock = wamn_test_postgres::lock();
+    let (database, postgres, release) = fixture().await;
+    database
+        .execute(&["DELETE FROM platform.\"user\""])
+        .unwrap();
+    run_guest(postgres, release, 24).await;
+}
+
+#[tokio::test]
+async fn refused_statement_authority_returns_unknown_statement() {
+    let (postgres, release) = offline_fixture();
+    run_guest(postgres, release, 25).await;
+}
+
+#[tokio::test]
+async fn anonymous_read_authorization_needs_no_database_credentials() {
+    let (postgres, release) = offline_fixture();
     run_guest(Arc::clone(&postgres), release, 19).await;
     assert!(postgres.operation_transactions.lock().unwrap().is_empty());
 }

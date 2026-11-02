@@ -13,6 +13,7 @@ use wamn_engine::router_delivery::DeliveryClass;
 use wash_runtime::engine::ctx::ActiveCtx;
 use wash_runtime::wasmtime::component::{Accessor, HasData, Resource, ResourceTable};
 
+use super::claims::{ClaimError, ClaimErrorKind};
 use super::write_log::OpaqueBegun;
 use super::{
     OperationTransaction, PgCommitFailure, PreparedStatementMembers, PreparedStatementSet,
@@ -311,7 +312,7 @@ fn state(table: &mut ResourceTable) -> Option<&mut StoreOperation> {
 struct OperationError {
     kind: OperationErrorKind,
     scope: String,
-    source: anyhow::Error,
+    source: ClaimError,
 }
 
 #[derive(Debug)]
@@ -333,18 +334,30 @@ impl std::fmt::Display for OperationError {
 
 impl std::error::Error for OperationError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.source.as_ref())
+        Some(&self.source)
     }
 }
 
 fn binding_error(kind: OperationErrorKind, scope: &str, source: anyhow::Error) -> Refusal {
+    // Principal reads classify their failures. The other binding steps only
+    // validate claims and install local authority.
+    let source = source
+        .downcast::<ClaimError>()
+        .unwrap_or_else(|source| ClaimError {
+            kind: ClaimErrorKind::Authorization,
+            context: "bind operation authority",
+            source,
+        });
     let error = OperationError {
         kind,
         scope: scope.to_owned(),
         source,
     };
-    tracing::warn!(error = %error, "operation binding refused");
-    Refusal::Postgres(super::PgError::PermissionDenied)
+    tracing::warn!(category = ?error.source.kind, error = %error, "operation binding refused");
+    Refusal::Postgres(match error.source.kind {
+        ClaimErrorKind::Authorization => super::PgError::PermissionDenied,
+        ClaimErrorKind::Infrastructure => super::PgError::ConnectionUnavailable,
+    })
 }
 
 /// The `wamn:operation` host over PostgreSQL. It reaches the Store's state

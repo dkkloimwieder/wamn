@@ -151,6 +151,43 @@ impl std::fmt::Display for SessionGrantRefusal {
 
 impl std::error::Error for SessionGrantRefusal {}
 
+#[derive(Debug)]
+pub(super) struct ClaimError {
+    pub(super) kind: ClaimErrorKind,
+    pub(super) context: &'static str,
+    pub(super) source: anyhow::Error,
+}
+
+#[derive(Debug)]
+pub(super) enum ClaimErrorKind {
+    Authorization,
+    Infrastructure,
+}
+
+impl std::fmt::Display for ClaimError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.context, self.source)
+    }
+}
+
+impl std::error::Error for ClaimError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+
+fn principal_read_error(context: &'static str, source: tokio_postgres::Error) -> ClaimError {
+    ClaimError {
+        kind: if source.code() == Some(&tokio_postgres::error::SqlState::INSUFFICIENT_PRIVILEGE) {
+            ClaimErrorKind::Authorization
+        } else {
+            ClaimErrorKind::Infrastructure
+        },
+        context,
+        source: source.into(),
+    }
+}
+
 /// The grants an active principal holds, from all its roles or only from the
 /// `signed` roles it still holds.
 fn session_grants(
@@ -1797,23 +1834,33 @@ impl WamnPostgres {
         let Err(ticket) = self.auth.provisioned(env_key, principal_id) else {
             return Ok(());
         };
-        let (connection, _policy) = self
-            .checkout_guest(project, env_key)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))
-            .context("check out the env_key connection that reads platform.\"user\"")?;
+        let (connection, _policy) =
+            self.checkout_guest(project, env_key)
+                .await
+                .map_err(|source| ClaimError {
+                    kind: ClaimErrorKind::Infrastructure,
+                    context: "check out the env_key connection that reads platform.\"user\"",
+                    source: source.into(),
+                })?;
         let statement = match connection.prepare_cached(PROVISIONED_PRINCIPAL_SQL).await {
             Ok(statement) => statement,
             Err(error) => {
                 self.destroy(connection);
-                return Err(error).context("prepare the provisioned-principal read");
+                return Err(
+                    principal_read_error("prepare the provisioned-principal read", error).into(),
+                );
             }
         };
         let rows = connection
             .query(&statement, &[&principal_id])
             .instrument(tracing::info_span!("wamn.claims.principal.query"))
             .await
-            .context("read the executing principal's platform.\"user\" row")?;
+            .map_err(|source| {
+                principal_read_error(
+                    "read the executing principal's platform.\"user\" row",
+                    source,
+                )
+            })?;
         if rows.is_empty() {
             tracing::warn!(
                 env_key,
