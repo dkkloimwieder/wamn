@@ -33,7 +33,8 @@ const INVITE: &str = r#"invite_owner() {
   export WAMN_PAT_CLIENT_CERT="$scratch/tls.crt" WAMN_PAT_CLIENT_KEY="$scratch/tls.key" WAMN_PAT_SERVER_CA="$scratch/ca.crt"
   /usr/local/bin/wamn-ctl invite --org "$ORG" --email "$OWNER_EMAIL" --display-name "$OWNER_EMAIL" --org-admin
 }
-invite_owner >/dev/null || { echo 'invite owner failed' >&2; exit 1; }
+errors=$(mktemp)
+invite_owner >/dev/null 2>"$errors" || { cat "$errors" >&2; echo 'invite owner failed' >&2; exit 1; }
 echo 'owner invitation accepted'
 "#;
 
@@ -151,4 +152,73 @@ pub(super) fn request(
     };
     job::auth_nats_inputs(&mut request, auth)?;
     Ok(request)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    use super::INVITE;
+
+    /// Run the Job script with stub kubectl and wamn-ctl that log to stderr.
+    fn run_invite(exit: &str) -> std::process::Output {
+        let directory =
+            std::env::temp_dir().join(format!("wamn-invite-script-{}-{exit}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        for (name, body) in [
+            ("kubectl", "#!/bin/sh\nexit 0\n".to_owned()),
+            (
+                "wamn-ctl",
+                format!(
+                    "#!/bin/sh\necho 'INFO async_nats: connected' >&2\necho invited\nexit {exit}\n"
+                ),
+            ),
+        ] {
+            let path = directory.join(name);
+            std::fs::write(&path, body).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        std::fs::write(directory.join("uri"), "postgresql://host/postgres").unwrap();
+        let script = INVITE
+            .replace(
+                "/usr/local/bin/wamn-ctl",
+                directory.join("wamn-ctl").to_str().unwrap(),
+            )
+            .replace(
+                "/etc/wamn/postgres/uri",
+                directory.join("uri").to_str().unwrap(),
+            );
+        let output = std::process::Command::new("/bin/sh")
+            .args(["-ec", &script])
+            .env("PATH", format!("{}:/usr/bin:/bin", directory.display()))
+            .output()
+            .unwrap();
+        std::fs::remove_dir_all(&directory).unwrap();
+        output
+    }
+
+    // Kind run 7: the verb's stderr made the passing Job log differ from the
+    // line platform_apply_kind reads.
+    #[test]
+    fn a_passing_invite_logs_only_its_result() {
+        let output = run_invite("0");
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "owner invitation accepted\n"
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stderr), "");
+    }
+
+    // Kind run 5: the failed Job log named no cause.
+    #[test]
+    fn a_failed_invite_logs_the_verb_error() {
+        let output = run_invite("1");
+        assert!(!output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            "INFO async_nats: connected\ninvite owner failed\n"
+        );
+    }
 }
