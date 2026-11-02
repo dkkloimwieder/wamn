@@ -1,19 +1,19 @@
 # Dev loop and build identity
 
 This report covers epic `wamn-710me`, which is audit group 2 (see [README](README.md)).
-The branch is `worktree-devloop`, on main `b067a1e9a`.
+The branch is `worktree-devloop`, on main `5129e3434`.
 Part 2 of the cleanup stays unfiled.
 
 ## Issues
 
 | Issue | Audit reference | Commits | Result |
 | --- | --- | --- | --- |
-| `.1` Build record rename | N1 | `fb9d4e096` | The rename is the first commit and it is alone. Serialized names follow it. |
-| `.2` Saved edits reach the loop | F2-1 | `36c7898eb`, `aadbd0590`, `2ee9e5d97`, `aee656ce7` | The local apply takes the edited tree. |
-| `.3` Watch covers the application | F2-2 | `5ea10b760`, `d895619c6`, `64541a252`, `014a5f313` | The watcher uses the build input paths. |
-| `.4` Active application survives a failed candidate | F2-3 | `299847fc1` | A failed candidate leaves the application running. |
-| `.5` Skip unchanged packages per cycle | DX 3.2 | `1890e932d`, `d839ea1a3` | Only changed packages and dependent overlays build. |
-| `.6` Image identity and revision runner | H1-1, D2-8, H1-2, H1-9 | `91bb46168` | `tools/test-revision` replaces the old runner name. |
+| `.1` Build record rename | N1 | `6c1a32f49` | The rename is the first commit and it is alone. Serialized names follow it. |
+| `.2` Saved edits reach the loop | F2-1 | `0a7d8d134`, `dd9677bfc`, `b5af3337d`, `76488d1c7` | The local apply takes the edited tree. |
+| `.3` Watch covers the application | F2-2 | `0f6c71bbd`, `93ae4d0d6`, `ab885e14d`, `eadda33b8` | The watcher uses the build input paths. |
+| `.4` Active application survives a failed candidate | F2-3 | `a947c6ae6` | A failed candidate leaves the application running. |
+| `.5` Skip unchanged packages per cycle | DX 3.2 | `454b3eee5`, `ecaff318b` | Only changed packages and dependent overlays build. |
+| `.6` Image identity and revision runner | H1-1, D2-8, H1-2, H1-9 | `d321130a1` | `tools/test-revision` replaces the old runner name. |
 
 F2-4 (the fixed Receiving coordinate) is deferred to part 2 with `dev/environment.rs`.
 
@@ -40,13 +40,13 @@ The baseline hash guards the deployed path.
 
 The local `local_delivery` case found these defects. It fails on each of them, so each failure has a local test.
 
-- `wamn` panicked because it did not install a rustls provider. Commit `aadbd0590` fixes this regression from `wamn-j1r05`.
-- The loop connected to NATS without its certificate and failed with `UnknownIssuer`. Commit `2ee9e5d97` fixes this regression from `wamn-j1r05`.
-- A named statement edit reran Migrate. Commit `014a5f313` fixes this, and it adds unit tests.
+- `wamn` panicked because it did not install a rustls provider. Commit `dd9677bfc` fixes this regression from `wamn-j1r05`.
+- The loop connected to NATS without its certificate and failed with `UnknownIssuer`. Commit `b5af3337d` fixes this regression from `wamn-j1r05`.
+- A named statement edit reran Migrate. Commit `eadda33b8` fixes this, and it adds unit tests.
 
 ## Test results
 
-All results are for `aee656ce7`.
+All results are for `aee656ce7`, the same source before the rebase over the `Chart.yaml` commit `5129e3434`.
 
 - `local_delivery` passed in 806 s. The log is `/var/tmp/wamn-devloop/accept.main.log`.
 - The workspace run passed 2,996 tests, failed 1, and ignored 139. The log is `/var/tmp/wamn-devloop/workspace.log`.
