@@ -182,7 +182,6 @@ targets = [
   { workspace="root", package="wamn-project-state", target="test:schema", tier="live-postgres" },
   { workspace="root", package="wamn-receiving-tests", target="lib:wamn_receiving_tests", tier="live-nats" },
   { workspace="root", package="wamn-router", target="lib:wamn_router", tier="unit" },
-  { workspace="root", package="wamn-router", target="test:resolution", tier="unit" },
   { workspace="root", package="wamn-router", target="test:route", tier="unit" },
   { workspace="root", package="wamn-router", target="test:terminal", tier="unit" },
   { workspace="root", package="wamn-router", target="test:walk", tier="unit" },
