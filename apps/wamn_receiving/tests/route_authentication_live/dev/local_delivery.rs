@@ -29,9 +29,8 @@ const CODE_BEFORE: &str = "read::location_list(connection)";
 const CODE_AFTER: &str = "async { let mut rows = read::location_list(connection).await?; for row in &mut rows { row.location_code.push_str(\"-edited\"); } Ok::<_, wamn_receiving_data_access::AccessError>(rows) }";
 const MANIFEST_BEFORE: &str = "table = \"location\"\n            owner = \"wamn_receiving\"\n            server_owned_fields = []";
 const MANIFEST_AFTER: &str = "table = \"location\"\n            owner = \"wamn_receiving\"\n            server_owned_fields = [\"note\"]";
-const OWNER_BEFORE: &str = "server_owned_fields = [\"note\"]";
-const OWNER_AFTER: &str =
-    "server_owned_fields = [\"note\"]\n            field_owners = {note = \"wamn_receiving\"}";
+const APPENDED_EDIT: &[u8] =
+    b"ALTER TABLE receiving.location ADD COLUMN note text;\n-- edited after apply\n";
 
 #[tokio::test]
 #[ignore = "requires: WAMN_LOCAL_DEV_EDIT_ROOT, WAMN_RECEIVING_DEV_BIN, WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, WAMN_DEV_ENV_MATERIALIZER_COMPONENT, WAMN_RECEIVING_DEV_HOST_BIN, WAMN_RECEIVING_DEV_NATS_URL, WAMN_DEV_ENV_NATS_TLS_CA, WAMN_DEV_ENV_NATS_TLS_CERT, WAMN_DEV_ENV_NATS_TLS_KEY, WAMN_EVT_STREAM_REPLICAS, WAMN_EVT_DUP_WINDOW_SECS, WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, WAMN_ROUTE_HOST, cargo-sqlx, jq"]
@@ -203,9 +202,9 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
         declared.locations(token, &["DOCK-2-edited", "DOCK-1-edited"]).await?;
         require_revision(&environment.route.database_url).await?;
 
-        original.replace(MANIFEST, OWNER_BEFORE, OWNER_AFTER)?;
+        fs::write(repository.join(APPENDED), APPENDED_EDIT)?;
         let reset = watch.served().await?;
-        ensure!(reset.instance != first.instance && !reset.skipped.contains("migrate"), "a declared definition owner must create a new target instance: instance {} after {}, skipped {:?}", reset.instance, first.instance, reset.skipped);
+        ensure!(reset.instance != first.instance && !reset.skipped.contains("migrate"), "an edited applied migration must create a new target instance: instance {} after {}, skipped {:?}", reset.instance, first.instance, reset.skipped);
         reset.locations(token, &[]).await?;
         ensure!(location_note(&environment.route.database_url).await?, "the recreated target lacks the appended migration");
         require_local_facts(root, admin.as_ref(), &environment.route.database_url).await?;
