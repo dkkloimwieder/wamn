@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+"""Check that every package of a Cargo workspace compiles on its own.
+
+Cargo unifies dependency features across the packages of one build. A package
+can then compile in the workspace build while it uses a dependency feature
+that only another package turns on (wamn-bcplj). `cargo check -p` builds one
+package with its own features.
+"""
+
+import json
+import os
+import subprocess
+import sys
+
+CARGO = os.environ.get("CARGO", "cargo")
+ROOT_MANIFEST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Cargo.toml")
+
+
+def members(manifest):
+    metadata = json.loads(
+        subprocess.run(
+            [CARGO, "metadata", "--no-deps", "--format-version", "1", "--manifest-path", manifest],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+    )
+    workspace = set(metadata["workspace_members"])
+    return sorted(package["name"] for package in metadata["packages"] if package["id"] in workspace)
+
+
+def main(arguments):
+    if len(arguments) > 1:
+        print("usage: tools/check-packages-alone [MANIFEST]", file=sys.stderr)
+        return 64
+    manifest = arguments[0] if arguments else ROOT_MANIFEST
+    failed = []
+    for name in members(manifest):
+        result = subprocess.run(
+            [CARGO, "check", "--locked", "--quiet", "--manifest-path", manifest, "-p", name]
+        )
+        print(f"check -p {name}: {'ok' if result.returncode == 0 else 'failed'}", flush=True)
+        if result.returncode != 0:
+            failed.append(name)
+    if failed:
+        print(
+            "check-packages-alone: these packages do not compile on their own: " + ", ".join(failed),
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

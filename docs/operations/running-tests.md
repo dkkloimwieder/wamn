@@ -30,6 +30,7 @@ It includes committed, staged, unstaged, deleted, and untracked files.
 - A file in a Cargo package selects that package and its dependents in every workspace that resolves it: normal and build dependents transitively, then one development dependent.
 - A file under `apps/<name>/` outside a package selects every package under that directory in every workspace, with their dependents.
 - A workspace `Cargo.toml` or `Cargo.lock` runs that whole workspace.
+- Any `Cargo.toml` or `Cargo.lock` also runs `tools/check-packages-alone`, which runs `cargo check -p` for each root workspace package on its own. A package that compiles only through a feature that another package turns on fails it.
 - Canonical router/runtime WIT changes select all three workspaces because direct bindings cross Cargo dependency boundaries. Shared router-delivery and materializer WASI WIT select root and apps.
 - A file under `deploy/`, `web/`, the `Dockerfile`, or a root pnpm file runs the root workspace and the suites that name it, because Rust tests read these files by path.
 - A path that no package owns and no rule names selects every applicable workspace and suite.

@@ -42,6 +42,7 @@ targets = [
   { workspace="root", package="wamn-conformance-tests", target="test:kubernetes_gate_runner", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:otel_collector", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:package_build", tier="live-postgres" },
+  { workspace="root", package="wamn-conformance-tests", target="test:packages_alone", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:palette_declarations", tier="contract" },
   { workspace="root", package="wamn-conformance-tests", target="test:registry_image_archive", tier="kind" },
   { workspace="root", package="wamn-conformance-tests", target="test:repo_lint", tier="contract" },
@@ -501,6 +502,22 @@ execution = "commands"
 mode = "always"
 always = true
 commands = [["repo-lint", "tools/repo-lint", "run"]]
+resource_lock = ""
+timeout = 1800
+
+[[suites]]
+id = "packages-alone"
+tier = "contract"
+workspace = "root"
+package = ""
+target = []
+tests = []
+features = []
+prerequisites = []
+inputs = ["(^|/)Cargo\\.(toml|lock)$"]
+execution = "commands"
+mode = "local"
+commands = [["packages alone", "tools/check-packages-alone"]]
 resource_lock = ""
 timeout = 1800
 

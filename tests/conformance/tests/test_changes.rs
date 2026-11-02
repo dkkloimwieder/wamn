@@ -146,6 +146,10 @@ impl Fixture {
             &fixture.root.join("tools/repo-lint"),
             "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$WAMN_FAKE_QUALITY_LOG\"\n",
         );
+        executable(
+            &fixture.root.join("tools/check-packages-alone"),
+            "#!/usr/bin/env bash\nexit 0\n",
+        );
         executable(&fixture.directory.join("fake cargo"), FAKE_CARGO);
         executable(&fixture.directory.join("docker"), FAKE_GUEST_BUILD);
         executable(
@@ -739,7 +743,7 @@ fn unknown_paths_select_every_applicable_suite() {
         );
         let stdout = String::from_utf8(output.stdout).unwrap();
         assert!(
-            stdout.contains("suites: quality web docker-guests"),
+            stdout.contains("suites: quality packages-alone web docker-guests"),
             "{stdout}"
         );
         assert!(stdout.contains("root (full:"), "{stdout}");
@@ -813,16 +817,17 @@ fn dry_run_prints_the_commands_without_running_tests() {
     assert!(!fixture.directory.join("cargo calls").exists());
     let stdout = String::from_utf8(output.stdout).unwrap();
     let lines = stdout.lines().collect::<Vec<_>>();
-    assert_eq!(lines.len(), 5, "{stdout}");
+    assert_eq!(lines.len(), 6, "{stdout}");
     assert!(lines[0].starts_with("working-directory: "), "{stdout}");
     assert!(lines[1].starts_with("base: "), "{stdout}");
     assert!(
-        lines[2] == "suites: quality"
+        lines[2] == "suites: quality packages-alone"
             && lines[3].starts_with("repo-lint: ")
             && lines[4].starts_with("root (full: \"Cargo.lock\"): ")
             && lines[4].ends_with(
                 " --no-fail-fast --workspace --features wamn-control/ops\\,wamn-ctl/ops"
-            ),
+            )
+            && lines[5] == "packages alone: tools/check-packages-alone",
         "{stdout}"
     );
 }
