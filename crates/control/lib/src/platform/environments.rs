@@ -398,6 +398,39 @@ async fn release_inputs(
     request: &mut JobRequest,
     registry: &wamn_package_artifact::PackageRegistry,
 ) -> anyhow::Result<()> {
+    let secrets = super::packages::credentials(target, environment).await?;
+    let database = url::Url::parse(&secrets[1].value)
+        .map_err(|_| anyhow::anyhow!("parse environment database URL"))?;
+    let suffix = database
+        .path()
+        .rsplit_once("--")
+        .context("environment database has no instance suffix")?
+        .1;
+    let path = cluster_directory.join(format!("host-group-{}.yaml", environment.project));
+    let group = std::fs::read_to_string(&path)
+        .with_context(|| format!("read host group {}", path.display()))?;
+    released_request_inputs(
+        document,
+        environment,
+        request,
+        registry,
+        &directory.join("release-chart"),
+        &group,
+        suffix,
+    )?;
+    super::oauth::ensure_key(target, document).await?;
+    Ok(())
+}
+
+pub(super) fn released_request_inputs(
+    document: &ClusterDocument,
+    environment: &crate::environment::document::EnvironmentDocument,
+    request: &mut JobRequest,
+    registry: &wamn_package_artifact::PackageRegistry,
+    chart: &Path,
+    group_yaml: &str,
+    suffix: &str,
+) -> anyhow::Result<()> {
     super::packages::registry_inputs(request, registry)?;
     request.environment.insert(
         "WAMN_PACKAGE_ARTIFACT_BASE".into(),
@@ -411,27 +444,9 @@ async fn release_inputs(
         "WAMN_COMPONENT_ARTIFACT_BASE".into(),
         super::packages::artifact_base(registry, "components")?,
     );
-    chart_files(&directory.join("release-chart"), Path::new(""), request)?;
-    let path = cluster_directory.join(format!("host-group-{}.yaml", environment.project));
-    let secrets = super::packages::credentials(target, environment).await?;
-    let database = url::Url::parse(&secrets[1].value)
-        .map_err(|_| anyhow::anyhow!("parse environment database URL"))?;
-    let suffix = database
-        .path()
-        .rsplit_once("--")
-        .context("environment database has no instance suffix")?
-        .1;
-    let mut group = render_host_group(
-        &std::fs::read_to_string(&path)
-            .with_context(|| format!("read host group {}", path.display()))?,
-        environment,
-        &document.registry,
-        suffix,
-    )?;
+    chart_files(chart, Path::new(""), request)?;
+    let mut group = render_host_group(group_yaml, environment, &document.registry, suffix)?;
     super::oauth::host_group(&mut group, &super::oauth::configuration(document))?;
-    // A local target's hosts mount the key, so it exists before their first
-    // apply and not only after the control release of 4.19.1.
-    super::oauth::ensure_key(target, document).await?;
     request
         .files
         .insert("host-group.yaml".into(), serde_yaml::to_string(&group)?);
@@ -609,6 +624,56 @@ pub(super) fn request(
     };
     job::auth_nats_inputs(&mut request, auth)?;
     Ok(request)
+}
+
+pub(super) fn release_chart_objects(
+    chart: &Path,
+    input: &crate::release_chart::ValuesInput,
+    host_group: &Path,
+    clients: &std::collections::BTreeMap<String, String>,
+) -> anyhow::Result<Vec<serde_json::Value>> {
+    let mut values = crate::environment::write::render(input, Some(host_group))?;
+    values["webClients"] = serde_yaml::to_value(clients)?;
+    let name = crate::release_chart::release_name(&input.org, &input.project, &input.env)?;
+    Ok(vec![
+        json!({"chart":chart,"version":super::steps::read_platform_version(&chart.join("Chart.yaml"))?,"name":name,"namespace":"hosts","values":values}),
+    ])
+}
+
+pub(super) fn template_objects(
+    entry: &serde_json::Value,
+) -> anyhow::Result<Vec<serde_json::Value>> {
+    use serde::Deserialize as _;
+    use std::io::Write as _;
+    use std::process::{Command, Stdio};
+    let chart = entry["chart"].as_str().context("chart reference")?;
+    let name = entry["name"].as_str().context("chart release name")?;
+    let namespace = entry["namespace"].as_str().context("chart namespace")?;
+    let mut child = Command::new("helm")
+        .args(["template", name, chart, "--namespace", namespace, "-f", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("start local helm template")?;
+    child
+        .stdin
+        .take()
+        .context("helm stdin")?
+        .write_all(serde_yaml::to_string(&entry["values"])?.as_bytes())?;
+    let output = child.wait_with_output()?;
+    anyhow::ensure!(
+        output.status.success(),
+        "helm template {chart}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_yaml::Deserializer::from_slice(&output.stdout)
+        .map(serde_json::Value::deserialize)
+        .filter_map(|value| match value {
+            Ok(value) if value.is_null() => None,
+            value => Some(value.map_err(Into::into)),
+        })
+        .collect()
 }
 
 #[cfg(test)]

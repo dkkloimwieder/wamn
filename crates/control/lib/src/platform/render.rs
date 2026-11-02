@@ -20,6 +20,9 @@ pub struct Package {
 #[derive(Debug)]
 pub struct Fixtures {
     pub identity_tls: Value,
+    pub releases: BTreeMap<String, wamn_catalog::ServingManifest>,
+    pub web_clients: BTreeMap<String, BTreeMap<String, String>>,
+    pub applied: BTreeMap<String, Vec<Value>>,
     pub oauth_key: [u8; 32],
     pub oauth_exists: bool,
     pub registry: wamn_package_artifact::PackageRegistry,
@@ -414,6 +417,100 @@ pub fn install(
             super::oauth::key_objects(&fixtures.oauth_key),
         );
     }
+    for environment in environments {
+        let key = environment_key(environment);
+        let mut environment = environment.clone();
+        let (mut request, secrets) = super::environments::apply_request(
+            document,
+            &mut environment,
+            &fixtures.runner_image,
+            false,
+            &auth,
+            &fixtures.directory.join("release-chart"),
+            (&admin, &fixtures.apply_url),
+        )?;
+        let database = url::Url::parse(
+            fixtures
+                .environment_urls
+                .get(&key)
+                .context("environment URL fixture")?,
+        )?;
+        let suffix = database
+            .path()
+            .rsplit_once("--")
+            .context("fixture database instance suffix")?
+            .1;
+        let source = std::fs::read_to_string(repository.join(format!(
+            "deploy/gcp/host-group-{}.yaml",
+            environment.project
+        )))?;
+        super::environments::released_request_inputs(
+            document,
+            &environment,
+            &mut request,
+            &fixtures.registry,
+            &fixtures.directory.join("release-chart"),
+            &source,
+            suffix,
+        )?;
+        let group = fixtures
+            .directory
+            .join(format!("host-group-{}.yaml", environment.project));
+        std::fs::write(
+            &group,
+            request
+                .files
+                .get("host-group.yaml")
+                .context("rendered host group")?,
+        )?;
+        let manifest = fixtures
+            .releases
+            .get(&key)
+            .context("release manifest fixture")?;
+        let mut applications = environment.applications.clone();
+        for application in applications.values_mut() {
+            application.connections.clear();
+        }
+        let batch = super::environments::release_chart_objects(
+            &fixtures.directory.join("release-chart"),
+            &crate::release_chart::ValuesInput {
+                org: environment.org.clone(),
+                project: environment.project.clone(),
+                env: environment.env.clone(),
+                manifest_digest: environment.release.to_string(),
+                artifact_base: super::packages::artifact_base(&fixtures.registry, "releases")?,
+                route_host: environment.route_host.clone(),
+                applications,
+                roles: crate::release_chart::roles(
+                    manifest,
+                    &environment.org,
+                    &environment.project,
+                    &environment.env,
+                ),
+                drain_bound_seconds: 70,
+                actor: "platform render".into(),
+                host_group: serde_yaml::Mapping::new(),
+            },
+            &group,
+            fixtures
+                .web_clients
+                .get(&key)
+                .context("web client fixture")?,
+        )?;
+        let chart_objects = super::environments::template_objects(&batch[0])?;
+        append(
+            &mut objects,
+            "4.17",
+            job_objects_with(
+                &request,
+                "platform",
+                &json!({"environment":environment}),
+                &secrets,
+                fixtures,
+                &chart_objects,
+            )?,
+        );
+    }
     Ok(objects)
 }
 
@@ -428,6 +525,17 @@ fn job_objects(
     secrets: &[JobSecret],
     fixtures: &Fixtures,
 ) -> anyhow::Result<Vec<Value>> {
+    job_objects_with(request, namespace, inputs, secrets, fixtures, &[])
+}
+
+fn job_objects_with(
+    request: &JobRequest,
+    namespace: &str,
+    inputs: &Value,
+    secrets: &[JobSecret],
+    fixtures: &Fixtures,
+    nested: &[Value],
+) -> anyhow::Result<Vec<Value>> {
     let mut objects = super::job::start_objects(request, namespace, secrets)?;
     let owner = json!({"name":request.name, "namespace":namespace, "uid":fixtures.job_uid});
     objects.extend(super::job::support_objects(request, &owner, secrets)?);
@@ -438,6 +546,10 @@ fn job_objects(
             .ok_or_else(|| anyhow::anyhow!("missing emitted fixture {}", request.name))?;
         objects.extend(super::job::emitted_objects(&output.to_string())?);
     }
+    if let Some(applied) = fixtures.applied.get(&request.name) {
+        objects.extend_from_slice(applied);
+    }
+    objects.extend_from_slice(nested);
     let output = if request.capture_output {
         fixtures
             .outputs
@@ -463,6 +575,31 @@ fn append(objects: &mut Vec<(&'static str, Value)>, step: &'static str, batch: V
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn fixture_release() -> anyhow::Result<wamn_catalog::ServingManifest> {
+        let digest = format!("sha256:{}", "1".repeat(64));
+        let operation = "edge-device:sample/read@2.1.0";
+        let mut descriptor = serde_json::to_value(wamn_catalog::ComponentDescriptor::named(
+            "device", "0.1", &digest,
+        ))?;
+        descriptor["operations"] = json!({operation:{"registered-operation":wamn_catalog::operation_token("edge_device","2.1.0","sample","read"),"input-ports":[],"output-ports":[],"parameters":[]}});
+        let descriptor: wamn_catalog::ComponentDescriptor = serde_json::from_value(descriptor)?;
+        let admitted = descriptor
+            .into_admitted(wamn_catalog::ComponentPackageScope {
+                env_key: String::new(),
+                package_id: "edge_device".into(),
+                package_version: "2.1.0".into(),
+            })
+            .component;
+        let component = wamn_catalog::ServingComponent::project(&admitted, Vec::new())?;
+        let value = json!({"format-version":11,"release":{"packages":[{"package-id":"edge_device","package-version":"2.1.0"}]},"components":[component],
+            "attachments":{"sample-read-http":{"auth-policy":{"modes":["session"]},"component":"device","definition":{"id":"sample-read-http","route":{"method":"GET","path":"/sample/read"},"run-deadline-ms":30000,"type":"http"},"definition-hash":format!("sha256:{}","5".repeat(64)),"operation":operation,"package-id":"edge_device","type":"http"}},
+            "routes":[{"component":"device","operation":operation,"package-id":"edge_device","type":"get"}]});
+        Ok(wamn_catalog::ServingManifest::from_canonical_bytes(
+            &wamn_execution_contract::canonical_json_bytes(&value),
+        )?
+        .0)
+    }
 
     #[test]
     fn kind_install_renders_in_install_order() -> anyhow::Result<()> {
@@ -507,6 +644,9 @@ mod tests {
         let mut fixtures = Fixtures {
             identity_tls: json!({"data": {"ca.crt": "Zml4dHVyZS1jYQ=="}}),
             broker_authorization_exists: false,
+            releases:BTreeMap::new(),
+            web_clients:BTreeMap::new(),
+            applied:BTreeMap::new(),
             oauth_key:[0x41;32],
             oauth_exists:false,
             registry: wamn_package_artifact::PackageRegistry {artifact_base:"registry.invalid/wamn/packages".into(), registry_auth_file:work.path().join("registry.json"), insecure_registry:true, oci_ca_paths:Vec::new()},
@@ -536,11 +676,29 @@ mod tests {
             ].into(),
         };
         std::fs::write(&fixtures.registry.registry_auth_file, "{}")?;
+        let mut manifest = fixture_release()?;
+        let component = manifest.components.first().context("fixture component")?;
+        let member = wamn_catalog::ServingEntryMember {
+            package_id: component.package_id.clone(),
+            component: component.descriptor.component.clone(),
+            digest: component.descriptor.component_digest.clone(),
+        };
+        manifest.composed_entry = Some(wamn_catalog::ServingComposedEntry {
+            reference: format!("entries@sha256:{}", "1".repeat(64)),
+            route_digest: format!("sha256:{}", "2".repeat(64)),
+            application: member.clone(),
+            members: [member].into(),
+        });
+        manifest =
+            wamn_catalog::ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?.0;
         for environment in &documents {
             use wamn_control_provision::{
                 WorkloadRoleFamily, WorkloadRoleScope, WorkloadSecretBody,
             };
             let key = environment_key(environment);
+            fixtures.releases.insert(key.clone(), manifest.clone());
+            fixtures.web_clients.insert(key.clone(), BTreeMap::new());
+
             fixtures.outputs.insert(
                 format!("platform-release-{key}"),
                 environment.release.to_string(),
