@@ -35,7 +35,6 @@ One database per (org, project, environment) is the org boundary. No table below
 | org | `user` | id, name, email, type (`user`, `service`, `platform`), active | platform routes | yes |
 | application, per env | `file` | id, application, connection\_id, connection\_generation, name, media\_type, size, sha256, blob key, exposure (`application`, `private`, `public`), url, width, height, standard stamps | the host, in the `file.put` route, in its own commit before any application operation | yes; no INSERT |
 | application, per env | `setting` | scope\_type, scope\_id, key, value (jsonb), locked | platform routes, per environment | no (UI reads via routes) |
-| application, per env | `role`, `user_role`, `permission` | as today | as today | yes |
 
 Control plane only, reached through platform routes and the host:
 
@@ -51,15 +50,8 @@ Control plane only, reached through platform routes and the host:
 - C4 covers `gcs` and `s3`. C10 owns disk stores and eviction.
 - `file` is the only file table. An image is a file with an image media type; `width` and `height` are nullable. `connection_id` names the store. Each row pins its application and the connection generation that stored its bytes. Reads and deletes use that generation's bucket and prefix. The application links `file_id` from its own table (which record, which purpose). No generic attachment-by-(table, id) table.
 - Storing is two short calls: `file.put(binding, bytes)` streams the bytes to the store the binding names, inserts the row in its own commit and returns `file_id`; the application operation then carries `file_id` like any reference. No transaction waits on the store. A store is a connection with a store integration (`s3` or `gcs`), declared by the package and bound by name in `environment.k` with `mode = write`.
-- File routes are operations in the application's ACL: `file.put`, `file.get`, `file.delete`, `file.expose`, granted per role. `file.put` also needs a `mode = write` binding to its target store. `file.get` on a `private` file returns 403 for every role. Only an operation that returns a signed URL reaches it.
-- The registry owns file bindings. Calls that name a binding require its registry row for the org, project, environment, application, and alias. The host also requires a component in the application's packages to declare that blobstore alias. Release scopes hold no binding map. Binding changes do not restart release hosts.
-- Reads by `file_id` need `file.get` on the owning application and no current binding. They use the recorded connection generation. The connection must stay active and enabled in the project. Disabling it stops reads.
-- A public operation declares `signed_reads` on a UUID result field. The host replaces the returned file ID with a signed URL. Its optional `lifetime_seconds` accepts 1 through 900 and defaults to 900. The roles holding the operation can read the private file through that result. No WIT change.
 - A `file` row is a file. A row nothing references is kept; deleting it is the user's job through the normal delete. No sweep of unreferenced rows: a file uploaded on purpose and linked to nothing is a normal file, and a list that hides unlinked files is a screen filter, not a deletion policy. Uploads use `<environment>/_wamn_files/staging/<uuid>` under the binding prefix. The host commits the row, copies staging to `<environment>/_wamn_files/live/<uuid>`, then deletes staging. An age rule removes staged objects only. Live objects never expire by age. A read repairs a missing live object from staging. If object deletion fails after row deletion commits, the host logs the key without retry. The collector removes aged orphans only under this environment's segment, including stores that other environments share. Clean up pre-change objects outside environment segments by hand once.
 - `exposure` is per file: `application` (default; the session holds `file.get` on the owning application, at `/api/<app>/files/<id>`), `private` (only an operation that returns a short-lived signed url; so the roles holding that operation), `public` (anyone with the link, no login). `url` is stored only for `public`, so old links survive a CDN change. Another application never serves the row.
-- A cdn is a way to expose files already in a store, not a place to put them: one hostname fronting the store's `<environment>/public/` prefix, a parameter on the store connection (`cdn_host`). Exposing a file copies the object to `<environment>/public/_wamn_files/live/<uuid>` server-side and sets `url`; unexposing deletes the public object and clears it. A store with no `cdn_host` refuses `public`. Public copies carry `Cache-Control: max-age=3600`. Unexpose deletes the origin object at once and requires no cache purge. Expose and unexpose are idempotent. Deleting a referenced file refuses through its foreign key.
-- Native host code transfers file bytes without a WIT change. Guest operations carry only `file_id`. GCS signs through IAM `signBlob` with the pod identity. S3 reads credentials through `wamn_credential_store::Store`. Signed URLs last at most 15 minutes, or less when requested.
-- All mutations require a write binding. Raw blobstore writes, deletes, and clears refuse file-managed keys, including public copies. Application SQL cannot insert, update, or delete file rows. Standard stamps and unlimited history apply to `platform.file`.
 - A local `disk` store has `max_bytes` and `max_age` parameters: a box has a disk, so retention is the admin's explicit choice on that row, and an evicted blob takes its `file` row with it — the one place a row is removed by the platform. The box serves its own files; nothing on it is `public`. Forwarding a file to the cloud is an application decision carried over a `wamn` connection (a new row in a cloud store, same `sha256`); the platform never forwards on its own.
 
 - An integration's name identifies it within its project and never changes. Each environment holds at most one connection for that integration. The integration selects its optional `external_system_id`. A connection uses the target of its environment.
@@ -115,14 +107,11 @@ On Postgres the three platform functions, `bump_counter`, `assign_counter` and `
 
 ### Function
 
-2. For each counter in lock order: a counter keyed by another counter comes after that counter, and independent counters go in name order. The order is fixed for each pattern, so concurrent callers cannot deadlock.
-   - `reset=`: `bump_counter(sequence, counter, key_value)` locks the row, inserts at 1 if absent, returns the value and increments.
    - `per=`: look up `(counter, key_value)` with no lock — mappings are immutable, so a hit is safe to render. On a miss, `assign_counter(sequence, counter, key_value)` takes a per-key `pg_advisory_xact_lock`, looks again, and returns the existing mapping or allocates from the `''` allocator and inserts the key row with that value. Two concurrent misses for one key allocate once, so `per=` has no gaps. The first line of a batch pays the allocator lock; every later line pays only its own counter (owner ruling 2026-10-23).
 
 - Rendering, preview and validation all go through the plugin's one renderer (preview in a rolled-back transaction). No second parser, in SQL or anywhere. `set_counter` renders nothing.
 - Name-order locking within one call means two patterns on one sequence cannot deadlock each other. Two operations that insert into two models in opposite order can still deadlock on two sequences; Postgres detects it and one retries. The plugin guarantees no more than that.
-- Cost: locks hold until commit, so creates of one document type (or one key) serialize for the SQL of one operation. There are no outbound calls inside a transaction, so that is milliseconds. Acceptable at document rates. A Postgres sequence was rejected: non-blocking but gaps on rollback.
-
+A Postgres sequence was rejected: non-blocking but gaps on rollback.
 ### Administration
 
 One platform route, `set_counter(application, sequence, counter, key_value, value)`. It answers the value the counter renders next:
@@ -349,10 +338,6 @@ The rules of `platform-deploy.md` "How this plan is worked" apply (worktree lane
 - One agent per lane that touches `crates/control`. Epics C1–C4 run in sequence in the integrations agent; the UI agent and platform-install agent keep their own epics.
 - Platform version bumps as rule 6 says. C1 and C2 are host-plugin changes, so they are image bumps; plan the build with the cloud path.
 
-### C1 schema
-
-See [platform schema and grants](../architecture/data-access.md#actors).
-
 ### Architecture references
 
 See [numbering](../architecture/data-access.md#numbering), [org connections](../architecture/data-access.md#org-connections-and-credentials), and [application bindings](../architecture/data-access.md#application-connection-bindings).
@@ -374,50 +359,28 @@ Tag = the spec's dependency tag. Owner = which running agent takes it, in its qu
 | C9 | **Loadable connectors.** Spec assumption 11 spike first (connector class in admission, sockets granted to a connector component and refused to applications, bundle carries connectors). Then `integration.form`, `connectors` pins in `environment.k`, `wamn integration build/publish`, `target_application` digests. | after loadable connectors | integrations agent, after C4 | One wasm connector pinned per environment, bumped by an `environment.k` edit, no platform release. |
 | C10 | **Local environments.** SQLite platform tables in the plugin, model-free packages on `local` targets, outbox, offline sessions, `feed = "operation"` projections. CDC projections last. | after SQLite platform functions | edge owner, after the edge plan's next epic | A box runs `wms.station` offline, numbers a record gaplessly, and the cloud commits its events on reconnect. |
 
-Order inside each agent's queue:
-
-- integrations agent: C2 → C3 → C4 → C9.
-- platform UI agent: M3 → M4 → C6 → M5 → M6 → C5.
-- platform-install agent: E4 → E5 → C7.
-- perf-arch agent: M6/M7 → A5 → C8.
-
 Nothing in C1–C4 blocks the UI or install epics; C5 needs C1–C3 merged.
 
 ### C2 numbering
 
-The owner ruling of 2026-10-24 (`wamn-83eth.28`) uses the environment map name throughout numbering.
-Local development requires the same authored KCL map as deployment.
-Equal defaults from two packages create one sequence row.
-Env apply and `wamn dev` refuse different defaults before any sequence write.
-
 The owner ruled that no kind run follows C2.4. Its rulings replace the C2 rulings below where they differ:
 
 - Sequences and records are independent. A package declares a sequence and its default pattern, and the admin owns the pattern after that.
-- `next-number(name, keys)` and `peek-number(name, keys)` take a key map with only the values the pattern names (`per=`, `reset=`, `{field:}`). A bare `{seq}` or `{date:}` pattern takes none. Any command can call them. A field with `number = "<sequence>"` is one caller, and the generated insert passes that model's fields as the keys (C2.4.1).
 - The build refusals "sequence with no field and no caller" and "a key must be a field of every model using the sequence" are removed (C2.4.2). A model's numbered field must have a field for each key its pattern names (C2.4.3).
 - `set_counter` reads and writes counter rows only. It renders no number and scans no application table. The model's `UQ` catches a set that gives a number a record already has (C2.4.4).
 - Counter authority, case 1 (C2.4.6, recorded on `wamn-83eth.13`): no application surface runs arbitrary SQL. An application guest runs only the statements its package declares, and admission denies the raw `wamn:postgres/client` interface to applications. Component admission parses each declared statement with `pg_query`, which is Postgres's own grammar. It refuses a counter function call, `DO`, dynamic `EXECUTE`, `query_to_xml*`, `cursor_to_xml*` and `U&` identifiers. `sqlparser` was refused, because a grammar difference is the bypass that the check closes.
 - Package backfill SQL is outside the counter check, because it runs as `wamn_db_owner`, which already holds more authority. Who may author backfill SQL is `wamn-o1hwr`.
 - Migration 0031 stays rewritten in place, because no wamn-dev database ran it.
-- The renderer refuses an empty or null key before the first `bump_counter` or `assign_counter` (C2.4.8). An invalid `timezone` setting is a refusal with SQLSTATE `22023` (C2.4.9). When a pattern holds `WW`, `YYYY` and `YY` render the ISO year (C2.4.10).
-- Model-side refusals: an overlay is checked against the relation owner's fields (C2.4.11). A numbered field must be `text`, `int32` or `int64`. Integer fields take only a bare `{seq}` (C2.4.12). Actor fields are `uuid` and are named only `created_by` or `updated_by` (C2.4.13). Env apply refuses one sequence name with different patterns in two packages of one application (C2.4.14, after `wamn-o763w.4` adds the `applications` map).
-- Cleanup: the WIT doc of `next-number` says that the application comes from host state (C2.4.15). One shared date function in `numbering.rs` (C2.4.16). Renames of the plural aliases, the `USERS` constant, `user_roles.rs` and `role_permissions.rs` (C2.4.17). `CounterSetError` and `numbering::Failure` become error structs with a kind (C2.4.18). The `wamn.k` example is real KCL (C2.4.19).
-- Tests: the generator tests that check SQL or Rust text are deleted, and live tests replace them (C2.4.20). No sleep inside the tokio test, no NATS port race, and the numbering live tests reuse `test_database` (C2.4.21).
+- `CounterSetError` and `numbering::Failure` become error structs with a kind (C2.4.18).
+- No sleep inside the tokio test, no NATS port race, and the numbering live tests reuse `test_database` (C2.4.21).
 
 Rulings for C2 as filed:
 
 - `next-number(name, keys) -> text` and `peek-number(name, keys) -> text` are two added functions on `wamn:postgres/statements`, with no version bump. `peek` is generated from `peek-number` (owner ruling 2026-10-23). It renders the current value with no lock and no advance. The host refuses both outside an open operation transaction. The renderer lives in the plugin. The three platform functions, `bump_counter`, `assign_counter` and `set_counter`, are the only writers of `number_counter` (owner rulings 2026-10-23).
-- The application is the composing application that runs the operation (C1.2 ruling). The plugin reads it from host state, not from the `app.application` claim, which guest SQL can rewrite. `next_number` refuses a sequence of another application because the plugin resolves the sequence by that application and the name, never by SQL text (wamn-9e4ks).
 - `{date:FMT}` uses the environment's `timezone` setting row at application scope when present, else UTC. Settings resolution across scopes is C5 (admin screens).
-- `role = "actor"` fills from `app.user_id`. An insert fills every actor field. An update fills `updated_by` and never touches `created_by` (owner ruling 2026-10-23). A payload that supplies an actor field is a build refusal. `actor` joins `key`, `reference`, `revision` and `value` as a column role.
 - `targets` is declared and validated at build: a package with models is `cloud` only. The apply-side target refusal is C10 (local environments).
-- Build refusals: a write cannot supply a `number` or `actor` field, including an inherited field. A counter cannot use `per=` on the model’s key field. A key field cannot be numbered. A numbered field must be `text`, `int32` or `int64`. Integer numbered fields take only a bare `{seq}` (C2.4.12). The model must contain every field that its number pattern names.
-- An actor field must be `uuid` and must be named `created_by` or `updated_by` (C2.4.13). An overlay inherits the relation owner’s number and actor declarations. Conflicting declarations or sequence patterns are build refusals. Numbered fields, actor fields and pattern keys must belong to the relation owner (C2.4.11).
 - C2.4 allows a sequence with no field and no caller. A sequence key need not belong to every model that uses the sequence (owner ruling 2026-10-24).
 - `set_counter` is a host route granted per role: a new `HostRouteAuthority` variant in `host_route.rs`, added in place with no `wamn.json` version bump, and `permission.grant` accepts it. It runs in the operation transaction and writes through `platform.set_counter` (SECURITY DEFINER, `EXECUTE` for the application role; the route resolves the sequence by the application it checked against the release and the sequence name) under the counter row lock. The engine write log and the counter row's `updated_by` record the actor (owner ruling 2026-10-23). It never touches a `per=` mapping. C2.4 removed the dry render: the set reads and writes counter rows only, and a model's `UQ` catches a live number (owner ruling 2026-10-24).
-- Env apply creates `number_sequence` rows from package defaults and never overwrites an existing pattern.
-- Receiving conformance only: `purchase_order.create {writable_fields = ["supplier_id"]}` with `purchase_order_number` numbered by `PO-{seq:po,width=6}`, and `role = "actor"` on `created_by` and `updated_by`. Receiving moves to 2.2.6, and Acme moves only its Receiving pin and its `record-receipt` import to 2.2.6. WMS does not change (owner ruling 2026-10-23).
-- The kind case checks the `number_sequence` row after apply. A local live test covers the numbered create, because the kind suite has no token issuer.
 
 Out of C2: settings resolution, the `set_counter` UI, the SQLite renderer, connections, seed rows.
 
@@ -433,26 +396,19 @@ Owner rulings of 2026-10-25 on the C3 scoping questions. They replace the text b
 4. Connection generations and immutable bindings stay. The connection row points to its current generation.
 5. The connection row has a unique `service_principal_id` column.
 6. Both principal kinds stay, and nothing migrates. The application principal runs schedules and integrations, as ruled earlier. The connection principal is only for inbound calls, and it holds the roles that an admin grants it.
-7. The host refuses a principal that acts with a role that it does not hold, and it refuses a user session that presents a service's role.
 8. A failed auth deletion is logged, and the TTL limits the stale fact. A durable retry is `wamn-3gqi1`.
 9. Credentials enter through the UI or API and stay in the credential store. Rotation appends a connection generation. The integration schema in `wamn-kjncn` removes the import command.
 10. `registry.integration_type` and `registry.integration_type_version` hold the platform catalog. The host types include `http`, `gcs`, and `s3`, all shared. `blobstore` names an interface. Each new implementation supplies its type and version rows.
-11. `postgres` stays outside the connection map. Each HTTP alias resolves by name to a binding in the application's map.
 12. For HTTP, `mode = read` permits only GET and HEAD. The rule for `wamn` is set in the epic that builds that capability.
 13. An exclusive medium allows one binding per target, readers included, because a physical port has one owner.
 14. An environment's target never changes. To move an environment, the operator deletes it and creates it again.
 15. C3 creates only the target identity. `target_application` and the target's platform connection are `wamn-ztxg2`.
 16. C3 builds inbound authentication only for the principals of external connections. The `wamn` connection records, peer external identity, inbound authentication, and request and event capability belong to `wamn-ym204`. The platform catalog gains a `wamn` type and version when that implementation is available.
-17. C3.3 owns record provenance (`external_system_id` plus `external_id`).
 18. The final kind check is the REST connection from `rest_connector` to `rest_consumer_fixture` in the WMS dev document.
 
 Owner rulings made while C3 was built:
 
-19. C3.2 reads and writes the system connection tables through `SECURITY DEFINER` functions, written like `identity.lock_password_principal`. Each one pins `search_path = pg_catalog`, is owned by `wamn_system`, grants EXECUTE only to the control and administration roles, never to `wamn_app`, and returns no credential.
-20. A service principal signed in with a PAT can start a workflow as its caller with a role that it holds (ruling 7).
-21. Env apply does not refuse two aliases that bind one org connection (2026-10-26). Independent packages name their own connections, and binding both names to one connection is the normal case. Only the exclusive-media rule (ruling 13) remains.
 22. A changed package records its new digest under the same version. C3 bumps no package version.
-
 Rules:
 
 - No table or function that holds or returns a credential is granted to `wamn_app`.
@@ -463,7 +419,7 @@ The ruling 18 kind check must prove the REST connection from `rest_connector` to
 
 ### Open decisions
 
-The docs audit (`docs/plan/docs-audit.md`, 2026-10-24) lists the places where this plan and the built code disagree. Each waits for an owner ruling before the spec text changes.
+The docs audit ([docs-audit.md](../history/README.md#docs-audit), 2026-10-24) lists the places where this plan and the built code disagree. Each waits for an owner ruling before the spec text changes.
 
 - Item 3: `relations` in `wamn.k`. The manifest derives relations and has no such key.
 - Item 4: the `user` shape. The code has `display_name` and `status`, not `name` and `active`.

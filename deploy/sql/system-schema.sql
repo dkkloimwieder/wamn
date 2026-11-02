@@ -914,7 +914,7 @@ CREATE TABLE registry.event_readers (
 );
 
 -- ---------------------------------------------------------------------------
--- Capture gaps (wamn-59z6, docs/plan/cdc-reader-slot.md section 4.3): one row
+-- Capture gaps (wamn-59z6, docs/history/README.md#cdc-reader-slot section 4.3): one row
 -- per lost slot of a CDC reader registration. `wamn-ctl recover-capture-gap`
 -- writes it, and `wamn-ctl close-capture-gap` sets `resync_at`. The reader
 -- captures only while the newest row of its registration has `resync_at` set,

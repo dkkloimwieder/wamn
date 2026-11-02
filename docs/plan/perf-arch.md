@@ -6,7 +6,7 @@ Oct 20, 2026 · @D Kloimwieder
 
 The host, not Postgres, is the bottleneck for reads. A get costs about 2.4 ms of host CPU and about 0.1 ms of Postgres CPU. For writes, Postgres commit cost dominates latency, and the host adds a similar tax on top. This doc lists the choices for both sides without picking.
 
-Evidence is main at `92df3a0` (2026-10-20). Numbers come from `tests/bench/local-0.1.28.json`, `tests/bench/local-pg-0.1.28.json`, `tests/bench/platform-0.1.2{5,6}.json`, `docs/operations/benchmark.md`, `docs/plan/request-round-trips.md`, and the beads `wamn-9jvm1`, `wamn-lflrw`, `wamn-h2r2l`, `wamn-spv0f`, `wamn-stxy9`. The function-level profiles from `wamn-lflrw` and `wamn-h2r2l` live only in `/var/tmp` on the bench machine, so their percentages are quoted from the bead text.
+Evidence is main at `92df3a0` (2026-10-20). Numbers come from `tests/bench/local-0.1.28.json`, `tests/bench/local-pg-0.1.28.json`, `tests/bench/platform-0.1.2{5,6}.json`, `docs/operations/benchmark.md`, [request-round-trips.md](../history/README.md#request-round-trips), and the beads `wamn-9jvm1`, `wamn-lflrw`, `wamn-h2r2l`, `wamn-spv0f`, `wamn-stxy9`. The function-level profiles from `wamn-lflrw` and `wamn-h2r2l` live only in `/var/tmp` on the bench machine, so their percentages are quoted from the bead text.
 
 Local run shape: 8 cores, host pinned to cores 0–3, Postgres to 4–5, client to 6–7, concurrency 16, 60 s per call, Receiving with the 1000-order seed. Local benchmarks inform, never decide (owner rule 2026-10-18).
 
@@ -53,8 +53,6 @@ A get, in order (code on main):
 An update takes the same path, with two pipelined Postgres trips instead of one (section 5).
 
 Count per get: 2 instantiations, 5 host imports, about 6 JSON parses and 5 serializations, at least 6 payload copies across the boundary, 2 tap publishes. The tap publish is non-blocking (`poll_immediate`), so it is a broker and serialization cost, not a wait.
-
-Not on the path any more: actor-label query (`wamn-stxy9.1`), per-request auth queries (`.2`), separate claim and finish trips (`.3`), per-request linking (`wamn-9jvm1.2`), SQL cursors for bounded reads (`wamn-7fdyb`), 100% trace export (`wamn-spv0f`).
 
 ## Where host CPU goes
 
@@ -252,8 +250,6 @@ Invariants A5 must keep (each is already a ruling or a refusal today):
 - The guest supplies no trust data (ruled 2026-10-20 from the spike, `wamn-cbqzl`). The host mints the delivery id at `begin-operation`. `authenticate` returns an opaque caller handle, and `begin-operation` checks it. The request hash and the result are the application's idempotency data, which the host stores without interpreting.
 
 Cost: a contract change across publish, the generator, the Postgres plugin's transaction surface, the edge host, and the flow tests. Weeks, not days. It touches the security model, so it gets the review the composition spec got.
-
-Spike: compose `http-route` into Receiving by hand with `begin-operation` / `commit` stubbed on the Postgres plugin, run get and update c16 locally against the current path. Done in `wamn-cbqzl`: A5 was ruled on its result (decision 1). Its results and its list of shortcuts are in that issue's notes.
 
 ### A3 (H8): taps, what they are, who reads them, and the options
 

@@ -1,16 +1,9 @@
 # Platform UI application — spec
 
-Status: live, `wamn-n8q9m`. M1 through M6 merged, and the shell runs on `@wfe/shell` at wfe v0.0.8.
 Server paging, `wamn-n8q9m.20`, remains open.
 [Execution](../architecture/execution.md#operator-clients) records current client and shell behavior.
-Owner rulings of 2026-10-19 are applied.
-**Baseline:** wamn `main` at `02e87bb4f`; wfe `main` at `45faa4aed7de92a7cd3e0a0b772bbd845e52ba63`.
 
 ## 1. Goal and scope
-
-One web application, the platform UI, that lets an administrator run a tenant from a browser the day an environment is applied: sign in, see what is deployed, invite and manage users, grant access, and manage application roles and permissions.
-
-It replaces the three partial UIs that exist today: `web/shell` (Solid 1, sign-in and app screens), `web/ui` (Solid 1, Zaidan copies), and `wfe/examples/platform` (Solid 2, mock-driven fixture).
 
 In scope:
 - Control of one org: projects, environments, environment status, users, memberships, org and project administration.
@@ -114,17 +107,6 @@ The wfe side is its own plan in the wfe repository. M1 starts on the exports tha
 ## 7. wamn track
 
 Each is a wamn epic under the usual rules (worktree, ≤3 issues, build+clippy+fmt+unit per issue, report at merge). A wamn-dev deploy closes M1, M2, M4 and M5; the owner gives pool time once at each of those closes, and local checks run before that.
-
-| # | Epic | Done when |
-| --- | --- | --- |
-| M1 | Three issues: pin wfe and port the shell core (D4); the sign-in, invite, recover and reset pages; delete `web/ui` and `web/components`. `web/runtime` and `web/host-route-clients.mjs` stay. | The shell tests pass on wfe; `wamn web upload` serves the shell; sign-in reaches the audience list on wamn-dev. |
-| M2 | Control screens (§4.1) on real routes, with the project and environment activate/inactivate actions. | A fresh `env apply` + `provision-org --admin` lets the admin invite a user and grant a membership from the browser. |
-| M3 | `client_component.rs` emits wfe descriptions (D6); `label` in `wamn.k` and the IR (D7). Receiving's web page renders from descriptions. | Receiving screens work in the browser; no Solid 1 output remains. |
-| M4 | Application administration (§4.2): roles grid, users. | A role is created, a permission granted, and a user assigned from the browser; the server refuses what the client hides. |
-| M5 | The three `environment.status` answer members (D8) and the splash pages (§5). | Both splashes render tiles from live data on wamn-dev. |
-| M6 | Docs: `execution.md` shell rules, `web-operator-client.md` closed to history, operations page for `wamn web upload`. | Plan index updated. |
-
-M1 → M2 → M3 → M4 → M5 → M6, one at a time.
 
 ## 8. What stays out of the platform UI
 

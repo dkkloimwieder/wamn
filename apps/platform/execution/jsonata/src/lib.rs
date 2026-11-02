@@ -2,7 +2,7 @@
 //!
 //! The expression is the wiring parameter `expression`: configuration, not
 //! input. It runs here, in the guest sandbox, and never in the host
-//! (docs/plan/routes-router.md rule 6). The node imports nothing, so it holds
+//! (docs/history/README.md#routes-router rule 6). The node imports nothing, so it holds
 //! no authority, and its effect projection is empty.
 //!
 //! The node emits the expression's result as it is. A result that JSONata
@@ -239,7 +239,7 @@ mod tests {
         assert_eq!(super::select_port(&json!({}), "[]").unwrap(), None);
     }
 
-    /// The WMS label workflow's shape expression (docs/plan/workflow-feature.md
+    /// The WMS label workflow's shape expression (docs/history/README.md#workflow-feature
     /// 4.4): a move row becomes one label-render request element keyed by its command,
     /// and any other row none.
     const SHAPE: &str = r#"event = "insert" and new.kind = "move"

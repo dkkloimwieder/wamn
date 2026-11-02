@@ -1,5 +1,5 @@
 //! Live test of `recover-capture-gap` and `close-capture-gap` (`wamn-59z6`,
-//! docs/plan/cdc-reader-slot.md 4.3).
+//! docs/history/README.md#cdc-reader-slot 4.3).
 //!
 //! The test starts its own PostgreSQL 18 server with `wal_level=logical`. Set
 //! `WAMN_READER_NATS_URL` to a throwaway JetStream-enabled NATS, the broker of

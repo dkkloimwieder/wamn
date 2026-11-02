@@ -16,7 +16,7 @@ After this change the host begins the transaction of an operation, the guest wor
 - One host transaction per item, and one guest call per item, in the cloud and on the edge. The item is the unit of idempotency, so its commit and its uncertainty are its own. No savepoints. The engine loops over the items. The guest gets a one-item list, and the contract does not change.
 - A read keeps the implicit transaction of `run` and logs nothing, as today.
 - The engine runs the intent rules of `crates/platform/engine/src/operation/intent.rs` around every logging call. No codec, data function or component spells a claim.
-- An operation with SQL claims its key inside the host transaction. The claim and the work commit together or not at all, as `docs/plan/write-log.md` section 2 requires.
+- An operation with SQL claims its key inside the host transaction. The claim and the work commit together or not at all, as [write-log.md](README.md#write-log) section 2 requires.
 - An operation without SQL claims in two steps, begin and finish. A begun claim that never finishes is `intent-uncertain`, as today on the edge.
 - A commit whose outcome the host cannot know is `intent-uncertain` in the cloud too. That is only the case when the host sent `COMMIT` and did not read its answer. A failure before that is a certain rollback and answers as today (`retry`, `timeout` or `internal_error`).
 - The transaction runs under `READ COMMITTED`. The host already sets it (`crates/platform/runtime/src/plugins/wamn_postgres/claims/transactions.rs:132`).
@@ -48,7 +48,7 @@ The two stores differ in three definitions:
 | --- | --- | --- |
 | Request bytes | SHA-256 of the item without `request_id`, with the key kept (`intent.rs:115-121`). | The canonical bytes without `request_id` and the key, with the participation intent added. |
 | Conflict detail | `{field, intent}` | `{field}` |
-| Stored outcome | A success or a failure (`StoredOutcome`). | A success only. A refusal frees the key (owner ruling in `write-log.md` section 2). |
+| Stored outcome | A success or a failure (`StoredOutcome`). | A success only. A refusal frees the key (owner ruling in [write-log.md](README.md#write-log) section 2). |
 
 ## 4. Design
 
@@ -84,14 +84,14 @@ One branch, one agent (the routes agent). Each issue lands with its tests. Only 
 
 1. One definition set. `intent.rs` takes the definitions of section 2: the request hash, the conflict detail and no stored refusal. The engine calls the guest once per item. The edge store drops `StoredOutcome` failures, and its tests follow. A test pins both stores to them.
 2. The host transaction. `wamn:postgres` 0.3.0: the statements plugin gains the operation transaction, `begin` refuses inside it, and the engine can commit or roll it back. 0.2.0 leaves the tree. Live test on a disposable database: commit, rollback, a guest `begin` refusal, and a participant view in the same transaction.
-3. The write log store. A Postgres `IntentStore` over `write_log`, in the host transaction and in two steps. The same live tests as `write-log.md` issue 1, run through the engine: first claim, retry with the same bytes, retry with different bytes, a refused item, and two concurrent calls.
+3. The write log store. A Postgres `IntentStore` over `write_log`, in the host transaction and in two steps. The same live tests as [write-log.md](README.md#write-log) issue 1, run through the engine: first claim, retry with the same bytes, retry with different bytes, a refused item, and two concurrent calls.
 4. The cloud callers pass an intent context. The route and the router driver build it from the published route.
 5. The generator and the applications. Codecs lose the claim, and data functions take `&mut Transaction` and lose `begin` and `commit`. Every package regenerates against 0.3.0 and rebuilds. The application tests run as they are.
-6. Closeout. `docs/architecture` states one claim path. `write-log.md` section 6 loses its finding. Workspace test run, cluster stages noted pending, merge to main.
+6. Closeout. `docs/architecture` states one claim path. [write-log.md](README.md#write-log) section 6 loses its finding. Workspace test run, cluster stages noted pending, merge to main.
 
 ## 6. Out of scope
 
-- Replay of the log, retention, and logging reads. `write-log.md` section 6 keeps them out.
+- Replay of the log, retention, and logging reads. [write-log.md](README.md#write-log) section 6 keeps them out.
 - The legacy `client` interface transaction (`package.wit:91-114`).
 - An upgrade of a deployed database. The environments are provisioned again, as for the write log.
 - `wamn:postgres` 0.1.0.

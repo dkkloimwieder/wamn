@@ -1,28 +1,18 @@
 Each plan describes work or decisions for its subject. [Architecture](../architecture/README.md) describes current behavior. Beads records implementation status.
 
 - [Authored views](authored-views.md): views in package schemas for reports, narrow reads, and query feeds.
-- [CDC reader slot](cdc-reader-slot.md): replication slot ownership.
-- [Component pull](component-pull.md): digest-addressed component loading.
 - [Delivery](delivery.md): CI integration and conditional test extensions.
-- [Docs audit](docs-audit.md): source comparisons and decisions for documentation.
-- [Environment teardown](environment-teardown.md): deletion rules.
 - [Identity](identity.md): external login adapters.
 - [Integrations](integrations.md): connector candidates and owner rulings.
 - [Manifest authoring](manifest-authoring.md): KCL package declarations.
 - [NATS outage](nats-outage.md): evidence and recovery requirements.
 - [Observability](observability.md): telemetry collection and export.
-- [Operator image](operator-image.md): image ownership.
 - [Performance architecture](perf-arch.md): request execution design.
 - [Platform configuration](platform-config.md): application configuration and owner rulings.
 - [Platform deploy](platform-deploy.md): environment lifecycle rules.
 - [Platform install](platform-install.md): cluster installation and project resources.
 - [Platform UI](platform-ui.md): administration rules.
 - [Platform UI application](platform-ui-app.md): the shared operator shell.
-- [Request round-trips](request-round-trips.md): request path design.
-- [Routes, workflows, and the router](routes-router.md): execution boundaries.
 - [Transactional composition](trx-pkg-plan.md): operation transactions.
 - [Offline and sync](wamn-sync.md): browser storage and generated application wiring.
-- [Web deployment](web-deployment.md): application assets.
-- [Workflow feature](workflow-feature.md): workflow execution design.
 - [Workflows](workflows.md): effect recording, node publication, and editor work.
-- [Write log](write-log.md): operation retry identity.

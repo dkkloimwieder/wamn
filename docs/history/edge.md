@@ -268,11 +268,11 @@ The owner scopes each issue after the one before it closes and is reviewed, and 
 5. The generator emits no `wamn:postgres` import for an application with no SQL, and an edge fixture application.
 6. The serial plugin, the device loop, and the sample store.
 7. The forward with a device PAT, the retry from the log, and the power-loss test against a local stack.
-8. The closeout, the sweep log, and the section 7 line in `routes-router.md`.
+8. The closeout, the sweep log, and the section 7 line in [routes-router.md](README.md#routes-router).
 
 ## 6. Done when
 
 - `wamn-edge` builds for aarch64, and the dependency test passes.
 - On a host with a virtual serial port, a sample is read, logged, stored, and forwarded to a local stack. It survives a kill between the store and the forward.
 - A fixture release loads from a file and serves one route.
-- The closeout, the sweep log, and a section 7 line in `routes-router.md` exist.
+- The closeout, the sweep log, and a section 7 line in [routes-router.md](README.md#routes-router) exist.

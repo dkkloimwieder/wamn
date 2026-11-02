@@ -1,4 +1,4 @@
-//! Web client files in a bucket (docs/plan/web-deployment.md).
+//! Web client files in a bucket (docs/history/README.md#web-deployment).
 //!
 //! `wamn web upload` writes the built client of each package of the release
 //! an environment serves, under `<prefix>/<package_id>/<release hex>/`, every

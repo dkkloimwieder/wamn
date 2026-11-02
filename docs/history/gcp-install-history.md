@@ -810,7 +810,7 @@ Run the check of section 3.10 again. The key set now lists the `kid`. On 2026-09
 
 ### 3.16 PAT mint in the cluster
 
-The Job `deploy/gcp/operator/mint-pat.yaml` mints a PAT inside the cluster, in namespace `identity` (`docs/plan/operator-image.md`, `wamn-n5d1`). It runs the operator image `wamn-ctl`, which the manifest pins by digest. It reads the `operator-dkk` certificate as a mounted Secret, so the certificate never reaches this machine. It needs no `/etc/hosts` line and no identity port-forward.
+The Job `deploy/gcp/operator/mint-pat.yaml` mints a PAT inside the cluster, in namespace `identity` ([operator-image.md](README.md#operator-image), `wamn-n5d1`). It runs the operator image `wamn-ctl`, which the manifest pins by digest. It reads the `operator-dkk` certificate as a mounted Secret, so the certificate never reaches this machine. It needs no `/etc/hosts` line and no identity port-forward.
 
 No mint and no invitation runs on wamn-dev until step B2 of the kind to type cutover (`docs/history/kind-to-type.md` §3.2). The image pinned in `mint-pat.yaml` and `invite.yaml` comes from `main` after the cutover commit, and it reads `placement_type`, which wamn-dev does not have before B2. The two operator Jobs are part of the binaries of the cutover. No image from a commit that is not on `main` runs in them (`wamn-rjtf`).
 
@@ -1740,7 +1740,7 @@ kubectl -n platform patch pvc wamn-pg-1 --type merge -p '{"spec":{"resources":{"
 
 On 2026-09-28 the apply alone did not grow the claim in 408 seconds. The patch grew it in 32 seconds, and Postgres was ready 167 seconds later. Only the two live CDC slots existed, so no slot was dropped (finding `wamn-6jit`).
 
-The slot limit `max_slot_wal_keep_size` is 4 GB in the same file (plan `docs/plan/cdc-reader-slot.md` section 4.5). Apply it and read it back. It takes effect without a restart:
+The slot limit `max_slot_wal_keep_size` is 4 GB in the same file (plan [cdc-reader-slot.md](README.md#cdc-reader-slot) section 4.5). Apply it and read it back. It takes effect without a restart:
 
 ```bash
 kubectl apply -f deploy/gcp/cnpg-cluster.yaml
@@ -1754,7 +1754,7 @@ Restart identity and the CDC readers after an outage of Postgres. Do not restart
 
 ### 6.3 CDC slot lost
 
-If a CDC reader is down while the WAL passes `max_slot_wal_keep_size` (4 GB), Postgres invalidates its slot. The reader then stays running and stopped. It logs `CDC_CAPTURE_GAP` once and reads its gap row every 30 seconds (`docs/plan/cdc-reader-slot.md` section 4.3). Look at the slots:
+If a CDC reader is down while the WAL passes `max_slot_wal_keep_size` (4 GB), Postgres invalidates its slot. The reader then stays running and stopped. It logs `CDC_CAPTURE_GAP` once and reads its gap row every 30 seconds ([cdc-reader-slot.md](README.md#cdc-reader-slot) section 4.3). Look at the slots:
 
 ```bash
 kubectl -n platform exec wamn-pg-1 -c postgres -- psql -U postgres -Atc \
