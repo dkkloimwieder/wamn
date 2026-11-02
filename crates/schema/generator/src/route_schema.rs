@@ -152,16 +152,6 @@ fn checked(reference: &str) -> Result<&str, RouteSchemaError> {
     }
 }
 
-/// Read one generated schema from a package on disk.
-///
-/// # Errors
-///
-/// [`RouteSchemaError`] when the reference leaves the generated route schemas,
-/// or the file is unreadable or not JSON.
-pub fn read_from_package(package_root: &Path, reference: &str) -> Result<Value, RouteSchemaError> {
-    PackageFiles::open(package_root)?.schema(reference)
-}
-
 /// Generated schemas and publication files of one current package build.
 #[derive(Debug)]
 pub struct PackageFiles<'a> {

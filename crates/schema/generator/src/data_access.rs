@@ -303,15 +303,6 @@ impl DataAccessRelation {
     pub fn lock_update_field(&self) -> Option<&str> {
         self.lock_update_field.as_deref()
     }
-
-    pub fn granted_update_fields(&self) -> impl Iterator<Item = &str> {
-        self.update_fields
-            .iter()
-            .map(String::as_str)
-            .chain(self.lock_update_field.iter().map(String::as_str))
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-    }
 }
 
 impl EffectiveDataAccess {
