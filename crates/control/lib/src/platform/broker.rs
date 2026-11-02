@@ -203,6 +203,30 @@ pub(super) async fn apply(target: &Target, environments: &Path, org: &str) -> an
     )
     .await?
     .context("missing Secret platform/wamn-nats-authorization")?;
+    let documents = documents(environments)?;
+    for (path, document) in &documents {
+        ensure!(
+            document.org == org,
+            "environment {} names another org",
+            path.display()
+        );
+    }
+    let documents = documents
+        .into_iter()
+        .map(|(_, document)| document)
+        .collect::<Vec<_>>();
+    let mut changed = false;
+    for object in objects(&live, org, &documents)? {
+        changed |= apply_object(target, &object).await?;
+    }
+    Ok(changed)
+}
+
+pub(super) fn objects(
+    live: &Value,
+    org: &str,
+    environments: &[EnvironmentDocument],
+) -> anyhow::Result<Vec<Value>> {
     let encoded = live["data"]["authorization.conf"]
         .as_str()
         .context("the broker Secret has no authorization.conf")?;
@@ -219,16 +243,10 @@ pub(super) async fn apply(target: &Target, environments: &Path, org: &str) -> an
     keep_platform_users(&mut authorization);
     let (control, certificate) = control_user(org);
     keep_user(&mut authorization, control);
-    let mut changed = apply_object(target, &certificate).await?;
-    for (path, document) in documents(environments)? {
-        ensure!(
-            document.org == org,
-            "environment {} names another org",
-            path.display()
-        );
-        for object in render(&document.triple(), &mut authorization) {
-            changed |= apply_object(target, &object).await?;
-        }
+    let mut objects = vec![certificate];
+    for document in environments {
+        ensure!(document.org == org, "environment names another org");
+        objects.extend(render(&document.triple(), &mut authorization));
     }
     // Preserve the original bytes when the user set did not change. Formatting
     // alone must not rewrite an existing broker Secret.
@@ -250,9 +268,9 @@ pub(super) async fn apply(target: &Target, environments: &Path, org: &str) -> an
             )]
             .into(),
         );
-        changed |= apply_object(target, &serde_json::to_value(object)?).await?;
+        objects.push(serde_json::to_value(object)?);
     }
-    Ok(changed)
+    Ok(objects)
 }
 
 /// The NATS objects of a cluster that runs the platform in one `namespace`, as

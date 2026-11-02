@@ -27,7 +27,7 @@ use crate::environment::document::EnvironmentDocument;
 /// Returns an error if an install manifest cannot be read or decoded.
 pub fn install(
     document: &ClusterDocument,
-    _environments: &[EnvironmentDocument],
+    environments: &[EnvironmentDocument],
     repository: &Path,
     fixtures: &Fixtures,
 ) -> anyhow::Result<Vec<(&'static str, Value)>> {
@@ -103,6 +103,18 @@ pub fn install(
         &mut objects,
         "4.7",
         super::install::identity_ca_objects(&identity_tls)?,
+    );
+    let authorization = objects
+        .iter()
+        .find(|(_, object)| {
+            object["kind"] == "Secret" && object["metadata"]["name"] == "wamn-nats-authorization"
+        })
+        .map(|(_, object)| object.clone())
+        .ok_or_else(|| anyhow::anyhow!("missing initial authorization fixture"))?;
+    append(
+        &mut objects,
+        "4.8",
+        super::broker::objects(&authorization, &document.org, environments)?,
     );
     append(
         &mut objects,
