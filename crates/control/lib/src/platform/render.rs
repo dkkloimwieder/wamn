@@ -7,10 +7,21 @@ use super::job::{JobRequest, JobSecret};
 use anyhow::Context as _;
 use serde_json::{Value, json};
 
+/// One registry artifact supplied to package installation without a registry call.
+#[derive(Debug)]
+pub struct Package {
+    pub id: String,
+    pub version: String,
+    pub digest: String,
+    pub files: BTreeMap<String, String>,
+}
+
 /// Live values supplied to the install batches instead of reading a cluster.
 #[derive(Debug)]
 pub struct Fixtures {
     pub identity_tls: Value,
+    pub registry: wamn_package_artifact::PackageRegistry,
+    pub packages: BTreeMap<String, Vec<Package>>,
     pub identity_database: Value,
     pub identity_image: String,
     pub postgres_image: String,
@@ -248,6 +259,86 @@ pub fn install(
             fixtures,
         )?,
     );
+    for environment in environments {
+        let key = environment_key(environment);
+        let secrets = super::packages::credentials_from(
+            &admin,
+            fixtures
+                .environment_urls
+                .get(&key)
+                .context("environment URL fixture")?,
+        )?;
+        let database = url::Url::parse(&secrets[1].value)?;
+        let packages = fixtures.packages.get(&key).context("package fixtures")?;
+        let tags = packages
+            .iter()
+            .map(|package| format!("{}-{}", package.id, package.version))
+            .collect::<Vec<_>>();
+        let artifacts = packages
+            .iter()
+            .map(|package| &package.digest)
+            .collect::<Vec<_>>();
+        for (package, tag) in packages.iter().zip(&tags) {
+            let request = super::packages::package_job(
+                &key,
+                tag.clone(),
+                environment,
+                &fixtures.runner_image,
+                &fixtures.registry,
+                &auth,
+            )?;
+            append(
+                &mut objects,
+                "4.13",
+                job_objects(
+                    &request,
+                    "platform",
+                    &json!({"artifact":package.digest,"database":database.path()}),
+                    &secrets,
+                    fixtures,
+                )?,
+            );
+        }
+        if !packages.is_empty() {
+            let request = super::packages::access_job(
+                &key,
+                environment,
+                &fixtures.runner_image,
+                &fixtures.registry,
+                &tags,
+            )?;
+            append(
+                &mut objects,
+                "4.13",
+                job_objects(
+                    &request,
+                    "platform",
+                    &json!({"artifacts":artifacts,"database":database.path()}),
+                    &secrets,
+                    fixtures,
+                )?,
+            );
+        }
+        for package in packages {
+            let request = super::packages::replica_job(
+                &key,
+                &package.id,
+                &fixtures.runner_image,
+                &package.files,
+            );
+            append(
+                &mut objects,
+                "4.13",
+                job_objects(
+                    &request,
+                    "platform",
+                    &json!({"artifact":package.digest,"database":database.path()}),
+                    &secrets,
+                    fixtures,
+                )?,
+            );
+        }
+    }
     Ok(objects)
 }
 
@@ -341,6 +432,8 @@ mod tests {
         let mut fixtures = Fixtures {
             identity_tls: json!({"data": {"ca.crt": "Zml4dHVyZS1jYQ=="}}),
             broker_authorization_exists: false,
+            registry: wamn_package_artifact::PackageRegistry {artifact_base:"registry.invalid/wamn/packages".into(), registry_auth_file:work.path().join("registry.json"), insecure_registry:true, oci_ca_paths:Vec::new()},
+            packages:BTreeMap::new(),
             identity_database: json!({"data":{"url":"cG9zdGdyZXNxbDovL2lkZW50aXR5OmZpeHR1cmVAZGF0YWJhc2Uvd2Ftbl9zeXN0ZW0="}}),
             identity_image: format!("registry.invalid/wamn/identity@sha256:{}", "1".repeat(64)),
             postgres_image: "postgres:18".into(),
@@ -365,11 +458,35 @@ mod tests {
                 ("platform-identity-check".into(),r#"{"keys":[{"kid":"fixture-kid"}]}"#.into()),
             ].into(),
         };
+        std::fs::write(&fixtures.registry.registry_auth_file, "{}")?;
         for environment in &documents {
             use wamn_control_provision::{
                 WorkloadRoleFamily, WorkloadRoleScope, WorkloadSecretBody,
             };
             let key = environment_key(environment);
+            let id = environment
+                .applications
+                .keys()
+                .next()
+                .context("fixture application")?
+                .clone();
+            fixtures.packages.insert(
+                key.clone(),
+                vec![Package {
+                    id: id.clone(),
+                    version: "1.0.0".into(),
+                    digest: format!("sha256:{}", "2".repeat(64)),
+                    files: [
+                        (
+                            "wamn.json".into(),
+                            json!({"package":{"id":id,"version":"1.0.0"}}).to_string(),
+                        ),
+                        ("migrations/0001.sql".into(), "SELECT 1;".into()),
+                    ]
+                    .into(),
+                }],
+            );
+
             let database = wamn_control_provision::project_env_database_name(
                 &environment.org,
                 &environment.project,
@@ -409,7 +526,7 @@ mod tests {
         let objects = install(&cluster, &documents, &repository, &fixtures)?;
         // This list grows as each install file gains its shared batch builders.
         for step in [
-            "4.3", "4.4", "4.4.1", "4.5", "4.7", "4.8", "4.9", "4.11", "4.12",
+            "4.3", "4.4", "4.4.1", "4.5", "4.7", "4.8", "4.9", "4.11", "4.12", "4.13",
         ] {
             assert!(
                 objects.iter().any(|(number, _)| *number == step),

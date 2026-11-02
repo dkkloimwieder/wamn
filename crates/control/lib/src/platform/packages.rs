@@ -130,13 +130,20 @@ pub(super) async fn credentials(
     )
     .await?
     .context("missing environment application Secret")?;
-    let application = url::Url::parse(&secret_text(&secret, "url")?)
+    credentials_from(&admin, &secret_text(&secret, "url")?)
+}
+
+pub(super) fn credentials_from(
+    admin: &JobSecret,
+    application_url: &str,
+) -> anyhow::Result<[JobSecret; 2]> {
+    let application = url::Url::parse(application_url)
         .map_err(|_| anyhow::anyhow!("parse application database URL"))?;
     let mut database = url::Url::parse(&admin.value)
         .map_err(|_| anyhow::anyhow!("parse administrator database URL"))?;
     database.set_path(application.path());
     Ok([
-        admin,
+        admin.clone(),
         JobSecret {
             name: "platform-package-admin".into(),
             key: "url".into(),
@@ -189,9 +196,7 @@ pub(super) async fn apply(
             let digest = pushed.digest;
             tags.push(tag.clone());
             artifacts.push(digest.clone());
-            let mut request =
-                package_request(&env_key, tag, &environment, &image, registry, &auth)?;
-            registry_inputs(&mut request, registry)?;
+            let request = package_job(&env_key, tag, &environment, &image, registry, &auth)?;
             changed |= job::run(
                 target,
                 directory,
@@ -200,29 +205,20 @@ pub(super) async fn apply(
                 &secrets,
             )
             .await?;
-            let mut request = replica_request(&env_key, &identity.id, &image);
             let opened = open_package(registry, &identity.id, &identity.version).await?;
             let source = crate::apply_package::read_package_directory(opened.root())?;
-            request.files.insert(
-                "package/wamn.json".into(),
+            let mut files = std::collections::BTreeMap::from([(
+                "wamn.json".into(),
                 String::from_utf8(source.manifest_bytes)?,
-            );
+            )]);
             for migration in source.migrations {
-                request.files.insert(
-                    format!("package/{}", migration.relative_path),
-                    String::from_utf8(migration.bytes)?,
-                );
+                files.insert(migration.relative_path, String::from_utf8(migration.bytes)?);
             }
+            let request = replica_job(&env_key, &identity.id, &image, &files);
             replicas.push((request, digest));
         }
         if !tags.is_empty() {
-            let mut request = access_request(&env_key, &environment, &image, registry);
-            for tag in &tags {
-                request
-                    .arguments
-                    .extend(["--package-artifact".into(), tag.clone()]);
-            }
-            registry_inputs(&mut request, registry)?;
+            let request = access_job(&env_key, &environment, &image, registry, &tags)?;
             changed |= job::run(
                 target,
                 directory,
@@ -325,4 +321,47 @@ pub(super) fn access_request(
         ],
         ..JobRequest::default()
     }
+}
+
+pub(super) fn package_job(
+    env_key: &str,
+    tag: String,
+    environment: &EnvironmentDocument,
+    image: &str,
+    registry: &PackageRegistry,
+    auth: &SecretData,
+) -> anyhow::Result<JobRequest> {
+    let mut request = package_request(env_key, tag, environment, image, registry, auth)?;
+    registry_inputs(&mut request, registry)?;
+    Ok(request)
+}
+pub(super) fn replica_job(
+    env_key: &str,
+    package: &str,
+    image: &str,
+    files: &std::collections::BTreeMap<String, String>,
+) -> JobRequest {
+    let mut request = replica_request(env_key, package, image);
+    request.files.extend(
+        files
+            .iter()
+            .map(|(name, contents)| (format!("package/{name}"), contents.clone())),
+    );
+    request
+}
+pub(super) fn access_job(
+    env_key: &str,
+    environment: &EnvironmentDocument,
+    image: &str,
+    registry: &PackageRegistry,
+    tags: &[String],
+) -> anyhow::Result<JobRequest> {
+    let mut request = access_request(env_key, environment, image, registry);
+    for tag in tags {
+        request
+            .arguments
+            .extend(["--package-artifact".into(), tag.clone()]);
+    }
+    registry_inputs(&mut request, registry)?;
+    Ok(request)
 }
