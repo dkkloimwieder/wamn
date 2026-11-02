@@ -26,12 +26,13 @@ use std::sync::Arc;
 
 use wamn_catalog::edge_bundle::{
     BUNDLE_FILE_NAME, BUNDLE_FORMAT, COMPONENTS_FILE_NAME, EdgeBundle, GRANTS_FILE_NAME,
-    INGRESS_FILE_NAME, file_digest,
+    INGRESS_FILE_NAME,
 };
 use wamn_catalog::{AdmittedComponent, RELEASE_MANIFEST_FILE_NAME};
 use wamn_engine::artifact_source::{ArtifactSource as _, LocalComponentSource};
 use wamn_engine::operation::native_workload::NativeComponent;
 use wamn_engine::release_manifest::{LoadedRelease, ReleaseScope, validate_component_in_release};
+use wamn_execution_contract::bytes_sha256;
 
 use crate::grants::Grants;
 
@@ -206,7 +207,7 @@ fn read_pinned(directory: &Path, name: &str, pinned: &str) -> Result<Vec<u8>, Ed
             format!("read {}: {error}", path.display()),
         )
     })?;
-    let digest = file_digest(&bytes);
+    let digest = bytes_sha256(&bytes);
     if digest != pinned {
         return Err(EdgeReleaseError::new(
             EdgeReleaseErrorType::Mismatch,
@@ -286,7 +287,7 @@ pub(crate) mod test_util {
             },
             component: "device".into(),
             interface_version: "0.1".into(),
-            component_digest: file_digest(b"device"),
+            component_digest: bytes_sha256(b"device"),
             operations: BTreeMap::from([(
                 OPERATION.into(),
                 AdmittedComponentOperation {
@@ -337,10 +338,10 @@ pub(crate) mod test_util {
         std::fs::write(directory.join(format!("{tag}.wasm")), b"device").unwrap();
         let bundle = serde_json::to_vec(&serde_json::json!({
             "format": BUNDLE_FORMAT,
-            "manifest": file_digest(&manifest_bytes),
-            "components": file_digest(&components),
-            "grants": file_digest(grants),
-            "ingress": file_digest(ingress),
+            "manifest": bytes_sha256(&manifest_bytes),
+            "components": bytes_sha256(&components),
+            "grants": bytes_sha256(grants),
+            "ingress": bytes_sha256(ingress),
         }))
         .unwrap();
         std::fs::write(directory.join(BUNDLE_FILE_NAME), &bundle).unwrap();
@@ -351,7 +352,7 @@ pub(crate) mod test_util {
                 connections: BTreeMap::new(),
             },
         )]));
-        let release = EdgeRelease::load(&directory, &file_digest(&bundle), scope)
+        let release = EdgeRelease::load(&directory, &bytes_sha256(&bundle), scope)
             .await
             .unwrap();
         std::fs::remove_dir_all(directory).unwrap();

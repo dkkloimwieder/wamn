@@ -32,9 +32,9 @@ use tokio::process::Command;
 use crate::authoring::COMPILED_MANIFEST_NAME;
 use crate::build::{BuildRequest, package_output};
 use crate::build_record::{self, BUILD_RECORD_FILE, BuildComponent, BuildRecord};
-use crate::generate::sha256;
 use wamn_catalog::manifest::PackageManifest;
 use wamn_catalog::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
+use wamn_execution_contract::bytes_sha256;
 
 /// Where the components lie in a package's build output.
 const COMPONENTS: &str = "components";
@@ -198,7 +198,7 @@ async fn compile_components(request: &BuildRequest, package: &str) -> Result<Bui
         components.push(BuildComponent {
             name,
             path,
-            sha256: sha256(&bytes),
+            sha256: bytes_sha256(&bytes),
         });
     }
     components.sort_by(|left, right| left.name.cmp(&right.name));
@@ -383,7 +383,7 @@ fn check_guest(repository: &Path, name: &str, file: &Path, crate_manifest: &Path
     let pin = crate_manifest.with_file_name(format!("{artifact}.sha256"));
     if let Ok(text) = fs::read_to_string(&pin) {
         let expected = text.split_whitespace().next().unwrap_or_default();
-        let actual = sha256(&bytes);
+        let actual = bytes_sha256(&bytes);
         ensure!(
             actual.strip_prefix("sha256:") == Some(expected),
             "built guest {name} is {actual} but {} pins sha256:{expected}. If the change is intended, write the new digest to the pin.",
@@ -560,7 +560,7 @@ fn component_file(
         })?;
     let path = output.join(&entry.path);
     let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
-    let digest = sha256(&bytes);
+    let digest = bytes_sha256(&bytes);
     ensure!(
         digest == entry.sha256,
         "{} differs from its build.json entry; build {} again",
@@ -697,12 +697,12 @@ mod tests {
             dependencies: Vec::new(),
             generator: build_record::generator(),
             outputs: build_record::BuildOutputs {
-                manifest: sha256(&fs::read(output.join(COMPILED_MANIFEST_NAME)).unwrap()),
+                manifest: bytes_sha256(&fs::read(output.join(COMPILED_MANIFEST_NAME)).unwrap()),
                 files: BTreeMap::new(),
                 components: vec![BuildComponent {
                     name: "base".into(),
                     path: "components/base.wasm".into(),
-                    sha256: sha256(&bytes),
+                    sha256: bytes_sha256(&bytes),
                 }],
                 web: None,
             },
@@ -711,7 +711,7 @@ mod tests {
         manifest["package"]["id"] = "overlay".into();
         manifest["components"] = serde_json::json!({"overlay": {"connections": []}});
         manifest["base_dependencies"] = serde_json::json!({"base": {
-            "package": "base", "version": "1.0.0", "digest": sha256(b"old base"),
+            "package": "base", "version": "1.0.0", "digest": bytes_sha256(b"old base"),
             "operations": []
         }});
         let manifest =
@@ -732,7 +732,7 @@ mod tests {
             format!(
                 "InvalidComponent: package overlay pins base base to {}, but its built component digest is {}",
                 manifest.base_dependencies["base"].digest,
-                sha256(&fs::read(file).unwrap())
+                bytes_sha256(&fs::read(file).unwrap())
             )
         );
     }

@@ -16,6 +16,8 @@ wamn-run-state-sqlite = { workspace = true }
 wamn-session = { workspace = true }
 # The admitted component facts and the serving manifest of a release bundle.
 wamn-catalog = { workspace = true }
+# The `sha256:<hex>` spelling of bundle, file and schema digests.
+wamn-execution-contract = { workspace = true }
 # The tenant of the box's environment coordinate (R1).
 wamn-control-registry = { workspace = true }
 # The plain host, its ingress and the route guest's workload. No `oci`.

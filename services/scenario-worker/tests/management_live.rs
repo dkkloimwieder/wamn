@@ -406,13 +406,7 @@ impl ArtifactRegistry {
                 location
             };
             let separator = if location.contains('?') { '&' } else { '?' };
-            let digest = <sha2::Sha256 as sha2::Digest>::digest(bytes).iter().fold(
-                String::from("sha256:"),
-                |mut digest, byte| {
-                    write!(digest, "{byte:02x}").expect("writing to a String cannot fail");
-                    digest
-                },
-            );
+            let digest = wamn_execution_contract::bytes_sha256(bytes);
             http.put(format!("{location}{separator}digest={digest}"))
                 .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
                 .body(bytes.to_vec())

@@ -144,7 +144,7 @@ mod tests {
                     package_id: "scale".into(),
                     component: "device".into(),
                     operation: crate::release::test_util::OPERATION.into(),
-                    definition_hash: DefinitionHash::parse(wamn_catalog::edge_bundle::file_digest(
+                    definition_hash: DefinitionHash::parse(wamn_execution_contract::bytes_sha256(
                         b"route",
                     ))
                     .unwrap(),

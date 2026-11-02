@@ -36,7 +36,6 @@ use crate::build_record::{
 pub use crate::components::{build_components, build_guest};
 use crate::data_access::application_schemas;
 use crate::describe::{DescribedStatement, column_type, describe_statements};
-use crate::generate::sha256;
 use crate::materialize::{
     classify_statements, client_bindings, existing_files, expected_files, generate_from_manifest,
     introspect_with_manifest, load_authored_sql, statement_corpus_from_manifest, write_files,
@@ -44,6 +43,7 @@ use crate::materialize::{
 use wamn_catalog::manifest::{
     CrudAction, PackageManifest, ResultClass, canonical_operation_identity,
 };
+use wamn_execution_contract::bytes_sha256;
 
 const RECORD_HISTORY_SQL: &str = include_str!("../../../../deploy/sql/record-history.sql");
 const RECORD_HISTORY_APP_GRANTS_SQL: &str =
@@ -939,10 +939,10 @@ fn write_outputs(
             .to_str()
             .with_context(|| format!("output path is not UTF-8: {}", relative.display()))?
             .to_owned();
-        digests.insert(key, sha256(bytes));
+        digests.insert(key, bytes_sha256(bytes));
     }
     Ok(BuildOutputs {
-        manifest: sha256(canonical),
+        manifest: bytes_sha256(canonical),
         files: digests,
         components: Vec::new(),
         web: None,
@@ -991,14 +991,16 @@ fn web_digest(web: &Path) -> Result<String> {
             .to_str()
             .with_context(|| format!("web path is not UTF-8: {}", relative.display()))?
             .to_owned();
-        files.insert(key, sha256(&bytes));
+        files.insert(key, bytes_sha256(&bytes));
     }
     ensure!(
         !files.is_empty(),
         "the web build has no file in {}",
         web.display()
     );
-    Ok(sha256(&canonical_json_bytes(&serde_json::json!(files))))
+    Ok(bytes_sha256(&canonical_json_bytes(&serde_json::json!(
+        files
+    ))))
 }
 
 #[cfg(test)]

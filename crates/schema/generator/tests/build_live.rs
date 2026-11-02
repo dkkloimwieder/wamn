@@ -9,7 +9,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
-use sha2::{Digest as _, Sha256};
 use wamn_catalog::manifest::PackageManifest;
 use wamn_catalog::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 use wamn_schema_generator::build::{
@@ -715,7 +714,7 @@ async fn a_stale_base_component_pin_refuses_fresh_and_current_builds() {
             PackageManifest::from_slice(&fs::read(output.join("wamn.json")).unwrap()).unwrap();
         let name = manifest.components.keys().next().unwrap().clone();
         let path = format!("components/{name}.wasm");
-        let digest = format!("sha256:{}", hex::encode(Sha256::digest(bytes)));
+        let digest = wamn_execution_contract::bytes_sha256(bytes);
         fs::create_dir_all(output.join("components")).unwrap();
         fs::write(output.join(&path), bytes).unwrap();
         let mut built = build_record::read(output).unwrap();

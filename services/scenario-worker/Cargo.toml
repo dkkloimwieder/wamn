@@ -34,7 +34,6 @@ hyper = { workspace = true, features = ["server", "http1"] }
 hyper-util = { workspace = true, features = ["tokio"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-sha2 = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "time"] }
 tokio-postgres = { workspace = true, features = ["with-serde_json-1"] }
 tracing = { workspace = true }

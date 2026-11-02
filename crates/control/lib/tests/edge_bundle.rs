@@ -5,8 +5,9 @@
 
 use std::path::{Path, PathBuf};
 
-use wamn_catalog::edge_bundle::{BUNDLE_FILE_NAME, EdgeBundle, INGRESS_FILE_NAME, file_digest};
+use wamn_catalog::edge_bundle::{BUNDLE_FILE_NAME, EdgeBundle, INGRESS_FILE_NAME};
 use wamn_control::dev::edge_bundle::{EdgeScope, PackageRelease, write_package};
+use wamn_execution_contract::bytes_sha256;
 
 fn repository() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
@@ -53,7 +54,7 @@ fn the_bundle_pins_the_entry_composed_from_the_route_guest_and_the_application()
     let entry = std::fs::read(out.join(INGRESS_FILE_NAME)).expect("read the entry");
     assert_eq!(
         bundle.ingress,
-        file_digest(&entry),
+        bytes_sha256(&entry),
         "the bundle pins the entry"
     );
     assert_ne!(

@@ -8,10 +8,8 @@
 //! edge-bundle`, and the reader is `wamn-edge`.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest as _, Sha256};
 
 /// The bundle file name inside a release bundle directory.
 pub const BUNDLE_FILE_NAME: &str = "edge-release.json";
@@ -40,15 +38,4 @@ pub struct EdgeBundle {
 #[serde(deny_unknown_fields)]
 pub struct EdgeGrants {
     pub roles: BTreeMap<String, BTreeSet<String>>,
-}
-
-/// The `sha256:<hex>` digest of exact file bytes.
-pub fn file_digest(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut output = String::with_capacity("sha256:".len() + digest.len() * 2);
-    output.push_str("sha256:");
-    for byte in digest {
-        write!(&mut output, "{byte:02x}").expect("writing to a string is infallible");
-    }
-    output
 }

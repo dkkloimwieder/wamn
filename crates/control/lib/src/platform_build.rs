@@ -21,7 +21,7 @@ use anyhow::{Context as _, ensure};
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command;
-use wamn_execution_contract::canonical_json_bytes;
+use wamn_execution_contract::{bytes_sha256, canonical_json_bytes};
 use wamn_package_artifact::registry_pull;
 
 use crate::release_chart::{ImageSet, QualificationImages, stamp};
@@ -132,18 +132,11 @@ pub fn platform_ui_digest(dist: &Path) -> anyhow::Result<String> {
             .to_str()
             .context("a platform UI file name is UTF-8")?
             .to_owned();
-        digests.insert(relative, sha256(&std::fs::read(file)?));
+        digests.insert(relative, bytes_sha256(&std::fs::read(file)?));
     }
-    Ok(sha256(&canonical_json_bytes(&serde_json::to_value(
+    Ok(bytes_sha256(&canonical_json_bytes(&serde_json::to_value(
         digests,
     )?)))
-}
-
-fn sha256(bytes: &[u8]) -> String {
-    format!(
-        "sha256:{}",
-        hex::encode(ring::digest::digest(&ring::digest::SHA256, bytes).as_ref())
-    )
 }
 
 /// The first 16 SHA-256 hex digits of the checkout's canonical absolute path.
@@ -665,7 +658,7 @@ async fn reuse_role(
         .put_manifest(&format!("{repository}:{version}"), &manifest, &media_type)
         .await?;
     eprintln!("build-platform {role} layer {layer} copy {previous}");
-    Ok(Some(format!("{repository}@{}", sha256(&manifest))))
+    Ok(Some(format!("{repository}@{}", bytes_sha256(&manifest))))
 }
 
 /// How each image reaches the chart version tag: built, or copied from the
@@ -936,7 +929,7 @@ async fn push_roles(
         let _stage = recorded_stage(durations, format!("push-{role}"));
         // A lookup that fails, for any reason, leaves the role to be pushed.
         if let Ok(Some(pinned)) =
-            reuse_role(components, registry, version, role, &sha256(&bytes)).await
+            reuse_role(components, registry, version, role, &bytes_sha256(&bytes)).await
         {
             pushed.push(pinned);
             continue;
@@ -1991,10 +1984,10 @@ mod tests {
             let manifest = serde_json::to_vec(&serde_json::json!({
                 "schemaVersion": 2,
                 "mediaType": "application/vnd.oci.image.manifest.v1+json",
-                "config": {"digest": sha256(created.as_bytes())},
-                "layers": [{"mediaType": "application/wasm", "digest": sha256(bytes)}],
+                "config": {"digest": bytes_sha256(created.as_bytes())},
+                "layers": [{"mediaType": "application/wasm", "digest": bytes_sha256(bytes)}],
             }))?;
-            let digest = sha256(&manifest);
+            let digest = bytes_sha256(&manifest);
             self.manifests.insert(reference.to_owned(), manifest);
             self.pushed.push(reference.to_owned());
             Ok(digest)
@@ -2326,9 +2319,9 @@ mod tests {
         let manifest = &components.manifests[&format!("{materializer}:{VERSION}")];
         assert_eq!(
             materializer_pinned,
-            format!("{materializer}@{}", sha256(manifest))
+            format!("{materializer}@{}", bytes_sha256(manifest))
         );
-        assert_eq!(wasm_layer(manifest).unwrap(), sha256(b"\0asm"));
+        assert_eq!(wasm_layer(manifest).unwrap(), bytes_sha256(b"\0asm"));
     }
 
     #[tokio::test]
@@ -2366,7 +2359,7 @@ mod tests {
         assert_ne!(&before, after);
         assert_eq!(after, &components.manifests[&format!("{http}:0.0.1")]);
         let materializer_now = &components.manifests[&format!("{materializer}:{VERSION}")];
-        assert_eq!(sha256(materializer_now), pushed);
+        assert_eq!(bytes_sha256(materializer_now), pushed);
     }
 
     #[test]

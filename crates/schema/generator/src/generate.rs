@@ -18,7 +18,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
 use serde_json::{Value, json};
-use sha2::{Digest as _, Sha256};
 use wamn_catalog::schema::ColumnType;
 use wamn_execution_contract::canonical_json_bytes;
 use wamn_record_history::history_table_name;
@@ -1080,10 +1079,6 @@ pub(crate) fn insert_bytes(
 /// and its codec refuses the omission on that path.
 fn omission_refused(column: &Column) -> bool {
     !column.nullable() && column.default().is_none() && column.generation().is_none()
-}
-
-pub(crate) fn sha256(bytes: &[u8]) -> String {
-    format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
 }
 
 fn constraint_error(kind: &ConstraintType) -> &'static str {

@@ -379,7 +379,9 @@ fn shape_digest(model: &ModelIr) -> String {
     if shapes.is_empty() {
         shapes.insert(fields_shape(&model.fields).to_string());
     }
-    crate::generate::sha256(&serde_json::to_vec(&shapes).expect("row shapes serialize"))
+    wamn_execution_contract::bytes_sha256(
+        &serde_json::to_vec(&shapes).expect("row shapes serialize"),
+    )
 }
 
 fn emit_model(package: &str, model: &ModelIr) -> Result<String, ClientTsError> {

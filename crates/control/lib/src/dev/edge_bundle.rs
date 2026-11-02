@@ -20,11 +20,12 @@ use std::path::Path;
 use anyhow::{Context as _, ensure};
 use wamn_catalog::edge_bundle::{
     BUNDLE_FILE_NAME, BUNDLE_FORMAT, COMPONENTS_FILE_NAME, EdgeBundle, EdgeGrants,
-    GRANTS_FILE_NAME, INGRESS_FILE_NAME, file_digest,
+    GRANTS_FILE_NAME, INGRESS_FILE_NAME,
 };
 use wamn_catalog::{PackageCoordinate, RELEASE_MANIFEST_FILE_NAME, ServingManifest};
 use wamn_control_registry::project_env_key;
 use wamn_engine::artifact_source::local_component_path;
+use wamn_execution_contract::bytes_sha256;
 use wamn_project_state::ADMIN_ROLE;
 use wamn_runtime::local_application::{LOCAL_FACTS_FILE, LocalApplicationFacts};
 
@@ -220,7 +221,7 @@ fn write_bundle(
         let digest = &component.component_digest;
         let bytes = read_component(digest)?;
         ensure!(
-            file_digest(&bytes) == *digest,
+            bytes_sha256(&bytes) == *digest,
             "component {digest} changed after admission"
         );
         bodies.push(bytes);
@@ -252,12 +253,12 @@ fn write_bundle(
     fs::write(out.join(INGRESS_FILE_NAME), ingress_bytes)?;
     let bundle = serde_json::to_vec(&EdgeBundle {
         format: BUNDLE_FORMAT,
-        manifest: file_digest(manifest_bytes),
-        components: file_digest(&components),
-        grants: file_digest(&grants),
-        ingress: file_digest(ingress_bytes),
+        manifest: bytes_sha256(manifest_bytes),
+        components: bytes_sha256(&components),
+        grants: bytes_sha256(&grants),
+        ingress: bytes_sha256(ingress_bytes),
     })
     .context("encode the bundle")?;
     fs::write(out.join(BUNDLE_FILE_NAME), &bundle)?;
-    Ok(file_digest(&bundle))
+    Ok(bytes_sha256(&bundle))
 }

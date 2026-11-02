@@ -17,7 +17,6 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use chrono::{SecondsFormat, Utc};
-use wamn_catalog::edge_bundle::file_digest;
 use wamn_engine::engine::{
     build_engine_with_host_memory_and_compilation_cache, core_instances_of_component,
     host_memory_budgets,
@@ -25,6 +24,7 @@ use wamn_engine::engine::{
 use wamn_engine::expected_router::expected_host_router;
 use wamn_engine::flow_http_routing::{FlowHttpRouting, RouteInFlightLimit};
 use wamn_engine::router_delivery::RouterDelivery;
+use wamn_execution_contract::bytes_sha256;
 use wamn_run_state_sqlite::{SqliteIntentStore, StoreClosed};
 use wamn_session::file_keys::FileKeys;
 use wamn_session::verifier::SessionVerifier;
@@ -335,7 +335,7 @@ fn ingress_workload(release: &EdgeRelease, route_host: &str) -> WorkloadStartReq
             components: vec![Component {
                 name: INGRESS_WORKLOAD.to_owned(),
                 bytes: release.ingress().to_vec().into(),
-                digest: Some(file_digest(release.ingress())),
+                digest: Some(bytes_sha256(release.ingress())),
                 local_resources: LocalResources::default(),
                 pool_size: 0,
                 max_invocations: 0,

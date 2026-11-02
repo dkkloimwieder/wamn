@@ -16,7 +16,7 @@ use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context as _, bail, ensure};
 use serde_json::{Value, json};
-use wamn_execution_contract::canonical_json_bytes;
+use wamn_execution_contract::{bytes_sha256, canonical_json_bytes};
 
 /// The guests that the component-builder stage compiles in one invocation.
 const COMPONENTS: &[&str] = &[
@@ -571,7 +571,7 @@ fn walk(
         let mode = metadata.permissions().mode() & 0o7777;
         files.insert(
             key()?,
-            format!("{} {mode:o}", super::sha256(&std::fs::read(&path)?)),
+            format!("{} {mode:o}", bytes_sha256(&std::fs::read(&path)?)),
         );
     }
     Ok(())
@@ -693,7 +693,7 @@ pub(super) fn input_hash(target: &str, files: &BTreeMap<String, String>) -> Stri
         "labels": ["wamn.dev/build-profile=release"],
         "files": files,
     });
-    let digest = super::sha256(&canonical_json_bytes(&document));
+    let digest = bytes_sha256(&canonical_json_bytes(&document));
     digest.trim_start_matches("sha256:").to_owned()
 }
 

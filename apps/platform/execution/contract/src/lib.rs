@@ -109,11 +109,62 @@ impl serde::Serialize for SortedKeys<'_> {
     }
 }
 
+/// `sha256:<lowercase hex>` over exact bytes, with no JSON step.
+///
+/// This is the one spelling of a raw-byte digest: file, bundle, component and
+/// build-record digests all use it. [`canonical_json_sha256`] is the same
+/// spelling over canonical JSON bytes.
+///
+/// Guests never take a raw digest, and a new compiled item in this crate
+/// changes every guest's bytes and pinned digest, so it is native only.
+#[cfg(not(target_family = "wasm"))]
+pub fn bytes_sha256(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut hash = String::with_capacity("sha256:".len() + digest.len() * 2);
+    hash.push_str("sha256:");
+    for byte in digest {
+        write!(&mut hash, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    hash
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
+    #[cfg(not(target_family = "wasm"))]
+    use super::bytes_sha256;
     use super::{canonical_json_bytes, canonical_json_sha256};
+
+    #[cfg(not(target_family = "wasm"))]
+    #[test]
+    fn raw_byte_digests_match_fixed_sha256_vectors() {
+        let binary: Vec<u8> = (0..=255).collect();
+
+        assert_eq!(
+            bytes_sha256(b""),
+            "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            bytes_sha256(&binary),
+            "sha256:40aff2e9d2d8922e47afd4648e6967497158785fbd1da870e7110266bf944880"
+        );
+        assert_eq!(
+            bytes_sha256("wamn ✓\n".as_bytes()),
+            "sha256:b6f49645cc50cf7d007a270a1ee823cc1c8ccd47e3ee4fd281ed6800409229be"
+        );
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    #[test]
+    fn canonical_json_hash_is_the_raw_digest_of_canonical_bytes() {
+        let value = json!({"b": [1, "two"], "a": null});
+
+        assert_eq!(
+            canonical_json_sha256(&value),
+            bytes_sha256(&canonical_json_bytes(&value))
+        );
+    }
 
     #[test]
     fn canonical_json_hash_ignores_object_insertion_order() {

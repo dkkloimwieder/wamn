@@ -16,8 +16,8 @@ use syn::parse::Parser as _;
 use syn::visit::Visit as _;
 use wamn_execution_contract::canonical_json_bytes;
 
-use crate::generate::sha256;
 use crate::materialize::{GENERATOR_ID, TOOLCHAIN_ID};
+use wamn_execution_contract::bytes_sha256;
 
 /// The build record's file name in a package's build output directory.
 pub const BUILD_RECORD_FILE: &str = "build.json";
@@ -307,7 +307,7 @@ pub(crate) fn inputs(package_root: &Path) -> Result<BuildInputs> {
     let lock = package_root.join(WORKSPACE_LOCK);
     if lock.is_file() {
         let bytes = fs::read(&lock).with_context(|| format!("read {}", lock.display()))?;
-        files.insert(WORKSPACE_LOCK.to_owned(), sha256(&bytes));
+        files.insert(WORKSPACE_LOCK.to_owned(), bytes_sha256(&bytes));
     }
     Ok(digests(files, &generator(), GENERATOR_FINGERPRINT))
 }
@@ -341,7 +341,7 @@ fn digest_inputs(
     generator: &BuildGenerator,
     fingerprint: &str,
 ) -> String {
-    sha256(&canonical_json_bytes(&serde_json::json!({
+    bytes_sha256(&canonical_json_bytes(&serde_json::json!({
         "files": files,
         "generator": generator,
         "generator_fingerprint": fingerprint,
@@ -421,7 +421,7 @@ fn insert_guest_wit(
                 key.to_str()
                     .context("guest WIT path is not UTF-8")?
                     .to_owned(),
-                sha256(&bytes),
+                bytes_sha256(&bytes),
             );
         }
     }
@@ -502,7 +502,7 @@ fn insert_tree(files: &mut BTreeMap<String, String>, root: &Path, prefix: &Path)
             .to_owned();
         let path = root.join(&relative);
         let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
-        files.insert(key, sha256(&bytes));
+        files.insert(key, bytes_sha256(&bytes));
     }
     Ok(())
 }
@@ -599,7 +599,7 @@ mod tests {
             dependencies: Vec::new(),
             generator: generator(),
             outputs: BuildOutputs {
-                manifest: sha256(b"manifest"),
+                manifest: bytes_sha256(b"manifest"),
                 files: BTreeMap::new(),
                 components: Vec::new(),
                 web: None,
@@ -627,8 +627,8 @@ mod tests {
     #[test]
     fn generator_changes_invalidate_both_digests() {
         let files = BTreeMap::from([
-            ("wamn.k".to_owned(), sha256(b"package")),
-            ("component/src/lib.rs".to_owned(), sha256(b"source")),
+            ("wamn.k".to_owned(), bytes_sha256(b"package")),
+            ("component/src/lib.rs".to_owned(), bytes_sha256(b"source")),
         ]);
         let generator = generator();
         let before = digests(files.clone(), &generator, "old templates");
@@ -988,14 +988,14 @@ mod tests {
                 version: "1.0.0".to_owned(),
             },
             inputs: BuildInputs {
-                digest: sha256(b"i"),
-                generation_digest: sha256(b"g"),
+                digest: bytes_sha256(b"i"),
+                generation_digest: bytes_sha256(b"g"),
                 files: BTreeMap::new(),
             },
             dependencies: Vec::new(),
             generator: generator(),
             outputs: BuildOutputs {
-                manifest: sha256(b"m"),
+                manifest: bytes_sha256(b"m"),
                 files: BTreeMap::new(),
                 components: Vec::new(),
                 web: None,

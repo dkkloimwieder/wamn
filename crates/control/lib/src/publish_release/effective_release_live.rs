@@ -7,11 +7,12 @@ use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{ComponentDeclaration, OperationType, PackageCoordinate};
 use wamn_control_provision::CONTROL_BOOTSTRAP_SQL;
 use wamn_engine::component_admission::{ComponentAdmissionRequest, validate_component_admission};
+use wamn_execution_contract::bytes_sha256;
 
 use super::{
     PublishManifestErrorType, PublishReleaseManifest, PublishedRelease, ReleaseComponents,
     publish_release_with_package_manifests, read_package_attachments, read_package_manifests,
-    resolve_route_methods, sha256,
+    resolve_route_methods,
 };
 use crate::apply_package::{self, ApplyPackageRequest};
 
@@ -205,7 +206,7 @@ fn admit_components(inputs: &[PackageInput]) -> (BTreeMap<String, String>, Relea
             .unwrap_or_else(|error| panic!("read {}: {error}", input.component_bytes.display()));
         if let Some(expected) = &input.expected_component_digest {
             assert_eq!(
-                sha256(&bytes),
+                bytes_sha256(&bytes),
                 *expected,
                 "{}@{} must use the exact digest pinned by the overlay dependency",
                 input.id,

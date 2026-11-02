@@ -20,13 +20,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ring::signature::{Ed25519KeyPair, KeyPair as _};
 use serde_json::json;
-use wamn_catalog::edge_bundle::{BUNDLE_FILE_NAME, file_digest};
+use wamn_catalog::edge_bundle::BUNDLE_FILE_NAME;
 use wamn_catalog::{RELEASE_MANIFEST_FILE_NAME, ServingManifest};
 use wamn_control::dev::edge_bundle::{EdgeScope, PackageRelease, write_package};
 use wamn_edge::config::{
     EdgeConfig, HttpConfig, ReleaseConfig, ScopeConfig, SessionConfig, StoreConfig,
 };
 use wamn_edge::serve::{EdgeHost, serve};
+use wamn_execution_contract::bytes_sha256;
 use wamn_session::keys::PublicSessionKey;
 use wamn_session::token::{SessionAuthority, SessionClaims, SessionHeader};
 
@@ -110,7 +111,7 @@ pub fn bundle(test: &str, public: &PublicSessionKey) -> (PathBuf, String) {
     )
     .expect("write the key file");
     let bundle = std::fs::read(directory.join(BUNDLE_FILE_NAME)).expect("read the bundle");
-    (directory, file_digest(&bundle))
+    (directory, bytes_sha256(&bundle))
 }
 
 /// Build the route guest into `apps/target`, and write the bundle of `apps/edge_device`, with the
@@ -132,7 +133,7 @@ fn build_bundle() -> PathBuf {
         repository.join("apps/platform/ingress/http-route/http_route.wasm.sha256"),
     )
     .expect("read the http-route pin");
-    let ingress_digest = file_digest(&std::fs::read(&ingress).expect("read the route guest"));
+    let ingress_digest = bytes_sha256(&std::fs::read(&ingress).expect("read the route guest"));
     assert_eq!(
         Some(&ingress_digest["sha256:".len()..]),
         pin.split_whitespace().next(),

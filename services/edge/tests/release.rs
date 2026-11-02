@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use serde_json::json;
 use wamn_catalog::edge_bundle::{
-    BUNDLE_FILE_NAME, COMPONENTS_FILE_NAME, GRANTS_FILE_NAME, INGRESS_FILE_NAME, file_digest,
+    BUNDLE_FILE_NAME, COMPONENTS_FILE_NAME, GRANTS_FILE_NAME, INGRESS_FILE_NAME,
 };
 use wamn_catalog::{
     AdmittedComponent, AdmittedComponentOperation, ComponentDescriptor, ComponentPackageScope,
@@ -15,6 +15,7 @@ use wamn_catalog::{
 };
 use wamn_edge::release::{EdgeRelease, EdgeReleaseErrorType};
 use wamn_engine::release_manifest::ReleaseScope;
+use wamn_execution_contract::bytes_sha256;
 
 const ENV_KEY: &str = "t1";
 const PACKAGE: &str = "scale";
@@ -44,7 +45,7 @@ fn manifest() -> ServingManifest {
                     statements: BTreeMap::new(),
                 },
             )]),
-            descriptor: ComponentDescriptor::named(COMPONENT, "0.1", file_digest(BODY)),
+            descriptor: ComponentDescriptor::named(COMPONENT, "0.1", bytes_sha256(BODY)),
         }]),
         BTreeSet::new(),
         BTreeMap::new(),
@@ -73,7 +74,7 @@ fn fact() -> AdmittedComponent {
                 statements: BTreeMap::new(),
             },
         )]),
-        component_digest: file_digest(BODY),
+        component_digest: bytes_sha256(BODY),
         imports: Vec::new(),
         imports_fingerprint: String::new(),
         effects: Vec::new(),
@@ -112,21 +113,21 @@ impl Bundle {
         std::fs::create_dir_all(&directory).expect("create the bundle directory");
         let bundle = serde_json::to_vec(&json!({
             "format": 1,
-            "manifest": file_digest(&self.manifest),
-            "components": file_digest(&self.components),
-            "grants": file_digest(&self.grants),
-            "ingress": file_digest(&self.ingress),
+            "manifest": bytes_sha256(&self.manifest),
+            "components": bytes_sha256(&self.components),
+            "grants": bytes_sha256(&self.grants),
+            "ingress": bytes_sha256(&self.ingress),
         }))
         .expect("bundle");
         write(&directory, RELEASE_MANIFEST_FILE_NAME, &self.manifest);
         write(&directory, COMPONENTS_FILE_NAME, &self.components);
         write(&directory, GRANTS_FILE_NAME, &self.grants);
         write(&directory, INGRESS_FILE_NAME, &self.ingress);
-        let tag = file_digest(BODY);
+        let tag = bytes_sha256(BODY);
         let tag = tag.strip_prefix("sha256:").expect("digest prefix");
         write(&directory, &format!("{tag}.wasm"), &self.body);
         write(&directory, BUNDLE_FILE_NAME, &bundle);
-        (directory, file_digest(&bundle))
+        (directory, bytes_sha256(&bundle))
     }
 }
 
@@ -180,7 +181,7 @@ async fn a_pinned_bundle_loads_and_grants_permissions_by_role() {
 async fn a_changed_file_does_not_match_its_pin() {
     let (directory, digest) = Bundle::valid().write();
     assert_eq!(
-        refusal(&directory, &file_digest(b"another bundle")).await,
+        refusal(&directory, &bytes_sha256(b"another bundle")).await,
         EdgeReleaseErrorType::Mismatch
     );
     for name in [
@@ -199,7 +200,7 @@ async fn a_changed_file_does_not_match_its_pin() {
             "{name}"
         );
     }
-    let tag = file_digest(BODY);
+    let tag = bytes_sha256(BODY);
     let tag = tag.strip_prefix("sha256:").expect("digest prefix");
     write(&directory, &format!("{tag}.wasm"), b"other component bytes");
     assert_eq!(

@@ -1135,14 +1135,6 @@ where
     }
 }
 
-#[cfg(test)]
-fn sha256(bytes: &[u8]) -> String {
-    format!(
-        "sha256:{}",
-        hex::encode(ring::digest::digest(&ring::digest::SHA256, bytes).as_ref())
-    )
-}
-
 async fn publish_release_with_package_manifests(
     client: &Client,
     request: &PublishReleaseManifest<'_>,
