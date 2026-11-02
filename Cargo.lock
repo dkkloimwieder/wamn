@@ -6446,7 +6446,6 @@ dependencies = [
 name = "wamn-router"
 version = "0.1.0"
 dependencies = [
- "opentelemetry",
  "proptest",
  "serde_json",
  "wamn-event-wire",
