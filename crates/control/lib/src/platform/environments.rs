@@ -190,8 +190,7 @@ pub(super) async fn connections(
     )
     .await?
     .context("missing Secret platform/wamn-pg-superuser")?;
-    let mut admin = administrator(&secret)?;
-    admin.environment = "WAMN_CONTROL_DATABASE_URL".into();
+    let admin = administrator(&secret)?;
     let auth: SecretData = kubectl::get(
         &target.kubeconfig,
         &target.context,
@@ -212,19 +211,20 @@ pub(super) async fn connections(
         if environment.integrations.is_empty() {
             continue;
         }
-        let request = connections_request(
+        let (request, credential) = connection_inputs(
             document,
             &environment,
             &image,
             &auth,
             connection_documents(&source, &environment)?,
+            &admin,
         )?;
         changed |= job::run(
             &target,
             directory,
             &request,
             &json!({"environment": environment}),
-            std::slice::from_ref(&admin),
+            std::slice::from_ref(&credential),
         )
         .await?;
     }
@@ -232,7 +232,7 @@ pub(super) async fn connections(
 }
 
 /// The documents of each integration `environment` declares, by file name.
-fn connection_documents(
+pub(super) fn connection_documents(
     source: &Path,
     environment: &crate::environment::document::EnvironmentDocument,
 ) -> anyhow::Result<std::collections::BTreeMap<String, String>> {
@@ -253,6 +253,20 @@ fn connection_documents(
         }
     }
     Ok(files)
+}
+
+pub(super) fn connection_inputs(
+    document: &ClusterDocument,
+    environment: &crate::environment::document::EnvironmentDocument,
+    image: &str,
+    auth: &SecretData,
+    files: std::collections::BTreeMap<String, String>,
+    admin: &super::job::JobSecret,
+) -> anyhow::Result<(JobRequest, super::job::JobSecret)> {
+    let request = connections_request(document, environment, image, auth, files)?;
+    let mut credential = admin.clone();
+    credential.environment = "WAMN_CONTROL_DATABASE_URL".into();
+    Ok((request, credential))
 }
 
 pub(super) fn connections_request(

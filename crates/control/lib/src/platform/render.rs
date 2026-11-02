@@ -377,6 +377,34 @@ pub fn install(
             )?,
         );
     }
+    for environment in environments
+        .iter()
+        .filter(|environment| !environment.integrations.is_empty())
+    {
+        let files = super::environments::connection_documents(
+            &repository.join("deploy/gcp/connections"),
+            environment,
+        )?;
+        let (request, credential) = super::environments::connection_inputs(
+            document,
+            environment,
+            &fixtures.runner_image,
+            &auth,
+            files,
+            &admin,
+        )?;
+        append(
+            &mut objects,
+            "4.16.1",
+            job_objects(
+                &request,
+                "hosts",
+                &json!({"environment":environment}),
+                std::slice::from_ref(&credential),
+                fixtures,
+            )?,
+        );
+    }
     Ok(objects)
 }
 
@@ -570,6 +598,7 @@ mod tests {
         // This list grows as each install file gains its shared batch builders.
         for step in [
             "4.3", "4.4", "4.4.1", "4.5", "4.7", "4.8", "4.9", "4.11", "4.12", "4.13", "4.14",
+            "4.16.1",
         ] {
             assert!(
                 objects.iter().any(|(number, _)| *number == step),
