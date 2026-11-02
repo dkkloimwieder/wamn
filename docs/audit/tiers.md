@@ -92,3 +92,14 @@ The close run of `wamn-ms1sn.2` used a hand-picked target list ("provision live"
 - The three broker.rs and edge.rs cases passed with `--ignored`, with `WAMN_NATIVE_C_NATS_BIN` and `helm` set.
 
 The logs are in `/var/tmp/wamn-docs`: `select-conformance.log` and `kov6v6-test.log`. The runs built no image and did not use kind.
+
+### Selection by policy row
+
+`wamn-s182s` (`fb5c01ae0`) makes `tools/test-changes` read a diff of `tests/selection.toml` by row. A row is one `[[suites]]` table or one element of `targets` or `exclusions`. The tool compares the parsed rows of the base and the working file, so a format change of a row selects nothing.
+
+- An added or changed suite row selects that suite and `-p wamn-conformance-tests --test test_changes --test test_tiers`. The suite still passes the tier filter.
+- A changed targets or exclusions element selects only the two selector tests.
+- A removed suite row selects nothing for that suite. The tool fails if a tracked file outside `docs/history/` and `docs/audit/` still names the suite.
+- A change to the shared header or to `tools/test-changes` selects everything, as before.
+
+A change of code files and rows selects the union of both rules. A dry run on a one-row edit of `packages-alone` selected only that suite and the selector tests. Five new cases cover the rules. `test_changes` passed 37 of 37 and `test_tiers` passed 5 of 5, and format and clippy passed. The logs are `rowdiff-test.log` and `rowdiff-dry.log` in `/var/tmp/wamn-docs`. The runs built no image and did not use kind.
