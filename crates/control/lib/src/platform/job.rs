@@ -15,7 +15,7 @@ const OUTPUT_FILE: &str = "/out/secret.json";
 // env apply passes the policy's 600 s readiness budget to Helm. Allow 900 s
 // here so Helm can report its own timeout and finish its cleanup first.
 const INSTALL_DEADLINE: Duration = Duration::from_mins(15);
-const HANDOFF: &str = r#"umask 077
+pub(super) const HANDOFF: &str = r#"umask 077
 /usr/local/bin/wamn-ctl "$@"
 waited=0
 while [ -e /out/secret.json ] && [ "$waited" -lt 300 ]; do
@@ -75,8 +75,6 @@ pub struct JobRequest {
     pub files: BTreeMap<String, String>,
     /// Binary mounted inputs, such as the chart's packaged dependency.
     pub binary_files: BTreeMap<String, Vec<u8>>,
-    /// Namespace-scoped access required by this Job.
-    pub permissions: Vec<Access>,
     /// Override the executable for an existing tool, such as identity or psql.
     pub command: Vec<String>,
     /// Retain public command output with the completion digest.
@@ -646,7 +644,7 @@ pub(super) fn completion_digest(request: &JobRequest, inputs: &Value) -> anyhow:
         "inputs": inputs, "image": image, "arguments": request.arguments,
         "environment": request.environment, "files": request.files,
         "binary_files": request.binary_files,
-        "permissions": request.permissions, "command": request.command,
+        "permissions": super::job_contract::access(request)?, "command": request.command,
         "capture_output": request.capture_output, "run_as_user": request.run_as_user
     });
     if !request.secret_mounts.is_empty() {
@@ -847,6 +845,7 @@ pub(super) fn start_objects(
     namespace: &str,
     secrets: &[JobSecret],
 ) -> anyhow::Result<Vec<Value>> {
+    super::job_contract::request(request)?;
     Ok(vec![serde_json::to_value(render(
         request, namespace, secrets,
     ))?])
@@ -873,7 +872,7 @@ pub(super) fn support_objects(
     if let Some(account) = account(request, &owner)? {
         objects.push(serde_json::to_value(account)?);
     }
-    for access in &request.permissions {
+    for access in &super::job_contract::access(request)? {
         objects.push(serde_json::to_value(role(request, access))?);
         objects.push(serde_json::to_value(role_binding(
             request,
@@ -1055,7 +1054,7 @@ async fn finish(target: &Target, directory: &Path, request: &JobRequest) -> anyh
     )
     .await;
     deleted?;
-    for access in &request.permissions {
+    for access in &super::job_contract::access(request)? {
         kubectl::kubectl(
             &target.kubeconfig,
             &target.context,

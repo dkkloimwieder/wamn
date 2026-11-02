@@ -38,60 +38,6 @@ pub struct ApplyArgs {
     pub dry_run: bool,
 }
 
-// Environment contract for this verb as invoked by platform install Jobs.
-#[cfg(test)]
-pub(crate) const ENV_APPLY_INSTALL_ENV: crate::install_job_tests::Environment =
-    crate::install_job_tests::Environment {
-        required: &[
-            "WAMN_APPLY_DATABASE_URL",
-            "WAMN_SYSTEM_ADMIN_URL",
-            "WAMN_RELEASE_CHART",
-            "WAMN_RELEASE_ARTIFACT_BASE",
-            "WAMN_REGISTRY_AUTH_FILE",
-            "WAMN_NATS_URL",
-            "WAMN_NATS_TLS_CA",
-            "WAMN_NATS_TLS_CERT",
-            "WAMN_NATS_TLS_KEY",
-        ],
-        optional: &[
-            "KUBECONFIG",
-            "WAMN_KCL",
-            "WAMN_RELEASE_NAMESPACE",
-            "WAMN_OCI_CA_PATHS",
-            "WAMN_PACKAGE_ARTIFACT_BASE",
-            "WAMN_DATABASE_NAMESPACE",
-            "WAMN_DATABASE_HOST",
-            "WAMN_DATABASE_PORT",
-            "WAMN_RELEASE_HOST_GROUP",
-            "WAMN_IDENTITY_URL",
-            "WAMN_IDENTITY_CLIENT_CERT",
-            "WAMN_IDENTITY_CLIENT_KEY",
-            "WAMN_IDENTITY_SERVER_CA",
-            "WAMN_NATS_TLS_SERVER_NAME",
-            "WAMN_EVENT_NATS_URL",
-            "WAMN_EVENT_NATS_USERNAME",
-            "WAMN_EVENT_NATS_PASSWORD_FILE",
-            "WAMN_EVENT_STREAM_REPLICAS",
-            "WAMN_EVENT_DUP_WINDOW_SECS",
-        ],
-    };
-
-#[cfg(test)]
-pub(crate) const ENV_CONNECTIONS_INSTALL_ENV: crate::install_job_tests::Environment =
-    crate::install_job_tests::Environment {
-        required: &[
-            "WAMN_CONTROL_DATABASE_URL",
-            "WAMN_RELEASE_CHART",
-            "WAMN_RELEASE_ARTIFACT_BASE",
-            "WAMN_REGISTRY_AUTH_FILE",
-            "WAMN_NATS_URL",
-            "WAMN_NATS_TLS_CA",
-            "WAMN_NATS_TLS_CERT",
-            "WAMN_NATS_TLS_KEY",
-        ],
-        optional: ENV_APPLY_INSTALL_ENV.optional,
-    };
-
 #[derive(Debug, Args)]
 pub struct ConnectionsArgs {
     /// The environment.k document.

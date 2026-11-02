@@ -354,3 +354,145 @@ fn install_inputs_reject_a_missing_rendered_key() -> anyhow::Result<()> {
     assert!(failures[0].contains("identity-resend key missing-key producer step absent"));
     Ok(())
 }
+
+fn role_failures(objects: &[(&str, serde_json::Value)]) -> Vec<String> {
+    use wamn_control::platform::job_contract;
+    let mut failures = Vec::new();
+    for (index, (step, object)) in objects.iter().enumerate() {
+        if object["kind"] != "Job" {
+            continue;
+        }
+        let Some(spec) = pod(object) else { continue };
+        let namespace = object["metadata"]["namespace"].as_str().unwrap();
+        let account = spec["serviceAccountName"].as_str().unwrap_or("default");
+        for container in spec["containers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .chain(spec["initContainers"].as_array().into_iter().flatten())
+        {
+            let command: Vec<String> =
+                serde_json::from_value(container["command"].clone()).unwrap_or_default();
+            let arguments: Vec<String> =
+                serde_json::from_value(container["args"].clone()).unwrap_or_default();
+            let contract = match job_contract::resolve(&command, &arguments) {
+                Ok(contract) => contract,
+                Err(error) => {
+                    failures.push(format!("{} step {step}:{index} field command -> command contract producer step absent: {error}",identity(object)));
+                    continue;
+                }
+            };
+            if !contract.access.is_empty() && spec["automountServiceAccountToken"] == false {
+                failures.push(format!("{} step {step}:{index} field automountServiceAccountToken -> API credentials producer step absent", identity(object)));
+            }
+            for access in contract.access {
+                let roles = objects
+                    .iter()
+                    .enumerate()
+                    .filter(|(position, (_, binding))| {
+                        *position < index
+                            && binding["kind"] == "RoleBinding"
+                            && binding["metadata"]["namespace"] == access.namespace
+                            && binding["subjects"].as_array().is_some_and(|subjects| {
+                                subjects.iter().any(|subject| {
+                                    subject["kind"] == "ServiceAccount"
+                                        && subject["name"] == account
+                                        && subject["namespace"] == namespace
+                                })
+                            })
+                    })
+                    .filter_map(|(_, (_, binding))| {
+                        objects.iter().enumerate().find(|(position, (_, role))| {
+                            *position < index
+                                && role["kind"] == binding["roleRef"]["kind"]
+                                && role["kind"] == "Role"
+                                && role["metadata"]["name"] == binding["roleRef"]["name"]
+                                && role["metadata"]["namespace"] == access.namespace
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                for resource in access.resources {
+                    for verb in access.verbs {
+                        let permits = |values: &serde_json::Value, required: &str| {
+                            values.as_array().is_some_and(|values| {
+                                values.iter().any(|value| value == required || value == "*")
+                            })
+                        };
+                        if roles.iter().any(|(_, (_, role))| {
+                            role["rules"].as_array().is_some_and(|rules| {
+                                rules.iter().any(|rule| {
+                                    permits(&rule["apiGroups"], access.group)
+                                        && permits(&rule["resources"], resource)
+                                        && permits(&rule["verbs"], verb)
+                                })
+                            })
+                        }) {
+                            continue;
+                        }
+                        let producer = roles.first().map_or_else(
+                            || "absent".into(),
+                            |(position, (step, _))| format!("{step}:{position}"),
+                        );
+                        failures.push(format!("{} step {step}:{index} field command ({}) -> Role/{}/{}/{resource}/{verb} producer step {producer}",identity(object),contract.verb,access.namespace,access.group));
+                    }
+                }
+            }
+        }
+    }
+    failures
+}
+
+#[test]
+fn install_job_roles_cover_command_access() -> anyhow::Result<()> {
+    let failures = role_failures(&platform_install::render()?.objects);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    Ok(())
+}
+
+#[test]
+fn install_job_roles_reject_a_missing_rendered_verb() -> anyhow::Result<()> {
+    let mut objects = platform_install::render()?.objects.clone();
+    let (_, role) = objects
+        .iter_mut()
+        .find(|(_, object)| {
+            object["kind"] == "Role"
+                && object["metadata"]["namespace"] == "hosts"
+                && object["metadata"]["name"] == "platform-first-apply-test--wms--dev"
+        })
+        .unwrap();
+    let permission = role["rules"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|rule| {
+            rule["resources"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("pods"))
+        })
+        .unwrap();
+    permission["verbs"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|verb| verb != "list");
+    let failures = role_failures(&objects);
+    assert_eq!(failures.len(), 1, "{}", failures.join("\n"));
+    assert!(failures[0].contains("/pods/list producer step"));
+    Ok(())
+}
+
+#[test]
+fn install_jobs_refuse_an_unknown_command() -> anyhow::Result<()> {
+    let mut objects = platform_install::render()?.objects.clone();
+    let (_, job) = objects
+        .iter_mut()
+        .find(|(_, object)| object["kind"] == "Job" && object["spec"]["suspend"] == false)
+        .unwrap();
+    let container = &mut job["spec"]["template"]["spec"]["containers"][0];
+    container["command"] = json!(["/usr/local/bin/wamn-ctl"]);
+    container["args"] = json!(["unlisted-command"]);
+    let failures = role_failures(&objects);
+    assert_eq!(failures.len(), 1, "{}", failures.join("\n"));
+    assert!(failures[0].contains("no command contract"));
+    Ok(())
+}

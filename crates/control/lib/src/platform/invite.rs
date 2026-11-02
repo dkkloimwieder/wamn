@@ -9,7 +9,7 @@ use crate::{kubectl, release_chart::Target};
 
 use super::document::ClusterDocument;
 use super::install::SecretData;
-use super::job::{self, Access, JobRequest, PolicyRule, SecretMount};
+use super::job::{self, JobRequest, SecretMount};
 
 const STATE: &str = "SELECT EXISTS (
     SELECT FROM identity.principals p WHERE p.type = 'user' AND p.email = :'owner'
@@ -18,7 +18,9 @@ const STATE: &str = "SELECT EXISTS (
         AND t.purpose = 'invitation' AND t.consumed_at IS NULL AND t.expires_at > clock_timestamp()))
 );";
 
-const INVITE: &str = r#"invite_owner() {
+pub(super) const OWNER_STATE: &str = "export PGPASSWORD=\"$(cat /etc/wamn/postgres/password)\"; exec psql --no-psqlrc --tuples-only --no-align --set ON_ERROR_STOP=1 --set owner=\"$OWNER_EMAIL\" --file /inputs/state.sql";
+
+pub(super) const INVITE: &str = r#"invite_owner() {
   umask 077
   scratch=$(mktemp -d)
   trap 'rm -rf "$scratch"' EXIT
@@ -114,14 +116,6 @@ pub(super) fn request(
         )]
         .into(),
         secret_mounts: vec![postgres_mount()],
-        permissions: vec![Access {
-            namespace: "identity".into(),
-            rules: vec![PolicyRule {
-                api_groups: vec![String::new()],
-                resources: vec!["secrets".into()],
-                verbs: vec!["get".into()],
-            }],
-        }],
         ..JobRequest::default()
     };
     job::auth_nats_inputs(&mut request, auth)?;
@@ -133,12 +127,14 @@ pub(super) fn state_request(document: &ClusterDocument, image: &str) -> JobReque
         name: format!("platform-owner-state-{}", document.org),
         image: image.into(),
         command: vec!["/bin/sh".into(), "-ec".into()],
-        arguments: vec!["export PGPASSWORD=\"$(cat /etc/wamn/postgres/password)\"; exec psql --no-psqlrc --tuples-only --no-align --set ON_ERROR_STOP=1 --set owner=\"$OWNER_EMAIL\" --file /inputs/state.sql".into()],
+        arguments: vec![OWNER_STATE.into()],
         environment: [
             ("PGHOST".into(), super::install::DATABASE_HOST.into()),
-            ("PGUSER".into(), "postgres".into()), ("PGDATABASE".into(), "wamn_system".into()),
+            ("PGUSER".into(), "postgres".into()),
+            ("PGDATABASE".into(), "wamn_system".into()),
             ("OWNER_EMAIL".into(), document.owner_email.clone()),
-        ].into(),
+        ]
+        .into(),
         files: [("state.sql".into(), STATE.into())].into(),
         secret_mounts: vec![postgres_mount()],
         capture_output: true,

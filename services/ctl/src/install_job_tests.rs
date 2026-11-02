@@ -4,34 +4,8 @@ use std::collections::BTreeSet;
 
 use wamn_control::platform::job::{JobRequest, JobSecret, install_job_requests};
 
-#[derive(Debug)]
-pub(crate) struct Environment {
-    pub required: &'static [&'static str],
-    pub optional: &'static [&'static str],
-}
-
-fn contract(verb: &str) -> Environment {
-    use crate::{env_verbs, identity_verbs, package_verbs, provisioning_verbs, release_verbs, web};
-    match verb {
-        "provision-system" => provisioning_verbs::PROVISION_SYSTEM_INSTALL_ENV,
-        "provision-org" => provisioning_verbs::PROVISION_ORG_INSTALL_ENV,
-        "provision-project-env" => provisioning_verbs::PROVISION_PROJECT_ENV_INSTALL_ENV,
-        "provision-identity-issuer" => identity_verbs::IDENTITY_ISSUER_INSTALL_ENV,
-        "invite" => identity_verbs::INVITE_INSTALL_ENV,
-        "apply-package" => package_verbs::APPLY_PACKAGE_INSTALL_ENV,
-        "reconcile-package-data-access" => package_verbs::RECONCILE_PACKAGE_DATA_ACCESS_INSTALL_ENV,
-        "reconcile-replica-identity" => package_verbs::RECONCILE_REPLICA_IDENTITY_INSTALL_ENV,
-        "publish-release" => release_verbs::PUBLISH_RELEASE_INSTALL_ENV,
-        "env apply" => env_verbs::ENV_APPLY_INSTALL_ENV,
-        "env connections" => env_verbs::ENV_CONNECTIONS_INSTALL_ENV,
-        "web upload" => web::WEB_UPLOAD_INSTALL_ENV,
-        "web upload --platform-ui" => web::PLATFORM_UI_INSTALL_ENV,
-        _ => panic!("install verb {verb} has no environment contract"),
-    }
-}
-
-fn missing(verb: &str, request: &JobRequest, secrets: &[JobSecret]) -> Vec<&'static str> {
-    let contract = contract(verb);
+fn missing(_verb: &str, request: &JobRequest, secrets: &[JobSecret]) -> Vec<&'static str> {
+    let contract = wamn_control::platform::job_contract::request(request).unwrap();
     let mut available: BTreeSet<&str> = request
         .environment
         .keys()
@@ -50,12 +24,6 @@ fn missing(verb: &str, request: &JobRequest, secrets: &[JobSecret]) -> Vec<&'sta
             }
         }
     }
-    assert!(
-        contract
-            .optional
-            .iter()
-            .all(|name| !contract.required.contains(name))
-    );
     contract
         .required
         .iter()

@@ -14,6 +14,7 @@ mod identity;
 pub mod install;
 mod invite;
 pub mod job;
+pub mod job_contract;
 pub mod lock;
 pub mod manifests;
 pub(crate) mod oauth;

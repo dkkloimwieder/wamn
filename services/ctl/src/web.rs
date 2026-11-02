@@ -54,36 +54,6 @@ pub struct UploadArgs {
     pub org: Option<String>,
 }
 
-// Environment contract for this verb as invoked by platform install Jobs.
-#[cfg(test)]
-pub(crate) const WEB_UPLOAD_INSTALL_ENV: crate::install_job_tests::Environment =
-    crate::install_job_tests::Environment {
-        required: &[
-            "WAMN_CONTROL_DATABASE_URL",
-            "WAMN_RELEASE_CHART",
-            "WAMN_RELEASE_ARTIFACT_BASE",
-            "WAMN_REGISTRY_AUTH_FILE",
-            "WAMN_PACKAGE_ARTIFACT_BASE",
-            "WAMN_NATS_URL",
-            "WAMN_NATS_TLS_CA",
-            "WAMN_NATS_TLS_CERT",
-            "WAMN_NATS_TLS_KEY",
-        ],
-        optional: &[
-            "KUBECONFIG",
-            "WAMN_RELEASE_NAMESPACE",
-            "WAMN_OCI_CA_PATHS",
-            "WAMN_NATS_TLS_SERVER_NAME",
-        ],
-    };
-
-#[cfg(test)]
-pub(crate) const PLATFORM_UI_INSTALL_ENV: crate::install_job_tests::Environment =
-    crate::install_job_tests::Environment {
-        required: &["WAMN_RELEASE_CHART"],
-        optional: &[],
-    };
-
 pub async fn run(args: WebArgs) -> anyhow::Result<()> {
     match args.command {
         WebCommand::Upload(args) => upload(args).await,

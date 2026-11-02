@@ -9,10 +9,10 @@ use serde_json::{Value, json};
 use crate::{kubectl, release_chart::Target};
 
 use super::document::ClusterDocument;
-use super::job::{self, Access, JobRequest, PolicyRule, SecretMount};
+use super::job::{self, JobRequest, SecretMount};
 
 // Neither command output nor an API error can copy credential bytes to a log.
-const PROVISION: &str = r#"prepare() {
+pub(super) const PROVISION: &str = r#"prepare() {
   umask 077
   scratch=$(mktemp -d)
   trap 'rm -rf "$scratch"' EXIT
@@ -36,7 +36,7 @@ const PROVISION: &str = r#"prepare() {
 prepare >/dev/null 2>/dev/null || { echo 'prepare control credentials failed' >&2; exit 1; }
 "#;
 
-const COPY_OPERATOR: &str = r#"copy_operator() {
+pub(super) const COPY_OPERATOR: &str = r#"copy_operator() {
   umask 077
   scratch=$(mktemp -d)
   trap 'rm -rf "$scratch"' EXIT
@@ -59,17 +59,6 @@ struct MetadataPatch<'a> {
     op: &'static str,
     path: &'static str,
     value: SecretMetadata<'a>,
-}
-
-fn secret_access(namespace: &str, verbs: &[&str]) -> Access {
-    Access {
-        namespace: namespace.into(),
-        rules: vec![PolicyRule {
-            api_groups: vec![String::new()],
-            resources: vec!["secrets".into()],
-            verbs: verbs.iter().map(|verb| (*verb).into()).collect(),
-        }],
-    }
 }
 
 pub(super) fn provision_request(document: &ClusterDocument, image: &str) -> JobRequest {
@@ -96,7 +85,6 @@ pub(super) fn provision_request(document: &ClusterDocument, image: &str) -> JobR
             path: "/etc/wamn/postgres".into(),
             keys: vec!["uri".into()],
         }],
-        permissions: vec![secret_access("hosts", &["get", "create", "patch"])],
         ..JobRequest::default()
     }
 }
@@ -391,10 +379,6 @@ pub(super) fn operator_request(
             }])?,
         )]
         .into(),
-        permissions: vec![
-            secret_access("identity", &["get"]),
-            secret_access("hosts", &["get", "create", "patch"]),
-        ],
         ..JobRequest::default()
     })
 }
@@ -528,7 +512,10 @@ mod tests {
         assert!(!request.capture_output);
         assert_eq!(request.secret_mounts[0].name, "wamn-pg-superuser");
         assert_eq!(request.secret_mounts[0].keys, ["uri"]);
-        assert_eq!(request.permissions[0].namespace, "hosts");
+        assert_eq!(
+            super::super::job_contract::access(&request).unwrap()[0].namespace,
+            "hosts"
+        );
         assert!(!request.environment.contains_key("WAMN_SYSTEM_ADMIN_URL"));
     }
 }

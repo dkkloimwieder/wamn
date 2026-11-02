@@ -47,21 +47,6 @@ pub struct ApplyPackageArgs {
     pub environment: String,
 }
 
-// Environment contract for this verb as invoked by platform install Jobs.
-#[cfg(test)]
-pub(crate) const APPLY_PACKAGE_INSTALL_ENV: crate::install_job_tests::Environment =
-    crate::install_job_tests::Environment {
-        required: &[
-            "WAMN_PG_ADMIN_URL",
-            "WAMN_COMPONENT_ARTIFACT_BASE",
-            "WAMN_NATS_URL",
-            "WAMN_NATS_TLS_CA",
-            "WAMN_NATS_TLS_CERT",
-            "WAMN_NATS_TLS_KEY",
-        ],
-        optional: &["WAMN_NATS_TLS_SERVER_NAME", "WASH_OCI_CA_PATHS"],
-    };
-
 /// The registry flags of `apply-package` and
 /// `reconcile-package-data-access`.
 #[derive(Debug, Args)]
@@ -199,14 +184,6 @@ pub struct ReconcilePackageDataAccessArgs {
     pub environment: String,
 }
 
-// Environment contract for this verb as invoked by platform install Jobs.
-#[cfg(test)]
-pub(crate) const RECONCILE_PACKAGE_DATA_ACCESS_INSTALL_ENV: crate::install_job_tests::Environment =
-    crate::install_job_tests::Environment {
-        required: &["WAMN_PG_ADMIN_URL"],
-        optional: &["WASH_OCI_CA_PATHS"],
-    };
-
 /// Replica identity reconciliation arguments.
 #[derive(Debug, Args)]
 pub struct ReconcileReplicaIdentityArgs {
@@ -222,14 +199,6 @@ pub struct ReconcileReplicaIdentityArgs {
     #[arg(long)]
     pub dry_run: bool,
 }
-
-// Environment contract for this verb as invoked by platform install Jobs.
-#[cfg(test)]
-pub(crate) const RECONCILE_REPLICA_IDENTITY_INSTALL_ENV: crate::install_job_tests::Environment =
-    crate::install_job_tests::Environment {
-        required: &["WAMN_PG_ADMIN_URL"],
-        optional: &[],
-    };
 
 /// Apply one package artifact and print the applied line.
 pub async fn apply(args: ApplyPackageArgs) -> anyhow::Result<()> {

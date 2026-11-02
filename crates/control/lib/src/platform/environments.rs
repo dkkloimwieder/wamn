@@ -10,7 +10,7 @@ use crate::{kubectl, release_chart::Target};
 
 use super::document::ClusterDocument;
 use super::install::{DATABASE_HOST, SecretData, administrator, runner_image, secret_text};
-use super::job::{self, Access, JobRequest, PolicyRule};
+use super::job::{self, JobRequest};
 
 pub(super) async fn apply(
     target: &Target,
@@ -282,14 +282,6 @@ pub(super) fn connections_request(
     ]
     .map(str::to_owned)
     .into();
-    request.permissions = vec![Access {
-        namespace: "hosts".into(),
-        rules: vec![PolicyRule {
-            api_groups: vec![String::new()],
-            resources: vec!["secrets".into()],
-            verbs: ["get", "create", "update"].map(str::to_owned).into(),
-        }],
-    }];
     for (name, text) in documents {
         anyhow::ensure!(
             !request.files.contains_key(&name),
@@ -446,49 +438,6 @@ pub(super) fn released_request_inputs(
         "WAMN_RELEASE_HOST_GROUP".into(),
         "/inputs/host-group.yaml".into(),
     );
-    let hosts = request
-        .permissions
-        .iter_mut()
-        .find(|access| access.namespace == "hosts")
-        .context("missing hosts permissions")?;
-    hosts.rules.extend([
-        PolicyRule {
-            api_groups: vec![String::new()],
-            resources: vec!["services".into(), "configmaps".into(), "secrets".into()],
-            verbs: [
-                "get", "list", "watch", "create", "patch", "update", "delete",
-            ]
-            .map(str::to_owned)
-            .into(),
-        },
-        PolicyRule {
-            api_groups: vec!["apps".into()],
-            resources: vec!["deployments".into(), "replicasets".into()],
-            verbs: [
-                "get", "list", "watch", "create", "patch", "update", "delete",
-            ]
-            .map(str::to_owned)
-            .into(),
-        },
-        PolicyRule {
-            api_groups: vec!["networking.k8s.io".into()],
-            resources: vec!["networkpolicies".into()],
-            verbs: [
-                "get", "list", "watch", "create", "patch", "update", "delete",
-            ]
-            .map(str::to_owned)
-            .into(),
-        },
-        PolicyRule {
-            api_groups: vec!["runtime.wasmcloud.dev".into()],
-            resources: vec!["workloaddeployments".into()],
-            verbs: [
-                "get", "list", "watch", "create", "patch", "update", "delete",
-            ]
-            .map(str::to_owned)
-            .into(),
-        },
-    ]);
     Ok(())
 }
 
@@ -505,62 +454,6 @@ pub(super) fn kubeconfig() -> serde_json::Value {
         "contexts": [{"name": "install", "context": {"cluster": "install", "user": "install"}}],
         "current-context": "install"
     })
-}
-
-fn permissions() -> Vec<Access> {
-    vec![
-        Access {
-            namespace: "platform".into(),
-            rules: vec![PolicyRule {
-                api_groups: vec!["postgresql.cnpg.io".into()],
-                resources: vec!["clusters".into(), "databases".into(), "publications".into()],
-                verbs: ["get", "list", "watch", "create", "patch"]
-                    .map(str::to_owned)
-                    .into(),
-            }],
-        },
-        Access {
-            namespace: "hosts".into(),
-            rules: vec![
-                PolicyRule {
-                    api_groups: vec![String::new()],
-                    resources: vec!["secrets".into()],
-                    verbs: ["get", "list", "watch", "create", "patch"]
-                        .map(str::to_owned)
-                        .into(),
-                },
-                PolicyRule {
-                    api_groups: vec![String::new()],
-                    resources: vec!["pods".into()],
-                    verbs: ["get", "list", "watch"].map(str::to_owned).into(),
-                },
-                // The log and warning events of a host that does not become
-                // Ready, read into the failure (wamn-samh5).
-                PolicyRule {
-                    api_groups: vec![String::new()],
-                    resources: vec!["pods/log".into()],
-                    verbs: vec!["get".into()],
-                },
-                PolicyRule {
-                    api_groups: vec![String::new()],
-                    resources: vec!["events".into()],
-                    verbs: vec!["list".into()],
-                },
-                // The host account of the environment and its grant on the
-                // credential Secret (environment::ensure::credential_access).
-                PolicyRule {
-                    api_groups: vec![String::new()],
-                    resources: vec!["serviceaccounts".into()],
-                    verbs: ["get", "create"].map(str::to_owned).into(),
-                },
-                PolicyRule {
-                    api_groups: vec!["rbac.authorization.k8s.io".into()],
-                    resources: vec!["roles".into(), "rolebindings".into()],
-                    verbs: ["get", "create"].map(str::to_owned).into(),
-                },
-            ],
-        },
-    ]
 }
 
 pub(super) fn request(
@@ -611,7 +504,6 @@ pub(super) fn request(
             ("registry.json".into(), "{}".into()),
         ]
         .into(),
-        permissions: permissions(),
         ..JobRequest::default()
     };
     job::auth_nats_inputs(&mut request, auth)?;
@@ -673,20 +565,28 @@ mod tests {
             config["clusters"][0]["cluster"]["server"],
             "https://kubernetes.default.svc"
         );
-        let access = permissions();
-        assert_eq!(access[0].namespace, "platform");
-        assert_eq!(access[1].namespace, "hosts");
+        let access = super::super::job_contract::access(&JobRequest {
+            arguments: vec!["env".into(), "apply".into(), "/inputs/environment.k".into()],
+            ..JobRequest::default()
+        })
+        .unwrap();
+        assert!(access.iter().any(|grant| grant.namespace == "platform"));
+        let hosts = access
+            .iter()
+            .find(|grant| grant.namespace == "hosts")
+            .unwrap();
         for (resource, verb) in [("pods/log", "get"), ("events", "list")] {
-            assert!(access[1].rules.iter().any(|rule| {
+            assert!(hosts.rules.iter().any(|rule| {
                 rule.resources.iter().any(|name| name == resource)
                     && rule.verbs.iter().any(|name| name == verb)
             }));
         }
-        assert!(access.iter().flat_map(|access| &access.rules).all(|rule| {
-            !rule
-                .verbs
+        // A verb-wide apply Role includes Helm cleanup, including delete.
+        assert!(
+            access
                 .iter()
-                .any(|verb| verb == "*" || verb == "delete")
-        }));
+                .flat_map(|access| &access.rules)
+                .all(|rule| { !rule.verbs.iter().any(|verb| verb == "*") })
+        );
     }
 }

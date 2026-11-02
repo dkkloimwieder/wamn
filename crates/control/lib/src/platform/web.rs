@@ -13,7 +13,11 @@ use crate::release_chart::Target;
 
 use super::document::ClusterDocument;
 use super::install::SecretData;
-use super::job::{self, Access, JobRequest, PolicyRule, SecretMount};
+use super::job::{self, JobRequest, SecretMount};
+
+pub(super) const UPLOAD: &str = "unset WAMN_EVENT_NATS_URL\nexport WAMN_CONTROL_DATABASE_URL=\"$(cat /etc/wamn/registry-reader/url)\"\nexec /usr/local/bin/wamn \"$@\"";
+
+pub(super) const PLATFORM_UI: &str = "cd /inputs; exec /usr/local/bin/wamn web upload --platform-ui --org \"$ORG\" --bucket \"$BUCKET\"";
 
 pub(super) async fn apply(
     target: &Target,
@@ -92,25 +96,29 @@ pub(super) fn request(
         service_account: Some("wamn-host".into()),
         command: vec!["/bin/sh".into(), "-ec".into()],
         arguments: vec![
-            "unset WAMN_EVENT_NATS_URL\nexport WAMN_CONTROL_DATABASE_URL=\"$(cat /etc/wamn/registry-reader/url)\"\nexec /usr/local/bin/wamn \"$@\"".into(),
-            "web-upload".into(), "web".into(), "upload".into(),
-            format!("{}/{}/{}", environment.org, environment.project, environment.env),
-            "--release".into(), digest.clone(), "--bucket".into(), format!("gs://{bucket}/clients"),
+            UPLOAD.into(),
+            "web-upload".into(),
+            "web".into(),
+            "upload".into(),
+            format!(
+                "{}/{}/{}",
+                environment.org, environment.project, environment.env
+            ),
+            "--release".into(),
+            digest.clone(),
+            "--bucket".into(),
+            format!("gs://{bucket}/clients"),
         ],
         environment: [
             ("KUBECONFIG".into(), "/inputs/kubeconfig".into()),
             ("WAMN_RELEASE_NAMESPACE".into(), "hosts".into()),
             ("WAMN_RELEASE_CHART".into(), "/inputs".into()),
-        ].into(),
-        secret_mounts: vec![
-            SecretMount { name: format!("wamn-registry-reader-{env_key}"), path: "/etc/wamn/registry-reader".into(), keys: vec!["url".into()] },
-        ],
-        permissions: vec![Access {
-            namespace: "hosts".into(),
-            rules: vec![PolicyRule {
-                api_groups: vec![String::new()], resources: vec!["secrets".into()],
-                verbs: ["get", "list"].map(str::to_owned).into(),
-            }],
+        ]
+        .into(),
+        secret_mounts: vec![SecretMount {
+            name: format!("wamn-registry-reader-{env_key}"),
+            path: "/etc/wamn/registry-reader".into(),
+            keys: vec!["url".into()],
         }],
         ..JobRequest::default()
     };
@@ -203,14 +211,13 @@ pub(super) fn platform_ui_request(document: &ClusterDocument, image: &str) -> Jo
         image: image.into(),
         service_account: Some("wamn-host".into()),
         command: vec!["/bin/sh".into(), "-ec".into()],
-        arguments: vec![
-            "cd /inputs; exec /usr/local/bin/wamn web upload --platform-ui --org \"$ORG\" --bucket \"$BUCKET\"".into(),
-        ],
+        arguments: vec![PLATFORM_UI.into()],
         environment: [
             ("ORG".into(), document.org.clone()),
             ("BUCKET".into(), format!("gs://{}", document.buckets.web)),
             ("WAMN_RELEASE_CHART".into(), "/inputs/chart".into()),
-        ].into(),
+        ]
+        .into(),
         ..JobRequest::default()
     }
 }
@@ -384,6 +391,9 @@ mod tests {
             request.secret_mounts[0].name,
             "wamn-registry-reader-test--receiving--dev"
         );
-        assert_eq!(request.permissions[0].rules[0].verbs, ["get", "list"]);
+        assert_eq!(
+            super::super::job_contract::access(&request).unwrap()[0].rules[0].verbs,
+            ["get", "list"]
+        );
     }
 }
