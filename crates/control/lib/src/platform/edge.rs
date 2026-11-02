@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{Context as _, ensure};
-use serde::{Deserialize as _, Serialize};
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::document::{ClusterDocument, Provider};
@@ -52,33 +52,15 @@ pub(super) async fn proxy(
         .map(|(_, document)| document)
         .collect::<Vec<_>>();
     let routes = routes(document, &environments)?;
+    let entry = proxy_objects(repository, document, &routes)?;
     let values = directory.join("values-edge.yaml");
-    std::fs::write(
-        &values,
-        serde_yaml::to_string(&proxy_values(document, &routes))?,
-    )?;
-    let chart = repository.join("deploy/platform/edge");
+    std::fs::write(&values, serde_yaml::to_string(&entry[0]["values"])?)?;
+    let chart = Path::new(entry[0]["chart"].as_str().context("edge chart reference")?);
     let edge = Target {
         namespace: "edge".into(),
         ..target.clone()
     };
-    let rendered = super::install::helm(
-        &edge,
-        &[
-            "template".as_ref(),
-            NEG.as_ref(),
-            chart.as_os_str(),
-            "--namespace".as_ref(),
-            "edge".as_ref(),
-            "-f".as_ref(),
-            values.as_os_str(),
-        ],
-    )
-    .await?;
-    let source = std::str::from_utf8(&rendered)?;
-    let objects = serde_yaml::Deserializer::from_str(source)
-        .map(Value::deserialize)
-        .collect::<Result<Vec<_>, _>>()?;
+    let objects = super::environments::template_objects(&entry[0])?;
     let mut changed = false;
     for object in objects.iter().filter(|object| !object.is_null()) {
         let kind = object["kind"].as_str().context("edge manifest kind")?;
@@ -94,7 +76,7 @@ pub(super) async fn proxy(
     if changed {
         crate::release_chart::upgrade(
             &edge,
-            &chart,
+            chart,
             NEG,
             &values,
             std::time::Duration::from_secs(600),
@@ -161,7 +143,7 @@ struct Configuration<'a> {
     releases: &'a BTreeMap<String, String>,
 }
 
-fn routes(
+pub(super) fn routes(
     document: &ClusterDocument,
     environments: &[EnvironmentDocument],
 ) -> anyhow::Result<BTreeMap<String, String>> {
@@ -186,7 +168,7 @@ fn routes(
     Ok(routes)
 }
 
-fn objects(
+pub(super) fn objects(
     document: &ClusterDocument,
     routes: &BTreeMap<String, String>,
     chart: &Value,
@@ -289,12 +271,6 @@ pub(super) async fn check(
     let routes = routes(document, &environments)?;
     let chart: Value =
         serde_yaml::from_slice(&std::fs::read(directory.join("release-chart/values.yaml"))?)?;
-    let rendered = objects(document, &routes, &chart)?;
-    let mut configuration: Value = serde_json::from_str(
-        rendered[3]["data"]["web.json"]
-            .as_str()
-            .context("edge configuration")?,
-    )?;
     // Only a host whose release serves a web client has an index to check.
     let web = super::check::web_hosts(target, &routes, registry).await?;
     for host in routes.keys().filter(|host| !web.contains(*host)) {
@@ -302,16 +278,7 @@ pub(super) async fn check(
             "4.20 Edge bucket check {host}: skipped: no web client"
         ))?;
     }
-    configuration["releases"] = json!(
-        routes
-            .iter()
-            .filter(|(host, _)| web.contains(*host))
-            .collect::<BTreeMap<_, _>>()
-    );
-    let image = chart["platform"]["edge"]["image"]
-        .as_str()
-        .context("edge image")?;
-    let request = check_request(&configuration, image);
+    let request = check_inputs(document, &routes, &chart, &web)?;
     let edge = Target {
         namespace: "edge".into(),
         ..target.clone()
@@ -322,6 +289,41 @@ pub(super) async fn check(
         "4.20 Edge bucket check: done {:.1}s",
         started.elapsed().as_secs_f64()
     ))
+}
+
+pub(super) fn proxy_objects(
+    repository: &Path,
+    document: &ClusterDocument,
+    routes: &BTreeMap<String, String>,
+) -> anyhow::Result<Vec<Value>> {
+    let chart = repository.join("deploy/platform/edge");
+    Ok(vec![
+        json!({"chart":chart,"version":super::steps::read_platform_version(&chart.join("Chart.yaml"))?,"name":NEG,"namespace":"edge","values":proxy_values(document,routes)}),
+    ])
+}
+
+pub(super) fn check_inputs(
+    document: &ClusterDocument,
+    routes: &BTreeMap<String, String>,
+    chart: &Value,
+    web: &std::collections::BTreeSet<String>,
+) -> anyhow::Result<JobRequest> {
+    let rendered = objects(document, routes, chart)?;
+    let mut configuration: Value = serde_json::from_str(
+        rendered[3]["data"]["web.json"]
+            .as_str()
+            .context("edge configuration")?,
+    )?;
+    configuration["releases"] = json!(
+        routes
+            .iter()
+            .filter(|(host, _)| web.contains(*host))
+            .collect::<BTreeMap<_, _>>()
+    );
+    let image = chart["platform"]["edge"]["image"]
+        .as_str()
+        .context("edge image")?;
+    Ok(check_request(&configuration, image))
 }
 
 pub(super) fn check_request(configuration: &Value, image: &str) -> JobRequest {
@@ -341,6 +343,7 @@ pub(super) fn check_request(configuration: &Value, image: &str) -> JobRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize as _;
 
     #[test]
     fn proxy_uses_routes_and_only_gcp_requests_a_neg() {

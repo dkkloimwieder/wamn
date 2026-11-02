@@ -1,6 +1,6 @@
 //! Render the platform install batches without a cluster.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use super::job::{JobRequest, JobSecret};
@@ -20,6 +20,7 @@ pub struct Package {
 #[derive(Debug)]
 pub struct Fixtures {
     pub identity_tls: Value,
+    pub web_hosts: BTreeSet<String>,
     pub control_operator: Value,
     pub platform_ui_files: BTreeMap<String, Vec<u8>>,
     pub cdc_credentials: BTreeMap<String, Value>,
@@ -657,6 +658,29 @@ pub fn install(
             )?,
         );
     }
+    let routes = super::edge::routes(document, environments)?;
+    let chart: Value = serde_yaml::from_slice(&std::fs::read(
+        fixtures.directory.join("release-chart/values.yaml"),
+    )?)?;
+    append(
+        &mut objects,
+        "4.20",
+        super::edge::objects(document, &routes, &chart)?,
+    );
+    if !document.buckets.web.is_empty() {
+        let request = super::edge::check_inputs(document, &routes, &chart, &fixtures.web_hosts)?;
+        append(
+            &mut objects,
+            "4.20",
+            job_objects(&request, "edge", &json!({"routes":routes}), &[], fixtures)?,
+        );
+    }
+    let entry = super::edge::proxy_objects(repository, document, &routes)?;
+    append(
+        &mut objects,
+        "4.20",
+        super::environments::template_objects(&entry[0])?,
+    );
     Ok(objects)
 }
 
@@ -787,9 +811,17 @@ mod tests {
             }),
             &work.path().join("release-chart"),
         )?;
+        let chart_file = work.path().join("release-chart/values.yaml");
+        let mut chart: Value = serde_yaml::from_slice(&std::fs::read(&chart_file)?)?;
+        chart["platform"]["edge"]["image"] = json!(format!(
+            "registry.invalid/wamn/edge@sha256:{}",
+            "1".repeat(64)
+        ));
+        std::fs::write(&chart_file, serde_yaml::to_string(&chart)?)?;
         let mut fixtures = Fixtures {
             identity_tls: json!({"data": {"ca.crt": "Zml4dHVyZS1jYQ=="}}),
             broker_authorization_exists: false,
+            web_hosts:["control.example.com".into()].into(),
             control_operator:json!({"apiVersion":"v1","kind":"Secret","metadata":{"name":"operator-test","namespace":"identity","resourceVersion":"1"},"type":"kubernetes.io/tls","data":{"ca.crt":"Zml4dHVyZS1jYQ==","tls.crt":"Zml4dHVyZS1jcnQ=","tls.key":"Zml4dHVyZS1rZXk="}}),
             platform_ui_files:BTreeMap::new(),
             cdc_credentials:BTreeMap::new(),
