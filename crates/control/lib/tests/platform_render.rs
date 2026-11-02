@@ -1297,3 +1297,126 @@ fn install_connections_name_an_uncreated_rendered_binding() -> anyhow::Result<()
     assert!(failures[0].contains("a-unqualified-wms.k") && failures[0].contains("connections.labels -> connection test/wms/dev/missing-connection producer step absent"));
     Ok(())
 }
+
+fn application_failures(
+    objects: &[(&str, serde_json::Value)],
+    render: &platform_install::Render,
+) -> anyhow::Result<Vec<String>> {
+    let EnvironmentJobs {
+        documents,
+        mut failures,
+    } = environment_jobs(objects)?;
+    for (index, document) in documents {
+        let (step, job) = &objects[index];
+        let key =
+            wamn_control_registry::project_env_key(&document.org, &document.project, &document.env);
+        let producer = objects
+            .iter()
+            .enumerate()
+            .find(|(_, (_, object))| {
+                object["kind"] == "ConfigMap"
+                    && object["metadata"]["name"] == format!("wamn-install-platform-release-{key}")
+            })
+            .map_or_else(
+                || "absent".into(),
+                |(position, (step, _))| format!("{step}:{position}"),
+            );
+        let member = render
+            .fixtures
+            .releases
+            .get(&key)
+            .and_then(|manifest| manifest.composed_entry.as_ref())
+            .map(|entry| &entry.application);
+        let Some(member) = member else {
+            failures.push(format!("{} document {} step {step}:{index} field release -> composed-entry.application producer step {producer}",identity(job),source_document(render,&document)));
+            continue;
+        };
+        let package = &member.package_id;
+        if wamn_catalog::application_for_package(&document.applications, package).is_some() {
+            continue;
+        }
+        let owners = document
+            .applications
+            .iter()
+            .filter(|(_, definition)| definition.packages.contains(package))
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>();
+        failures.push(format!("{} document {} step {step}:{index} field applications[*].packages -> composed-entry.application package {package} owners {owners:?} producer step {producer}",identity(job),source_document(render,&document)));
+    }
+    Ok(failures)
+}
+
+#[test]
+fn install_documents_resolve_one_application() -> anyhow::Result<()> {
+    let render = platform_install::render()?;
+    let failures = application_failures(&render.objects, render)?;
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    Ok(())
+}
+
+#[test]
+fn install_documents_reject_ambiguous_rendered_package_ownership() -> anyhow::Result<()> {
+    let render = platform_install::render()?;
+    let mut objects = render.objects.clone();
+    let mut document = render
+        .documents
+        .iter()
+        .find(|(_, document)| document.project == "wms")
+        .unwrap()
+        .1
+        .clone();
+    let duplicate = document.applications["wamn_wms"].clone();
+    document.applications.insert("duplicate".into(), duplicate);
+    replace_job_document(&mut objects, "platform-apply-test--wms--dev", &document);
+    let failures = application_failures(&objects, render)?;
+    assert_eq!(failures.len(), 1, "{}", failures.join("\n"));
+    assert!(
+        failures[0].contains("a-unqualified-wms.k")
+            && failures[0].contains("package wamn_wms owners [\"duplicate\", \"wamn_wms\"]")
+            && failures[0].contains("producer step 4.14:")
+    );
+    Ok(())
+}
+
+#[test]
+fn install_documents_select_the_package_owner_with_multiple_applications() -> anyhow::Result<()> {
+    let render = platform_install::render()?;
+    let mut objects = render.objects.clone();
+    let mut document = render
+        .documents
+        .iter()
+        .find(|(_, document)| document.project == "wms")
+        .unwrap()
+        .1
+        .clone();
+    document.applications.insert(
+        "other".into(),
+        wamn_catalog::ApplicationDefinition {
+            packages: ["unrelated-package".into()].into(),
+            connections: std::collections::BTreeMap::new(),
+        },
+    );
+    replace_job_document(&mut objects, "platform-apply-test--wms--dev", &document);
+    let failures = application_failures(&objects, render)?;
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    Ok(())
+}
+
+#[test]
+fn install_documents_reject_an_unowned_rendered_package() -> anyhow::Result<()> {
+    let render = platform_install::render()?;
+    let mut objects = render.objects.clone();
+    let mut document = render
+        .documents
+        .iter()
+        .find(|(_, document)| document.project == "wms")
+        .unwrap()
+        .1
+        .clone();
+    document.applications.clear();
+    replace_job_document(&mut objects, "platform-apply-test--wms--dev", &document);
+    let failures = application_failures(&objects, render)?;
+    assert_eq!(failures.len(), 1, "{}", failures.join("\n"));
+    assert!(failures[0].contains("package wamn_wms owners []"));
+    Ok(())
+}
