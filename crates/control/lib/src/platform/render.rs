@@ -20,6 +20,7 @@ pub struct Package {
 #[derive(Debug)]
 pub struct Fixtures {
     pub identity_tls: Value,
+    pub platform_ui_files: BTreeMap<String, Vec<u8>>,
     pub cdc_credentials: BTreeMap<String, Value>,
     pub gates_image: String,
     pub releases: BTreeMap<String, wamn_catalog::ServingManifest>,
@@ -526,6 +527,48 @@ pub fn install(
             );
         }
     }
+    if !document.buckets.web.is_empty() {
+        for environment in environments {
+            let request = super::web::upload_request(
+                environment,
+                &document.buckets.web,
+                &fixtures.runner_image,
+                &fixtures.registry,
+                &auth,
+                &fixtures.directory.join("release-chart"),
+            )?;
+            append(
+                &mut objects,
+                "4.19",
+                job_objects(
+                    &request,
+                    "hosts",
+                    &json!({"environment":environment}),
+                    &[],
+                    fixtures,
+                )?,
+            );
+        }
+    }
+    // Control host credentials and release precede this upload.
+    if !document.buckets.web.is_empty() {
+        let request = super::web::platform_ui_with_files(
+            document,
+            &fixtures.runner_image,
+            fixtures.platform_ui_files.clone(),
+        );
+        append(
+            &mut objects,
+            "4.19.1",
+            job_objects(
+                &request,
+                "hosts",
+                &json!({"org":document.org}),
+                &[],
+                fixtures,
+            )?,
+        );
+    }
     Ok(objects)
 }
 
@@ -622,7 +665,7 @@ mod tests {
         let cluster = ClusterDocument::from_json(&serde_json::to_vec(&json!({
             "provider":"kind", "project_id":"", "zone":"", "cluster_name":"render",
             "org":"test", "owner_email":"owner@example.com", "registry":"registry.invalid/wamn",
-            "buckets":{"web":"", "otel":"", "state":""},
+            "buckets":{"web":"fixture-web", "otel":"", "state":""},
             "route_hosts":{"control":"control.example.com"}, "resend_from":"sender@example.com"
         }))?)?;
         // platform_apply_kind writes the WMS document first as a-unqualified-wms.k.
@@ -659,6 +702,7 @@ mod tests {
         let mut fixtures = Fixtures {
             identity_tls: json!({"data": {"ca.crt": "Zml4dHVyZS1jYQ=="}}),
             broker_authorization_exists: false,
+            platform_ui_files:BTreeMap::new(),
             cdc_credentials:BTreeMap::new(),
             gates_image:format!("registry.invalid/wamn/gates@sha256:{}","1".repeat(64)),
             releases:BTreeMap::new(),
@@ -692,6 +736,25 @@ mod tests {
                 ("platform-identity-check".into(),r#"{"keys":[{"kid":"fixture-kid"}]}"#.into()),
             ].into(),
         };
+        fixtures.platform_ui_files = [
+            (
+                "chart/Chart.yaml".into(),
+                std::fs::read(work.path().join("release-chart/Chart.yaml"))?,
+            ),
+            (
+                format!("chart/{}", crate::platform_build::BUILD_RECORD_FILE),
+                b"{}".to_vec(),
+            ),
+            (
+                "deploy/platform/release/Chart.yaml".into(),
+                std::fs::read(repository.join("deploy/platform/release/Chart.yaml"))?,
+            ),
+            (
+                "apps/platform_ui/dist/index.html".into(),
+                b"<!doctype html><title>fixture</title>".to_vec(),
+            ),
+        ]
+        .into();
         std::fs::write(&fixtures.registry.registry_auth_file, "{}")?;
         let mut manifest = fixture_release()?;
         let component = manifest.components.first().context("fixture component")?;

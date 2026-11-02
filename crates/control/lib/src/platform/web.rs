@@ -49,22 +49,14 @@ pub(super) async fn apply(
         )
         .await?
         .context("missing Secret platform/wamn-ctl-nats")?;
-        let mut request = request(
+        let request = upload_request(
             &environment,
             &document.buckets.web,
             &super::install::runner_image(directory)?,
             registry,
             &auth,
-        )?;
-        super::environments::chart_files(
             &directory.join("release-chart"),
-            Path::new(""),
-            &mut request,
         )?;
-        request.files.insert(
-            "kubeconfig".into(),
-            super::environments::kubeconfig().to_string(),
-        );
         let mut target = target.clone();
         target.namespace = "hosts".into();
         let changed = job::run(
@@ -192,14 +184,14 @@ fn platform_ui_inputs(
     repository: &Path,
     directory: &Path,
 ) -> anyhow::Result<JobRequest> {
-    let mut request = platform_ui_request(document, image);
+    let mut inputs = std::collections::BTreeMap::new();
     for name in ["Chart.yaml", crate::platform_build::BUILD_RECORD_FILE] {
-        request.binary_files.insert(
+        inputs.insert(
             format!("chart/{name}"),
             std::fs::read(directory.join("release-chart").join(name))?,
         );
     }
-    request.binary_files.insert(
+    inputs.insert(
         "deploy/platform/release/Chart.yaml".into(),
         std::fs::read(repository.join("deploy/platform/release/Chart.yaml"))?,
     );
@@ -211,12 +203,12 @@ fn platform_ui_inputs(
             .strip_prefix(&dist)?
             .to_str()
             .context("platform UI path is not UTF-8")?;
-        request.binary_files.insert(
+        inputs.insert(
             format!("apps/platform_ui/dist/{relative}"),
             std::fs::read(path)?,
         );
     }
-    Ok(request)
+    Ok(platform_ui_with_files(document, image, inputs))
 }
 
 pub(super) fn platform_ui_request(document: &ClusterDocument, image: &str) -> JobRequest {
@@ -235,6 +227,33 @@ pub(super) fn platform_ui_request(document: &ClusterDocument, image: &str) -> Jo
         ].into(),
         ..JobRequest::default()
     }
+}
+
+pub(super) fn upload_request(
+    environment: &EnvironmentDocument,
+    bucket: &str,
+    image: &str,
+    registry: &PackageRegistry,
+    auth: &SecretData,
+    chart: &Path,
+) -> anyhow::Result<JobRequest> {
+    let mut request = request(environment, bucket, image, registry, auth)?;
+    super::environments::chart_files(chart, Path::new(""), &mut request)?;
+    request.files.insert(
+        "kubeconfig".into(),
+        super::environments::kubeconfig().to_string(),
+    );
+    Ok(request)
+}
+
+pub(super) fn platform_ui_with_files(
+    document: &ClusterDocument,
+    image: &str,
+    files: std::collections::BTreeMap<String, Vec<u8>>,
+) -> JobRequest {
+    let mut request = platform_ui_request(document, image);
+    request.binary_files = files;
+    request
 }
 
 #[cfg(test)]
