@@ -197,14 +197,9 @@ pub(super) async fn apply(
             tags.push(tag.clone());
             artifacts.push(digest.clone());
             let request = package_job(&env_key, tag, &environment, &image, registry, &auth)?;
-            changed |= job::run(
-                target,
-                directory,
-                &request,
-                &json!({"artifact": digest, "database": database.path()}),
-                &secrets,
-            )
-            .await?;
+            let (request, secrets, inputs) =
+                artifact_inputs(request, &digest, database.path(), &secrets);
+            changed |= job::run(target, directory, &request, &inputs, &secrets).await?;
             let opened = open_package(registry, &identity.id, &identity.version).await?;
             let source = crate::apply_package::read_package_directory(opened.root())?;
             let mut files = std::collections::BTreeMap::from([(
@@ -219,24 +214,14 @@ pub(super) async fn apply(
         }
         if !tags.is_empty() {
             let request = access_job(&env_key, &environment, &image, registry, &tags)?;
-            changed |= job::run(
-                target,
-                directory,
-                &request,
-                &json!({"artifacts": artifacts, "database": database.path()}),
-                &secrets,
-            )
-            .await?;
+            let (request, secrets, inputs) =
+                artifacts_inputs(request, &artifacts, database.path(), &secrets);
+            changed |= job::run(target, directory, &request, &inputs, &secrets).await?;
         }
         for (request, digest) in replicas {
-            changed |= job::run(
-                target,
-                directory,
-                &request,
-                &json!({"artifact": digest, "database": database.path()}),
-                &secrets,
-            )
-            .await?;
+            let (request, secrets, inputs) =
+                artifact_inputs(request, &digest, database.path(), &secrets);
+            changed |= job::run(target, directory, &request, &inputs, &secrets).await?;
         }
     }
     Ok(changed)
@@ -364,4 +349,30 @@ pub(super) fn access_job(
     }
     registry_inputs(&mut request, registry)?;
     Ok(request)
+}
+
+pub(super) fn artifact_inputs(
+    request: JobRequest,
+    artifact: &str,
+    database: &str,
+    secrets: &[JobSecret],
+) -> job::JobInputs {
+    (
+        request,
+        secrets.to_vec(),
+        json!({"artifact":artifact,"database":database}),
+    )
+}
+
+pub(super) fn artifacts_inputs<T: serde::Serialize>(
+    request: JobRequest,
+    artifacts: &[T],
+    database: &str,
+    secrets: &[JobSecret],
+) -> job::JobInputs {
+    (
+        request,
+        secrets.to_vec(),
+        json!({"artifacts":artifacts,"database":database}),
+    )
 }

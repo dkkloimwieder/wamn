@@ -166,19 +166,12 @@ pub(super) async fn apply(
     )
     .await?
     .context("missing Secret identity/identity-tls")?;
-    let check = check_request(&secret_text(&ca, "ca.crt")?);
+    let (check, check_secrets, inputs) = check_inputs(&ca, &kid, values)?;
     let hosts = Target {
         namespace: "hosts".into(),
         ..identity
     };
-    changed |= job::run(
-        &hosts,
-        directory,
-        &check,
-        &json!({"kid": kid, "values": values}),
-        &[],
-    )
-    .await?;
+    changed |= job::run(&hosts, directory, &check, &inputs, &check_secrets).await?;
     let jwks: Value = serde_json::from_str(&job::output(&hosts, &check).await?)
         .context("decode identity public keys")?;
     ensure!(
@@ -193,29 +186,50 @@ pub(super) async fn apply(
 pub(super) fn key_probe(
     image: &str,
     superuser: &SecretData,
-) -> anyhow::Result<(JobRequest, [JobSecret; 1])> {
+    identity_image: &str,
+) -> anyhow::Result<job::JobInputs> {
     Ok((
         key_state_request(image),
-        [JobSecret {
+        vec![JobSecret {
             name: "platform-key-probe".into(),
             key: "password".into(),
             value: secret_text(superuser, "password")?,
             environment: "PGPASSWORD".into(),
         }],
+        json!({"issuer":ISSUER,"identity_image":identity_image}),
     ))
 }
-pub(super) fn key_publish(
-    image: &str,
-    credential: &SecretData,
-) -> anyhow::Result<(JobRequest, [JobSecret; 1])> {
+
+pub(super) fn key_publish(image: &str, credential: &SecretData) -> anyhow::Result<job::JobInputs> {
     Ok((
         key_publish_request(image),
-        [JobSecret {
+        vec![JobSecret {
             name: "platform-key-identity".into(),
             key: "url".into(),
             value: secret_text(credential, "url")?,
             environment: "WAMN_IDENTITY_DATABASE_URL".into(),
         }],
+        json!({"issuer":ISSUER}),
+    ))
+}
+
+pub(super) fn key_activate_inputs(image: &str, kid: &str, secrets: &[JobSecret]) -> job::JobInputs {
+    (
+        key_activate_request(image, kid),
+        secrets.to_vec(),
+        json!({"issuer":ISSUER,"kid":kid}),
+    )
+}
+
+pub(super) fn check_inputs(
+    ca: &SecretData,
+    kid: &str,
+    values: &Value,
+) -> anyhow::Result<job::JobInputs> {
+    Ok((
+        check_request(&secret_text(ca, "ca.crt")?),
+        Vec::new(),
+        json!({"kid":kid,"values":values}),
     ))
 }
 
@@ -224,7 +238,7 @@ pub(super) fn session_inputs(
     image: &str,
     admin: &JobSecret,
     application_url: &str,
-) -> anyhow::Result<(JobRequest, [JobSecret; 2], Value)> {
+) -> anyhow::Result<job::JobInputs> {
     let credential = url::Url::parse(application_url)
         .map_err(|_| anyhow::anyhow!("parse the application database URL"))?;
     let mut database = url::Url::parse(&admin.value)
@@ -232,7 +246,7 @@ pub(super) fn session_inputs(
     database.set_path(credential.path());
     Ok((
         session_request(environment, image),
-        [
+        vec![
             admin.clone(),
             JobSecret {
                 name: "platform-session-admin".into(),
@@ -368,15 +382,8 @@ async fn keys(
     let image = cluster["spec"]["imageName"]
         .as_str()
         .context("the PostgreSQL Cluster has no image")?;
-    let (probe, probe_secrets) = key_probe(image, superuser)?;
-    let mut changed = job::run(
-        target,
-        directory,
-        &probe,
-        &json!({"issuer": ISSUER, "identity_image": identity_image}),
-        &probe_secrets,
-    )
-    .await?;
+    let (probe, probe_secrets, inputs) = key_probe(image, superuser, identity_image)?;
+    let mut changed = job::run(target, directory, &probe, &inputs, &probe_secrets).await?;
     let state: Value = serde_json::from_str(&job::output(target, &probe).await?)
         .context("decode the public session key state")?;
     if let Some(kid) = state["kid"].as_str() {
@@ -391,30 +398,16 @@ async fn keys(
     )
     .await?
     .context("missing Secret identity/wamn-identity-db")?;
-    let (publish, secrets) = key_publish(identity_image, &credential)?;
-    changed |= job::run(
-        identity,
-        directory,
-        &publish,
-        &json!({"issuer": ISSUER}),
-        &secrets,
-    )
-    .await?;
+    let (publish, secrets, inputs) = key_publish(identity_image, &credential)?;
+    changed |= job::run(identity, directory, &publish, &inputs, &secrets).await?;
     let public: Value = serde_json::from_str(&job::output(identity, &publish).await?)
         .context("decode the published session key")?;
     let kid = public["kid"]
         .as_str()
         .context("the published session key has no kid")?
         .to_owned();
-    let activate = key_activate_request(identity_image, &kid);
-    changed |= job::run(
-        identity,
-        directory,
-        &activate,
-        &json!({"issuer": ISSUER, "kid": kid}),
-        &secrets,
-    )
-    .await?;
+    let (activate, secrets, inputs) = key_activate_inputs(identity_image, &kid, &secrets);
+    changed |= job::run(identity, directory, &activate, &inputs, &secrets).await?;
     Ok((changed, kid))
 }
 

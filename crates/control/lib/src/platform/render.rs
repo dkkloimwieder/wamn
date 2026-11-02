@@ -3,7 +3,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use super::job::{JobRequest, JobSecret};
 use anyhow::Context as _;
 use serde_json::{Value, json};
 
@@ -114,17 +113,12 @@ pub fn install(
     );
     let superuser = serde_json::from_value(fixtures.postgres_superuser.clone())?;
     let admin = super::install::administrator(&superuser)?;
-    for request in super::install::provisioning_jobs(document, &fixtures.runner_image) {
+    for batch in super::install::provisioning_inputs(document, &fixtures.runner_image, &superuser)?
+    {
         append(
             &mut objects,
             "4.7",
-            job_objects(
-                &request,
-                "platform",
-                &json!({}),
-                std::slice::from_ref(&admin),
-                fixtures,
-            )?,
+            job_objects(&batch, "platform", fixtures)?,
         );
     }
     append(
@@ -144,7 +138,7 @@ pub fn install(
             object["kind"] == "Secret" && object["metadata"]["name"] == "wamn-nats-authorization"
         })
         .map(|(_, object)| object.clone())
-        .ok_or_else(|| anyhow::anyhow!("missing initial authorization fixture"))?;
+        .context("missing initial authorization fixture")?;
     append(
         &mut objects,
         "4.8",
@@ -163,7 +157,7 @@ pub fn install(
     let auth = serde_json::from_value(fixtures.ctl_nats.clone())?;
     for environment in environments {
         let mut environment = environment.clone();
-        let (request, secrets) = super::environments::apply_request(
+        let batch = super::environments::apply_request(
             document,
             &mut environment,
             &fixtures.runner_image,
@@ -175,13 +169,7 @@ pub fn install(
         append(
             &mut objects,
             "4.11",
-            job_objects(
-                &request,
-                "platform",
-                &json!({"environment": environment}),
-                &secrets,
-                fixtures,
-            )?,
+            job_objects(&batch, "platform", fixtures)?,
         );
     }
     let mut targets = Vec::new();
@@ -191,12 +179,12 @@ pub fn install(
             .environment_urls
             .get(&key)
             .context("environment URL fixture")?;
-        let (request, secrets, inputs) =
+        let batch =
             super::identity::session_inputs(environment, &fixtures.runner_image, &admin, url)?;
         append(
             &mut objects,
             "4.12",
-            job_objects(&request, "identity", &inputs, &secrets, fixtures)?,
+            job_objects(&batch, "identity", fixtures)?,
         );
         targets.push(format!("wamn-session-role-reader-{key}"));
     }
@@ -204,75 +192,56 @@ pub fn install(
         super::identity::chart_objects(repository, document, &fixtures.identity_image, targets)?;
     let values = chart[0]["values"].clone();
     append(&mut objects, "4.12", chart);
-    let (probe, secrets) = super::identity::key_probe(&fixtures.postgres_image, &superuser)?;
-    let issuer = super::identity::ISSUER;
+    let probe = super::identity::key_probe(
+        &fixtures.postgres_image,
+        &superuser,
+        &fixtures.identity_image,
+    )?;
     append(
         &mut objects,
         "4.12",
-        job_objects(
-            &probe,
-            "platform",
-            &json!({"issuer":issuer,"identity_image":fixtures.identity_image}),
-            &secrets,
-            fixtures,
-        )?,
+        job_objects(&probe, "platform", fixtures)?,
     );
     let state: Value = serde_json::from_str(
         fixtures
             .outputs
-            .get(&probe.name)
+            .get(&probe.0.name)
             .context("session key state fixture")?,
     )?;
     let kid = if let Some(kid) = state["kid"].as_str() {
         kid.to_owned()
     } else {
         let credential = serde_json::from_value(fixtures.identity_database.clone())?;
-        let (publish, secrets) =
-            super::identity::key_publish(&fixtures.identity_image, &credential)?;
+        let publish = super::identity::key_publish(&fixtures.identity_image, &credential)?;
         append(
             &mut objects,
             "4.12",
-            job_objects(
-                &publish,
-                "identity",
-                &json!({"issuer":issuer}),
-                &secrets,
-                fixtures,
-            )?,
+            job_objects(&publish, "identity", fixtures)?,
         );
         let public: Value = serde_json::from_str(
             fixtures
                 .outputs
-                .get(&publish.name)
+                .get(&publish.0.name)
                 .context("published key fixture")?,
         )?;
         let kid = public["kid"]
             .as_str()
             .context("published kid fixture")?
             .to_owned();
+        let activate =
+            super::identity::key_activate_inputs(&fixtures.identity_image, &kid, &publish.1);
         append(
             &mut objects,
             "4.12",
-            job_objects(
-                &super::identity::key_activate_request(&fixtures.identity_image, &kid),
-                "identity",
-                &json!({"issuer":issuer,"kid":kid}),
-                &secrets,
-                fixtures,
-            )?,
+            job_objects(&activate, "identity", fixtures)?,
         );
         kid
     };
+    let batch = super::identity::check_inputs(&identity_tls, &kid, &values)?;
     append(
         &mut objects,
         "4.12",
-        job_objects(
-            &super::identity::check_request(&super::install::secret_text(&identity_tls, "ca.crt")?),
-            "hosts",
-            &json!({"kid":kid,"values":values}),
-            &[],
-            fixtures,
-        )?,
+        job_objects(&batch, "hosts", fixtures)?,
     );
     for environment in environments {
         let key = environment_key(environment);
@@ -291,7 +260,7 @@ pub fn install(
             .collect::<Vec<_>>();
         let artifacts = packages
             .iter()
-            .map(|package| &package.digest)
+            .map(|package| package.digest.clone())
             .collect::<Vec<_>>();
         for (package, tag) in packages.iter().zip(&tags) {
             let request = super::packages::package_job(
@@ -302,16 +271,16 @@ pub fn install(
                 &fixtures.registry,
                 &auth,
             )?;
+            let batch = super::packages::artifact_inputs(
+                request,
+                &package.digest,
+                database.path(),
+                &secrets,
+            );
             append(
                 &mut objects,
                 "4.13",
-                job_objects(
-                    &request,
-                    "platform",
-                    &json!({"artifact":package.digest,"database":database.path()}),
-                    &secrets,
-                    fixtures,
-                )?,
+                job_objects(&batch, "platform", fixtures)?,
             );
         }
         if !packages.is_empty() {
@@ -322,16 +291,12 @@ pub fn install(
                 &fixtures.registry,
                 &tags,
             )?;
+            let batch =
+                super::packages::artifacts_inputs(request, &artifacts, database.path(), &secrets);
             append(
                 &mut objects,
                 "4.13",
-                job_objects(
-                    &request,
-                    "platform",
-                    &json!({"artifacts":artifacts,"database":database.path()}),
-                    &secrets,
-                    fixtures,
-                )?,
+                job_objects(&batch, "platform", fixtures)?,
             );
         }
         for package in packages {
@@ -341,16 +306,16 @@ pub fn install(
                 &fixtures.runner_image,
                 &package.files,
             );
+            let batch = super::packages::artifact_inputs(
+                request,
+                &package.digest,
+                database.path(),
+                &secrets,
+            );
             append(
                 &mut objects,
                 "4.13",
-                job_objects(
-                    &request,
-                    "platform",
-                    &json!({"artifact":package.digest,"database":database.path()}),
-                    &secrets,
-                    fixtures,
-                )?,
+                job_objects(&batch, "platform", fixtures)?,
             );
         }
     }
@@ -363,7 +328,7 @@ pub fn install(
             .collect::<Vec<_>>();
         let artifacts = packages
             .iter()
-            .map(|package| &package.digest)
+            .map(|package| package.digest.clone())
             .collect::<Vec<_>>();
         let request = super::releases::publish_request(
             &key,
@@ -380,16 +345,12 @@ pub fn install(
                 .context("environment URL fixture")?,
         )?;
         let database = url::Url::parse(&secrets[1].value)?;
+        let batch =
+            super::packages::artifacts_inputs(request, &artifacts, database.path(), &secrets);
         append(
             &mut objects,
             "4.14",
-            job_objects(
-                &request,
-                "platform",
-                &json!({"artifacts":artifacts,"database":database.path()}),
-                &secrets,
-                fixtures,
-            )?,
+            job_objects(&batch, "platform", fixtures)?,
         );
     }
     for environment in environments
@@ -400,7 +361,7 @@ pub fn install(
             &repository.join("deploy/gcp/connections"),
             environment,
         )?;
-        let (request, credential) = super::environments::connection_inputs(
+        let batch = super::environments::connection_inputs(
             document,
             environment,
             &fixtures.runner_image,
@@ -411,13 +372,7 @@ pub fn install(
         append(
             &mut objects,
             "4.16.1",
-            job_objects(
-                &request,
-                "hosts",
-                &json!({"environment":environment}),
-                std::slice::from_ref(&credential),
-                fixtures,
-            )?,
+            job_objects(&batch, "hosts", fixtures)?,
         );
     }
     if !environments.is_empty() && !fixtures.oauth_exists {
@@ -430,7 +385,7 @@ pub fn install(
     for environment in environments {
         let key = environment_key(environment);
         let mut environment = environment.clone();
-        let (mut request, secrets) = super::environments::apply_request(
+        let mut batch = super::environments::apply_request(
             document,
             &mut environment,
             &fixtures.runner_image,
@@ -457,7 +412,7 @@ pub fn install(
         super::environments::released_request_inputs(
             document,
             &environment,
-            &mut request,
+            &mut batch.0,
             &fixtures.registry,
             &fixtures.directory.join("release-chart"),
             &source,
@@ -468,7 +423,8 @@ pub fn install(
             .join(format!("host-group-{}.yaml", environment.project));
         std::fs::write(
             &group,
-            request
+            batch
+                .0
                 .files
                 .get("host-group.yaml")
                 .context("rendered host group")?,
@@ -477,48 +433,29 @@ pub fn install(
             .releases
             .get(&key)
             .context("release manifest fixture")?;
-        let mut applications = environment.applications.clone();
-        for application in applications.values_mut() {
-            application.connections.clear();
-        }
-        let batch = super::environments::release_chart_objects(
-            &fixtures.directory.join("release-chart"),
-            &crate::release_chart::ValuesInput {
-                org: environment.org.clone(),
-                project: environment.project.clone(),
-                env: environment.env.clone(),
-                manifest_digest: environment.release.to_string(),
-                artifact_base: super::packages::artifact_base(&fixtures.registry, "releases")?,
-                route_host: environment.route_host.clone(),
-                applications,
-                roles: crate::release_chart::roles(
-                    manifest,
-                    &environment.org,
-                    &environment.project,
-                    &environment.env,
-                ),
-                drain_bound_seconds: fixtures.drain_bound_seconds,
-                actor: fixtures.actor.clone(),
-                host_group: serde_yaml::Mapping::new(),
-            },
-            &group,
+        let (values, _) = crate::environment::write::release_values(
+            &environment,
+            manifest,
+            &environment.release.to_string(),
+            &super::packages::artifact_base(&fixtures.registry, "releases")?,
+            fixtures.drain_bound_seconds,
+            &fixtures.actor,
+            Some(&group),
             fixtures
                 .web_clients
                 .get(&key)
                 .context("web client fixture")?,
         )?;
-        let chart_objects = super::environments::template_objects(&batch[0])?;
+        let entry = super::environments::release_chart_objects(
+            &fixtures.directory.join("release-chart"),
+            &environment,
+            &values,
+        )?;
+        let chart_objects = super::install::helm_template(&entry[0])?;
         append(
             &mut objects,
             "4.17",
-            job_objects_with(
-                &request,
-                "platform",
-                &json!({"environment":environment}),
-                &secrets,
-                fixtures,
-                &chart_objects,
-            )?,
+            job_objects_with(&batch, "platform", fixtures, &chart_objects)?,
         );
     }
     append(&mut objects, "4.18", vec![super::cdc::account()]);
@@ -536,7 +473,7 @@ pub fn install(
     }
     if !document.buckets.web.is_empty() {
         for environment in environments {
-            let request = super::web::upload_request(
+            let batch = super::web::upload_request(
                 environment,
                 &document.buckets.web,
                 &fixtures.runner_image,
@@ -547,37 +484,27 @@ pub fn install(
             append(
                 &mut objects,
                 "4.19",
-                job_objects(
-                    &request,
-                    "hosts",
-                    &json!({"environment":environment}),
-                    &[],
-                    fixtures,
-                )?,
+                job_objects(&batch, "hosts", fixtures)?,
             );
         }
     }
+    let batch = super::control::provision_inputs(document, &fixtures.runner_image);
     append(
         &mut objects,
         "4.19.1",
-        job_objects(
-            &super::control::provision_request(document, &fixtures.runner_image),
-            "platform",
-            &json!({"org":document.org}),
-            &[],
-            fixtures,
-        )?,
+        job_objects(&batch, "platform", fixtures)?,
     );
+    let batch = super::control::operator_inputs(
+        document,
+        &fixtures.runner_image,
+        fixtures.control_operator["metadata"]["resourceVersion"]
+            .as_str()
+            .context("operator resource version fixture")?,
+    )?;
     append(
         &mut objects,
         "4.19.1",
-        job_objects(
-            &super::control::operator_request(document, &fixtures.runner_image)?,
-            "platform",
-            &json!({"source_version":fixtures.control_operator["metadata"]["resourceVersion"]}),
-            &[],
-            fixtures,
-        )?,
+        job_objects(&batch, "platform", fixtures)?,
     );
     if environments.is_empty() && !fixtures.oauth_exists {
         append(
@@ -604,7 +531,7 @@ pub fn install(
     append(
         &mut objects,
         "4.19.1",
-        super::environments::template_objects(&entry[0])?,
+        super::install::helm_template(&entry[0])?,
     );
     let chart: Value = serde_yaml::from_slice(&std::fs::read(
         fixtures.directory.join("release-chart/values.yaml"),
@@ -616,7 +543,7 @@ pub fn install(
     );
     // Control host credentials and release precede this upload.
     if !document.buckets.web.is_empty() {
-        let request = super::web::platform_ui_with_files(
+        let batch = super::web::platform_ui_with_files(
             document,
             &fixtures.runner_image,
             fixtures.platform_ui_files.clone(),
@@ -624,43 +551,26 @@ pub fn install(
         append(
             &mut objects,
             "4.19.1",
-            job_objects(
-                &request,
-                "hosts",
-                &json!({"org":document.org}),
-                &[],
-                fixtures,
-            )?,
+            job_objects(&batch, "hosts", fixtures)?,
         );
     }
-    let owner_state = super::invite::state_request(document, &fixtures.postgres_image);
+    let owner_state = super::invite::state_inputs(document, &fixtures.postgres_image);
     append(
         &mut objects,
         "4.19.1",
-        job_objects(
-            &owner_state,
-            "platform",
-            &json!({"org":document.org}),
-            &[],
-            fixtures,
-        )?,
+        job_objects(&owner_state, "platform", fixtures)?,
     );
     if super::invite::needs_invite(
         fixtures
             .outputs
-            .get(&owner_state.name)
+            .get(&owner_state.0.name)
             .context("owner state fixture")?,
     )? {
+        let batch = super::invite::invite_inputs(document, &fixtures.runner_image, &auth)?;
         append(
             &mut objects,
             "4.19.1",
-            job_objects(
-                &super::invite::request(document, &fixtures.runner_image, &auth)?,
-                "platform",
-                &json!({"org":document.org}),
-                &[],
-                fixtures,
-            )?,
+            job_objects(&batch, "platform", fixtures)?,
         );
     }
     let routes = super::edge::routes(document, environments)?;
@@ -673,18 +583,14 @@ pub fn install(
         super::edge::objects(document, &routes, &chart)?,
     );
     if !document.buckets.web.is_empty() {
-        let request = super::edge::check_inputs(document, &routes, &chart, &fixtures.web_hosts)?;
-        append(
-            &mut objects,
-            "4.20",
-            job_objects(&request, "edge", &json!({"routes":routes}), &[], fixtures)?,
-        );
+        let batch = super::edge::check_inputs(document, &routes, &chart, &fixtures.web_hosts)?;
+        append(&mut objects, "4.20", job_objects(&batch, "edge", fixtures)?);
     }
     let entry = super::edge::proxy_objects(repository, document, &routes)?;
     append(
         &mut objects,
         "4.20",
-        super::environments::template_objects(&entry[0])?,
+        super::install::helm_template(&entry[0])?,
     );
     let mut routes = vec![(
         document.route_hosts.control.clone(),
@@ -715,17 +621,8 @@ pub fn install(
             path,
             !document.buckets.web.is_empty() && fixtures.web_hosts.contains(host),
         ) {
-            append(
-                &mut objects,
-                "4.21",
-                job_objects(
-                    &super::check::kind_request(host, method, path),
-                    "edge",
-                    &json!({}),
-                    &[],
-                    fixtures,
-                )?,
-            );
+            let batch = super::check::kind_inputs(host, method, path);
+            append(&mut objects, "4.21", job_objects(&batch, "edge", fixtures)?);
         }
     }
     let releases = routes
@@ -767,23 +664,20 @@ fn environment_key(environment: &EnvironmentDocument) -> String {
 }
 
 fn job_objects(
-    request: &JobRequest,
+    batch: &super::job::JobInputs,
     namespace: &str,
-    inputs: &Value,
-    secrets: &[JobSecret],
     fixtures: &Fixtures,
 ) -> anyhow::Result<Vec<Value>> {
-    job_objects_with(request, namespace, inputs, secrets, fixtures, &[])
+    job_objects_with(batch, namespace, fixtures, &[])
 }
 
 fn job_objects_with(
-    request: &JobRequest,
+    batch: &super::job::JobInputs,
     namespace: &str,
-    inputs: &Value,
-    secrets: &[JobSecret],
     fixtures: &Fixtures,
     nested: &[Value],
 ) -> anyhow::Result<Vec<Value>> {
+    let (request, secrets, inputs) = batch;
     let mut objects = super::job::start_objects(request, namespace, secrets)?;
     let owner = json!({"name":request.name, "namespace":namespace, "uid":fixtures.job_uid});
     objects.extend(super::job::support_objects(request, &owner, secrets)?);

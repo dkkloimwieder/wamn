@@ -59,7 +59,7 @@ pub(super) async fn apply(
                 continue;
             }
         }
-        let (mut request, secrets) = apply_request(
+        let (mut request, secrets, inputs) = apply_request(
             document,
             &mut environment,
             &image,
@@ -82,14 +82,7 @@ pub(super) async fn apply(
             )
             .await?;
         }
-        let result = job::run(
-            target,
-            directory,
-            &request,
-            &json!({"environment": environment}),
-            &secrets,
-        )
-        .await;
+        let result = job::run(target, directory, &request, &inputs, &secrets).await;
         match result {
             Ok(applied) => changed |= applied,
             Err(error) => {
@@ -128,11 +121,11 @@ pub(super) fn apply_request(
     auth: &SecretData,
     chart: &Path,
     credentials: (&super::job::JobSecret, &str),
-) -> anyhow::Result<(JobRequest, [super::job::JobSecret; 2])> {
+) -> anyhow::Result<job::JobInputs> {
     if initial {
         environment.release = DeclaredRelease::None;
     }
-    let secrets = [
+    let secrets = vec![
         credentials.0.clone(),
         super::job::JobSecret {
             name: "wamn-env-apply".into(),
@@ -147,7 +140,7 @@ pub(super) fn apply_request(
             .files
             .insert(name.into(), std::fs::read_to_string(chart.join(name))?);
     }
-    Ok((request, secrets))
+    Ok((request, secrets, json!({"environment":environment})))
 }
 
 /// Whether the release apply of 4.17 completed for `environment`.
@@ -211,7 +204,7 @@ pub(super) async fn connections(
         if environment.integrations.is_empty() {
             continue;
         }
-        let (request, credential) = connection_inputs(
+        let (request, secrets, inputs) = connection_inputs(
             document,
             &environment,
             &image,
@@ -219,14 +212,7 @@ pub(super) async fn connections(
             connection_documents(&source, &environment)?,
             &admin,
         )?;
-        changed |= job::run(
-            &target,
-            directory,
-            &request,
-            &json!({"environment": environment}),
-            std::slice::from_ref(&credential),
-        )
-        .await?;
+        changed |= job::run(&target, directory, &request, &inputs, &secrets).await?;
     }
     Ok(changed)
 }
@@ -262,11 +248,15 @@ pub(super) fn connection_inputs(
     auth: &SecretData,
     files: std::collections::BTreeMap<String, String>,
     admin: &super::job::JobSecret,
-) -> anyhow::Result<(JobRequest, super::job::JobSecret)> {
+) -> anyhow::Result<job::JobInputs> {
     let request = connections_request(document, environment, image, auth, files)?;
     let mut credential = admin.clone();
     credential.environment = "WAMN_CONTROL_DATABASE_URL".into();
-    Ok((request, credential))
+    Ok((
+        request,
+        vec![credential],
+        json!({"environment":environment}),
+    ))
 }
 
 pub(super) fn connections_request(
@@ -418,6 +408,8 @@ async fn release_inputs(
         &group,
         suffix,
     )?;
+    // A local target's hosts mount the key, so it exists before their first
+    // apply and not only after the control release of 4.19.1.
     super::oauth::ensure_key(target, document).await?;
     Ok(())
 }
@@ -628,52 +620,13 @@ pub(super) fn request(
 
 pub(super) fn release_chart_objects(
     chart: &Path,
-    input: &crate::release_chart::ValuesInput,
-    host_group: &Path,
-    clients: &std::collections::BTreeMap<String, String>,
+    document: &crate::environment::document::EnvironmentDocument,
+    values: &serde_yaml::Value,
 ) -> anyhow::Result<Vec<serde_json::Value>> {
-    let mut values = crate::environment::write::render(input, Some(host_group))?;
-    values["webClients"] = serde_yaml::to_value(clients)?;
-    let name = crate::release_chart::release_name(&input.org, &input.project, &input.env)?;
+    let name = crate::release_chart::release_name(&document.org, &document.project, &document.env)?;
     Ok(vec![
         json!({"chart":chart,"version":super::steps::read_platform_version(&chart.join("Chart.yaml"))?,"name":name,"namespace":"hosts","values":values}),
     ])
-}
-
-pub(super) fn template_objects(
-    entry: &serde_json::Value,
-) -> anyhow::Result<Vec<serde_json::Value>> {
-    use serde::Deserialize as _;
-    use std::io::Write as _;
-    use std::process::{Command, Stdio};
-    let chart = entry["chart"].as_str().context("chart reference")?;
-    let name = entry["name"].as_str().context("chart release name")?;
-    let namespace = entry["namespace"].as_str().context("chart namespace")?;
-    let mut child = Command::new("helm")
-        .args(["template", name, chart, "--namespace", namespace, "-f", "-"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("start local helm template")?;
-    child
-        .stdin
-        .take()
-        .context("helm stdin")?
-        .write_all(serde_yaml::to_string(&entry["values"])?.as_bytes())?;
-    let output = child.wait_with_output()?;
-    anyhow::ensure!(
-        output.status.success(),
-        "helm template {chart}: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_yaml::Deserializer::from_slice(&output.stdout)
-        .map(serde_json::Value::deserialize)
-        .filter_map(|value| match value {
-            Ok(value) if value.is_null() => None,
-            value => Some(value.map_err(Into::into)),
-        })
-        .collect()
 }
 
 #[cfg(test)]

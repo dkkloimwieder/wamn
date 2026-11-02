@@ -291,12 +291,12 @@ async fn kind_check(
     method: &str,
     path: &str,
 ) -> anyhow::Result<(u16, String)> {
-    let request = kind_request(host, method, path);
+    let (request, secrets, inputs) = kind_inputs(host, method, path);
     let edge = Target {
         namespace: "edge".into(),
         ..target.clone()
     };
-    job::run(&edge, directory, &request, &json!({}), &[]).await?;
+    job::run(&edge, directory, &request, &inputs, &secrets).await?;
     let output: Value = serde_json::from_str(&job::output(&edge, &request).await?)?;
     let status = output["http_code"]
         .as_u64()
@@ -442,6 +442,10 @@ pub(super) fn completion_objects(
             "load_balancer": if document.provider == Provider::Kind {"skipped: kind"} else {"checked"},
             "web": if document.buckets.web.is_empty() {"skipped: no bucket"} else {"checked"}},
     })])
+}
+
+pub(super) fn kind_inputs(host: &str, method: &str, path: &str) -> job::JobInputs {
+    (kind_request(host, method, path), Vec::new(), json!({}))
 }
 
 #[cfg(test)]

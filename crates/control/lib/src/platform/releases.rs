@@ -67,7 +67,8 @@ pub(super) async fn apply(
         let secrets = Vec::from(packages::credentials(target, &environment).await?);
         let database = url::Url::parse(&secrets[1].value)
             .map_err(|_| anyhow::anyhow!("parse environment database URL"))?;
-        let inputs = json!({"artifacts": artifacts, "database": database.path()});
+        let (request, secrets, inputs) =
+            packages::artifacts_inputs(request, &artifacts, database.path(), &secrets);
         published.changed |= job::run(target, directory, &request, &inputs, &secrets).await?;
         let output = job::output(target, &request).await?;
         let digest = output.trim();

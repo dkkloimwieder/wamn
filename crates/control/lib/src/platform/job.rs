@@ -358,6 +358,9 @@ struct ServiceAccount {
     metadata: Metadata,
 }
 
+/// A Job request, its temporary credentials, and its completion inputs.
+pub(super) type JobInputs = (JobRequest, Vec<JobSecret>, Value);
+
 /// One temporary Secret key exposed as an environment variable to the Job.
 #[derive(Clone)]
 pub struct JobSecret {

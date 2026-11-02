@@ -534,12 +534,10 @@ async fn provisioning(
     )
     .await?
     .context("missing Secret platform/wamn-pg-superuser")?;
-    let secrets = [administrator(&secret)?];
     // Each Job creates its records once. Its arguments are its only input, so
     // a new version, image or registry does not rerun it (wamn-xjna8).
-    let inputs = json!({});
     let mut changed = false;
-    for request in provisioning_jobs(document, &image) {
+    for (request, secrets, inputs) in provisioning_inputs(document, &image, &secret)? {
         changed |= job::run(target, directory, &request, &inputs, &secrets).await?;
     }
     for object in identity_certificate_objects(repository, document)? {
@@ -1214,6 +1212,40 @@ async fn install_operator(
     Ok(true)
 }
 
+pub(super) fn helm_template(entry: &serde_json::Value) -> anyhow::Result<Vec<serde_json::Value>> {
+    use serde::Deserialize as _;
+    use std::io::Write as _;
+    use std::process::Command;
+    let chart = entry["chart"].as_str().context("chart reference")?;
+    let name = entry["name"].as_str().context("chart release name")?;
+    let namespace = entry["namespace"].as_str().context("chart namespace")?;
+    let mut child = Command::new("helm")
+        .args(["template", name, chart, "--namespace", namespace, "-f", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("start local helm template")?;
+    child
+        .stdin
+        .take()
+        .context("helm stdin")?
+        .write_all(serde_yaml::to_string(&entry["values"])?.as_bytes())?;
+    let output = child.wait_with_output()?;
+    anyhow::ensure!(
+        output.status.success(),
+        "helm template {chart}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_yaml::Deserializer::from_slice(&output.stdout)
+        .map(serde_json::Value::deserialize)
+        .filter_map(|value| match value {
+            Ok(value) if value.is_null() => None,
+            value => Some(value.map_err(Into::into)),
+        })
+        .collect()
+}
+
 pub(super) async fn helm(
     target: &Target,
     arguments: &[&std::ffi::OsStr],
@@ -1252,6 +1284,18 @@ pub(super) fn authorization_secret() -> Value {
         "metadata": {"name": super::broker::AUTHORIZATION, "namespace": "platform"},
         "data": {"authorization.conf": STANDARD.encode(super::broker::initial_authorization())}
     })
+}
+
+pub(super) fn provisioning_inputs(
+    document: &ClusterDocument,
+    image: &str,
+    superuser: &SecretData,
+) -> anyhow::Result<Vec<job::JobInputs>> {
+    let secret = administrator(superuser)?;
+    Ok(provisioning_jobs(document, image)
+        .into_iter()
+        .map(|request| (request, vec![secret.clone()], json!({})))
+        .collect())
 }
 
 #[cfg(test)]

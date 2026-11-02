@@ -60,34 +60,16 @@ pub async fn write(
     let version = shown["version"]
         .as_str()
         .with_context(|| format!("the chart {} has no version", platform.chart.display()))?;
-    let roles = release_chart::roles(
+    let (rendered, names) = release_values(
+        document,
         &release.manifest,
-        &document.org,
-        &document.project,
-        &document.env,
-    );
-    let names = roles.iter().map(|role| role.name).collect();
-    let mut applications = document.applications.clone();
-    for application in applications.values_mut() {
-        application.connections.clear();
-    }
-    let mut rendered = render(
-        &ValuesInput {
-            org: document.org.clone(),
-            project: document.project.clone(),
-            env: document.env.clone(),
-            manifest_digest: release.digest.clone(),
-            artifact_base: platform.release_artifact_base.clone(),
-            route_host: document.route_host.clone(),
-            applications,
-            roles,
-            drain_bound_seconds: u32::try_from(policy.drain_bound_seconds)?,
-            actor: analysis.actor.clone(),
-            host_group: Mapping::new(),
-        },
+        &release.digest,
+        &platform.release_artifact_base,
+        u32::try_from(policy.drain_bound_seconds)?,
+        &analysis.actor,
         platform.host_group.as_deref(),
+        clients,
     )?;
-    rendered["webClients"] = serde_yaml::to_value(clients)?;
     let release_name = analysis.authorities.release_name.clone();
     let unchanged = analysis
         .authorities
@@ -133,6 +115,47 @@ pub async fn write(
         deadline,
         helm_written: true,
     })
+}
+
+/// Build release values from the document, artifact, policy, and host overlay.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Release values combine document, artifact, policy, and chart inputs"
+)]
+pub(crate) fn release_values(
+    document: &EnvironmentDocument,
+    manifest: &wamn_catalog::ServingManifest,
+    manifest_digest: &str,
+    artifact_base: &str,
+    drain_bound_seconds: u32,
+    actor: &str,
+    host_group: Option<&Path>,
+    clients: &std::collections::BTreeMap<String, String>,
+) -> anyhow::Result<(Value, Vec<RoleName>)> {
+    let roles = release_chart::roles(manifest, &document.org, &document.project, &document.env);
+    let names = roles.iter().map(|role| role.name).collect();
+    let mut applications = document.applications.clone();
+    for application in applications.values_mut() {
+        application.connections.clear();
+    }
+    let mut rendered = render(
+        &ValuesInput {
+            org: document.org.clone(),
+            project: document.project.clone(),
+            env: document.env.clone(),
+            manifest_digest: manifest_digest.to_owned(),
+            artifact_base: artifact_base.to_owned(),
+            route_host: document.route_host.clone(),
+            applications,
+            roles,
+            drain_bound_seconds,
+            actor: actor.to_owned(),
+            host_group: Mapping::new(),
+        },
+        host_group,
+    )?;
+    rendered["webClients"] = serde_yaml::to_value(clients)?;
+    Ok((rendered, names))
 }
 
 /// Render apply values with the platform overlay and derived credential references.

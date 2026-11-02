@@ -107,14 +107,8 @@ pub(super) async fn credentials(
     directory: &Path,
 ) -> anyhow::Result<bool> {
     let image = super::install::runner_image(directory)?;
-    let mut changed = job::run(
-        target,
-        directory,
-        &provision_request(document, &image),
-        &json!({"org": document.org}),
-        &[],
-    )
-    .await?;
+    let (request, secrets, inputs) = provision_inputs(document, &image);
+    let mut changed = job::run(target, directory, &request, &inputs, &secrets).await?;
     let operator = format!("operator-{}", document.org);
     // Read only metadata on the verb's machine. The Job copies the private data.
     let version = kubectl::kubectl(
@@ -135,16 +129,10 @@ pub(super) async fn credentials(
         !version.is_empty(),
         "operator Secret has no resource version"
     );
-    let request = operator_request(document, &image)?;
-    changed |= job::run(
-        target,
-        directory,
-        &request,
-        &json!({"source_version": version}),
-        &[],
-    )
-    .await
-    .context("copy the control operator Secret")?;
+    let (request, secrets, inputs) = operator_inputs(document, &image, &version)?;
+    changed |= job::run(target, directory, &request, &inputs, &secrets)
+        .await
+        .context("copy the control operator Secret")?;
     Ok(changed)
 }
 
@@ -274,7 +262,7 @@ pub(super) async fn release(
             .as_str()
             .context("control chart reference")?,
     );
-    let objects = super::environments::template_objects(&entry[0])?;
+    let objects = super::install::helm_template(&entry[0])?;
     let mut release_changed = false;
     for object in objects.iter().filter(|object| !object.is_null()) {
         let kind = object["kind"].as_str().context("control manifest kind")?;
@@ -408,6 +396,26 @@ pub(super) fn operator_request(
         ],
         ..JobRequest::default()
     })
+}
+
+pub(super) fn provision_inputs(document: &ClusterDocument, image: &str) -> job::JobInputs {
+    (
+        provision_request(document, image),
+        Vec::new(),
+        json!({"org":document.org}),
+    )
+}
+
+pub(super) fn operator_inputs(
+    document: &ClusterDocument,
+    image: &str,
+    source_version: &str,
+) -> anyhow::Result<job::JobInputs> {
+    Ok((
+        operator_request(document, image)?,
+        Vec::new(),
+        json!({"source_version":source_version}),
+    ))
 }
 
 #[cfg(test)]

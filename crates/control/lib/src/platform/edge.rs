@@ -60,7 +60,7 @@ pub(super) async fn proxy(
         namespace: "edge".into(),
         ..target.clone()
     };
-    let objects = super::environments::template_objects(&entry[0])?;
+    let objects = super::install::helm_template(&entry[0])?;
     let mut changed = false;
     for object in objects.iter().filter(|object| !object.is_null()) {
         let kind = object["kind"].as_str().context("edge manifest kind")?;
@@ -278,13 +278,13 @@ pub(super) async fn check(
             "4.20 Edge bucket check {host}: skipped: no web client"
         ))?;
     }
-    let request = check_inputs(document, &routes, &chart, &web)?;
+    let (request, secrets, inputs) = check_inputs(document, &routes, &chart, &web)?;
     let edge = Target {
         namespace: "edge".into(),
         ..target.clone()
     };
     let started = std::time::Instant::now();
-    job::run(&edge, directory, &request, &json!({"routes": routes}), &[]).await?;
+    job::run(&edge, directory, &request, &inputs, &secrets).await?;
     progress(&format!(
         "4.20 Edge bucket check: done {:.1}s",
         started.elapsed().as_secs_f64()
@@ -307,7 +307,7 @@ pub(super) fn check_inputs(
     routes: &BTreeMap<String, String>,
     chart: &Value,
     web: &std::collections::BTreeSet<String>,
-) -> anyhow::Result<JobRequest> {
+) -> anyhow::Result<job::JobInputs> {
     let rendered = objects(document, routes, chart)?;
     let mut configuration: Value = serde_json::from_str(
         rendered[3]["data"]["web.json"]
@@ -323,7 +323,11 @@ pub(super) fn check_inputs(
     let image = chart["platform"]["edge"]["image"]
         .as_str()
         .context("edge image")?;
-    Ok(check_request(&configuration, image))
+    Ok((
+        check_request(&configuration, image),
+        Vec::new(),
+        json!({"routes":routes}),
+    ))
 }
 
 pub(super) fn check_request(configuration: &Value, image: &str) -> JobRequest {

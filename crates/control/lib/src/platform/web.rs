@@ -49,7 +49,7 @@ pub(super) async fn apply(
         )
         .await?
         .context("missing Secret platform/wamn-ctl-nats")?;
-        let request = upload_request(
+        let (request, secrets, inputs) = upload_request(
             &environment,
             &document.buckets.web,
             &super::install::runner_image(directory)?,
@@ -59,14 +59,7 @@ pub(super) async fn apply(
         )?;
         let mut target = target.clone();
         target.namespace = "hosts".into();
-        let changed = job::run(
-            &target,
-            directory,
-            &request,
-            &json!({"environment": environment}),
-            &[],
-        )
-        .await?;
+        let changed = job::run(&target, directory, &request, &inputs, &secrets).await?;
         progress(&format!(
             "4.19 Web upload {coordinate}: {} {:.1}s",
             if changed { "done" } else { "skipped" },
@@ -149,7 +142,7 @@ pub(super) async fn platform_ui(
     }
     let started = Instant::now();
     progress("4.19.1 Platform UI upload: starting")?;
-    let request = platform_ui_inputs(
+    let (request, secrets, inputs) = platform_ui_inputs(
         document,
         &super::install::runner_image(directory)?,
         repository,
@@ -159,14 +152,7 @@ pub(super) async fn platform_ui(
         namespace: "hosts".into(),
         ..target.clone()
     };
-    let changed = job::run(
-        &hosts,
-        directory,
-        &request,
-        &json!({"org": document.org}),
-        &[],
-    )
-    .await?;
+    let changed = job::run(&hosts, directory, &request, &inputs, &secrets).await?;
     progress(&format!(
         "4.19.1 Platform UI upload: {} {:.1}s",
         if changed { "done" } else { "skipped" },
@@ -183,7 +169,7 @@ fn platform_ui_inputs(
     image: &str,
     repository: &Path,
     directory: &Path,
-) -> anyhow::Result<JobRequest> {
+) -> anyhow::Result<job::JobInputs> {
     let mut inputs = std::collections::BTreeMap::new();
     for name in ["Chart.yaml", crate::platform_build::BUILD_RECORD_FILE] {
         inputs.insert(
@@ -236,24 +222,24 @@ pub(super) fn upload_request(
     registry: &PackageRegistry,
     auth: &SecretData,
     chart: &Path,
-) -> anyhow::Result<JobRequest> {
+) -> anyhow::Result<job::JobInputs> {
     let mut request = request(environment, bucket, image, registry, auth)?;
     super::environments::chart_files(chart, Path::new(""), &mut request)?;
     request.files.insert(
         "kubeconfig".into(),
         super::environments::kubeconfig().to_string(),
     );
-    Ok(request)
+    Ok((request, Vec::new(), json!({"environment":environment})))
 }
 
 pub(super) fn platform_ui_with_files(
     document: &ClusterDocument,
     image: &str,
     files: std::collections::BTreeMap<String, Vec<u8>>,
-) -> JobRequest {
+) -> job::JobInputs {
     let mut request = platform_ui_request(document, image);
     request.binary_files = files;
-    request
+    (request, Vec::new(), json!({"org":document.org}))
 }
 
 #[cfg(test)]
@@ -296,7 +282,8 @@ mod tests {
             "route_hosts": {"control": "control.example.com"}, "resend_from": "sender@example.com"
         }))
         .unwrap();
-        let request = platform_ui_inputs(&document, "image", &repository, &directory).unwrap();
+        let (request, _, _) =
+            platform_ui_inputs(&document, "image", &repository, &directory).unwrap();
         // The Job's input volume, with the request's files only.
         let inputs = work.join("inputs");
         for (name, bytes) in request

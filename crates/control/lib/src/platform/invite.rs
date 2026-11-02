@@ -60,20 +60,13 @@ pub(super) async fn apply(
     )
     .await?
     .context("missing Cluster platform/wamn-pg")?;
-    let probe = state_request(
+    let (probe, secrets, inputs) = state_inputs(
         document,
         cluster["spec"]["imageName"]
             .as_str()
             .context("PostgreSQL Cluster has no image")?,
     );
-    job::run(
-        target,
-        directory,
-        &probe,
-        &json!({"org": document.org}),
-        &[],
-    )
-    .await?;
+    job::run(target, directory, &probe, &inputs, &secrets).await?;
     if !needs_invite(&job::output(target, &probe).await?)? {
         return Ok(false);
     }
@@ -88,15 +81,9 @@ pub(super) async fn apply(
     )
     .await?
     .context("missing Secret platform/wamn-ctl-nats")?;
-    let request = request(document, &super::install::runner_image(directory)?, &auth)?;
-    job::run(
-        target,
-        directory,
-        &request,
-        &json!({"org": document.org}),
-        &[],
-    )
-    .await
+    let (request, secrets, inputs) =
+        invite_inputs(document, &super::install::runner_image(directory)?, &auth)?;
+    job::run(target, directory, &request, &inputs, &secrets).await
 }
 
 pub(super) fn request(
@@ -167,6 +154,26 @@ pub(super) fn needs_invite(output: &str) -> anyhow::Result<bool> {
         "f" => Ok(true),
         _ => anyhow::bail!("owner invitation state is not a boolean"),
     }
+}
+
+pub(super) fn state_inputs(document: &ClusterDocument, image: &str) -> job::JobInputs {
+    (
+        state_request(document, image),
+        Vec::new(),
+        json!({"org":document.org}),
+    )
+}
+
+pub(super) fn invite_inputs(
+    document: &ClusterDocument,
+    image: &str,
+    auth: &SecretData,
+) -> anyhow::Result<job::JobInputs> {
+    Ok((
+        request(document, image, auth)?,
+        Vec::new(),
+        json!({"org":document.org}),
+    ))
 }
 
 #[cfg(test)]
