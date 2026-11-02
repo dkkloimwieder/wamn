@@ -1,17 +1,17 @@
 # Documentation ownership
 
 This report covers epic `wamn-ggdxf`, which is audit hygiene Part 2 (H2, see [hygiene](hygiene.md)).
-The branch is `worktree-docs`, rebased onto main `6382199f3`.
+The branch is `worktree-docs`, rebased onto main `779cbf125`.
 
 ## Issues
 
 | Issue | Audit reference | Commit | Result |
 | --- | --- | --- | --- |
-| `.1` Completed plans out | H2-2, H2-3 | `a45f5a0fa` | Ten completed plans and `docs-audit.md` are deleted. `bd show` confirmed each bead closed. Seven mixed plans keep their unresolved design and every rule that no reference page states. |
-| `.2` One reference owner | H2-1, H2-4 | `73a630322`, `258fee130` | The standing rules of `platform-deploy.md` are in `CLAUDE.md`, the platform version procedure is in `operations/building.md`, and the cloud prerequisites are in `operations/gcp.md`. Rules of built work moved to eleven architecture and operations pages. `platform-deploy.md` and `integrations.md` are deleted. |
-| `.3` Links and evidence | H2-5, H2-6, H2-7 | `5c3d9f866` | The five `wamn-sync.md` links and all other missing local links resolve. Twelve evidence links are removed, and each claim keeps its bead and the note "evidence not retained". The three snapshot pages are deleted, and git holds them at `73a630322`. |
-| `.4` Navigation | H2-8 | `257b3ebc1` | The plan index lists all sixteen retained plans. `docs/README.md` names `audit/`. The history index maps every page to its successor, bead or revision. |
-| `.5` Auth cache ignores | `wamn-kov6v.6` part | `b820d59ff` | The three `auth_cache.rs` cases use `requires: env:WAMN_NATIVE_C_NATS_BIN` and check it before setup. Their exclusion rows are removed. |
+| `.1` Completed plans out | H2-2, H2-3 | `64933dbf8` | Ten completed plans and `docs-audit.md` are deleted. `bd show` confirmed each bead closed. Seven mixed plans keep their unresolved design and every rule that no reference page states. |
+| `.2` One reference owner | H2-1, H2-4 | `82df826ce`, `fe812ec01` | The standing rules of `platform-deploy.md` are in `CLAUDE.md`, the platform version procedure is in `operations/building.md`, and the cloud prerequisites are in `operations/gcp.md`. Rules of built work moved to eleven architecture and operations pages. `platform-deploy.md` and `integrations.md` are deleted. |
+| `.3` Links and evidence | H2-5, H2-6, H2-7 | `93926c34b` | The five `wamn-sync.md` links and all other missing local links resolve. Twelve evidence links are removed, and each claim keeps its bead and the note "evidence not retained". The three snapshot pages are deleted, and git holds them at `82df826ce`. |
+| `.4` Navigation | H2-8 | `7821b47d8` | The plan index lists all sixteen retained plans. `docs/README.md` names `audit/`. The history index maps every page to its successor, bead or revision. |
+| `.5` Auth cache ignores | `wamn-kov6v.6` part | `31d54aa71` | The three `auth_cache.rs` cases use `requires: env:WAMN_NATIVE_C_NATS_BIN` and check it before setup. Their exclusion rows are removed. |
 
 The branch deletes 15 files and changes 118 files, with 718 lines added and 6,842 lines removed.
 

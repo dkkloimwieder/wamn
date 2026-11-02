@@ -408,8 +408,8 @@ Proposal: Repair retained links against their actual owners.
 | `history/deterministic-testing-spec.md:5` | The retained file is `history/wamn_testing_spec.md` |
 | `history/operator-ui.md:10` | Use `../plan/platform-ui-app.md` |
 | Three links in `history/wamn_base_application_poc_revised.md`, starting at line 54 | Use the relevant `architecture/naming.md` section, or the historical source revision |
-| `history/platform-ui-history.md at 73a630322:1388` | Use `history/release-qualification.md` for historical context or current `operations/delivery.md` |
-| Four removed deployment-file links in `history/gcp-install-history.md at 73a630322`, starting at line 1258 | Link to their recorded Git revision rather than restoring retired deployment files |
+| `history/platform-ui-history.md at 82df826ce:1388` | Use `history/release-qualification.md` for historical context or current `operations/delivery.md` |
+| Four removed deployment-file links in `history/gcp-install-history.md at 82df826ce`, starting at line 1258 | Link to their recorded Git revision rather than restoring retired deployment files |
 
 The remaining twelve missing paths are evidence artifacts covered by H2-6.
 
@@ -441,7 +441,7 @@ Owner review 2026-10-31: question 3 is answered: the twelve artifacts are retain
 Severity: low  
 Effort: M  
 Area: docs/history, docs/plan/perf-arch.md  
-Evidence: `docs/history/gcp-install-history.md at 73a630322:3`, `docs/history/gcp-install-history.md at 73a630322:5`, `docs/history/platform-ui-history.md at 73a630322:1351`, `docs/history/kind-to-type.md:1988`, `docs/plan/request-round-trips.md:23`, `docs/plan/perf-arch.md:317`.
+Evidence: `docs/history/gcp-install-history.md at 82df826ce:3`, `docs/history/gcp-install-history.md at 82df826ce:5`, `docs/history/platform-ui-history.md at 82df826ce:1351`, `docs/history/kind-to-type.md:1988`, `docs/plan/request-round-trips.md:23`, `docs/plan/perf-arch.md:317`.
 
 Problem: Several pages primarily preserve rollout steps, successive decisions, or before-and-after measurements. The performance plan mixes a dated “today” path with later rulings. These records are useful history, but they do not provide a dependable current reference.
 
@@ -449,9 +449,9 @@ Proposal: Use the following replacements and retain chronology through immutable
 
 | Change history or dated record | Current reference replacement |
 | --- | --- |
-| `history/gcp-install-history.md at 73a630322` | `operations/gcp.md` |
-| `history/deployment-pre-apply.md at 73a630322` | `operations/deployment.md` |
-| `history/platform-ui-history.md at 73a630322` | `architecture/execution.md#operator-clients` and `architecture/overview.md#organization-membership-and-administration` |
+| `history/gcp-install-history.md at 82df826ce` | `operations/gcp.md` |
+| `history/deployment-pre-apply.md at 82df826ce` | `operations/deployment.md` |
+| `history/platform-ui-history.md at 82df826ce` | `architecture/execution.md#operator-clients` and `architecture/overview.md#organization-membership-and-administration` |
 | `history/kind-to-type.md` | `architecture/naming.md` plus the actual WIT and schema definitions |
 | Completed measurements and issue sequence in `plan/request-round-trips.md` | `operations/benchmark.md` and `architecture/execution.md#native-dispatch` |
 | Completed experiments and decision chronology in `plan/perf-arch.md` | Cut per H2-3. The plan keeps every A5 ruling and the remaining decisions. |
