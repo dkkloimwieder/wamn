@@ -513,6 +513,7 @@ pub(super) fn operator_objects(
 ) -> anyhow::Result<Vec<Value>> {
     Ok(vec![
         json!({"chart": "oci://ghcr.io/wasmcloud/charts/runtime-operator", "version": OPERATOR_VERSION,
+        "name":"wamn", "namespace":"platform", "render_chart": repository.join(format!("deploy/platform/release/charts/runtime-operator-{OPERATOR_VERSION}.tgz")),
         "values": operator_values(repository, document)?}),
     ])
 }
@@ -1216,7 +1217,27 @@ pub(super) fn helm_template(entry: &serde_json::Value) -> anyhow::Result<Vec<ser
     use serde::Deserialize as _;
     use std::io::Write as _;
     use std::process::Command;
-    let chart = entry["chart"].as_str().context("chart reference")?;
+    let chart = entry
+        .get("render_chart")
+        .unwrap_or(&entry["chart"])
+        .as_str()
+        .context("local chart reference")?;
+    anyhow::ensure!(
+        Path::new(chart).exists(),
+        "local chart {chart} is missing; rendering cannot fetch a chart"
+    );
+    let shown = Command::new("helm")
+        .args(["show", "chart", chart])
+        .output()
+        .context("read local Helm chart")?;
+    anyhow::ensure!(shown.status.success(), "read local chart {chart}");
+    let metadata: Value = serde_yaml::from_slice(&shown.stdout)?;
+    anyhow::ensure!(
+        metadata["version"] == entry["version"],
+        "chart {chart} version {} does not match pinned {}",
+        metadata["version"],
+        entry["version"]
+    );
     let name = entry["name"].as_str().context("chart release name")?;
     let namespace = entry["namespace"].as_str().context("chart namespace")?;
     let mut child = Command::new("helm")
@@ -1304,6 +1325,26 @@ mod tests {
 
     // wamn-tcmtt, copied from its exported description.
     const WEBHOOK_REFUSED: &str = "failed calling webhook \"webhook.cert-manager.io\" ... dial tcp 10.96.164.197:443: connect: connection refused";
+
+    #[test]
+    fn offline_chart_render_refuses_remote_paths_and_wrong_versions() {
+        let remote = json!({"chart":"oci://registry.invalid/chart", "version":"1", "name":"test", "namespace":"test", "values":{}});
+        assert!(
+            helm_template(&remote)
+                .unwrap_err()
+                .to_string()
+                .contains("cannot fetch")
+        );
+        let chart = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../deploy/platform/release/charts/runtime-operator-2.11.0.tgz");
+        let wrong = json!({"chart":chart, "version":"wrong", "name":"test", "namespace":"test", "values":{}});
+        assert!(
+            helm_template(&wrong)
+                .unwrap_err()
+                .to_string()
+                .contains("does not match pinned")
+        );
+    }
 
     #[test]
     fn only_webhook_transport_failures_retry() {

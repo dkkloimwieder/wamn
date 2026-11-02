@@ -1,5 +1,8 @@
 //! Platform objects rendered without a cluster.
 use serde_json::json;
+use wamn_control as control;
+#[path = "support/platform_install.rs"]
+mod platform_install;
 use std::path::Path;
 use std::time::Instant;
 #[path = "support/release_documents.rs"]
@@ -50,5 +53,20 @@ fn prekind_platform_renders() -> anyhow::Result<()> {
         );
     }
     println!("prekind platform renders elapsed {:?}", started.elapsed());
+    Ok(())
+}
+
+#[test]
+fn prekind_install_renders() -> anyhow::Result<()> {
+    let render = platform_install::render()?;
+    assert!(
+        render
+            .objects
+            .iter()
+            .all(|(_, object)| object["kind"].is_string())
+    );
+    assert_eq!(render.documents.len(), 2);
+    assert_eq!(render.fixtures.releases.len(), 2);
+    assert_eq!(render.cluster.org, "test");
     Ok(())
 }

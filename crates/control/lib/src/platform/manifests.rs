@@ -48,7 +48,7 @@ pub fn objects(
         }
         provider_edits(&mut object, document)
             .with_context(|| format!("render manifest {}", path.display()))?;
-        objects.push(object);
+        objects.push(apply_namespace(object, "platform"));
     }
     Ok(objects)
 }
@@ -307,6 +307,30 @@ pub fn already_applied(desired: &Value, live: &Value) -> bool {
         }
         _ => desired == live,
     }
+}
+
+/// Retain the namespace supplied by apply for a namespaced object.
+pub(super) fn apply_namespace(mut object: Value, namespace: &str) -> Value {
+    if object["metadata"]["namespace"].is_null()
+        && !matches!(
+            object["kind"].as_str(),
+            Some(
+                "Namespace"
+                    | "CustomResourceDefinition"
+                    | "ClusterRole"
+                    | "ClusterRoleBinding"
+                    | "ClusterIssuer"
+                    | "MutatingWebhookConfiguration"
+                    | "ValidatingWebhookConfiguration"
+                    | "PriorityClass"
+                    | "StorageClass"
+                    | "APIService"
+            )
+        )
+    {
+        object["metadata"]["namespace"] = namespace.into();
+    }
+    object
 }
 
 #[cfg(test)]

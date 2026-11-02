@@ -89,7 +89,7 @@ pub fn install(
     append(
         &mut objects,
         "4.4",
-        super::install::operator_objects(repository, document)?,
+        super::install::helm_template(&super::install::operator_objects(repository, document)?[0])?,
     );
     append(
         &mut objects,
@@ -191,7 +191,11 @@ pub fn install(
     let chart =
         super::identity::chart_objects(repository, document, &fixtures.identity_image, targets)?;
     let values = chart[0]["values"].clone();
-    append(&mut objects, "4.12", chart);
+    append(
+        &mut objects,
+        "4.12",
+        super::install::helm_template(&chart[0])?,
+    );
     let probe = super::identity::key_probe(
         &fixtures.postgres_image,
         &superuser,
@@ -710,358 +714,26 @@ fn job_objects_with(
 }
 
 fn append(objects: &mut Vec<(&'static str, Value)>, step: &'static str, batch: Vec<Value>) {
-    objects.extend(batch.into_iter().map(|object| (step, object)));
+    objects.extend(
+        batch
+            .into_iter()
+            .map(|object| (step, super::manifests::apply_namespace(object, "platform"))),
+    );
 }
 
 #[cfg(test)]
+use crate as control;
+#[cfg(test)]
+#[path = "../../tests/support/platform_install.rs"]
+mod fixture;
+#[cfg(test)]
 mod tests {
-    use super::*;
-    use serde_json::json;
-
-    const CERTIFICATE: &str = "-----BEGIN CERTIFICATE-----\nMIIBgTCCASagAwIBAgIBATAKBggqhkjOPQQDAjAeMRwwGgYDVQQDDBNmaXh0dXJl\nLmV4YW1wbGUuY29tMCAXDTI2MTEwMjEyMzgxNloYDzIxMjYxMDA5MTIzODE2WjAe\nMRwwGgYDVQQDDBNmaXh0dXJlLmV4YW1wbGUuY29tMFkwEwYHKoZIzj0CAQYIKoZI\nzj0DAQcDQgAEwothT2JuPjLNlLo2LgOAxv8TwQMunnkNT6sRbiysY2x4+uwQZwAd\nW6EI0ybWuVz4mh9IJzvE7uG4K+JWyfnD1KNTMFEwHQYDVR0OBBYEFAdEfAoyn/sb\nu8NfR2LI9O3aX5RAMB8GA1UdIwQYMBaAFAdEfAoyn/sbu8NfR2LI9O3aX5RAMA8G\nA1UdEwEB/wQFMAMBAf8wCgYIKoZIzj0EAwIDSQAwRgIhAP376NiYdu2wfzDjSFTL\nrUBTkwITOUHqIMv4XjQALrwmAiEAzeBS6qodhVMRPVjAwGf8SNpylD5gyy7jWy36\nE9Trpas=\n-----END CERTIFICATE-----\n";
-
-    fn fixture_release() -> anyhow::Result<wamn_catalog::ServingManifest> {
-        let digest = format!("sha256:{}", "1".repeat(64));
-        let operation = "edge-device:sample/read@2.1.0";
-        let mut descriptor = serde_json::to_value(wamn_catalog::ComponentDescriptor::named(
-            "device", "0.1", &digest,
-        ))?;
-        descriptor["operations"] = json!({operation:{"registered-operation":wamn_catalog::operation_token("edge_device","2.1.0","sample","read"),"input-ports":[],"output-ports":[],"parameters":[]}});
-        let descriptor: wamn_catalog::ComponentDescriptor = serde_json::from_value(descriptor)?;
-        let admitted = descriptor
-            .into_admitted(wamn_catalog::ComponentPackageScope {
-                env_key: String::new(),
-                package_id: "edge_device".into(),
-                package_version: "2.1.0".into(),
-            })
-            .component;
-        let component = wamn_catalog::ServingComponent::project(&admitted, Vec::new())?;
-        let value = json!({"format-version":11,"release":{"packages":[{"package-id":"edge_device","package-version":"2.1.0"}]},"components":[component],
-            "attachments":{"sample-read-http":{"auth-policy":{"modes":["session"]},"component":"device","definition":{"id":"sample-read-http","route":{"method":"GET","path":"/sample/read"},"run-deadline-ms":30000,"type":"http"},"definition-hash":format!("sha256:{}","5".repeat(64)),"operation":operation,"package-id":"edge_device","type":"http"}},
-            "routes":[{"component":"device","operation":operation,"package-id":"edge_device","type":"get"}]});
-        Ok(wamn_catalog::ServingManifest::from_canonical_bytes(
-            &wamn_execution_contract::canonical_json_bytes(&value),
-        )?
-        .0)
-    }
-
     #[test]
     fn kind_install_renders_in_install_order() -> anyhow::Result<()> {
-        let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let cluster = ClusterDocument::from_json(&serde_json::to_vec(&json!({
-            "provider":"kind", "project_id":"", "zone":"", "cluster_name":"render",
-            "org":"test", "owner_email":"owner@example.com", "registry":"registry.invalid/wamn",
-            "buckets":{"web":"fixture-web", "otel":"", "state":""},
-            "route_hosts":{"control":"control.example.com"}, "resend_from":"sender@example.com"
-        }))?)?;
-        let work = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
-        // platform_apply_kind writes the WMS document first as a-unqualified-wms.k.
-        let documents = ["wms", "receiving"]
-            .into_iter()
-            .map(|project| {
-                let mut environment = EnvironmentDocument::compile(
-                    &repository.join(format!("deploy/gcp/environments/dkk--{project}--dev.k")),
-                )?;
-                environment.org.clone_from(&cluster.org);
-                environment.route_host = format!("{project}.example.com");
-                let name = if project == "wms" {
-                    "a-unqualified-wms.k"
-                } else {
-                    "test--receiving--dev.k"
-                };
-                let path = work.path().join(name);
-                std::fs::write(&path, environment.to_kcl())?;
-                EnvironmentDocument::compile(&path)
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        let image = format!(
-            "registry.invalid/wamn/fixture:render@sha256:{}",
-            "1".repeat(64)
-        );
-        crate::release_chart::stamp(
-            &repository.join("deploy/platform/release"),
-            &crate::release_chart::ImageSet {
-                host: image.clone(),
-                http: image.clone(),
-                materializer: image.clone(),
-            },
-            Some(&crate::release_chart::QualificationImages {
-                runner: image.clone(),
-                gates: image.clone(),
-                identity: image,
-            }),
-            &work.path().join("release-chart"),
-        )?;
-        let chart_file = work.path().join("release-chart/values.yaml");
-        let mut chart: Value = serde_yaml::from_slice(&std::fs::read(&chart_file)?)?;
-        chart["platform"]["edge"]["image"] = json!(format!(
-            "registry.invalid/wamn/edge@sha256:{}",
-            "1".repeat(64)
-        ));
-        std::fs::write(&chart_file, serde_yaml::to_string(&chart)?)?;
-        let mut fixtures = Fixtures {
-            identity_tls: json!({"data": {"ca.crt": "Zml4dHVyZS1jYQ=="}}),
-            broker_authorization_exists: false,
-            drain_bound_seconds:70,
-            actor:"platform render".into(),
-            edge_certificate:base64::Engine::encode(&base64::engine::general_purpose::STANDARD,CERTIFICATE),
-            proxy_uid:"00000000-0000-0000-0000-000000000002".into(),
-            https_results:Vec::new(),
-            web_hosts:["control.example.com".into()].into(),
-            control_operator:json!({"apiVersion":"v1","kind":"Secret","metadata":{"name":"operator-test","namespace":"identity","resourceVersion":"1"},"type":"kubernetes.io/tls","data":{"ca.crt":"Zml4dHVyZS1jYQ==","tls.crt":"Zml4dHVyZS1jcnQ=","tls.key":"Zml4dHVyZS1rZXk="}}),
-            platform_ui_files:BTreeMap::new(),
-            cdc_credentials:BTreeMap::new(),
-            gates_image:format!("registry.invalid/wamn/gates@sha256:{}","1".repeat(64)),
-            releases:BTreeMap::new(),
-            web_clients:BTreeMap::new(),
-            applied:BTreeMap::new(),
-            oauth_key:[0x41;32],
-            oauth_exists:false,
-            registry: wamn_package_artifact::PackageRegistry {artifact_base:"registry.invalid/wamn/packages".into(), registry_auth_file:work.path().join("registry.json"), insecure_registry:true, oci_ca_paths:Vec::new()},
-            packages:BTreeMap::new(),
-            identity_database: json!({"data":{"url":"cG9zdGdyZXNxbDovL2lkZW50aXR5OmZpeHR1cmVAZGF0YWJhc2Uvd2Ftbl9zeXN0ZW0="}}),
-            identity_image: format!("registry.invalid/wamn/identity@sha256:{}", "1".repeat(64)),
-            postgres_image: "postgres:18".into(),
-            environment_urls: BTreeMap::new(),
-            ctl_nats: json!({"data":{"ca.crt":"Zml4dHVyZS1jYQ==", "tls.crt":"Zml4dHVyZS1jcnQ=", "tls.key":"Zml4dHVyZS1rZXk="}}),
-            directory: work.path().to_owned(),
-            apply_url: "postgresql://wamn_apply:fixture@database/wamn_system".into(),
-            postgres_superuser: json!({"data":{"password":"cGFzc3dvcmQ="}}),
-            runner_image: format!("registry.invalid/wamn/runner@sha256:{}", "1".repeat(64)),
-            job_uid: "00000000-0000-0000-0000-000000000001".into(),
-            emitted: [
-                ("platform-system".into(), json!({"apiVersion":"v1","kind":"Secret","type":"Opaque",
-                    "metadata":{"name":"wamn-apply","namespace":"platform","labels":{"app.kubernetes.io/name":"wamn-apply"}},
-                    "stringData":{"url":"postgresql://wamn_apply:fixture@database/wamn_system"}})),
-                ("platform-identity-issuer".into(), json!({"apiVersion":"v1","kind":"Secret","type":"Opaque",
-                    "metadata":{"name":"wamn-identity-db","namespace":"identity","labels":{"app.kubernetes.io/name":"wamn-identity","app.kubernetes.io/managed-by":"wamn"}},
-                    "stringData":{"url":"postgresql://identity:fixture@database/wamn_system"}})),
-            ].into(),
-            outputs: [
-                ("platform-session-key-state".into(),r#"{"kid":null}"#.into()),
-                ("platform-session-key-publish".into(),r#"{"kid":"fixture-kid"}"#.into()),
-                ("platform-identity-check".into(),r#"{"keys":[{"kid":"fixture-kid"}]}"#.into()),
-            ].into(),
-        };
-        fixtures
-            .outputs
-            .insert("platform-owner-state-test".into(), "f\n".into());
-        fixtures.platform_ui_files = [
-            (
-                "chart/Chart.yaml".into(),
-                std::fs::read(work.path().join("release-chart/Chart.yaml"))?,
-            ),
-            (
-                format!("chart/{}", crate::platform_build::BUILD_RECORD_FILE),
-                b"{}".to_vec(),
-            ),
-            (
-                "deploy/platform/release/Chart.yaml".into(),
-                std::fs::read(repository.join("deploy/platform/release/Chart.yaml"))?,
-            ),
-            (
-                "apps/platform_ui/dist/index.html".into(),
-                b"<!doctype html><title>fixture</title>".to_vec(),
-            ),
-        ]
-        .into();
-        fixtures.applied.insert(
-            "platform-control-credentials-test".into(),
-            vec![
-                wamn_control_provision::render_org_workload_secret_manifest(
-                    wamn_control_provision::WorkloadRoleFamily::Control,
-                    "test",
-                    "hosts",
-                    "postgresql://control:fixture@database/wamn_system",
-                ),
-                wamn_control_provision::render_control_administration_secret_manifest(
-                    "test", "hosts",
-                ),
-            ],
-        );
-        let mut operator = fixtures.control_operator.clone();
-        operator["metadata"] = json!({"name":"operator-test","namespace":"hosts"});
-        fixtures
-            .applied
-            .insert("platform-control-operator-test".into(), vec![operator]);
-        std::fs::write(&fixtures.registry.registry_auth_file, "{}")?;
-        let mut manifest = fixture_release()?;
-        let component = manifest.components.first().context("fixture component")?;
-        let member = wamn_catalog::ServingEntryMember {
-            package_id: component.package_id.clone(),
-            component: component.descriptor.component.clone(),
-            digest: component.descriptor.component_digest.clone(),
-        };
-        manifest.composed_entry = Some(wamn_catalog::ServingComposedEntry {
-            reference: format!("entries@sha256:{}", "1".repeat(64)),
-            route_digest: format!("sha256:{}", "2".repeat(64)),
-            application: member.clone(),
-            members: [member].into(),
-        });
-        manifest =
-            wamn_catalog::ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())?.0;
-        for environment in &documents {
-            use wamn_control_provision::{
-                WorkloadRoleFamily, WorkloadRoleScope, WorkloadSecretBody,
-            };
-            let key = environment_key(environment);
-            let cdc = wamn_control_provision::render_project_env_cdc_secret_manifest(
-                &environment.triple(),
-                "render01",
-                "hosts",
-                &format!("postgresql://fixture:fixture@database/wamn-db-{key}--render01"),
-            );
-            fixtures.cdc_credentials.insert(key.clone(), cdc.clone());
-            fixtures
-                .applied
-                .insert(format!("platform-apply-{key}"), vec![cdc]);
-
-            fixtures.releases.insert(key.clone(), manifest.clone());
-            fixtures.web_clients.insert(key.clone(), BTreeMap::new());
-
-            fixtures.outputs.insert(
-                format!("platform-release-{key}"),
-                environment.release.to_string(),
-            );
-
-            let id = environment
-                .applications
-                .keys()
-                .next()
-                .context("fixture application")?
-                .clone();
-            fixtures.packages.insert(
-                key.clone(),
-                vec![Package {
-                    id: id.clone(),
-                    version: "1.0.0".into(),
-                    digest: format!("sha256:{}", "2".repeat(64)),
-                    files: [
-                        (
-                            "wamn.json".into(),
-                            json!({"package":{"id":id,"version":"1.0.0"}}).to_string(),
-                        ),
-                        ("migrations/0001.sql".into(), "SELECT 1;".into()),
-                    ]
-                    .into(),
-                }],
-            );
-
-            let database = wamn_control_provision::project_env_database_name(
-                &environment.org,
-                &environment.project,
-                &environment.env,
-                "render01",
-            );
-            fixtures.environment_urls.insert(
-                key.clone(),
-                format!("postgresql://fixture:fixture@database/{database}"),
-            );
-            let role = wamn_control_provision::workload_generation_role(
-                WorkloadRoleFamily::SessionRoleReader,
-                WorkloadRoleScope::ProjectEnvironment {
-                    org: &environment.org,
-                    project: &environment.project,
-                    environment: &environment.env,
-                    database: &database,
-                },
-                wamn_run_state::CredentialGeneration::A,
-            )?;
-            let target = wamn_control_provision::session_target::SessionTarget::new(
-                &environment.triple(),
-                "render01",
-                "fixture",
-                &format!("postgresql://{role}:fixture@database/{database}"),
-            )?;
-            fixtures.emitted.insert(
-                format!("platform-session-{key}"),
-                wamn_control_provision::render_workload_secret_manifest(
-                    WorkloadRoleFamily::SessionRoleReader,
-                    &environment.triple(),
-                    "identity",
-                    WorkloadSecretBody::SessionTarget(&target),
-                ),
-            );
-        }
-        let mut targets = vec![(
-            cluster.route_hosts.control.clone(),
-            "GET".to_owned(),
-            "/api/wamn_control/control/mine".to_owned(),
-        )];
-        for environment in &documents {
-            let (method, path) = super::super::check::api_route(
-                fixtures
-                    .releases
-                    .get(&environment_key(environment))
-                    .context("release fixture")?,
-            )?;
-            targets.push((environment.route_host.clone(), method, path));
-            let key = environment_key(environment);
-            let account = wamn_credential_store::kubernetes::service_account_name(
-                &environment.org,
-                &environment.project,
-                &environment.env,
-            );
-            let secret_name = wamn_credential_store::kubernetes::secret_name(
-                &environment.org,
-                &environment.project,
-                &environment.env,
-            );
-            let mut applied = crate::environment::ensure::credential_access(&account, &secret_name)
-                .into_iter()
-                .map(|(_, object)| object)
-                .collect::<Vec<_>>();
-            applied.push(wamn_control_provision::render_project_env_database(
-                &environment.triple(),
-                "render01",
-                "wamn-pg",
-                "platform",
-                None,
-            ));
-            applied.push(wamn_control_provision::render_project_env_secret_manifest(
-                &environment.triple(),
-                "hosts",
-            ));
-            let url = fixtures
-                .environment_urls
-                .get(&key)
-                .context("environment URL fixture")?;
-            for credential in wamn_control_provision::host_credentials::HOST_CREDENTIALS {
-                let body = if credential.family == wamn_control_provision::WorkloadRoleFamily::App {
-                    wamn_control_provision::WorkloadSecretBody::EnvKeyUrl {
-                        env_key: "fixture",
-                        tenant_key: "fixture",
-                        url,
-                    }
-                } else {
-                    wamn_control_provision::WorkloadSecretBody::Url(url)
-                };
-                applied.push(wamn_control_provision::render_workload_secret_manifest(
-                    credential.family,
-                    &environment.triple(),
-                    "hosts",
-                    body,
-                ));
-            }
-            fixtures
-                .applied
-                .insert(format!("platform-first-apply-{key}"), applied);
-        }
-        for (host, method, path) in targets {
-            for (method, path, status) in
-                super::super::check::requests(&method, &path, fixtures.web_hosts.contains(&host))
-            {
-                let request = super::super::check::kind_request(&host, method, path);
-                fixtures.outputs.insert(
-                    request.name,
-                    json!({"http_code":status,"certs":CERTIFICATE}).to_string(),
-                );
-                fixtures.https_results.push(
-                    json!({"host":host,"method":method,"path":path,"status":status,"serial":"01"}),
-                );
-            }
-        }
-        let objects = install(&cluster, &documents, &repository, &fixtures)?;
+        let render = super::fixture::render()?;
+        let objects = &render.objects;
+        assert_eq!(render.documents.len(), 2);
+        assert_eq!(render.fixtures.releases.len(), 2);
         // Owner and local-build steps apply no Kubernetes objects.
         for step in [
             "4.3", "4.4", "4.4.1", "4.5", "4.7", "4.8", "4.9", "4.11", "4.12", "4.13", "4.14",
@@ -1088,7 +760,7 @@ mod tests {
                 "missing kind {kind}"
             );
         }
-        let steps = super::super::steps::install_steps(&cluster, "render");
+        let steps = super::super::steps::install_steps(&render.cluster, "render");
         let positions = objects
             .iter()
             .map(|(number, _)| {

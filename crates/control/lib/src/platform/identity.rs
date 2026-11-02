@@ -268,7 +268,7 @@ pub(super) fn chart_objects(
     let chart = repository.join("deploy/platform/identity");
     let version = super::steps::read_platform_version(&chart.join("Chart.yaml"))?;
     Ok(vec![
-        json!({"chart":chart,"version":version,"values":values(document,image,targets)?}),
+        json!({"chart":chart,"version":version,"name":"identity","namespace":"identity","values":values(document,image,targets)?}),
     ])
 }
 
