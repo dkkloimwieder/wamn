@@ -1,17 +1,17 @@
 # Generator edge, qualification cases, binding errors and command help
 
 This report covers epic `wamn-68mv8`, which is audit group 2 and 3 part B (see [README](README.md)).
-The branch is `worktree-genedge`, on main `229f7377e`.
-Every pin below refers to that branch head, `9ef20278a`.
+The branch is `genedge-r2`, on main `055afa9f9`.
+Every pin below refers to that branch head, `ca82acc13`.
 
 ## Issues
 
 | Issue | Audit reference | Commits | Result |
 | --- | --- | --- | --- |
-| `.1` Generator out of serving code | B1-1, B3-1 | `eaf6d5392`, `9ef20278a` | The package manifest, its declaration types, the release profile and the SQL lexer live in `crates/catalog/model`. Provisioning, schema control and the execution host have no generator dependency. |
-| `.2` Declared qualification cases | B2-6, F3-5 | `d0fdb1eef` | Each package declares its cases in `tests/qualification.json`. `qualify-release` runs the union of the declarations of the release packages. |
-| `.3` Infrastructure is not permission denial | A3-1 | `f0104c82a` | An unavailable principal database gives `ConnectionUnavailable`. A missing principal gives `PermissionDenied`. |
-| `.4` Secret-free command help | E2-6 | `cdcca42e1` | Help hides the values of 36 secret-bearing environment inputs in `services/ctl`, `services/cdc-reader` and `services/scenario-worker`. |
+| `.1` Generator out of serving code | B1-1, B3-1 | `b763b86c3`, `ca82acc13` | The package manifest, its declaration types, the release profile and the SQL lexer live in `crates/catalog/model`. Provisioning, schema control and the execution host have no generator dependency. |
+| `.2` Declared qualification cases | B2-6, F3-5 | `c743606fb` | Each package declares its cases in `tests/qualification.json`. `qualify-release` runs the union of the declarations of the release packages. |
+| `.3` Infrastructure is not permission denial | A3-1 | `796a398b0` | An unavailable principal database gives `ConnectionUnavailable`. A missing principal gives `PermissionDenied`. |
+| `.4` Secret-free command help | E2-6 | `0469c8b82` | Help hides the values of 36 secret-bearing environment inputs in `services/ctl`, `services/cdc-reader` and `services/scenario-worker`. |
 
 After issue 1, `cargo tree -e normal` of `wamn-host`, `wamn-runtime` and `wamn-control-provision` shows no `wamn-schema-generator` and no `wamn-schema-introspection`.
 A generator edit then does not rebuild the host image.
@@ -45,8 +45,8 @@ Root decided these details inside the brief.
 
 ## Regressions found and fixed on the branch
 
-- Two packages compiled only through features that the removed generator edge turned on. `wamn-platform-identity` reads `serde_json::Value` through tokio-postgres without `with-serde_json-1`. `wamn-execution-host` uses `wash_runtime::washlet` without `washlet`, which also broke `wamn-workflow`. The workspace build and clippy passed. A check of each of the 45 packages alone found them, and `9ef20278a` declares both features. `wamn-bcplj` holds the check that keeps this class out.
-- Main `229f7377e` added two uses of the old manifest path, in `ensure_project_database` and `install_sequence_live.rs`. `9ef20278a` moves them to `wamn_catalog`.
+- Two packages compiled only through features that the removed generator edge turned on. `wamn-platform-identity` reads `serde_json::Value` through tokio-postgres without `with-serde_json-1`. `wamn-execution-host` uses `wash_runtime::washlet` without `washlet`, which also broke `wamn-workflow`. The workspace build and clippy passed. A check of each of the 45 packages alone found them, and `ca82acc13` declares both features. `wamn-bcplj` holds the check that keeps this class out.
+- Main `229f7377e` added two uses of the old manifest path, in `ensure_project_database` and `install_sequence_live.rs`. `ca82acc13` moves them to `wamn_catalog`.
 
 ## Test results
 
@@ -54,6 +54,8 @@ Root decided these details inside the brief.
 - The branch on `229f7377e`: fmt, workspace clippy and `wamn-ctl --features ops` clippy passed. The `platform_generation` tests passed.
 - The unit tests passed in eleven packages: `wamn-catalog`, `wamn-control-provision`, `wamn-schema-control`, `wamn-execution-host`, `wamn-schema-generator` and `wamn-runtime`. They also passed in `wamn-control`, `wamn-cdc-reader`, `wamn-scenario-worker`, `wamn-ctl` and `wamn-host`.
 - Ten `wamn-control` unit tests first failed on stale build records, because issue 2 adds `tests/qualification.json` to three packages. They passed after a rebuild. One test passed after `WAMN_IDENTITY_BINARY` named a built `wamn-identity`.
+- After the rebase onto `5e2448b79`, the package digests matched main again. `test_tiers`, clippy with `--features cluster` and the unit tests of `wamn-wms-tests` and `wamn-receiving-tests` also passed.
+- After the rebase onto `055afa9f9`, fmt, clippy and the `wamn-control` unit tests passed.
 - Live targets of the changed files passed: `deploy_sql_authority` (17), `install_sequence_live` (2) and `release_qualification_live` (1).
 - The new help test fails on main. It found `__WAMN_HELP_SECRET_WAMN_REPLICATION_PASSWORD__`.
 
