@@ -371,8 +371,8 @@ fn ignored_tests_name_prerequisites_and_never_act_as_child_helpers() {
     }
     assert_eq!(
         exclusions.len(),
-        6,
-        "only the six protected tests are excluded"
+        3,
+        "only the three protected tests are excluded"
     );
     let mut errors = Vec::new();
     for (workspace, manifest) in [

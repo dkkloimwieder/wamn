@@ -8,9 +8,6 @@ exclusions = [
   { workspace="root", package="wamn-control", test="platform::broker::tests::the_control_and_environment_users_open_their_memory_watches", bead="wamn-kov6v.6" },
   { workspace="root", package="wamn-control", test="platform::broker::tests::identity_makes_the_buckets_that_wamn_ctl_writes", bead="wamn-kov6v.6" },
   { workspace="root", package="wamn-control", test="platform::edge::tests::proxy_chart_resolves_declared_routes_at_runtime", bead="wamn-kov6v.6" },
-  { workspace="root", package="wamn-runtime", test="auth_cache::tests::a_fact_expires_after_the_ttl_and_a_clear_drops_it", bead="wamn-kov6v.6" },
-  { workspace="root", package="wamn-runtime", test="auth_cache::tests::the_bucket_shares_kept_facts_and_every_drop_reaches_every_host", bead="wamn-kov6v.6" },
-  { workspace="root", package="wamn-runtime", test="auth_cache::tests::present_grants_answer_the_provisioned_check", bead="wamn-kov6v.6" },
 ]
 targets = [
   { workspace="root", package="wamn-authoring-model", target="lib:wamn_authoring_model", tier="contract" },

@@ -396,8 +396,9 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
+    #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
     async fn a_fact_expires_after_the_ttl_and_a_clear_drops_it() {
+        wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
         let (_server, client) = nats().await;
         let cache = Arc::new(AuthCache::with_ttl(Duration::from_millis(50)));
         watched(&client, None, Arc::clone(&cache)).await;
@@ -426,8 +427,9 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
+    #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
     async fn the_bucket_shares_kept_facts_and_every_drop_reaches_every_host() {
+        wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
         use wamn_platform_identity::auth_changes::AuthDrops;
 
         let (_server, client) = nats().await;
@@ -522,8 +524,9 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
+    #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
     async fn present_grants_answer_the_provisioned_check() {
+        wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
         let (_server, client) = nats().await;
         let cache = Arc::new(AuthCache::default());
         watched(&client, None, Arc::clone(&cache)).await;
