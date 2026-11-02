@@ -243,6 +243,7 @@ struct Job {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct JobSpec {
+    suspend: bool,
     backoff_limit: u32,
     template: PodTemplate,
 }
@@ -563,6 +564,7 @@ fn render(request: &JobRequest, namespace: &str, secrets: &[JobSecret]) -> Job {
         kind: "Job",
         metadata: metadata(&request.name, namespace),
         spec: JobSpec {
+            suspend: true,
             backoff_limit: 0,
             template: PodTemplate {
                 spec: PodSpec {
@@ -715,6 +717,22 @@ pub async fn run(
                 .context("Job support namespace")?;
             kubectl::apply(&target.kubeconfig, &target.context, namespace, &object).await?;
         }
+        let resumed = resume_object(request, &target.namespace, secrets)?;
+        kubectl::kubectl(
+            &target.kubeconfig,
+            &target.context,
+            &target.namespace,
+            &[
+                "patch",
+                "job",
+                &request.name,
+                "--type=merge",
+                "--patch",
+                &serde_json::to_string(&resumed)?,
+            ],
+            None,
+        )
+        .await?;
         if request.emits_secret {
             kubectl::wait(
                 &target.kubeconfig,
@@ -832,6 +850,17 @@ pub(super) fn start_objects(
     Ok(vec![serde_json::to_value(render(
         request, namespace, secrets,
     ))?])
+}
+
+/// Resume the same pod only after its owned inputs and account exist.
+pub(super) fn resume_object(
+    request: &JobRequest,
+    namespace: &str,
+    secrets: &[JobSecret],
+) -> anyhow::Result<Value> {
+    let mut object = serde_json::to_value(render(request, namespace, secrets))?;
+    object["spec"]["suspend"] = false.into();
+    Ok(object)
 }
 
 pub(super) fn support_objects(

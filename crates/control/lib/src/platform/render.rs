@@ -685,6 +685,7 @@ fn job_objects_with(
     let mut objects = super::job::start_objects(request, namespace, secrets)?;
     let owner = json!({"name":request.name, "namespace":namespace, "uid":fixtures.job_uid});
     objects.extend(super::job::support_objects(request, &owner, secrets)?);
+    objects.push(super::job::resume_object(request, namespace, secrets)?);
     if request.emits_secret {
         let output = fixtures
             .emitted

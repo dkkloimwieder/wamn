@@ -70,3 +70,100 @@ fn prekind_install_renders() -> anyhow::Result<()> {
     assert_eq!(render.cluster.org, "test");
     Ok(())
 }
+
+// A suspended Job is a declaration. Its resumed version marks execution.
+fn pod(object: &serde_json::Value) -> Option<&serde_json::Value> {
+    match object["kind"].as_str()? {
+        "Pod" => Some(&object["spec"]),
+        "Job" if object["spec"]["suspend"] == true => None,
+        "Deployment" | "StatefulSet" | "DaemonSet" | "Job" | "ReplicaSet" => {
+            Some(&object["spec"]["template"]["spec"])
+        }
+        "CronJob" => Some(&object["spec"]["jobTemplate"]["spec"]["template"]["spec"]),
+        _ => None,
+    }
+}
+
+fn identity(object: &serde_json::Value) -> String {
+    format!(
+        "{}/{}/{}",
+        object["kind"].as_str().unwrap_or("?"),
+        object["metadata"]["namespace"].as_str().unwrap_or("?"),
+        object["metadata"]["name"].as_str().unwrap_or("?")
+    )
+}
+
+fn relation_failure(
+    objects: &[(&str, serde_json::Value)],
+    consumer: usize,
+    field: &str,
+    kind: &str,
+    namespace: &str,
+    name: &str,
+) -> Option<String> {
+    let target = objects.iter().position(|(_, object)| {
+        object["kind"] == kind
+            && object["metadata"]["namespace"] == namespace
+            && object["metadata"]["name"] == name
+    });
+    if target.is_some_and(|position| position < consumer) {
+        return None;
+    }
+    let producer = target.map_or_else(
+        || "absent".to_owned(),
+        |position| format!("{}:{}", objects[position].0, position),
+    );
+    Some(format!(
+        "{} step {}:{} field {field} -> {kind}/{namespace}/{name} producer step {producer}",
+        identity(&objects[consumer].1),
+        objects[consumer].0,
+        consumer
+    ))
+}
+
+fn account_failures(objects: &[(&str, serde_json::Value)]) -> Vec<String> {
+    let mut failures = Vec::new();
+    for (index, (_, object)) in objects.iter().enumerate() {
+        let Some(spec) = pod(object) else { continue };
+        if let Some(account) = spec["serviceAccountName"].as_str()
+            && let Some(failure) = relation_failure(
+                objects,
+                index,
+                "serviceAccountName",
+                "ServiceAccount",
+                object["metadata"]["namespace"].as_str().unwrap(),
+                account,
+            )
+        {
+            failures.push(failure);
+        }
+    }
+    failures
+}
+
+#[test]
+fn install_service_accounts_precede_consumers() -> anyhow::Result<()> {
+    let failures = account_failures(&platform_install::render()?.objects);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    Ok(())
+}
+
+#[test]
+fn install_service_accounts_reject_a_missing_rendered_reference() -> anyhow::Result<()> {
+    let mut objects = platform_install::render()?.objects.clone();
+    let (_, object) = objects
+        .iter_mut()
+        .find(|(_, object)| {
+            object["kind"] == "Deployment"
+                && pod(object).is_some_and(|spec| spec["serviceAccountName"].is_string())
+        })
+        .unwrap();
+    object["spec"]["template"]["spec"]["serviceAccountName"] = json!("missing-account");
+    let failures = account_failures(&objects);
+    assert_eq!(failures.len(), 1, "{}", failures.join("\n"));
+    assert!(
+        failures[0].contains("serviceAccountName -> ServiceAccount/")
+            && failures[0].contains("missing-account producer step absent")
+    );
+    Ok(())
+}
