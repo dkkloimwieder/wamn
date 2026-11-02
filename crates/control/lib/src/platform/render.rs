@@ -627,6 +627,36 @@ pub fn install(
             )?,
         );
     }
+    let owner_state = super::invite::state_request(document, &fixtures.postgres_image);
+    append(
+        &mut objects,
+        "4.19.1",
+        job_objects(
+            &owner_state,
+            "platform",
+            &json!({"org":document.org}),
+            &[],
+            fixtures,
+        )?,
+    );
+    if super::invite::needs_invite(
+        fixtures
+            .outputs
+            .get(&owner_state.name)
+            .context("owner state fixture")?,
+    )? {
+        append(
+            &mut objects,
+            "4.19.1",
+            job_objects(
+                &super::invite::request(document, &fixtures.runner_image, &auth)?,
+                "platform",
+                &json!({"org":document.org}),
+                &[],
+                fixtures,
+            )?,
+        );
+    }
     Ok(objects)
 }
 
@@ -795,6 +825,9 @@ mod tests {
                 ("platform-identity-check".into(),r#"{"keys":[{"kid":"fixture-kid"}]}"#.into()),
             ].into(),
         };
+        fixtures
+            .outputs
+            .insert("platform-owner-state-test".into(), "f\n".into());
         fixtures.platform_ui_files = [
             (
                 "chart/Chart.yaml".into(),

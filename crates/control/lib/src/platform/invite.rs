@@ -74,10 +74,8 @@ pub(super) async fn apply(
         &[],
     )
     .await?;
-    match job::output(target, &probe).await?.trim() {
-        "t" => return Ok(false),
-        "f" => {}
-        _ => anyhow::bail!("owner invitation state is not a boolean"),
+    if !needs_invite(&job::output(target, &probe).await?)? {
+        return Ok(false);
     }
     // The Job runs in the platform namespace, so it copies the ctl auth client
     // like the package and environment Jobs.
@@ -160,6 +158,14 @@ pub(super) fn state_request(document: &ClusterDocument, image: &str) -> JobReque
         refresh: true,
         run_as_user: Some(0),
         ..JobRequest::default()
+    }
+}
+
+pub(super) fn needs_invite(output: &str) -> anyhow::Result<bool> {
+    match output.trim() {
+        "t" => Ok(false),
+        "f" => Ok(true),
+        _ => anyhow::bail!("owner invitation state is not a boolean"),
     }
 }
 
