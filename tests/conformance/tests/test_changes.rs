@@ -42,6 +42,12 @@ if [[ "$1" == metadata ]]; then
   cat "$WAMN_FAKE_METADATA/${relative//\//_}.json"
   exit 0
 fi
+if [[ -n "${WAMN_FAKE_EXPECT_INPUT:-}" ]]; then
+  [[ "${WAMN_FIXTURE_COMPONENT:-}" == "$WAMN_FAKE_EXPECT_INPUT" ]] || exit 32
+fi
+if [[ -n "${WAMN_FAKE_EXPECT_SCREEN:-}" ]]; then
+  [[ "${WAMN_SYNC_BENCH_DIST:-}" == "$WAMN_FAKE_EXPECT_SCREEN" ]] || exit 33
+fi
 if [[ " $* " == *' --list '* && " $* " == *' --exact '* ]]; then
   [[ "${WAMN_FAKE_MISSING_TEST:-false}" != true ]] || exit 0
   for argument in "$@"; do
@@ -978,7 +984,7 @@ fn runtime_changes_select_the_native_host_reader() {
         .replace("target = [\"test:native_host\"]", "target = [\"lib:user\"]")
         .replace("features = [\"ops\"]", "features = []")
         .replace(
-            "prerequisites = [\"fixture\", \"edge\", \"nats\", \"route\"]",
+            "prerequisites = [\"fixture\", \"edge\", \"nats\", \"host\", \"http-route\", \"materializer\", \"workflow-guests\"]",
             "prerequisites = []",
         )
         .replace(
@@ -1162,6 +1168,130 @@ fn an_ignored_target_suite_runs_without_exact_names() {
         ])),
         "{calls:?}"
     );
+}
+
+#[test]
+fn an_explicit_ignored_suite_runs_on_an_unchanged_tree_and_refuses_zero_cases() {
+    let fixture = Fixture::new();
+    fixture.add_suite(
+        &EXACT_SUITE.replace("tests = [\"fixture::case\"]", "tests = []\nignored = true"),
+    );
+    let arguments = ["--suite", "fixture-exact", "run"];
+    let calls = fixture.selected(&arguments);
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert!(calls[0].contains(&"--ignored".into()));
+    let output = fixture
+        .tool_command(&arguments)
+        .env("WAMN_FAKE_PASSED", "0")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("no executed passing cases"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn suite_preparation_sets_its_input_and_preserves_a_nonempty_override() {
+    let fixture = Fixture::new();
+    let prepare = fixture.directory.join("prepare component");
+    let prepared = fixture.directory.join("prepared");
+    executable(&prepare, "#!/usr/bin/env bash\nprintf built > \"$1\"\n");
+    let path = fixture.root.join("tests/selection.toml");
+    let policy = fs::read_to_string(&path).unwrap();
+    let preparation = format!(
+        "[[preparation]]\nid = \"fixture-component\"\noutputs = {{WAMN_FIXTURE_COMPONENT = \"{{target}}/component.wasm\"}}\ncommands = [[{:?}, {:?}]]\n",
+        prepare.to_str().unwrap(),
+        prepared.to_str().unwrap()
+    );
+    fs::write(
+        &path,
+        policy.replacen("[[suites]]", &(preparation + "[[suites]]"), 1),
+    )
+    .unwrap();
+    fixture.add_suite(&EXACT_SUITE.replace(
+        "prerequisites = []",
+        "prerequisites = [\"fixture-component\"]",
+    ));
+    let target = fixture.directory.join("target");
+    for override_input in ["", "/explicit/component.wasm"] {
+        let expected = if override_input.is_empty() {
+            target.join("component.wasm")
+        } else {
+            PathBuf::from(override_input)
+        };
+        let output = fixture
+            .tool_command(&["--suite", "fixture-exact"])
+            .env("CARGO_TARGET_DIR", &target)
+            .env("WAMN_FIXTURE_COMPONENT", override_input)
+            .env("WAMN_FAKE_EXPECT_INPUT", expected)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(prepared.exists(), override_input.is_empty());
+        if prepared.exists() {
+            fs::remove_file(&prepared).unwrap();
+        }
+    }
+}
+
+#[test]
+fn the_screen_build_follows_application_generation_and_preserves_an_override() {
+    let fixture = Fixture::new();
+    fixture.write("apps/wamn_wms/wamn.k", "");
+    fixture
+        .add_suite(&EXACT_SUITE.replace("prerequisites = []", "prerequisites = [\"sync-bench\"]"));
+    let target = fixture.directory.join("target");
+    let marker = fixture.directory.join("application built");
+    let calls = fixture.directory.join("pnpm calls");
+    fs::create_dir_all(target.join("debug")).unwrap();
+    executable(
+        &target.join("debug/wamn-test-postgres"),
+        "#!/usr/bin/env bash\ntouch \"$WAMN_FAKE_APPLICATION_MARKER\"\n",
+    );
+    executable(
+        &fixture.directory.join("pnpm"),
+        "#!/usr/bin/env bash\nset -eu\nif [[ $1 == install ]]; then [[ ! -f $WAMN_FAKE_APPLICATION_MARKER ]]; else [[ -f $WAMN_FAKE_APPLICATION_MARKER ]]; fi\nprintf '%s\\n' \"$*\" >> \"$WAMN_FAKE_SCREEN_CALLS\"\n",
+    );
+    for override_input in ["", "/explicit/screen"] {
+        let expected = if override_input.is_empty() {
+            target.join("sync-bench/web")
+        } else {
+            PathBuf::from(override_input)
+        };
+        let output = fixture
+            .tool_command(&["--suite", "fixture-exact"])
+            .env("CARGO_TARGET_DIR", &target)
+            .env("WAMN_SYNC_BENCH_DIST", override_input)
+            .env("WAMN_FAKE_EXPECT_SCREEN", expected)
+            .env("WAMN_FAKE_APPLICATION_MARKER", &marker)
+            .env("WAMN_FAKE_SCREEN_CALLS", &calls)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(calls.exists(), override_input.is_empty());
+        assert_eq!(marker.exists(), override_input.is_empty());
+        if calls.exists() {
+            let commands = fs::read_to_string(&calls).unwrap();
+            assert!(commands.starts_with("install --offline\n"), "{commands}");
+            assert!(
+                commands.contains("--dir web/sync-bench run build --outDir"),
+                "{commands}"
+            );
+            fs::remove_file(&calls).unwrap();
+            fs::remove_file(&marker).unwrap();
+        }
+    }
 }
 
 #[test]

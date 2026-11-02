@@ -22,6 +22,16 @@ use url::Url;
 
 const POSTGRES_BIN: &str = "/usr/lib/postgresql/18/bin";
 
+fn postgres_bin(override_directory: Option<std::ffi::OsString>) -> PathBuf {
+    override_directory
+        .filter(|directory| !directory.is_empty())
+        .map_or_else(|| PathBuf::from(POSTGRES_BIN), PathBuf::from)
+}
+
+fn postgres_bin_dir() -> PathBuf {
+    postgres_bin(std::env::var_os("WAMN_POSTGRES_BIN_DIR"))
+}
+
 /// Create a database that the calling test owns on the server of this test process.
 ///
 /// The first call starts the server. The server stops, and its directory is
@@ -33,15 +43,15 @@ const POSTGRES_BIN: &str = "/usr/lib/postgresql/18/bin";
 ///
 /// # Panics
 ///
-/// Panics when the PostgreSQL 18 binaries in `/usr/lib/postgresql/18/bin` cannot
-/// start a server.
+/// Panics when the PostgreSQL 18 binaries cannot start a server.
+/// `WAMN_POSTGRES_BIN_DIR` overrides the default `/usr/lib/postgresql/18/bin`.
 pub fn database() -> Database {
     static SERVER: Mutex<Option<OwnedPostgres>> = Mutex::new(None);
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let mut server = SERVER.lock().unwrap_or_else(PoisonError::into_inner);
     if server.is_none() {
         *server = Some(start(&[]).expect(
-            "start the test PostgreSQL server; it requires the PostgreSQL 18 binaries in /usr/lib/postgresql/18/bin",
+            "start the test PostgreSQL server with WAMN_POSTGRES_BIN_DIR or /usr/lib/postgresql/18/bin",
         ));
     }
     let server = server.as_mut().expect("the test PostgreSQL server started");
@@ -321,7 +331,7 @@ impl OwnedPostgres {
                     r#"read -r _; "$1/pg_ctl" -D "$2/data" -m immediate -w -t 10 stop; rm -rf "$2""#,
                     "wamn-test-postgres-watcher",
                 ])
-                .arg(POSTGRES_BIN)
+                .arg(postgres_bin_dir())
                 .arg(&self.directory)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::null())
@@ -332,7 +342,7 @@ impl OwnedPostgres {
         );
         let password_file = self.directory.join("password");
         private_file(&password_file)?.write_all(self.password.as_bytes())?;
-        let initialized = Command::new(Path::new(POSTGRES_BIN).join("initdb"))
+        let initialized = Command::new(postgres_bin_dir().join("initdb"))
             .env_clear()
             .env("LC_ALL", "C")
             .arg("-D")
@@ -361,7 +371,7 @@ impl OwnedPostgres {
             .port();
         self.port = port;
         let log = private_file(&self.directory.join("server.log"))?;
-        let mut command = Command::new(Path::new(POSTGRES_BIN).join("postgres"));
+        let mut command = Command::new(postgres_bin_dir().join("postgres"));
         command
             .env_clear()
             .env("LC_ALL", "C")
@@ -473,7 +483,7 @@ impl OwnedPostgres {
 }
 
 fn psql(port: u16, password: &str, database: &str, batches: &[&str]) -> anyhow::Result<String> {
-    let mut command = Command::new(Path::new(POSTGRES_BIN).join("psql"));
+    let mut command = Command::new(postgres_bin_dir().join("psql"));
     command
         .env_clear()
         .env("LC_ALL", "C")
@@ -545,6 +555,16 @@ fn valid_database_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn postgres_binaries_use_a_nonempty_override_or_the_default() {
+        assert_eq!(postgres_bin(None), Path::new(POSTGRES_BIN));
+        assert_eq!(postgres_bin(Some("".into())), Path::new(POSTGRES_BIN));
+        assert_eq!(
+            postgres_bin(Some("/custom/postgres/bin".into())),
+            Path::new("/custom/postgres/bin")
+        );
+    }
 
     #[test]
     fn log_tail_keeps_the_last_twenty_lines_and_reports_an_absent_log() {

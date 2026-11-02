@@ -1,7 +1,7 @@
 //! The packaging screen restores offline rows, corrects refusals and retries lost replies.
 //!
-//! Uses the same local host and inputs as `local_feed`. Build `web/sync-bench`
-//! before running these ignored tests. Each case uses fresh PostgreSQL databases.
+//! Uses the same local host and prepared screen as `local_feed`.
+//! Each case uses fresh PostgreSQL databases.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -16,29 +16,57 @@ use wamn_test_infrastructure::scratch::ScratchRoot;
 
 use crate::business_fixture::{LOCATION_A_ID, PACKAGING_ID};
 
+#[test]
+fn browser_cases_require_the_prepared_screen_before_database_setup() {
+    for case in [
+        "local_feed::the_packaging_screen_follows_a_write_and_a_delete",
+        "local_outbox::offline_creates_survive_reload_and_follow_the_feed",
+        "local_outbox::a_refused_create_succeeds_after_correction",
+        "local_outbox::a_lost_create_reply_replays_without_another_row",
+        "local_release::a_waiting_shell_reloads_after_pending_and_sending_entries_finish",
+        "local_take_offline::take_offline_fills_packaging_and_locations",
+    ] {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([case, "--ignored", "--exact", "--nocapture"])
+            .env("WAMN_APPLICATION_COMPONENTS", "/unused/components")
+            .env("WAMN_FLOW_HTTP_COMPONENT", "/unused/http.wasm")
+            .env("WAMN_NATIVE_C_NATS_BIN", "/unused/nats-server")
+            .env_remove("WAMN_SYNC_BENCH_DIST")
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "{case}");
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains("missing prerequisites: environment variable WAMN_SYNC_BENCH_DIST"),
+            "{case}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, bin:node"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, env:WAMN_SYNC_BENCH_DIST, bin:node"]
 async fn offline_creates_survive_reload_and_follow_the_feed() -> anyhow::Result<()> {
     wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, bin:node",
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, env:WAMN_SYNC_BENCH_DIST, bin:node",
     );
     run("offline").await
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, bin:node"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, env:WAMN_SYNC_BENCH_DIST, bin:node"]
 async fn a_refused_create_succeeds_after_correction() -> anyhow::Result<()> {
     wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, bin:node",
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, env:WAMN_SYNC_BENCH_DIST, bin:node",
     );
     run("refusal").await
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, bin:node"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, env:WAMN_SYNC_BENCH_DIST, bin:node"]
 async fn a_lost_create_reply_replays_without_another_row() -> anyhow::Result<()> {
     wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, bin:node",
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, env:WAMN_SYNC_BENCH_DIST, bin:node",
     );
     run("lost-reply").await
 }
@@ -48,6 +76,7 @@ pub(super) async fn run(scenario: &str) -> anyhow::Result<()> {
         "WAMN_APPLICATION_COMPONENTS",
         "WAMN_FLOW_HTTP_COMPONENT",
         "WAMN_NATIVE_C_NATS_BIN",
+        "WAMN_SYNC_BENCH_DIST",
         "node",
     ]);
     let _lock = wamn_test_postgres::lock();
@@ -139,6 +168,10 @@ pub(super) async fn run(scenario: &str) -> anyhow::Result<()> {
                 .arg(driver)
                 .arg(scenario)
                 .current_dir(&bench)
+                .env(
+                    "WAMN_SYNC_BENCH_DIST",
+                    std::env::var_os("WAMN_SYNC_BENCH_DIST").context("WAMN_SYNC_BENCH_DIST")?,
+                )
                 .env("WAMN_ENDPOINT", &application.endpoint)
                 .env("WAMN_ROUTE_HOST", &application.route_host)
                 .env("WAMN_BEARER", &application.bearer)

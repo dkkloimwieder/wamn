@@ -62,7 +62,9 @@ Web changes select repository web lint, runtime tests, and platform UI checks, t
 Every change outside documentation selects `tools/repo-lint run`, including root formatting and Clippy for every target.
 
 The tool builds native binaries, application packages, and guests only when selected suites need them.
-It builds HTTP route bytes in release mode and materializer bytes in debug mode under `$CARGO_TARGET_DIR/apps`.
+The selection file names each preparation step, its output variables, and its commands.
+The runner keeps nonempty overrides and skips their preparation commands.
+The pinned HTTP guest keeps its required release artifact. Other native and standalone guest inputs use debug mode.
 It builds the three HTTP workflow guests under `$CARGO_TARGET_DIR/no-std`.
 It copies those debug guests to the root target path that the native host test reads.
 It builds applications through a private PostgreSQL database.
@@ -77,6 +79,53 @@ The tool starts a private NATS server on a free loopback port and stops it at ex
 Set `WAMN_NATIVE_C_NATS_BIN` to a prebuilt `nats-server`, or put `nats-server` on `PATH`.
 If neither exists, the tool fails and names the variable.
 It never downloads or compiles NATS.
+
+Use `--suite ID[,ID]` to run named suites on any tree, including an unchanged tree.
+This selects only those suites and their preparation steps.
+Run the Receiving and WMS proof from the repository root:
+
+```bash
+tools/test-changes --suite receiving-business,wms-local
+```
+
+Append `dry-run` to print the preparation commands and test filters without execution.
+The runner executes suites that declare `ignored = true` with `--ignored`.
+Every suite test command passes through `tools/require-test-result`.
+Only selector discovery uses `--list`, which executes no tests.
+
+For direct Cargo commands or artifact comparisons, set these overrides explicitly.
+The runner also accepts them and preserves every nonempty value.
+In the paths below, `TARGET` means `CARGO_TARGET_DIR`, and `ROOT` means this checkout.
+
+| Override | Default input |
+| --- | --- |
+| `WAMN_NATIVE_C_NATS_BIN` | `nats-server` |
+| `WAMN_APPLICATION_COMPONENTS` | `TARGET/virtualized/std-empty-environment` |
+| `WAMN_EDGE_DEVICE_COMPONENT` | `ROOT/apps/target/wamn/edge_device/components/device.wasm` |
+| `WAMN_JSONATA_COMPONENT` | `ROOT/apps/target/wamn/wamn_wms/components/jsonata.wasm` |
+| `WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM` | `ROOT/apps/target/wamn/platform_fixture/components/fixture.wasm` |
+| `WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM` | `ROOT/apps/target/wamn/platform_fixture_overlay/components/fixture_overlay.wasm` |
+| `WAMN_GENERATED_WIDGET_UPDATE_SCHEMA` | `ROOT/apps/target/wamn/platform_fixture/routes/widget/update.json` |
+| `WAMN_HOST_BINARY` | `TARGET/debug/wamn-host` |
+| `WAMN_RECEIVING_DEV_BIN` | `TARGET/debug/wamn-ctl` |
+| `WAMN_IDENTITY_BINARY` | `TARGET/debug/wamn-identity` |
+| `WAMN_FLOW_HTTP_COMPONENT` | `TARGET/apps/wasm32-wasip2/release/http_route.wasm` |
+| `WAMN_MATERIALIZER_COMPONENT` | `TARGET/apps/wasm32-wasip2/debug/materializer.wasm` |
+| `WAMN_BLOB_PUT_COMPONENT` | `TARGET/apps/wasm32-wasip2/debug/blob_put.wasm` |
+| `WAMN_SQLX_TRANSACTION_COMPONENT` | `TARGET/apps/wasm32-wasip2/debug/sqlx_command.wasm` |
+| `WAMN_PLATFORM_UI_DIST` | `ROOT/apps/platform_ui/dist` |
+| `WAMN_SYNC_BENCH_DIST` | `TARGET/sync-bench/web` |
+| `WAMN_HOST_LIVE_NATS_SERVER_BIN` | Same input as `WAMN_NATIVE_C_NATS_BIN` |
+| `WAMN_RECEIVING_DEV_HOST_BIN` | Same input as `WAMN_HOST_BINARY` |
+| `WAMN_SESSION_EXCHANGE_CTL_BIN` | Same input as `WAMN_RECEIVING_DEV_BIN` |
+| `WAMN_DEV_ENV_FLOW_HTTP_COMPONENT` | Same input as `WAMN_FLOW_HTTP_COMPONENT` |
+| `WAMN_DEV_ENV_MATERIALIZER_COMPONENT` | Same input as `WAMN_MATERIALIZER_COMPONENT` |
+| `WAMN_POSTGRES_BIN_DIR` | `/usr/lib/postgresql/18/bin` |
+
+The PostgreSQL directory holds `initdb`, `postgres`, `pg_ctl`, and `psql` from PostgreSQL 18.
+An empty override uses the default directory.
+The `operator_inputs` table in the selection file documents credentials, external addresses, comparison artifacts, and parent-owned fixture inputs.
+The runner does not create those operator inputs.
 
 Other cross-package file readers still need explicit path rules.
 `tools/test-changes dry-run` prints the selected commands.
@@ -111,12 +160,7 @@ It uses committed files from `REF`, so commit tool changes before testing them t
 Run `tools/test-revision-test` for offline self-tests with fake external commands.
 
 The client compatibility test reads the current generated widget update schema at run time.
-After application generation, run it with this path:
-
-```bash
-WAMN_GENERATED_WIDGET_UPDATE_SCHEMA="$PWD/apps/target/wamn/platform_fixture/routes/widget/update.json" \
-  cargo test --locked --offline -p wamn-client --test generated_schema -- --ignored
-```
+Its preparation step builds the platform fixture and supplies the schema path.
 
 `tools/test-changes --tier kind` selects the kind targets of affected packages.
 It enables their `cluster` feature and runs ignored cases one at a time.
@@ -186,64 +230,23 @@ Receiving command histories and WMS operation/replay assertions use real compone
 The fixture composes the pinned HTTP entry with the application and binds operation authority from its format-11 manifest.
 They share the in-process runtime setup in `tests/integration/src/local_application.rs`.
 The fixture starts a private NATS with TLS and replicates the host auth cache from its `wamn-auth` bucket.
-Set `WAMN_NATIVE_C_NATS_BIN` to a local `nats-server` executable.
-These tests need no registry, cluster, gate binary, or container image.
-Deployment tests retain startup, restart, queue, CDC/materializer, and label delivery assertions.
+Select `receiving-business,wms-local` with the runner described above.
+The Receiving suite runs `route_authentication_live::local_business::*` in its library target.
+The WMS suite runs `local_*` in its library target, including its browser cases.
+The runner prepares application components, the pinned HTTP guest, and the prebuilt NATS executable before either suite.
+These cases need no registry, cluster, check binary, or container image.
+The WMS browser cases also need Node and Chrome on `PATH`.
+The `sync-bench` step installs web dependencies offline and builds the screen after WMS application generation.
 
-Build the packages that these tests use, with a PostgreSQL server URL in `DATABASE_URL` ([building](building.md#wamn-build)), and the route guest:
-
-```bash
-"$CARGO_TARGET_DIR/debug/wamn" build apps/wamn_receiving apps/client_acme_receiving apps/wamn_wms
-RUSTFLAGS="$(tools/guest-rustflags)" cargo build --manifest-path apps/Cargo.toml --locked --offline \
-  --target wasm32-wasip2 --release -p http-route
-```
-
-The build composes Acme with the Receiving base into one component.
-It writes the virtualized application components to `$CARGO_TARGET_DIR/virtualized/std-empty-environment`.
-
-Run the local business assertions:
-
-```bash
-WAMN_APPLICATION_COMPONENTS="$CARGO_TARGET_DIR/virtualized/std-empty-environment" \
-WAMN_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/release/http_route.wasm" \
-WAMN_NATIVE_C_NATS_BIN="$(command -v nats-server)" \
-  cargo test --locked --offline -p wamn-receiving-tests -p wamn-wms-tests \
-    --lib local_business:: -- --ignored --test-threads=1
-```
-
-The publish composition tests use the pinned `http-route` guest from the build above.
-They inspect composed bytes and SQL ownership without serving requests or starting a database:
-
-```bash
-WAMN_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/release/http_route.wasm" \
-  cargo test --offline -p wamn-control --test application_composition -- --include-ignored
-```
-
-The edge bundle and release digest tests use the same pinned guest.
-Build `apps/edge_device` first, with `DATABASE_URL` set as [building](building.md#wamn-build) describes.
-Both targets are ignored by default because they need built components.
-The release publication case also needs Docker.
-It starts a private registry and passes its address as `WAMN_COMPONENT_ARTIFACT_BASE` to a child process.
-
-```bash
-"$CARGO_TARGET_DIR/debug/wamn" build apps/edge_device
-WAMN_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/release/http_route.wasm" \
-  cargo test --locked --offline -p wamn-control --test edge_bundle -- --include-ignored
-WAMN_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/release/http_route.wasm" \
-  cargo test --locked --offline -p wamn-control --test release_one_digest -- --include-ignored
-```
-
-The generated clients of the host routes run against the same HTTP shell.
-`control_client_live` serves each set and runs `apps/platform_ui/test/control-client.live.test.ts` and `control-org-client.live.test.ts` with `pnpm`, so run `pnpm install` at the repository root first:
-
-```bash
-WAMN_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/release/http_route.wasm" \
-  cargo test --locked --offline -p wamn-integration-tests --lib control_client_live -- --ignored
-```
+The publish composition, edge bundle, release digest, and control-client cases use the same prepared HTTP guest.
+Their preparation rows supply the edge component and application packages when selected.
+The release publication case starts a private registry.
+The control-client cases also need the installed web dependencies.
 
 The edge route, device and forward tests run in the workspace run.
 Each test binary builds the edge release bundle of [`apps/edge_device`](../../apps/edge_device/README.md) once, when its first test starts.
-It reads the component from the build output of `wamn build apps/edge_device`, so run that build first. Cargo builds the `http-route` guest as the Dockerfile does. The guest must match its pin.
+The `edge` preparation step supplies its application component.
+The HTTP guest must match its pin.
 The bundle writer composes the guest with the component into the entry that the edge serves.
 The dev loop's bundle writer admits the component and writes the bundle, with no session.
 The tests sign their own sessions.
@@ -272,59 +275,16 @@ The edge runs the `sample.read` command of the `edge_device` bundle on each fram
 The test sends each of its two samples twice, and prints the tag of its frames.
 Count the rows of that tag in `edge_samples.sample` of the session's target database: the count must be 2.
 
-Run the local SQLx transaction case with its component:
-
-```bash
-cargo build --manifest-path apps/Cargo.toml --locked --offline \
-  --target wasm32-wasip2 -p sqlx-command
-WAMN_SQLX_TRANSACTION_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/debug/sqlx_command.wasm" \
-  cargo test --locked --offline -p wamn-runtime --test sqlx_transaction_live \
-    sqlx_command_commits_rolls_back_and_obeys_current_user_rls -- --ignored --exact
-```
+The SQLx transaction case uses the `sqlx-command` preparation step.
+It commits and rolls back commands under the current PostgreSQL role.
 
 ## Prekind render and native host tests
 
 These cases use the environment release chart without a cluster.
 The render cases need Helm 4 on `PATH`.
-The native case also needs PostgreSQL 18 binaries, a local `nats-server` executable, and the guest toolchain from [building](building.md).
-Use a prebuilt `nats-server`, as the other native cases do. Do not compile it.
-Build every input in this checkout's own target directory. Replace `<checkout>` with a name for the checkout:
-
-```bash
-export CARGO_TARGET_DIR="$HOME/.cache/wamn-target/<checkout>"
-export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='kache test-runner'
-cargo build --locked --offline -p wamn-ctl --bin wamn
-cargo build --locked --offline -p wamn-host -p wamn-test-infrastructure --bins
-RUSTFLAGS="$(tools/guest-rustflags)" cargo build --locked --offline --release \
-  --manifest-path apps/Cargo.toml --target wasm32-wasip2 -p http-route
-RUSTFLAGS="$(tools/guest-rustflags)" cargo build --locked --offline \
-  --manifest-path apps/Cargo.toml --target wasm32-wasip2 -p materializer
-for guest in transform http-request http-page; do
-  RUSTFLAGS="$(tools/guest-rustflags)" cargo build --locked --offline \
-    --manifest-path apps/platform/no-std/Cargo.toml --target wasm32-wasip2 -p "$guest" || exit "$?"
-done
-"$CARGO_TARGET_DIR/debug/wamn-test-postgres" --database prekind_build --url-env DATABASE_URL -- \
-  "$CARGO_TARGET_DIR/debug/wamn" build apps/edge_device
-```
-
-The HTTP route guest needs release mode because composition requires its committed SHA-256 digest.
-The package builder fixes the device guest to release mode and records its virtualized bytes in the build record.
-It writes the device component and build record under `apps/target/wamn/edge_device` in this checkout.
-The native programs, materializer, and three HTTP workflow guests use debug mode.
-The `wamn-control` library tests need `apps/target/wamn/platform_fixture_overlay/wamn.json` from the initial checkout preparation.
-If that file is absent, use the database runner above to build `apps/platform_fixture` and `apps/platform_fixture_overlay`, in that order.
-
-Set the paths to these built inputs, then run the native case:
-
-```bash
-export WAMN_HOST_BINARY="$CARGO_TARGET_DIR/debug/wamn-host"
-export WAMN_NATIVE_C_NATS_BIN="$(command -v nats-server)"
-export WAMN_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/release/http_route.wasm"
-export WAMN_MATERIALIZER_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/debug/materializer.wasm"
-cargo test --locked --offline -p wamn-control --test native_host \
-  prekind_host::prekind_http_host_runs_and_rejects_respond_without_caller \
-  -- --ignored --exact --nocapture --test-threads=1
-```
+The `native-host` suite also needs PostgreSQL 18 and a prebuilt NATS executable.
+Its preparation rows build the host, HTTP guest, materializer, edge package, and HTTP workflow guests.
+The runner starts a private PostgreSQL database for application generation.
 
 The case resolves rendered Secrets through the production credential provisioner and starts private PostgreSQL and NATS servers.
 It starts the debug host with rendered arguments and local component files.
@@ -605,7 +565,7 @@ It tests the removed and kept runs, the refusals, and the grants of the generati
 ### Development identity lifecycle
 
 The development command case tests application rebuilds and owned process cleanup.
-Build the test identity binary with `cargo build --locked --offline -p wamn-identity --features test-util`.
+The `identity` preparation step builds the test identity binary with `test-util`.
 The `test-util` feature permits only a loopback mail endpoint with a dummy API key. Production builds do not include this path.
 The focused identity case also covers application database recreation:
 
@@ -627,22 +587,14 @@ Run this case alone.
 The fixture requires PostgreSQL 18 binaries, Docker, and the existing development service images.
 The case also requires SQLx CLI 0.9.0 as `cargo-sqlx` and `jq` on `PATH`.
 
-Build the native programs, the packages, the HTTP and materializer guests, and the exact test binary from that worktree, with a PostgreSQL server URL in `DATABASE_URL`:
+Use the preparation rows for the native programs, application packages, HTTP guest, and materializer.
+From the disposable worktree, build its fixture example and list its test executable:
 
 ```bash
 cd "$SOURCE"
-cargo build --locked --offline \
-  -p wamn-ctl -p wamn-host -p wamn-identity -p wamn-cdc-reader \
-  -p wamn-test-infrastructure -p wamn-receiving-tests --bins --example delivery_timings
-RUSTFLAGS="$(tools/guest-rustflags)" cargo build --locked --offline --release --manifest-path apps/Cargo.toml \
-  --target wasm32-wasip2 -p http-route
-RUSTFLAGS="$(tools/guest-rustflags)" cargo build --locked --offline --release \
-  --manifest-path apps/Cargo.toml --target wasm32-wasip2 -p materializer
-"$CARGO_TARGET_DIR/debug/wamn" build apps/wamn_receiving apps/client_acme_receiving
+cargo build --locked --offline -p wamn-receiving-tests --example delivery_timings
 cargo test --locked --offline -p wamn-receiving-tests --lib --no-run
 ```
-
-Set `WAMN_DEV_ENV_MATERIALIZER_COMPONENT` to the absolute path of that `materializer.wasm`, `$CARGO_TARGET_DIR/wasm32-wasip2/release/materializer.wasm`.
 
 Set `WAMN_LOCAL_TEST_BINARY` to the absolute executable path printed by the last command.
 Set `WAMN_LOCAL_RESULTS` to an unused private directory outside the worktree.
@@ -650,7 +602,6 @@ Run the exact case through the owned fixture:
 
 ```bash
 WAMN_LOCAL_DEV_EDIT_ROOT="$SOURCE" \
-WAMN_DEV_ENV_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/release/http_route.wasm" \
   "$CARGO_TARGET_DIR/debug/examples/delivery_timings" \
   "$SOURCE" "$CARGO_TARGET_DIR" "$WAMN_LOCAL_RESULTS" -- \
   "$WAMN_LOCAL_TEST_BINARY" \
@@ -670,7 +621,8 @@ It sets `WAMN_DEV_ENV_ROOT` to `delivery-timings/env` in the target directory, w
 Before the command starts, the fixture counts the files under `dev-wasmtime-cache/modules` in that root, without the `.stats` files.
 It writes the count to `cache-state.json` in the results directory, so that you can read a cold run as cold.
 `wamn-test-postgres` starts its server with `wal_level=logical`.
-It sets every variable that the case declares, except the two that the command sets.
+It supplies the service coordinates that the case declares.
+For direct fixture commands, set the artifact overrides from the table above.
 The case starts its own PostgreSQL server, because the development environment resets the control store of the whole server.
 The case requires authenticated application results after code, SQL, and schema edits.
 It also requires retained data for compatible edits and for an appended migration.
@@ -825,7 +777,7 @@ After the qualification refusal, an unchanged apply must skip every step through
 The broker and session target Secrets must keep their resource versions.
 
 The separate environment test needs Docker, kind, Helm 4, kubectl, OpenSSL, and the release chart that `build-platform` stamps.
-Build `apps/edge_device` with `wamn build` first.
+The `edge` preparation step supplies the device component.
 Its [test source](../../crates/control/lib/tests/environment_apply_kind.rs) describes the required images and fixtures.
 
 ```bash
@@ -914,7 +866,6 @@ The C4 tests use disposable PostgreSQL databases. Compile them without starting 
 
 ```bash
 export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER='kache test-runner'
-export WAMN_NATIVE_C_NATS_BIN=/var/tmp/wamn-nats/nats-server
 cargo test --locked --offline -p wamn-control --test files_live --test platform_grants_live --no-run
 cargo test --locked --offline -p wamn-control-provision --test family_denial_matrix --test deploy_sql_authority --no-run
 cargo test --locked --offline -p wamn-execution-host --test files_live --test host_route_live --no-run
@@ -982,14 +933,8 @@ The assertions cover hashes, access refusals, public origin behavior, and read b
 
 Docker Hub no longer serves the pinned `minio/minio` and `minio/mc` images.
 The check loads the local copies into kind after it makes sure that their digests match the pins.
-The scenario requires `WAMN_BLOB_PUT_COMPONENT`, the path to a debug blob-put guest from this checkout.
-The scenario uses the debug `wamn-component-virtualizer` to remove ambient WASI CLI imports before publication.
-Build that input with the guest workspace and the same target directory as the other scenario inputs:
-
-```bash
-cargo build --manifest-path apps/Cargo.toml --locked --offline -p blob-put --target wasm32-wasip2
-export WAMN_BLOB_PUT_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/debug/blob_put.wasm"
-```
+The scenario uses the `blob-put` preparation step from the selection file.
+The debug component virtualizer removes ambient WASI CLI imports before publication.
 
 Before a kind run, make sure that the fixture release has an http role.
 This test builds and assembles the fixture package on a disposable PostgreSQL, without kind:
@@ -1069,7 +1014,9 @@ They copy the platform fixture and build it into their own output root.
 A build with an old manifest and obsolete client output must match a build into an empty target.
 Both builds must emit the authored operation bindings and components, with identical bytes and `build.json`.
 The tests also check that a left-out statement type is derived and that the nullability rule of [building](building.md#wamn-build) holds.
-One test composes Acme over Receiving into a copy of their build output and checks that the composed component embeds the exact bytes of the Receiving component. Run `wamn build apps/wamn_receiving apps/client_acme_receiving` first.
+One test composes Acme over Receiving into a copy of their build output.
+It requires the composed component to embed the exact bytes of the Receiving component.
+The application preparation step supplies both packages.
 
 ### Generated TypeScript bindings
 
@@ -1222,9 +1169,7 @@ Recovery and reset captures show their entry forms. The reset capture includes t
 The test retains these files after service cleanup.
 For the WFE review, copy the PNG files from the printed directory to `/var/tmp/wamn-wfe-ui-report/` and attach them to the report.
 
-Build the native programs and components described in [the development loop](development-loop.md).
-Build the application bundles with `wamn build apps/wamn_receiving apps/client_acme_receiving`.
-Build the platform UI with `pnpm --filter @wamn/platform-ui build`.
+Use the preparation rows for the native programs, application components, and platform UI.
 Build the fixture and test before the timed run:
 
 ```bash
@@ -1235,13 +1180,10 @@ TMPDIR=/var/tmp cargo test --offline -p wamn-ctl --test platform_ui_live --no-ru
 The fixture needs Docker and its local service images, PostgreSQL 18 binaries, and Chrome.
 It uses the Playwright installation in `web/shell`, so run `pnpm install` at the repository root first.
 `CARGO_TARGET_DIR` must name the directory of the built native programs.
-Set the two component variables to the corresponding built component files.
 Run this command from the repository root:
 
 ```bash
 export TMPDIR=/var/tmp
-export WAMN_DEV_ENV_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/release/http_route.wasm"
-export WAMN_DEV_ENV_MATERIALIZER_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/release/materializer.wasm"
 results="$(mktemp -d /var/tmp/wamn-platform-ui-XXXXXX)/run"
 "$CARGO_TARGET_DIR/debug/examples/delivery_timings" "$PWD" "$CARGO_TARGET_DIR" "$results" -- \
   cargo test --offline -p wamn-ctl --test platform_ui_live \
@@ -1270,7 +1212,8 @@ Build the test without starting services:
 TMPDIR=/var/tmp cargo test --offline -p wamn-ctl --test receiving_ui_live --no-run
 ```
 
-After you set the component variables from Local platform sign-in, run from the repository root:
+For direct fixture commands, set the artifact overrides from the table above.
+Run from the repository root:
 
 ```bash
 export TMPDIR=/var/tmp

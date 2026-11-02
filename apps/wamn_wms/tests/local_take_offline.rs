@@ -1,12 +1,12 @@
 //! Online take-offline counts, saved bytes, and fill time for 20,000 added locations.
 //!
-//! Build WMS and web/sync-bench first. Uses the local_outbox host and inputs.
+//! Uses the local_outbox host and its prepared inputs.
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, bin:node, bin:google-chrome"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, env:WAMN_SYNC_BENCH_DIST, bin:node, bin:google-chrome"]
 async fn take_offline_fills_packaging_and_locations() -> anyhow::Result<()> {
     wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, bin:node, bin:google-chrome",
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, env:WAMN_SYNC_BENCH_DIST, bin:node, bin:google-chrome",
     );
     super::local_outbox::run("take-offline").await
 }

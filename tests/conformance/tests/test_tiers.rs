@@ -488,3 +488,75 @@ fn malformed_reasons_drift_and_child_helper_bodies_fail() {
         assert!(ignore_errors(&function).is_empty(), "refused {source}");
     }
 }
+
+fn preparation_errors(policy: &Value, names: &BTreeSet<String>) -> Vec<String> {
+    let mut owners: BTreeMap<&str, usize> = BTreeMap::new();
+    for step in policy["preparation"].as_array().unwrap() {
+        for field in ["outputs", "aliases"] {
+            if let Some(outputs) = step[field].as_object() {
+                for name in outputs.keys() {
+                    *owners.entry(name).or_default() += 1;
+                }
+            }
+        }
+    }
+    for (name, description) in policy["operator_inputs"].as_object().unwrap() {
+        assert!(!description.as_str().unwrap().is_empty());
+        *owners.entry(name).or_default() += 1;
+    }
+    names
+        .iter()
+        .filter(|name| owners.get(name.as_str()) != Some(&1))
+        .map(|name| format!("{name}: expected exactly one preparation or operator input"))
+        .collect()
+}
+
+#[test]
+fn every_ignored_environment_input_has_one_preparation_or_operator_owner() {
+    use syn::visit::Visit as _;
+
+    #[derive(Default)]
+    struct Inputs(BTreeSet<String>);
+    impl<'ast> syn::visit::Visit<'ast> for Inputs {
+        fn visit_item_fn(&mut self, function: &'ast syn::ItemFn) {
+            if let Some(reason) = ignored_reason(function)
+                && let Ok(names) = wamn_test_postgres::parse_prerequisites(&reason)
+            {
+                self.0.extend(
+                    names
+                        .into_iter()
+                        .filter(|(kind, _)| *kind == "env")
+                        .map(|(_, name)| name.to_owned()),
+                );
+            }
+            syn::visit::visit_item_fn(self, function);
+        }
+    }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut files = BTreeSet::new();
+    for directory in ["apps", "crates", "services", "tests", "test-support"] {
+        rust_files(&root.join(directory), &mut files);
+    }
+    let mut inputs = Inputs::default();
+    for path in files {
+        inputs.visit_file(&syn::parse_file(&std::fs::read_to_string(path).unwrap()).unwrap());
+    }
+    let policy = policy(&root);
+    let errors = preparation_errors(&policy, &inputs.0);
+    assert!(errors.is_empty(), "{}", errors.join("\n"));
+    let name = "WAMN_FLOW_HTTP_COMPONENT";
+    let mut missing = policy.clone();
+    let steps = missing["preparation"].as_array_mut().unwrap();
+    let index = steps
+        .iter()
+        .position(|step| step["outputs"][name].is_string())
+        .unwrap();
+    steps[index]["outputs"]
+        .as_object_mut()
+        .unwrap()
+        .remove(name);
+    assert!(!preparation_errors(&missing, &inputs.0).is_empty());
+    let mut duplicate = policy.clone();
+    duplicate["operator_inputs"][name] = "duplicate owner".into();
+    assert!(!preparation_errors(&duplicate, &inputs.0).is_empty());
+}

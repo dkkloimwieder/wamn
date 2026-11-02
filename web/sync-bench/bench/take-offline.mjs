@@ -1,9 +1,8 @@
 /** Online take-offline and counts. The Rust fixture adds 20,000 locations. */
 import assert from "node:assert/strict";
 import { request } from "node:http";
-import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
-import { preview } from "vite";
+import { preparedPreview } from "./preview.ts";
 import { rowsDatabase } from "../../runtime/src/sync/names.ts";
 
 const endpoint = new URL(process.env.WAMN_ENDPOINT);
@@ -18,10 +17,7 @@ const reads = { packaging: 0, location: 0, locationChanges: 0 };
 const errors = [];
 let firstLocationRead;
 let result;
-const server = await preview({
-  root: fileURLToPath(new URL("..", import.meta.url)),
-  preview: { port: 0, host: "127.0.0.1" },
-});
+const server = await preparedPreview();
 const browser = await chromium.launch({ channel: "chrome", headless: true });
 try {
   const context = await browser.newContext();

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly WAMN_USAGE='usage: tools/test-changes [--base REF] [--tier T[,T] [--name FILTER]] [run|dry-run]'
+readonly WAMN_USAGE='usage: tools/test-changes [--base REF] [--tier T[,T] [--name FILTER]] [--suite ID[,ID]] [run|dry-run]'
 
 wamn_fail() {
   local -r exit_code="$1"
@@ -35,6 +35,7 @@ WAMN_KIND=false
 WAMN_EXPLICIT_TIER=false
 WAMN_TIERS='unit,contract,live-postgres,live-nats'
 WAMN_NAME=''
+WAMN_REQUESTED_SUITES=''
 WAMN_COMMAND=''
 while (($# > 0)); do
   case "$1" in
@@ -52,6 +53,13 @@ while (($# > 0)); do
     --name)
       (($# >= 2)) || wamn_usage_error '--name requires a test name filter'
       WAMN_NAME="$2"
+      shift 2
+      ;;
+    --suite)
+      (($# >= 2)) || wamn_usage_error '--suite requires one or more suite IDs'
+      [[ -n "$2" && "$2" != ,* && "$2" != *, && "$2" != *,,* ]] ||
+        wamn_usage_error '--suite requires nonempty suite IDs'
+      WAMN_REQUESTED_SUITES="$2"
       shift 2
       ;;
     run | dry-run)
@@ -134,6 +142,13 @@ print(json.dumps(policy))
 PYTHON
 )" || wamn_fail 65 'cannot read tests/selection.toml'
 readonly WAMN_POLICY
+if [[ -n "$WAMN_REQUESTED_SUITES" ]]; then
+  IFS=',' read -ra requested_suites <<<"$WAMN_REQUESTED_SUITES"
+  for suite in "${requested_suites[@]}"; do
+    jq -e --arg id "$suite" 'any(.suites[]; .id == $id)' <<<"$WAMN_POLICY" >/dev/null ||
+      wamn_usage_error "unknown suite '$suite'"
+  done
+fi
 WAMN_RELEVANT="$(
   jq -n --argjson policy "$WAMN_POLICY" '$ARGS.positional | unique
     | map(select(. as $path | any($policy.documentation[];
@@ -142,7 +157,7 @@ WAMN_RELEVANT="$(
 )"
 readonly WAMN_RELEVANT
 
-if [[ "$WAMN_RELEVANT" == '[]' ]]; then
+if [[ "$WAMN_RELEVANT" == '[]' && -z "$WAMN_REQUESTED_SUITES" ]]; then
   printf 'working-directory: %q\n' "$WAMN_REPOSITORY_ROOT"
   printf 'base: %s\n' "$WAMN_BASE"
   printf 'selected: nothing\n'
@@ -289,6 +304,7 @@ WAMN_PLAN="$(printf '%s\n' "${WAMN_METADATA[@]}" | jq -rs \
           (.selected | map(.target) | join(" "))] | @tsv
     end')"
 fi
+if [[ -n "$WAMN_REQUESTED_SUITES" ]]; then WAMN_PLAN=''; fi
 readonly WAMN_PLAN
 
 printf 'working-directory: %q\n' "$WAMN_REPOSITORY_ROOT"
@@ -304,6 +320,7 @@ fi
 WAMN_PACKAGES="$(printf '%s\n' "${WAMN_METADATA[@]}" | jq -rs '[.[] | . as $md
   | .packages[] | select(.id | IN($md.workspace_members[])) | .name] | unique')"
 WAMN_SELECTED="$(jq '[.workspaces[] | {index: .[0], packages: (.[3] | split(" "))}]' <<<"$WAMN_DISCOVERY")"
+if [[ -n "$WAMN_REQUESTED_SUITES" ]]; then WAMN_SELECTED='[]'; fi
 WAMN_GUEST_RULE="$(jq -c '.suites[] | select(.execution == "docker-guests")' <<<"$WAMN_POLICY")"
 WAMN_GUEST_STAGE="$(jq -r '.stage' <<<"$WAMN_GUEST_RULE")"
 WAMN_DOCKERFILE="$(jq -r '.dockerfile' <<<"$WAMN_GUEST_RULE")"
@@ -321,15 +338,16 @@ mapfile -t guests < <(
 ((${#guests[@]} > 0)) ||
   wamn_fail 65 "the Dockerfile stage $WAMN_GUEST_STAGE names no guest package"
 WAMN_SUITES="$(jq -r --argjson paths "$WAMN_RELEVANT" --argjson selected "$WAMN_SELECTED" \
-  --argjson discovery "$WAMN_DISCOVERY" --arg tiers "$WAMN_TIERS" \
+  --argjson discovery "$WAMN_DISCOVERY" --arg tiers "$WAMN_TIERS" --arg requested "$WAMN_REQUESTED_SUITES" \
   --argjson guests "$(printf '%s\n' "${guests[@]}" | jq -Rsc 'split("\n")[:-1]')" '
   .suites[] | . as $suite
-  | select(.mode == "always" or (.tier | IN($tiers | split(",") | .[])))
+  | if $requested != "" then select(.id | IN($requested | split(",") | .[])) else
+    select(.mode == "always" or (.tier | IN($tiers | split(",") | .[])))
   | select($discovery.unknown or .always == true
       or any($paths[]; . as $path | any($suite.inputs[]; . as $pattern | $path | test($pattern)))
       or any($selected[].packages[]; IN($suite.select_packages[]?))
       or (.execution == "docker-guests" and any($selected[] | select(.index == 1) | .packages[]; IN($guests[]))))
-  | .id' <<<"$WAMN_POLICY")" || wamn_fail 65 'cannot select suites'
+  end | .id' <<<"$WAMN_POLICY")" || wamn_fail 65 'cannot select suites'
 declare -a WAMN_SELECTED_PACKAGES=()
 mapfile -t WAMN_SELECTED_PACKAGES < <(awk -F '\t' '$1 == 0 {print $4}' <<<"$WAMN_PLAN" | tr ' ' '\n')
 wamn_package_selected() {
@@ -395,29 +413,26 @@ wamn_suite_arguments() {
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$WAMN_REPOSITORY_ROOT/target}"
 [[ "$CARGO_TARGET_DIR" == /* ]] || export CARGO_TARGET_DIR="$WAMN_REPOSITORY_ROOT/$CARGO_TARGET_DIR"
 export PATH="$CARGO_TARGET_DIR/debug:$PATH"
-export WAMN_APPLICATION_COMPONENTS="$CARGO_TARGET_DIR/virtualized/std-empty-environment"
-export WAMN_EDGE_DEVICE_COMPONENT="$WAMN_REPOSITORY_ROOT/apps/target/wamn/edge_device/components/device.wasm"
-export WAMN_PLATFORM_UI_DIST="$WAMN_REPOSITORY_ROOT/apps/platform_ui/dist"
-export WAMN_JSONATA_COMPONENT="$WAMN_REPOSITORY_ROOT/apps/target/wamn/wamn_wms/components/jsonata.wasm"
-need_edge=false
-need_packages=false
-need_fixture=false
-need_nats=false
-need_route=false
 WAMN_PREREQUISITES="$(jq -r --argjson selected "$WAMN_SELECTED" --argjson members "$WAMN_PACKAGES" \
   --arg suites "$WAMN_SUITES" '
   [(.suites[] | select(.id | IN($suites | split("\n") | .[])) | .prerequisites[]),
-   (.preparation[] | . as $rule
+   (.preparation[] | select(.id == null) | . as $rule
      | select(if .suites then
          any(.suites[]; IN($suites | split("\n") | .[])) and any($members[]; IN($rule.packages[]))
          else any($selected[] | select(.index == 0) | .packages[]; IN($rule.packages[])) end)
      | .prerequisites[]?)] | unique | .[]' <<<"$WAMN_POLICY")"
 wamn_prerequisite() { grep -qxF -- "$1" <<<"$WAMN_PREREQUISITES"; }
-if wamn_prerequisite packages; then need_packages=true; fi
-if wamn_prerequisite fixture; then need_fixture=true; fi
-if wamn_prerequisite edge; then need_edge=true; fi
-if wamn_prerequisite nats; then need_nats=true; fi
-if wamn_prerequisite route; then need_route=true; fi
+WAMN_INPUTS="$(jq -c --arg prerequisites "$WAMN_PREREQUISITES" '
+  [.preparation[] | select(.id != null)
+    | select(.id | IN($prerequisites | split("\n") | .[]))]
+  | sort_by(if .id == "nats" then 0 else 1 end)' <<<"$WAMN_POLICY")"
+# Package selection also prepares inputs for cases outside the named suites.
+if [[ -z "$WAMN_REQUESTED_SUITES" ]]; then
+  WAMN_INPUTS="$(jq -c --argjson required "$WAMN_INPUTS" --argjson selected "$WAMN_SELECTED" '
+    [$required[], (.preparation[] | select(.id != null) | . as $step
+      | select(any($selected[] | select(.index == 0) | .packages[]; IN($step.packages[]?))))]
+    | unique_by(.id) | sort_by(if .id == "nats" then 0 else 1 end)' <<<"$WAMN_POLICY")"
+fi
 # Clippy compiles generated source in the apps workspace.
 # Derive those application roots from Cargo targets.
 declare -a applications=()
@@ -452,56 +467,88 @@ if wamn_prerequisite applications; then
     done
   done
 fi
-if [[ "$need_fixture" == true ]]; then
+if wamn_prerequisite fixture; then
   wamn_application apps/platform_fixture
   wamn_application apps/platform_fixture_overlay
 fi
-if [[ "$need_packages" == true ]]; then
+if wamn_prerequisite packages; then
   while IFS= read -r app; do wamn_application "$app"; done \
     < <(jq -r '.packages[]' deploy/gcp/environments/*.json | sort -u)
   if wamn_prerequisite client-acme; then wamn_application apps/client_acme_receiving; fi
 fi
-if [[ "$need_edge" == true ]]; then wamn_application apps/edge_device; fi
-if [[ "$need_nats" == true ]]; then
-  if [[ "$WAMN_COMMAND" == dry-run ]]; then
-    printf 'input nats: use WAMN_NATIVE_C_NATS_BIN or nats-server on PATH (prebuilt only)\n'
-  else
-    export WAMN_NATIVE_C_NATS_BIN="${WAMN_NATIVE_C_NATS_BIN:-$(command -v nats-server || :)}"
-    [[ -n "$WAMN_NATIVE_C_NATS_BIN" && -x "$WAMN_NATIVE_C_NATS_BIN" ]] ||
-      wamn_fail 65 'set WAMN_NATIVE_C_NATS_BIN to an existing prebuilt nats-server executable'
+
+wamn_expand_input() {
+  local value="$1"
+  value="${value//\{root\}/$WAMN_REPOSITORY_ROOT}"
+  value="${value//\{target\}/$CARGO_TARGET_DIR}"
+  if [[ "$value" == *'{guest-rustflags}'* ]]; then
+    if [[ "$WAMN_COMMAND" == dry-run ]]; then guest_flags='$(tools/guest-rustflags)'
+    else guest_flags="$("$WAMN_TOOL_DIRECTORY/guest-rustflags")"; fi
+    value="${value//\{guest-rustflags\}/$guest_flags}"
   fi
-fi
-if ((${#applications[@]} > 0)); then
-  bins=(-p wamn-ctl --bin wamn -p wamn-test-infrastructure --bins)
-  if [[ "$need_route" == true ]]; then bins+=(-p wamn-host); fi
-  wamn_step 'input bins' "$WAMN_CARGO" build --locked --offline "${bins[@]}" || exit 1
-fi
-if [[ "$need_route" == true ]]; then
-  export WAMN_HOST_BINARY="$CARGO_TARGET_DIR/debug/wamn-host"
-  export WAMN_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/apps/wasm32-wasip2/release/http_route.wasm"
-  export WAMN_MATERIALIZER_COMPONENT="$CARGO_TARGET_DIR/apps/wasm32-wasip2/debug/materializer.wasm"
-  if [[ "$WAMN_COMMAND" == dry-run ]]; then guest_flags='$(tools/guest-rustflags)'
-  else guest_flags="$("$WAMN_TOOL_DIRECTORY/guest-rustflags")"; fi
-  wamn_step 'input http-route' env "RUSTFLAGS=$guest_flags" "$WAMN_CARGO" build --locked --offline \
-    --release --manifest-path apps/Cargo.toml --target-dir "$CARGO_TARGET_DIR/apps" \
-    --target wasm32-wasip2 -p http-route || exit 1
-  wamn_step 'input materializer' env "RUSTFLAGS=$guest_flags" "$WAMN_CARGO" build --locked --offline \
-    --manifest-path apps/Cargo.toml --target-dir "$CARGO_TARGET_DIR/apps" \
-    --target wasm32-wasip2 -p materializer || exit 1
-  wamn_step 'input native guest directory' mkdir -p "$CARGO_TARGET_DIR/wasm32-wasip2/debug" || exit 1
-  for guest in transform http-request http-page; do
-    wamn_step "input $guest" env "RUSTFLAGS=$guest_flags" "$WAMN_CARGO" build --locked --offline \
-      --manifest-path apps/platform/no-std/Cargo.toml --target-dir "$CARGO_TARGET_DIR/no-std" \
-      --target wasm32-wasip2 -p "$guest" || exit 1
-    wamn_step "input native $guest" cp "$CARGO_TARGET_DIR/no-std/wasm32-wasip2/debug/${guest//-/_}.wasm" \
-      "$CARGO_TARGET_DIR/wasm32-wasip2/debug/${guest//-/_}.wasm" || exit 1
+  if [[ "$value" == cargo ]]; then value="$WAMN_CARGO"; fi
+  input_value="$value"
+}
+wamn_input_commands() {
+  local preparation="$1" field="${2:-commands}" command index
+  local -a input_argv=()
+  while IFS= read -r command; do
+    mapfile -d '' -t input_argv < <(jq -j '.[] | ., "\u0000"' <<<"$command")
+    for index in "${!input_argv[@]}"; do
+      wamn_expand_input "${input_argv[$index]}"
+      input_argv[$index]="$input_value"
+    done
+    wamn_step "input $(jq -r '.id' <<<"$preparation")" "${input_argv[@]}" || return 1
+  done < <(jq -c --arg field "$field" '.[$field][]?' <<<"$preparation")
+}
+declare -a WAMN_DEFERRED_INPUTS=()
+while IFS= read -r preparation; do
+  input_id="$(jq -r '.id' <<<"$preparation")"
+  missing=false
+  mapfile -t output_names < <(jq -r '.outputs | keys[]' <<<"$preparation")
+  for name in "${output_names[@]}"; do
+    [[ -n "${!name:-}" ]] || missing=true
   done
+  if ((${#output_names[@]} == 0)); then missing=true; fi
+  if [[ "$input_id" == nats ]]; then
+    if [[ "$WAMN_COMMAND" == dry-run ]]; then
+      printf 'input nats: use WAMN_NATIVE_C_NATS_BIN or nats-server on PATH (prebuilt only)\n'
+    else
+      export WAMN_NATIVE_C_NATS_BIN="${WAMN_NATIVE_C_NATS_BIN:-$(command -v nats-server || :)}"
+      [[ -n "$WAMN_NATIVE_C_NATS_BIN" && -x "$WAMN_NATIVE_C_NATS_BIN" ]] ||
+        wamn_fail 65 'set WAMN_NATIVE_C_NATS_BIN to an existing prebuilt nats-server executable'
+    fi
+    continue
+  fi
+  [[ "$missing" == true ]] || continue
+  while IFS= read -r app; do wamn_application "$app"; done < <(jq -r '.applications[]?' <<<"$preparation")
+  wamn_input_commands "$preparation" before_applications || exit 1
+  if [[ "$(jq -r '.after_applications // false' <<<"$preparation")" == true ]]; then
+    WAMN_DEFERRED_INPUTS+=("$preparation")
+  else
+    wamn_input_commands "$preparation" || exit 1
+  fi
+  for name in "${output_names[@]}"; do
+    [[ -z "${!name:-}" ]] || continue
+    wamn_expand_input "$(jq -r --arg name "$name" '.outputs[$name]' <<<"$preparation")"
+    export "$name=$input_value"
+  done
+done < <(jq -c '.[]' <<<"$WAMN_INPUTS")
+while IFS=$'\t' read -r name source; do
+  [[ -n "${!name:-}" || -z "${!source:-}" ]] || export "$name=${!source}"
+done < <(jq -r '.[] | .aliases // {} | to_entries[] | [.key, .value] | @tsv' <<<"$WAMN_INPUTS")
+if ((${#applications[@]} > 0)); then
+  wamn_step 'input bins' "$WAMN_CARGO" build --locked --offline \
+    -p wamn-ctl --bin wamn -p wamn-test-infrastructure --bins || exit 1
 fi
 if ((${#applications[@]} > 0)); then
   wamn_step 'input applications' "$CARGO_TARGET_DIR/debug/wamn-test-postgres" \
     --database prekind_build --url-env DATABASE_URL -- \
     "$CARGO_TARGET_DIR/debug/wamn" build "${applications[@]}" || exit 1
 fi
+for preparation in "${WAMN_DEFERRED_INPUTS[@]}"; do
+  wamn_input_commands "$preparation" || exit 1
+done
 
 # Resolve every selected exact selector before any test execution.
 if [[ "$WAMN_COMMAND" != dry-run ]]; then

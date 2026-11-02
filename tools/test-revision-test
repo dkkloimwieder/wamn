@@ -29,7 +29,7 @@ export CARGO_TARGET_DIR="$fixture/target" TMPDIR="$fixture"
 cat > "$fixture/repo/deploy/gcp/environments/test.json" <<'JSON'
 {"packages": []}
 JSON
-for app in platform_fixture platform_fixture_overlay edge_device client_acme_receiving; do
+for app in platform_fixture platform_fixture_overlay edge_device client_acme_receiving wamn_receiving wamn_wms; do
   mkdir -p "$fixture/repo/apps/$app"
   : > "$fixture/repo/apps/$app/wamn.k"
 done
@@ -76,7 +76,8 @@ elif [[ $1 == metadata ]]; then
     [if $root == $workspace then
       ["wamn-control", "crates/control/lib"], ["wamn-control-provision", "crates/control/provision"],
       ["wamn-schema-generator", "crates/schema/generator"], ["wamn-runtime", "crates/platform/runtime"],
-      ["wamn-ctl", "services/ctl"] else empty end
+      ["wamn-ctl", "services/ctl"], ["wamn-receiving-tests", "apps/wamn_receiving/tests"],
+      ["wamn-wms-tests", "apps/wamn_wms/tests"] else empty end
     | {name: .[0], id: .[0], manifest_path: ($root + "/" + .[1] + "/Cargo.toml"),
        targets: [{name: (.[0] | gsub("-"; "_")), kind: ["lib"]},
          {name: "package_digest", kind: ["test"]},
@@ -119,6 +120,10 @@ FAKE
 cat > "$fixture/bin/docker" <<'FAKE'
 #!/usr/bin/env bash
 exit 91
+FAKE
+cat > "$fixture/bin/pnpm" <<'FAKE'
+#!/usr/bin/env bash
+printf 'pnpm %s %s\n' "$PWD" "$*" >> "$FAKE_STATE/calls"
 FAKE
 cat > "$fixture/bin/nats-server" <<'FAKE'
 #!/usr/bin/env bash
@@ -182,6 +187,12 @@ if run_case crates/platform/runtime/src/change.rs run; then exit 1; fi
 grep -q 'set WAMN_NATIVE_C_NATS_BIN' "$fixture/output"
 unset WAMN_NATIVE_C_NATS_BIN
 printf 'missing prebuilt NATS fails with the variable name: PASS\n'
+mv "$fixture/bin/nats-server" "$fixture/nats-server"
+if PATH="$fixture/bin:/usr/bin:/bin" run_case crates/platform/runtime/src/change.rs run; then exit 1; fi
+grep -q 'set WAMN_NATIVE_C_NATS_BIN' "$fixture/output"
+! grep -q '^cargo test ' "$fixture/calls"
+mv "$fixture/nats-server" "$fixture/bin/nats-server"
+printf 'absent NATS on PATH stops before every test: PASS\n'
 run_case deploy/platform/release/values.yaml run
 grep -q 'cargo test .*--features ops.*prekind' "$fixture/calls"
 export FAKE_CARGO_FAIL_TEST=true
@@ -202,10 +213,6 @@ printf 'test-changes %s %s\n' "$PWD" "$*" >> "$FAKE_STATE/calls"
 if [[ $1 == dry-run && ${FAKE_DOCUMENTATION:-false} == true ]]; then printf 'selected: nothing\n'
 elif [[ $1 == dry-run ]]; then printf 'suites: quality %s\n' "${FAKE_WEB:-}"
 else exit "${FAKE_TEST_STATUS:-0}"; fi
-FAKE
-cat > "$fixture/bin/pnpm" <<'FAKE'
-#!/usr/bin/env bash
-printf 'pnpm %s %s\n' "$PWD" "$*" >> "$FAKE_STATE/calls"
 FAKE
 chmod +x "$fixture/revision-test-changes" "$fixture/bin/pnpm"
 # Keep even failed revision fixtures inside this self-test's disposable directory.

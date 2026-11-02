@@ -5,8 +5,8 @@
 //! `web/sync-bench/bench/follow.mjs`, which opens the packaging screen in
 //! headless Chrome. The screen lists once. A create through the host's route
 //! then reaches it through the feed with no second list read, and a row that
-//! the test deletes in the database leaves it. Build the screen first with
-//! `pnpm --dir web/sync-bench run build`.
+//! the test deletes in the database leaves it. The selected runner prepares
+//! the screen and supplies its path.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -23,10 +23,10 @@ use wamn_test_infrastructure::scratch::ScratchRoot;
 use crate::business_fixture::{LOCATION_A_ID, PACKAGING_ID};
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, bin:node"]
+#[ignore = "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, env:WAMN_SYNC_BENCH_DIST, bin:node"]
 async fn the_packaging_screen_follows_a_write_and_a_delete() -> anyhow::Result<()> {
     wamn_test_postgres::require_ignored_prerequisites(
-        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, bin:node",
+        "requires: env:WAMN_APPLICATION_COMPONENTS, env:WAMN_FLOW_HTTP_COMPONENT, env:WAMN_NATIVE_C_NATS_BIN, env:WAMN_SYNC_BENCH_DIST, bin:node",
     );
     let _lock = wamn_test_postgres::lock();
     let system = wamn_test_postgres::database();
@@ -98,6 +98,10 @@ async fn the_packaging_screen_follows_a_write_and_a_delete() -> anyhow::Result<(
         let mut driver = tokio::process::Command::new("node")
             .arg("bench/follow.mjs")
             .current_dir(&bench)
+            .env(
+                "WAMN_SYNC_BENCH_DIST",
+                std::env::var_os("WAMN_SYNC_BENCH_DIST").context("WAMN_SYNC_BENCH_DIST")?,
+            )
             .env("WAMN_ENDPOINT", &application.endpoint)
             .env("WAMN_ROUTE_HOST", &application.route_host)
             .env("WAMN_BEARER", &application.bearer)

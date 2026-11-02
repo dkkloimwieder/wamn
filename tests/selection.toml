@@ -296,6 +296,50 @@ targets = [
 documentation = ['^docs/', '^\.beads/', '^[^/]+\.md$']
 root_features = ["wamn-control/ops", "wamn-ctl/ops"]
 
+# Operator inputs select external services, comparison artifacts, or parent-owned fixtures.
+[operator_inputs]
+  RESEND_API_KEY = "Credential for the selected mail service."
+  RESEND_FROM = "Authorized sender of the selected mail service."
+  WAMN_COMPONENT_ARTIFACT_BASE = "Registry address supplied by the parent publication test."
+  WAMN_DELIVERY_CLUSTER = "Operator-selected cluster declaration for delivery."
+  WAMN_DEV_ENV_NATS_TLS_CA = "Credential or trust file for the operator-selected external service."
+  WAMN_DEV_ENV_NATS_TLS_CERT = "Credential or trust file for the operator-selected external service."
+  WAMN_DEV_ENV_NATS_TLS_KEY = "Credential or trust file for the operator-selected external service."
+  WAMN_DIGEST_REPRO_A = "Artifacts from the first independently built checkout for comparison."
+  WAMN_DIGEST_REPRO_B = "Artifacts from the second independently built checkout for comparison."
+  WAMN_E1_NATS_URL = "Address of the operator-selected external service or artifact registry."
+  WAMN_EDGE_LIVE_CA_FILE = "Credential or trust file for the operator-selected external service."
+  WAMN_EDGE_LIVE_TOKEN_FILE = "Credential or trust file for the operator-selected external service."
+  WAMN_EDGE_LIVE_URL = "Address of the operator-selected external service or artifact registry."
+  WAMN_EVT_DUP_WINDOW_SECS = "Deduplication window of the operator-selected NATS stream."
+  WAMN_EVT_STREAM_REPLICAS = "Replica count of the operator-selected NATS stream."
+  WAMN_EXCLUSION_DIAGNOSTICS = "SQL diagnostics supplied by the owning exclusion_diagnostics example."
+  WAMN_HOST_LIVE_EVIDENCE_DIR = "Operator-selected directory for live host evidence."
+  WAMN_HOTROUTE_ARTIFACT_BASE = "Address of the operator-selected external service or artifact registry."
+  WAMN_HOTROUTE_COMPONENT_WASM = "Exact component bytes selected by the operator for an artifact comparison."
+  WAMN_HTTP_REUSE_ARTIFACT_BASE = "Address of the operator-selected external service or artifact registry."
+  WAMN_HTTP_REUSE_COMPONENT_WASM = "Exact component bytes selected by the operator for an artifact comparison."
+  WAMN_LOCAL_DEV_EDIT_ROOT = "Disposable checkout that the saved-edit test can modify."
+  WAMN_NATIVE_C_NATS_URL = "Address of the operator-selected external service or artifact registry."
+  WAMN_NATS_TLS_CA = "Credential or trust file for the operator-selected external service."
+  WAMN_NATS_TLS_CERT = "Credential or trust file for the operator-selected external service."
+  WAMN_NATS_TLS_KEY = "Credential or trust file for the operator-selected external service."
+  WAMN_NATS_URL = "Address of the operator-selected external service or artifact registry."
+  WAMN_READER_NATS_URL = "Address of the operator-selected external service or artifact registry."
+  WAMN_RECEIVING_DEV_NATS_URL = "Address of the operator-selected external service or artifact registry."
+  WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT = "Address of the operator-selected external service or artifact registry."
+  WAMN_REGISTRY_AUTH_FILE = "Credential or trust file for the operator-selected external service."
+  WAMN_RELEASE_CHART = "Chart with exact image digests for the selected deployed environment."
+  WAMN_RELEASE_MANIFEST_ARTIFACT_BASE = "Address of the operator-selected external service or artifact registry."
+  WAMN_RELEASE_MANIFEST_DIGEST = "Digest of the operator-selected published release."
+  WAMN_ROUTE_HOST = "Route host of the operator-selected development environment."
+  WAMN_STD_VIRTUALIZATION_ARTIFACT_BASE = "Address of the operator-selected external service or artifact registry."
+  WAMN_STD_VIRTUALIZATION_COMPONENT_WASM = "Exact component bytes selected by the operator for an artifact comparison."
+  WAMN_STD_VIRTUALIZATION_FLOW_HTTP_WASM = "Exact component bytes selected by the operator for an artifact comparison."
+  WAMN_STD_VIRTUALIZATION_RECEIVING_DIRECTORY = "Receiving directory of the operator-selected virtualization comparison."
+  WAMN_STD_VIRTUALIZATION_SENTINEL = "Sentinel value for the operator-selected virtualization comparison."
+  WAMN_TIMINGS_ROOT = "Operator-selected directory for browser evidence."
+
 [[rules]]
 # Bindgen reads shared WIT outside Cargo dependency edges.
 inputs = ['^crates/execution/workflow/router/wit/', '^crates/platform/runtime/wit/deps/']
@@ -335,6 +379,119 @@ prerequisites = ["edge"]
 [[preparation]]
 packages = ["wamn-control", "wamn-ctl"]
 features = ["ops"]
+
+[[preparation]]
+id = "nats"
+outputs = {WAMN_NATIVE_C_NATS_BIN = "nats-server"}
+aliases = {WAMN_HOST_LIVE_NATS_SERVER_BIN = "WAMN_NATIVE_C_NATS_BIN"}
+packages = ["wamn-runtime", "wamn-execution-host", "wamn-host", "wamn-control", "wamn-integration-tests", "wamn-receiving-tests", "wamn-wms-tests", "wamn-workflow"]
+
+[[preparation]]
+id = "application-components"
+outputs = {WAMN_APPLICATION_COMPONENTS = "{target}/virtualized/std-empty-environment"}
+applications = ["apps/wamn_receiving", "apps/client_acme_receiving", "apps/wamn_wms"]
+packages = ["wamn-integration-tests", "wamn-receiving-tests", "wamn-wms-tests"]
+
+[[preparation]]
+id = "edge"
+outputs = {WAMN_EDGE_DEVICE_COMPONENT = "{root}/apps/target/wamn/edge_device/components/device.wasm"}
+applications = ["apps/edge_device"]
+packages = ["wamn-control", "wamn-edge"]
+
+[[preparation]]
+id = "jsonata"
+outputs = {WAMN_JSONATA_COMPONENT = "{root}/apps/target/wamn/wamn_wms/components/jsonata.wasm"}
+applications = ["apps/wamn_wms"]
+packages = ["wamn-workflow"]
+
+[[preparation]]
+id = "fixture-components"
+outputs = {WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM = "{root}/apps/target/wamn/platform_fixture/components/fixture.wasm", WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM = "{root}/apps/target/wamn/platform_fixture_overlay/components/fixture_overlay.wasm", WAMN_GENERATED_WIDGET_UPDATE_SCHEMA = "{root}/apps/target/wamn/platform_fixture/routes/widget/update.json"}
+applications = ["apps/platform_fixture", "apps/platform_fixture_overlay"]
+packages = ["wamn-control", "wamn-client"]
+
+[[preparation]]
+id = "host"
+outputs = {WAMN_HOST_BINARY = "{target}/debug/wamn-host"}
+aliases = {WAMN_RECEIVING_DEV_HOST_BIN = "WAMN_HOST_BINARY"}
+commands = [["cargo", "build", "--locked", "--offline", "-p", "wamn-host"]]
+packages = ["wamn-control", "wamn-receiving-tests"]
+
+[[preparation]]
+id = "ctl"
+outputs = {WAMN_RECEIVING_DEV_BIN = "{target}/debug/wamn-ctl"}
+aliases = {WAMN_SESSION_EXCHANGE_CTL_BIN = "WAMN_RECEIVING_DEV_BIN"}
+commands = [["cargo", "build", "--locked", "--offline", "-p", "wamn-ctl", "--bin", "wamn-ctl", "--features", "ops"]]
+packages = ["wamn-execution-host", "wamn-receiving-tests"]
+
+[[preparation]]
+id = "identity"
+outputs = {WAMN_IDENTITY_BINARY = "{target}/debug/wamn-identity"}
+commands = [["cargo", "build", "--locked", "--offline", "-p", "wamn-identity", "--features", "test-util"]]
+packages = ["wamn-integration-tests", "wamn-receiving-tests"]
+
+[[preparation]]
+id = "http-route"
+outputs = {WAMN_FLOW_HTTP_COMPONENT = "{target}/apps/wasm32-wasip2/release/http_route.wasm"}
+aliases = {WAMN_DEV_ENV_FLOW_HTTP_COMPONENT = "WAMN_FLOW_HTTP_COMPONENT"}
+commands = [
+  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--release", "--manifest-path", "apps/Cargo.toml", "--target-dir", "{target}/apps", "--target", "wasm32-wasip2", "-p", "http-route"],
+]
+packages = ["wamn-control", "wamn-integration-tests", "wamn-receiving-tests", "wamn-wms-tests"]
+
+[[preparation]]
+id = "materializer"
+outputs = {WAMN_MATERIALIZER_COMPONENT = "{target}/apps/wasm32-wasip2/debug/materializer.wasm"}
+aliases = {WAMN_DEV_ENV_MATERIALIZER_COMPONENT = "WAMN_MATERIALIZER_COMPONENT"}
+commands = [
+  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/Cargo.toml", "--target-dir", "{target}/apps", "--target", "wasm32-wasip2", "-p", "materializer"],
+]
+packages = ["wamn-control", "wamn-receiving-tests"]
+
+[[preparation]]
+id = "blob-put"
+outputs = {WAMN_BLOB_PUT_COMPONENT = "{target}/apps/wasm32-wasip2/debug/blob_put.wasm"}
+commands = [
+  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/Cargo.toml", "--target-dir", "{target}/apps", "--target", "wasm32-wasip2", "-p", "blob-put"],
+]
+
+[[preparation]]
+id = "sqlx-command"
+outputs = {WAMN_SQLX_TRANSACTION_COMPONENT = "{target}/apps/wasm32-wasip2/debug/sqlx_command.wasm"}
+commands = [
+  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/Cargo.toml", "--target-dir", "{target}/apps", "--target", "wasm32-wasip2", "-p", "sqlx-command"],
+]
+packages = ["wamn-runtime"]
+
+[[preparation]]
+id = "workflow-guests"
+outputs = {}
+commands = [
+  ["mkdir", "-p", "{target}/wasm32-wasip2/debug"],
+  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/platform/no-std/Cargo.toml", "--target-dir", "{target}/no-std", "--target", "wasm32-wasip2", "-p", "transform"],
+  ["cp", "{target}/no-std/wasm32-wasip2/debug/transform.wasm", "{target}/wasm32-wasip2/debug/transform.wasm"],
+  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/platform/no-std/Cargo.toml", "--target-dir", "{target}/no-std", "--target", "wasm32-wasip2", "-p", "http-request"],
+  ["cp", "{target}/no-std/wasm32-wasip2/debug/http_request.wasm", "{target}/wasm32-wasip2/debug/http_request.wasm"],
+  ["env", "RUSTFLAGS={guest-rustflags}", "cargo", "build", "--locked", "--offline", "--manifest-path", "apps/platform/no-std/Cargo.toml", "--target-dir", "{target}/no-std", "--target", "wasm32-wasip2", "-p", "http-page"],
+  ["cp", "{target}/no-std/wasm32-wasip2/debug/http_page.wasm", "{target}/wasm32-wasip2/debug/http_page.wasm"],
+]
+
+[[preparation]]
+id = "platform-ui"
+outputs = {WAMN_PLATFORM_UI_DIST = "{root}/apps/platform_ui/dist"}
+commands = [["pnpm", "--filter", "@wamn/platform-ui", "build"]]
+packages = ["wamn-ctl"]
+
+[[preparation]]
+id = "sync-bench"
+outputs = {WAMN_SYNC_BENCH_DIST = "{target}/sync-bench/web"}
+applications = ["apps/wamn_wms"]
+after_applications = true
+before_applications = [["pnpm", "install", "--offline"]]
+commands = [
+  ["pnpm", "--dir", "web/sync-bench", "run", "build", "--outDir", "{target}/sync-bench/web"],
+]
+packages = ["wamn-wms-tests"]
 
 [[suites]]
 id = "quality"
@@ -441,7 +598,7 @@ package = "wamn-control"
 target = ["test:native_host"]
 tests = ["prekind_host::prekind_http_host_runs_and_rejects_respond_without_caller"]
 features = ["ops"]
-prerequisites = ["fixture", "edge", "nats", "route"]
+prerequisites = ["fixture", "edge", "nats", "host", "http-route", "materializer", "workflow-guests"]
 inputs = ["^(crates/control/|deploy/platform/|crates/platform/runtime/|crates/execution/host/|services/host/)"]
 execution = "libtest"
 mode = "local"
@@ -479,7 +636,14 @@ prerequisites = []
 inputs = ["^(web/|apps/[^/]+/web/|apps/platform_ui/|package.json$|pnpm-)"]
 execution = "commands"
 mode = "local"
-commands = [["web lint", "pnpm", "run", "check"], ["@wamn/web-runtime check", "pnpm", "--filter", "@wamn/web-runtime", "check"], ["@wamn/web-runtime test", "pnpm", "--filter", "@wamn/web-runtime", "test"], ["@wamn/platform-ui check", "pnpm", "--filter", "@wamn/platform-ui", "check"], ["@wamn/platform-ui test", "pnpm", "--filter", "@wamn/platform-ui", "test"], ["platform UI build", "pnpm", "--filter", "@wamn/platform-ui", "build"]]
+commands = [
+  ["web lint", "pnpm", "run", "check"],
+  ["@wamn/web-runtime check", "pnpm", "--filter", "@wamn/web-runtime", "check"],
+  ["@wamn/web-runtime test", "pnpm", "--filter", "@wamn/web-runtime", "test"],
+  ["@wamn/platform-ui check", "pnpm", "--filter", "@wamn/platform-ui", "check"],
+  ["@wamn/platform-ui test", "pnpm", "--filter", "@wamn/platform-ui", "test"],
+  ["platform UI build", "pnpm", "--filter", "@wamn/platform-ui", "build"],
+]
 resource_lock = ""
 timeout = 1800
 
@@ -527,7 +691,7 @@ package = "wamn-control"
 target = ["test:environment_apply_kind"]
 tests = ["environment_apply_kind"]
 features = ["ops"]
-prerequisites = ["docker", "kind", "helm", "kubectl"]
+prerequisites = ["docker", "kind", "helm", "kubectl", "blob-put"]
 inputs = []
 execution = "libtest"
 mode = "local"
@@ -587,6 +751,42 @@ execution = "libtest"
 mode = "local"
 select_packages = ["wamn-wms-tests"]
 covered_by_package = true
+ignored = true
+resource_lock = ""
+timeout = 1800
+
+[[suites]]
+id = "receiving-business"
+tier = "live-nats"
+workspace = "root"
+package = "wamn-receiving-tests"
+target = ["lib:wamn_receiving_tests"]
+tests = []
+filter = "route_authentication_live::local_business::"
+features = []
+prerequisites = ["application-components", "http-route", "nats"]
+inputs = []
+execution = "libtest"
+mode = "local"
+select_packages = ["wamn-receiving-tests"]
+ignored = true
+resource_lock = ""
+timeout = 1800
+
+[[suites]]
+id = "wms-local"
+tier = "live-nats"
+workspace = "root"
+package = "wamn-wms-tests"
+target = ["lib:wamn_wms_tests"]
+tests = []
+filter = "local_"
+features = []
+prerequisites = ["application-components", "http-route", "nats", "sync-bench"]
+inputs = []
+execution = "libtest"
+mode = "local"
+select_packages = ["wamn-wms-tests"]
 ignored = true
 resource_lock = ""
 timeout = 1800

@@ -16,9 +16,8 @@
  */
 import { request } from "node:http";
 import { createInterface } from "node:readline";
-import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
-import { preview } from "vite";
+import { preparedPreview } from "./preview.ts";
 import { uuidv7 } from "../../runtime/src/sync/ids.ts";
 
 const endpoint = new URL(process.env.WAMN_ENDPOINT);
@@ -59,10 +58,7 @@ function host(method, path, headers, body) {
 }
 
 const reads = { list: 0, changes: 0, notModified: 0 };
-const server = await preview({
-  root: fileURLToPath(new URL("..", import.meta.url)),
-  preview: { port: 0, host: "127.0.0.1" },
-});
+const server = await preparedPreview();
 const browser = await chromium.launch({ channel: "chrome", headless: true });
 let result;
 try {
