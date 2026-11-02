@@ -119,18 +119,26 @@ pub(super) async fn ensure_key(
     ring::rand::SystemRandom::new()
         .fill(&mut key)
         .map_err(|_| anyhow::anyhow!("OAuth key entropy unavailable"))?;
-    let object = json!({"apiVersion":"v1", "kind":"Secret", "metadata":{"name":SECRET,"namespace":"hosts"},
-        "data":{"key":base64::engine::general_purpose::STANDARD.encode(key)}});
     // Create refuses a concurrent winner rather than replacing the target key.
-    crate::kubectl::kubectl(
-        &target.kubeconfig,
-        &target.context,
-        "hosts",
-        &["create", "-f", "-"],
-        Some(&serde_json::to_vec(&object)?),
-    )
-    .await?;
+    for object in key_objects(&key) {
+        crate::kubectl::kubectl(
+            &target.kubeconfig,
+            &target.context,
+            "hosts",
+            &["create", "-f", "-"],
+            Some(&serde_json::to_vec(&object)?),
+        )
+        .await?;
+    }
+
     Ok(true)
+}
+
+pub(super) fn key_objects(key: &[u8; 32]) -> Vec<Value> {
+    vec![
+        json!({"apiVersion":"v1", "kind":"Secret", "metadata":{"name":SECRET,"namespace":"hosts"},
+        "data":{"key":base64::engine::general_purpose::STANDARD.encode(key)}}),
+    ]
 }
 
 #[cfg(test)]

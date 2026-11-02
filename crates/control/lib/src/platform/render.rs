@@ -20,6 +20,8 @@ pub struct Package {
 #[derive(Debug)]
 pub struct Fixtures {
     pub identity_tls: Value,
+    pub oauth_key: [u8; 32],
+    pub oauth_exists: bool,
     pub registry: wamn_package_artifact::PackageRegistry,
     pub packages: BTreeMap<String, Vec<Package>>,
     pub identity_database: Value,
@@ -405,6 +407,13 @@ pub fn install(
             )?,
         );
     }
+    if !environments.is_empty() && !fixtures.oauth_exists {
+        append(
+            &mut objects,
+            "4.17",
+            super::oauth::key_objects(&fixtures.oauth_key),
+        );
+    }
     Ok(objects)
 }
 
@@ -498,6 +507,8 @@ mod tests {
         let mut fixtures = Fixtures {
             identity_tls: json!({"data": {"ca.crt": "Zml4dHVyZS1jYQ=="}}),
             broker_authorization_exists: false,
+            oauth_key:[0x41;32],
+            oauth_exists:false,
             registry: wamn_package_artifact::PackageRegistry {artifact_base:"registry.invalid/wamn/packages".into(), registry_auth_file:work.path().join("registry.json"), insecure_registry:true, oci_ca_paths:Vec::new()},
             packages:BTreeMap::new(),
             identity_database: json!({"data":{"url":"cG9zdGdyZXNxbDovL2lkZW50aXR5OmZpeHR1cmVAZGF0YWJhc2Uvd2Ftbl9zeXN0ZW0="}}),
