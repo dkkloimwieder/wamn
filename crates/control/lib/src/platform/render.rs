@@ -20,6 +20,11 @@ pub struct Package {
 #[derive(Debug)]
 pub struct Fixtures {
     pub identity_tls: Value,
+    pub drain_bound_seconds: u32,
+    pub actor: String,
+    pub edge_certificate: String,
+    pub proxy_uid: String,
+    pub https_results: Vec<Value>,
     pub web_hosts: BTreeSet<String>,
     pub control_operator: Value,
     pub platform_ui_files: BTreeMap<String, Vec<u8>>,
@@ -50,7 +55,7 @@ pub struct Fixtures {
 use super::document::ClusterDocument;
 use crate::environment::document::EnvironmentDocument;
 
-/// Render the install batches in their apply order without executing them.
+/// Render a fresh kind install in apply order without executing it.
 ///
 /// # Errors
 /// Returns an error if an install manifest cannot be read or decoded.
@@ -492,8 +497,8 @@ pub fn install(
                     &environment.project,
                     &environment.env,
                 ),
-                drain_bound_seconds: 70,
-                actor: "platform render".into(),
+                drain_bound_seconds: fixtures.drain_bound_seconds,
+                actor: fixtures.actor.clone(),
                 host_group: serde_yaml::Mapping::new(),
             },
             &group,
@@ -681,6 +686,79 @@ pub fn install(
         "4.20",
         super::environments::template_objects(&entry[0])?,
     );
+    let mut routes = vec![(
+        document.route_hosts.control.clone(),
+        format!("c-{}", document.org),
+        "GET".to_owned(),
+        "/api/wamn_control/control/mine".to_owned(),
+    )];
+    for environment in environments {
+        let manifest = fixtures
+            .releases
+            .get(&environment_key(environment))
+            .context("release manifest fixture")?;
+        let (method, path) = super::check::api_route(manifest)?;
+        routes.push((
+            environment.route_host.clone(),
+            crate::release_chart::release_name(
+                &environment.org,
+                &environment.project,
+                &environment.env,
+            )?,
+            method,
+            path,
+        ));
+    }
+    for (host, _, method, path) in &routes {
+        for (method, path, _) in super::check::requests(
+            method,
+            path,
+            !document.buckets.web.is_empty() && fixtures.web_hosts.contains(host),
+        ) {
+            append(
+                &mut objects,
+                "4.21",
+                job_objects(
+                    &super::check::kind_request(host, method, path),
+                    "edge",
+                    &json!({}),
+                    &[],
+                    fixtures,
+                )?,
+            );
+        }
+    }
+    let releases = routes
+        .iter()
+        .map(|(_, name, _, _)| {
+            objects
+                .iter()
+                .rev()
+                .find(|(_, object)| {
+                    object["kind"] == "ConfigMap" && object["metadata"]["name"] == *name
+                })
+                .map(|(_, object)| object["data"].clone())
+                .context("rendered release ConfigMap")
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let proxy = objects
+        .iter()
+        .find(|(_, object)| {
+            object["kind"] == "Deployment" && object["metadata"]["name"] == "wamn-edge"
+        })
+        .context("rendered proxy Deployment")?;
+    let digest = super::check::completion_digest(
+        document,
+        &releases,
+        &fixtures.edge_certificate,
+        &proxy.1["spec"],
+        &json!(fixtures.proxy_uid),
+    );
+    append(
+        &mut objects,
+        "4.21",
+        super::check::completion_objects(document, &digest, &fixtures.https_results)?,
+    );
     Ok(objects)
 }
 
@@ -746,6 +824,8 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    const CERTIFICATE: &str = "-----BEGIN CERTIFICATE-----\nMIIBgTCCASagAwIBAgIBATAKBggqhkjOPQQDAjAeMRwwGgYDVQQDDBNmaXh0dXJl\nLmV4YW1wbGUuY29tMCAXDTI2MTEwMjEyMzgxNloYDzIxMjYxMDA5MTIzODE2WjAe\nMRwwGgYDVQQDDBNmaXh0dXJlLmV4YW1wbGUuY29tMFkwEwYHKoZIzj0CAQYIKoZI\nzj0DAQcDQgAEwothT2JuPjLNlLo2LgOAxv8TwQMunnkNT6sRbiysY2x4+uwQZwAd\nW6EI0ybWuVz4mh9IJzvE7uG4K+JWyfnD1KNTMFEwHQYDVR0OBBYEFAdEfAoyn/sb\nu8NfR2LI9O3aX5RAMB8GA1UdIwQYMBaAFAdEfAoyn/sbu8NfR2LI9O3aX5RAMA8G\nA1UdEwEB/wQFMAMBAf8wCgYIKoZIzj0EAwIDSQAwRgIhAP376NiYdu2wfzDjSFTL\nrUBTkwITOUHqIMv4XjQALrwmAiEAzeBS6qodhVMRPVjAwGf8SNpylD5gyy7jWy36\nE9Trpas=\n-----END CERTIFICATE-----\n";
+
     fn fixture_release() -> anyhow::Result<wamn_catalog::ServingManifest> {
         let digest = format!("sha256:{}", "1".repeat(64));
         let operation = "edge-device:sample/read@2.1.0";
@@ -780,6 +860,7 @@ mod tests {
             "buckets":{"web":"fixture-web", "otel":"", "state":""},
             "route_hosts":{"control":"control.example.com"}, "resend_from":"sender@example.com"
         }))?)?;
+        let work = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
         // platform_apply_kind writes the WMS document first as a-unqualified-wms.k.
         let documents = ["wms", "receiving"]
             .into_iter()
@@ -789,10 +870,16 @@ mod tests {
                 )?;
                 environment.org.clone_from(&cluster.org);
                 environment.route_host = format!("{project}.example.com");
-                Ok(environment)
+                let name = if project == "wms" {
+                    "a-unqualified-wms.k"
+                } else {
+                    "test--receiving--dev.k"
+                };
+                let path = work.path().join(name);
+                std::fs::write(&path, environment.to_kcl())?;
+                EnvironmentDocument::compile(&path)
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
-        let work = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
         let image = format!(
             "registry.invalid/wamn/fixture:render@sha256:{}",
             "1".repeat(64)
@@ -821,6 +908,11 @@ mod tests {
         let mut fixtures = Fixtures {
             identity_tls: json!({"data": {"ca.crt": "Zml4dHVyZS1jYQ=="}}),
             broker_authorization_exists: false,
+            drain_bound_seconds:70,
+            actor:"platform render".into(),
+            edge_certificate:base64::Engine::encode(&base64::engine::general_purpose::STANDARD,CERTIFICATE),
+            proxy_uid:"00000000-0000-0000-0000-000000000002".into(),
+            https_results:Vec::new(),
             web_hosts:["control.example.com".into()].into(),
             control_operator:json!({"apiVersion":"v1","kind":"Secret","metadata":{"name":"operator-test","namespace":"identity","resourceVersion":"1"},"type":"kubernetes.io/tls","data":{"ca.crt":"Zml4dHVyZS1jYQ==","tls.crt":"Zml4dHVyZS1jcnQ=","tls.key":"Zml4dHVyZS1rZXk="}}),
             platform_ui_files:BTreeMap::new(),
@@ -997,11 +1089,89 @@ mod tests {
                 ),
             );
         }
+        let mut targets = vec![(
+            cluster.route_hosts.control.clone(),
+            "GET".to_owned(),
+            "/api/wamn_control/control/mine".to_owned(),
+        )];
+        for environment in &documents {
+            let (method, path) = super::super::check::api_route(
+                fixtures
+                    .releases
+                    .get(&environment_key(environment))
+                    .context("release fixture")?,
+            )?;
+            targets.push((environment.route_host.clone(), method, path));
+            let key = environment_key(environment);
+            let account = wamn_credential_store::kubernetes::service_account_name(
+                &environment.org,
+                &environment.project,
+                &environment.env,
+            );
+            let secret_name = wamn_credential_store::kubernetes::secret_name(
+                &environment.org,
+                &environment.project,
+                &environment.env,
+            );
+            let mut applied = crate::environment::ensure::credential_access(&account, &secret_name)
+                .into_iter()
+                .map(|(_, object)| object)
+                .collect::<Vec<_>>();
+            applied.push(wamn_control_provision::render_project_env_database(
+                &environment.triple(),
+                "render01",
+                "wamn-pg",
+                "platform",
+                None,
+            ));
+            applied.push(wamn_control_provision::render_project_env_secret_manifest(
+                &environment.triple(),
+                "hosts",
+            ));
+            let url = fixtures
+                .environment_urls
+                .get(&key)
+                .context("environment URL fixture")?;
+            for credential in wamn_control_provision::host_credentials::HOST_CREDENTIALS {
+                let body = if credential.family == wamn_control_provision::WorkloadRoleFamily::App {
+                    wamn_control_provision::WorkloadSecretBody::EnvKeyUrl {
+                        env_key: "fixture",
+                        tenant_key: "fixture",
+                        url,
+                    }
+                } else {
+                    wamn_control_provision::WorkloadSecretBody::Url(url)
+                };
+                applied.push(wamn_control_provision::render_workload_secret_manifest(
+                    credential.family,
+                    &environment.triple(),
+                    "hosts",
+                    body,
+                ));
+            }
+            fixtures
+                .applied
+                .insert(format!("platform-first-apply-{key}"), applied);
+        }
+        for (host, method, path) in targets {
+            for (method, path, status) in
+                super::super::check::requests(&method, &path, fixtures.web_hosts.contains(&host))
+            {
+                let request = super::super::check::kind_request(&host, method, path);
+                fixtures.outputs.insert(
+                    request.name,
+                    json!({"http_code":status,"certs":CERTIFICATE}).to_string(),
+                );
+                fixtures.https_results.push(
+                    json!({"host":host,"method":method,"path":path,"status":status,"serial":"01"}),
+                );
+            }
+        }
         let objects = install(&cluster, &documents, &repository, &fixtures)?;
-        // This list grows as each install file gains its shared batch builders.
+        // Owner and local-build steps apply no Kubernetes objects.
         for step in [
             "4.3", "4.4", "4.4.1", "4.5", "4.7", "4.8", "4.9", "4.11", "4.12", "4.13", "4.14",
-            "4.16.1",
+            "4.16.1", "4.17", "4.18", "4.19", "4.19.1", "4.20", "4.21",
         ] {
             assert!(
                 objects.iter().any(|(number, _)| *number == step),

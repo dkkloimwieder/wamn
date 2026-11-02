@@ -82,11 +82,13 @@ pub(super) async fn apply(
     )
     .await?
     .context("missing edge/wamn-edge Deployment")?;
-    let digest = job::input_digest(&json!({
-        "document": document, "releases": releases, "certificate": certificate,
-        "proxy": proxy["spec"], "proxy_uid": proxy["metadata"]["uid"],
-        "check": 1,
-    }));
+    let digest = completion_digest(
+        document,
+        &releases,
+        &certificate,
+        &proxy["spec"],
+        &proxy["metadata"]["uid"],
+    );
     let completed = kubectl::get(
         &target.kubeconfig,
         &target.context,
@@ -136,10 +138,8 @@ pub(super) async fn apply(
         .build()?;
     let mut results = Vec::new();
     for ((host, _), (method, api)) in routes.iter().zip(apis) {
-        let mut checks = vec![(method.as_str(), api.as_str(), 401)];
-        if web.contains(host) {
-            checks.extend([("GET", "/", 200), ("GET", "/config.json", 200)]);
-        } else if !document.buckets.web.is_empty() {
+        let checks = requests(method.as_str(), api.as_str(), web.contains(host));
+        if !web.contains(host) && !document.buckets.web.is_empty() {
             progress(&format!(
                 "4.21 Web / and /config.json on {host}: skipped: no web client"
             ))?;
@@ -185,16 +185,16 @@ pub(super) async fn apply(
             results.push(json!({"host": host, "method": method, "path": path, "status": status, "serial": serial}));
         }
     }
-    super::install::apply_object(target, &json!({
-        "apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": MARKER, "namespace": "platform"},
-        "data": {"digest": digest, "results": serde_json::to_string(&results)?,
-            "load_balancer": if document.provider == Provider::Kind {"skipped: kind"} else {"checked"},
-            "web": if document.buckets.web.is_empty() {"skipped: no bucket"} else {"checked"}},
-    })).await?;
+    for object in completion_objects(document, &digest, &results)? {
+        super::install::apply_object(target, &object).await?;
+    }
+
     Ok(true)
 }
 
-fn api_route(manifest: &wamn_catalog::ServingManifest) -> anyhow::Result<(String, String)> {
+pub(super) fn api_route(
+    manifest: &wamn_catalog::ServingManifest,
+) -> anyhow::Result<(String, String)> {
     for attachment in manifest.attachments.values() {
         let Some(path) = attachment.definition["route"]["path"].as_str() else {
             continue;
@@ -405,6 +405,43 @@ pub(super) fn kind_request(host: &str, method: &str, path: &str) -> JobRequest {
         run_as_user: Some(0),
         ..JobRequest::default()
     }
+}
+
+pub(super) fn requests<'a>(
+    method: &'a str,
+    api: &'a str,
+    web: bool,
+) -> Vec<(&'a str, &'a str, u16)> {
+    let mut requests = vec![(method, api, 401)];
+    if web {
+        requests.extend([("GET", "/", 200), ("GET", "/config.json", 200)]);
+    }
+    requests
+}
+
+pub(super) fn completion_digest(
+    document: &ClusterDocument,
+    releases: &[Value],
+    certificate: &str,
+    proxy_spec: &Value,
+    proxy_uid: &Value,
+) -> String {
+    job::input_digest(
+        &json!({"document":document,"releases":releases,"certificate":certificate,"proxy":proxy_spec,"proxy_uid":proxy_uid,"check":1}),
+    )
+}
+
+pub(super) fn completion_objects(
+    document: &ClusterDocument,
+    digest: &str,
+    results: &[Value],
+) -> anyhow::Result<Vec<Value>> {
+    Ok(vec![json!({
+        "apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": MARKER, "namespace": "platform"},
+        "data": {"digest": digest, "results": serde_json::to_string(&results)?,
+            "load_balancer": if document.provider == Provider::Kind {"skipped: kind"} else {"checked"},
+            "web": if document.buckets.web.is_empty() {"skipped: no bucket"} else {"checked"}},
+    })])
 }
 
 #[cfg(test)]
