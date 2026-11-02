@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
 use tokio_postgres::{Client, NoTls};
+use wamn_catalog::manifest::PackageManifest;
 use wamn_control::apply_package::{ApplyPackageRequest, PackageRoot, apply_package};
 use wamn_control::environment::{
     Platform, document::EnvironmentDocument, ensure::ensure_project_database,
@@ -20,7 +21,6 @@ use wamn_control::provision_system::{ProvisionSystemRequest, provision_system};
 use wamn_control::reconcile_run_plane;
 use wamn_control_provision::sql;
 use wamn_platform_identity::auth_changes::AuthChanges;
-use wamn_schema_generator::PackageManifest;
 use wamn_test_infrastructure::{locked_database, scratch::ScratchRoot};
 
 #[path = "support/install_invitation.rs"]

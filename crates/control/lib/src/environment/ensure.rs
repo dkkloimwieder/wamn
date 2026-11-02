@@ -213,7 +213,7 @@ pub async fn ensure(
 pub async fn ensure_project_database(
     platform: &Platform,
     document: &EnvironmentDocument,
-    packages: &[wamn_schema_generator::PackageManifest],
+    packages: &[wamn_catalog::manifest::PackageManifest],
     admin: &tokio_postgres::Client,
     admin_url: &str,
 ) -> anyhow::Result<String> {
