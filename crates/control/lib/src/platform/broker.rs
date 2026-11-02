@@ -118,8 +118,10 @@ fn platform_users() -> Vec<Account> {
         },
     };
     let control = ["runtime.host.>", "runtime.operator.>", "_INBOX.>"];
-    // Identity owns both memory buckets (docs/plan/alignment.md R7).
+    // Identity owns both memory buckets (docs/plan/alignment.md R7). Making a
+    // bucket reads the account limits first ($JS.API.INFO).
     let identity = [
+        "$JS.API.INFO",
         "$KV.wamn-auth.>",
         "$KV.wamn-connection.>",
         "$JS.API.STREAM.INFO.KV_wamn-auth",
@@ -678,5 +680,80 @@ mod tests {
                 .all(|user| user.password.is_none())
         );
         assert_eq!(authorization.users.len(), platform_users().len());
+    }
+
+    /// Kind run 7: the invite Job, as wamn-ctl, found no wamn-auth bucket.
+    /// Identity makes the buckets as its own user, and wamn-ctl then deletes
+    /// a memory key, on a real server with the rendered platform users.
+    #[tokio::test]
+    #[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
+    async fn identity_makes_the_buckets_that_wamn_ctl_writes() {
+        let binary = std::env::var_os("WAMN_NATIVE_C_NATS_BIN")
+            .expect("set WAMN_NATIVE_C_NATS_BIN to a nats-server executable");
+        let directory = std::env::temp_dir().join(format!("wamn-broker-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let mut authorization = Authorization {
+            users: platform_users(),
+        };
+        for user in &mut authorization.users {
+            user.password = Some("p".into());
+        }
+        let configuration = directory.join("nats.conf");
+        std::fs::write(
+            &configuration,
+            format!(
+                "listen: \"127.0.0.1:{port}\"\njetstream {{ store_dir: {:?} }}\nauthorization: {}\n",
+                directory.join("store"),
+                json!(authorization)
+            ),
+        )
+        .unwrap();
+        let mut server = std::process::Command::new(binary)
+            .arg("-c")
+            .arg(&configuration)
+            .spawn()
+            .unwrap();
+        let url = format!("nats://127.0.0.1:{port}");
+        let connect = |user: &'static str| {
+            let url = url.clone();
+            async move {
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                loop {
+                    match async_nats::ConnectOptions::with_user_and_password(
+                        user.into(),
+                        "p".into(),
+                    )
+                    .connect(url.clone())
+                    .await
+                    {
+                        Ok(client) => break client,
+                        Err(error) => assert!(std::time::Instant::now() < deadline, "{error}"),
+                    }
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            }
+        };
+        let identity = connect("wamn-identity").await;
+        let made = wamn_platform_identity::kv_memory::create_buckets(&identity).await;
+        let ctl = connect("wamn-ctl").await;
+        let opened = wamn_platform_identity::auth_changes::auth_bucket(&ctl).await;
+        let deleted = match &opened {
+            Ok(bucket) => bucket
+                .delete("identity.someone")
+                .await
+                .map_err(anyhow::Error::from),
+            Err(_) => Ok(()),
+        };
+        let _ = server.kill();
+        let _ = server.wait();
+        let _ = std::fs::remove_dir_all(&directory);
+        made.expect("identity makes the memory buckets");
+        opened.expect("wamn-ctl opens wamn-auth");
+        deleted.expect("wamn-ctl deletes a memory key");
     }
 }
