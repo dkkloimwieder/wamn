@@ -369,11 +369,7 @@ fn ignored_tests_name_prerequisites_and_never_act_as_child_helpers() {
             "duplicate exclusion {row}"
         );
     }
-    assert_eq!(
-        exclusions.len(),
-        3,
-        "only the three protected tests are excluded"
-    );
+    assert_eq!(exclusions.len(), 0, "no test is excluded");
     let mut errors = Vec::new();
     for (workspace, manifest) in [
         ("root", "Cargo.toml"),

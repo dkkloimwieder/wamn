@@ -584,8 +584,9 @@ mod tests {
     /// R5, R7, A7). Each user gets a password here in place of its
     /// certificate, and the permissions are the rendered ones.
     #[tokio::test]
-    #[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
+    #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
     async fn the_control_and_environment_users_open_their_memory_watches() {
+        wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
         let binary = std::env::var_os("WAMN_NATIVE_C_NATS_BIN")
             .expect("set WAMN_NATIVE_C_NATS_BIN to a nats-server executable");
         let directory = std::env::temp_dir().join(format!("wamn-broker-{}", uuid::Uuid::new_v4()));
@@ -703,8 +704,9 @@ mod tests {
     /// Identity makes the buckets as its own user, and wamn-ctl then deletes
     /// a memory key, on a real server with the rendered platform users.
     #[tokio::test]
-    #[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
+    #[ignore = "requires: env:WAMN_NATIVE_C_NATS_BIN"]
     async fn identity_makes_the_buckets_that_wamn_ctl_writes() {
+        wamn_test_postgres::require_ignored_prerequisites("requires: env:WAMN_NATIVE_C_NATS_BIN");
         let binary = std::env::var_os("WAMN_NATIVE_C_NATS_BIN")
             .expect("set WAMN_NATIVE_C_NATS_BIN to a nats-server executable");
         let directory = std::env::temp_dir().join(format!("wamn-broker-{}", uuid::Uuid::new_v4()));

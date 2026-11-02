@@ -367,9 +367,9 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires: helm"]
+    #[ignore = "requires: bin:helm"]
     fn proxy_chart_resolves_declared_routes_at_runtime() {
-        wamn_test_postgres::require_prerequisites(&["helm"]);
+        wamn_test_postgres::require_ignored_prerequisites("requires: bin:helm");
         let document = document();
         let environment = serde_json::from_value(json!({
             "org": "acme", "project": "wms", "env": "partial", "target": "test",
