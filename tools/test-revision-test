@@ -6,13 +6,16 @@ fixture=$(mktemp -d "${TMPDIR:-/tmp}/wamn-test-revision-test.XXXXXXXX")
 trap 'status=$?; if ((status != 0)); then cat "$fixture/output" >&2 2>/dev/null || :; fi; rm -rf -- "$fixture"' EXIT
 mkdir -p "$fixture/bin" "$fixture/repo/tools" "$fixture/target/debug" \
   "$fixture/repo/deploy/gcp/environments" "$fixture/repo/apps"
-cp "$tools/test-changes" "$tools/test-changes-suites.json" "$tools/require-test-result" \
+cp "$tools/test-changes" "$tools/require-test-result" \
   "$tools/test-revision" "$fixture/repo/tools/"
+mkdir -p "$fixture/repo/tests"
+cp "$tools/../tests/selection.toml" "$fixture/repo/tests/"
 # Substitute storage roots only, so the test never uses the real revision paths.
 sed -e "s|/var/tmp/wamn-test-revision/worktree|$fixture/revision-worktree|g" \
   -e 's|$HOME/.cache/wamn-target/revision|$FAKE_STATE/revision-target|g' \
   "$tools/test-revision" > "$fixture/repo/tools/test-revision"
 cp "$tools/../Dockerfile" "$fixture/repo/"
+unset WAMN_NATIVE_C_NATS_BIN
 export FAKE_STATE="$fixture" PATH="$fixture/bin:$PATH" CARGO="$fixture/bin/cargo"
 export CARGO_TARGET_DIR="$fixture/target" TMPDIR="$fixture"
 cat > "$fixture/repo/deploy/gcp/environments/test.json" <<'JSON'
@@ -66,10 +69,20 @@ elif [[ $1 == metadata ]]; then
       ["wamn-control", "crates/control/lib"], ["wamn-control-provision", "crates/control/provision"],
       ["wamn-schema-generator", "crates/schema/generator"], ["wamn-runtime", "crates/platform/runtime"],
       ["wamn-ctl", "services/ctl"] else empty end
-    | {name: .[0], id: .[0], manifest_path: ($root + "/" + .[1] + "/Cargo.toml"), targets: []}]
+    | {name: .[0], id: .[0], manifest_path: ($root + "/" + .[1] + "/Cargo.toml"),
+       targets: [{name: (.[0] | gsub("-"; "_")), kind: ["lib"]},
+         {name: "package_digest", kind: ["test"]},
+         {name: "environment_apply_kind", kind: ["test"]},
+         {name: "platform_apply_kind", kind: ["test"]}]}]
     | {workspace_root: $root, packages: ., workspace_members: [.[].id],
        resolve: {nodes: [.[] | {id, deps: []}]}}'
 elif [[ $1 == test ]]; then
+  if [[ " $* " == *' --list '* ]]; then
+    for argument in "$@"; do
+      case "$argument" in prekind_host::* | plugins::*) printf '%s: test\n' "$argument" ;; esac
+    done
+    exit 0
+  fi
   if [[ $* == *prekind_host::* ]]; then
     [[ $WAMN_HOST_BINARY == "$CARGO_TARGET_DIR/debug/wamn-host" ]]
     [[ $WAMN_FLOW_HTTP_COMPONENT == "$CARGO_TARGET_DIR/apps/wasm32-wasip2/release/http_route.wasm" ]]
@@ -80,6 +93,9 @@ elif [[ $1 == test ]]; then
   if [[ $* == *live_derived* ]]; then
     [[ ${WAMN_EVT_NATS_URL:-} == nats://127.0.0.1:44222 ]]
   fi
+  for argument in "$@"; do
+    case "$argument" in prekind_host::* | plugins::*) printf 'test %s ... ok\n' "$argument" ;; esac
+  done
   printf 'test result: ok. 1 passed; 0 failed; 0 ignored;\n'
 elif [[ ${FAKE_FAIL_INPUT:-false} == true ]]; then exit 31
 fi
@@ -119,19 +135,19 @@ grep -q 'cannot read untracked paths with git ls-files' "$fixture/output"
 unset FAKE_LS_FILES_FAIL
 printf 'failed Git reads stop selection before Cargo: PASS\n'
 run_case docs/change.md
-grep -q '^suites: quality' "$fixture/output"
-grep -q '^repo-lint:' "$fixture/output"
+grep -q '^selected: nothing$' "$fixture/output"
+! grep -q '^repo-lint:' "$fixture/output"
 ! grep -q '^root:' "$fixture/output"
 run_case crates/schema/generator/src/change.rs
 grep -q '^package-digest:.*--test package_digest' "$fixture/output"
 run_case apps/platform_fixture/wamn.k
-grep -q '^provision:.*-p wamn-control-provision' "$fixture/output"
+grep -q '^suites:.*provision' "$fixture/output"
 run_case deploy/sql/catalog.sql
 grep -q '^suites:.*ctl-ops' "$fixture/output"
-grep -q '^root .*wamn-ctl/ops' "$fixture/output"
+grep -q '^root (full: "deploy/sql/catalog.sql").*--features wamn-control/ops' "$fixture/output"
 run_case deploy/platform/release/values.yaml
-grep -q '^prekind:.*--test environment_apply_kind --test platform_apply_kind prekind$' "$fixture/output"
-grep -q '^native host:.*--ignored --exact --test-threads=1$' "$fixture/output"
+grep -q '^prekind:.*--test environment_apply_kind --test platform_apply_kind --features ops prekind$' "$fixture/output"
+grep -q '^native host:.*--exact --test-threads=1 --ignored$' "$fixture/output"
 ! grep -q -- '--skip' "$fixture/output"
 grep -q 'target/no-std' "$fixture/output"
 grep -q 'target/apps' "$fixture/output"
@@ -139,8 +155,12 @@ printf 'path rules, prekind filters, isolated guest paths: PASS\n'
 
 export FAKE_FAIL_INPUT=true
 if run_case crates/control/lib/src/change.rs run; then exit 1; fi
-! grep -q '^cargo test ' "$fixture/calls"
+! grep '^cargo test ' "$fixture/calls" | grep -qv -- '--list'
 unset FAKE_FAIL_INPUT
+mkdir -p "$fixture/target/no-std/wasm32-wasip2/debug"
+for guest in transform http_request http_page; do
+  : > "$fixture/target/no-std/wasm32-wasip2/debug/$guest.wasm"
+done
 run_case crates/platform/runtime/src/change.rs run
 kill -0 "$(cat "$fixture/nats-pid")" 2>/dev/null && exit 1
 ! compgen -G "$fixture/wamn-test-changes-nats.*" > /dev/null
@@ -150,12 +170,8 @@ if run_case crates/platform/runtime/src/change.rs run; then exit 1; fi
 grep -q 'set WAMN_NATIVE_C_NATS_BIN' "$fixture/output"
 unset WAMN_NATIVE_C_NATS_BIN
 printf 'missing prebuilt NATS fails with the variable name: PASS\n'
-mkdir -p "$fixture/target/no-std/wasm32-wasip2/debug"
-for guest in transform http_request http_page; do
-  : > "$fixture/target/no-std/wasm32-wasip2/debug/$guest.wasm"
-done
 run_case deploy/platform/release/values.yaml run
-grep -q 'cargo test .*--features .*wamn-control/ops.*wamn-ctl/ops' "$fixture/calls"
+grep -q 'cargo test .*--features ops.*prekind' "$fixture/calls"
 export FAKE_CARGO_FAIL_TEST=true
 if run_case crates/platform/runtime/src/change.rs run; then exit 1; fi
 kill -0 "$(cat "$fixture/nats-pid")" 2>/dev/null && exit 1
@@ -171,7 +187,8 @@ set -euo pipefail
 mkdir -p "$CARGO_TARGET_DIR"
 : > "$CARGO_TARGET_DIR/kept"
 printf 'test-changes %s %s\n' "$PWD" "$*" >> "$FAKE_STATE/calls"
-if [[ $1 == dry-run ]]; then printf 'suites: quality %s\n' "${FAKE_WEB:-}"
+if [[ $1 == dry-run && ${FAKE_DOCUMENTATION:-false} == true ]]; then printf 'selected: nothing\n'
+elif [[ $1 == dry-run ]]; then printf 'suites: quality %s\n' "${FAKE_WEB:-}"
 else exit "${FAKE_TEST_STATUS:-0}"; fi
 FAKE
 cat > "$fixture/bin/pnpm" <<'FAKE'
@@ -187,6 +204,14 @@ if [[ $* == '-d /var/tmp/wamn-test-revision.'* ]]; then
 else /usr/bin/mktemp "$@"; fi
 FAKE
 chmod +x "$fixture/bin/mktemp"
+export FAKE_DOCUMENTATION=true
+: > "$fixture/calls"
+"$fixture/repo/tools/test-revision" HEAD --base main > "$fixture/output" 2>&1
+! grep -q '^cargo ' "$fixture/calls"
+! grep -q '^test-changes .* run ' "$fixture/calls"
+[[ ! -d $fixture/revision-worktree ]]
+unset FAKE_DOCUMENTATION
+printf 'documentation-only revisions stop after selection: PASS\n'
 for FAKE_WEB in '' web; do
   export FAKE_WEB
   : > "$fixture/calls"

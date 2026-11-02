@@ -31,8 +31,10 @@ It includes committed, staged, unstaged, deleted, and untracked files.
 - A file under `apps/<name>/` outside a package selects every package under that directory in every workspace, with their dependents.
 - A workspace `Cargo.toml` or `Cargo.lock` runs that whole workspace.
 - Canonical router/runtime WIT changes select all three workspaces because direct bindings cross Cargo dependency boundaries. Shared router-delivery and materializer WASI WIT select root and apps.
-- Any other file outside `docs/`, `.beads/`, and the root Markdown files runs the root command `cargo test --workspace --locked --offline --features wamn-control/ops,wamn-ctl/ops --no-fail-fast`.
-- Documentation, `.beads/`, and root Markdown changes select the quality suite.
+- A file under `deploy/`, `web/`, the `Dockerfile`, or a root pnpm file runs the root workspace and the suites that name it, because Rust tests read these files by path.
+- A path that no package owns and no rule names selects every applicable workspace and suite.
+- Documentation-only changes select nothing, including quality, and exit successfully.
+  `tests/selection.toml` defines documentation as `docs/`, `.beads/`, and root Markdown files.
   A Markdown file below another directory also follows the package rules above.
 
 Selected packages run their default tests with the required features of their targets.
@@ -44,7 +46,7 @@ These guests are the packages that the Dockerfile `component-builder` stage buil
 The stage checks the router pin, as the guest build of `wamn build` does.
 Control-client tests compose this pinned raw guest with an empty dispatcher and link operation calls without authority.
 `tools/test-changes --cluster` runs no guest build.
-The path rules in `tools/test-changes-suites.json` add suites beyond Cargo dependencies.
+`tests/selection.toml` owns suite commands, tiers, prerequisites, and inputs beyond Cargo dependencies.
 Generator changes select `package_digest` in `wamn-control`.
 Platform fixture and catalog changes select `wamn-control-provision`.
 SQL changes select `wamn-ctl` with `ops`, including `protected_relations_live`.
@@ -52,7 +54,7 @@ Control and platform deployment changes select prekind rendering and the exact n
 The prekind command uses one `prekind` filter across both test targets.
 It does not use `--skip kind`, which also skips prekind cases.
 Web changes select repository web lint, runtime tests, and platform UI checks, tests, and build.
-Every change selects `tools/repo-lint run`, including root formatting and Clippy for every target.
+Every change outside documentation selects `tools/repo-lint run`, including root formatting and Clippy for every target.
 
 The tool builds native binaries, application packages, and guests only when selected suites need them.
 It builds HTTP route bytes in release mode and materializer bytes in debug mode under `$CARGO_TARGET_DIR/apps`.
@@ -64,6 +66,7 @@ The tool derives those application roots from Cargo metadata and builds each bas
 It exports `WAMN_APPLICATION_COMPONENTS` and the selected guest and host paths.
 Control and CLI suites enable `ops`.
 Runtime changes also select the ignored JetStream round trip.
+Runtime and host changes also select the exact native host case.
 The tool starts a private NATS server on a free loopback port and stops it at exit.
 Set `WAMN_NATIVE_C_NATS_BIN` to a prebuilt `nats-server`, or put `nats-server` on `PATH`.
 If neither exists, the tool fails and names the variable.
@@ -73,6 +76,7 @@ Other cross-package file readers still need explicit path rules.
 `tools/test-changes dry-run` prints the selected commands.
 `tools/test-changes run` reports each step and returns a nonzero status if any command fails.
 Each required command must report at least one executed passing case and exit successfully.
+Missing packages, targets, and exact test names fail before any test runs.
 The same rule applies to contract-diff, owned delivery, and the upstream release tests.
 `tools/require-test-result` captures command output in a private temporary file, prints it after completion, and removes the file.
 It preserves command failures and refuses absent or entirely ignored test results.

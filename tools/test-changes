@@ -25,14 +25,10 @@ readonly WAMN_REPOSITORY_ROOT="$(
 )"
 readonly WAMN_CARGO="${CARGO:-cargo}"
 readonly WAMN_DOCKER="${DOCKER:-docker}"
-# The Dockerfile stage that builds the guests of the host image.
-readonly WAMN_GUEST_STAGE='component-builder'
 
 # The three Cargo workspaces, in run order: label and manifest.
 readonly -a WAMN_WORKSPACES=(root apps no-std)
 readonly -a WAMN_MANIFESTS=(Cargo.toml apps/Cargo.toml apps/platform/no-std/Cargo.toml)
-# The root full run is the acceptance command of docs/operations/running-tests.md.
-readonly -a WAMN_ROOT_FULL_FEATURES=(wamn-control/ops wamn-ctl/ops)
 
 WAMN_BASE=''
 WAMN_CLUSTER=false
@@ -94,14 +90,44 @@ mapfile -d '' -t WAMN_CHANGED < "$changed_file"
 rm -f -- "$changed_file"
 readonly WAMN_CHANGED
 
+WAMN_POLICY="$(python3 - "$WAMN_REPOSITORY_ROOT/tests/selection.toml" <<'PYTHON'
+import json
+import sys
+import tomllib
+
+with open(sys.argv[1], "rb") as source:
+    policy = tomllib.load(source)
+if policy["version"] != 1:
+    sys.exit("unsupported selection schema version")
+identifiers = set()
+for suite in policy["suites"]:
+    identifier = suite["id"]
+    if identifier in identifiers:
+        sys.exit(f"duplicate suite: {identifier}")
+    identifiers.add(identifier)
+    if suite["tier"] not in ("unit", "contract", "live-postgres", "live-nats", "kind"):
+        sys.exit(f"suite {identifier}: invalid tier")
+    if suite["workspace"] not in ("root", "apps", "no-std"):
+        sys.exit(f"suite {identifier}: invalid workspace")
+    if suite["execution"] not in ("commands", "libtest", "docker-guests"):
+        sys.exit(f"suite {identifier}: invalid execution policy")
+    if suite["mode"] not in ("always", "local"):
+        sys.exit(f"suite {identifier}: invalid mode")
+    if suite["timeout"] != 1800 or not isinstance(suite["resource_lock"], str):
+        sys.exit(f"suite {identifier}: use the shared 30-minute silent-stage limit and a resource lock string")
+print(json.dumps(policy))
+PYTHON
+)" || wamn_fail 65 'cannot read tests/selection.toml'
+readonly WAMN_POLICY
 WAMN_RELEVANT="$(
-  jq -n '$ARGS.positional | unique
-    | map(select((startswith("docs/") or startswith(".beads/") or test("^[^/]+\\.md$")) | not))' \
+  jq -n --argjson policy "$WAMN_POLICY" '$ARGS.positional | unique
+    | map(select(. as $path | any($policy.documentation[];
+        . as $pattern | $path | test($pattern)) | not))' \
     --args -- "${WAMN_CHANGED[@]}"
 )"
 readonly WAMN_RELEVANT
 
-if ((${#WAMN_CHANGED[@]} == 0)); then
+if [[ "$WAMN_RELEVANT" == '[]' ]]; then
   printf 'working-directory: %q\n' "$WAMN_REPOSITORY_ROOT"
   printf 'base: %s\n' "$WAMN_BASE"
   printf 'selected: nothing\n'
@@ -123,6 +149,21 @@ for manifest in "${WAMN_MANIFESTS[@]}"; do
   WAMN_METADATA+=("$metadata")
 done
 readonly WAMN_METADATA
+
+selector_errors="$(printf '%s\n' "${WAMN_METADATA[@]}" | jq -rs --argjson policy "$WAMN_POLICY" '
+  . as $metadata | $policy.suites[] | select(.execution == "libtest") | . as $suite
+  | (["root", "apps", "no-std"] | index($suite.workspace)) as $index
+  | $metadata[$index] as $md
+  | [$md.packages[] | select(.id | IN($md.workspace_members[]))
+      | select(.name == $suite.package)] as $packages
+  | if $packages == [] then "suite \($suite.id): missing package \($suite.package) in \($suite.workspace)"
+    else $suite.target[] as $target
+      | ($target | split(":")) as $parts
+      | select(all($packages[0].targets[];
+          .name != $parts[1] or (.kind | index($parts[0]) | not)))
+      | "suite \($suite.id): missing target \($target) in \($suite.package)"
+    end')" || wamn_fail 65 'cannot read suite selectors'
+[[ -z "$selector_errors" ]] || wamn_fail 65 "$selector_errors"
 
 # One line per workspace with work: index, full (true or false), the first input
 # that forced a full run as JSON, and the selected packages and features.
@@ -157,26 +198,28 @@ $metadata[0].workspace_root as $root
       elif $path == "apps/Cargo.toml" or $path == "apps/Cargo.lock" then {full: 1, $path}
       elif $path == "apps/platform/no-std/Cargo.toml" or $path == "apps/platform/no-std/Cargo.lock"
       then {full: 2, $path}
-      elif ($path | startswith("crates/execution/workflow/router/wit/")
-             or startswith("crates/platform/runtime/wit/deps/"))
-      then (range(0; 3) | {full: ., $path})
-      elif ($path | startswith("crates/execution/host/wit/deps/wamn-router-delivery-0.4/")
-             or startswith("apps/platform/execution/materializer/wit/deps/wasi-cli/")
-             or startswith("apps/platform/execution/materializer/wit/deps/wasi-clocks/"))
-      then (range(0; 2) | {full: ., $path})
       else ([$members[] | select(.dir as $dir | $path | startswith($dir + "/"))]
           | max_by(.dir | length)) as $owner
-        | if $owner != null then {package: $owner.manifest}
-          elif ($path | test("^apps/[^/]+/")) then
-            ($path | capture("^(?<app>apps/[^/]+/)").app) as $app
-            | ($members[] | select(.dir + "/" | startswith($app)) | {package: .manifest})
-          else {full: 0, $path} end
+        | [$policy.rules[] | select(any(.inputs[];
+            . as $pattern | $path | test($pattern)))] as $rules
+        | [$rules[] | select(.application == true and $owner == null
+            and all($rules[]; (.workspaces // []) == []))
+            | ($path | capture("^(?<app>apps/[^/]+/)").app) as $app
+            | $members[] | select(.dir + "/" | startswith($app))] as $applications
+        | (if $owner != null then {package: $owner.manifest} else empty end),
+          ($applications[] | {package: .manifest}),
+          ($rules[] | .workspaces[]? as $workspace
+            | {full: ($workspaces | index($workspace)), $path}),
+          (if $owner == null and $applications == []
+               and all($rules[]; (.workspaces // []) == [])
+           then {unknown: true, $path} else empty end)
       end] as $selections
 | [$selections[] | .package // empty] | unique as $changed
-| range(0; $metadata | length) as $index
+| ([$selections[] | select(.unknown) | .path] | first) as $unknown
+| {unknown: ($unknown != null), workspaces: [range(0; $metadata | length) as $index
 | select(($cluster | not) or $index == 0)
 | $metadata[$index] as $md
-| ([$selections[] | select(.full == $index) | .path] | first) as $full
+| ($unknown // ([$selections[] | select(.full == $index) | .path] | first)) as $full
 | ($md.workspace_members) as $workspace
 | graph($md; ["normal", "build"]) as $linked
 | graph($md; ["dev"]) as $dev
@@ -188,16 +231,22 @@ $metadata[0].workspace_root as $root
 | [$index, ($full != null), ($full | tojson),
    ([$selected[].name] | sort | join(" ")),
    ([$selected[] | features(.)[]]
+      + [$selected[] as $package | $policy.preparation[]
+          | select(.packages | index($package.name)) | .features[]?
+          | "\($package.name)/\(.)"]
       + [$selected[] | select($cluster and (.features // {} | has("cluster")))
           | "\(.name)/cluster"]
       | unique | join(" "))]
-| @tsv
+]}
 '
 
-WAMN_PLAN="$(
+WAMN_DISCOVERY="$(
   printf '%s\n' "${WAMN_METADATA[@]}" | jq -rs --argjson relevant "$WAMN_RELEVANT" \
+    --argjson policy "$WAMN_POLICY" \
+    --argjson workspaces "$(printf '%s\n' "${WAMN_WORKSPACES[@]}" | jq -Rsc 'split("\n")[:-1]')" \
     --argjson cluster "$WAMN_CLUSTER" '. as $metadata | '"$WAMN_SELECTION"
 )" || wamn_fail 65 'could not select packages from Cargo metadata'
+WAMN_PLAN="$(jq -r '.workspaces[] | @tsv' <<<"$WAMN_DISCOVERY")"
 readonly WAMN_PLAN
 
 printf 'working-directory: %q\n' "$WAMN_REPOSITORY_ROOT"
@@ -212,10 +261,33 @@ fi
 # Path rules supplement Cargo edges, including readers outside their package.
 WAMN_PACKAGES="$(printf '%s\n' "${WAMN_METADATA[@]}" | jq -rs '[.[] | . as $md
   | .packages[] | select(.id | IN($md.workspace_members[])) | .name] | unique')"
-WAMN_SUITES="$(jq -r --argjson members "$WAMN_PACKAGES" --argjson paths "$(jq -n '$ARGS.positional' --args -- "${WAMN_CHANGED[@]}")" '
-  [.[] | . as $rule | select(any($paths[]; test($rule.path)))
-    | select(.package == null or (.package | IN($members[]))) | .suites[]]
-  | unique | .[]' "$WAMN_TOOL_DIRECTORY/test-changes-suites.json")"
+WAMN_SELECTED="$(jq '[.workspaces[] | {index: .[0], packages: (.[3] | split(" "))}]' <<<"$WAMN_DISCOVERY")"
+WAMN_GUEST_RULE="$(jq -c '.suites[] | select(.execution == "docker-guests")' <<<"$WAMN_POLICY")"
+WAMN_GUEST_STAGE="$(jq -r '.stage' <<<"$WAMN_GUEST_RULE")"
+WAMN_DOCKERFILE="$(jq -r '.dockerfile' <<<"$WAMN_GUEST_RULE")"
+if [[ -f "$WAMN_DOCKERFILE" ]]; then
+  guest_source="$(cat -- "$WAMN_DOCKERFILE")"
+else
+  guest_source="$(git show "$WAMN_BASE:$WAMN_DOCKERFILE")" ||
+    wamn_fail 65 "cannot read deleted guest input $WAMN_DOCKERFILE from Git"
+fi
+declare -a guests=()
+mapfile -t guests < <(
+  awk -v stage="$WAMN_GUEST_STAGE" '$1 == "FROM" { in_stage = ($NF == stage); next } in_stage' <<<"$guest_source" |
+    grep -oE -- '-p [A-Za-z0-9_-]+' | cut -d ' ' -f 2
+)
+((${#guests[@]} > 0)) ||
+  wamn_fail 65 "the Dockerfile stage $WAMN_GUEST_STAGE names no guest package"
+WAMN_SUITES="$(jq -r --argjson paths "$WAMN_RELEVANT" --argjson selected "$WAMN_SELECTED" \
+  --argjson discovery "$WAMN_DISCOVERY" --argjson cluster "$WAMN_CLUSTER" \
+  --argjson guests "$(printf '%s\n' "${guests[@]}" | jq -Rsc 'split("\n")[:-1]')" '
+  .suites[] | . as $suite
+  | select(.mode == "always" or ($cluster | not))
+  | select($discovery.unknown or .always == true
+      or any($paths[]; . as $path | any($suite.inputs[]; . as $pattern | $path | test($pattern)))
+      or any($selected[].packages[]; IN($suite.select_packages[]?))
+      or (.execution == "docker-guests" and any($selected[] | select(.index == 1) | .packages[]; IN($guests[]))))
+  | .id' <<<"$WAMN_POLICY")" || wamn_fail 65 'cannot select suites'
 declare -a WAMN_SELECTED_PACKAGES=()
 mapfile -t WAMN_SELECTED_PACKAGES < <(awk -F '\t' '$1 == 0 {print $4}' <<<"$WAMN_PLAN" | tr ' ' '\n')
 wamn_package_selected() {
@@ -225,11 +297,6 @@ wamn_package_selected() {
   done
   return 1
 }
-wamn_suite_selected() { grep -qxF -- "$1" <<<"$WAMN_SUITES"; }
-# The runtime owns this ignored, local-only JetStream round trip.
-if [[ "$WAMN_CLUSTER" != true ]] && wamn_package_selected wamn-runtime; then
-  WAMN_SUITES+=$'\njetstream'
-fi
 printf 'suites: %s\n' "$(paste -sd ' ' <<<"$WAMN_SUITES")"
 
 failed=0
@@ -256,8 +323,30 @@ wamn_step() {
 wamn_test() {
   local label="$1"
   shift
-  wamn_step "$label" "$WAMN_TOOL_DIRECTORY/require-test-result" "$WAMN_CARGO" test \
+  local -a result_flags=()
+  if [[ ${1:-} == --expected-test ]]; then result_flags+=("$1" "$2"); shift 2; fi
+  if [[ ${1:-} == --each-target ]]; then result_flags+=("$1"); shift; fi
+  wamn_step "$label" "$WAMN_TOOL_DIRECTORY/require-test-result" "${result_flags[@]}" "$WAMN_CARGO" test \
     --locked --offline --no-fail-fast "$@"
+}
+
+wamn_suite_arguments() {
+  local suite="$1" workspace index target feature
+  workspace="$(jq -r '.workspace' <<<"$suite")"
+  for index in "${!WAMN_WORKSPACES[@]}"; do
+    [[ "${WAMN_WORKSPACES[$index]}" != "$workspace" ]] || break
+  done
+  suite_argv=(--manifest-path "$WAMN_REPOSITORY_ROOT/${WAMN_MANIFESTS[$index]}"
+    -p "$(jq -r '.package' <<<"$suite")")
+  while IFS= read -r target; do
+    case "$target" in
+      lib:*) suite_argv+=(--lib) ;;
+      test:* | bin:* | example:* | bench:*) suite_argv+=("--${target%%:*}" "${target#*:}") ;;
+      *) wamn_fail 65 "invalid suite target: $target" ;;
+    esac
+  done < <(jq -r '.target[]' <<<"$suite")
+  feature="$(jq -r '.features | join(",")' <<<"$suite")"
+  [[ -z "$feature" ]] || suite_argv+=(--features "$feature")
 }
 
 # Inputs are built before any test. A failed input stops dependent tests.
@@ -269,15 +358,20 @@ need_packages=false
 need_fixture=false
 need_nats=false
 need_route=false
-if wamn_package_selected wamn-control || wamn_suite_selected package-digest; then
-  need_packages=true
-  need_fixture=true
-fi
-if wamn_package_selected wamn-schema-generator; then need_packages=true; fi
-if wamn_package_selected wamn-control-provision || wamn_suite_selected provision; then need_fixture=true; fi
-if wamn_package_selected wamn-edge || wamn_suite_selected prekind; then need_edge=true; fi
-if wamn_suite_selected prekind; then need_nats=true; need_route=true; fi
-if wamn_suite_selected jetstream; then need_nats=true; fi
+WAMN_PREREQUISITES="$(jq -r --argjson selected "$WAMN_SELECTED" --argjson members "$WAMN_PACKAGES" \
+  --arg suites "$WAMN_SUITES" '
+  [(.suites[] | select(.id | IN($suites | split("\n") | .[])) | .prerequisites[]),
+   (.preparation[] | . as $rule
+     | select(if .suites then
+         any(.suites[]; IN($suites | split("\n") | .[])) and any($members[]; IN($rule.packages[]))
+         else any($selected[] | select(.index == 0) | .packages[]; IN($rule.packages[])) end)
+     | .prerequisites[]?)] | unique | .[]' <<<"$WAMN_POLICY")"
+wamn_prerequisite() { grep -qxF -- "$1" <<<"$WAMN_PREREQUISITES"; }
+if wamn_prerequisite packages; then need_packages=true; fi
+if wamn_prerequisite fixture; then need_fixture=true; fi
+if wamn_prerequisite edge; then need_edge=true; fi
+if wamn_prerequisite nats; then need_nats=true; fi
+if wamn_prerequisite route; then need_route=true; fi
 # Clippy compiles every target, including generated application source and
 # compile-time fixture reads. Derive those application roots from Cargo targets.
 declare -a applications=()
@@ -297,7 +391,7 @@ wamn_application() {
   done < <(sed -n 's/^[[:space:]]*package = "\([^" ]*\)".*/\1/p' "$app/wamn.k")
   applications+=("$app")
 }
-if wamn_suite_selected quality; then
+if wamn_prerequisite applications; then
   mapfile -t input_sources < <(printf '%s\n' "${WAMN_METADATA[@]}" | jq -rs -r '
     .[] | . as $md | .packages[] | select(.id | IN($md.workspace_members[]))
     | .manifest_path, .targets[].src_path? // empty')
@@ -311,10 +405,6 @@ if wamn_suite_selected quality; then
       directory="${directory%/*}"
     done
   done
-  # Native tests also include generated fixture files at compile time.
-  if jq -e 'index("wamn-fixture-package") != null' <<<"$WAMN_PACKAGES" >/dev/null; then
-    need_fixture=true
-  fi
 fi
 if [[ "$need_fixture" == true ]]; then
   wamn_application apps/platform_fixture
@@ -323,7 +413,7 @@ fi
 if [[ "$need_packages" == true ]]; then
   while IFS= read -r app; do wamn_application "$app"; done \
     < <(jq -r '.packages[]' deploy/gcp/environments/*.json | sort -u)
-  if wamn_package_selected wamn-schema-generator; then wamn_application apps/client_acme_receiving; fi
+  if wamn_prerequisite client-acme; then wamn_application apps/client_acme_receiving; fi
 fi
 if [[ "$need_edge" == true ]]; then wamn_application apps/edge_device; fi
 if [[ "$need_nats" == true ]]; then
@@ -337,7 +427,7 @@ if [[ "$need_nats" == true ]]; then
 fi
 if ((${#applications[@]} > 0)); then
   bins=(-p wamn-ctl --bin wamn -p wamn-test-infrastructure --bins)
-  if wamn_suite_selected prekind; then bins+=(-p wamn-host); fi
+  if [[ "$need_route" == true ]]; then bins+=(-p wamn-host); fi
   wamn_step 'input bins' "$WAMN_CARGO" build --locked --offline "${bins[@]}" || exit 1
 fi
 if [[ "$need_route" == true ]]; then
@@ -367,10 +457,71 @@ if ((${#applications[@]} > 0)); then
     "$CARGO_TARGET_DIR/debug/wamn" build "${applications[@]}" || exit 1
 fi
 
-# Every nonempty change set, including documentation, retains all lint legs.
-if wamn_suite_selected quality; then
-  wamn_step repo-lint "$WAMN_TOOL_DIRECTORY/repo-lint" run || :
+# Resolve every selected exact selector before any test execution.
+if [[ "$WAMN_COMMAND" != dry-run ]]; then
+  while IFS= read -r suite; do
+    wamn_suite_arguments "$suite"
+    while IFS= read -r name; do
+      list_argv=("${suite_argv[@]}" "$name" -- --exact --list --format terse)
+      if [[ "$(jq -r '.ignored // false' <<<"$suite")" == true ]]; then list_argv+=(--ignored); fi
+      listed="$("$WAMN_CARGO" test --locked --offline "${list_argv[@]}" </dev/null)" ||
+        wamn_fail 65 "cannot list exact selector $name"
+      grep -qxF -- "$name: test" <<<"$listed" ||
+        wamn_fail 65 "suite $(jq -r '.id' <<<"$suite"): missing exact test $name"
+    done < <(jq -r '.tests[]' <<<"$suite")
+  done < <(jq -c --arg suites "$WAMN_SUITES" '.suites[]
+    | select(.id | IN($suites | split("\n") | .[]))
+    | select(.execution == "libtest" and .tests != [])' <<<"$WAMN_POLICY")
 fi
+
+wamn_run_suite() {
+  local suite="$1" label execution name filter resource
+  label="$(jq -r '.label // .id' <<<"$suite")"
+  execution="$(jq -r '.execution' <<<"$suite")"
+  resource="$(jq -r '.resource_lock' <<<"$suite")"
+  if [[ -n "$resource" && "$WAMN_COMMAND" != dry-run ]]; then
+    mkdir -p "$CARGO_TARGET_DIR/test-locks"
+    exec 9>"$CARGO_TARGET_DIR/test-locks/$resource"
+    flock 9
+  fi
+  case "$execution" in
+    commands)
+      while IFS= read -r command; do
+        mapfile -d '' -t command_argv < <(jq -j '.[] | ., "\u0000"' <<<"$command")
+        wamn_step "${command_argv[@]}" || :
+      done < <(jq -c '.commands[]' <<<"$suite")
+      ;;
+    libtest)
+      if [[ "$(jq -r '.covered_by_package // false' <<<"$suite")" == true ]] &&
+        wamn_package_selected "$(jq -r '.package' <<<"$suite")"; then return 0; fi
+      wamn_suite_arguments "$suite"
+      filter="$(jq -r '.filter // ""' <<<"$suite")"
+      if [[ "$(jq '.tests | length' <<<"$suite")" == 0 ]]; then
+        [[ -z "$filter" ]] || suite_argv+=("$filter")
+        result_flags=()
+        if [[ "$(jq '.target | length' <<<"$suite")" != 0 ]]; then result_flags+=(--each-target); fi
+        wamn_test "$label" "${result_flags[@]}" "${suite_argv[@]}" || :
+      else
+        while IFS= read -r name; do
+          exact_argv=("${suite_argv[@]}" "$name" -- --exact --test-threads=1)
+          if [[ "$(jq -r '.ignored // false' <<<"$suite")" == true ]]; then exact_argv+=(--ignored); fi
+          wamn_test "$label" --expected-test "$name" --each-target "${exact_argv[@]}" || :
+        done < <(jq -r '.tests[]' <<<"$suite")
+      fi
+      ;;
+    docker-guests)
+      wamn_step "$label" "$WAMN_DOCKER" build --target "$(jq -r '.stage' <<<"$suite")" \
+        --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath "$WAMN_REPOSITORY_ROOT")" | sha256sum | cut -c1-16)" \
+        "$WAMN_REPOSITORY_ROOT" || :
+      ;;
+  esac
+  if [[ -n "$resource" && "$WAMN_COMMAND" != dry-run ]]; then exec 9>&-; fi
+}
+
+while IFS= read -r suite; do wamn_run_suite "$suite"; done < <(
+  jq -c --arg suites "$WAMN_SUITES" '.suites[] | select(.mode == "always")
+    | select(.id | IN($suites | split("\n") | .[]))' <<<"$WAMN_POLICY"
+)
 
 while IFS=$'\t' read -r index full trigger packages features; do
   [[ -n "$index" ]] || continue
@@ -385,16 +536,13 @@ while IFS=$'\t' read -r index full trigger packages features; do
       for feature in $features; do
         [[ "$feature" != */cluster ]] || cluster_features+=" $feature"
       done
-      features="${WAMN_ROOT_FULL_FEATURES[*]}$cluster_features"
+      features="$(jq -r '.root_features | join(" ")' <<<"$WAMN_POLICY")$cluster_features"
     fi
   else
     for package in $packages; do
       argv+=(-p "$package")
     done
   fi
-  for package in wamn-control wamn-ctl; do
-    if [[ " $packages " == *" $package "* && " $features " != *" $package/ops "* ]]; then features+=" $package/ops"; fi
-  done
   features="${features# }"
   if [[ -n "$features" ]]; then
     argv+=(--features "${features// /,}")
@@ -430,33 +578,6 @@ while IFS=$'\t' read -r index full trigger packages features; do
   fi
 done <<<"$WAMN_PLAN"
 
-if [[ "$WAMN_CLUSTER" != true ]]; then
-  if wamn_suite_selected package-digest && ! wamn_package_selected wamn-control; then
-    wamn_test package-digest -p wamn-control --features ops --test package_digest || :
-  fi
-  if wamn_suite_selected provision && ! wamn_package_selected wamn-control-provision; then
-    wamn_test provision -p wamn-control-provision || :
-  fi
-  if wamn_suite_selected ctl-ops && ! wamn_package_selected wamn-ctl; then
-    wamn_test ctl-ops -p wamn-ctl --features ops || :
-  fi
-  if wamn_suite_selected prekind; then
-    wamn_test prekind -p wamn-control --features ops --test environment_apply_kind \
-      --test platform_apply_kind prekind || :
-    wamn_test 'native host' -p wamn-control --features ops --test environment_apply_kind \
-      prekind_host::prekind_http_host_runs_and_rejects_respond_without_caller \
-      -- --ignored --exact --test-threads=1 || :
-  fi
-  if wamn_suite_selected web; then
-    wamn_step 'web lint' pnpm run check || :
-    for package in @wamn/web-runtime @wamn/platform-ui; do
-      wamn_step "$package check" pnpm --filter "$package" check || :
-      wamn_step "$package test" pnpm --filter "$package" test || :
-    done
-    wamn_step 'platform UI build' pnpm --filter @wamn/platform-ui build || :
-  fi
-fi
-
 # Ask NATS itself for an unused port, bound only on loopback. Own this process
 # and its storage, including on a signal or test failure. Never reuse a broker.
 nats_pid=''
@@ -471,7 +592,7 @@ wamn_cleanup() {
 trap wamn_cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-if [[ "$WAMN_CLUSTER" != true ]] && wamn_suite_selected jetstream; then
+if wamn_prerequisite private-nats; then
   if [[ "$WAMN_COMMAND" == dry-run ]]; then
     printf 'input jetstream: private nats-server -js -a 127.0.0.1 -p -1 -sd <temporary directory>\n'
   else
@@ -492,36 +613,10 @@ if [[ "$WAMN_CLUSTER" != true ]] && wamn_suite_selected jetstream; then
     fi
     export WAMN_EVT_NATS_URL="nats://127.0.0.1:$port"
   fi
-  wamn_test jetstream -p wamn-runtime --lib \
-    plugins::wamn_jetstream::tests::live_derived_publish_replay_converges_through_jetstream_dedup \
-    -- --ignored --exact --test-threads=1 || :
 fi
 
-# A change set that selects a guest of the host image also builds the guests
-# with the Dockerfile guest stage, which checks the router pin that a local
-# guest build also checks (wamn-lt7y). The guests are the packages that the
-# stage builds, and they belong to the apps workspace.
-
-if [[ "$WAMN_CLUSTER" != true ]]; then
-  declare -a guests=()
-  mapfile -t guests < <(
-    awk -v stage="$WAMN_GUEST_STAGE" '$1 == "FROM" { in_stage = ($NF == stage); next } in_stage' Dockerfile |
-      grep -oE -- '-p [A-Za-z0-9_-]+' | cut -d ' ' -f 2
-  )
-  ((${#guests[@]} > 0)) ||
-    wamn_fail 65 "the Dockerfile stage $WAMN_GUEST_STAGE names no guest package"
-  guest_selected=false
-  while IFS=$'\t' read -r index _ _ packages _; do
-    ((index == 1)) || continue
-    for package in $packages; do
-      for guest in "${guests[@]}"; do
-        [[ "$package" != "$guest" ]] || guest_selected=true
-      done
-    done
-  done <<<"$WAMN_PLAN"
-  if [[ "$guest_selected" == true ]]; then
-    wamn_step "guests (Dockerfile $WAMN_GUEST_STAGE)" \
-      "$WAMN_DOCKER" build --target "$WAMN_GUEST_STAGE" --build-arg WAMN_CHECKOUT_KEY="$(printf '%s' "$(realpath "$WAMN_REPOSITORY_ROOT")" | sha256sum | cut -c1-16)" "$WAMN_REPOSITORY_ROOT" || :
-  fi
-fi
+while IFS= read -r suite; do wamn_run_suite "$suite"; done < <(
+  jq -c --arg suites "$WAMN_SUITES" '.suites[] | select(.mode == "local")
+    | select(.id | IN($suites | split("\n") | .[]))' <<<"$WAMN_POLICY"
+)
 ((failed == 0))

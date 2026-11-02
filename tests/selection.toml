@@ -1,0 +1,203 @@
+# Suites record id, tier, workspace, package, target, tests, features,
+# prerequisites, inputs (path regexes), execution, resource_lock, and timeout.
+# Empty package means a tool command. Empty target means package defaults.
+# Timeout is the shared silent-stage kill limit in seconds, never a suite estimate.
+# Rules describe non-Cargo readers. Cargo still discovers package dependencies.
+version = 1
+documentation = ['^docs/', '^\.beads/', '^[^/]+\.md$']
+root_features = ["wamn-control/ops", "wamn-ctl/ops"]
+
+[[rules]]
+# Bindgen reads shared WIT outside Cargo dependency edges.
+inputs = ['^crates/execution/workflow/router/wit/', '^crates/platform/runtime/wit/deps/']
+workspaces = ["root", "apps", "no-std"]
+
+[[rules]]
+# Host and materializer bindings read these shared interfaces.
+inputs = ['^crates/execution/host/wit/deps/wamn-router-delivery-0.4/', '^apps/platform/execution/materializer/wit/deps/wasi-cli/', '^apps/platform/execution/materializer/wit/deps/wasi-clocks/']
+workspaces = ["root", "apps"]
+
+[[rules]]
+# Rust tests read SQL, charts, the Dockerfile and web sources by path.
+inputs = ['^deploy/', '^Dockerfile$', '^web/', '^package\.json$', '^pnpm-']
+workspaces = ["root"]
+
+[[rules]]
+# Application SQL, manifests, and generated files feed sibling packages.
+inputs = ['^apps/[^/]+/']
+application = true
+
+[[preparation]]
+packages = ["wamn-control"]
+prerequisites = ["packages", "fixture"]
+
+[[preparation]]
+packages = ["wamn-schema-generator"]
+prerequisites = ["packages", "client-acme"]
+
+[[preparation]]
+packages = ["wamn-control-provision"]
+prerequisites = ["fixture"]
+
+[[preparation]]
+packages = ["wamn-edge"]
+prerequisites = ["edge"]
+
+[[preparation]]
+packages = ["wamn-control", "wamn-ctl"]
+features = ["ops"]
+
+[[preparation]]
+packages = ["wamn-fixture-package"]
+suites = ["quality"]
+prerequisites = ["fixture"]
+
+[[suites]]
+id = "quality"
+tier = "contract"
+workspace = "root"
+package = ""
+target = []
+tests = []
+features = []
+prerequisites = ["applications"]
+inputs = []
+execution = "commands"
+mode = "always"
+always = true
+commands = [["repo-lint", "tools/repo-lint", "run"]]
+resource_lock = ""
+timeout = 1800
+
+[[suites]]
+id = "package-digest"
+tier = "contract"
+workspace = "root"
+package = "wamn-control"
+target = ["test:package_digest"]
+tests = []
+features = ["ops"]
+prerequisites = ["packages", "fixture"]
+inputs = ["^crates/schema/generator/", "^deploy/gcp/environments/"]
+execution = "libtest"
+mode = "local"
+covered_by_package = true
+resource_lock = ""
+timeout = 1800
+
+[[suites]]
+id = "provision"
+tier = "live-postgres"
+workspace = "root"
+package = "wamn-control-provision"
+target = []
+tests = []
+features = []
+prerequisites = ["fixture"]
+inputs = ["^(apps/platform_fixture(_overlay)?/|crates/catalog/|deploy/sql/)"]
+execution = "libtest"
+mode = "local"
+covered_by_package = true
+resource_lock = ""
+timeout = 1800
+
+[[suites]]
+id = "ctl-ops"
+tier = "live-postgres"
+workspace = "root"
+package = "wamn-ctl"
+target = []
+tests = []
+features = ["ops"]
+prerequisites = []
+inputs = ["^deploy/sql/"]
+execution = "libtest"
+mode = "local"
+covered_by_package = true
+resource_lock = ""
+timeout = 1800
+
+[[suites]]
+id = "prekind"
+tier = "contract"
+workspace = "root"
+package = "wamn-control"
+target = ["test:environment_apply_kind", "test:platform_apply_kind"]
+tests = []
+features = ["ops"]
+prerequisites = ["edge", "nats", "route"]
+inputs = ["^(crates/control/|deploy/platform/)"]
+execution = "libtest"
+mode = "local"
+filter = "prekind"
+resource_lock = ""
+timeout = 1800
+
+[[suites]]
+id = "native-host"
+label = "native host"
+tier = "live-nats"
+workspace = "root"
+package = "wamn-control"
+target = ["test:environment_apply_kind"]
+tests = ["prekind_host::prekind_http_host_runs_and_rejects_respond_without_caller"]
+features = ["ops"]
+prerequisites = ["fixture", "edge", "nats", "route"]
+inputs = ["^(crates/control/|deploy/platform/|crates/platform/runtime/|crates/execution/host/|services/host/)"]
+execution = "libtest"
+mode = "local"
+select_packages = ["wamn-runtime", "wamn-execution-host", "wamn-host"]
+ignored = true
+resource_lock = "native-host"
+timeout = 1800
+
+[[suites]]
+id = "jetstream"
+tier = "live-nats"
+workspace = "root"
+package = "wamn-runtime"
+target = ["lib:wamn_runtime"]
+tests = ["plugins::wamn_jetstream::tests::live_derived_publish_replay_converges_through_jetstream_dedup"]
+features = []
+prerequisites = ["nats", "private-nats"]
+inputs = []
+execution = "libtest"
+mode = "local"
+select_packages = ["wamn-runtime"]
+ignored = true
+resource_lock = "private-nats"
+timeout = 1800
+
+[[suites]]
+id = "web"
+tier = "contract"
+workspace = "root"
+package = ""
+target = []
+tests = []
+features = []
+prerequisites = []
+inputs = ["^(web/|apps/[^/]+/web/|apps/platform_ui/|package.json$|pnpm-)"]
+execution = "commands"
+mode = "local"
+commands = [["web lint", "pnpm", "run", "check"], ["@wamn/web-runtime check", "pnpm", "--filter", "@wamn/web-runtime", "check"], ["@wamn/web-runtime test", "pnpm", "--filter", "@wamn/web-runtime", "test"], ["@wamn/platform-ui check", "pnpm", "--filter", "@wamn/platform-ui", "check"], ["@wamn/platform-ui test", "pnpm", "--filter", "@wamn/platform-ui", "test"], ["platform UI build", "pnpm", "--filter", "@wamn/platform-ui", "build"]]
+resource_lock = ""
+timeout = 1800
+
+[[suites]]
+id = "docker-guests"
+label = "guests (Dockerfile component-builder)"
+tier = "contract"
+workspace = "apps"
+package = ""
+target = []
+tests = []
+features = []
+prerequisites = []
+inputs = ["^Dockerfile$"]
+execution = "docker-guests"
+mode = "local"
+dockerfile = "Dockerfile"
+stage = "component-builder"
+resource_lock = "docker"
+timeout = 1800

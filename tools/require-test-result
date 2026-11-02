@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 # Run a required libtest command and refuse success without an executed case.
 set -euo pipefail
+expected=''
+each_target=false
+if [[ ${1:-} == --expected-test ]]; then
+  expected=$2
+  shift 2
+fi
+if [[ ${1:-} == --each-target ]]; then
+  each_target=true
+  shift
+fi
 (($# > 0)) || { printf 'usage: tools/require-test-result COMMAND [ARG...]\n' >&2; exit 64; }
 umask 077
 result=$(mktemp "${TMPDIR:-/tmp}/wamn-required-test.XXXXXXXX")
@@ -14,5 +24,13 @@ if ! awk '
   END { exit !(passed > 0) }
 ' "$result"; then
   printf 'required test command reported no executed passing cases\n' >&2
+  exit 1
+fi
+if [[ "$each_target" == true ]] && grep -q '^test result: ok\. 0 passed;' "$result"; then
+  printf 'required test target reported no executed passing cases\n' >&2
+  exit 1
+fi
+if [[ -n "$expected" ]] && ! grep -qxF -- "test $expected ... ok" "$result"; then
+  printf 'required test did not pass: %s\n' "$expected" >&2
   exit 1
 fi

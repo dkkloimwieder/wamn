@@ -16,6 +16,22 @@ use sha2::{Digest as _, Sha256};
 
 const TOOL: &str = "tools/test-changes";
 
+const EXACT_SUITE: &str = r#"
+id = "fixture-exact"
+tier = "contract"
+workspace = "root"
+package = "core"
+target = ["lib:core"]
+tests = ["fixture::case"]
+features = []
+prerequisites = []
+inputs = ["^crates/core/"]
+execution = "libtest"
+mode = "local"
+resource_lock = ""
+timeout = 1800
+"#;
+
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
 const FAKE_CARGO: &str = r#"#!/usr/bin/env bash
@@ -23,6 +39,13 @@ set -euo pipefail
 if [[ "$1" == metadata ]]; then
   relative="${3#"$WAMN_FAKE_ROOT"/}"
   cat "$WAMN_FAKE_METADATA/${relative//\//_}.json"
+  exit 0
+fi
+if [[ " $* " == *' --list '* && " $* " == *' --exact '* ]]; then
+  [[ "${WAMN_FAKE_MISSING_TEST:-false}" != true ]] || exit 0
+  for argument in "$@"; do
+    [[ "$argument" != fixture::* ]] || printf '%s: test\n' "$argument"
+  done
   exit 0
 fi
 count_file="$WAMN_FAKE_CARGO_LOG.count"
@@ -39,7 +62,17 @@ printf '%s\n' "$count" >"$count_file"
 if [[ "${WAMN_FAKE_CARGO_FAIL_AT:-0}" == "$count" ]]; then
   exit 23
 fi
-printf 'test result: ok. %s passed; 0 failed; 0 ignored; 0 measured;\n' "${WAMN_FAKE_PASSED:-1}"
+passed="${WAMN_FAKE_PASSED:-1}"
+if [[ " $* " == *' --exact '* ]]; then passed="${WAMN_FAKE_EXACT_PASSED:-$passed}"; fi
+if ((passed > 0)) && [[ " $* " == *' --exact '* ]]; then
+  for argument in "$@"; do
+    [[ "$argument" != fixture::* ]] || printf 'test %s ... ok\n' "${WAMN_FAKE_EXECUTED_TEST:-$argument}"
+  done
+fi
+printf 'test result: ok. %s passed; 0 failed; 0 ignored; 0 measured;\n' "$passed"
+if [[ "${WAMN_FAKE_EMPTY_TARGET:-false}" == true ]]; then
+  printf 'test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured;\n'
+fi
 "#;
 
 /// Stands in for `docker`: records its name and arguments, and fails when
@@ -91,16 +124,24 @@ impl Fixture {
             &fixture.root.join(required),
             &fs::read_to_string(repository_root().join(required)).unwrap(),
         );
-        fixture.write(
-            "tools/test-changes-suites.json",
-            &fs::read_to_string(repository_root().join("tools/test-changes-suites.json")).unwrap(),
-        );
+        let policy = fs::read_to_string(repository_root().join("tests/selection.toml")).unwrap();
+        let mut sections = policy.split("[[suites]]");
+        let mut policy = sections.next().unwrap().to_owned();
+        for section in sections.filter(|section| section.contains("package = \"\"")) {
+            policy.push_str("[[suites]]");
+            policy.push_str(section);
+        }
+        fixture.write("tests/selection.toml", &policy);
         executable(
             &fixture.root.join("tools/repo-lint"),
             "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$WAMN_FAKE_QUALITY_LOG\"\n",
         );
         executable(&fixture.directory.join("fake cargo"), FAKE_CARGO);
         executable(&fixture.directory.join("docker"), FAKE_GUEST_BUILD);
+        executable(
+            &fixture.directory.join("pnpm"),
+            "#!/usr/bin/env bash\nexit 0\n",
+        );
         fs::create_dir(fixture.directory.join("metadata")).unwrap();
         for file in [
             "Cargo.toml",
@@ -135,6 +176,13 @@ impl Fixture {
         let path = self.root.join(file);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, contents).expect("write a fixture file");
+    }
+
+    fn add_suite(&self, suite: &str) {
+        let path = self.root.join("tests/selection.toml");
+        let policy = fs::read_to_string(&path).unwrap();
+        fs::write(path, format!("{policy}\n[[suites]]\n{suite}\n")).unwrap();
+        self.commit("fixture selection");
     }
 
     fn git(&self, arguments: &[&str]) {
@@ -269,6 +317,14 @@ impl Fixture {
             )
             .env("DOCKER", self.directory.join("docker"))
             .env("WAMN_FAKE_GUEST_LOG", self.directory.join("guest calls"))
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    self.directory.display(),
+                    std::env::var("PATH").unwrap()
+                ),
+            )
             .env("GIT_CONFIG_GLOBAL", "/dev/null");
         command
     }
@@ -380,7 +436,7 @@ fn executable(path: &Path, source: &str) {
     fs::set_permissions(path, permissions).unwrap();
 }
 
-fn assert_quality_only(fixture: &Fixture) {
+fn assert_nothing_selected(fixture: &Fixture) {
     let output = fixture.tool(&["dry-run"]);
     assert!(
         output.status.success(),
@@ -389,14 +445,10 @@ fn assert_quality_only(fixture: &Fixture) {
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
     let lines = stdout.lines().collect::<Vec<_>>();
-    assert_eq!(lines.len(), 4, "{stdout}");
+    assert_eq!(lines.len(), 3, "{stdout}");
     assert!(lines[0].starts_with("working-directory: "), "{stdout}");
     assert!(lines[1].starts_with("base: "), "{stdout}");
-    assert_eq!(lines[2], "suites: quality");
-    assert!(
-        lines[3].starts_with("repo-lint: ") && lines[3].ends_with("/tools/repo-lint run"),
-        "{stdout}"
-    );
+    assert_eq!(lines[2], "selected: nothing");
     assert!(!fixture.directory.join("cargo calls").exists());
     assert!(!fixture.directory.join("quality calls").exists());
     let output = fixture.tool(&["run"]);
@@ -405,26 +457,23 @@ fn assert_quality_only(fixture: &Fixture) {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(
-        fs::read_to_string(fixture.directory.join("quality calls")).unwrap(),
-        "run\n"
-    );
+    assert!(!fixture.directory.join("quality calls").exists());
     assert!(!fixture.directory.join("cargo calls").exists());
 }
 
 #[test]
-fn documentation_and_beads_changes_select_quality() {
+fn documentation_and_beads_changes_select_nothing() {
     let fixture = Fixture::new();
     fixture.write("docs/readme.md", "changed\n");
     fixture.write(".beads/issues.jsonl", "{}\n");
-    assert_quality_only(&fixture);
+    assert_nothing_selected(&fixture);
 }
 
 #[test]
-fn a_root_markdown_change_selects_quality() {
+fn a_root_markdown_change_selects_nothing() {
     let fixture = Fixture::new();
     fixture.write("README.md", "changed\n");
-    assert_quality_only(&fixture);
+    assert_nothing_selected(&fixture);
 }
 
 #[test]
@@ -552,6 +601,68 @@ fn workspace_files_and_unowned_inputs_run_the_full_command() {
             fixture.command("apps/Cargo.toml", &["--workspace"]),
         ]
     );
+}
+
+#[test]
+fn unknown_paths_select_every_applicable_suite() {
+    for path in ["tools/new-input", "apps/unknown/schema.sql"] {
+        let fixture = Fixture::new();
+        fixture.write(path, "changed\n");
+        let output = fixture.tool(&["dry-run"]);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            stdout.contains("suites: quality web docker-guests"),
+            "{stdout}"
+        );
+        assert!(stdout.contains("root (full:"), "{stdout}");
+        assert!(stdout.contains("apps (full:"), "{stdout}");
+        assert!(stdout.contains("no-std (full:"), "{stdout}");
+        let output = fixture.tool(&["--cluster", "dry-run"]);
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(output.status.success());
+        assert!(stdout.contains("suites: quality\n"), "{stdout}");
+        assert!(!stdout.contains("apps (full:"), "{stdout}");
+    }
+}
+
+#[test]
+fn deleted_paths_select_the_same_tests_as_edits() {
+    for path in [
+        "crates/core/src/lib.rs",
+        "deploy/sql/schema.sql",
+        "Dockerfile",
+    ] {
+        let fixture = Fixture::new();
+        let contents = if path == "Dockerfile" {
+            DOCKERFILE
+        } else {
+            "fixture\n"
+        };
+        fixture.write(path, &format!("{contents}\n# changed\n"));
+        let edited = fixture.tool(&["dry-run"]);
+        fs::remove_file(fixture.root.join(path)).unwrap();
+        let deleted = fixture.tool(&["dry-run"]);
+        assert!(edited.status.success(), "{path}");
+        assert!(
+            deleted.status.success(),
+            "{}",
+            String::from_utf8_lossy(&deleted.stderr)
+        );
+        assert_eq!(edited.stdout, deleted.stdout, "{path}");
+    }
+}
+
+#[test]
+fn a_dockerfile_change_builds_the_guest_stage() {
+    let fixture = Fixture::new();
+    fixture.write("Dockerfile", &format!("{DOCKERFILE}\n# changed\n"));
+    fixture.selected(&[]);
+    assert_eq!(fixture.guest_calls(), fixture.guest_builds());
 }
 
 #[test]
@@ -717,6 +828,126 @@ fn selected_workspace_refuses_zero_executed_cases() {
 }
 
 #[test]
+fn an_exact_suite_refuses_zero_executed_cases() {
+    let fixture = Fixture::new();
+    fixture.add_suite(EXACT_SUITE);
+    fixture.write("crates/core/src/lib.rs", "changed\n");
+    let output = fixture
+        .tool_command(&["run"])
+        .env("WAMN_FAKE_EXACT_PASSED", "0")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no executed passing cases"));
+    assert_eq!(fixture.calls().len(), 2);
+}
+
+#[test]
+fn an_exact_suite_requires_its_named_case_to_pass() {
+    let fixture = Fixture::new();
+    fixture.add_suite(EXACT_SUITE);
+    fixture.write("crates/core/src/lib.rs", "changed\n");
+    let output = fixture
+        .tool_command(&["run"])
+        .env("WAMN_FAKE_EXECUTED_TEST", "fixture::different_case")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("required test did not pass: fixture::case")
+    );
+}
+
+#[test]
+fn a_selected_target_refuses_an_empty_result_beside_a_passing_result() {
+    let fixture = Fixture::new();
+    fixture.add_suite(&EXACT_SUITE.replace("tests = [\"fixture::case\"]", "tests = []"));
+    fixture.write("crates/core/src/lib.rs", "changed\n");
+    let output = fixture
+        .tool_command(&["run"])
+        .env("WAMN_FAKE_EMPTY_TARGET", "true")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("required test target reported no executed passing cases")
+    );
+}
+
+#[test]
+fn bad_selectors_fail_before_any_test_runs() {
+    for (suite, missing, exact) in [
+        (
+            EXACT_SUITE.replace("package = \"core\"", "package = \"absent\""),
+            "missing package absent",
+            false,
+        ),
+        (
+            EXACT_SUITE.replace("lib:core", "test:absent"),
+            "missing target test:absent",
+            false,
+        ),
+        (
+            EXACT_SUITE.to_owned(),
+            "missing exact test fixture::case",
+            true,
+        ),
+    ] {
+        let fixture = Fixture::new();
+        fixture.add_suite(&suite);
+        fixture.write("crates/core/src/lib.rs", "changed\n");
+        let output = fixture
+            .tool_command(&["run"])
+            .env("WAMN_FAKE_MISSING_TEST", exact.to_string())
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(65));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(missing), "{stderr}");
+        assert!(fixture.calls().is_empty());
+        assert!(!fixture.directory.join("quality calls").exists());
+    }
+}
+
+#[test]
+fn runtime_changes_select_the_native_host_reader() {
+    let fixture = Fixture::new();
+    let policy = fs::read_to_string(repository_root().join("tests/selection.toml")).unwrap();
+    let host = policy
+        .split("[[suites]]")
+        .find(|section| section.contains("id = \"native-host\""))
+        .unwrap();
+    assert!(host.contains("crates/platform/runtime/"));
+    // The fixture has no runtime package, so a fixture package stands for it.
+    let host = host
+        .replace("crates/platform/runtime/", "crates/far/")
+        .replace("package = \"wamn-control\"", "package = \"user\"")
+        .replace(
+            "target = [\"test:environment_apply_kind\"]",
+            "target = [\"lib:user\"]",
+        )
+        .replace("features = [\"ops\"]", "features = []")
+        .replace(
+            "prerequisites = [\"fixture\", \"edge\", \"nats\", \"route\"]",
+            "prerequisites = []",
+        )
+        .replace(
+            "prekind_host::prekind_http_host_runs_and_rejects_respond_without_caller",
+            "fixture::case",
+        );
+    fixture.add_suite(&host);
+    fixture.write("crates/far/src/lib.rs", "changed\n");
+    let calls = fixture.selected(&[]);
+    assert!(
+        calls
+            .iter()
+            .any(|call| call.contains(&"fixture::case".to_owned()))
+    );
+}
+
+#[test]
 fn a_change_that_selects_an_image_guest_builds_the_guests_both_ways() {
     // A platform crate the guest links, and a shared WIT root.
     for path in [
@@ -754,7 +985,7 @@ fn a_dry_run_prints_the_guest_builds_and_a_failed_build_fails_the_run() {
     let lines = stdout.lines().collect::<Vec<_>>();
     assert_eq!(lines.len(), 7, "{stdout}");
     assert!(
-        lines[2] == "suites: quality"
+        lines[2] == "suites: quality docker-guests"
             && lines[3].starts_with("repo-lint: ")
             && lines[6].starts_with("guests (Dockerfile component-builder): ")
             && lines[6].contains(" build --target component-builder "),

@@ -74,6 +74,7 @@ step submodules git submodule update --init --recursive
 select_suites() { tools/test-changes dry-run --base "$base" > "$state/selection.log"; }
 step select select_suites
 cat "$state/selection.log"
+if grep -qxF 'selected: nothing' "$state/selection.log"; then exit 0; fi
 if grep -qE '^suites:.*(^| )web( |$)' "$state/selection.log"; then
   step web-install pnpm install --offline
 fi
