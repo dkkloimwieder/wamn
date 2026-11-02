@@ -1030,3 +1030,270 @@ fn install_jobs_reject_discarded_public_stdout() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+fn mounted_text(
+    objects: &[(&str, serde_json::Value)],
+    index: usize,
+    path: &str,
+) -> anyhow::Result<String> {
+    use anyhow::Context as _;
+    use base64::Engine as _;
+    let job = &objects[index].1;
+    let spec = pod(job).context("the Job is not executable")?;
+    let mount = spec["containers"][0]["volumeMounts"]
+        .as_array()
+        .context("Job mounts")?
+        .iter()
+        .find(|mount| {
+            mount["mountPath"]
+                .as_str()
+                .is_some_and(|prefix| path.starts_with(&format!("{prefix}/")))
+        })
+        .context("document mount")?;
+    let volume = spec["volumes"]
+        .as_array()
+        .context("Job volumes")?
+        .iter()
+        .find(|volume| volume["name"] == mount["name"])
+        .context("document volume")?;
+    let relative = path
+        .strip_prefix(mount["mountPath"].as_str().unwrap())
+        .unwrap()
+        .trim_start_matches('/');
+    let source = &volume["secret"];
+    let key = source["items"]
+        .as_array()
+        .context("document items")?
+        .iter()
+        .find(|item| item["path"] == relative)
+        .and_then(|item| item["key"].as_str())
+        .context("document key")?;
+    let secret = objects[..index]
+        .iter()
+        .rev()
+        .find(|(_, object)| {
+            object["kind"] == "Secret"
+                && object["metadata"]["name"] == source["secretName"]
+                && object["metadata"]["namespace"] == job["metadata"]["namespace"]
+        })
+        .map(|(_, object)| object)
+        .context("document Secret")?;
+    if let Some(value) = secret["stringData"][key].as_str() {
+        return Ok(value.into());
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(secret["data"][key].as_str().context("document data")?)?;
+    Ok(String::from_utf8(bytes)?)
+}
+
+#[derive(Debug)]
+struct EnvironmentJobs {
+    documents: Vec<(
+        usize,
+        wamn_control::environment::document::EnvironmentDocument,
+    )>,
+    failures: Vec<String>,
+}
+
+fn environment_jobs(objects: &[(&str, serde_json::Value)]) -> anyhow::Result<EnvironmentJobs> {
+    use anyhow::Context as _;
+    use wamn_control::environment::document::EnvironmentDocument;
+    let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create()?;
+    let mut compiled = std::collections::BTreeMap::<String, EnvironmentDocument>::new();
+    let mut result = EnvironmentJobs {
+        documents: Vec::new(),
+        failures: Vec::new(),
+    };
+    for (index, (step, object)) in objects.iter().enumerate() {
+        if object["kind"] != "Job" {
+            continue;
+        }
+        let Some(spec) = pod(object) else { continue };
+        let decoded = (|| -> anyhow::Result<Option<EnvironmentDocument>> {
+            let container = &spec["containers"][0];
+            let command: Vec<String> = serde_json::from_value(container["command"].clone())?;
+            let arguments: Vec<String> = serde_json::from_value(container["args"].clone())?;
+            let contract = wamn_control::platform::job_contract::resolve(&command, &arguments)?;
+            if !matches!(contract.verb, "env apply" | "env connections") {
+                return Ok(None);
+            }
+            let text = mounted_text(
+                objects,
+                index,
+                arguments.get(2).context("document argument")?,
+            )?;
+            let document = if let Some(document) = compiled.get(&text) {
+                document.clone()
+            } else {
+                let path = scratch.path().join(format!("document-{index}.k"));
+                std::fs::write(&path, &text)?;
+                let document = EnvironmentDocument::compile(&path)?;
+                compiled.insert(text, document.clone());
+                document
+            };
+            Ok(Some(document))
+        })();
+        match decoded {
+            Ok(Some(document)) => result.documents.push((index,document)),
+            Ok(None) => {},
+            Err(_) => result.failures.push(format!("{} step {step}:{index} field args[2] -> compiled /inputs/environment.k producer step absent or invalid",identity(object))),
+        }
+    }
+    Ok(result)
+}
+
+fn source_document<'a>(
+    render: &'a platform_install::Render,
+    document: &wamn_control::environment::document::EnvironmentDocument,
+) -> &'a str {
+    render
+        .documents
+        .iter()
+        .find(|(_, candidate)| {
+            candidate.org == document.org
+                && candidate.project == document.project
+                && candidate.env == document.env
+        })
+        .and_then(|(path, _)| path.to_str())
+        .unwrap_or("unmapped rendered environment.k")
+}
+
+fn connection_failures(
+    objects: &[(&str, serde_json::Value)],
+    render: &platform_install::Render,
+) -> anyhow::Result<Vec<String>> {
+    let EnvironmentJobs {
+        documents,
+        mut failures,
+    } = environment_jobs(objects)?;
+    let mut created = std::collections::BTreeMap::new();
+    for (index, document) in &documents {
+        let container = &objects[*index].1["spec"]["template"]["spec"]["containers"][0];
+        if container["args"][1] != "connections" {
+            continue;
+        }
+        for name in document.integrations.keys() {
+            let connection = mounted_text(objects, *index, &format!("/inputs/{name}.json"))
+                .ok()
+                .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
+            let integration =
+                mounted_text(objects, *index, &format!("/inputs/{name}.integration.json"))
+                    .ok()
+                    .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
+            if connection.is_some_and(|value| {
+                value["name"] == *name
+                    && value["project"] == document.project
+                    && value["env"] == document.env
+            }) && integration
+                .is_some_and(|value| value["name"] == *name && value["project"] == document.project)
+            {
+                created
+                    .entry((
+                        document.org.clone(),
+                        document.project.clone(),
+                        document.env.clone(),
+                        name.clone(),
+                    ))
+                    .or_insert(*index);
+            }
+        }
+    }
+    for (index, document) in documents {
+        let (step, job) = &objects[index];
+        if job["spec"]["template"]["spec"]["containers"][0]["args"][1] != "apply"
+            || document.release == wamn_control::environment::document::DeclaredRelease::None
+        {
+            continue;
+        }
+        for (application, definition) in &document.applications {
+            for (alias, name) in &definition.connections {
+                let producer = created.get(&(
+                    document.org.clone(),
+                    document.project.clone(),
+                    document.env.clone(),
+                    name.clone(),
+                ));
+                if producer.is_some_and(|producer| *producer < index) {
+                    continue;
+                }
+                let target = producer.map_or_else(
+                    || "absent".into(),
+                    |position| format!("{}:{position}", objects[*position].0),
+                );
+                failures.push(format!("{} document {} step {step}:{index} field applications.{application}.connections.{alias} -> connection {}/{}/{}/{name} producer step {target}",identity(job),source_document(render,&document),document.org,document.project,document.env));
+            }
+        }
+    }
+    Ok(failures)
+}
+
+fn replace_job_document(
+    objects: &mut [(&str, serde_json::Value)],
+    job_name: &str,
+    document: &wamn_control::environment::document::EnvironmentDocument,
+) {
+    use base64::Engine as _;
+    let job = &objects
+        .iter()
+        .find(|(_, object)| object["kind"] == "Job" && object["metadata"]["name"] == job_name)
+        .unwrap()
+        .1;
+    let volume = job["spec"]["template"]["spec"]["volumes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|volume| volume["name"] == "inputs")
+        .unwrap();
+    let name = volume["secret"]["secretName"].clone();
+    let key = volume["secret"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["path"] == "environment.k")
+        .unwrap()["key"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (_, secret) = objects
+        .iter_mut()
+        .find(|(_, object)| object["kind"] == "Secret" && object["metadata"]["name"] == name)
+        .unwrap();
+    if secret["stringData"].get(&key).is_some() {
+        secret["stringData"][&key] = json!(document.to_kcl());
+    } else {
+        secret["data"][&key] =
+            json!(base64::engine::general_purpose::STANDARD.encode(document.to_kcl()));
+    }
+}
+
+#[test]
+fn install_connections_precede_first_apply() -> anyhow::Result<()> {
+    let render = platform_install::render()?;
+    let failures = connection_failures(&render.objects, render)?;
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    Ok(())
+}
+
+#[test]
+fn install_connections_name_an_uncreated_rendered_binding() -> anyhow::Result<()> {
+    let render = platform_install::render()?;
+    let mut objects = render.objects.clone();
+    let mut document = render
+        .documents
+        .iter()
+        .find(|(_, document)| document.project == "wms")
+        .unwrap()
+        .1
+        .clone();
+    document
+        .applications
+        .get_mut("wamn_wms")
+        .unwrap()
+        .connections
+        .insert("labels".into(), "missing-connection".into());
+    replace_job_document(&mut objects, "platform-apply-test--wms--dev", &document);
+    let failures = connection_failures(&objects, render)?;
+    assert_eq!(failures.len(), 1, "{}", failures.join("\n"));
+    assert!(failures[0].contains("a-unqualified-wms.k") && failures[0].contains("connections.labels -> connection test/wms/dev/missing-connection producer step absent"));
+    Ok(())
+}
