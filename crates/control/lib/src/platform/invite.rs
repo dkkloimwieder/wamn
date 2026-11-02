@@ -36,7 +36,7 @@ pub(super) const INVITE: &str = r#"invite_owner() {
   /usr/local/bin/wamn-ctl invite --org "$ORG" --email "$OWNER_EMAIL" --display-name "$OWNER_EMAIL" --org-admin
 }
 errors=$(mktemp)
-invite_owner >/dev/null 2>"$errors" || { cat "$errors" >&2; echo 'invite owner failed' >&2; exit 1; }
+invite_owner 2>"$errors" || { cat "$errors" >&2; echo 'invite owner failed' >&2; exit 1; }
 echo 'owner invitation accepted'
 "#;
 
@@ -223,7 +223,7 @@ mod tests {
         assert!(output.status.success());
         assert_eq!(
             String::from_utf8_lossy(&output.stdout),
-            "owner invitation accepted\n"
+            "invited\nowner invitation accepted\n"
         );
         assert_eq!(String::from_utf8_lossy(&output.stderr), "");
     }
@@ -233,7 +233,7 @@ mod tests {
     fn a_failed_invite_logs_the_verb_error() {
         let output = run_invite("1");
         assert!(!output.status.success());
-        assert_eq!(String::from_utf8_lossy(&output.stdout), "");
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "invited\n");
         assert_eq!(
             String::from_utf8_lossy(&output.stderr),
             "INFO async_nats: connected\ninvite owner failed\n"

@@ -911,3 +911,122 @@ fn install_selectorless_services_reject_a_missing_workload_reference() -> anyhow
     assert!(failures[0].contains("WorkloadDeployment count 0"));
     Ok(())
 }
+
+fn diagnostic_failures(objects: &[(&str, serde_json::Value)]) -> Vec<String> {
+    use wamn_control::platform::job_contract;
+    let mut failures = Vec::new();
+    for (index, (step, object)) in objects.iter().enumerate() {
+        if object["kind"] != "Job" {
+            continue;
+        }
+        let Some(spec) = pod(object) else { continue };
+        for container in spec["containers"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .chain(spec["initContainers"].as_array().into_iter().flatten())
+        {
+            let command: Vec<String> =
+                serde_json::from_value(container["command"].clone()).unwrap_or_default();
+            let arguments: Vec<String> =
+                serde_json::from_value(container["args"].clone()).unwrap_or_default();
+            let contract = job_contract::resolve(&command, &arguments);
+            let credential = contract
+                .as_ref()
+                .is_ok_and(|contract| contract.credential_stdout);
+            if let Err(error) = contract {
+                failures.push(format!("{} step {step}:{index} field command -> command contract producer step absent: {error}",identity(object)));
+            }
+            if command
+                .first()
+                .is_none_or(|program| program.rsplit('/').next() != Some("sh"))
+            {
+                continue;
+            }
+            let script = arguments
+                .first()
+                .map_or("", String::as_str)
+                .split_whitespace()
+                .collect::<String>();
+            let stdout = script
+                .replace("2>/dev/null", "")
+                .replace("2>>/dev/null", "")
+                .contains(">/dev/null")
+                || script.contains("1>&-")
+                || script.contains("&>/dev/null");
+            let stderr = script.contains("2>/dev/null")
+                || script.contains("2>>/dev/null")
+                || script.contains("2>&-")
+                || script.contains("&>/dev/null")
+                || (stdout && script.contains("2>&1"));
+            for (field, discards) in [("stderr", stderr), ("stdout", stdout && !credential)] {
+                if discards {
+                    failures.push(format!("{} step {step}:{index} field command.{field} -> discarded {field} producer step {step}:{index} (command)",identity(object)));
+                }
+            }
+        }
+    }
+    failures
+}
+
+#[test]
+fn install_jobs_preserve_diagnostics() -> anyhow::Result<()> {
+    let failures = diagnostic_failures(&platform_install::render()?.objects);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    Ok(())
+}
+
+#[test]
+fn install_jobs_reject_discarded_stderr_without_printing_credentials() -> anyhow::Result<()> {
+    let mut objects = platform_install::render()?.objects.clone();
+    let (_, job) = objects
+        .iter_mut()
+        .find(|(_, object)| {
+            object["kind"] == "Job"
+                && object["spec"]["suspend"] == false
+                && object["metadata"]["name"] == "platform-control-credentials-test"
+        })
+        .unwrap();
+    let container = &mut job["spec"]["template"]["spec"]["containers"][0];
+    let secret = "private-credential-sentinel";
+    container["env"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"SECRET","value":secret}));
+    let script = container["args"][0].as_str().unwrap();
+    container["args"][0] = json!(format!("{script}\n: {secret} 2>/dev/null"));
+    let failures = diagnostic_failures(&objects);
+    assert!(
+        failures
+            .iter()
+            .any(|failure| failure.contains("command.stderr -> discarded stderr"))
+    );
+    assert!(failures.iter().all(|failure| !failure.contains(secret)));
+    Ok(())
+}
+
+#[test]
+fn install_jobs_reject_discarded_public_stdout() -> anyhow::Result<()> {
+    let mut objects = platform_install::render()?.objects.clone();
+    let (_, job) = objects
+        .iter_mut()
+        .find(|(_, object)| {
+            object["kind"] == "Job"
+                && object["spec"]["suspend"] == false
+                && object["metadata"]["name"] == "platform-invite-test"
+        })
+        .unwrap();
+    let script = job["spec"]["template"]["spec"]["containers"][0]["args"][0]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    job["spec"]["template"]["spec"]["containers"][0]["args"][0] =
+        json!(format!("{script}\n: >/dev/null"));
+    let failures = diagnostic_failures(&objects);
+    assert!(
+        failures
+            .iter()
+            .any(|failure| failure.contains("command.stdout -> discarded stdout"))
+    );
+    Ok(())
+}

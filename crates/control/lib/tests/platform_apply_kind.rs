@@ -975,7 +975,18 @@ cluster.Cluster {{
         "4.19.1",
         async {
             ensure!(
-                invite_log == "owner invitation accepted",
+                invite_log == format!(
+                    "invited principal_id={} org={}: 201 {{\"status\":\"accepted_for_delivery\"}}\nowner invitation accepted",
+                    serde_json::from_str::<Value>(&owner_mail(&kubeconfig, &context).await?)
+                        .map_err(|_| anyhow::anyhow!("invalid local invitation mail"))?["text"]
+                        .as_str()
+                        .context("invitation has no text")?
+                        .lines()
+                        .find_map(|line| line.strip_prefix("Invitation code: "))
+                        .and_then(|code| code.split_once(':').map(|(principal, _)| principal))
+                        .context("local invitation has no principal")?,
+                    document.org,
+                ),
                 "invite Job did not complete"
             );
             Ok(())

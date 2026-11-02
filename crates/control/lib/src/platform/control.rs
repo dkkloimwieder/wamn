@@ -11,7 +11,7 @@ use crate::{kubectl, release_chart::Target};
 use super::document::ClusterDocument;
 use super::job::{self, JobRequest, SecretMount};
 
-// Neither command output nor an API error can copy credential bytes to a log.
+// Credential JSON stays in private files. Commands retain their diagnostics.
 pub(super) const PROVISION: &str = r#"prepare() {
   umask 077
   scratch=$(mktemp -d)
@@ -33,7 +33,7 @@ pub(super) const PROVISION: &str = r#"prepare() {
     kubectl create -f "$scratch/administration.json" || return 1
   fi
 }
-prepare >/dev/null 2>/dev/null || { echo 'prepare control credentials failed' >&2; exit 1; }
+prepare || { echo 'prepare control credentials failed' >&2; exit 1; }
 "#;
 
 pub(super) const COPY_OPERATOR: &str = r#"copy_operator() {
@@ -45,7 +45,7 @@ pub(super) const COPY_OPERATOR: &str = r#"copy_operator() {
     --patch-file /inputs/metadata.json -o json > "$scratch/hosts.json" || return 1
   kubectl apply --server-side -f "$scratch/hosts.json" || return 1
 }
-copy_operator >/dev/null 2>/dev/null || { echo 'copy operator Secret failed' >&2; exit 1; }
+copy_operator || { echo 'copy operator Secret failed' >&2; exit 1; }
 "#;
 
 #[derive(Serialize)]
