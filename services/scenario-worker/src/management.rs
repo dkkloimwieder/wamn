@@ -442,7 +442,7 @@ pub struct ManagementServeArgs {
     /// bound to any principal and present the matching PAT here, or INSERT a
     /// project_roles row and self-grant in any project. It is settled purely
     /// before any I/O, so such a credential crash-loops instead of serving.
-    #[arg(long = "system-url", env = "WAMN_SYSTEM_URL")]
+    #[arg(long = "system-url", env = "WAMN_SYSTEM_URL", hide_env_values = true)]
     pub system_url: String,
 
     /// The SOLE authoring and report connection input: a scoped A/B generation of
@@ -452,7 +452,8 @@ pub struct ManagementServeArgs {
     /// absent or out-of-scope value refuses before any I/O.
     #[arg(
         long = "control-authoring-database-url",
-        env = "WAMN_CONTROL_AUTHORING_PG_URL"
+        env = "WAMN_CONTROL_AUTHORING_PG_URL",
+        hide_env_values = true
     )]
     pub control_authoring_database_url: String,
 
@@ -475,6 +476,7 @@ pub struct ManagementServeArgs {
     #[arg(
         long = "management-admission-database-url",
         env = "WAMN_MANAGEMENT_ADMISSION_PG_URL",
+        hide_env_values = true,
         value_name = "URL ($WAMN_MANAGEMENT_ADMISSION_PG_URL)"
     )]
     pub management_admission_database_url: String,

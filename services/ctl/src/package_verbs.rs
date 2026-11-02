@@ -35,7 +35,7 @@ pub struct ApplyPackageArgs {
     pub registry: RegistryArgs,
 
     /// Owner connection to the target project-environment database.
-    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
+    #[arg(long, env = "WAMN_PG_ADMIN_URL", hide_env_values = true)]
     pub database_url: String,
 
     #[arg(long)]
@@ -187,7 +187,7 @@ pub struct ReconcilePackageDataAccessArgs {
     pub registry: RegistryArgs,
 
     /// Owner connection to the target project-environment database.
-    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
+    #[arg(long, env = "WAMN_PG_ADMIN_URL", hide_env_values = true)]
     pub database_url: String,
 
     #[arg(long)]
@@ -211,7 +211,7 @@ pub(crate) const RECONCILE_PACKAGE_DATA_ACCESS_INSTALL_ENV: crate::install_job_t
 #[derive(Debug, Args)]
 pub struct ReconcileReplicaIdentityArgs {
     /// Superuser connection to the project database.
-    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
+    #[arg(long, env = "WAMN_PG_ADMIN_URL", hide_env_values = true)]
     pub admin_database_url: String,
 
     /// Package root whose strict manifest maps model keys to physical tables.

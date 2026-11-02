@@ -1,5 +1,9 @@
 //! Product command-line client for the local development loop.
 
+#[cfg(all(test, target_os = "linux"))]
+#[path = "../../../cli_help_tests.rs"]
+mod help_env_tests;
+
 #[cfg(target_os = "linux")]
 use anyhow::Context as _;
 #[cfg(target_os = "linux")]

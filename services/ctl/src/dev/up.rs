@@ -27,7 +27,7 @@ const OPERATOR_PAT_FILE: &str = "operator-pat.json";
 #[derive(Debug, Args)]
 pub struct DevUpArgs {
     /// Admin URL of the disposable PostgreSQL 18 cluster.
-    #[arg(long, env = "WAMN_DEV_ENV_SYSTEM_DATABASE_URL")]
+    #[arg(long, env = "WAMN_DEV_ENV_SYSTEM_DATABASE_URL", hide_env_values = true)]
     system_database_url: String,
 
     /// Directory the emitted Secrets, SQL and `dev.json` are written to.
@@ -35,7 +35,7 @@ pub struct DevUpArgs {
     root: PathBuf,
 
     /// The one local NATS: scheduler, events and memories.
-    #[arg(long, env = "WAMN_DEV_ENV_NATS_URL")]
+    #[arg(long, env = "WAMN_DEV_ENV_NATS_URL", hide_env_values = true)]
     nats_url: String,
 
     /// The CA of the local NATS server.

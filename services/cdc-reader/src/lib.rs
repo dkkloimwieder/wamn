@@ -122,17 +122,17 @@ pub struct EventReaderArgs {
     /// before any I/O by [`parse_system_reader_url`], so a URL carrying the
     /// unconfined `wamn_system` owner — which can write `identity.pats` under no
     /// row-level security — crash-loops the reader instead of serving it.
-    #[arg(long, env = "WAMN_SYSTEM_URL")]
+    #[arg(long, env = "WAMN_SYSTEM_URL", hide_env_values = true)]
     pub system_database_url: String,
 
     /// The replication credential: the `wamn-cdc-…` Secret's `url` — a PLAIN
     /// libpq URL (no query string); the reader appends `sslmode` +
     /// `replication=database` itself.
-    #[arg(long, env = "WAMN_CDC_URL")]
+    #[arg(long, env = "WAMN_CDC_URL", hide_env_values = true)]
     pub cdc_url: String,
 
     /// The NATS (JetStream) the events publish to (docs/plan/alignment.md R8).
-    #[arg(long, env = "WAMN_NATS_URL")]
+    #[arg(long, env = "WAMN_NATS_URL", hide_env_values = true)]
     pub nats_url: String,
 
     /// The CA of the NATS server.

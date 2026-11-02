@@ -1,5 +1,9 @@
 //! Deterministic product scenario worker.
 
+#[cfg(test)]
+#[path = "../../cli_help_tests.rs"]
+mod help_env_tests;
+
 use std::str::FromStr as _;
 
 use clap::Parser;

@@ -1,5 +1,9 @@
 //! MVP one-shot control-plane verbs.
 
+#[cfg(test)]
+#[path = "../../cli_help_tests.rs"]
+mod help_env_tests;
+
 use std::str::FromStr as _;
 
 mod platform_verbs;

@@ -29,7 +29,7 @@ use wamn_control_registry::{Template, Triple};
 pub struct ProvisionSystemArgs {
     /// Superuser Postgres URL to the empty system database (`wamn_system`),
     /// whose owner role `wamn_system` already exists.
-    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
+    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL", hide_env_values = true)]
     pub system_url: String,
 
     /// Email domain of the platform principal rows, written to
@@ -152,7 +152,7 @@ pub struct ProvisionProjectEnvArgs {
     /// Superuser Postgres URL to the T1 system DB (`wamn_system`): read the org's
     /// placement, read-or-mint the stored instance suffix, and record the project
     /// + project-env. Env `WAMN_SYSTEM_ADMIN_URL`.
-    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
+    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL", hide_env_values = true)]
     pub system_database_url: Option<String>,
 
     /// Override the target CNPG `Cluster` name. When omitted, it is read from the
@@ -491,7 +491,7 @@ pub struct EnableCdcProjectEnvArgs {
     /// Superuser Postgres URL to the T1 system DB (`wamn_system`): derive the
     /// target cluster, resolve the stored project-env instance suffix, and record
     /// the `registry.event_readers` registration. Env `WAMN_SYSTEM_ADMIN_URL`.
-    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
+    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL", hide_env_values = true)]
     pub system_database_url: Option<String>,
 
     /// Override the target CNPG `Cluster` name. When omitted, it is derived from
@@ -512,6 +512,7 @@ pub struct EnableCdcProjectEnvArgs {
     #[arg(
         long,
         env = "WAMN_REPLICATION_PASSWORD",
+        hide_env_values = true,
         value_name = "PASSWORD ($WAMN_REPLICATION_PASSWORD)"
     )]
     pub replication_password: String,
@@ -590,11 +591,11 @@ pub struct RecoverCaptureGapArgs {
 
     /// Superuser Postgres URL to the T1 system DB (`wamn_system`): the instance
     /// suffix, the reader registration, and the gap row.
-    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
+    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL", hide_env_values = true)]
     pub system_database_url: String,
 
     /// Superuser connection to the project database, which holds the slot.
-    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
+    #[arg(long, env = "WAMN_PG_ADMIN_URL", hide_env_values = true)]
     pub admin_database_url: String,
 }
 
@@ -613,7 +614,7 @@ pub struct CloseCaptureGapArgs {
     pub env: String,
 
     /// Superuser Postgres URL to the T1 system DB (`wamn_system`).
-    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
+    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL", hide_env_values = true)]
     pub system_database_url: String,
 }
 
@@ -1106,7 +1107,7 @@ pub struct ProvisionOrgArgs {
     /// Superuser Postgres URL to the T1 system DB (`wamn_system`), where the org
     /// and its policy rows are recorded and read back (for cluster sizing). Env
     /// `WAMN_SYSTEM_ADMIN_URL`. Omit to render/plan only (with template policies).
-    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
+    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL", hide_env_values = true)]
     pub system_database_url: Option<String>,
 
     /// The email of the org's admin. The run writes that user's active org

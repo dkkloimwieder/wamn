@@ -3,6 +3,10 @@
 //! Pre-split this ran as `wamn-host event-reader`; the flags are unchanged,
 //! the `event-reader` subcommand literal is gone (single-purpose binary).
 
+#[cfg(test)]
+#[path = "../../cli_help_tests.rs"]
+mod help_env_tests;
+
 use std::str::FromStr as _;
 
 use clap::Parser;

@@ -54,7 +54,7 @@ pub enum WorkflowCommand {
 #[derive(Debug, Args)]
 pub struct WorkflowScope {
     /// Project-admin PostgreSQL URL for the project database.
-    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
+    #[arg(long, env = "WAMN_PG_ADMIN_URL", hide_env_values = true)]
     pub admin_database_url: String,
     /// Project run-plane schema.
     #[arg(long, default_value = "wamn_run")]

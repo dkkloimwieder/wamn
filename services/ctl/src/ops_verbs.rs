@@ -61,7 +61,7 @@ pub struct CreateUserArgs {
     pub display_name: String,
 
     /// Provisioning administrator URL for the system database.
-    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
+    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL", hide_env_values = true)]
     pub system_database_url: String,
 }
 
@@ -96,7 +96,7 @@ pub async fn create_user(args: CreateUserArgs) -> anyhow::Result<()> {
 pub struct PruneRecordHistoryArgs {
     /// Postgres URL for this tenant's `wamn_audit_retention` credential
     /// generation. The verb refuses any other login. Env `WAMN_PG_URL`.
-    #[arg(long, env = "WAMN_PG_URL")]
+    #[arg(long, env = "WAMN_PG_URL", hide_env_values = true)]
     pub database_url: String,
 
     /// Organization in the coordinate that the mounted audit retention credential was minted for.
@@ -119,7 +119,7 @@ pub struct PruneRunHistoryArgs {
     /// Postgres URL for this tenant's `wamn_run_retention` credential generation
     /// — the NOSUPERUSER/NOBYPASSRLS role whose whole authority is the terminal
     /// run delete. The verb refuses any other identity. Env `WAMN_PG_URL`.
-    #[arg(long, env = "WAMN_PG_URL")]
+    #[arg(long, env = "WAMN_PG_URL", hide_env_values = true)]
     pub database_url: String,
 
     /// The run-plane schema the `runs` table lives in (set as the session

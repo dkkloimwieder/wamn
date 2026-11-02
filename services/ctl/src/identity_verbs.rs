@@ -78,7 +78,7 @@ impl fmt::Debug for IdentityIssuerArgs {
 #[derive(Debug, Args)]
 pub struct ProjectEnvMembershipArgs {
     /// Base URL of the control host for the organization.
-    #[arg(long, env = "WAMN_CONTROL_URL")]
+    #[arg(long, env = "WAMN_CONTROL_URL", hide_env_values = true)]
     pub host_url: String,
 
     /// The caller's session token.
@@ -129,7 +129,7 @@ pub struct InviteArgs {
     pub memberships: Vec<(String, String)>,
 
     /// Provisioning administrator URL for the system database.
-    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
+    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL", hide_env_values = true)]
     pub system_database_url: String,
 
     #[command(flatten)]

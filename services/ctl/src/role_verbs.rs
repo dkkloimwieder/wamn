@@ -7,7 +7,7 @@ use serde_json::json;
 #[derive(Debug, Args)]
 pub struct EnvironmentArgs {
     /// Base URL of the application host.
-    #[arg(long, env = "WAMN_CONTROL_URL")]
+    #[arg(long, env = "WAMN_CONTROL_URL", hide_env_values = true)]
     pub host_url: String,
     /// The caller's session token.
     #[arg(long, env = "WAMN_TOKEN", hide_env_values = true)]

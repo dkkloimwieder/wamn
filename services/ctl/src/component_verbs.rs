@@ -11,7 +11,7 @@ use wamn_catalog::{HostAttachment, HostRouteSet};
 #[derive(Debug, Args)]
 pub struct ConfigurationArgs {
     /// Base URL of the control host for the organization.
-    #[arg(long, env = "WAMN_CONTROL_URL")]
+    #[arg(long, env = "WAMN_CONTROL_URL", hide_env_values = true)]
     pub host_url: String,
     /// The caller's session token.
     #[arg(long, env = "WAMN_TOKEN", hide_env_values = true)]
