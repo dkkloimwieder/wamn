@@ -60,7 +60,7 @@ ENGINE_ACCEPTED = {
     "anyhow": "error context",
     "async-trait": "the host traits the engine declares",
     "boon": "route input schemas: a pure schema check with no I/O",
-    "data-encoding": "the base32 wamn.release label of a release digest (platform-deploy.md §9.2)",
+    "data-encoding": "the base32 wamn.release label of a release digest (architecture/naming.md, Environment names)",
     "hex": "the route CSRF digest",
     "hyper": "the expected-host router's request types, with no client or server feature",
     "opentelemetry": "the route limiter's gauges",

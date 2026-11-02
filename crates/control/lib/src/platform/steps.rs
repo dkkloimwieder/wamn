@@ -326,7 +326,7 @@ fn history(name: String, sections: &str) -> OwnerInput {
     OwnerInput {
         name,
         instructions: format!(
-            "made by the owner: docs/history/gcp-install-history.md sections {sections} (docs/operations/gcp.md section 2)"
+            "made by the owner: docs/operations/gcp.md section 2 (retired install history sections {sections})"
         ),
     }
 }

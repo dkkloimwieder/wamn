@@ -1,17 +1,17 @@
 # Documentation ownership
 
 This report covers epic `wamn-ggdxf`, which is audit hygiene Part 2 (H2, see [hygiene](hygiene.md)).
-The branch is `worktree-docs`, on main `40be5b96d`.
+The branch is `worktree-docs`, rebased onto main `6382199f3`.
 
 ## Issues
 
 | Issue | Audit reference | Commit | Result |
 | --- | --- | --- | --- |
-| `.1` Completed plans out | H2-2, H2-3 | `2329b9d54` | Ten completed plans and `docs-audit.md` are deleted. `bd show` confirmed each bead closed. Seven mixed plans keep their unresolved design and every rule that no reference page states. |
-| `.2` One reference owner | H2-1, H2-4 | `bdc8c5530`, `22448b389` | The standing rules of `platform-deploy.md` are in `CLAUDE.md`, the platform version procedure is in `operations/building.md`, and the cloud prerequisites are in `operations/gcp.md`. Rules of built work moved to eleven architecture and operations pages. `platform-deploy.md` and `integrations.md` are deleted. |
-| `.3` Links and evidence | H2-5, H2-6, H2-7 | `12ec0f74c` | The five `wamn-sync.md` links and all other missing local links resolve. Twelve evidence links are removed, and each claim keeps its bead and the note "evidence not retained". The three snapshot pages are deleted, and git holds them at `bdc8c5530`. |
-| `.4` Navigation | H2-8 | `875753ec9` | The plan index lists all sixteen retained plans. `docs/README.md` names `audit/`. The history index maps every page to its successor, bead or revision. |
-| `.5` Auth cache ignores | `wamn-kov6v.6` part | `feaf20322` | The three `auth_cache.rs` cases use `requires: env:WAMN_NATIVE_C_NATS_BIN` and check it before setup. Their exclusion rows are removed. |
+| `.1` Completed plans out | H2-2, H2-3 | `a45f5a0fa` | Ten completed plans and `docs-audit.md` are deleted. `bd show` confirmed each bead closed. Seven mixed plans keep their unresolved design and every rule that no reference page states. |
+| `.2` One reference owner | H2-1, H2-4 | `73a630322`, `258fee130` | The standing rules of `platform-deploy.md` are in `CLAUDE.md`, the platform version procedure is in `operations/building.md`, and the cloud prerequisites are in `operations/gcp.md`. Rules of built work moved to eleven architecture and operations pages. `platform-deploy.md` and `integrations.md` are deleted. |
+| `.3` Links and evidence | H2-5, H2-6, H2-7 | `5c3d9f866` | The five `wamn-sync.md` links and all other missing local links resolve. Twelve evidence links are removed, and each claim keeps its bead and the note "evidence not retained". The three snapshot pages are deleted, and git holds them at `73a630322`. |
+| `.4` Navigation | H2-8 | `257b3ebc1` | The plan index lists all sixteen retained plans. `docs/README.md` names `audit/`. The history index maps every page to its successor, bead or revision. |
+| `.5` Auth cache ignores | `wamn-kov6v.6` part | `b820d59ff` | The three `auth_cache.rs` cases use `requires: env:WAMN_NATIVE_C_NATS_BIN` and check it before setup. Their exclusion rows are removed. |
 
 The branch deletes 15 files and changes 118 files, with 718 lines added and 6,842 lines removed.
 
@@ -37,10 +37,16 @@ The moved standing rules are in `CLAUDE.md` under "Standing repository rules". E
 
 The logs are in `/var/tmp/wamn-docs`. The runs built no image and did not use kind.
 
+## Owner rulings
+
+The owner accepted the epic on 2026-11-02 and ruled on the open items.
+
+1. The two runtime strings that cited deleted pages now cite their owners: `tools/repo-lint-dependencies:63` cites `architecture/naming.md`, and `crates/control/lib/src/platform/steps.rs:329` cites `operations/gcp.md` section 2.
+2. The 31 undecided rules (D) stay as recorded. They are not copied into any page. Git holds them at `40be5b96d`, and a person who needs one files a bead.
+3. The 66 contradicted rules (C) get no beads. The resolution table is the list for a later owner pass. One bead covers the teardown example: `wamn-e70ys`.
+4. The rule "An epic is at most three issues" is deleted from `CLAUDE.md`. It contradicts the 2026-09-25 ruling that an instruction can scope more work.
+
 ## Open items
 
-- `wamn-kov6v.6`: the three ignores in `platform/broker.rs` and `platform/edge.rs`. This session makes that change after `wamn-pvsoo.1` step B lands, and then the `test_tiers.rs` count becomes zero.
-- Two runtime strings still cite deleted pages: `tools/repo-lint-dependencies:63` cites `platform-deploy.md §9.2`, and `crates/control/lib/src/platform/steps.rs:329` cites a snapshot page. The brief allowed comment changes only.
-- 31 undecided rules from deleted plans, listed as D in the resolution table. Git holds their text at `40be5b96d`.
-- 66 rules that current code contradicts, listed as C. Some of them can be code defects and not retired rules. An example is `environment-teardown.md:75`: a refusal after uninstall can leave earlier delete steps applied (`crates/control/lib/src/environment/delete.rs:179`).
-- The moved rule "An epic is at most three issues" in `CLAUDE.md` conflicts with this five-issue epic. The owner decides whether the rule stays.
+- `wamn-kov6v.6`: the three ignores in `platform/broker.rs` and `platform/edge.rs`. `wamn-pvsoo.1` step B landed at `6382199f3`. The change waits for an owner brief, and then the `test_tiers.rs` count becomes zero.
+- `wamn-e70ys`: a refusal after uninstall leaves earlier environment delete steps applied.

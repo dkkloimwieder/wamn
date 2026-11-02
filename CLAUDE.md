@@ -126,8 +126,7 @@ Epics may run in parallel when they share no files and no migration (owner rulin
 
 1. Decide, do not ask. The orchestrator decides any question that does not change a plan invariant, with these defaults: delete over add; one owner per fact; greenfield (refuse old rows, bump formats, no compatibility paths); no new table, column, flag or environment variable unless a rule names it; NULL for dev-only state; literals without a versioned contract change freely. The decision is recorded on the issue. Only a change to an invariant goes to the owner.
 2. Findings first. A lane with open review findings starts nothing else.
-3. An epic is at most three issues.
-4. Reports are ten lines or fewer. There are no progress reports: a report comes at merge, at epic close, or with an invariant question.
-5. The main checkout is read-only (owner ruling 2026-10-13). Every lane works in its own worktree, which is removed at merge. At every lane start and every merge, `git status --short` on the main checkout is empty; otherwise the orchestrator stops and reports. `git stash` is not used: unfinished work is a WIP commit on the lane branch. A lane starts with `git submodule update --init --recursive` in its worktree, and the lane start does it (owner ruling 2026-10-20).
+3. Reports are ten lines or fewer. There are no progress reports: a report comes at merge, at epic close, or with an invariant question.
+4. The main checkout is read-only (owner ruling 2026-10-13). Every lane works in its own worktree, which is removed at merge. At every lane start and every merge, `git status --short` on the main checkout is empty; otherwise the orchestrator stops and reports. `git stash` is not used: unfinished work is a WIP commit on the lane branch. A lane starts with `git submodule update --init --recursive` in its worktree, and the lane start does it (owner ruling 2026-10-20).
 
 CONCISE OUTPUT ONLY!

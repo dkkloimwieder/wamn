@@ -16,9 +16,9 @@ This page lists retired plans and pages. Git holds the deleted text.
 - <a id="platform-deploy"></a>platform-deploy.md: wamn-jqdja, landed at 5d224710a. One environment document drives package installation and release deployment.
 - <a id="integrations"></a>integrations.md: superseded by integration-schema.md. The integration schema owns project integrations and environment connections.
 
-- <a id="gcp-install-history"></a>gcp-install-history.md: deleted, held in git at bdc8c5530. Successor: [Google Cloud](../operations/gcp.md).
-- <a id="platform-ui-history"></a>platform-ui-history.md: deleted, held in git at bdc8c5530. Successors: [operator clients](../architecture/execution.md#operator-clients) and [organization membership and administration](../architecture/overview.md#organization-membership-and-administration).
-- <a id="deployment-pre-apply"></a>deployment-pre-apply.md: deleted, held in git at bdc8c5530. Successor: [deployment](../operations/deployment.md).
+- <a id="gcp-install-history"></a>gcp-install-history.md: deleted, held in git at 73a630322. Successor: [Google Cloud](../operations/gcp.md).
+- <a id="platform-ui-history"></a>platform-ui-history.md: deleted, held in git at 73a630322. Successors: [operator clients](../architecture/execution.md#operator-clients) and [organization membership and administration](../architecture/overview.md#organization-membership-and-administration).
+- <a id="deployment-pre-apply"></a>deployment-pre-apply.md: deleted, held in git at 73a630322. Successor: [deployment](../operations/deployment.md).
 
 - [2a-capability-registry.md](2a-capability-registry.md): Successor: [platform capabilities](../architecture/capabilities.md#import-admission).
 - [application-simplification-plan.md](application-simplification-plan.md): Successor: [components](../architecture/components.md), [data access](../architecture/data-access.md).

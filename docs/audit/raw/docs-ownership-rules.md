@@ -122,7 +122,7 @@
 | docs/plan/write-log.md:91 | D | The one-branch/one-agent and per-issue test rules belong to a completed campaign. Source cannot establish a present requirement. |
 | docs/plan/write-log.md:100 | D | This proposes future replay requirements including commit order and determinism. No current implementation or later ruling settles them. |
 | docs/plan/write-log.md:101 | C | crates/control/provision/src/audit_retention.rs:32. Successful write-log rows expire after 30 days. The log no longer grows without any retention period. |
-| docs/plan/docs-audit.md:9 | C | bdc8c5530. the later ownership change assigns integration contracts to integration-schema.md, so platform-config.md is no longer the universal newest authority on those subjects. |
+| docs/plan/docs-audit.md:9 | C | 73a630322. the later ownership change assigns integration contracts to integration-schema.md, so platform-config.md is no longer the universal newest authority on those subjects. |
 | docs/plan/docs-audit.md:11 | D | This is a precedence instruction between dated plans, not executable behavior. Source cannot establish that the old newest-plan rule still controls every unresolved sync decision. |
 | docs/plan/docs-audit.md:21 | B | docs/architecture/data-access.md:161. Numbered primary keys are refused in the Numbering section.. source crates/schema/generator/src/key.rs:49 |
 | docs/plan/docs-audit.md:27 | B | CLAUDE.md:131. The version procedure is docs/operations/building.md, Platform version procedure. Completed-plan deletion is recorded in docs/history/README.md. |

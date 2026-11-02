@@ -148,7 +148,7 @@ Severity: low
 Effort: S  
 Area: Named manifests and stale executor references
 
-Evidence: `deploy/gcp/cdc-reader-wms.yaml:1`, `docs/history/gcp-install-history.md at bdc8c5530:1564`, `docs/operations/gcp.md:718`, `deploy/platform/identity-db.example.yaml:18`, `deploy/infra/prometheus-local.yaml:14`, `crates/platform/runtime/tests/guest_environment_isolation.rs:237`.
+Evidence: `deploy/gcp/cdc-reader-wms.yaml:1`, `docs/history/gcp-install-history.md at 73a630322:1564`, `docs/operations/gcp.md:718`, `deploy/platform/identity-db.example.yaml:18`, `deploy/infra/prometheus-local.yaml:14`, `crates/platform/runtime/tests/guest_environment_isolation.rs:237`.
 
 Problem: `cdc-reader-wms.yaml` has historical documentation consumers, but current platform installation renders CDC in Rust. `evt-nats-check.yaml` remains an active manual runbook input, so it is not an orphan. Searches found no external consumer for `identity-db.example.yaml` or `prometheus-local.yaml`. The missing `executor.yaml` appears in test prose and failure text, not in a file read.
 
