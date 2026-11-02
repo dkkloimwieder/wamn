@@ -630,7 +630,7 @@ fn owned_secret(secret: &JobSecret, owner: &Metadata) -> anyhow::Result<Secret> 
 
 /// The completion digest of a Job. A `once` Job leaves its image out, so a new
 /// image does not rerun it.
-fn completion_digest(request: &JobRequest, inputs: &Value) -> anyhow::Result<String> {
+pub(super) fn completion_digest(request: &JobRequest, inputs: &Value) -> anyhow::Result<String> {
     let image = if request.once {
         ""
     } else {
@@ -692,8 +692,8 @@ pub async fn run(
     if existing.is_some() {
         finish(target, work_directory, request).await?;
     }
-    let rendered = render(request, &target.namespace, secrets);
-    let input = serde_json::to_vec(&rendered)?;
+    let rendered = start_objects(request, &target.namespace, secrets)?;
+    let input = serde_json::to_vec(&rendered[0])?;
     let created = kubectl::kubectl(
         &target.kubeconfig,
         &target.context,
@@ -704,53 +704,12 @@ pub async fn run(
     .await?;
     let created: Created = serde_json::from_str(&created).context("decode the created Job")?;
     let result = async {
-        if let Some(account) = account(request, &created.metadata)? {
-            kubectl::apply(
-                &target.kubeconfig,
-                &target.context,
-                &target.namespace,
-                &account,
-            )
-            .await?;
-        }
-        for access in &request.permissions {
-            // A namespaced Job cannot own objects in another namespace. These
-            // Roles and bindings are deleted explicitly with the Job.
-            let role = role(request, access);
-            kubectl::apply(
-                &target.kubeconfig,
-                &target.context,
-                &access.namespace,
-                &role,
-            )
-            .await?;
-            let binding = role_binding(request, access, &target.namespace);
-            kubectl::apply(
-                &target.kubeconfig,
-                &target.context,
-                &access.namespace,
-                &binding,
-            )
-            .await?;
-        }
-        for secret in secrets {
-            kubectl::apply(
-                &target.kubeconfig,
-                &target.context,
-                &target.namespace,
-                &owned_secret(secret, &created.metadata)?,
-            )
-            .await?;
-        }
-        if !request.files.is_empty() || !request.binary_files.is_empty() {
-            let secret = files_secret(request, &created.metadata)?;
-            kubectl::apply(
-                &target.kubeconfig,
-                &target.context,
-                &target.namespace,
-                &secret,
-            )
-            .await?;
+        let owner = serde_json::to_value(&created.metadata)?;
+        for object in support_objects(request, &owner, secrets)? {
+            let namespace = object["metadata"]["namespace"]
+                .as_str()
+                .context("Job support namespace")?;
+            kubectl::apply(&target.kubeconfig, &target.context, namespace, &object).await?;
         }
         if request.emits_secret {
             kubectl::wait(
@@ -793,20 +752,12 @@ pub async fn run(
                 Some(&[]),
             )
             .await?;
-            // Parser diagnostics can quote the credential. Keep them out of errors.
-            let secret: Secret = serde_json::from_str(&output)
-                .map_err(|_| anyhow::anyhow!("decode the emitted Secret from {OUTPUT_FILE}"))?;
-            ensure!(
-                secret.api_version == "v1" && secret.kind == "Secret",
-                "the Job output is not a v1 Secret"
-            );
-            kubectl::apply(
-                &target.kubeconfig,
-                &target.context,
-                &secret.metadata.namespace,
-                &secret,
-            )
-            .await?;
+            for object in emitted_objects(&output)? {
+                let namespace = object["metadata"]["namespace"]
+                    .as_str()
+                    .context("emitted Secret namespace")?;
+                kubectl::apply(&target.kubeconfig, &target.context, namespace, &object).await?;
+            }
         }
         let deadline = Instant::now() + INSTALL_DEADLINE;
         loop {
@@ -863,14 +814,70 @@ pub async fn run(
         let log = std::fs::read_to_string(&path).unwrap_or_default();
         format!("install Job log saved at {}:\n{log}", path.display())
     })?;
-    kubectl::apply(
-        &target.kubeconfig,
-        &target.context,
-        "platform",
-        &completion(request, &digest, output),
-    )
-    .await?;
+    for object in completion_objects(request, &digest, &output)? {
+        kubectl::apply(&target.kubeconfig, &target.context, "platform", &object).await?;
+    }
     Ok(true)
+}
+
+pub(super) fn start_objects(
+    request: &JobRequest,
+    namespace: &str,
+    secrets: &[JobSecret],
+) -> anyhow::Result<Vec<Value>> {
+    Ok(vec![serde_json::to_value(render(
+        request, namespace, secrets,
+    ))?])
+}
+
+pub(super) fn support_objects(
+    request: &JobRequest,
+    owner: &Value,
+    secrets: &[JobSecret],
+) -> anyhow::Result<Vec<Value>> {
+    let owner: Metadata = serde_json::from_value(owner.clone())?;
+    let mut objects = Vec::new();
+    if let Some(account) = account(request, &owner)? {
+        objects.push(serde_json::to_value(account)?);
+    }
+    for access in &request.permissions {
+        objects.push(serde_json::to_value(role(request, access))?);
+        objects.push(serde_json::to_value(role_binding(
+            request,
+            access,
+            &owner.namespace,
+        ))?);
+    }
+    for secret in secrets {
+        objects.push(serde_json::to_value(owned_secret(secret, &owner)?)?);
+    }
+    if !request.files.is_empty() || !request.binary_files.is_empty() {
+        objects.push(serde_json::to_value(files_secret(request, &owner)?)?);
+    }
+    Ok(objects)
+}
+
+pub(super) fn emitted_objects(output: &str) -> anyhow::Result<Vec<Value>> {
+    // Parser diagnostics can quote a credential. Keep them out of errors.
+    let secret: Secret = serde_json::from_str(output)
+        .map_err(|_| anyhow::anyhow!("decode the emitted Secret from {OUTPUT_FILE}"))?;
+    ensure!(
+        secret.api_version == "v1" && secret.kind == "Secret",
+        "the Job output is not a v1 Secret"
+    );
+    Ok(vec![serde_json::to_value(secret)?])
+}
+
+pub(super) fn completion_objects(
+    request: &JobRequest,
+    digest: &str,
+    output: &str,
+) -> anyhow::Result<Vec<Value>> {
+    Ok(vec![serde_json::to_value(completion(
+        request,
+        digest,
+        output.into(),
+    ))?])
 }
 
 fn role(request: &JobRequest, access: &Access) -> Role {

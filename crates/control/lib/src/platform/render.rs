@@ -1,13 +1,20 @@
 //! Render the platform install batches without a cluster.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
-use serde_json::Value;
+use super::job::{JobRequest, JobSecret};
+use serde_json::{Value, json};
 
 /// Live values supplied to the install batches instead of reading a cluster.
 #[derive(Debug)]
 pub struct Fixtures {
     pub identity_tls: Value,
+    pub postgres_superuser: Value,
+    pub runner_image: String,
+    pub job_uid: String,
+    pub emitted: BTreeMap<String, Value>,
+    pub outputs: BTreeMap<String, String>,
     pub broker_authorization_exists: bool,
 }
 
@@ -71,6 +78,21 @@ pub fn install(
         "4.5",
         super::install::postgres_cluster_objects(repository, document)?,
     );
+    let superuser = serde_json::from_value(fixtures.postgres_superuser.clone())?;
+    let admin = super::install::administrator(&superuser)?;
+    for request in super::install::provisioning_jobs(document, &fixtures.runner_image) {
+        append(
+            &mut objects,
+            "4.7",
+            job_objects(
+                &request,
+                "platform",
+                &json!({}),
+                std::slice::from_ref(&admin),
+                fixtures,
+            )?,
+        );
+    }
     append(
         &mut objects,
         "4.7",
@@ -92,6 +114,40 @@ pub fn install(
         "4.9",
         super::manifests::platform_inputs(repository, document)?,
     );
+    Ok(objects)
+}
+
+fn job_objects(
+    request: &JobRequest,
+    namespace: &str,
+    inputs: &Value,
+    secrets: &[JobSecret],
+    fixtures: &Fixtures,
+) -> anyhow::Result<Vec<Value>> {
+    let mut objects = super::job::start_objects(request, namespace, secrets)?;
+    let owner = json!({"name":request.name, "namespace":namespace, "uid":fixtures.job_uid});
+    objects.extend(super::job::support_objects(request, &owner, secrets)?);
+    if request.emits_secret {
+        let output = fixtures
+            .emitted
+            .get(&request.name)
+            .ok_or_else(|| anyhow::anyhow!("missing emitted fixture {}", request.name))?;
+        objects.extend(super::job::emitted_objects(&output.to_string())?);
+    }
+    let output = if request.capture_output {
+        fixtures
+            .outputs
+            .get(&request.name)
+            .ok_or_else(|| anyhow::anyhow!("missing stdout fixture {}", request.name))?
+            .as_str()
+    } else {
+        ""
+    };
+    objects.extend(super::job::completion_objects(
+        request,
+        &super::job::completion_digest(request, inputs)?,
+        output,
+    )?);
     Ok(objects)
 }
 
@@ -128,6 +184,18 @@ mod tests {
         let fixtures = Fixtures {
             identity_tls: json!({"data": {"ca.crt": "Zml4dHVyZS1jYQ=="}}),
             broker_authorization_exists: false,
+            postgres_superuser: json!({"data":{"password":"cGFzc3dvcmQ="}}),
+            runner_image: format!("registry.invalid/wamn/runner@sha256:{}", "1".repeat(64)),
+            job_uid: "00000000-0000-0000-0000-000000000001".into(),
+            emitted: [
+                ("platform-system".into(), json!({"apiVersion":"v1","kind":"Secret","type":"Opaque",
+                    "metadata":{"name":"wamn-apply","namespace":"platform","labels":{"app.kubernetes.io/name":"wamn-apply"}},
+                    "stringData":{"url":"postgresql://wamn_apply:fixture@database/wamn_system"}})),
+                ("platform-identity-issuer".into(), json!({"apiVersion":"v1","kind":"Secret","type":"Opaque",
+                    "metadata":{"name":"wamn-identity-db","namespace":"identity","labels":{"app.kubernetes.io/name":"wamn-identity","app.kubernetes.io/managed-by":"wamn"}},
+                    "stringData":{"url":"postgresql://identity:fixture@database/wamn_system"}})),
+            ].into(),
+            outputs: BTreeMap::new(),
         };
         let objects = install(&cluster, &documents, &repository, &fixtures)?;
         // This list grows as each install file gains its shared batch builders.
@@ -146,6 +214,7 @@ mod tests {
             "RoleBinding",
             "Secret",
             "ConfigMap",
+            "Job",
         ] {
             assert!(
                 objects.iter().any(|(_, object)| object["kind"] == kind),
