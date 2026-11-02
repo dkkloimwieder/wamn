@@ -454,16 +454,6 @@ impl FieldText {
     pub const fn is_empty(&self) -> bool {
         self.label.is_none() && self.visible.is_none() && self.description.is_none()
     }
-
-    /// The text of one contract field, as the field object states it.
-    #[must_use]
-    pub fn of_field(field: &ContractFieldDeclaration) -> Self {
-        Self {
-            label: field.label.clone(),
-            visible: field.visible,
-            description: field.description.clone(),
-        }
-    }
 }
 
 /// Typed custom-operation result contract.
@@ -642,18 +632,6 @@ impl PackageManifest {
                     .map(|(name, _)| name.clone()),
             )
             .collect()
-    }
-
-    /// Whether any operation of this package claims its key in the write log:
-    /// a generated create, or a command idempotent by claim.
-    pub fn has_claim_operation(&self) -> bool {
-        self.models
-            .values()
-            .any(|model| model.operations.contains_key(&CrudAction::Create))
-            || self
-                .custom_operations
-                .values()
-                .any(CustomOperationDeclaration::claims)
     }
 
     /// Parse a manifest, dropping retired workflow declarations and refusing other unknown fields.
@@ -2797,13 +2775,6 @@ impl ModelDeclaration {
     pub fn field_owner(&self, field: &str) -> &str {
         self.field_owners
             .get(field)
-            .map_or(self.owner.as_str(), String::as_str)
-    }
-
-    /// Definition owner for one constraint, inheriting the relation owner when omitted.
-    pub fn constraint_owner(&self, constraint: &str) -> &str {
-        self.constraint_owners
-            .get(constraint)
             .map_or(self.owner.as_str(), String::as_str)
     }
 
