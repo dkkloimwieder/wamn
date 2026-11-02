@@ -8,12 +8,12 @@ mod bindings {
     wit_bindgen::generate!({
         world: "wamn:flow-http/flow-http@0.1.0",
         path: [
-            "../../../../crates/platform/runtime/wit/deps/wamn-flow-http-routing",
-            "../../../../crates/platform/runtime/wit/deps/wamn-postgres-0.4",
-            "../../../../crates/platform/runtime/wit/deps/wamn-operation-0.1",
-            "../../../../crates/execution/workflow/router/wit",
-            "../../../../crates/platform/component-composer/wit",
-            "../../../../crates/execution/host/wit/deps/wamn-router-delivery-0.4",
+            "../../../../wit/wamn-flow-http-routing",
+            "../../../../wit/wamn-postgres-0.4",
+            "../../../../wit/wamn-operation-0.1",
+            "../../../../wit/wamn-node",
+            "../../../../wit/wamn-application-dispatch",
+            "../../../../wit/wamn-router-delivery-0.4",
             "../../execution/materializer/wit/deps/wasi-clocks",
             "wit",
         ],

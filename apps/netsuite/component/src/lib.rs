@@ -7,7 +7,7 @@
 wit_bindgen::generate!({
     world: "netsuite:component/netsuite@0.1.0",
     path: [
-        "../../../crates/execution/workflow/router/wit",
+        "../../../wit/wamn-node",
         "../../target/wamn/wamn_integration/wit/deps/wamn-integration-setting",
         "../../target/wamn/netsuite/wit",
         "wit",

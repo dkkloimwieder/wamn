@@ -703,7 +703,7 @@ mod declaration_tests {
             "read.wit",
             &format!(
                 "{} world fixture {{ import bound; export health; }}",
-                include_str!("../../runtime/wit/deps/wamn-integration/package.wit")
+                include_str!("../../../../wit/wamn-integration/package.wit")
             ),
         )?;
         let world = resolve.select_world(&[package], Some("fixture"))?;

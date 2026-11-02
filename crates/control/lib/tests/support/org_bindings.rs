@@ -314,7 +314,7 @@ manifest.Package {{
         let mut resolve = wit_parser::Resolve::new();
         resolve.push_str(
             "node.wit",
-            include_str!("../../../../../crates/execution/workflow/router/wit/package.wit"),
+            include_str!("../../../../../wit/wamn-node/package.wit"),
         )?;
         let (wit_package, _) = resolve.push_dir(output.join("wit"))?;
         let world = resolve.select_world(&[wit_package], Some("generated"))?;

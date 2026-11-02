@@ -13,7 +13,7 @@ mod guest_runtime;
 mod component {
     use alloc::{format, string::String, vec::Vec};
     wit_bindgen::generate!({
-        path: ["../../crates/platform/runtime/wit/deps/wamn-integration", "wit"],
+        path: ["../../wit/wamn-integration", "wit"],
         world: "wamn:modbus/client@1.0.0",
         generate_all,
         std_feature,

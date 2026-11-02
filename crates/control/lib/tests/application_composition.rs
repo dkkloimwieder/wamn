@@ -36,25 +36,25 @@ fn application(extra: &str) -> Vec<u8> {
     resolve
         .push_str(
             "node.wit",
-            include_str!("../../../execution/workflow/router/wit/package.wit"),
+            include_str!("../../../../wit/wamn-node/package.wit"),
         )
         .expect("read node contract");
     resolve
         .push_str(
             "routing.wit",
-            include_str!("../../../platform/runtime/wit/deps/wamn-flow-http-routing/package.wit"),
+            include_str!("../../../../wit/wamn-flow-http-routing/package.wit"),
         )
         .expect("read routing contract");
     resolve
         .push_str(
             "postgres.wit",
-            include_str!("../../../platform/runtime/wit/deps/wamn-postgres-0.4/package.wit"),
+            include_str!("../../../../wit/wamn-postgres-0.4/package.wit"),
         )
         .expect("read PostgreSQL contract");
     resolve
         .push_str(
             "operation.wit",
-            include_str!("../../../platform/runtime/wit/deps/wamn-operation-0.1/package.wit"),
+            include_str!("../../../../wit/wamn-operation-0.1/package.wit"),
         )
         .expect("read operation contract");
     let package = resolve

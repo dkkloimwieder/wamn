@@ -1069,7 +1069,7 @@ mod tests {
     #[test]
     fn contract_declares_host_registration() {
         let contract = fs::read_to_string(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("wit/deps/wamn-jetstream/package.wit"),
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../wit/wamn-jetstream/package.wit"),
         )
         .expect("authoritative jetstream WIT reads");
         for required in [

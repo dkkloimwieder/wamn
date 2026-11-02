@@ -32,11 +32,15 @@
 //! packages changed (`wamn-10yt.61`). Each guest now uses its own invocation.
 //! The cross-profile arm compares declared application guests with all workspace
 //! guests to check that the selection does not change their bytes.
+//!
+//! Guest WIT inputs must not resolve into root-workspace member packages.
+//! The WIT guard reads binding macros and resolves links in dependency trees.
 
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use sha2::{Digest as _, Sha256};
+use syn::visit::Visit as _;
 
 /// Every workspace whose members are compiled into guest artifacts.
 const GUEST_WORKSPACES: [&str; 2] = ["apps/Cargo.toml", "apps/platform/no-std/Cargo.toml"];
@@ -281,6 +285,254 @@ fn no_guest_workspace_declares_a_dependency_outside_itself() {
          that applies to the table it sits in:\n{}",
         escapes.join("\n")
     );
+}
+
+#[derive(Default)]
+struct WitPaths(Vec<String>);
+
+impl<'ast> syn::visit::Visit<'ast> for WitPaths {
+    fn visit_macro(&mut self, node: &'ast syn::Macro) {
+        let Some(name) = node.path.segments.last() else {
+            return;
+        };
+        let binding = (name.ident == "generate"
+            && node
+                .path
+                .segments
+                .iter()
+                .any(|part| part.ident == "wit_bindgen"))
+            || (name.ident == "bindgen"
+                && node
+                    .path
+                    .segments
+                    .iter()
+                    .any(|part| part.ident == "component"));
+        if !binding {
+            return;
+        }
+        let mut tokens: Vec<_> = node.tokens.clone().into_iter().collect();
+        if let [proc_macro2::TokenTree::Group(body)] = tokens.as_slice() {
+            tokens = body.stream().into_iter().collect();
+        }
+        let mut explicit = false;
+        for field in tokens.windows(3) {
+            let proc_macro2::TokenTree::Ident(key) = &field[0] else {
+                continue;
+            };
+            let proc_macro2::TokenTree::Punct(colon) = &field[1] else {
+                continue;
+            };
+            if colon.as_char() != ':' {
+                continue;
+            }
+            if key == "inline" {
+                explicit = true;
+            }
+            if key != "path" {
+                continue;
+            }
+            explicit = true;
+            let values = match &field[2] {
+                proc_macro2::TokenTree::Group(array) => array.stream(),
+                value => std::iter::once(value.clone()).collect(),
+            };
+            for value in values {
+                if matches!(&value, proc_macro2::TokenTree::Punct(comma) if comma.as_char() == ',')
+                {
+                    continue;
+                }
+                let path = syn::parse2::<syn::LitStr>(std::iter::once(value).collect())
+                    .expect("binding WIT paths must be string literals");
+                self.0.push(path.value());
+            }
+        }
+        if !explicit {
+            self.0.push("wit".to_owned());
+        }
+    }
+}
+
+fn root_member_directories(root: &Path) -> Vec<PathBuf> {
+    let source = fs::read_to_string(root.join("Cargo.toml")).expect("read root workspace manifest");
+    declared_members("Cargo.toml", &source)
+        .into_iter()
+        .map(|member| {
+            root.join(member)
+                .canonicalize()
+                .expect("root member directory")
+        })
+        .collect()
+}
+
+fn wit_path_reaches_native(members: &[PathBuf], directory: &Path, declared: &Path) -> bool {
+    let path = directory.join(declared);
+    let mut existing = path.as_path();
+    while !existing.exists() && !existing.is_symlink() {
+        let Some(parent) = existing.parent() else {
+            return false;
+        };
+        existing = parent;
+    }
+    let Ok(resolved) = existing.canonicalize() else {
+        return false;
+    };
+    let resolved = resolved.join(path.strip_prefix(existing).unwrap());
+    let mut normalized = PathBuf::new();
+    for part in resolved.components() {
+        match part {
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::CurDir => {}
+            _ => normalized.push(part.as_os_str()),
+        }
+    }
+    members.iter().any(|member| normalized.starts_with(member))
+}
+
+fn guest_wit_escapes(members: &[PathBuf], directory: &Path) -> Vec<String> {
+    let mut escapes = Vec::new();
+    let mut pending = vec![directory.to_path_buf()];
+    while let Some(path) = pending.pop() {
+        let metadata = fs::symlink_metadata(&path).expect("inspect guest input");
+        if metadata.file_type().is_symlink() {
+            if path.starts_with(directory.join("wit"))
+                && wit_path_reaches_native(
+                    members,
+                    directory,
+                    path.strip_prefix(directory).unwrap(),
+                )
+            {
+                escapes.push(format!(
+                    "{}: WIT link resolves into a root-workspace package",
+                    path.display()
+                ));
+            }
+            continue;
+        }
+        if metadata.is_dir() {
+            if path != directory && path.join("Cargo.toml").is_file() {
+                continue;
+            }
+            pending.extend(
+                fs::read_dir(path)
+                    .expect("read guest directory")
+                    .map(|entry| entry.expect("read guest entry").path())
+                    .filter(|path| path.file_name().is_none_or(|name| name != "target")),
+            );
+        } else if path.extension().is_some_and(|extension| extension == "rs") {
+            let source = fs::read_to_string(&path).expect("read guest Rust source");
+            let parsed = syn::parse_file(&source)
+                .unwrap_or_else(|error| panic!("parse {}: {error}", path.display()));
+            let mut paths = WitPaths::default();
+            paths.visit_file(&parsed);
+            for declared in paths.0 {
+                if wit_path_reaches_native(members, directory, Path::new(&declared)) {
+                    escapes.push(format!(
+                        "{}: WIT path {declared:?} resolves into a root-workspace package",
+                        path.display()
+                    ));
+                }
+            }
+        }
+    }
+    escapes
+}
+
+#[test]
+fn guest_wit_paths_do_not_reach_root_workspace_packages() {
+    let root = repository_root().canonicalize().expect("repository root");
+    let members = root_member_directories(&root);
+    let mut escapes = Vec::new();
+    for workspace in GUEST_WORKSPACES {
+        for manifest in workspace_manifests(workspace).into_iter().skip(1) {
+            let directory = root.join(manifest).parent().unwrap().to_path_buf();
+            escapes.extend(guest_wit_escapes(&members, &directory));
+        }
+    }
+    assert!(
+        escapes.is_empty(),
+        "guest WIT paths reach native packages:\n{}",
+        escapes.join("\n")
+    );
+}
+
+#[test]
+fn wit_paths_include_arrays_raw_strings_and_default_directories() {
+    let source = r##"
+        wit_bindgen::generate!({ path: [r#"../../../wit/wamn-node"#, "wit"] });
+        wasmtime::component::bindgen!({ path: "../../../native/wit" });
+        wit_bindgen::generate!({ world: "default" });
+        wit_bindgen::generate!({ inline: "package test:inline; world test {}" });
+    "##;
+    let mut paths = WitPaths::default();
+    paths.visit_file(&syn::parse_file(source).unwrap());
+    assert_eq!(
+        paths.0,
+        [
+            "../../../wit/wamn-node",
+            "wit",
+            "../../../native/wit",
+            "wit"
+        ]
+    );
+}
+
+#[test]
+fn guest_wit_guard_rejects_native_paths_and_dependency_links() {
+    let root = std::env::temp_dir().join(format!(
+        "wamn-guest-wit-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let guest = root.join("apps/guest");
+    for directory in [
+        "apps/guest/src",
+        "apps/guest/wit/deps",
+        "wit/shared",
+        "crates/native/wit",
+        "apps/native-tests/wit",
+    ] {
+        fs::create_dir_all(root.join(directory)).unwrap();
+    }
+    fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/native\", \"apps/native-tests\"]\n",
+    )
+    .unwrap();
+    let members = root_member_directories(&root);
+    let source = guest.join("src/lib.rs");
+    fs::write(
+        &source,
+        r#"wit_bindgen::generate!({ path: ["../../wit/shared", "wit", "wit/generated",
+            "../another/wit", "../../integrations/test/wit", "../target/wamn/guest/wit"] });"#,
+    )
+    .unwrap();
+    let allowed = guest_wit_escapes(&members, &guest);
+    fs::write(
+        &source,
+        r#"wit_bindgen::generate!({ path: "../../crates/native/wit" });"#,
+    )
+    .unwrap();
+    let native = guest_wit_escapes(&members, &guest);
+    fs::write(&source, r#"wit_bindgen::generate!({ path: "wit" });"#).unwrap();
+    std::os::unix::fs::symlink(
+        "../../../../apps/native-tests/wit",
+        guest.join("wit/deps/native"),
+    )
+    .unwrap();
+    let linked = guest_wit_escapes(&members, &guest);
+    fs::remove_file(guest.join("wit/deps/native")).unwrap();
+    std::os::unix::fs::symlink("../../../../wit/shared", guest.join("wit/deps/shared")).unwrap();
+    let canonical = guest_wit_escapes(&members, &guest);
+    fs::remove_dir_all(root).unwrap();
+    assert!(allowed.is_empty(), "{allowed:?}");
+    assert_eq!(native.len(), 1, "{native:?}");
+    assert_eq!(linked.len(), 1, "{linked:?}");
+    assert!(canonical.is_empty(), "{canonical:?}");
 }
 
 #[test]

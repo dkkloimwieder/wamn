@@ -49,7 +49,7 @@ mod exclusive_resources;
 
 mod node {
     wash_runtime::wasmtime::component::bindgen!({
-        path: "../../execution/workflow/router/wit", world: "node", wasmtime_crate: wash_runtime::wasmtime,
+        path: "../../../wit/wamn-node", world: "node", wasmtime_crate: wash_runtime::wasmtime,
     });
 }
 use node::wamn::node::types::{Emission, NodeContext, NodeError};
@@ -93,7 +93,7 @@ fn fixture(root: &Path) -> anyhow::Result<()> {
         "integrations/modbus/wit/world.wit",
         "integrations/modbus/wit/deps/io.wit",
         "integrations/modbus/wit/deps/sockets.wit",
-        "crates/platform/runtime/wit/deps/wamn-integration/package.wit",
+        "wit/wamn-integration/package.wit",
     ] {
         let target = root.join(file);
         std::fs::create_dir_all(target.parent().unwrap())?;

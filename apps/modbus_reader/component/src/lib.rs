@@ -7,9 +7,9 @@
 
 wit_bindgen::generate!({
     path: [
-        "../../../crates/platform/runtime/wit/deps/wamn-integration",
+        "../../../wit/wamn-integration",
         "../../../integrations/modbus/wit",
-        "../../../crates/execution/workflow/router/wit",
+        "../../../wit/wamn-node",
         "../../target/wamn/modbus_reader/wit",
         "wit",
     ],

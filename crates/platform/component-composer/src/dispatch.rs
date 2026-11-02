@@ -11,7 +11,7 @@ use wit_parser::{
     WasmImport, WorldItem, WorldKey,
 };
 
-const CONTRACT: &str = include_str!("../wit/package.wit");
+const CONTRACT: &str = include_str!("../../../../wit/wamn-application-dispatch/package.wit");
 
 pub(super) fn build(application: &[u8]) -> anyhow::Result<Vec<u8>> {
     let mut types = Types::default();
@@ -20,7 +20,7 @@ pub(super) fn build(application: &[u8]) -> anyhow::Result<Vec<u8>> {
     let mut resolve = Resolve::default();
     resolve.push_str(
         "node.wit",
-        include_str!("../../../execution/workflow/router/wit/package.wit"),
+        include_str!("../../../../wit/wamn-node/package.wit"),
     )?;
     let mut packages = BTreeMap::<String, String>::new();
     let mut names = Vec::new();
@@ -364,7 +364,7 @@ mod tests {
         resolve
             .push_str(
                 "node.wit",
-                include_str!("../../../execution/workflow/router/wit/package.wit"),
+                include_str!("../../../../wit/wamn-node/package.wit"),
             )
             .unwrap();
         let package = resolve.push_str("app.wit", r"

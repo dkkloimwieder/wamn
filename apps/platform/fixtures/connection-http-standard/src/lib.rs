@@ -83,7 +83,7 @@ mod bindings {
     wit_bindgen::generate!({
         world: "wamn:connection-http-standard-fixture/connection-http-standard@0.1.0",
         path: [
-            "../../../../crates/platform/runtime/wit/deps/wamn-connection",
+            "../../../../wit/wamn-connection",
             "wit",
         ],
         generate_all,

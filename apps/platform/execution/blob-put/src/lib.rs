@@ -50,8 +50,8 @@ mod bindings {
     wit_bindgen::generate!({
         world: "wamn:blob-put/blob-put@0.1.0",
         path: [
-            "../../../../crates/execution/workflow/router/wit",
-            "../../../../crates/platform/runtime/wit/deps/wasmcloud-blobstore",
+            "../../../../wit/wamn-node",
+            "../../../../wit/wasmcloud-blobstore",
             "wit",
         ],
         generate_all,

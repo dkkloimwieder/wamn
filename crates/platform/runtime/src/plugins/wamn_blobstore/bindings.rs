@@ -1,6 +1,6 @@
 //! Host-side bindings for `wasmcloud:blobstore@0.1.0`.
 //!
-//! Generated from the WIT vendored at `runtime/wit/deps/wasmcloud-blobstore/`,
+//! Generated from the WIT vendored at `wit/wasmcloud-blobstore/`,
 //! following the `wamn_postgres` pattern: WAMN owns this interface, generates
 //! its own bindings, and needs nothing from upstream's `wasi_blobstore`
 //! module — which is not even compiled, since the `wasi-blobstore` cargo

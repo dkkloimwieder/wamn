@@ -1,6 +1,6 @@
 //! Real `wamn:postgres` host plugin (S2).
 //!
-//! Contract source of truth: `crates/platform/runtime/wit/deps/wamn-postgres-0.4/package.wit`.
+//! Contract source of truth: `wit/wamn-postgres-0.4/package.wit`.
 //! Guest bindgen paths reference that canonical package directly.
 //! Host-enforced invariants:
 //!

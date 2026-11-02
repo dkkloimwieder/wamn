@@ -95,7 +95,7 @@ Rotation is the `wamn-ctl provision-project-env` sequence: prepare the new gener
 
 ## Outbound HTTP
 
-The public contract is [`wamn:connection/http@0.1.0`](../../crates/platform/runtime/wit/deps/wamn-connection/package.wit).
+The public contract is [`wamn:connection/http@0.1.0`](../../wit/wamn-connection/package.wit).
 A request names a requirement, method, relative path and query, headers, optional body, and optional idempotency key.
 The guest does not supply an endpoint or credential.
 The host resolves the admitted requirement and confines the request to that connection.

@@ -7,8 +7,8 @@
 wit_bindgen::generate!({
     world: "rest-consumer-fixture:component/rest-consumer-fixture@0.1.0",
     path: [
-        "../../../crates/execution/workflow/router/wit",
-        "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.4",
+        "../../../wit/wamn-node",
+        "../../../wit/wamn-postgres-0.4",
         "../../target/wamn/rest_consumer_fixture/wit",
         "wit",
     ],

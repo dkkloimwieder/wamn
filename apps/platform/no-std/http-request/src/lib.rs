@@ -28,8 +28,8 @@ mod bindings {
     wit_bindgen::generate!({
         world: "wamn:http-request/http-request@0.1.0",
         path: [
-            "../../../../crates/platform/runtime/wit/deps/wamn-connection",
-            "../../../../crates/execution/workflow/router/wit",
+            "../../../../wit/wamn-connection",
+            "../../../../wit/wamn-node",
             "wit",
         ],
         generate_all,

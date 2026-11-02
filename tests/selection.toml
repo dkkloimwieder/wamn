@@ -335,12 +335,12 @@ root_features = ["wamn-control/ops", "wamn-ctl/ops"]
 
 [[rules]]
 # Bindgen reads shared WIT outside Cargo dependency edges.
-inputs = ['^crates/execution/workflow/router/wit/', '^crates/platform/runtime/wit/deps/']
+inputs = ['^wit/(wamn-(connection|flow-http-routing|integration|jetstream|node|operation-0\.1|postgres-0\.4)|wasmcloud-blobstore)/', '^crates/platform/runtime/wit/deps/']
 workspaces = ["root", "apps", "no-std"]
 
 [[rules]]
 # Host and materializer bindings read these shared interfaces.
-inputs = ['^crates/execution/host/wit/deps/wamn-router-delivery-0.4/', '^apps/platform/execution/materializer/wit/deps/wasi-cli/', '^apps/platform/execution/materializer/wit/deps/wasi-clocks/']
+inputs = ['^wit/(wamn-router-delivery-0\.4|wamn-application-dispatch)/', '^apps/platform/execution/materializer/wit/deps/wasi-cli/', '^apps/platform/execution/materializer/wit/deps/wasi-clocks/']
 workspaces = ["root", "apps"]
 
 [[rules]]

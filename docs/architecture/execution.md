@@ -273,7 +273,7 @@ The memory of a read is bounded by the statement's declared limit and the platfo
 The test `a_read_of_100000_rows_refuses_at_the_ceiling` in [`route_interface_live`](../../tests/integration/src/route_interface_live.rs) shows the refusal.
 The composed entry calls the application query through its private dispatch interface, as it calls a projection.
 The query returns its page and the WAL position of a list ETag from one `read-json` call, and it reads through `statements.run`.
-Host routes and wiring attachments retain [`wamn:router-delivery` 0.4.0](../../crates/execution/host/wit/deps/wamn-router-delivery-0.4/package.wit).
+Host routes and wiring attachments retain [`wamn:router-delivery` 0.4.0](../../wit/wamn-router-delivery-0.4/package.wit).
 
 `invoke_operation` takes an optional intent context, and with one a write logs one intent for each input item and runs only the new items.
 The router driver and the edge pass that context for each write operation.

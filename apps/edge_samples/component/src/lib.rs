@@ -19,8 +19,8 @@ mod generated {
 wit_bindgen::generate!({
     world: "edge-samples:component/samples@0.1.0",
     path: [
-        "../../../crates/execution/workflow/router/wit",
-        "../../../crates/platform/runtime/wit/deps/wamn-postgres-0.4",
+        "../../../wit/wamn-node",
+        "../../../wit/wamn-postgres-0.4",
         "../../target/wamn/edge_samples/wit",
         "wit",
     ],

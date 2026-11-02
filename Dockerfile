@@ -32,6 +32,7 @@ WORKDIR /build
 FROM toolchain AS root-source
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY wit ./wit
 COPY vendor ./vendor
 # Native packages use shared guest libraries under apps/platform.
 COPY apps ./apps
@@ -118,6 +119,7 @@ RUN rustup target add --toolchain 1.99.0 wasm32-wasip2 \
 COPY .cargo/config.toml /build/.cargo/config.toml
 COPY Cargo.toml /build/Cargo.toml
 COPY crates /build/crates
+COPY wit /build/wit
 COPY vendor /build/vendor
 COPY apps /build/apps
 COPY tools/guest-rustflags /build/tools/guest-rustflags
@@ -287,6 +289,7 @@ ADD --chmod=0755 --checksum=sha256:1e9045ec32bea85da43de85f0065358529ea7c7a152ec
 COPY --from=build-cases /cases /cases
 COPY --from=root-source /build/apps /build/apps
 COPY --from=runner-wit /wit-output/crates /build/crates
+COPY --from=root-source /build/wit /build/wit
 COPY --from=apps-target . /build/apps/target/wamn
 COPY --from=runner-deploy /build/deploy /build/deploy
 COPY tools /build/tools

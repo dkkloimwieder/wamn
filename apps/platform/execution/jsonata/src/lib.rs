@@ -25,7 +25,7 @@
 mod bindings {
     wit_bindgen::generate!({
         world: "wamn:jsonata/jsonata@0.1.0",
-        path: ["../../../../crates/execution/workflow/router/wit", "wit"],
+        path: ["../../../../wit/wamn-node", "wit"],
         generate_all,
     });
 }

@@ -783,12 +783,10 @@ mod tests {
     fn a_platform_interface_change_makes_every_package_stale() {
         let scratch = scratch("platform");
         let apps = scratch.0.join("apps");
-        let wit = scratch
-            .0
-            .join("crates/platform/runtime/wit/deps/wamn-postgres-0.4/package.wit");
+        let wit = scratch.0.join("wit/wamn-postgres-0.4/package.wit");
         let sdk = apps.join("platform/data/postgres-statements/src/lib.rs");
         let bindings = r#"wit_bindgen::generate!({
-            path: "../../../../crates/platform/runtime/wit/deps/wamn-postgres-0.4",
+            path: "../../../../wit/wamn-postgres-0.4",
         });"#;
         for (path, bytes) in [
             (apps.join("Cargo.toml"), ""),
@@ -809,9 +807,9 @@ mod tests {
 
         let top_inputs = inputs(&top).expect("read the inputs");
         assert!(
-            top_inputs.files.contains_key(
-                "../../crates/platform/runtime/wit/deps/wamn-postgres-0.4/package.wit"
-            ),
+            top_inputs
+                .files
+                .contains_key("../../wit/wamn-postgres-0.4/package.wit"),
             "{:?}",
             top_inputs.files.keys()
         );
@@ -856,9 +854,9 @@ mod tests {
         let package = apps.join("rest_connector");
         let nested = apps.join("platform/nested");
         let imported = [
-            "crates/execution/workflow/router/wit/package.wit",
+            "wit/wamn-node/package.wit",
             "crates/execution/host/wit/deps/delivery/package.wit",
-            "crates/platform/component-composer/wit/package.wit",
+            "wit/wamn-application-dispatch/package.wit",
             "crates/new-provider/wit/deps/imported/package.wit",
             "apps/platform/guest/wit/deps/shared/package.wit",
         ];
@@ -871,7 +869,7 @@ mod tests {
                 "apps/rest_connector/component/src/lib.rs",
                 r#"wit_bindgen::generate!({
                     path: [
-                        "../../../crates/execution/workflow/router/wit",
+                        "../../../wit/wamn-node",
                         "../../../crates/execution/host/wit/deps/delivery",
                         "../../target/wamn/rest_connector/wit",
                     ],
@@ -883,7 +881,7 @@ mod tests {
                 "apps/platform/guest/src/bindings.rs",
                 r##"mod bindings {
                     wit_bindgen::generate!({ path: r#"../../../crates/new-provider/wit"# });
-                    wit_bindgen::generate!({ path: "../../../crates/platform/component-composer/wit/package.wit" });
+                    wit_bindgen::generate!({ path: "../../../wit/wamn-application-dispatch/package.wit" });
                     wit_bindgen::generate!({ world: "shared" });
                 }"##,
             ),
@@ -970,9 +968,9 @@ mod tests {
         let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let inputs = inputs(&repository.join("apps/rest_connector")).unwrap();
         for path in [
-            "../../crates/execution/workflow/router/wit/package.wit",
-            "../../crates/execution/host/wit/deps/wamn-router-delivery-0.4/package.wit",
-            "../../crates/platform/component-composer/wit/package.wit",
+            "../../wit/wamn-node/package.wit",
+            "../../wit/wamn-router-delivery-0.4/package.wit",
+            "../../wit/wamn-application-dispatch/package.wit",
         ] {
             assert!(inputs.files.contains_key(path), "missing {path}");
         }

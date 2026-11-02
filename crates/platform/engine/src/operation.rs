@@ -28,7 +28,7 @@ pub use native_workload::NativeApplication;
 
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
-        path: "../../execution/workflow/router/wit",
+        path: "../../../wit/wamn-node",
         world: "node",
         exports: { default: async },
         wasmtime_crate: wash_runtime::wasmtime,

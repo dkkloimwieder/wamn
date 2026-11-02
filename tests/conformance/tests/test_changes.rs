@@ -629,15 +629,16 @@ fn a_platform_crate_selects_its_dependents_in_every_workspace() {
 #[test]
 fn shared_wit_changes_select_the_workspaces_with_direct_readers() {
     for (path, no_std) in [
-        ("crates/execution/workflow/router/wit/package.wit", true),
-        (
-            "crates/platform/runtime/wit/deps/wamn-postgres-0.4/package.wit",
-            true,
-        ),
-        (
-            "crates/execution/host/wit/deps/wamn-router-delivery-0.4/package.wit",
-            false,
-        ),
+        ("wit/wamn-node/package.wit", true),
+        ("wit/wamn-connection/package.wit", true),
+        ("wit/wamn-flow-http-routing/package.wit", true),
+        ("wit/wamn-integration/package.wit", true),
+        ("wit/wamn-jetstream/package.wit", true),
+        ("wit/wamn-operation-0.1/package.wit", true),
+        ("wit/wasmcloud-blobstore/package.wit", true),
+        ("wit/wamn-postgres-0.4/package.wit", true),
+        ("wit/wamn-router-delivery-0.4/package.wit", false),
+        ("wit/wamn-application-dispatch/package.wit", false),
         (
             "apps/platform/execution/materializer/wit/deps/wasi-cli/package.wit",
             false,
@@ -1293,10 +1294,7 @@ fn every_change_selects_the_install_render_checks() {
 #[test]
 fn a_change_that_selects_an_image_guest_builds_the_guests_both_ways() {
     // A platform crate the guest links, and a shared WIT root.
-    for path in [
-        "apps/platform/wire/src/lib.rs",
-        "crates/execution/workflow/router/wit/package.wit",
-    ] {
+    for path in ["apps/platform/wire/src/lib.rs", "wit/wamn-node/package.wit"] {
         let fixture = Fixture::new();
         fixture.write(path, "changed\n");
         fixture.selected(&[]);

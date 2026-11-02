@@ -14,7 +14,7 @@ use wash_runtime::wasmtime::component::types::ComponentItem;
 
 mod node_contract {
     wash_runtime::wasmtime::component::bindgen!({
-        path: "../../execution/workflow/router/wit",
+        path: "../../../wit/wamn-node",
         world: "node",
         exports: { default: async },
         wasmtime_crate: wash_runtime::wasmtime,
@@ -645,7 +645,7 @@ mod tests {
         ),
         (
             "wamn-integration.wit",
-            include_str!("../../runtime/wit/deps/wamn-integration/package.wit"),
+            include_str!("../../../../wit/wamn-integration/package.wit"),
         ),
         (
             "wasi-clocks.wit",
@@ -723,7 +723,7 @@ mod tests {
         resolve
             .push_str(
                 "wamn-node.wit",
-                include_str!("../../../execution/workflow/router/wit/package.wit"),
+                include_str!("../../../../wit/wamn-node/package.wit"),
             )
             .expect("the live node WIT parses");
         for (name, wit) in DEPENDENCY_WITS {
@@ -967,7 +967,7 @@ mod tests {
             resolve
                 .push_str(
                     "node.wit",
-                    include_str!("../../../execution/workflow/router/wit/package.wit"),
+                    include_str!("../../../../wit/wamn-node/package.wit"),
                 )
                 .unwrap();
             let package = resolve.push_str("typed.wit", &format!(r"

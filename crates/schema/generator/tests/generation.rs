@@ -1605,7 +1605,7 @@ fn compile_inventory_item_component(package: &GeneratedPackage, codec_tests: &st
         ),
     )
     .expect("write fixture manifest");
-    let node = root.join("crates/execution/workflow/router/wit");
+    let node = root.join("wit/wamn-node");
     let lib = format!(
         r##"wit_bindgen::generate!({{
     world: "wamn:inventory-fixture/component@1.0.0",

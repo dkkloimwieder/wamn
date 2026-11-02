@@ -18,7 +18,7 @@ wit_bindgen::generate!({
         }
     "#,
     path: [
-        "../../../crates/execution/workflow/router/wit",
+        "../../../wit/wamn-node",
         "../../target/wamn/edge_device/wit",
     ],
     generate_all,

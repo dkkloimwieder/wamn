@@ -7,8 +7,8 @@
 wit_bindgen::generate!({
     world: "wamn-integration:component/wamn-integration@0.1.0",
     path: [
-        "../../../../crates/execution/workflow/router/wit",
-        "../../../../crates/platform/runtime/wit/deps/wamn-postgres-0.4",
+        "../../../../wit/wamn-node",
+        "../../../../wit/wamn-postgres-0.4",
         "../../../target/wamn/wamn_integration/wit",
         "wit",
     ],

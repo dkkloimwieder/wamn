@@ -12,8 +12,8 @@ use wamn::node::types::ErrorDetail;
 wit_bindgen::generate!({
     world: "wamn:http-request/http-request@0.1.0",
     path: [
-        "../../../../crates/platform/runtime/wit/deps/wamn-connection",
-        "../../../../crates/execution/workflow/router/wit",
+        "../../../../wit/wamn-connection",
+        "../../../../wit/wamn-node",
         "../../no-std/http-request/wit",
     ],
     generate_all,
