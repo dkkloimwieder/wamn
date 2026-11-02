@@ -62,7 +62,7 @@ Each base table must be in the package's own schema, or a relation that the pack
 ## Ownership and grants
 
 The package owner role owns the view, because apply runs migrations as that role.
-[`synchronization.rs`](../../crates/control/lib/src/apply_package/synchronization.rs) calls `roles::set_package_owner_role` before it runs them.
+[`roles.rs`](../../crates/control/lib/src/apply_package/roles.rs) calls `roles::set_package_owner_role` before it runs them.
 
 wamn runs PostgreSQL 18.
 [`environment.rs`](../../crates/control/lib/src/dev/environment.rs) refuses a version below 180000, and the CloudNativePG clusters use `ghcr.io/cloudnative-pg/postgresql:18`.
@@ -139,10 +139,10 @@ Qualification makes sure of three facts:
 ## Effect profile
 
 A statement that reads a view reports the view and each base table of the view.
-[`profile.rs`](../../crates/schema/generator/src/profile.rs), `RelationProfile`, gains the view's base tables from `pg_depend`.
+[`profile.rs`](../../crates/catalog/model/src/profile.rs), `RelationProfile`, gains the view's base tables from `pg_depend`.
 So role review still sees every table that an operation reaches.
 
-Today [`sql_lex.rs`](../../crates/schema/generator/src/sql_lex.rs), `physical_select_relations`, keeps only names in the catalog's table map.
+Today [`sql_lex.rs`](../../crates/catalog/model/src/sql_lex.rs), `physical_select_relations`, keeps only names in the catalog's table map.
 A view in authored SQL therefore yields no relation access at all.
 This is the first implementation item, bead `wamn-p0q0g`.
 `physical_select_relations` resolves a view to the tables that it depends on, from `pg_depend`.

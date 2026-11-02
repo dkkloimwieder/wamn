@@ -1,5 +1,5 @@
 # The platform part of the host group of dkk/wms/dev: WAMN_RELEASE_HOST_GROUP of
-# `wamn-ctl env apply` (docs/history/gcp-install-history.md section 11.10). It is hand-written
+# `wamn-ctl env apply` (docs/operations/gcp.md section 4.17). It is hand-written
 # from the group `wms` of values-host.yaml. The release chart derives the name,
 # namespace, service, release arguments, WAMN_ORG, WAMN_PROJECT, the drain
 # bound, and host telemetry (the collector and sampler).

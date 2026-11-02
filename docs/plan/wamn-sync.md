@@ -468,7 +468,7 @@ An authored feeding read that names any relation other than one view refuses, na
 
 The restricted run wraps an authored statement as `SELECT * FROM (<statement>) AS result WHERE result.<key> = any($n)`.
 The build refuses a feed on an authored statement that groups, uses window functions, or carries `LIMIT`, because the wrapper changes their result.
-[`sql_lex.rs`](../../crates/schema/generator/src/sql_lex.rs), `groups_or_windows`, already detects the first two.
+[`sql_lex.rs`](../../crates/catalog/model/src/sql_lex.rs), `groups_or_windows`, already detects the first two.
 
 | Rule | Invariant | Test |
 | --- | --- | --- |
@@ -518,7 +518,7 @@ The read's route supplies authentication and authorization for both result varia
 [`record-history.sql`](../../deploy/sql/record-history.sql), `wamn_history.create_history_table`, adds an index on `transaction_id`.
 Each linking column needs an index on its base column, because the key mapping looks up root rows by it.
 
-[`packaging-feed.ts`](../../web/sync-bench/src/packaging-feed.ts), `packagingFeed`, reads every list page up to its cap.
+[`client_ts_sync.ts`](../../crates/schema/generator/src/client_ts_sync.ts) emits `packagingFeed`, which reads every list page up to its cap.
 It keeps the first page's feed cursor, which covers changes between page reads.
 It reports `complete: false` when the cap stops a fill with more pages available.
 The default `RECORD_CAP` is 1000.
@@ -583,7 +583,7 @@ It runs in 0.08 to 0.09 ms for 10 keys, and in 2.8 to 3.2 ms for a page of 100 k
 
 A collection covers one query, generated shape digest, and canonical argument set.
 [`names.ts`](../../web/runtime/src/sync/names.ts), `collectionKey`, encodes those three values.
-[`packaging-feed.ts`](../../web/sync-bench/src/packaging-feed.ts), `canonicalJson` and `packagingKey`, make equal argument sets share a key.
+[`client_ts_sync.ts`](../../crates/schema/generator/src/client_ts_sync.ts) emits `canonicalJson` and `packagingKey`, which make equal argument sets share a key.
 Rows use the root key as their collection key.
 
 [`client_ts.rs`](../../crates/schema/generator/src/client_ts.rs), `shape_digest`, hashes generated row names, contract types, nested fields, and nullability in stable order.
@@ -860,7 +860,7 @@ The outbox database stores entries by `seq`.
 There is no release metadata store, because row shape keys and ordinary request validation supply the required boundaries.
 
 `shell` requests persistent storage once at startup and reads the storage estimate.
-[`shell-status.ts`](../../web/sync-bench/src/shell-status.ts), `shellStatus`, displays worker, persistence, protection, and quota results.
+[`status.ts`](../../web/shell/src/status.ts), `shellStatus`, displays worker, persistence, protection, and quota results.
 A persistence denial changes no other behavior.
 Replay runs while the application is open without a Background Sync dependency.
 
@@ -869,7 +869,7 @@ Replay runs while the application is open without a Background Sync dependency.
 Take-offline exists in sync-bench as a test of the mechanism.
 It does not promise full offline coverage for generated applications.
 [`packaging-offline.ts`](../../web/sync-bench/src/packaging-offline.ts), `packagingOffline`, saves the selected packaging scope and the whole location reference model.
-[`location-feed.ts`](../../web/sync-bench/src/location-feed.ts), `locationFeed`, reads every reference page in groups of 100.
+[`client_ts_sync.ts`](../../crates/schema/generator/src/client_ts_sync.ts) emits `locationFeed`, which reads every reference page in groups of 100.
 
 The action refuses an incomplete set.
 `collectionBytes` measures serialized rows, cursor, key, and timestamp before IndexedDB overhead.
@@ -900,7 +900,7 @@ The user id comes from `sub` in sign-in and renewal replies.
 `keepSession` renews on startup and before expiry.
 The environment comes from the page route through [`packaging-writes.ts`](../../web/sync-bench/src/packaging-writes.ts), `packagingAddress`.
 
-[`saved-user.ts`](../../web/sync-bench/src/saved-user.ts), `savedUser`, keeps the last signed-in id per application and environment in local storage.
+[`saved-user.ts`](../../web/runtime/src/saved-user.ts), `savedUser`, keeps the last signed-in id per application and environment in local storage.
 [`live.tsx`](../../web/sync-bench/src/live.tsx), `App`, opens that user's rows and outbox during an offline reopen.
 `SessionPackaging` gates upload on the matching signed-in user and shows “sign in to upload” while upload waits.
 Local recording needs no token.

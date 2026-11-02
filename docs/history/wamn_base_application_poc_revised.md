@@ -51,7 +51,7 @@
 
 ### 2.1 Package versus module
 
-[Application naming law](../architecture/application-naming.md#package-and-operation-identity) defines package, module, and operation identity.
+[Naming](../architecture/naming.md) defines package, module, and operation identity.
 
 Use **package**, unqualified, only for that WAMN application boundary. Other packaging concepts are named explicitly:
 
@@ -87,7 +87,7 @@ A client overlay consumes a base operation through a dependency alias plus **con
 
 ### 2.2 Local operation convention
 
-[Application naming law](../architecture/application-naming.md#package-and-operation-identity) defines local operation forms, generated CRUD actions, and custom action spelling.
+[Application naming law](../architecture/naming.md#source-and-wire-identifiers) defines local operation forms, generated CRUD actions, and custom action spelling.
 
 Application action examples:
 
@@ -123,7 +123,7 @@ is absent from the transport-independent package declarations in `wamn.json`.
 
 ### 2.3 Technical naming
 
-[Application naming law](../architecture/application-naming.md#technical-identifiers) defines technical identifier and generated type spelling.
+[Application naming law](../architecture/naming.md#source-and-wire-identifiers) defines technical identifier and generated type spelling.
 
 Application identifier examples:
 

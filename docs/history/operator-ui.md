@@ -7,7 +7,7 @@ This page retains only deferred extensions from the approved client designs.
 ## Web client
 
 The [web operator client history](../history/web-operator-client.md) records the browser work that followed this plan.
-The [platform UI application](platform-ui-app.md) owns current browser work.
+The [platform UI application](../plan/platform-ui-app.md) owns current browser work.
 
 TypeScript generation remains deferred under `wamn-10yt.5.1` until a concrete web consumer requires it.
 It must consume the same effective-release client-contract representation as the Rust emitter.

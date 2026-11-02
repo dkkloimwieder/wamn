@@ -2,7 +2,7 @@
 
 ## Owner amendment (2026-09-09)
 
-The owner accepted [WAMN platform and application testing](../poc/wamn_testing_spec.md) and authorized Receiving Increment 1 under `wamn-10yt.77`.
+The owner accepted [WAMN platform and application testing](wamn_testing_spec.md) and authorized Receiving Increment 1 under `wamn-10yt.77`.
 That specification governs the changes below. Beads and executed evidence own implementation status.
 
 Application tests proceed through real commands, guests, capabilities, and authenticated routes without waiting for the complete deterministic simulation framework.

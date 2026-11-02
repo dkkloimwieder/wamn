@@ -5,7 +5,7 @@
 **Revision:** 9, after the 2026-09-29 reviews and owner rulings  
 **Status:** architecture accepted. Platform UI implementation remains gated on the accepted and completed `kind` → `type` precursor.
 
-Sections 0, 1 and 3 to 9 are history: [platform UI history](../history/platform-ui-history.md). Section 5 is superseded by [environment lifecycle](../architecture/overview.md#environment-lifecycle).
+[Operator clients](../architecture/execution.md#operator-clients) and [organization membership and administration](../architecture/overview.md#organization-membership-and-administration) own the current references. Section 5 is superseded by [environment lifecycle](../architecture/overview.md#environment-lifecycle).
 
 ## 2. Fixed rules
 

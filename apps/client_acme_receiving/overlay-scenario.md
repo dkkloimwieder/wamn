@@ -79,8 +79,7 @@ Neither installation updates an existing database in place.
 
 The [compatibility observer](tests/overlay_compatibility.rs) compares consumed contracts, definition ownership, and application permissions.
 It refuses a breaking consumed field or constraint.
-The [paired deployed case](../wamn_receiving/tests/route_authentication_live/cluster/postcommit_pair.rs) compares the unchanged overlay across both installations.
-It also exercises the receipt consumer in each installation.
+The [deployed receipt case](../wamn_receiving/tests/route_authentication_live/cluster/postcommit_case.rs) exercises the receipt consumer with the unchanged overlay.
 
 A compatible additive base does not require rewriting the immutable overlay artifact.
 An incompatible consumed contract requires client work and a new package version.

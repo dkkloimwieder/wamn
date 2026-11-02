@@ -43,7 +43,7 @@ Allocator reuse, compiled-artifact reuse, HTTP connection reuse, and live guest-
 
 **Acceptance:** a subprocess starts with a deliberately low soft limit and known hard limit; the native helper's effective result is observed and derived ceilings use it. Cover inability to raise the limit according to the helper's supported behavior. Do not alter the test runner's own limit or require elevated privileges.
 
-A's [descriptor proof](../../evidence/perf/2026.09/native-a-descriptor/report.md) records the service startup calls and isolated subprocess results under `wamn-0ct2.1`.
+A covers the service startup calls and isolated subprocess results under `wamn-0ct2.1` (evidence not retained).
 
 ### B. Replace manual guest execution, including its duplicate caches
 
@@ -96,10 +96,10 @@ The shared `invocation_trace` carrier restores the host span and subscriber for 
 Native policy binds it under the existing invocation scope after initialization and revokes it with that scope.
 It supplies telemetry context only, with no guest interface, configuration, or authority rule.
 Other host paths retain ambient tracing, and guest logging retains its separate trace-context contract.
-The [main authenticated proof](../../evidence/perf/2026.09/native-b-adoption/production-authenticated-main-001/output.log) passes all six scenarios at the production source, including exact invocation and host-observation parentage.
-The [host tests](../../evidence/perf/2026.09/native-b-adoption/production-host-tests-003/output.log) pass 52 cases with zero failures and one filtered authenticated test.
-The [deployed Receiving proof](../../evidence/perf/2026.09/native-b-adoption/production-receiving-002/receiving-correctness-journey.receipt) passes at that production source.
-Its prerequisite covers 13 PAT routes and eight P3 protocol cases. The deployed receipts cover 19 histories, 129 steps, and seven boundaries.
+The authenticated run under `wamn-0ct2.2` reports six passing scenarios at the production source. They include exact invocation and host-observation parentage (evidence not retained).
+The host run under `wamn-0ct2.2` reports 52 passing cases, zero failures, and one filtered authenticated test (evidence not retained).
+The deployed Receiving run under `wamn-0ct2.2` reports success at that production source (evidence not retained).
+The Receiving run under `wamn-0ct2.2` lists prerequisites of 13 PAT routes and eight P3 protocol cases. It lists 19 histories, 129 steps, and seven boundaries (evidence not retained).
 
 An outer absolute timeout encloses native dispatch and its response. Nested deadlines cannot exceed that bound.
 Both production Tokio runtimes select public `event_interval(1)` so repeated guest yields do not postpone timer polling.
@@ -112,12 +112,12 @@ These mechanisms add no cleanup worker, private API access, or second compilatio
 
 **Stop condition:** a required context, candidate or loading boundary cannot be represented through public APIs. Record the exact obstacle before expanding the adapter. Do not copy internals or preserve duplicate machinery merely to report native adoption.
 
-B's [public dispatch checkpoint](../../evidence/perf/2026.09/native-b-dispatch/report.md) tests the deadline and exact component selection boundaries.
+The public dispatch checkpoint under `wamn-0ct2.2` covers the deadline and exact component selection boundaries (evidence not retained).
 The historical checkpoint records a valid stop against the former per-dependency selection contract.
 The accepted trade above supersedes that contract. Admission rejects ambiguous imported providers before native resolution.
 The original failed experiment remains failed and does not block this approved substitution.
 The completed production implementation satisfies the deletion contract for released, nested, and candidate calls.
-The [production report](../../evidence/perf/2026.09/native-b-adoption/production-report.md) records exact identities, executed correctness proofs, historical failures, and workspace limits.
+The production account under `wamn-0ct2.2` covers exact identities, correctness results, historical failures, and workspace limits (evidence not retained).
 The completed substitution does not enable warm reuse.
 
 #### B2. Warm reuse after B with its policy amendment
@@ -136,7 +136,7 @@ Palette or other components without this evidence keep `poolSize` unset/zero. Th
 
 ### C. Re-evaluate `wamn:jetstream` against native NATS
 
-The reviewed [source checkpoint of 2026-09-11](../../evidence/perf/2026.09/native-c-advisories/source-checkpoint-001/handoff.json), owned by `wamn-0ct2.7`, supersedes the payload dead-letter and adapter alternatives below.
+The source decision of 2026-09-11 under `wamn-0ct2.7` supersedes the payload dead-letter and adapter alternatives below (evidence not retained).
 It uses the platform-owned native `events` binding, private host configuration, scoped broker credentials, and retained exhaustion and termination advisories.
 Registration checks, drift refusal, derived publishing and the separate scheduler doorbell remain.
 The earlier `.4` report and `.6` alternative retain their historical context.
@@ -164,7 +164,7 @@ An idempotent inspection result is not a platform-wide exactly-once claim. Keep 
 **Stop condition:** identify any release, metadata, acknowledgement or authority requirement the public interface cannot preserve. Keep the necessary WAMN portion and document why; do not widen grants or rewrite the event architecture to claim adoption.
 
 Owner ruling, 2026-09-10: C can proceed ahead of B because their ordering protects shared-file edits, not a technical dependency.
-The [C source checkpoint](../../evidence/perf/2026.09/native-c-nats/report.md) reaches the public message-handle stop condition under `wamn-0ct2.4`.
+The C source checkpoint reaches the public message-handle stop condition under `wamn-0ct2.4` (evidence not retained).
 The owner retains registration checks and dead-letter construction in the Rust host.
 Deferred decision `wamn-0ct2.6` owns a trusted adapter component after the upstream binding surface stabilizes and the message handle becomes public.
 The capability registry can make that adapter the sole native NATS importer, but policy placement and bypass resistance require a separate decision and proof.
@@ -182,7 +182,7 @@ Its public API does not accept WAMN's approved peer before dispatch.
 The historical probe is not an executed 2.9 adoption proof. [S10, S11]
 
 Reusable clients live above the invocation-local plugin and store lifetime.
-The [HTTP report](../../evidence/perf/2026.09/ctc8-16-http-reuse/README.md) records the limits, exact commands, and proof gaps.
+The HTTP account under `wamn-ctc8.16` covers the limits, exact commands, and gaps in the results (evidence not retained).
 Standard WASI HTTP remains a separate interface option.
 Revisit native adoption only when its public API preserves the approved peer, isolation, aggregate limits, and existing effect outcomes.
 
