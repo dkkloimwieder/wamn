@@ -132,10 +132,7 @@ async fn ready(cluster: &ReceivingCluster, name: &str, endpoint: &str) -> anyhow
                     let error = anyhow::Error::new(error);
                     attempts.push(json!({"attempt":attempt,"failure":format!("{error:#}")}));
                     if attempt == 15
-                        || !(timed_out
-                            || wamn_integration_tests::operator_recovery::connection_refused(
-                                &error,
-                            ))
+                        || !(timed_out || wamn_test_infrastructure::connection_refused(&error))
                     {
                         return Err(error);
                     }
