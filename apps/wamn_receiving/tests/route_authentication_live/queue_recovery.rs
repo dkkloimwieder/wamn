@@ -51,7 +51,7 @@ async fn a_run_killed_during_application_sql_completes_after_the_host_restarts()
         wamn_schema_generator::route_schema::read_package_attachments(&receiving)?;
     attachments.retain(|_, attachment| {
         matches!(&attachment.target, wamn_catalog::AttachmentTarget::Route { operation, .. }
-            if wamn_schema_generator::sealed_operation_reference(operation)
+            if wamn_catalog::sealed_operation_reference(operation)
                 == super::BASE_RECORD_RECEIPT_REFERENCE)
     });
     ensure!(

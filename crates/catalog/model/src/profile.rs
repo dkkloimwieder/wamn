@@ -18,8 +18,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::{ComponentSqlStatement, ServingComponent};
 use serde::Serialize;
-use wamn_catalog::{ComponentSqlStatement, ServingComponent};
 
 /// The profile of every operation of a release's components.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -170,7 +170,7 @@ fn statements(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamn_catalog::{ComponentDescriptor, ServingComponentOperation};
+    use crate::{ComponentDescriptor, ServingComponentOperation};
 
     fn statement(path: &str, sql: &str) -> (String, ComponentSqlStatement) {
         (

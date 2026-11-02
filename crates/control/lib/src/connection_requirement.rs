@@ -4,7 +4,7 @@ use std::path::Path;
 
 use anyhow::{Context as _, ensure};
 use tokio_postgres::Transaction;
-use wamn_schema_generator::PackageManifest;
+use wamn_catalog::manifest::PackageManifest;
 
 pub(crate) fn exported_interfaces(bytes: &[u8]) -> anyhow::Result<Vec<String>> {
     world_interfaces(bytes, true)
@@ -33,14 +33,14 @@ fn world_interfaces(bytes: &[u8], exports: bool) -> anyhow::Result<Vec<String>> 
 }
 pub(crate) fn require_imports(bytes: &[u8], name: &str, interface: &str) -> anyhow::Result<String> {
     ensure!(
-        wamn_schema_generator::valid_connection_name(name),
+        wamn_catalog::manifest::valid_connection_name(name),
         "connection name must match ^[a-z][a-z0-9-]{{0,62}}$: {name}"
     );
     let wit_component::DecodedWasm::Component(resolve, world) = wit_component::decode(bytes)?
     else {
         anyhow::bail!("connection authority needs a component binary")
     };
-    let host = wamn_schema_generator::host_connection_interface(interface);
+    let host = wamn_catalog::manifest::host_connection_interface(interface);
     let found = resolve.worlds[world].imports.iter().any(|(key, item)| {
         let wit_parser::WorldItem::Interface { id, .. } = item else {
             return false;
@@ -88,7 +88,7 @@ pub(crate) async fn install(
             let Some(interface) = resolve.id_of(*id) else {
                 continue;
             };
-            if wamn_schema_generator::host_connection_interface(&interface)
+            if wamn_catalog::manifest::host_connection_interface(&interface)
                 || interface.starts_with("wamn:postgres/")
             {
                 continue;
@@ -109,8 +109,8 @@ pub(crate) async fn install(
                 .with_context(|| format!("package declares no connection {name}"))?;
             let interface = require_imports(&bytes, name, &declaration.interface)?;
             let mode = match declaration.mode {
-                wamn_schema_generator::ConnectionMode::Read => "read",
-                wamn_schema_generator::ConnectionMode::Write => "write",
+                wamn_catalog::manifest::ConnectionMode::Read => "read",
+                wamn_catalog::manifest::ConnectionMode::Write => "write",
             };
             let params: [&(dyn tokio_postgres::types::ToSql + Sync); 6] = [
                 &env_key,

@@ -30,7 +30,7 @@ manifest.Package {
 
     let directory = read_source_package_directory(&root).unwrap();
     let manifest =
-        wamn_schema_generator::PackageManifest::from_slice(&directory.manifest_bytes).unwrap();
+        wamn_catalog::manifest::PackageManifest::from_slice(&directory.manifest_bytes).unwrap();
     assert_eq!(manifest.package.id, "source_package");
     assert_eq!(directory.artifact_digest, None);
     assert_eq!(directory.migrations.len(), 1);

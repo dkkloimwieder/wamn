@@ -237,7 +237,7 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
     let package = plan_package_migrations(&directory, None)
         .context("validate strict package directory before component publication")?;
     let package_manifest =
-        wamn_schema_generator::PackageManifest::from_slice(&directory.manifest_bytes)
+        wamn_catalog::manifest::PackageManifest::from_slice(&directory.manifest_bytes)
             .context("parse strict package manifest before component publication")?;
     let component_bytes = std::fs::read(&args.component_bytes)
         .with_context(|| format!("read component bytes {}", args.component_bytes.display()))?;
@@ -305,12 +305,12 @@ pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentA
 /// Bind result signing only from the package's verified typed result fields.
 fn bind_signed_file_results(
     component: &mut AdmittedComponent,
-    manifest: &wamn_schema_generator::PackageManifest,
+    manifest: &wamn_catalog::manifest::PackageManifest,
 ) -> Result<(), ComponentProjectionError> {
+    use wamn_catalog::manifest::ResultClass;
     use wamn_catalog::{
         SIGNED_FILE_READS, SignedFileField, SignedFileReads, SignedFileResultClass,
     };
-    use wamn_schema_generator::ResultClass;
 
     let invalid = |detail: String| {
         ComponentProjectionError::new(
@@ -319,7 +319,7 @@ fn bind_signed_file_results(
         )
     };
     // Re-run the same vocabulary gate for callers that construct a manifest.
-    wamn_schema_generator::validate_operation_vocabulary(manifest)
+    wamn_catalog::manifest::validate_operation_vocabulary(manifest)
         .map_err(|error| invalid(error.to_string()))?;
     for (export, operation) in &mut component.operations {
         let result = manifest
@@ -327,7 +327,7 @@ fn bind_signed_file_results(
             .iter()
             .find_map(|(name, declaration)| {
                 let canonical =
-                    wamn_schema_generator::canonical_operation_identity(&manifest.package, name)
+                    wamn_catalog::manifest::canonical_operation_identity(&manifest.package, name)
                         .ok()?;
                 (canonical == *export)
                     .then_some(declaration.result.as_ref())
@@ -413,7 +413,7 @@ struct ExpectedOperationContract {
 
 fn load_component_statement_facts(
     package_root: &Path,
-    manifest: &wamn_schema_generator::PackageManifest,
+    manifest: &wamn_catalog::manifest::PackageManifest,
     component: &AdmittedComponent,
 ) -> Result<BTreeMap<String, BTreeMap<String, ComponentSqlStatement>>, ComponentProjectionError> {
     load_package_statements(package_root, manifest, Some(component))
@@ -422,12 +422,12 @@ fn load_component_statement_facts(
 /// The exports among `selected` whose request element transaction the host begins, as
 /// the package manifest declares them.
 fn host_transaction_exports<T>(
-    manifest: &wamn_schema_generator::PackageManifest,
+    manifest: &wamn_catalog::manifest::PackageManifest,
     selected: &BTreeMap<String, T>,
 ) -> Result<BTreeSet<String>, ComponentProjectionError> {
     let mut exports = BTreeSet::new();
     for local_operation in manifest.host_transaction_operations() {
-        let operation = wamn_schema_generator::canonical_operation_identity(
+        let operation = wamn_catalog::manifest::canonical_operation_identity(
             &manifest.package,
             &local_operation,
         )
@@ -448,14 +448,14 @@ fn host_transaction_exports<T>(
 #[cfg(test)]
 pub(crate) fn load_package_statement_facts(
     package_root: &Path,
-    manifest: &wamn_schema_generator::PackageManifest,
+    manifest: &wamn_catalog::manifest::PackageManifest,
 ) -> Result<BTreeMap<String, BTreeMap<String, ComponentSqlStatement>>, ComponentProjectionError> {
     load_package_statements(package_root, manifest, None)
 }
 
 fn load_package_statements(
     package_root: &Path,
-    manifest: &wamn_schema_generator::PackageManifest,
+    manifest: &wamn_catalog::manifest::PackageManifest,
     component: Option<&AdmittedComponent>,
 ) -> Result<BTreeMap<String, BTreeMap<String, ComponentSqlStatement>>, ComponentProjectionError> {
     wamn_schema_generator::build_record::check_current(package_root).map_err(|error| {
@@ -464,7 +464,7 @@ fn load_package_statements(
             format!("{error:#}"),
         )
     })?;
-    wamn_schema_generator::validate_operation_vocabulary(manifest).map_err(|error| {
+    wamn_catalog::manifest::validate_operation_vocabulary(manifest).map_err(|error| {
         ComponentProjectionError::new(
             ComponentProjectionErrorType::StatementContractInvalid,
             format!("package operation vocabulary is invalid: {error}"),
@@ -560,7 +560,7 @@ fn load_package_statements(
 /// declines to look for manifest operations that, by construction, it does
 /// not serve; it is not a bypass of admission.
 fn validate_component_operation_assignment(
-    manifest: &wamn_schema_generator::PackageManifest,
+    manifest: &wamn_catalog::manifest::PackageManifest,
     component: &AdmittedComponent,
     expected: &BTreeMap<String, ExpectedOperationContract>,
 ) -> Result<BTreeSet<String>, ComponentProjectionError> {
@@ -655,7 +655,7 @@ fn validate_component_operation_assignment(
 }
 
 fn expected_operation_contracts(
-    manifest: &wamn_schema_generator::PackageManifest,
+    manifest: &wamn_catalog::manifest::PackageManifest,
 ) -> Result<BTreeMap<String, ExpectedOperationContract>, ComponentProjectionError> {
     let default_component = (manifest.components.len() == 1).then(|| {
         manifest
@@ -684,14 +684,14 @@ fn expected_operation_contracts(
             &mut expected,
             local_operation,
             operation.component.as_deref().or(default_component),
-            operation.visibility() == wamn_schema_generator::OperationVisibility::Public,
+            operation.visibility() == wamn_catalog::manifest::OperationVisibility::Public,
         )?;
     }
     Ok(expected)
 }
 
 fn insert_expected_operation(
-    manifest: &wamn_schema_generator::PackageManifest,
+    manifest: &wamn_catalog::manifest::PackageManifest,
     expected: &mut BTreeMap<String, ExpectedOperationContract>,
     local_operation: &str,
     component: Option<&str>,
@@ -704,7 +704,7 @@ fn insert_expected_operation(
         )
     })?;
     let operation =
-        wamn_schema_generator::canonical_operation_identity(&manifest.package, local_operation)
+        wamn_catalog::manifest::canonical_operation_identity(&manifest.package, local_operation)
             .map_err(|error| {
                 ComponentProjectionError::new(
                     ComponentProjectionErrorType::StatementOperationMismatch,
@@ -1181,7 +1181,7 @@ mod tests {
     fn package_evidence_binds_exact_sql_to_each_manifest_operation() {
         let package_root =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/component_package");
-        let manifest = wamn_schema_generator::PackageManifest::from_slice(include_bytes!(
+        let manifest = wamn_catalog::manifest::PackageManifest::from_slice(include_bytes!(
             "../tests/fixtures/component_package/wamn.json"
         ))
         .expect("fixture package manifest parses");
@@ -1313,7 +1313,7 @@ mod tests {
                     manifest_path.display()
                 )
             });
-            let manifest = wamn_schema_generator::PackageManifest::from_slice(&bytes)
+            let manifest = wamn_catalog::manifest::PackageManifest::from_slice(&bytes)
                 .expect("the built manifest parses");
             let facts = load_package_statement_facts(root, &manifest)
                 .unwrap_or_else(|error| panic!("{}: {error}", root.display()));
@@ -1365,9 +1365,9 @@ mod tests {
             serde_json::json!({"connections": ["postgres", "secondary-only"]});
         document["custom_operations"]["audit.observe"]["component"] =
             serde_json::json!("secondary");
-        let manifest: wamn_schema_generator::PackageManifest =
+        let manifest: wamn_catalog::manifest::PackageManifest =
             serde_json::from_value(document).expect("two-component manifest parses");
-        wamn_schema_generator::validate_operation_vocabulary(&manifest)
+        wamn_catalog::manifest::validate_operation_vocabulary(&manifest)
             .expect("the explicit component partition is valid");
         let operation = "observer-fixture:audit/observe@3.0.0".to_owned();
         let component = AdmittedComponent {
@@ -1411,8 +1411,8 @@ mod tests {
     fn signed_file_result_metadata_is_bound_from_the_package_only() {
         let mut manifest = overlay_manifest();
         let declaration = manifest.custom_operations.get_mut("audit.observe").unwrap();
-        declaration.type_ = wamn_schema_generator::CustomOperationType::Projection;
-        declaration.visibility = wamn_schema_generator::OperationVisibility::Public;
+        declaration.type_ = wamn_catalog::manifest::CustomOperationType::Projection;
+        declaration.visibility = wamn_catalog::manifest::OperationVisibility::Public;
         declaration.permission = Some("audit.observe".into());
         declaration.errors.push("permission_denied".into());
         declaration.result = Some(
@@ -1422,9 +1422,11 @@ mod tests {
             }))
             .unwrap(),
         );
-        let export =
-            wamn_schema_generator::canonical_operation_identity(&manifest.package, "audit.observe")
-                .unwrap();
+        let export = wamn_catalog::manifest::canonical_operation_identity(
+            &manifest.package,
+            "audit.observe",
+        )
+        .unwrap();
         let mut component = stranger(&manifest, "observer_fixture", Some(&export));
         let (_, mut operation) = component.operations.pop_first().unwrap();
         operation
@@ -1465,7 +1467,7 @@ mod tests {
         assert!(super::bind_signed_file_results(&mut component, &manifest).is_err());
     }
 
-    fn overlay_manifest() -> wamn_schema_generator::PackageManifest {
+    fn overlay_manifest() -> wamn_catalog::manifest::PackageManifest {
         serde_json::from_str(include_str!("../tests/fixtures/observer_package/wamn.json"))
             .expect("fixture observer manifest parses")
     }
@@ -1473,7 +1475,7 @@ mod tests {
     /// A component absent from the manifest, exporting one handler and
     /// registering nothing: the palette-node shape.
     fn stranger(
-        manifest: &wamn_schema_generator::PackageManifest,
+        manifest: &wamn_catalog::manifest::PackageManifest,
         name: &str,
         registered: Option<&str>,
     ) -> AdmittedComponent {

@@ -12,7 +12,7 @@ mod files;
 
 #[test]
 fn file_fixture_declares_each_binding_mode() {
-    wamn_schema_generator::PackageManifest::from_slice(files::PACKAGE.as_bytes())
+    wamn_catalog::manifest::PackageManifest::from_slice(files::PACKAGE.as_bytes())
         .expect("the file fixture uses the current package manifest");
     let package: serde_json::Value = serde_json::from_str(files::PACKAGE).unwrap();
     let declaration = wamn_control::component_declaration::render_palette_declaration(

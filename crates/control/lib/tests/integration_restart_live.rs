@@ -357,7 +357,7 @@ async fn apply(
     system_url: &str,
     project_url: &str,
     document: &EnvironmentDocument,
-    packages: &[wamn_schema_generator::PackageManifest],
+    packages: &[wamn_catalog::manifest::PackageManifest],
 ) -> anyhow::Result<()> {
     let tx = client.transaction().await?;
     tx.batch_execute("SET LOCAL ROLE wamn_db_owner").await?;
@@ -403,8 +403,8 @@ async fn apply(
             .context("connection fixture package missing")?;
         let requirement = &manifest.connections["registers"];
         let mode = match requirement.mode {
-            wamn_schema_generator::ConnectionMode::Read => "read",
-            wamn_schema_generator::ConnectionMode::Write => "write",
+            wamn_catalog::manifest::ConnectionMode::Read => "read",
+            wamn_catalog::manifest::ConnectionMode::Write => "write",
         };
         tx.execute("INSERT INTO catalog.connection_requirement(env_key,component_digest,package_id,name,interface,mode) VALUES($1,$2,$3,'registers',$4,$5) ON CONFLICT DO NOTHING",&[&env_key,&digest,&package,&requirement.interface,&mode]).await?;
     }
@@ -492,7 +492,7 @@ async fn published_modbus_versions_link_before_the_next_call() -> anyhow::Result
     document.release = wamn_control::environment::document::DeclaredRelease::Digest(
         release.release().manifest_digest.to_string(),
     );
-    let package = wamn_schema_generator::PackageManifest::from_slice(&serde_json::to_vec(
+    let package = wamn_catalog::manifest::PackageManifest::from_slice(&serde_json::to_vec(
         &json!({"package":{"id":"modbus_reader","version":"0.1.0"},"required_platform_policy_contract":{"id":"modbus_reader_data_access","state":"satisfied"},"models":{},"components":{},"connections":{"registers":{"interface":"wamn:modbus/read@1.0.0","mode":"read"}}}),
     )?)?;
     let mut observer_package = package.clone();

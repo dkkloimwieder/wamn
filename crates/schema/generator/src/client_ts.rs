@@ -100,7 +100,7 @@ impl std::error::Error for ClientTsError {}
 /// The TypeScript spelling of one contract type.
 ///
 /// The frozen `wamn:postgres` vocabulary is the authority, read through
-/// [`ColumnType`](wamn_schema_introspection::ir::ColumnType)'s own wire
+/// [`ColumnType`](wamn_catalog::schema::ColumnType)'s own wire
 /// literals rather than restated, so a type added there cannot be silently
 /// missed here. `string` is the one literal outside that vocabulary: generated
 /// CRUD input contracts spell `request_id` that way.
@@ -114,7 +114,7 @@ impl std::error::Error for ClientTsError {}
 ///
 /// [`ClientTsError`] names a contract type with no TypeScript spelling.
 pub fn ts_type(type_name: &str) -> Result<&'static str, ClientTsError> {
-    use wamn_schema_introspection::ir::ColumnType;
+    use wamn_catalog::schema::ColumnType;
 
     if type_name == "string" {
         return Ok("string");

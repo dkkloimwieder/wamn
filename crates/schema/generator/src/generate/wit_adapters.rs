@@ -2,11 +2,11 @@
 
 use std::fmt::Write as _;
 
-use super::{
-    ColumnType, OperationErrorDetailDeclaration, binding_identifier, rust_identifier,
-    rust_type_identifier,
+use wamn_catalog::manifest::OperationErrorDetailKey;
+use wamn_catalog::manifest::{
+    OperationErrorDetailDeclaration, binding_identifier, rust_identifier, rust_type_identifier,
 };
-use crate::manifest::OperationErrorDetailKey;
+use wamn_catalog::schema::ColumnType;
 
 /// Emit a row conversion without requiring an application crate dependency.
 pub(super) fn emit_row_adapter<'a>(

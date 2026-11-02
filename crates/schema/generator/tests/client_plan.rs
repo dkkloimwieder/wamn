@@ -155,7 +155,7 @@ fn revision_inputs_join_the_declared_and_guarded_paths() {
     let mut guarded = release();
     let archive = operation(&mut guarded, "archive");
     for field in &mut archive.input_fields {
-        field.revision = wamn_schema_generator::Revision::default();
+        field.revision = wamn_catalog::manifest::Revision::default();
     }
     let plan = ClientPlan::from_ir(&guarded);
     assert_eq!(
@@ -513,7 +513,7 @@ fn a_screen_names_its_page_controls_apart_from_the_operator_fields() {
     query.input_fields.push(FieldIr {
         path: "note".to_owned(),
         children: Vec::new(),
-        revision: wamn_schema_generator::Revision::default(),
+        revision: wamn_catalog::manifest::Revision::default(),
         ..template
     });
     let plan = ClientPlan::from_ir(&mixed);

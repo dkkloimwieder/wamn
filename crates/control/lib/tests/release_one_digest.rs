@@ -166,7 +166,7 @@ async fn publish_through_publish_release(
     let package = repository().join("apps/edge_device");
     wamn_schema_generator::build_record::check_current(&package)?;
     let env_key = project_env_key(ORG, PROJECT, environment);
-    let manifest = wamn_schema_generator::PackageManifest::from_slice(
+    let manifest = wamn_catalog::manifest::PackageManifest::from_slice(
         &std::fs::read(wamn_schema_generator::package_manifest_path(&package))
             .expect("read the package manifest"),
     )

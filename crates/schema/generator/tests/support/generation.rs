@@ -1,11 +1,10 @@
 use serde_json::{Value, json};
+use wamn_catalog::manifest::PackageManifest;
+use wamn_catalog::schema::ColumnType;
 use wamn_schema_generator::{
-    AuthoredSql, GeneratedPackage, GenerationInput, PackageManifest, StatementTransactionality,
-    generate,
+    AuthoredSql, GeneratedPackage, GenerationInput, StatementTransactionality, generate,
 };
-use wamn_schema_introspection::ir::{
-    CatalogIr, Column, ColumnDefault, ColumnType, Constraint, Table,
-};
+use wamn_schema_introspection::ir::{CatalogIr, Column, ColumnDefault, Constraint, Table};
 
 pub(super) const QUERY_SOURCES: [AuthoredSql<'static>; 6] = [
     AuthoredSql::new(
@@ -251,7 +250,7 @@ pub(super) fn run(
     catalog: &CatalogIr,
     value: &Value,
     sources: &[AuthoredSql<'_>],
-) -> Result<GeneratedPackage, wamn_schema_generator::GenerateError> {
+) -> Result<GeneratedPackage, wamn_catalog::ManifestError> {
     run_with_bases(catalog, value, sources, &[manifest()])
 }
 
@@ -260,7 +259,7 @@ pub(super) fn run_with_bases(
     manifest: &Value,
     sources: &[AuthoredSql<'_>],
     bases: &[Value],
-) -> Result<GeneratedPackage, wamn_schema_generator::GenerateError> {
+) -> Result<GeneratedPackage, wamn_catalog::ManifestError> {
     let bases = bases
         .iter()
         .map(|base| PackageManifest::from_slice(&serde_json::to_vec(base).unwrap()).unwrap())

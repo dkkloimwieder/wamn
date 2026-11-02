@@ -11,7 +11,7 @@
 use std::collections::BTreeSet;
 use std::error::Error as StdError;
 
-use wamn_schema_generator::{
+use wamn_catalog::manifest::{
     OperationVisibility, PackageManifest, canonical_operation_identity,
     validate_operation_vocabulary,
 };
@@ -61,14 +61,14 @@ pub enum OperationGrantErrorType {
 pub struct OperationGrantError {
     type_: OperationGrantErrorType,
     context: Box<str>,
-    source: Option<wamn_schema_generator::GenerateError>,
+    source: Option<wamn_catalog::ManifestError>,
 }
 
 impl OperationGrantError {
     fn with_source(
         type_: OperationGrantErrorType,
         context: impl Into<Box<str>>,
-        source: wamn_schema_generator::GenerateError,
+        source: wamn_catalog::ManifestError,
     ) -> Self {
         Self {
             type_,
@@ -264,9 +264,9 @@ mod tests {
         assert_eq!(
             error
                 .source()
-                .and_then(|source| source.downcast_ref::<wamn_schema_generator::GenerateError>())
-                .map(wamn_schema_generator::GenerateError::error_type),
-            Some(wamn_schema_generator::GenerateErrorType::InvalidComponent)
+                .and_then(|source| source.downcast_ref::<wamn_catalog::ManifestError>())
+                .map(wamn_catalog::ManifestError::error_type),
+            Some(wamn_catalog::ManifestErrorType::InvalidComponent)
         );
     }
 
@@ -281,9 +281,9 @@ mod tests {
         assert_eq!(
             error
                 .source()
-                .and_then(|source| source.downcast_ref::<wamn_schema_generator::GenerateError>())
-                .map(wamn_schema_generator::GenerateError::error_type),
-            Some(wamn_schema_generator::GenerateErrorType::InvalidIdentity)
+                .and_then(|source| source.downcast_ref::<wamn_catalog::ManifestError>())
+                .map(wamn_catalog::ManifestError::error_type),
+            Some(wamn_catalog::ManifestErrorType::InvalidIdentity)
         );
     }
 }

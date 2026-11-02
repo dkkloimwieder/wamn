@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
 use tokio_postgres::{NoTls, Transaction, error::SqlState};
+use wamn_catalog::manifest::PackageManifest;
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 use wamn_schema_control::{
     AppliedPackage, PackageDirectory, RecordedMigration, SqlStatement, plan_package_migrations,
 };
-use wamn_schema_generator::PackageManifest;
 
 use definition_ownership::{
     reconcile_definition_ownership, validate_definition_ownership_before_apply,
@@ -160,7 +160,7 @@ fn prepare_directory(
         .context("validate package directory before database work")?;
     let manifest = PackageManifest::from_slice(&directory.manifest_bytes)
         .context("parse strict package manifest for definition ownership")?;
-    wamn_schema_generator::validate_operation_vocabulary(&manifest)
+    wamn_catalog::manifest::validate_operation_vocabulary(&manifest)
         .context("validate package manifest for registration projection")?;
     let policy = validate_migration_policy(&root.path, &directory, &presented)?;
     Ok(PreparedPackage {

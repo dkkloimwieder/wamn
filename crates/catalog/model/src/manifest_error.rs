@@ -1,9 +1,9 @@
 use std::error::Error;
 use std::fmt;
 
-/// Stable classification of generation refusals.
+/// Stable classification of package refusals.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GenerateErrorType {
+pub enum ManifestErrorType {
     InvalidManifest,
     InvalidIdentity,
     UnknownRelation,
@@ -19,19 +19,19 @@ pub enum GenerateErrorType {
     DuplicatePath,
 }
 
-/// A deterministic generation refusal with stable class and object context.
+/// A deterministic package refusal with stable class and object context.
 #[derive(Debug)]
-pub struct GenerateError {
-    type_: GenerateErrorType,
+pub struct ManifestError {
+    type_: ManifestErrorType,
     context: Box<str>,
     object: Option<Box<str>>,
     path: Option<Box<str>>,
     source: Option<Box<dyn Error + Send + Sync + 'static>>,
 }
 
-impl GenerateError {
+impl ManifestError {
     /// Stable refusal class for callers that must not match display text.
-    pub const fn error_type(&self) -> GenerateErrorType {
+    pub const fn error_type(&self) -> ManifestErrorType {
         self.type_
     }
 
@@ -50,7 +50,8 @@ impl GenerateError {
         self.path.as_deref()
     }
 
-    pub(crate) fn new(kind: GenerateErrorType, context: impl Into<Box<str>>) -> Self {
+    #[doc(hidden)]
+    pub fn new(kind: ManifestErrorType, context: impl Into<Box<str>>) -> Self {
         Self {
             type_: kind,
             context: context.into(),
@@ -60,8 +61,9 @@ impl GenerateError {
         }
     }
 
-    pub(crate) fn for_object(
-        type_: GenerateErrorType,
+    #[doc(hidden)]
+    pub fn for_object(
+        type_: ManifestErrorType,
         context: impl Into<Box<str>>,
         object: impl Into<Box<str>>,
     ) -> Self {
@@ -74,8 +76,9 @@ impl GenerateError {
         }
     }
 
-    pub(crate) fn for_path(
-        type_: GenerateErrorType,
+    #[doc(hidden)]
+    pub fn for_path(
+        type_: ManifestErrorType,
         context: impl Into<Box<str>>,
         path: impl Into<Box<str>>,
     ) -> Self {
@@ -88,8 +91,9 @@ impl GenerateError {
         }
     }
 
-    pub(crate) fn with_source(
-        type_: GenerateErrorType,
+    #[doc(hidden)]
+    pub fn with_source(
+        type_: ManifestErrorType,
         context: impl Into<Box<str>>,
         source: impl Error + Send + Sync + 'static,
     ) -> Self {
@@ -103,13 +107,13 @@ impl GenerateError {
     }
 }
 
-impl fmt::Display for GenerateError {
+impl fmt::Display for ManifestError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{:?}: {}", self.type_, self.context)
     }
 }
 
-impl Error for GenerateError {
+impl Error for ManifestError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         self.source
             .as_deref()

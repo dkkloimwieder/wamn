@@ -3,12 +3,12 @@ use std::fmt::Write as _;
 
 use anyhow::{Context as _, ensure};
 use tokio_postgres::Transaction;
+use wamn_catalog::manifest::{PackageManifest, RecordHistoryColumn};
 use wamn_control_provision::AUDIT_RETENTION_ROLE;
 use wamn_control_provision::audit_retention::{
     AUDIT_RETENTION_LOCK_SQL, reconcile_audit_retention_grants_sql,
 };
 use wamn_record_history::{LOG_TRIGGER, STAMP_TRIGGER, history_table_name};
-use wamn_schema_generator::{PackageManifest, RecordHistoryColumn};
 
 use super::definition_ownership::SELECT_RELATION_PRESENT_SQL;
 use super::roles::{reset_host_role, set_package_owner_role};

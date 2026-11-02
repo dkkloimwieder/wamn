@@ -13,7 +13,7 @@ use sqlx::{
     AssertSqlSafe, Column as _, Connection as _, Either, Executor as _, SqlSafeStr as _,
     TypeInfo as _,
 };
-use wamn_schema_introspection::ir::ColumnType;
+use wamn_catalog::schema::ColumnType;
 
 /// What describe says about one statement.
 #[derive(Debug, Clone, PartialEq, Eq)]

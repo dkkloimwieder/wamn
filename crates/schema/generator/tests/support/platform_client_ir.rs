@@ -66,14 +66,14 @@ impl ReleaseFiles {
                     json!({
                         "type": "http", "package-id": "platform_fixture",
                         "component": "fixture",
-                        "operation": wamn_schema_generator::sealed_operation_reference(&operation),
+                        "operation": wamn_catalog::sealed_operation_reference(&operation),
                         "definition-hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                         "definition": {"id": format!("widget-{index}"), "kind": "http",
                             "route": {"path": route.template}},
                         "auth-policy": {"modes": ["pat"]},
                         // An authored entry names its operation by reference.
                         "registered-operation":
-                            wamn_schema_generator::sealed_operation_reference(&operation)
+                            wamn_catalog::sealed_operation_reference(&operation)
                     }),
                 )
             })

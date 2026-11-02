@@ -19,10 +19,9 @@ use anyhow::{Context as _, anyhow, ensure};
 use clap::Args;
 use serde_json::{Value, json};
 use tokio_postgres::{Client, NoTls};
+use wamn_catalog::manifest::{PackageIdentity, canonical_operation_identity};
+use wamn_catalog::sealed_operation_reference;
 use wamn_platform_identity::{PrincipalId, assign_project_role, create_user, issue_pat};
-use wamn_schema_generator::{
-    PackageIdentity, canonical_operation_identity, sealed_operation_reference,
-};
 
 const PURCHASE_ORDER_ID: &str = "00000000-0000-0000-0000-000000000301";
 /// The deployed Receiving package whose route this test drives.

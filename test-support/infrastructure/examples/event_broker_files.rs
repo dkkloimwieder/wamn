@@ -16,6 +16,7 @@ use std::time::Duration;
 use anyhow::{Context as _, ensure};
 use async_nats::jetstream::consumer::pull;
 use serde_json::Value;
+use wamn_catalog::manifest::PackageManifest;
 use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
 use wamn_control_registry::Triple;
 use wamn_test_infrastructure::event_broker;
@@ -69,12 +70,13 @@ fn declared_consumers(scope: &Triple, manifests: &[String]) -> anyhow::Result<Ve
             if let Some(root) = wamn_schema_generator::manifest_package_root(Path::new(path)) {
                 wamn_schema_generator::build_record::check_current(root)?;
             }
-            Ok(wamn_schema_generator::PackageManifest::from_slice(
+            Ok(wamn_catalog::manifest::PackageManifest::from_slice(
                 &fs::read(path).with_context(|| format!("read {path}"))?,
             )?)
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let consumers = wamn_control_provision::events::entity_consumers(scope, &manifests);
+    let entities = manifests.iter().flat_map(PackageManifest::entity_pairs);
+    let consumers = wamn_control_provision::events::entity_consumers(scope, entities);
     Ok(consumers)
 }
 

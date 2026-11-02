@@ -1,8 +1,8 @@
+use wamn_catalog::schema::{ColumnType, ForeignKeyColumn};
 use wamn_schema_introspection::ir::{
-    CatalogIr, Column, ColumnDefault, ColumnGeneration, ColumnType, Constraint, Exclusion,
-    ExclusionAccessMethod, ExclusionElement, ExclusionKey, ForeignKeyAction, ForeignKeyColumn,
-    IdentityMode, Index, IndexColumn, IndexDirection, IrErrorType, Table, postgres_default,
-    postgres_type,
+    CatalogIr, Column, ColumnDefault, ColumnGeneration, Constraint, Exclusion,
+    ExclusionAccessMethod, ExclusionElement, ExclusionKey, ForeignKeyAction, IdentityMode, Index,
+    IndexColumn, IndexDirection, IrErrorType, Table, postgres_default, postgres_type,
 };
 
 fn complete_ir(reverse_collections: bool) -> CatalogIr {

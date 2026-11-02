@@ -255,7 +255,7 @@ pub async fn exercise(
         &format!("apps/{connector}"),
     ]
     .map(|path| repository.join(path));
-    let manifests: Vec<wamn_schema_generator::PackageManifest> = roots
+    let manifests: Vec<wamn_catalog::manifest::PackageManifest> = roots
         .iter()
         .map(|root| {
             wamn_schema_generator::build_record::check_current(root)?;
@@ -593,7 +593,7 @@ async fn publish(
     repository: &Path,
     registry: &PackageRegistry,
     roots: &[PathBuf],
-    manifests: &[wamn_schema_generator::PackageManifest],
+    manifests: &[wamn_catalog::manifest::PackageManifest],
     env_key: &str,
     connector: &str,
 ) -> anyhow::Result<Vec<u8>> {

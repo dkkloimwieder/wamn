@@ -101,7 +101,7 @@ pub struct Analysis {
     pub authorities: Authorities,
     pub actor: String,
     pub plan: Vec<String>,
-    pub packages: Vec<wamn_schema_generator::PackageManifest>,
+    pub packages: Vec<wamn_catalog::manifest::PackageManifest>,
 }
 
 /// Read every authority and check the document against it (§10.1 steps 2 and 3).
@@ -233,13 +233,13 @@ fn replica_refusal(connection: &str, replicas: Option<u64>) -> Option<String> {
 async fn read_release_sequences(
     platform: &Platform,
     manifest: &ServingManifest,
-) -> anyhow::Result<Vec<wamn_schema_generator::PackageManifest>> {
+) -> anyhow::Result<Vec<wamn_catalog::manifest::PackageManifest>> {
     let mut packages = Vec::new();
     for package in &manifest.release.packages {
         let (id, version) = (package.package_id(), package.package_version());
         let opened = super::stage::open(platform, id, version).await?;
         let path = wamn_schema_generator::package_manifest_path(opened.root());
-        let package_manifest = wamn_schema_generator::PackageManifest::from_slice(
+        let package_manifest = wamn_catalog::manifest::PackageManifest::from_slice(
             &std::fs::read(&path).with_context(|| format!("read {}", path.display()))?,
         )
         .with_context(|| format!("parse {}", path.display()))?;
@@ -255,7 +255,7 @@ async fn read_release_sequences(
 /// never refuses.
 fn sequence_refusals(
     applications: &wamn_catalog::EnvironmentApplications,
-    packages: &[wamn_schema_generator::PackageManifest],
+    packages: &[wamn_catalog::manifest::PackageManifest],
 ) -> Vec<String> {
     match super::stage::sequence_defaults(applications, packages) {
         Ok(_) => Vec::new(),
@@ -916,11 +916,11 @@ mod tests {
 
     fn sequences(
         entries: &[(&str, &[(&str, &str)])],
-    ) -> Vec<wamn_schema_generator::PackageManifest> {
+    ) -> Vec<wamn_catalog::manifest::PackageManifest> {
         entries
             .iter()
             .map(|(package, declared)| {
-                let mut manifest = wamn_schema_generator::PackageManifest::from_slice(
+                let mut manifest = wamn_catalog::manifest::PackageManifest::from_slice(
                     &crate::test_support::fixture_manifest(),
                 )
                 .unwrap();
@@ -930,7 +930,7 @@ mod tests {
                     .map(|(name, pattern)| {
                         (
                             (*name).to_owned(),
-                            wamn_schema_generator::SequenceDeclaration {
+                            wamn_catalog::manifest::SequenceDeclaration {
                                 pattern: (*pattern).to_owned(),
                             },
                         )

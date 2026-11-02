@@ -531,7 +531,7 @@ async fn start_with(
         wamn_schema_generator::route_schema::read_package_attachments(&receiving)?;
     attachments.retain(|_, attachment| {
         matches!(
-            wamn_schema_generator::sealed_operation_reference(route_operation(attachment)),
+            wamn_catalog::sealed_operation_reference(route_operation(attachment)),
             "wamn-receiving:purchase-order/query"
                 | "wamn-receiving:purchase-order/create"
                 | "wamn-receiving:purchase-order/update"
@@ -547,8 +547,7 @@ async fn start_with(
     let overlay_attachments: std::collections::BTreeMap<String, wamn_catalog::ServingAttachment> =
         wamn_schema_generator::route_schema::read_package_attachments(&acme)?;
     for (name, attachment) in overlay_attachments {
-        let operation =
-            wamn_schema_generator::sealed_operation_reference(route_operation(&attachment));
+        let operation = wamn_catalog::sealed_operation_reference(route_operation(&attachment));
         if matches!(
             operation,
             "client-acme-receiving:acme/record-receipt"

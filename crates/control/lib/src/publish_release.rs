@@ -949,7 +949,7 @@ async fn read_and_push(
     client: &Client,
     request: &PublishReleaseManifest<'_>,
     components: &ReleaseComponents,
-    package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
+    package_manifests: &BTreeMap<String, wamn_catalog::manifest::PackageManifest>,
     package_artifact_digests: &BTreeMap<String, String>,
     route_contracts: &RouteContracts,
     run_schema: &BareSchemaName,
@@ -1147,7 +1147,7 @@ async fn publish_release_with_package_manifests(
     client: &Client,
     request: &PublishReleaseManifest<'_>,
     components: &ReleaseComponents,
-    package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
+    package_manifests: &BTreeMap<String, wamn_catalog::manifest::PackageManifest>,
     package_artifact_digests: &BTreeMap<String, String>,
     route_contracts: &RouteContracts,
 ) -> Result<PublishedRelease, PublishManifestError> {
@@ -1166,7 +1166,7 @@ async fn publish_release_from_sources(
     client: &Client,
     request: &PublishReleaseManifest<'_>,
     component_facts: &ReleaseComponents,
-    package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
+    package_manifests: &BTreeMap<String, wamn_catalog::manifest::PackageManifest>,
     package_artifact_digests: &BTreeMap<String, String>,
     route_contracts: &RouteContracts,
 ) -> Result<PublishedRelease, PublishManifestError> {
@@ -1256,7 +1256,7 @@ fn validate_request(request: &PublishReleaseManifest<'_>) -> Result<(), PublishM
 async fn validate_release_package_manifests(
     client: &Client,
     request: &PublishReleaseManifest<'_>,
-    package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
+    package_manifests: &BTreeMap<String, wamn_catalog::manifest::PackageManifest>,
     package_artifact_digests: &BTreeMap<String, String>,
 ) -> Result<(), PublishManifestError> {
     let expected_package_ids = request
@@ -1354,8 +1354,8 @@ async fn validate_release_package_manifests(
 
 /// Derive the one schema that an application's SQL resolves against.
 pub(crate) fn application_runtime_schema(
-    manifest: &wamn_schema_generator::PackageManifest,
-    manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
+    manifest: &wamn_catalog::manifest::PackageManifest,
+    manifests: &BTreeMap<String, wamn_catalog::manifest::PackageManifest>,
     components: &BTreeSet<ServingComponent>,
 ) -> anyhow::Result<Option<String>> {
     let member_digests = components
@@ -1411,7 +1411,7 @@ pub(crate) fn application_runtime_schema(
 
 /// Select applications whose admitted component includes the integration base.
 pub(crate) fn composes_integration(
-    manifest: &wamn_schema_generator::PackageManifest,
+    manifest: &wamn_catalog::manifest::PackageManifest,
     components: &BTreeSet<ServingComponent>,
 ) -> bool {
     manifest.base_dependencies.values().any(|dependency| {
@@ -1436,8 +1436,8 @@ pub(crate) fn composes_integration(
 /// Resolve the declared dependency permissions of an integration application.
 /// Publication resolves them against the released package manifests.
 pub(crate) fn application_dependency_permissions(
-    manifest: &wamn_schema_generator::PackageManifest,
-    manifests: &BTreeMap<&str, &wamn_schema_generator::PackageManifest>,
+    manifest: &wamn_catalog::manifest::PackageManifest,
+    manifests: &BTreeMap<&str, &wamn_catalog::manifest::PackageManifest>,
 ) -> anyhow::Result<BTreeSet<String>> {
     let mut permissions = BTreeSet::new();
     for dependency in manifest.base_dependencies.values() {
@@ -1469,7 +1469,7 @@ pub(crate) fn application_dependency_permissions(
                 })?;
             if registered {
                 let canonical =
-                    wamn_schema_generator::canonical_operation_identity(&base.package, operation)?;
+                    wamn_catalog::manifest::canonical_operation_identity(&base.package, operation)?;
                 permissions.insert(
                     canonical
                         .split_once('@')
@@ -1485,7 +1485,7 @@ pub(crate) fn application_dependency_permissions(
 
 fn pin_runtime_schemas(
     components: BTreeSet<ServingComponent>,
-    manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
+    manifests: &BTreeMap<String, wamn_catalog::manifest::PackageManifest>,
 ) -> Result<BTreeSet<ServingComponent>, PublishManifestError> {
     let dependency_manifests = manifests
         .iter()
@@ -1693,7 +1693,7 @@ fn project_routes(
     request: &PublishReleaseManifest<'_>,
     route_contracts: &RouteContracts,
     component_facts: &ReleaseComponents,
-    package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
+    package_manifests: &BTreeMap<String, wamn_catalog::manifest::PackageManifest>,
     components: &mut BTreeSet<ServingComponent>,
 ) -> Result<BTreeSet<ServingRoute>, PublishManifestError> {
     let rule = DependencyDigestRule::for_environment(request.environment_is_disposable);
@@ -2668,7 +2668,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    fn dependency_manifest(digest: &str) -> wamn_schema_generator::PackageManifest {
+    fn dependency_manifest(digest: &str) -> wamn_catalog::manifest::PackageManifest {
         let mut document: serde_json::Value = serde_json::from_str(include_str!(
             "../tests/fixtures/component_package/wamn.json"
         ))
@@ -2684,7 +2684,7 @@ mod tests {
         serde_json::from_value(document).expect("the dependency fixture manifest parses")
     }
 
-    fn source_manifest() -> wamn_schema_generator::PackageManifest {
+    fn source_manifest() -> wamn_catalog::manifest::PackageManifest {
         serde_json::from_str(include_str!(
             "../tests/fixtures/component_package/wamn.json"
         ))
@@ -2795,7 +2795,7 @@ mod tests {
         version: &str,
         base: (&str, &str),
         digest: &str,
-    ) -> wamn_schema_generator::PackageManifest {
+    ) -> wamn_catalog::manifest::PackageManifest {
         let mut document = serde_json::to_value(dependency_manifest(digest))
             .expect("the dependency fixture manifest serializes");
         document["package"] = serde_json::json!({"id": id, "version": version});

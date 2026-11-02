@@ -3,8 +3,10 @@
 //! SQL executed in PostgreSQL.
 
 use serde_json::{Value, json};
-use wamn_schema_generator::{DATA_ACCESS_OVERLAY_PATH, GenerateErrorType, GeneratedPackage};
-use wamn_schema_introspection::ir::{CatalogIr, Column, ColumnType, Constraint};
+use wamn_catalog::ManifestErrorType as GenerateErrorType;
+use wamn_catalog::schema::ColumnType;
+use wamn_schema_generator::{DATA_ACCESS_OVERLAY_PATH, GeneratedPackage};
+use wamn_schema_introspection::ir::{CatalogIr, Column, Constraint};
 
 #[path = "support/generation.rs"]
 #[expect(

@@ -248,7 +248,7 @@ async fn publish(
     project: &Client,
     request: &PublishReleaseManifest<'_>,
     components: &ReleaseComponents,
-    manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
+    manifests: &BTreeMap<String, wamn_catalog::manifest::PackageManifest>,
     hashes: &BTreeMap<String, String>,
     kinds: &super::RouteContracts,
 ) -> PublishedRelease {

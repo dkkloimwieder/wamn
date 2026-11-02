@@ -11,8 +11,8 @@ use std::error::Error;
 use std::fmt;
 
 use wamn_catalog::PackageCoordinate;
+use wamn_catalog::manifest::{PackageManifest, validate_operation_vocabulary};
 use wamn_record_history::history_table_name;
-use wamn_schema_generator::{PackageManifest, validate_operation_vocabulary};
 
 use crate::connections::prefixed_sha256;
 use crate::{SqlStatement, Value};

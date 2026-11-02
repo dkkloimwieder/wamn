@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use wamn_schema_introspection::ir::{CatalogIr, Table};
 
-use crate::PackageManifest;
+use wamn_catalog::manifest::PackageManifest;
 
 /// Project installed schema objects to one package and its declared base owners.
 ///

@@ -4,12 +4,12 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use tokio_postgres::{NoTls, Transaction};
+use wamn_catalog::manifest::PackageManifest;
 use wamn_record_history::history_table_name;
 use wamn_runtime::local_application::{LocalTargetComment, read_local_target_comment};
 use wamn_schema_control::{
     AppliedPackage, PackageDirectory, PackageMigrationErrorType, plan_package_migrations,
 };
-use wamn_schema_generator::PackageManifest;
 
 use super::definition_ownership::SELECT_RELATION_PRESENT_SQL;
 use super::package_version::read_source_package_directory;

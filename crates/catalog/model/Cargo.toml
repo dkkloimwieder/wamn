@@ -19,6 +19,8 @@ license.workspace = true
 test-util = ["dep:wamn-test-postgres"]
 
 [dependencies]
+wamn-record-history = { workspace = true }
+wit-parser = { workspace = true }
 croner = { workspace = true }
 boon = { workspace = true }
 schemars = { workspace = true }
@@ -39,6 +41,7 @@ wamn-test-postgres = { workspace = true, optional = true }
 # not reach a lib-only build, so `cargo check -p wamn-catalog` remains the
 # production configuration.
 [dev-dependencies]
+proptest.workspace = true
 wamn-catalog = { path = ".", features = ["test-util"] }
 wamn-control-provision = { workspace = true }
 wamn-test-postgres = { workspace = true }

@@ -21,7 +21,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{Context as _, Result, bail, ensure};
 use serde_json::Value;
 
-use crate::{PackageManifest, StaticSqlRelationDeclaration, output_root};
+use crate::output_root;
+use wamn_catalog::manifest::{PackageManifest, StaticSqlRelationDeclaration};
 
 /// The manifest file an author writes.
 pub const AUTHORED_MANIFEST: &str = "wamn.k";
@@ -414,7 +415,7 @@ pub(crate) fn with_derived_relations(
 /// Attach feed facts while preserving the authored member order.
 pub(crate) fn with_derived_feed_sources(
     compiled: &[u8],
-    sources: &BTreeMap<String, crate::feed::FeedSource>,
+    sources: &BTreeMap<String, wamn_catalog::feed::FeedSource>,
 ) -> serde_json::Result<Vec<u8>> {
     if sources.is_empty() {
         return Ok(compiled.to_vec());

@@ -27,6 +27,7 @@ use wamn_execution_contract::canonical_json_bytes;
 use wamn_schema_introspection::ir::CatalogIr;
 use wamn_schema_introspection::postgres::authored_object_name;
 
+use crate::AuthoredSql;
 use crate::authoring::{COMPILED_MANIFEST_NAME, compile_authored_manifest, is_authored};
 use crate::build_record::{
     BUILD_RECORD_FILE, BUILD_RECORD_SCHEMA, BuildDependency, BuildOutputs, BuildPackage,
@@ -40,7 +41,9 @@ use crate::materialize::{
     classify_statements, client_bindings, existing_files, expected_files, generate_from_manifest,
     introspect_with_manifest, load_authored_sql, statement_corpus_from_manifest, write_files,
 };
-use crate::{AuthoredSql, CrudAction, PackageManifest, ResultClass, canonical_operation_identity};
+use wamn_catalog::manifest::{
+    CrudAction, PackageManifest, ResultClass, canonical_operation_identity,
+};
 
 const RECORD_HISTORY_SQL: &str = include_str!("../../../../deploy/sql/record-history.sql");
 const RECORD_HISTORY_APP_GRANTS_SQL: &str =

@@ -11,10 +11,11 @@ use wamn_schema_control::plan_package_migrations;
 
 use crate::apply_package::PackageRoot;
 use wamn_schema_generator::{
-    DATA_ACCESS_ROLE, DataAccessOverlay, DataAccessRelationFields, EffectiveDataAccess,
-    data_access_schemas, derive_effective_data_access, render_effective_data_access_sql,
+    DataAccessOverlay, DataAccessRelationFields, EffectiveDataAccess, data_access_schemas,
+    derive_effective_data_access, render_effective_data_access_sql,
     validate_data_access_contribution,
 };
+use wamn_schema_introspection::postgres::DATA_ACCESS_ROLE;
 
 const CLAIM_ENV_KEY_SQL: &str = "SELECT set_config('app.env_key', $1, true)";
 pub(crate) const LOCK_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\

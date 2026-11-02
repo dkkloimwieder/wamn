@@ -10,7 +10,7 @@ use super::{
 pub(super) fn resolve_component_dependency_closure(
     roots: &BTreeMap<String, AdmittedComponent>,
     component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
-    package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
+    package_manifests: &BTreeMap<String, wamn_catalog::manifest::PackageManifest>,
     rule: DependencyDigestRule,
 ) -> Result<Vec<AdmittedComponent>, PublishManifestError> {
     let mut closure = BTreeMap::<(String, String, String), AdmittedComponent>::new();
@@ -59,7 +59,7 @@ fn insert_closure_component(
 fn visit_base_dependencies(
     (package, version): (&str, &str),
     component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
-    package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
+    package_manifests: &BTreeMap<String, wamn_catalog::manifest::PackageManifest>,
     rule: DependencyDigestRule,
     path: &mut Vec<(String, String)>,
     visited: &mut BTreeSet<(String, String)>,
@@ -103,7 +103,7 @@ fn visit_base_dependencies(
 /// The admitted facts of one pinned base: the one component under the pinned
 /// digest, or under the development rule every component of the coordinate.
 fn resolve_base_dependency<'a>(
-    requirement: &wamn_schema_generator::BaseDependencyRequirement,
+    requirement: &wamn_catalog::manifest::BaseDependencyRequirement,
     component_facts: &'a BTreeMap<(String, String), Vec<AdmittedComponent>>,
     rule: DependencyDigestRule,
 ) -> Result<Vec<&'a AdmittedComponent>, PublishManifestError> {

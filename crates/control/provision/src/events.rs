@@ -56,16 +56,10 @@ pub fn advisory_stream_config(scope: &Triple, replicas: usize) -> stream::Config
 /// One durable consumer per captured package and entity, independent of workflows.
 pub fn entity_consumers<'a>(
     scope: &Triple,
-    manifests: impl IntoIterator<Item = &'a wamn_schema_generator::PackageManifest>,
+    entities: impl IntoIterator<Item = (&'a str, &'a str)>,
 ) -> Vec<pull::Config> {
-    let entities = manifests
+    let entities = entities
         .into_iter()
-        .flat_map(|manifest| {
-            manifest
-                .models
-                .iter()
-                .map(|(entity, model)| (model.owner.as_str(), entity.as_str()))
-        })
         .collect::<std::collections::BTreeSet<_>>();
     entities
         .into_iter()
@@ -257,22 +251,9 @@ mod tests {
 
     #[test]
     fn captured_entities_get_consumers_without_registrations() {
-        let manifest = |package: &str, entity: &str| {
-            serde_json::from_value::<wamn_schema_generator::PackageManifest>(serde_json::json!({
-                "package": {"id": package, "version": "1.0.0"},
-                "required_platform_policy_contract": {"id": "fixture", "state": "satisfied"},
-                "connections": {}, "components": {},
-                "models": {entity: {"schema": package, "table": entity, "owner": package, "operations": {}}}
-            }))
-            .unwrap()
-        };
-        let manifests = [
-            manifest("a_b", "c"),
-            manifest("a", "b_c"),
-            manifest("a", "b_c"),
-        ];
+        let entities = [("a_b", "c"), ("a", "b_c"), ("a", "b_c")];
         let scope = Triple::new("acme", "orders", "dev");
-        let consumers = entity_consumers(&scope, &manifests);
+        let consumers = entity_consumers(&scope, entities);
         assert_eq!(consumers.len(), 2);
         assert_ne!(consumers[0].durable_name, consumers[1].durable_name);
         assert_eq!(consumers[0].filter_subject, "evt.acme.orders.dev.b_c.>");

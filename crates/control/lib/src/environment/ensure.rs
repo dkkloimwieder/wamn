@@ -304,7 +304,7 @@ fn credential_request(
 async fn prepare_cdc(
     platform: &Platform,
     document: &EnvironmentDocument,
-    manifests: &[wamn_schema_generator::PackageManifest],
+    manifests: &[wamn_catalog::manifest::PackageManifest],
     admin: &tokio_postgres::Client,
     project_admin_url: &str,
 ) -> anyhow::Result<()> {
@@ -437,7 +437,7 @@ async fn prepare_cdc(
 pub(super) async fn ensure_cdc(
     platform: &Platform,
     document: &EnvironmentDocument,
-    manifests: &[wamn_schema_generator::PackageManifest],
+    manifests: &[wamn_catalog::manifest::PackageManifest],
 ) -> anyhow::Result<()> {
     let captured = manifests
         .iter()
@@ -517,7 +517,7 @@ pub(super) async fn ensure_cdc(
 async fn ensure_streams(
     platform: &Platform,
     document: &EnvironmentDocument,
-    manifests: &[wamn_schema_generator::PackageManifest],
+    manifests: &[wamn_catalog::manifest::PackageManifest],
 ) -> anyhow::Result<()> {
     let Some(events) = &platform.events else {
         return Ok(());
@@ -525,12 +525,15 @@ async fn ensure_streams(
     let triple = document.triple();
     let consumers = wamn_control_provision::events::entity_consumers(
         &triple,
-        manifests.iter().filter(|manifest| {
-            document
-                .applications
-                .values()
-                .any(|application| application.packages.contains(&manifest.package.id))
-        }),
+        manifests
+            .iter()
+            .filter(|manifest| {
+                document
+                    .applications
+                    .values()
+                    .any(|application| application.packages.contains(&manifest.package.id))
+            })
+            .flat_map(wamn_catalog::manifest::PackageManifest::entity_pairs),
     );
     let broker = async_nats::jetstream::new(
         events
@@ -553,7 +556,7 @@ async fn ensure_streams(
 async fn enable_cdc(
     platform: &Platform,
     document: &EnvironmentDocument,
-    manifests: &[wamn_schema_generator::PackageManifest],
+    manifests: &[wamn_catalog::manifest::PackageManifest],
     schemas: &[String],
     project: &tokio_postgres::Client,
     instance: &str,

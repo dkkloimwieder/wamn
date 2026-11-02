@@ -11,11 +11,13 @@ use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 
-use super::{GenerateError, PackageManifest, insert_json_line};
-use crate::manifest::canonical_operation_identity;
+use super::insert_json_line;
 use crate::route_schema::{
     GENERATED_ATTACHMENTS, GENERATED_COMPONENT_OPERATIONS, GENERATED_ROUTES,
 };
+use wamn_catalog::ManifestError as GenerateError;
+use wamn_catalog::manifest::PackageManifest;
+use wamn_catalog::manifest::canonical_operation_identity;
 
 /// The body size limit of every generated route.
 const RAW_BODY_MAXIMUM: u64 = 1_048_576;

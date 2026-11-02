@@ -15,11 +15,18 @@ mod component_facts;
 mod connection;
 pub mod edge_bundle;
 mod environment_application;
+pub mod feed;
 mod host_route;
+pub mod manifest;
+mod manifest_error;
 mod package;
+pub mod profile;
 mod route_identity;
+pub mod schema;
 mod serving_manifest;
 mod signed_file_read;
+#[doc(hidden)]
+pub mod sql_lex;
 mod wiring;
 mod wiring_compatibility;
 mod workflow_gate;
@@ -58,6 +65,7 @@ pub use host_route::{
     host_route_path_prefix, host_route_version, is_granted_host_route_operation,
     is_host_route_operation,
 };
+pub use manifest_error::{ManifestError, ManifestErrorType};
 pub use package::PackageCoordinate;
 pub use route_identity::{
     operation_token, route_attachment_id, route_path, sealed_operation_reference,

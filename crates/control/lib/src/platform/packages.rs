@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use serde_json::json;
+use wamn_catalog::manifest::PackageManifest;
 use wamn_package_artifact::PackageRegistry;
-use wamn_schema_generator::PackageManifest;
 
 use crate::delivery::environment::EnvironmentFile;
 use crate::environment::document::EnvironmentDocument;

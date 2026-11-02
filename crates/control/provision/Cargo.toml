@@ -38,10 +38,6 @@ wamn-catalog = { workspace = true }
 # ids from the platform model.
 wamn-project-state = { workspace = true }
 wamn-run-state = { workspace = true, features = ["tenant-key"] }
-# Operation-grant reconciliation consumes the same deny-unknown-fields package
-# manifest as generation. It derives grants from that public parsed shape; it
-# does not carry a second manifest grammar.
-wamn-schema-generator = { workspace = true }
 # The audit retention role name is a record history platform fixture name.
 wamn-record-history = { workspace = true }
 
@@ -62,6 +58,7 @@ wamn-test-postgres = { workspace = true, optional = true }
 # wamn-pg-core leaf.
 
 [dev-dependencies]
+wamn-schema-generator = { workspace = true }
 wamn-fixture-package = { workspace = true }
 wamn-schema-control = { workspace = true }
 wamn-test-postgres = { workspace = true }

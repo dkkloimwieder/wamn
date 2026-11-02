@@ -775,7 +775,7 @@ fn a_published_response_takes_its_text_from_the_terminal() {
         type_name: "text".to_owned(),
         nullable: false,
         required: true,
-        revision: wamn_schema_generator::Revision::default(),
+        revision: wamn_catalog::manifest::Revision::default(),
         children: Vec::new(),
         minimum: None,
         maximum: None,

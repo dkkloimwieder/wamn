@@ -12,7 +12,7 @@ use super::{
 /// Every package's parsed manifest and the contract kind of every operation
 /// the packages generate.
 pub(super) type PackageManifestSources = (
-    BTreeMap<String, wamn_schema_generator::PackageManifest>,
+    BTreeMap<String, wamn_catalog::manifest::PackageManifest>,
     RouteContracts,
 );
 
@@ -41,14 +41,14 @@ pub(super) fn read_package_manifests(
             )
         })?;
         let manifest =
-            wamn_schema_generator::PackageManifest::from_slice(&bytes).map_err(|error| {
+            wamn_catalog::manifest::PackageManifest::from_slice(&bytes).map_err(|error| {
                 PublishManifestError::with_source(
                     PublishManifestErrorType::PackageManifest,
                     format!("parse package manifest {}", path.display()),
                     error,
                 )
             })?;
-        wamn_schema_generator::validate_operation_vocabulary(&manifest).map_err(|error| {
+        wamn_catalog::manifest::validate_operation_vocabulary(&manifest).map_err(|error| {
             PublishManifestError::with_source(
                 PublishManifestErrorType::PackageManifest,
                 format!("validate package manifest {}", path.display()),

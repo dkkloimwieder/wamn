@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
-use wamn_schema_generator::{
-    DATA_ACCESS_OVERLAY_PATH, DataAccessOverlay, GenerateErrorType, validate_operation_vocabulary,
-};
+use wamn_catalog::ManifestErrorType as GenerateErrorType;
+use wamn_catalog::manifest::validate_operation_vocabulary;
+use wamn_schema_generator::{DATA_ACCESS_OVERLAY_PATH, DataAccessOverlay};
 use wamn_schema_introspection::ir::{CatalogIr, Constraint, Table};
 
 use super::{artifact, fixture, parsed};
@@ -255,7 +255,9 @@ fn the_retired_participant_keys_are_refused() {
     ] {
         let mut manifest = super::platform_claim::manifest();
         manifest["custom_operations"]["widget.archive"][key] = value;
-        wamn_schema_generator::PackageManifest::from_slice(&serde_json::to_vec(&manifest).unwrap())
-            .expect_err(key);
+        wamn_catalog::manifest::PackageManifest::from_slice(
+            &serde_json::to_vec(&manifest).unwrap(),
+        )
+        .expect_err(key);
     }
 }

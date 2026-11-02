@@ -626,7 +626,7 @@ async fn prekind_http_host_runs_and_rejects_respond_without_caller() -> anyhow::
         wamn_control::environment::document::Integration { version: 1 },
     );
     // Match the write mode declared by org_bindings::publish_declarations.
-    let package = wamn_schema_generator::PackageManifest::from_slice(&serde_json::to_vec(
+    let package = wamn_catalog::manifest::PackageManifest::from_slice(&serde_json::to_vec(
         &json!({
             "package":{"id":"http_fixture","version":"1.0.0"},
             "required_platform_policy_contract":{"id":"fixture_data_access","state":"satisfied"},

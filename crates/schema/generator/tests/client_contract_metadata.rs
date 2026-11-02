@@ -1,8 +1,9 @@
 use serde_json::{Value, json};
+use wamn_catalog::schema::ColumnType;
 use wamn_schema_generator::{
     AuthoredSql, GeneratedPackage, GenerationInput, StatementTransactionality, generate,
 };
-use wamn_schema_introspection::ir::{CatalogIr, Column, ColumnType, Constraint, Table};
+use wamn_schema_introspection::ir::{CatalogIr, Column, Constraint, Table};
 
 fn catalog() -> CatalogIr {
     CatalogIr::new(vec![Table::new(

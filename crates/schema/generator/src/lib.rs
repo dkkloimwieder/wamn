@@ -1,7 +1,7 @@
 //! Generates deterministic package artifacts from migration-derived schema IR.
 //!
 //! Core generation is a deterministic transformation: callers provide the
-//! normalized [`CatalogIr`], exact manifest bytes, and authored SQL bytes. That transformation performs no filesystem, database,
+//! normalized [`CatalogIr`](wamn_schema_introspection::ir::CatalogIr), exact manifest bytes, and authored SQL bytes. That transformation performs no filesystem, database,
 //! clock, or environment access; its one child process is `rustfmt`, which
 //! formats the Rust it emits so that the committed artifacts equal what
 //! `cargo fmt` produces.
@@ -32,7 +32,6 @@ mod components;
 mod cursor;
 mod data_access;
 mod describe;
-mod error;
 /// Catalog facts for authored query feeds.
 pub mod feed;
 mod generate;
@@ -43,11 +42,9 @@ mod materialize;
 pub mod operation_reference;
 mod output;
 mod package_catalog;
-pub mod profile;
 pub mod route_schema;
 mod rustfmt;
 mod sql;
-mod sql_lex;
 mod sqlx_metadata;
 mod tofu;
 
@@ -61,34 +58,14 @@ pub use cursor::{
     CursorError, CursorErrorType, CursorV1, CursorValue, decode_cursor, encode_cursor,
 };
 pub use data_access::{
-    DATA_ACCESS_OVERLAY_PATH, DATA_ACCESS_ROLE, DataAccessOverlay, DataAccessRelation,
-    DataAccessRelationFields, EffectiveDataAccess, EffectiveDataAccessRelation,
-    data_access_schemas, derive_data_access_overlay_from_relation_fields,
-    derive_effective_data_access, render_effective_data_access_sql,
-    validate_data_access_contribution,
+    DATA_ACCESS_OVERLAY_PATH, DataAccessOverlay, DataAccessRelation, DataAccessRelationFields,
+    EffectiveDataAccess, EffectiveDataAccessRelation, data_access_schemas,
+    derive_data_access_overlay_from_relation_fields, derive_effective_data_access,
+    render_effective_data_access_sql, validate_data_access_contribution,
 };
-pub use error::{GenerateError, GenerateErrorType};
 pub use generate::{
     AuthoredSql, GeneratedFile, GeneratedPackage, GenerationInput, REQUIRED_SCHEMA_CONTRACT_PATH,
     StatementTransactionality, derive_manifest, generate,
-};
-pub use manifest::{
-    AccessOperationErrorLiteral, AuditLogDeclaration, AuthoredSqlDeclaration, AuthoredSqlVariant,
-    BaseDependencyRequirement, CdcDisposition, ClientPackage, CommandCanonicalization,
-    CommandIdempotence, CommandLineOrder, CommandTransaction, ComponentDeclaration,
-    ConnectionDeclaration, ConnectionMode, ContractFieldDeclaration, CountLimitDeclaration,
-    CrudAction, CursorDirection, CustomOperationDeclaration, CustomOperationInputDeclaration,
-    CustomOperationResultDeclaration, CustomOperationType, FieldRole, FieldText, FilterDeclaration,
-    FilterDefault, FilterMatch, InternalRelationDeclaration, LimitDeclaration, ModelDeclaration,
-    ModelFieldDeclaration, OperationDeclaration, OperationErrorDetailDeclaration,
-    OperationErrorDetailKey, OperationOwners, OperationVisibility, PackageIdentity,
-    PackageManifest, PaginationDeclaration, PolicyContractRequirement, PolicyContractState,
-    RecordHistoryColumn, ResultClass, Revision, SearchDeclaration, SequenceDeclaration,
-    SortDeclaration, SortKey, StateGuardDeclaration, StaticSqlFetch, StaticSqlRelationDeclaration,
-    StaticSqlStatementDeclaration, StaticSqlValueDeclaration, Target, TieBreakerDeclaration,
-    TombstoneColumn, canonical_operation_identity, canonical_operation_prefix,
-    host_connection_interface, resolve_operation_reference, sealed_operation_reference,
-    valid_connection_name, validate_operation_vocabulary,
 };
 pub use materialize::{
     classify_statements_with_existing_grants_in_transaction, introspect_package,
@@ -103,5 +80,3 @@ pub use sqlx_metadata::{
 };
 #[doc(inline)]
 pub use tofu::render_project_tofu;
-#[doc(inline)]
-pub use wamn_schema_introspection::ir::CatalogIr;

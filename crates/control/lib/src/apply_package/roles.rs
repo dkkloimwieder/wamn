@@ -40,7 +40,7 @@ pub(super) async fn assert_host_role(tx: &Transaction<'_>) -> anyhow::Result<()>
 /// Exact byte slices retain the authored statement and its literals.
 pub(super) async fn execute_migration(
     tx: &Transaction<'_>,
-    manifest: &wamn_schema_generator::PackageManifest,
+    manifest: &wamn_catalog::manifest::PackageManifest,
     statement: &wamn_schema_control::SqlStatement,
 ) -> anyhow::Result<()> {
     use pg_query::NodeEnum;

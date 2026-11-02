@@ -357,7 +357,7 @@ impl Authority {
         project: &mut Client,
         url: &str,
         document: &EnvironmentDocument,
-        packages: &[wamn_schema_generator::PackageManifest],
+        packages: &[wamn_catalog::manifest::PackageManifest],
     ) {
         self.system
             .batch_execute("SET ROLE wamn_db_owner")
@@ -428,7 +428,7 @@ impl Authority {
         ConnectionCredentials::from_database(Arc::new(reader), "connection-binding-tenant")
     }
 }
-fn declarations(integration_type: &str, mode: &str) -> wamn_schema_generator::PackageManifest {
+fn declarations(integration_type: &str, mode: &str) -> wamn_catalog::manifest::PackageManifest {
     let interface = "wamn:connection/http@0.1.0";
     let connections = if integration_type == "s3" {
         json!({"labels":{"interface":"wasmcloud:blobstore/blobstore@0.1.0","mode":"write"},"erp":{"interface":"wamn:connection/http@0.1.0","mode":"read"}})

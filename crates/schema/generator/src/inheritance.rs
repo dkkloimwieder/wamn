@@ -5,7 +5,8 @@ use std::path::Path;
 
 use anyhow::{Context as _, Result, ensure};
 
-use crate::{GenerateError, GenerateErrorType, PackageManifest};
+use wamn_catalog::manifest::PackageManifest;
+use wamn_catalog::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 
 /// Read the same base builds that component composition uses. The build record
 /// records each manifest’s digest. Release resolution checks the package

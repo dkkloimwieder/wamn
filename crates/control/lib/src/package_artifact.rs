@@ -35,13 +35,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{Context as _, bail, ensure};
 use oci_client::Reference;
 use oci_client::manifest::OCI_IMAGE_MEDIA_TYPE;
+use wamn_catalog::manifest::{PackageManifest, PolicyContractState};
 use wamn_catalog::{
     AdmittedComponent, ComponentConnection, ComponentDeclaration, ComponentDescriptor,
     ComponentPackageScope, component_artifact_reference,
 };
 use wamn_engine::component_artifact::component_artifact_config_bytes;
 use wamn_package_artifact::registry_credentials::read_registry_push_credentials;
-use wamn_schema_generator::{AUTHORED_MANIFEST, PackageManifest, PolicyContractState};
+use wamn_schema_generator::AUTHORED_MANIFEST;
 
 use crate::component_admission::{AdmitComponentRequest, admit_component, publish_and_verify};
 use crate::component_declaration::{

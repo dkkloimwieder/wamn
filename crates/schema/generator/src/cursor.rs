@@ -5,10 +5,10 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use wamn_catalog::schema::ColumnType;
 use wamn_execution_contract::canonical_json_bytes;
-use wamn_schema_introspection::ir::ColumnType;
 
-use crate::CursorDirection;
+use wamn_catalog::manifest::CursorDirection;
 
 const VERSION: u8 = 1;
 

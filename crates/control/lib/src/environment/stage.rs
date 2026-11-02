@@ -15,7 +15,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Context as _, bail, ensure};
-use wamn_schema_generator::PackageManifest;
+use wamn_catalog::manifest::PackageManifest;
 
 use super::Platform;
 use super::analyse::{self, Installed, connect};
@@ -523,7 +523,7 @@ mod tests {
 
     #[test]
     fn sequence_defaults_use_map_names_and_refuse_conflicting_declarations() {
-        let mut base = wamn_schema_generator::PackageManifest::from_slice(
+        let mut base = wamn_catalog::manifest::PackageManifest::from_slice(
             &crate::test_support::fixture_manifest(),
         )
         .unwrap();

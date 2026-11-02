@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::anyhow;
-use wamn_schema_generator::PackageManifest;
+use wamn_catalog::manifest::PackageManifest;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CompositionErrorKind {

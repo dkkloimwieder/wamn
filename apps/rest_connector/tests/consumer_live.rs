@@ -400,7 +400,7 @@ pub async fn install(
     let manifests = roots
         .iter()
         .map(|root| {
-            Ok(wamn_schema_generator::PackageManifest::from_slice(
+            Ok(wamn_catalog::manifest::PackageManifest::from_slice(
                 &std::fs::read(wamn_schema_generator::package_manifest_path(root))?,
             )?)
         })

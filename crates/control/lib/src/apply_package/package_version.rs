@@ -177,7 +177,7 @@ fn read_migrations(
     let mut migrations = Vec::new();
     // A package that owns no table has no migrations directory.
     if !migrations_path.exists()
-        && wamn_schema_generator::PackageManifest::from_slice(&manifest_bytes)
+        && wamn_catalog::manifest::PackageManifest::from_slice(&manifest_bytes)
             .is_ok_and(|manifest| manifest.owns_no_table())
     {
         return Ok(PackageDirectory {

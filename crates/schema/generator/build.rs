@@ -7,6 +7,8 @@ use sha2::{Digest as _, Sha256};
 const INPUTS: &[&str] = &[
     "src",
     "kcl",
+    "../../catalog/model/src",
+    "../../catalog/model/Cargo.toml",
     "Cargo.toml",
     "build.rs",
     "../../platform/component-virtualizer/src",
@@ -20,6 +22,8 @@ fn main() -> io::Result<()> {
     // Keep these paths equal to INPUTS. Cargo watches directories recursively.
     println!("cargo:rerun-if-changed=src");
     println!("cargo:rerun-if-changed=kcl");
+    println!("cargo:rerun-if-changed=../../catalog/model/src");
+    println!("cargo:rerun-if-changed=../../catalog/model/Cargo.toml");
     println!("cargo:rerun-if-changed=Cargo.toml");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=../../platform/component-virtualizer/src");

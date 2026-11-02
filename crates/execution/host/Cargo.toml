@@ -13,7 +13,6 @@ wamn-credential-store = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-control-registry = { workspace = true }
 wamn-control-provision = { workspace = true }
-wamn-schema-generator = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-execution-contract = { workspace = true }
 wamn-platform-identity = { workspace = true }
@@ -45,6 +44,7 @@ url = { workspace = true }
 uuid = { workspace = true, features = ["v4", "serde"] }
 
 [dev-dependencies]
+wamn-schema-generator = { workspace = true }
 wamn-package-artifact = { workspace = true }
 object_store = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }

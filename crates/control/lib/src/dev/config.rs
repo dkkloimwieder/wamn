@@ -17,8 +17,8 @@ use tokio::net::TcpStream;
 use tokio::time::{Instant, timeout_at};
 use tokio_postgres::Config as PostgresConfig;
 use url::Url;
+use wamn_catalog::manifest::{PackageManifest, validate_operation_vocabulary};
 use wamn_pg_core::Identifier;
-use wamn_schema_generator::{PackageManifest, validate_operation_vocabulary};
 
 use super::activation::DevActivationIdentity;
 
@@ -1353,7 +1353,7 @@ fn validate_package_manifest(
 
 fn package_source_matches(
     source: &PackageSource,
-    dependency: &wamn_schema_generator::BaseDependencyRequirement,
+    dependency: &wamn_catalog::manifest::BaseDependencyRequirement,
 ) -> bool {
     source.manifest.package.id == dependency.package
         && source.manifest.package.version == dependency.version
@@ -2115,7 +2115,7 @@ manifest.Package {
         let base = TempPackage::with_manifest(&crate::test_support::fixture_manifest());
         let overlay_root = overlay.root().to_path_buf();
         let base_root = base.root().to_path_buf();
-        let expected = wamn_schema_generator::PackageManifest::from_slice(&overlay_manifest())
+        let expected = wamn_catalog::manifest::PackageManifest::from_slice(&overlay_manifest())
             .expect("parse repository overlay")
             .base_dependencies
             .remove("base_fixture")

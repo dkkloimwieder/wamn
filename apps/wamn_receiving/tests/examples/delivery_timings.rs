@@ -123,7 +123,7 @@ const WMS_PACKAGES: [&str; 1] = ["wamn_wms"];
 fn application_manifests(
     repository: &Path,
     packages: &[&str],
-) -> anyhow::Result<Vec<wamn_schema_generator::PackageManifest>> {
+) -> anyhow::Result<Vec<wamn_catalog::manifest::PackageManifest>> {
     packages
         .iter()
         .map(|package| {
@@ -133,7 +133,7 @@ fn application_manifests(
             let path = wamn_schema_generator::package_manifest_path(
                 &repository.join("apps").join(package),
             );
-            Ok(wamn_schema_generator::PackageManifest::from_slice(
+            Ok(wamn_catalog::manifest::PackageManifest::from_slice(
                 &fs::read(&path).with_context(|| format!("read {}", path.display()))?,
             )?)
         })
@@ -279,7 +279,12 @@ async fn main() -> anyhow::Result<()> {
         &RECEIVING_PACKAGES
     };
     let manifests = application_manifests(&repository, packages)?;
-    let consumers = wamn_control_provision::events::entity_consumers(&scope, &manifests);
+    let consumers = wamn_control_provision::events::entity_consumers(
+        &scope,
+        manifests
+            .iter()
+            .flat_map(wamn_catalog::manifest::PackageManifest::entity_pairs),
+    );
     let broker =
         event_broker::prepare(&directory, &scope, env_key, &source, &advisory, &consumers)?;
     private(

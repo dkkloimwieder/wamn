@@ -1058,7 +1058,7 @@ async fn release_profile(
     digest: &str,
 ) -> anyhow::Result<
     Option<(
-        wamn_schema_generator::profile::ReleaseProfile,
+        wamn_catalog::profile::ReleaseProfile,
         BTreeMap<String, Vec<String>>,
     )>,
 > {
@@ -1074,7 +1074,7 @@ async fn release_profile(
             wamn_catalog::ServingManifest::from_canonical_bytes(&row.get::<_, Vec<u8>>(0))
                 .context("decode the release manifest")?;
         let mut relations = BTreeMap::<String, std::collections::BTreeSet<String>>::new();
-        let mut views = BTreeMap::<String, wamn_schema_generator::profile::ViewRelation>::new();
+        let mut views = BTreeMap::<String, wamn_catalog::profile::ViewRelation>::new();
         for row in client.query(RELATION_COLUMNS_SQL, &[]).await? {
             if row.get::<_, bool>(2) {
                 let view = views.entry(row.get(0)).or_default();
@@ -1089,11 +1089,8 @@ async fn release_profile(
                 relations.entry(row.get(0)).or_default().insert(row.get(1));
             }
         }
-        let profile = wamn_schema_generator::profile::release_profile(
-            &manifest.components,
-            &relations,
-            &views,
-        );
+        let profile =
+            wamn_catalog::profile::release_profile(&manifest.components, &relations, &views);
         require_platform_rows(&client).await?;
         let mut roles = BTreeMap::new();
         for role in role_names(&client).await? {

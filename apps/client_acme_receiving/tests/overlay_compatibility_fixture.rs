@@ -7,12 +7,11 @@ use std::path::Path;
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
+use wamn_catalog::schema::ForeignKeyColumn;
 use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::package_artifact::OpenedPackage;
 use wamn_engine::component_admission::component_digest;
-use wamn_schema_introspection::ir::{
-    Constraint, ForeignKeyAction, ForeignKeyColumn, postgres_type,
-};
+use wamn_schema_introspection::ir::{Constraint, ForeignKeyAction, postgres_type};
 
 use super::identity;
 

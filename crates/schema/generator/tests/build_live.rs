@@ -10,11 +10,12 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
+use wamn_catalog::manifest::PackageManifest;
+use wamn_catalog::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 use wamn_schema_generator::build::{
     BuildRequest, build_components, build_package, generate_package, package_output,
 };
 use wamn_schema_generator::build_record;
-use wamn_schema_generator::{GenerateError, GenerateErrorType, PackageManifest};
 
 /// A test-owned copy of the fixture and its overlay, side by side.
 struct Workspace {

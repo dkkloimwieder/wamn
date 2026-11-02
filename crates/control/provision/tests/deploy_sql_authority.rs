@@ -2588,9 +2588,10 @@ fn image_columns(image: &str) -> Vec<(String, String)> {
 fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
     wamn_schema_generator::build_record::check_current(&wamn_fixture_package::package_root())
         .unwrap_or_else(|error| panic!("{error:#}"));
-    let manifest =
-        wamn_schema_generator::PackageManifest::from_slice(&wamn_fixture_package::manifest_bytes())
-            .expect("parse fixture manifest");
+    let manifest = wamn_catalog::manifest::PackageManifest::from_slice(
+        &wamn_fixture_package::manifest_bytes(),
+    )
+    .expect("parse fixture manifest");
     let mut history_tables = String::new();
     for model in manifest
         .models

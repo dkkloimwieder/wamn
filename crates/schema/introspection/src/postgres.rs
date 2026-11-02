@@ -10,10 +10,11 @@ use wamn_record_history::{
 
 use crate::ir::{
     CatalogIr, Column, ColumnGeneration, Constraint, Exclusion, ExclusionAccessMethod,
-    ExclusionElement, ExclusionKey, ForeignKeyAction, ForeignKeyColumn, IdentityMode, Index,
-    IndexColumn, IndexDirection, IrError, IrErrorType, Table, View, ViewBaseTable, ViewColumn,
-    ViewColumnOrigin, postgres_default, postgres_type,
+    ExclusionElement, ExclusionKey, ForeignKeyAction, IdentityMode, Index, IndexColumn,
+    IndexDirection, IrError, IrErrorType, Table, View, ViewBaseTable, ViewColumn, ViewColumnOrigin,
+    postgres_default, postgres_type,
 };
+use wamn_catalog::schema::ForeignKeyColumn;
 
 /// Stable class of PostgreSQL catalog refusal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -268,8 +269,7 @@ fn relation_is_excluded(excluded_relations: &[(&str, &str)], schema: &str, table
 
 /// Group role that the package data-access reconcile grants from the declaration.
 ///
-/// `wamn_schema_generator::DATA_ACCESS_ROLE` re-exports this name, so the
-/// generated grants and the skipped grantees below cannot drift apart.
+/// Generation imports this name for its grants and the skipped grantees below.
 pub const DATA_ACCESS_ROLE: &str = "wamn_app";
 
 /// Platform roles whose ACL entries the catalog reader skips by name.

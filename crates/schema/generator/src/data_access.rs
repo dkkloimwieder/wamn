@@ -9,11 +9,12 @@ use wamn_record_history::{ENTRY_ID_COLUMN, HISTORY_COLUMNS, POSITION_COLUMN, his
 use wamn_schema_introspection::ir::CatalogIr;
 
 use crate::generate::logged_history_tables;
-use crate::manifest::{
+use wamn_catalog::manifest::{CrudAction, PackageManifest};
+use wamn_catalog::manifest::{
     DeleteMode, ModelDeclaration, OperationDeclaration, StaticSqlRelationDeclaration,
     TombstoneColumn,
 };
-use crate::{CrudAction, GenerateError, GenerateErrorType, PackageManifest};
+use wamn_catalog::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 
 /// The history columns that the change feed of a list read selects
 /// (`crate::sql::changes`).
@@ -25,7 +26,7 @@ pub const DATA_ACCESS_OVERLAY_PATH: &str = "generated/platform-policy/data-acces
 ///
 /// The catalog reader skips the ACL entries of this role, so the generated
 /// grants and the reader read one name.
-pub use wamn_schema_introspection::postgres::DATA_ACCESS_ROLE;
+use wamn_schema_introspection::postgres::DATA_ACCESS_ROLE;
 
 /// Strict generated evidence consumed by the post-apply reconciliation step.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

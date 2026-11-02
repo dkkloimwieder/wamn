@@ -7,7 +7,7 @@ use std::process::ExitStatus;
 
 use anyhow::{Context as _, ensure};
 use rustix::process::{Pid, Signal, kill_process_group};
-use wamn_schema_generator::PackageManifest;
+use wamn_catalog::manifest::PackageManifest;
 use wamn_test_infrastructure::postgres;
 
 const RECORD_HISTORY_SQL: &str = include_str!("../../deploy/sql/record-history.sql");

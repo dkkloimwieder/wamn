@@ -5627,6 +5627,7 @@ version = "0.1.0"
 dependencies = [
  "boon",
  "croner",
+ "proptest",
  "schemars",
  "serde",
  "serde_json",
@@ -5637,7 +5638,9 @@ dependencies = [
  "wamn-control-provision",
  "wamn-event-wire",
  "wamn-execution-contract",
+ "wamn-record-history",
  "wamn-test-postgres",
+ "wit-parser 0.254.2",
 ]
 
 [[package]]
@@ -6587,7 +6590,6 @@ dependencies = [
  "wamn-catalog",
  "wamn-pg-core",
  "wamn-record-history",
- "wamn-schema-generator",
 ]
 
 [[package]]
@@ -6629,6 +6631,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-postgres",
+ "wamn-catalog",
  "wamn-fixture-package",
  "wamn-record-history",
  "wamn-test-postgres",

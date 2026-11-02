@@ -1,16 +1,20 @@
 //! Manifest, query, and authored SQL validation.
 
 use super::{
-    AuthoredSql, AuthoredSqlDeclaration, BTreeMap, BTreeSet, CatalogIr, Column, ColumnType,
-    Constraint, ConstraintType, CrudAction, CursorDirection, CustomOperationDeclaration,
-    DeleteMode, GenerateError, GenerateErrorType, GenerationInput, ModelDeclaration,
-    OperationDeclaration, PackageManifest, QUERY_LIMIT, RecordHistoryColumn, ResultClass,
-    SortDeclaration, Table, TombstoneColumn, column, contains_schema_qualified_reference,
-    custom_operation_constraint_origin, logged_history_tables, relation, rust_identifier,
-    server_owned_fields, validate_identifier, validate_operation_vocabulary,
+    AuthoredSql, BTreeMap, BTreeSet, CatalogIr, Column, Constraint, ConstraintType,
+    GenerationInput, QUERY_LIMIT, Table, column, contains_schema_qualified_reference,
+    custom_operation_constraint_origin, logged_history_tables, relation, server_owned_fields,
 };
-use crate::FilterMatch;
-use crate::manifest::StaticSqlRelationDeclaration;
+use wamn_catalog::manifest::FilterMatch;
+use wamn_catalog::manifest::StaticSqlRelationDeclaration;
+use wamn_catalog::manifest::{
+    AuthoredSqlDeclaration, CrudAction, CursorDirection, CustomOperationDeclaration, DeleteMode,
+    ModelDeclaration, OperationDeclaration, PackageManifest, RecordHistoryColumn, ResultClass,
+    SortDeclaration, TombstoneColumn, rust_identifier, validate_identifier,
+    validate_operation_vocabulary,
+};
+use wamn_catalog::schema::ColumnType;
+use wamn_catalog::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 use wamn_record_history::HISTORY_COLUMNS;
 use wamn_schema_introspection::ir::ViewColumn;
 
@@ -61,7 +65,7 @@ fn validate_client_package_name(package: &str, name: &str) -> Result<(), Generat
 /// the submission itself, and a label on it would be a member nothing reads.
 fn validate_count_text(
     operation_name: &str,
-    operation: &crate::CustomOperationDeclaration,
+    operation: &wamn_catalog::manifest::CustomOperationDeclaration,
 ) -> Result<(), GenerateError> {
     let Some(envelope) = &operation.input.envelope else {
         return Ok(());
@@ -131,7 +135,7 @@ pub(super) fn validate(
                 .find(|field| field.revision.is_revision())
                 .map(|field| field.path.as_str())
                 .or_else(|| match &operation.idempotent_by {
-                    Some(crate::CommandIdempotence::State(state)) => {
+                    Some(wamn_catalog::manifest::CommandIdempotence::State(state)) => {
                         state.guards.values().next().map(String::as_str)
                     }
                     _ => None,
@@ -184,7 +188,7 @@ pub(super) fn validate(
 fn validate_lists(
     manifest: &PackageManifest,
     operation_name: &str,
-    operation: &crate::CustomOperationDeclaration,
+    operation: &wamn_catalog::manifest::CustomOperationDeclaration,
 ) -> Result<(), GenerateError> {
     let refuse = |message: String| {
         Err(GenerateError::new(
@@ -192,7 +196,7 @@ fn validate_lists(
             message,
         ))
     };
-    let table = operation.type_ == crate::CustomOperationType::Projection
+    let table = operation.type_ == wamn_catalog::manifest::CustomOperationType::Projection
         && operation.result.as_ref().is_some_and(|result| {
             matches!(result.class, ResultClass::BoundedList | ResultClass::Page)
         });
@@ -993,7 +997,7 @@ fn validate_custom_operation_sql(
 
 fn validate_static_sql_relation_fields(
     operation: &str,
-    relation: &crate::manifest::StaticSqlRelationDeclaration,
+    relation: &wamn_catalog::manifest::StaticSqlRelationDeclaration,
     columns: &BTreeSet<&str>,
     fields: &[String],
 ) -> Result<(), GenerateError> {
@@ -1092,17 +1096,19 @@ pub(super) fn derive_relation_access(
                 statement.path.as_str(),
             )
         };
-        let statement_access = crate::sql_lex::relation_access(source.bytes, relation_fields)
-            .map_err(|detail| {
-                GenerateError::for_path(
-                    GenerateErrorType::InvalidOperation,
-                    format!(
-                        "{} cannot derive exact relation access: {detail}",
-                        statement.path
-                    ),
-                    statement.path.as_str(),
-                )
-            })?;
+        let statement_access =
+            wamn_catalog::sql_lex::relation_access(source.bytes, relation_fields).map_err(
+                |detail| {
+                    GenerateError::for_path(
+                        GenerateErrorType::InvalidOperation,
+                        format!(
+                            "{} cannot derive exact relation access: {detail}",
+                            statement.path
+                        ),
+                        statement.path.as_str(),
+                    )
+                },
+            )?;
         for (table, access) in &statement_access {
             if (!access.insert_fields.is_empty()
                 || !access.update_fields.is_empty()
@@ -1123,7 +1129,7 @@ pub(super) fn derive_relation_access(
                 ));
             }
         }
-        let deleted = crate::sql_lex::delete_targets(source.bytes).map_err(lexed)?;
+        let deleted = wamn_catalog::sql_lex::delete_targets(source.bytes).map_err(lexed)?;
         for target in &deleted {
             validate_delete_target(manifest, &schemas, operation, &statement.path, target)?;
         }
@@ -1133,7 +1139,7 @@ pub(super) fn derive_relation_access(
                 .entry(table)
                 .or_insert_with(|| DerivedRelation {
                     schema,
-                    access: crate::sql_lex::RelationAccess::default(),
+                    access: wamn_catalog::sql_lex::RelationAccess::default(),
                     constraints: BTreeSet::new(),
                 })
                 .access;
@@ -1143,7 +1149,7 @@ pub(super) fn derive_relation_access(
             aggregate.lock |= observed.lock;
             aggregate.delete |= observed.delete;
         }
-        for name in crate::sql_lex::conflict_constraints(source.bytes).map_err(lexed)? {
+        for name in wamn_catalog::sql_lex::conflict_constraints(source.bytes).map_err(lexed)? {
             let relation = defining_relation(catalog, &mut derived, &name).ok_or_else(|| {
                 GenerateError::for_path(
                     GenerateErrorType::InvalidOperation,
@@ -1247,7 +1253,7 @@ fn package_relations(
 #[derive(Debug)]
 pub(super) struct DerivedRelation {
     schema: String,
-    access: crate::sql_lex::RelationAccess,
+    access: wamn_catalog::sql_lex::RelationAccess,
     /// The constraints the operation relies on that this relation defines.
     constraints: BTreeSet<String>,
 }
@@ -1348,7 +1354,7 @@ fn validate_static_sql_relation_access(
             .collect::<BTreeMap<_, _>>();
     for relation in &declaration.relations {
         let observed = actual.remove(&relation.table).unwrap_or_default();
-        let declared = crate::sql_lex::RelationAccess {
+        let declared = wamn_catalog::sql_lex::RelationAccess {
             select_fields: relation.select_fields.iter().cloned().collect(),
             insert_fields: relation.insert_fields.iter().cloned().collect(),
             update_fields: relation.update_fields.iter().cloned().collect(),
@@ -1462,7 +1468,7 @@ fn validate_authored_variants(
 
 fn validate_connections(manifest: &PackageManifest) -> Result<(), GenerateError> {
     for name in manifest.connections.keys() {
-        if !crate::manifest::valid_connection_name(name) {
+        if !wamn_catalog::manifest::valid_connection_name(name) {
             return Err(GenerateError::new(
                 GenerateErrorType::InvalidConnection,
                 "connection name must match ^[a-z][a-z0-9-]{0,62}$",
@@ -1550,28 +1556,29 @@ fn validate_authored_query_filters(
                 for (index, filter) in operation.filters.iter().enumerate() {
                     let parameter = u32::try_from(index + 1).expect("a query has few filters");
                     let declared = filter.match_mode;
-                    let refusal = match crate::sql_lex::filter_predicate(source.bytes, parameter) {
-                        Some((Some(found), _)) if found == declared => continue,
-                        Some((Some(found), line)) => format!(
-                            "{path}:{line}: {model_name}.{operation_name} filter `{}` declares \
+                    let refusal =
+                        match wamn_catalog::sql_lex::filter_predicate(source.bytes, parameter) {
+                            Some((Some(found), _)) if found == declared => continue,
+                            Some((Some(found), line)) => format!(
+                                "{path}:{line}: {model_name}.{operation_name} filter `{}` declares \
                              match {}, but its predicate on ${parameter} matches {}",
-                            filter.field,
-                            declared.as_str(),
-                            found.as_str()
-                        ),
-                        Some((None, line)) => format!(
-                            "{path}:{line}: {model_name}.{operation_name} filter `{}` declares \
+                                filter.field,
+                                declared.as_str(),
+                                found.as_str()
+                            ),
+                            Some((None, line)) => format!(
+                                "{path}:{line}: {model_name}.{operation_name} filter `{}` declares \
                              match {}, but its predicate on ${parameter} matches no filter mode",
-                            filter.field,
-                            declared.as_str()
-                        ),
-                        None => format!(
-                            "{path}: {model_name}.{operation_name} filter `{}` declares match \
+                                filter.field,
+                                declared.as_str()
+                            ),
+                            None => format!(
+                                "{path}: {model_name}.{operation_name} filter `{}` declares match \
                              {}, but the file never reads ${parameter}",
-                            filter.field,
-                            declared.as_str()
-                        ),
-                    };
+                                filter.field,
+                                declared.as_str()
+                            ),
+                        };
                     return Err(GenerateError::for_path(
                         GenerateErrorType::InvalidOperation,
                         refusal,
@@ -1609,11 +1616,14 @@ fn refuse_generator_owned_queries(
                     .iter()
                     .find(|source| source.path == variant.path)
                     .is_some_and(|source| {
-                        !crate::sql_lex::groups_or_windows(source.bytes)
-                            && crate::sql_lex::relation_access(source.bytes, &relations.fields)
-                                .is_ok_and(|access| {
-                                    access.len() == 1 && access.contains_key(&model.table)
-                                })
+                        !wamn_catalog::sql_lex::groups_or_windows(source.bytes)
+                            && wamn_catalog::sql_lex::relation_access(
+                                source.bytes,
+                                &relations.fields,
+                            )
+                            .is_ok_and(|access| {
+                                access.len() == 1 && access.contains_key(&model.table)
+                            })
                     })
             });
             if generator_owned {
@@ -1702,11 +1712,13 @@ fn safe_sql_path(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{derive_relations, validate_custom_operation_sql};
+    use crate::AuthoredSql;
     use crate::data_access::{derive_data_access_overlay, validate_data_access_contribution};
-    use crate::{AuthoredSql, PackageManifest};
     use serde_json::json;
+    use wamn_catalog::manifest::PackageManifest;
+    use wamn_catalog::schema::ColumnType;
     use wamn_schema_introspection::ir::{
-        CatalogIr, Column, ColumnType, Table, View, ViewBaseTable, ViewColumn,
+        CatalogIr, Column, Table, View, ViewBaseTable, ViewColumn,
     };
 
     #[test]

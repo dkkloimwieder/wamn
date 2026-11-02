@@ -19,24 +19,22 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Serialize;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
+use wamn_catalog::schema::ColumnType;
 use wamn_execution_contract::canonical_json_bytes;
 use wamn_record_history::history_table_name;
 use wamn_schema_introspection::ir::{
-    CatalogIr, Column, ColumnType, Constraint, ConstraintType, Exclusion, ForeignKeyAction, Table,
+    CatalogIr, Column, Constraint, ConstraintType, Exclusion, ForeignKeyAction, Table,
 };
 
-use crate::manifest::{
-    AccessOperationErrorLiteral, AuthoredSqlDeclaration, ContractFieldDeclaration, CrudAction,
-    CursorDirection, CustomOperationDeclaration, CustomOperationResultDeclaration,
-    CustomOperationType, DeleteMode, FieldText, ModelDeclaration, OperationDeclaration,
-    OperationErrorDetailDeclaration, PackageManifest, RecordHistoryColumn, ResultClass,
-    SortDeclaration, StaticSqlFetch, TombstoneColumn, binding_identifier,
-    canonical_operation_identity, custom_artifact_stem, rust_identifier, rust_type_identifier,
-    validate_identifier, validate_operation_vocabulary,
-};
 use crate::sql;
-use crate::sql_lex::contains_schema_qualified_reference;
-use crate::{GenerateError, GenerateErrorType};
+use wamn_catalog::manifest::{
+    AccessOperationErrorLiteral, CrudAction, CursorDirection, CustomOperationDeclaration,
+    DeleteMode, ModelDeclaration, OperationDeclaration, OperationErrorDetailDeclaration,
+    PackageManifest, RecordHistoryColumn, StaticSqlFetch, TombstoneColumn,
+    validate_operation_vocabulary,
+};
+use wamn_catalog::sql_lex::contains_schema_qualified_reference;
+use wamn_catalog::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 
 const QUERY_LIMIT: u32 = 100;
 const CURSOR_VERSION: u8 = 1;
@@ -525,7 +523,7 @@ fn operation_error_details(
     operation: &OperationDeclaration,
     model: &ModelDeclaration,
 ) -> BTreeMap<AccessOperationErrorLiteral, OperationErrorDetailDeclaration> {
-    use AccessOperationErrorLiteral as Code;
+    use wamn_catalog::manifest::AccessOperationErrorLiteral as Code;
 
     let mut codes = BTreeSet::from([
         Code::InvalidInput,
@@ -562,7 +560,7 @@ fn operation_error_details(
         .map(|code| {
             (
                 code,
-                crate::manifest::access_operation_error_detail(action, code),
+                wamn_catalog::manifest::access_operation_error_detail(action, code),
             )
         })
         .collect()
@@ -1098,10 +1096,10 @@ fn constraint_error(kind: &ConstraintType) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        Column, ColumnType, Constraint, GenerateErrorType, ModelDeclaration, Table,
-        check_value_set, model_enum_fields,
-    };
+    use super::{Column, Constraint, Table, check_value_set, model_enum_fields};
+    use wamn_catalog::ManifestErrorType as GenerateErrorType;
+    use wamn_catalog::manifest::ModelDeclaration;
+    use wamn_catalog::schema::ColumnType;
 
     #[test]
     fn only_the_stored_in_form_is_a_value_set() {

@@ -2,17 +2,21 @@
 
 use std::fmt::Write as _;
 
-use crate::manifest::{CustomOperationType, authored_name};
+use wamn_catalog::manifest::{CustomOperationType, authored_name};
 
 use super::{
     AccessorBind, AccessorFetch, BTreeMap, CHANGES_STATEMENT, CREATE_STATEMENT, CatalogIr, Column,
-    ColumnType, ConstraintNameSlice, ConstraintType, CrudAction, CustomOperationDeclaration,
-    GenerateError, ModelDeclaration, MutationConstraintNames, NativeBindFixture,
-    OperationDeclaration, Projection, ProjectionContents, RustMember, RustRow, RustVisibility,
-    StaticSqlAccessor, StaticSqlFetch, Table, WamnAccessor, WamnApi, column, insert_bytes,
-    operation_constraints, operation_exclusions, query_variants, rust_identifier,
-    rust_type_identifier, sql,
+    ConstraintNameSlice, ConstraintType, MutationConstraintNames, NativeBindFixture, Projection,
+    ProjectionContents, RustMember, RustRow, RustVisibility, StaticSqlAccessor, Table,
+    WamnAccessor, WamnApi, column, insert_bytes, operation_constraints, operation_exclusions,
+    query_variants, sql,
 };
+use wamn_catalog::ManifestError as GenerateError;
+use wamn_catalog::manifest::{
+    CrudAction, CustomOperationDeclaration, ModelDeclaration, OperationDeclaration, StaticSqlFetch,
+    rust_identifier, rust_type_identifier,
+};
+use wamn_catalog::schema::ColumnType;
 
 /// Clippy's default `too-many-arguments-threshold`. The repository declares no
 /// `clippy.toml`, so this default is what the lint uses. Anyone who adds one

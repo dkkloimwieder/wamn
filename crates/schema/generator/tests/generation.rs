@@ -2,15 +2,19 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use wamn_catalog::ManifestErrorType as GenerateErrorType;
+use wamn_catalog::manifest::{
+    CrudAction, PackageManifest, canonical_operation_identity, canonical_operation_prefix,
+    resolve_operation_reference, validate_operation_vocabulary,
+};
+use wamn_catalog::schema::ColumnType;
 use wamn_schema_generator::client_ir::{ClientContractIr, ResponseIr, RouteIr};
 use wamn_schema_generator::client_ts::emit_ts_client;
 use wamn_schema_generator::{
-    AuthoredSql, CrudAction, DATA_ACCESS_OVERLAY_PATH, GenerateErrorType, GeneratedPackage,
-    PackageManifest, REQUIRED_SCHEMA_CONTRACT_PATH, canonical_operation_identity,
-    canonical_operation_prefix, resolve_operation_reference, validate_operation_vocabulary,
+    AuthoredSql, DATA_ACCESS_OVERLAY_PATH, GeneratedPackage, REQUIRED_SCHEMA_CONTRACT_PATH,
 };
 use wamn_schema_introspection::ir::{
-    CatalogIr, Column, ColumnDefault, ColumnType, Constraint, Exclusion, ExclusionAccessMethod,
+    CatalogIr, Column, ColumnDefault, Constraint, Exclusion, ExclusionAccessMethod,
     ExclusionElement, ExclusionKey, Table,
 };
 

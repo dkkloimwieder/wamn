@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
-use wamn_schema_generator::{GenerateErrorType, PackageManifest};
+use wamn_catalog::ManifestErrorType as GenerateErrorType;
+use wamn_catalog::manifest::PackageManifest;
 
 use super::{artifact, fixture};
 

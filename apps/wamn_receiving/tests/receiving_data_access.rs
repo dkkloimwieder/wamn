@@ -1073,7 +1073,7 @@ mod tests {
     /// triggers that apply-package derives from the `audit_log` declarations of
     /// one package manifest.
     async fn install_record_history(client: &Client, manifest: &[u8]) -> Result<()> {
-        let manifest: wamn_schema_generator::PackageManifest =
+        let manifest: wamn_catalog::manifest::PackageManifest =
             serde_json::from_slice(manifest).context("parse package manifest")?;
         let logs = manifest.models.values().filter_map(|model| {
             model.log_retention().map(|retention| {
@@ -1089,7 +1089,7 @@ mod tests {
         });
         let triggers = manifest.models.values().filter_map(|model| {
             let audit_log = model.audit_log.as_ref()?;
-            let columns = wamn_schema_generator::RecordHistoryColumn::ALL
+            let columns = wamn_catalog::manifest::RecordHistoryColumn::ALL
                 .into_iter()
                 .filter(|column| audit_log.columns.contains(column))
                 .map(|column| format!("'{}'", column.as_str()))

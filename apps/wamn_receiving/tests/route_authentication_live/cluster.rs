@@ -222,7 +222,7 @@ fn declared_consumers<'a>(
         .map(|root| {
             wamn_schema_generator::build_record::check_current(root)?;
             let path = wamn_schema_generator::package_manifest_path(root);
-            Ok(wamn_schema_generator::PackageManifest::from_slice(
+            Ok(wamn_catalog::manifest::PackageManifest::from_slice(
                 &fs::read(path)?,
             )?)
         })
@@ -233,7 +233,9 @@ fn declared_consumers<'a>(
             identity().project.clone(),
             identity().environment.clone(),
         ),
-        &manifests,
+        manifests
+            .iter()
+            .flat_map(wamn_catalog::manifest::PackageManifest::entity_pairs),
     ))
 }
 

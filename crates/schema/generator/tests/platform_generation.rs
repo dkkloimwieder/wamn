@@ -1,5 +1,6 @@
 use serde_json::{Value, json};
-use wamn_schema_generator::{GenerateErrorType, PackageManifest, validate_operation_vocabulary};
+use wamn_catalog::ManifestErrorType as GenerateErrorType;
+use wamn_catalog::manifest::{PackageManifest, validate_operation_vocabulary};
 use wamn_schema_introspection::ir::{
     CatalogIr, Exclusion, ExclusionAccessMethod, ExclusionElement, ExclusionKey, Table,
 };
@@ -1023,7 +1024,7 @@ fn a_delete_mode_needs_no_delete_route() {
 
 /// Whether a refusal names the member that caused it. The top line states the
 /// closed vocabulary, and the parser's own message underneath names the key.
-fn names_the_member(error: &wamn_schema_generator::GenerateError, member: &str) -> bool {
+fn names_the_member(error: &wamn_catalog::ManifestError, member: &str) -> bool {
     std::error::Error::source(error).is_some_and(|source| source.to_string().contains(member))
 }
 
@@ -1051,7 +1052,7 @@ fn authored_text_is_optional_and_its_key_is_closed() {
         "a label alone is a complete declaration"
     );
     assert_eq!(
-        widget.operations[&wamn_schema_generator::CrudAction::Query]
+        widget.operations[&wamn_catalog::manifest::CrudAction::Query]
             .label
             .as_deref(),
         Some("Find widgets")
@@ -1658,7 +1659,7 @@ fn without_relations(mut manifest: Value) -> Value {
     manifest
 }
 
-fn derive(manifest: &Value) -> Result<Value, wamn_schema_generator::GenerateError> {
+fn derive(manifest: &Value) -> Result<Value, wamn_catalog::ManifestError> {
     let sql = fixture::authored_sql();
     let sources = sql
         .iter()

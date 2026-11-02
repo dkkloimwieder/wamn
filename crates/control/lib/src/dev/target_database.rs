@@ -622,10 +622,11 @@ async fn replace_database(
 mod tests {
     use super::*;
     use serde_json::json;
+    use wamn_catalog::schema::{ColumnType, ForeignKeyColumn};
     use wamn_schema_introspection::ir::{
-        Column, ColumnDefault, ColumnGeneration, ColumnType, Constraint, Exclusion,
-        ExclusionAccessMethod, ExclusionElement, ExclusionKey, ForeignKeyAction, ForeignKeyColumn,
-        IdentityMode, Index, IndexColumn, IndexDirection, Table,
+        Column, ColumnDefault, ColumnGeneration, Constraint, Exclusion, ExclusionAccessMethod,
+        ExclusionElement, ExclusionKey, ForeignKeyAction, IdentityMode, Index, IndexColumn,
+        IndexDirection, Table,
     };
 
     /// Catalogs that hold every tagged and flattened IR shape the record carries.

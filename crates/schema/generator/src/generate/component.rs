@@ -18,11 +18,13 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-use super::{
-    CrudAction, GenerateError, ModelDeclaration, OperationDeclaration, PackageManifest,
-    binding_identifier, insert_bytes, rust_identifier, rust_type_identifier,
+use super::insert_bytes;
+use wamn_catalog::ManifestError as GenerateError;
+use wamn_catalog::manifest::{
+    CrudAction, ModelDeclaration, OperationDeclaration, PackageManifest, binding_identifier,
+    rust_identifier, rust_type_identifier,
 };
-use crate::manifest::{FilterMatch, PackageIdentity, canonical_operation_prefix};
+use wamn_catalog::manifest::{FilterMatch, PackageIdentity, canonical_operation_prefix};
 
 const HEADER: &str = "// @generated from the package manifest; do not edit.\n\n";
 
@@ -299,7 +301,7 @@ pub(super) fn emit_package_component(
         .expect("writing to a String cannot fail");
     }
     for (name, _) in feeds {
-        let stem = crate::manifest::custom_artifact_stem(name);
+        let stem = wamn_catalog::manifest::custom_artifact_stem(name);
         writeln!(
             source,
             "\n/// The authored `{name}` handler.\npub mod {stem} {{ include!(\"{stem}.rs\"); }}"
@@ -346,7 +348,7 @@ fn emit_package_world(
     // component keeps its world byte for byte.
     let mut imports = String::new();
     for (name, declaration) in &manifest.connections {
-        if !crate::manifest::host_connection_interface(&declaration.interface) {
+        if !wamn_catalog::manifest::host_connection_interface(&declaration.interface) {
             writeln!(imports, "  import {name}: {};", declaration.interface)
                 .expect("writing to a String cannot fail");
         }

@@ -4,50 +4,14 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use pg_query::NodeEnum;
 use pg_query::protobuf::{JoinType, Node, RangeVar, SelectStmt, SetOperation};
-use serde::{Deserialize, Serialize};
-use wamn_schema_introspection::ir::{
-    CatalogIr, ConstraintType, ForeignKeyColumn, Table, View, ViewColumnOrigin,
-};
+use wamn_catalog::schema::ForeignKeyColumn;
+use wamn_schema_introspection::ir::{CatalogIr, ConstraintType, Table, View, ViewColumnOrigin};
 
-use crate::{
-    AuthoredSql, CustomOperationDeclaration, GenerateError, GenerateErrorType, PackageManifest,
-};
+use crate::AuthoredSql;
+use wamn_catalog::manifest::{CustomOperationDeclaration, PackageManifest};
+use wamn_catalog::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 
-/// A schema-qualified table in a feed's read set.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FeedTable {
-    pub schema: String,
-    pub table: String,
-}
-
-/// How a non-root table maps its changes to root keys.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FeedDirection {
-    ReferencesRoot,
-    ReferencedByLink,
-}
-
-/// One link, including the base column used for indexed lookup.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FeedLink {
-    pub table: FeedTable,
-    pub linking_column: String,
-    pub direction: FeedDirection,
-    pub foreign_key_table: FeedTable,
-    pub foreign_key_columns: Vec<ForeignKeyColumn>,
-}
-
-/// The build's compact input to authored feed statement generation.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FeedSource {
-    pub root: FeedTable,
-    pub read_set: Vec<FeedTable>,
-    pub join_path: Vec<FeedLink>,
-}
+use wamn_catalog::feed::{FeedDirection, FeedLink, FeedSource, FeedTable};
 
 #[derive(Debug)]
 struct JoinColumn {
@@ -187,7 +151,7 @@ pub(crate) fn derive(
         ));
     }
     if let Some(result) = &operation.result {
-        if result.class != crate::manifest::ResultClass::BoundedList {
+        if result.class != wamn_catalog::manifest::ResultClass::BoundedList {
             return Err(fail("a feeding read needs a bounded_list result"));
         }
         for field in &result.fields {
@@ -226,7 +190,7 @@ pub(crate) fn derive(
         .find(|source| source.path() == statement.path)
         .ok_or_else(|| fail("the authored statement is missing"))?;
     let sql = std::str::from_utf8(sql.bytes()).map_err(|_| fail("the statement is not UTF-8"))?;
-    if crate::sql_lex::groups_or_windows(sql.as_bytes()) {
+    if wamn_catalog::sql_lex::groups_or_windows(sql.as_bytes()) {
         return Err(fail(
             "the authored statement has GROUP BY or a window function",
         ));
@@ -470,7 +434,7 @@ fn validate_view(
     if !query.distinct_clause.is_empty() {
         return Err("DISTINCT is not supported".into());
     }
-    if crate::sql_lex::groups_or_windows(view.definition().as_bytes()) && query.group_clause.is_empty()
+    if wamn_catalog::sql_lex::groups_or_windows(view.definition().as_bytes()) && query.group_clause.is_empty()
         || !query.window_clause.is_empty()
         || parsed.protobuf.nodes().iter().any(|(node, _, _, _)| matches!(node, pg_query::NodeRef::FuncCall(call) if call.over.is_some()))
     { return Err("window functions are not supported".into()) }
@@ -697,9 +661,10 @@ pub(crate) fn missing_indexes(catalog: &CatalogIr, name: &str, source: &FeedSour
 mod tests {
     use super::*;
     use serde_json::json;
+    use wamn_catalog::schema::ColumnType;
     use wamn_schema_introspection::ir::{
-        Column, ColumnType, Constraint, ForeignKeyAction, Index, IndexColumn, IndexDirection,
-        ViewBaseTable, ViewColumn,
+        Column, Constraint, ForeignKeyAction, Index, IndexColumn, IndexDirection, ViewBaseTable,
+        ViewColumn,
     };
 
     fn table(name: &str, references: &[(&str, &str)]) -> Table {
@@ -860,9 +825,9 @@ mod tests {
             .get_mut("load")
             .unwrap()
             .row
-            .push(crate::manifest::StaticSqlValueDeclaration {
+            .push(wamn_catalog::manifest::StaticSqlValueDeclaration {
                 name: "row_version".into(),
-                ty: wamn_schema_introspection::ir::ColumnType::Int64,
+                ty: wamn_catalog::schema::ColumnType::Int64,
                 nullable: false,
             });
         let error = derive_sql(&catalog(RECEIPT), &manifest, "SELECT id FROM screen").unwrap_err();

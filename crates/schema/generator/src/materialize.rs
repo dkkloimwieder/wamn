@@ -8,7 +8,7 @@ use std::path::{Component, Path, PathBuf};
 use anyhow::{Context as _, Result, ensure};
 use tokio_postgres::NoTls;
 use wamn_schema_introspection::ir::CatalogIr;
-use wamn_schema_introspection::postgres::read_catalog_excluding_relations;
+use wamn_schema_introspection::postgres::{DATA_ACCESS_ROLE, read_catalog_excluding_relations};
 
 use crate::StatementTransactionality;
 use crate::authoring::{COMPILED_MANIFEST, compile_manifest, is_authored, package_manifest_path};
@@ -16,16 +16,13 @@ use crate::client_component::emit_ts_components;
 use crate::client_ir::{ClientContractIr, published_routes};
 use crate::client_plan::ClientPlan;
 use crate::client_ts::{emit_ts_client, emit_ts_package_json};
-use crate::generate::GeneratedFile;
-use crate::{
-    AuthoredSql, GeneratedPackage, GenerationInput, PackageManifest,
-    data_access::{
-        DATA_ACCESS_OVERLAY_PATH, DATA_ACCESS_ROLE, DataAccessOverlay, DataAccessRelationFields,
-        application_schemas, derive_effective_data_access, render_effective_data_access_sql,
-    },
-    generate,
-    manifest::CONTROL_OWNED_RELATION_TABLES,
+use crate::data_access::{
+    DATA_ACCESS_OVERLAY_PATH, DataAccessOverlay, DataAccessRelationFields, application_schemas,
+    derive_effective_data_access, render_effective_data_access_sql,
 };
+use crate::generate::GeneratedFile;
+use crate::{AuthoredSql, GeneratedPackage, GenerationInput, generate};
+use wamn_catalog::manifest::{CONTROL_OWNED_RELATION_TABLES, PackageManifest};
 
 pub(crate) const GENERATOR_ID: &str = "wamn-schema-generator/0.1.13";
 pub(crate) const TOOLCHAIN_ID: &str = "rust-1.99.0";
@@ -1048,7 +1045,8 @@ pub(crate) fn existing_files(root: &Path) -> Result<Vec<PathBuf>> {
 mod tests {
     use std::cell::Cell;
 
-    use wamn_schema_introspection::ir::{Column, ColumnType, Constraint, Table};
+    use wamn_catalog::schema::ColumnType;
+    use wamn_schema_introspection::ir::{Column, Constraint, Table};
 
     use super::*;
 

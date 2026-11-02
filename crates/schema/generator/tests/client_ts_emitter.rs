@@ -164,7 +164,7 @@ fn invalid_client_names_refuse_before_emission() {
     }
 
     {
-        use wamn_schema_generator::GenerateErrorType;
+        use wamn_catalog::ManifestErrorType as GenerateErrorType;
 
         let catalog = fixture::catalog();
         for (name, reason) in [

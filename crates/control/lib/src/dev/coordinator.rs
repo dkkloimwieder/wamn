@@ -30,8 +30,8 @@ use serde::Deserialize;
 use tokio::process::Command;
 use tokio_postgres::NoTls;
 use wamn_catalog::PackageCoordinate;
+use wamn_catalog::manifest::PackageManifest;
 use wamn_schema_control::BareSchemaName;
-use wamn_schema_generator::PackageManifest;
 use wamn_schema_introspection::ir::CatalogIr;
 
 use super::activation::{self, DevActivation, DevActivationRequest};
@@ -1686,7 +1686,7 @@ async fn prepare_local_bindings(
     config: &DevConfig,
     admissions: &[ComponentAdmission],
     environment: &crate::environment::document::EnvironmentDocument,
-    packages: &[wamn_schema_generator::PackageManifest],
+    packages: &[wamn_catalog::manifest::PackageManifest],
     manifest_digest: &str,
 ) -> anyhow::Result<Vec<PreparedLocalBinding>> {
     let system = crate::environment::analyse::connect(config.system_database_url()).await?;
@@ -1734,7 +1734,7 @@ async fn prepare_local_bindings(
             );
             prepared.push(PreparedLocalBinding {
                 package_id: admission.package_id().to_owned(),
-                read_only: binding.mode == wamn_schema_generator::ConnectionMode::Read,
+                read_only: binding.mode == wamn_catalog::manifest::ConnectionMode::Read,
                 requirement: requirement.clone(),
                 instance_id: binding.connection_id.clone(),
             });
@@ -1770,7 +1770,7 @@ async fn prepare_local_bindings(
 async fn reserve_local_bindings(
     config: &DevConfig,
     environment: &crate::environment::document::EnvironmentDocument,
-    packages: &[wamn_schema_generator::PackageManifest],
+    packages: &[wamn_catalog::manifest::PackageManifest],
     prepared: &[PreparedLocalBinding],
     digest: &str,
 ) -> anyhow::Result<()> {
@@ -1796,7 +1796,7 @@ async fn reserve_local_bindings(
                     && input.requirement.store_alias() == binding.alias
                     && input.instance_id == binding.connection_id
                     && input.read_only
-                        == (binding.mode == wamn_schema_generator::ConnectionMode::Read)
+                        == (binding.mode == wamn_catalog::manifest::ConnectionMode::Read)
             }),
             "local org connection authority changed after candidate validation"
         );
@@ -1808,7 +1808,7 @@ async fn reserve_local_bindings(
 async fn resolve_local_bindings(
     config: &DevConfig,
     environment: &crate::environment::document::EnvironmentDocument,
-    packages: &[wamn_schema_generator::PackageManifest],
+    packages: &[wamn_catalog::manifest::PackageManifest],
     prepared: &[PreparedLocalBinding],
     digest: &str,
     apply: Option<&[wamn_runtime::local_application::LocalBindingFacts]>,
@@ -1879,7 +1879,7 @@ async fn resolve_local_bindings(
                 binding.generation,
                 &definition.definition,
                 handle,
-                binding.mode == wamn_schema_generator::ConnectionMode::Read,
+                binding.mode == wamn_catalog::manifest::ConnectionMode::Read,
             );
             bindings.push(wamn_runtime::local_application::LocalBindingFacts {
                 package_id: input.package_id.clone(),
@@ -2112,9 +2112,10 @@ impl Drop for TemporaryFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wamn_catalog::schema::ColumnType;
     use wamn_schema_introspection::ir::{
-        Column, ColumnDefault, ColumnType, Constraint, Exclusion, ExclusionAccessMethod,
-        ExclusionElement, ExclusionKey, Table,
+        Column, ColumnDefault, Constraint, Exclusion, ExclusionAccessMethod, ExclusionElement,
+        ExclusionKey, Table,
     };
 
     fn package(id: &str, version: &str, component: &str) -> PackageInput {
@@ -2151,7 +2152,7 @@ mod tests {
             });
             packages[2].manifest.base_dependencies.insert(
                 "base".to_owned(),
-                wamn_schema_generator::BaseDependencyRequirement {
+                wamn_catalog::manifest::BaseDependencyRequirement {
                     package: "base".to_owned(),
                     version: "1.0.0".to_owned(),
                     digest: format!("sha256:{}", "a".repeat(64)),
@@ -2836,7 +2837,7 @@ mod tests {
         model.enum_fields.clear();
         model
             .operations
-            .retain(|action, _| *action == wamn_schema_generator::CrudAction::Get);
+            .retain(|action, _| *action == wamn_catalog::manifest::CrudAction::Get);
         let bytes = serde_json::to_vec(&manifest).unwrap();
         let transactional = wamn_schema_generator::StatementTransactionality::unclassified();
         let generate = |catalog| {

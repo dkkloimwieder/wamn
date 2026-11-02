@@ -9,7 +9,8 @@
 
 use std::path::PathBuf;
 
-use wamn_schema_generator::{OperationOwners, package_manifest_path, resolve_operation_reference};
+use wamn_catalog::manifest::{OperationOwners, resolve_operation_reference};
+use wamn_schema_generator::package_manifest_path;
 
 /// The manifest of one repository package, by its package id.
 fn owners(package_id: &str) -> OperationOwners {

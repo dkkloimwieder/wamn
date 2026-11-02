@@ -3,16 +3,19 @@
 use std::fmt::Write as _;
 
 use super::wit_adapters::{emit_error_mapper, emit_export_adapter, emit_row_adapter};
-use super::{
-    AccessOperationErrorLiteral, BTreeMap, Column, ColumnType, ContractFieldDeclaration,
-    CrudAction, CustomOperationDeclaration, CustomOperationResultDeclaration, GenerateError,
-    GenerateErrorType, ModelDeclaration, OperationDeclaration, OperationErrorDetailDeclaration,
-    PackageManifest, ResultClass, Table, binding_identifier, insert_bytes, rust_identifier,
-    rust_type_identifier,
-};
+use super::{BTreeMap, Column, Table, insert_bytes};
 use crate::client_fields::input_fields_of;
 use crate::client_ir::FieldIr;
-use crate::manifest::{FilterMatch, OperationErrorDetailKey, authored_name, serde_field};
+use crate::manifest::serde_field;
+use wamn_catalog::manifest::{
+    AccessOperationErrorLiteral, ContractFieldDeclaration, CrudAction, CustomOperationDeclaration,
+    CustomOperationResultDeclaration, ModelDeclaration, OperationDeclaration,
+    OperationErrorDetailDeclaration, PackageManifest, ResultClass, binding_identifier,
+    rust_identifier, rust_type_identifier,
+};
+use wamn_catalog::manifest::{FilterMatch, OperationErrorDetailKey, authored_name};
+use wamn_catalog::schema::ColumnType;
+use wamn_catalog::{ManifestError as GenerateError, ManifestErrorType as GenerateErrorType};
 
 /// How many request elements one generated CRUD call carries. The codec refuses any
 /// other count, and the route input schema states the same bounds.
@@ -307,7 +310,7 @@ fn emit_crud_result(
     name: &str,
     action: CrudAction,
     fields: &[ContractFieldDeclaration],
-    class: super::ResultClass,
+    class: wamn_catalog::manifest::ResultClass,
 ) {
     writeln!(source, "  record {name}-row {{").expect("writing to a String cannot fail");
     for column in fields {
@@ -320,13 +323,14 @@ fn emit_crud_result(
     }
     source.push_str("  }\n\n");
     let carrier = match class {
-        super::ResultClass::One => format!("{name}-row"),
-        super::ResultClass::OptionalOne => format!("option<{name}-row>"),
-        super::ResultClass::BoundedList | super::ResultClass::Page => format!("list<{name}-row>"),
+        wamn_catalog::manifest::ResultClass::One => format!("{name}-row"),
+        wamn_catalog::manifest::ResultClass::OptionalOne => format!("option<{name}-row>"),
+        wamn_catalog::manifest::ResultClass::BoundedList
+        | wamn_catalog::manifest::ResultClass::Page => format!("list<{name}-row>"),
     };
     writeln!(source, "  record {name}-result {{\n    value: {carrier},")
         .expect("writing to a String cannot fail");
-    if action == CrudAction::Query && class == super::ResultClass::Page {
+    if action == CrudAction::Query && class == wamn_catalog::manifest::ResultClass::Page {
         source.push_str("    next-cursor: option<string>,\n");
     }
     source.push_str("  }\n\n");
@@ -1439,7 +1443,7 @@ fn crud_is_keyed(action: CrudAction) -> bool {
 /// Whether the request elements of a custom operation carry a `request_id`: every kind
 /// but a projection, which is a read.
 fn custom_is_keyed(operation: &CustomOperationDeclaration) -> bool {
-    operation.type_ != crate::manifest::CustomOperationType::Projection
+    operation.type_ != wamn_catalog::manifest::CustomOperationType::Projection
 }
 
 /// The WIT field that keys a request element or an outcome, or nothing for a read.
@@ -1755,7 +1759,7 @@ fn emit_forwarding_interface(
     version: &str,
     group: &str,
     local_name: &str,
-    dependency: &crate::manifest::BaseDependencyRequirement,
+    dependency: &wamn_catalog::manifest::BaseDependencyRequirement,
     operation: &CustomOperationDeclaration,
 ) -> String {
     let dependency_package = dependency.package.replace('_', "-");
@@ -1848,7 +1852,7 @@ fn emit_owned_interface(
         .map(|literal| {
             (
                 literal.as_str(),
-                crate::manifest::custom_operation_error_detail(operation, literal),
+                wamn_catalog::manifest::custom_operation_error_detail(operation, literal),
             )
         })
         .collect::<BTreeMap<_, _>>();
@@ -2266,7 +2270,7 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
             &mut source,
             &error_type,
             literal,
-            &crate::manifest::custom_operation_error_detail(operation, literal),
+            &wamn_catalog::manifest::custom_operation_error_detail(operation, literal),
             operation
                 .result
                 .as_ref()
@@ -2295,7 +2299,7 @@ fn emit_custom_codec(local_name: &str, operation: &CustomOperationDeclaration) -
         .map(|literal| {
             (
                 literal.as_str(),
-                crate::manifest::custom_operation_error_detail(operation, literal),
+                wamn_catalog::manifest::custom_operation_error_detail(operation, literal),
             )
         })
         .collect::<Vec<_>>();
@@ -2687,7 +2691,7 @@ fn codec_rust_type(ty: ColumnType, nullable: bool) -> String {
 }
 
 fn emit_invalid_detail(source: &mut String, operation: &CustomOperationDeclaration) {
-    let detail = crate::manifest::custom_operation_error_detail(operation, "invalid_input");
+    let detail = wamn_catalog::manifest::custom_operation_error_detail(operation, "invalid_input");
     source.push_str("fn invalid(field: &str) -> contract::InvalidInputDetail {\n    contract::InvalidInputDetail {\n");
     for key in &detail.required {
         let name = detail_name(*key).replace('-', "_");

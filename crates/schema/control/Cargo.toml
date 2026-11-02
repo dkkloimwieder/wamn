@@ -7,7 +7,6 @@ license.workspace = true
 
 [dependencies]
 wamn-catalog = { workspace = true }
-wamn-schema-generator = { workspace = true }
 wamn-record-history = { workspace = true }
 wamn-pg-core = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

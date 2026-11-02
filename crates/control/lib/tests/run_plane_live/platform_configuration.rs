@@ -240,9 +240,10 @@ async fn env_apply_creates_number_sequences_and_keeps_an_edit_live() {
         mint_administration_generation(&target, &target_url, &database).await;
     drop(administration);
 
-    let mut base =
-        wamn_schema_generator::PackageManifest::from_slice(&wamn_fixture_package::manifest_bytes())
-            .unwrap();
+    let mut base = wamn_catalog::manifest::PackageManifest::from_slice(
+        &wamn_fixture_package::manifest_bytes(),
+    )
+    .unwrap();
     base.package.id = "wamn_receiving".into();
     base.sequences = serde_json::from_value(
         serde_json::json!({"purchase_order": {"pattern": "PO-{seq:po,width=6}"}}),

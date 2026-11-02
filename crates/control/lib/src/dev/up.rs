@@ -6,6 +6,7 @@ use std::io::Write as _;
 use std::os::unix::fs::OpenOptionsExt as _;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::PathBuf;
+use wamn_catalog::manifest::PackageManifest;
 
 /// Explicit inputs for a disposable development environment.
 #[derive(Debug)]
@@ -167,7 +168,8 @@ async fn enable_cdc(
         .iter()
         .map(|root| super::config::read_package_manifest(root))
         .collect::<Result<Vec<_>, _>>()?;
-    let consumers = wamn_control_provision::events::entity_consumers(&scope, &manifests);
+    let entities = manifests.iter().flat_map(PackageManifest::entity_pairs);
+    let consumers = wamn_control_provision::events::entity_consumers(&scope, entities);
     let schemas = manifests
         .iter()
         .flat_map(|manifest| manifest.models.values().map(|model| model.schema.clone()))

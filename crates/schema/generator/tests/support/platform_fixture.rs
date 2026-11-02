@@ -1,13 +1,14 @@
 use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
+use wamn_catalog::schema::{ColumnType, ForeignKeyColumn};
 use wamn_schema_generator::client_ir::{ClientContractIr, ReplayIr, ResponseIr, RouteIr};
 use wamn_schema_generator::{
     AuthoredSql, GeneratedPackage, GenerationInput, StatementTransactionality, generate,
 };
 use wamn_schema_introspection::ir::{
-    CatalogIr, Column, ColumnDefault, ColumnType, Constraint, ForeignKeyAction, ForeignKeyColumn,
-    Index, IndexColumn, IndexDirection, Table, View, ViewBaseTable, ViewColumn, ViewColumnOrigin,
+    CatalogIr, Column, ColumnDefault, Constraint, ForeignKeyAction, Index, IndexColumn,
+    IndexDirection, Table, View, ViewBaseTable, ViewColumn, ViewColumnOrigin,
 };
 
 /// The fixture's authored SQL, as the fixture application holds it.
@@ -30,7 +31,7 @@ pub(crate) fn generate_with(catalog: &CatalogIr, value: &Value) -> GeneratedPack
 pub(crate) fn try_generate_with(
     catalog: &CatalogIr,
     value: &Value,
-) -> Result<GeneratedPackage, wamn_schema_generator::GenerateError> {
+) -> Result<GeneratedPackage, wamn_catalog::ManifestError> {
     try_generate_with_sql(catalog, value, &authored_sql())
 }
 
@@ -40,8 +41,8 @@ pub(crate) fn try_generate_with_sql(
     catalog: &CatalogIr,
     value: &Value,
     authored: &[(String, Vec<u8>)],
-) -> Result<GeneratedPackage, wamn_schema_generator::GenerateError> {
-    let bases = [wamn_schema_generator::PackageManifest::from_slice(
+) -> Result<GeneratedPackage, wamn_catalog::ManifestError> {
+    let bases = [wamn_catalog::manifest::PackageManifest::from_slice(
         &serde_json::to_vec(&manifest()).unwrap(),
     )
     .unwrap()];

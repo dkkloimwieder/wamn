@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use anyhow::{Context as _, ensure};
-use wamn_schema_generator::PackageManifest;
+use wamn_catalog::manifest::PackageManifest;
 
 /// Select SQL verification from declarations rather than package identity.
 pub fn requires_verifier(manifest: &PackageManifest) -> bool {

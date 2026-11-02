@@ -6,18 +6,18 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::FilterMatch;
+use crate::manifest::FilterMatch;
 
 #[cfg(test)]
 mod grammar;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct RelationAccess {
-    pub(crate) select_fields: BTreeSet<String>,
-    pub(crate) insert_fields: BTreeSet<String>,
-    pub(crate) update_fields: BTreeSet<String>,
-    pub(crate) lock: bool,
-    pub(crate) delete: bool,
+pub struct RelationAccess {
+    pub select_fields: BTreeSet<String>,
+    pub insert_fields: BTreeSet<String>,
+    pub update_fields: BTreeSet<String>,
+    pub lock: bool,
+    pub delete: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,7 +35,7 @@ enum Token {
     Other(u8),
 }
 
-pub(crate) fn contains_schema_qualified_reference(sql: &[u8], schema: &str) -> bool {
+pub fn contains_schema_qualified_reference(sql: &[u8], schema: &str) -> bool {
     let tokens = tokens(sql);
     tokens.windows(3).any(|window| {
         matches!(
@@ -50,7 +50,7 @@ pub(crate) fn contains_schema_qualified_reference(sql: &[u8], schema: &str) -> b
 /// PostgreSQL numbers the parameters of a statement up to the highest `$n` it
 /// references. A `$n` inside a comment, a string, or a quoted identifier is
 /// inert text and does not count.
-pub(crate) fn parameter_count(sql: &[u8]) -> u32 {
+pub fn parameter_count(sql: &[u8]) -> u32 {
     tokens(sql)
         .iter()
         .filter_map(|token| match token {
@@ -69,7 +69,7 @@ pub(crate) fn parameter_count(sql: &[u8]) -> u32 {
 /// remain owned by the two-sibling verifier; this pass joins the verified SQL
 /// to the manifest's relation authority declaration. [`delete_targets`] also
 /// reports deletions for the manifest to check the model's delete mode.
-pub(crate) fn relation_access(
+pub fn relation_access(
     sql: &[u8],
     relations: &BTreeMap<String, BTreeSet<String>>,
 ) -> Result<BTreeMap<String, RelationAccess>, &'static str> {
@@ -174,7 +174,7 @@ pub(crate) fn relation_access(
 
 /// Extend direct relation access with view dependencies for effect review.
 /// Grant derivation uses `relation_access` without this expansion.
-pub(crate) fn profile_relation_access(
+pub fn profile_relation_access(
     sql: &[u8],
     relations: &BTreeMap<String, BTreeSet<String>>,
     views: &BTreeMap<String, crate::profile::ViewRelation>,
@@ -258,7 +258,7 @@ fn whole_row_reference<'a>(
 /// admits a target only when its model declares `delete_mode: hard`. The scan
 /// is flat over the token stream, so it reaches a DELETE inside a CTE exactly
 /// as it reaches a top-level one.
-pub(crate) fn delete_targets(sql: &[u8]) -> Result<BTreeSet<String>, &'static str> {
+pub fn delete_targets(sql: &[u8]) -> Result<BTreeSet<String>, &'static str> {
     let tokens = tokens(sql);
     let mut targets = BTreeSet::new();
     for index in 0..tokens.len() {
@@ -281,7 +281,7 @@ pub(crate) fn delete_targets(sql: &[u8]) -> Result<BTreeSet<String>, &'static st
 ///
 /// The statement relies on that constraint, so the operation requires it. The
 /// scan is flat over the token stream, as [`delete_targets`] is.
-pub(crate) fn conflict_constraints(sql: &[u8]) -> Result<BTreeSet<String>, &'static str> {
+pub fn conflict_constraints(sql: &[u8]) -> Result<BTreeSet<String>, &'static str> {
     let tokens = tokens(sql);
     let mut constraints = BTreeSet::new();
     for index in 0..tokens.len() {
@@ -303,7 +303,7 @@ pub(crate) fn conflict_constraints(sql: &[u8]) -> Result<BTreeSet<String>, &'sta
 /// Whether one SQL artifact aggregates or windows its rows: a `GROUP BY`, or
 /// a window call `OVER (`. Generation writes neither, so a query with one is
 /// a query only its author can write.
-pub(crate) fn groups_or_windows(sql: &[u8]) -> bool {
+pub fn groups_or_windows(sql: &[u8]) -> bool {
     let tokens = tokens(sql);
     tokens.windows(2).any(|pair| {
         matches!(
@@ -932,7 +932,7 @@ fn positioned_tokens(sql: &[u8]) -> Vec<(usize, Token)> {
 /// bound of the parameter with `->>`. The mode is `None` when the group does
 /// none of these. The result is `None` when the statement never reads the
 /// parameter.
-pub(crate) fn filter_predicate(sql: &[u8], parameter: u32) -> Option<(Option<FilterMatch>, usize)> {
+pub fn filter_predicate(sql: &[u8], parameter: u32) -> Option<(Option<FilterMatch>, usize)> {
     let positioned = positioned_tokens(sql);
     let mut uses = positioned
         .iter()

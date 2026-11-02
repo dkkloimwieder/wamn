@@ -811,15 +811,15 @@ pub async fn publish(
 }
 
 /// The manifest of the WMS package of this checkout.
-pub fn package_manifest() -> anyhow::Result<wamn_schema_generator::PackageManifest> {
+pub fn package_manifest() -> anyhow::Result<wamn_catalog::manifest::PackageManifest> {
     package_manifest_at(&package_root())
 }
 
 /// The manifest of the package at `root`.
-pub fn package_manifest_at(root: &Path) -> anyhow::Result<wamn_schema_generator::PackageManifest> {
+pub fn package_manifest_at(root: &Path) -> anyhow::Result<wamn_catalog::manifest::PackageManifest> {
     wamn_schema_generator::build_record::check_current(root)?;
     let path = wamn_schema_generator::package_manifest_path(root);
-    wamn_schema_generator::PackageManifest::from_slice(
+    wamn_catalog::manifest::PackageManifest::from_slice(
         &fs::read(&path).with_context(|| format!("read {}", path.display()))?,
     )
     .with_context(|| format!("parse {}", path.display()))
@@ -827,7 +827,7 @@ pub fn package_manifest_at(root: &Path) -> anyhow::Result<wamn_schema_generator:
 
 /// One durable consumer for every captured entity in the WMS package.
 pub fn declared_consumers(
-    manifest: &wamn_schema_generator::PackageManifest,
+    manifest: &wamn_catalog::manifest::PackageManifest,
 ) -> Vec<async_nats::jetstream::consumer::pull::Config> {
     wamn_control_provision::events::entity_consumers(
         &wamn_control_registry::Triple::new(
@@ -835,7 +835,7 @@ pub fn declared_consumers(
             identity().project.clone(),
             identity().environment.clone(),
         ),
-        [manifest],
+        manifest.entity_pairs(),
     )
 }
 

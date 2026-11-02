@@ -32,7 +32,7 @@ pub(super) fn read_package_attachments(
 /// The operation owners of each package the release presents, by package id.
 fn package_owners(
     package_manifests: &[PathBuf],
-) -> Result<BTreeMap<String, wamn_schema_generator::OperationOwners>, PublishManifestError> {
+) -> Result<BTreeMap<String, wamn_catalog::manifest::OperationOwners>, PublishManifestError> {
     let mut owners = BTreeMap::new();
     for path in package_manifests {
         if let Some(root) = wamn_schema_generator::manifest_package_root(path) {
@@ -54,7 +54,7 @@ fn package_owners(
             )
         })?;
         let package =
-            wamn_schema_generator::OperationOwners::from_slice(&bytes).map_err(|error| {
+            wamn_catalog::manifest::OperationOwners::from_slice(&bytes).map_err(|error| {
                 PublishManifestError::with_source(
                     PublishManifestErrorType::PackageManifest,
                     format!("parse package manifest {}", path.display()),
@@ -96,7 +96,7 @@ fn resolve_generated_input_schemas(
             )
         })?;
         let manifest =
-            wamn_schema_generator::PackageManifest::from_slice(&bytes).map_err(|error| {
+            wamn_catalog::manifest::PackageManifest::from_slice(&bytes).map_err(|error| {
                 PublishManifestError::with_source(
                     PublishManifestErrorType::PackageManifest,
                     format!("parse package manifest {}", path.display()),
@@ -136,7 +136,7 @@ fn resolve_generated_input_schemas(
 
 fn read_authored_attachments(
     paths: &[PathBuf],
-    owners: &BTreeMap<String, wamn_schema_generator::OperationOwners>,
+    owners: &BTreeMap<String, wamn_catalog::manifest::OperationOwners>,
 ) -> Result<BTreeMap<String, ServingAttachment>, PublishManifestError> {
     if paths.is_empty() {
         return Err(PublishManifestError::new(
