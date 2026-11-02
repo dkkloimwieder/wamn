@@ -792,3 +792,122 @@ fn install_job_commands_reject_an_unbacked_export() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+fn selector_failures(objects: &[(&str, serde_json::Value)]) -> Vec<String> {
+    let latest = objects
+        .iter()
+        .enumerate()
+        .map(|(index, (_, object))| (identity(object), index))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut failures = Vec::new();
+    for index in latest.values().copied() {
+        let (step, service) = &objects[index];
+        if service["kind"] != "Service" {
+            continue;
+        }
+        let namespace = &service["metadata"]["namespace"];
+        let selector = service["spec"]["selector"]
+            .as_object()
+            .filter(|selector| !selector.is_empty());
+        let matches = latest
+            .values()
+            .copied()
+            .filter(|position| {
+                let object = &objects[*position].1;
+                if &object["metadata"]["namespace"] != namespace {
+                    return false;
+                }
+                if let Some(selector) = selector {
+                    if pod(object).is_none() {
+                        return false;
+                    }
+                    let labels = if object["kind"] == "Pod" {
+                        &object["metadata"]["labels"]
+                    } else if object["kind"] == "CronJob" {
+                        &object["spec"]["jobTemplate"]["spec"]["template"]["metadata"]["labels"]
+                    } else {
+                        &object["spec"]["template"]["metadata"]["labels"]
+                    };
+                    selector.iter().all(|(key, value)| &labels[key] == value)
+                } else {
+                    object["kind"] == "WorkloadDeployment"
+                        && object["spec"]["template"]["spec"]["kubernetes"]["service"]["name"]
+                            == service["metadata"]["name"]
+                }
+            })
+            .collect::<Vec<_>>();
+        if matches.len() != 1 {
+            let targets = matches
+                .iter()
+                .map(|position| {
+                    format!(
+                        "{} step {}:{position}",
+                        identity(&objects[*position].1),
+                        objects[*position].0
+                    )
+                })
+                .collect::<Vec<_>>();
+            failures.push(format!(
+                "{} step {step}:{index} field {} -> {} count {} producer steps [{}]",
+                identity(service),
+                if selector.is_some() {
+                    "spec.selector"
+                } else {
+                    "WorkloadDeployment.kubernetes.service.name"
+                },
+                if selector.is_some() {
+                    "pod template"
+                } else {
+                    "WorkloadDeployment"
+                },
+                matches.len(),
+                if targets.is_empty() {
+                    "absent".into()
+                } else {
+                    targets.join(", ")
+                }
+            ));
+        }
+    }
+    failures
+}
+
+#[test]
+fn install_service_selectors_resolve_one_pod_template() -> anyhow::Result<()> {
+    let failures = selector_failures(&platform_install::render()?.objects);
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    Ok(())
+}
+
+#[test]
+fn install_service_selectors_reject_an_unmatched_reference() -> anyhow::Result<()> {
+    let mut objects = platform_install::render()?.objects.clone();
+    let (_, service) = objects
+        .iter_mut()
+        .find(|(_, object)| {
+            object["kind"] == "Service" && object["metadata"]["name"] == "wamn-edge"
+        })
+        .unwrap();
+    service["spec"]["selector"]["absent-label"] = json!("absent-value");
+    let failures = selector_failures(&objects);
+    assert_eq!(failures.len(), 1, "{}", failures.join("\n"));
+    assert!(failures[0].contains("spec.selector -> pod template count 0 producer steps [absent]"));
+    Ok(())
+}
+
+#[test]
+fn install_selectorless_services_reject_a_missing_workload_reference() -> anyhow::Result<()> {
+    let mut objects = platform_install::render()?.objects.clone();
+    let (_, workload) = objects
+        .iter_mut()
+        .find(|(_, object)| {
+            object["kind"] == "WorkloadDeployment" && object["metadata"]["name"] == "c-test-http"
+        })
+        .unwrap();
+    workload["spec"]["template"]["spec"]["kubernetes"]["service"]["name"] =
+        json!("missing-service");
+    let failures = selector_failures(&objects);
+    assert_eq!(failures.len(), 1, "{}", failures.join("\n"));
+    assert!(failures[0].contains("WorkloadDeployment count 0"));
+    Ok(())
+}
