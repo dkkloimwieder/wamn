@@ -8,28 +8,16 @@ use std::time::Duration;
 use anyhow::{Context as _, ensure};
 use tokio::process::Command;
 
-use super::qualification_artifact::{
+use wamn_control::delivery::qualification_artifact::{
     self, FoundQualification, QUALIFICATION_PAYLOAD_FORMAT, QualificationPayload,
     QualificationPushDisposition,
 };
-use super::{ApplicationResult, Candidate, CheckResult, Qualification};
-use crate::package_artifact::PackageRegistry;
+use wamn_control::delivery::{ApplicationResult, Candidate, CheckResult, Qualification};
+use wamn_control::package_artifact::PackageRegistry;
 
-const RECEIVING_CASES: &[&str] = &[
-    "route_authentication_live::cluster::route_cases::command_histories",
-    "route_authentication_live::cluster::postcommit_case::baseline_overlay_and_materializer_progress",
-];
-// The Receiving cases that touch no overlay, for a release without Acme.
-// queue_recovery is in neither set: it starts its item from the wiring
-// wamn_receiving/receiving_record_receipt, which no release carries
-// (wamn-ld93.33.11).
-const RECEIVING_BASE_CASES: &[&str] =
-    &["route_authentication_live::cluster::route_cases::command_histories"];
-const WMS_CASES: &[&str] = &[
-    "cluster::released_wms_routes",
-    "cluster::released_wms_routes_retain_committed_work_after_label_failure",
-    "cluster::restarted_wms_host_retains_compiled_code_and_serves_requests",
-];
+mod declarations;
+use declarations::{Case, declared_cases};
+
 // Existing deployed cases own bounded setup and cleanup inside this outer limit.
 const COMMAND_TIMEOUT: Duration = Duration::from_mins(45);
 
@@ -40,6 +28,8 @@ const COMMAND_TIMEOUT: Duration = Duration::from_mins(45);
 pub struct QualifyReleaseRequest {
     /// The release, `sha256:<hex>`.
     pub release_digest: String,
+    /// The checkout that owns the packages and their case declarations.
+    pub repository: PathBuf,
     /// The release repository: `publish-release` pushed the manifest there,
     /// and the qualification goes beside it.
     pub releases: PackageRegistry,
@@ -90,17 +80,6 @@ impl Drop for TemporaryResults {
     }
 }
 
-struct Application {
-    package: &'static str,
-    cases: &'static [&'static str],
-    evidence_env: &'static str,
-}
-
-fn application(candidate: &Candidate) -> anyhow::Result<Application> {
-    let packages = candidate_packages(candidate)?;
-    application_for(&packages.iter().map(String::as_str).collect::<Vec<_>>())
-}
-
 /// The package ids of the candidate release, sorted and without repeats.
 fn candidate_packages(candidate: &Candidate) -> anyhow::Result<Vec<String>> {
     let (manifest, _) = candidate.manifest()?;
@@ -114,42 +93,20 @@ fn candidate_packages(candidate: &Candidate) -> anyhow::Result<Vec<String>> {
         .collect())
 }
 
-/// The cases that qualify a release, chosen by its exact package set in
-/// sorted order. No case runs that needs a package the release does not carry.
-fn application_for(packages: &[&str]) -> anyhow::Result<Application> {
-    match packages {
-        ["wamn_wms"] => Ok(Application {
-            package: "wamn-wms-tests",
-            cases: WMS_CASES,
-            evidence_env: "WAMN_WMS_EVIDENCE_DIR",
-        }),
-        ["wamn_receiving"] => Ok(Application {
-            package: "wamn-receiving-tests",
-            cases: RECEIVING_BASE_CASES,
-            evidence_env: "WAMN_RECEIVING_EVIDENCE_DIR",
-        }),
-        ["client_acme_receiving", "wamn_receiving"] => Ok(Application {
-            package: "wamn-receiving-tests",
-            cases: RECEIVING_CASES,
-            evidence_env: "WAMN_RECEIVING_EVIDENCE_DIR",
-        }),
-        _ => {
-            anyhow::bail!("the candidate has no supported existing application qualification case")
-        }
-    }
-}
-
 /// Refuse partial results before publication can use them.
-pub(super) fn require_complete_checks(result: &Qualification) -> anyhow::Result<()> {
-    let app = application(&result.candidate)?;
-    for case in app.cases {
+fn require_complete_checks(checks: &[CheckResult], cases: &[Case]) -> anyhow::Result<()> {
+    for case in cases {
         ensure!(
-            result
-                .checks
-                .iter()
-                .any(|check| check.command.iter().any(|arg| arg == case)
-                    && check.command.iter().any(|arg| arg == "--exact")),
-            "qualification lacks required case {case}"
+            checks.iter().any(|check| check.result == "pass"
+                && check.command.iter().any(|arg| arg == &case.name)
+                && check
+                    .command
+                    .iter()
+                    .any(|arg| arg == &format!("--entrypoint={RUNNER_CASES}/{}", case.executable))
+                && check.command.iter().any(|arg| arg == "--exact")),
+            "qualification lacks required case {} in {}",
+            case.name,
+            case.executable
         );
     }
     Ok(())
@@ -170,12 +127,14 @@ pub async fn qualify(
     let candidate_path = temporary.path.join("candidate.json");
     let (candidate, release_size) =
         write_candidate(&request, &temporary.path, &candidate_path).await?;
+    let cases = declared_cases(&request.repository, &candidate_packages(&candidate)?)?;
+    let case_names: Vec<String> = cases.iter().map(|case| case.name.clone()).collect();
     let (manifest, digest) = candidate.manifest()?;
     let image_set = qualification_artifact::image_set_digests(&candidate.images)?;
     if let Some(found) =
         qualification_artifact::lookup(&request.releases, digest.as_str(), &image_set).await?
     {
-        let report = reuse(&found, application(&candidate)?.cases)?;
+        let report = reuse(&found, &case_names)?;
         eprintln!("{report}");
         return Ok((found.digest, QualificationPushDisposition::Reused));
     }
@@ -186,18 +145,19 @@ pub async fn qualify(
         checks: Vec::new(),
         result: "fail".to_owned(),
     };
-    let cases = qualify_candidate(
+    qualify_candidate(
         &request.release_chart,
         &candidate_path,
         temporary,
         &mut result,
+        &cases,
     )
     .await?;
     let payload = QualificationPayload {
         format: QUALIFICATION_PAYLOAD_FORMAT,
         release_digest: result.manifest_digest.clone(),
         image_set,
-        cases: cases.iter().map(|case| (*case).to_owned()).collect(),
+        cases: case_names,
     };
     qualification_artifact::push(&request.releases, &payload, release_size).await
 }
@@ -206,7 +166,7 @@ pub async fn qualify(
 /// of this release and image set, when it passed exactly `cases`, the cases
 /// this release runs. Other cases refuse: a run would push other bytes under
 /// the immutable tag, which the push refuses.
-fn reuse(found: &FoundQualification, cases: &[&str]) -> anyhow::Result<String> {
+fn reuse(found: &FoundQualification, cases: &[String]) -> anyhow::Result<String> {
     let payload = &found.payload;
     ensure!(
         payload.cases == cases,
@@ -258,8 +218,9 @@ async fn write_candidate(
     let candidate = Candidate {
         manifest_path,
         releases: request.releases.clone(),
-        images: crate::release_chart::image_set(&request.release_chart).await?,
-        qualification: crate::release_chart::qualification_images(&request.release_chart).await?,
+        images: wamn_control::release_chart::image_set(&request.release_chart).await?,
+        qualification: wamn_control::release_chart::qualification_images(&request.release_chart)
+            .await?,
     };
     let output = OpenOptions::new()
         .create_new(true)
@@ -364,16 +325,15 @@ fn runner_command(
     command
 }
 
-/// Run the candidate's cases and return them. The candidate's manifest is in
-/// `temporary`, which this removes on return, so a caller that needs the cases
-/// takes them from here and never reads the manifest again.
+/// Run the declared cases against the candidate. A passing run removes
+/// `temporary`, including the candidate's manifest.
 async fn qualify_candidate(
     release_chart: &Path,
     candidate_path: &Path,
     temporary: TemporaryResults,
     result: &mut Qualification,
-) -> anyhow::Result<&'static [&'static str]> {
-    let app = application(&result.candidate)?;
+    cases: &[Case],
+) -> anyhow::Result<()> {
     let user = runner_user()?;
     let root = temporary.path.clone();
     for command in image_commands(&result.candidate) {
@@ -387,23 +347,34 @@ async fn qualify_candidate(
     )
     .await?;
     // A case the executable lacks refuses here, before any case starts a cluster (wamn-pgub).
-    let listed = run(
-        &root,
-        &runner_command(
-            &result.candidate,
-            user,
-            release_chart,
-            &temporary.path,
-            app.package,
-            &["--list", "--format=terse", "--ignored"],
+    for executable in cases
+        .iter()
+        .map(|case| case.executable.as_str())
+        .collect::<std::collections::BTreeSet<_>>()
+    {
+        let listed = run(
+            &root,
+            &runner_command(
+                &result.candidate,
+                user,
+                release_chart,
+                &temporary.path,
+                executable,
+                &["--list", "--format=terse", "--ignored"],
+                &[],
+            ),
             &[],
-        ),
-        &[],
-        &mut result.checks,
-    )
-    .await?;
-    require_listed_cases(&String::from_utf8_lossy(&listed.stdout), app.cases)?;
-    for (index, case) in app.cases.iter().enumerate() {
+            &mut result.checks,
+        )
+        .await?;
+        let names: Vec<&str> = cases
+            .iter()
+            .filter(|case| case.executable == executable)
+            .map(|case| case.name.as_str())
+            .collect();
+        require_listed_cases(&String::from_utf8_lossy(&listed.stdout), &names)?;
+    }
+    for (index, case) in cases.iter().enumerate() {
         let checked: anyhow::Result<()> = async {
             ensure!(
                 Candidate::read(candidate_path)? == result.candidate,
@@ -411,19 +382,25 @@ async fn qualify_candidate(
             );
             let case_result = temporary.path.join(format!("case-{index}.json"));
             let env = [
-                (super::CANDIDATE_ENV, candidate_path.display().to_string()),
+                (
+                    wamn_control::delivery::CANDIDATE_ENV,
+                    candidate_path.display().to_string(),
+                ),
                 ("WAMN_DELIVERY_RESULT", case_result.display().to_string()),
                 // The case creates its own new result directory inside this parent.
-                (app.evidence_env, temporary.path.display().to_string()),
+                (
+                    case.evidence_env.as_str(),
+                    temporary.path.display().to_string(),
+                ),
             ];
             let command = runner_command(
                 &result.candidate,
                 user,
                 release_chart,
                 &temporary.path,
-                app.package,
+                &case.executable,
                 &[
-                    case,
+                    &case.name,
                     "--exact",
                     "--ignored",
                     "--nocapture",
@@ -452,8 +429,8 @@ async fn qualify_candidate(
             return Err(temporary.keep(&mut result.checks, error));
         }
     }
-    require_complete_checks(result)?;
-    Ok(app.cases)
+    require_complete_checks(&result.checks, cases)?;
+    Ok(())
 }
 
 /// The commands that record each image of the candidate. The candidate names
@@ -545,7 +522,12 @@ async fn run(
         command.env_remove(name);
     }
     command.envs(env.iter().cloned());
-    let result = execute_owned(&mut command, COMMAND_TIMEOUT).await;
+    let result = wamn_control::owned_command::execute(
+        &mut command,
+        COMMAND_TIMEOUT,
+        Duration::from_secs(60),
+    )
+    .await;
     let cause = match &result {
         Ok(output) if output.status.success() => None,
         Ok(output) => Some(format!(
@@ -586,11 +568,6 @@ fn output_tail(output: &Output) -> String {
         .join("\n")
 }
 
-/// Give each selected case time to remove its own resources on cancellation.
-pub async fn execute_owned(command: &mut Command, timeout: Duration) -> anyhow::Result<Output> {
-    crate::owned_command::execute(command, timeout, Duration::from_secs(60)).await
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -611,6 +588,9 @@ mod tests {
             output("test result: ok. 0 passed; 0 failed; 1 ignored;", "", 0),
             output(pass, "[skip] missing database", 0),
             output(pass, "", 256),
+            output("test result: ok. 2 passed; 0 failed; 0 ignored;", "", 0),
+            output(pass, "skipping missing inputs", 0),
+            output("skip: no inputs", pass, 0),
         ] {
             assert!(require_one_case(&failed).is_err());
         }
@@ -627,12 +607,12 @@ mod tests {
                 insecure_registry: false,
                 oci_ca_paths: Vec::new(),
             },
-            images: crate::release_chart::ImageSet {
+            images: wamn_control::release_chart::ImageSet {
                 host: pinned("host"),
                 http: pinned("flow-http"),
                 materializer: pinned("materializer"),
             },
-            qualification: crate::release_chart::QualificationImages {
+            qualification: wamn_control::release_chart::QualificationImages {
                 runner: pinned("runner"),
                 gates: pinned("gates"),
                 identity: pinned("identity"),
@@ -723,26 +703,7 @@ mod tests {
             error,
             "the test executable does not contain the qualification cases cluster::gone"
         );
-        assert!(require_listed_cases("", WMS_CASES).is_err());
-    }
-
-    #[test]
-    fn the_package_set_selects_its_cases_exactly() {
-        let cases = |packages: &[&str]| application_for(packages).map(|app| app.cases);
-        assert_eq!(cases(&["wamn_wms"]).unwrap(), WMS_CASES);
-        assert_eq!(cases(&["wamn_receiving"]).unwrap(), RECEIVING_BASE_CASES);
-        assert_eq!(
-            cases(&["client_acme_receiving", "wamn_receiving"]).unwrap(),
-            RECEIVING_CASES
-        );
-        for refused in [
-            &["client_acme_receiving"][..],
-            &["wamn_receiving", "wamn_wms"],
-            &["client_acme_receiving", "wamn_receiving", "wamn_wms"],
-            &[],
-        ] {
-            assert!(cases(refused).is_err(), "accepted {refused:?}");
-        }
+        assert!(require_listed_cases("", &["cluster::released_wms_routes"]).is_err());
     }
 
     #[test]
@@ -757,25 +718,61 @@ mod tests {
                     "host".to_owned(),
                     format!("sha256:{}", "b".repeat(64)),
                 )]),
-                cases: strings(RECEIVING_BASE_CASES),
+                cases: strings(&["command_histories"]),
             },
         };
-        let report = reuse(&found, RECEIVING_BASE_CASES).unwrap();
+        let report = reuse(&found, &strings(&["command_histories"])).unwrap();
         for named in [
             "reuses qualification registry.example/wamn/releases:qualification-1",
             &found.digest,
             "runs no case",
             &found.payload.release_digest,
             &format!("host sha256:{}", "b".repeat(64)),
-            RECEIVING_BASE_CASES[0],
+            "command_histories",
         ] {
             assert!(report.contains(named), "{report} lacks {named}");
         }
-        let refused = reuse(&found, RECEIVING_CASES).unwrap_err().to_string();
+        let refused = reuse(&found, &strings(&["command_histories", "overlay"]))
+            .unwrap_err()
+            .to_string();
         assert!(
-            refused.contains("immutable") && refused.contains(RECEIVING_CASES[1]),
+            refused.contains("immutable") && refused.contains("overlay"),
             "{refused}"
         );
+    }
+
+    #[test]
+    fn complete_checks_require_each_exact_case_in_its_executable() {
+        let cases = [
+            Case {
+                executable: "one-tests".into(),
+                name: "same::case".into(),
+                evidence_env: "EVIDENCE".into(),
+            },
+            Case {
+                executable: "two-tests".into(),
+                name: "same::case".into(),
+                evidence_env: "EVIDENCE".into(),
+            },
+        ];
+        let check = |executable: &str| CheckResult {
+            command: strings(&[
+                &format!("--entrypoint=/cases/{executable}"),
+                "same::case",
+                "--exact",
+            ]),
+            result: "pass".into(),
+            cause: None,
+        };
+        assert!(require_complete_checks(&[], &cases).is_err());
+        assert!(require_complete_checks(&[check("one-tests")], &cases).is_err());
+        let mut checks = vec![check("one-tests"), check("two-tests")];
+        require_complete_checks(&checks, &cases).unwrap();
+        checks[1].command.pop();
+        assert!(require_complete_checks(&checks, &cases).is_err());
+        checks[1] = check("two-tests");
+        checks[1].result = "fail".into();
+        assert!(require_complete_checks(&checks, &cases).is_err());
     }
 
     #[test]

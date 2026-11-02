@@ -692,14 +692,44 @@ cluster.Cluster {{
         .to_owned()
         + "/releases";
     let started = Instant::now();
-    let qualified = wamn_control::delivery::qualification::qualify(
-        wamn_control::delivery::qualification::QualifyReleaseRequest {
-            release_digest: digest.clone(),
-            releases,
-            release_chart: work.join("release-chart"),
-        },
+    let target = std::env::var_os("CARGO_TARGET_DIR").unwrap_or_else(|| "target".into());
+    let mut command = tokio::process::Command::new(repository.join(target).join("debug/wamn-ctl"));
+    command
+        .current_dir(&repository)
+        .args([
+            "qualify-release",
+            "--release-digest",
+            &digest,
+            "--artifact-base",
+            &releases.artifact_base,
+        ])
+        .arg("--registry-auth-file")
+        .arg(&releases.registry_auth_file)
+        .arg("--release-chart")
+        .arg(work.join("release-chart"));
+    if releases.insecure_registry {
+        command.arg("--insecure-registry");
+    }
+    for ca in &releases.oci_ca_paths {
+        command.arg("--oci-ca-path").arg(ca);
+    }
+    let qualified = wamn_control::owned_command::execute(
+        &mut command,
+        std::time::Duration::from_hours(3),
+        std::time::Duration::from_secs(60),
     )
-    .await;
+    .await
+    .and_then(|output| {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprint!("{stderr}");
+        print!("{}", String::from_utf8_lossy(&output.stdout));
+        ensure!(
+            output.status.success(),
+            "qualify-release exited {}: {stderr}",
+            output.status
+        );
+        Ok(())
+    });
     let timing = format!(
         "qualify-release Receiving wall time {:.3}s result {}",
         started.elapsed().as_secs_f64(),

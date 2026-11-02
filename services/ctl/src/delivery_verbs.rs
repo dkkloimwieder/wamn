@@ -2,9 +2,9 @@
 
 use std::path::PathBuf;
 
+use crate::qualification;
 use anyhow::Context as _;
 use clap::Args;
-use wamn_control::delivery::qualification;
 use wamn_control::package_artifact::PackageRegistry;
 use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;
 
@@ -72,6 +72,7 @@ pub struct BuildPlatformArgs {
 pub async fn qualify(args: QualifyReleaseArgs) -> anyhow::Result<()> {
     let (digest, disposition) = qualification::qualify(qualification::QualifyReleaseRequest {
         release_digest: args.release_digest,
+        repository: repository(&std::env::current_dir()?)?,
         releases: PackageRegistry {
             artifact_base: args.artifact_base,
             registry_auth_file: args.registry_auth_file,
@@ -112,4 +113,36 @@ pub async fn build_platform(args: BuildPlatformArgs) -> anyhow::Result<()> {
     };
     println!("{}", chart.display());
     Ok(())
+}
+
+/// Find the enclosing repository checkout for application declarations.
+fn repository(directory: &std::path::Path) -> anyhow::Result<PathBuf> {
+    directory
+        .ancestors()
+        .find(|path| path.join("apps/Cargo.toml").is_file() && path.join("Cargo.toml").is_file())
+        .map(PathBuf::from)
+        .context("qualify-release requires a repository checkout with apps/Cargo.toml")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn qualification_requires_an_enclosing_checkout() {
+        let checkout = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .unwrap();
+        assert_eq!(
+            repository(&checkout.join("apps/wamn_receiving/tests")).unwrap(),
+            checkout
+        );
+        assert!(
+            repository(std::path::Path::new("/without-a-checkout"))
+                .unwrap_err()
+                .to_string()
+                .contains("requires a repository checkout")
+        );
+    }
 }

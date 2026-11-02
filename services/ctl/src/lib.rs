@@ -2,9 +2,10 @@
 //!
 //! MVP outcome: provisioning · publish · additive schema · tenant isolation (T1 minting).
 //!
-//! `wamn-control` does the work. This crate holds the clap argument
+//! `wamn-control` owns the control operations. This crate holds the clap argument
 //! definitions, the printed output, and the exit codes. Each verb parses its
-//! arguments, makes one library call, and prints the result. The user-creation,
+//! arguments, calls its owner, and prints the result. Qualification also reads
+//! application case declarations and runs their Docker commands. The user-creation,
 //! broker-advisory reporting, and history-pruning verbs require the `ops`
 //! feature and ship in the separate `wamn-ctl-ops` binary. The clients in `dev/` retain argument parsing,
 //! output, and process signals for `wamn-control::dev` sessions.
@@ -21,6 +22,7 @@ pub mod integration_verbs;
 pub mod ops_verbs;
 pub mod package_verbs;
 pub mod provisioning_verbs;
+mod qualification;
 pub mod release_verbs;
 pub mod role_verbs;
 #[cfg(target_os = "linux")]

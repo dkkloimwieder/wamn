@@ -12,7 +12,6 @@ use crate::package_artifact::PackageRegistry;
 use crate::release_chart::{ImageSet, QualificationImages};
 
 pub mod environment;
-pub mod qualification;
 pub mod qualification_artifact;
 pub mod sqlx;
 

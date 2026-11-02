@@ -22,7 +22,8 @@ Run one installation at a time when cases share fixed management ports.
 
 Each application owns a `cluster` integration target with the required `cluster` feature.
 The library targets keep local business cases.
-`qualify-release` runs the cases of the release's package set:
+`qualify-release` runs the union of `tests/qualification.json` declarations in the release's packages ([declaration format](delivery.md#release-qualification)).
+The current application declarations give these sets:
 
 | Package set | Cases |
 | --- | --- |

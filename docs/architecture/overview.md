@@ -43,8 +43,8 @@ The CLI, the dev loop, and other callers call `wamn-control`, and `wamn-control`
 A deployed service never depends on `wamn-control`. The scenario worker reads component facts through `wamn-package-artifact`, as publish does.
 A `wamn-control` operation takes ordinary inputs, keeps its own validation, and returns its result without printing.
 
-`wamn-control` lives at `crates/control/lib` and owns every control verb.
-It also owns the delivery code, which qualifies a release, publishes it, and applies it to an environment.
+`wamn-control` lives at `crates/control/lib` and owns the control operations.
+It also owns release publication, qualification artifacts, and environment application.
 That code runs the `git`, `docker`, `kubectl`, and `cargo` processes its work needs.
 It owns the child process group those processes run in.
 The `ops` feature adds the user-creation, broker-advisory reporting, and history-pruning verbs.
@@ -52,7 +52,8 @@ The `ops` feature adds the user-creation, broker-advisory reporting, and history
 
 `wamn-ctl` lives at `services/ctl` and owns the command line.
 It holds the clap argument definitions, the printed output, and the exit codes.
-Each verb parses its arguments, makes one library call, and prints the result.
+Each verb parses its arguments, calls its owner, and prints the result.
+The qualification verb also reads application case declarations and runs their Docker commands.
 The `<area>_verbs.rs` modules hold that surface.
 The development commands in `services/ctl/src/dev/` own argument parsing, output, and process signals.
 `wamn-control::dev` owns the watcher, session orchestration, environment setup, target reset, and child-process supervision.
@@ -102,7 +103,14 @@ A rollout changes the serving release.
 Runtime requests resolve wiring from the supplied release, independently of mutable activation pointers and PostgreSQL notifications.
 Frozen candidate execution retains its own admitted facts throughout the traversal.
 
-`wamn-ctl qualify-release` runs the qualification cases against a published release, which it pulls by digest.
+`wamn-ctl qualify-release` pulls a published release by digest and reads each package's `tests/qualification.json` from the checkout.
+The build owner's `build_record::source_root` resolves package ids to their source directories.
+Each declaration names test executables, exact cases, and evidence variables. The application declaration is the authority.
+The verb runs their union in lexical order of executable, case name, then evidence variable, without duplicate entries.
+
+Missing or malformed declarations refuse. An explicit empty declaration contributes no cases, but an empty release union refuses.
+The ctl verb owns case execution and temporary results. The control library owns qualification artifacts and registry verification.
+
 When every case passes, it pushes a qualification artifact beside the release.
 The artifact is keyed by the release digest and the platform image set of the release chart.
 `env apply` refuses a release that has no qualification for that image set.

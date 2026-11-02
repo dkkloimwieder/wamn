@@ -675,7 +675,7 @@ The fixture copies `deploy/gcp/host-group-receiving.yaml` into its own cluster d
 The test records both printed digests in its own environment files.
 WMS stays unqualified and runs first in the refusal assertions.
 The unchanged rerun must skip every step through 4.14 and refuse that same WMS release.
-The test then calls `delivery::qualification::qualify` on the host for Receiving, which has one required case.
+The test then runs `wamn-ctl qualify-release` on the host for Receiving, which declares one required case.
 It supplies the fixture release registry, its credential file, its CA path, and the stamped chart.
 It prints one line with the qualification wall time and result.
 Qualification starts its own case cluster through the host Docker socket.

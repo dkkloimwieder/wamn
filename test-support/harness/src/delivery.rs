@@ -645,10 +645,11 @@ async fn step(app: &Application<'_>, name: &str, command: &mut Command) -> anyho
         .map(|value| redact(value.to_string_lossy().into_owned()))
         .collect::<Vec<_>>();
     command.current_dir(app.repository).kill_on_drop(true);
-    let output = wamn_control::delivery::qualification::execute_owned(command, COMMAND_TIMEOUT)
-        .await
-        .map_err(|error| anyhow::anyhow!(redact(format!("{error:#}"))))
-        .with_context(|| format!("execute owned delivery {name}"))?;
+    let output =
+        wamn_control::owned_command::execute(command, COMMAND_TIMEOUT, Duration::from_secs(60))
+            .await
+            .map_err(|error| anyhow::anyhow!(redact(format!("{error:#}"))))
+            .with_context(|| format!("execute owned delivery {name}"))?;
     write_evidence(
         app.evidence,
         &format!("{name}-command.json"),

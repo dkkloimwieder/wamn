@@ -267,7 +267,8 @@ The separate `environment` field keeps the short name.
 The release also names no route host.
 The route host is only the `host` of the http workload config. The router matches routes under it.
 `publish-release` takes the same `--oci-ca-path` input as `push-package`.
-[Qualify the release](delivery.md#release-qualification) before deployment.
+[Qualify the release](delivery.md#release-qualification) from the repository checkout before deployment.
+Each package selects its cases through its own `tests/qualification.json` declaration.
 `qualify-release` pushes the qualification artifact beside the release only when every case passes, and `env apply` reads it from the registry.
 Name the release digest in the environment document, and run `env apply` of it ([deployment ordering](#deployment-ordering)).
 

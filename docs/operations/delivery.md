@@ -32,7 +32,8 @@ If the registry uses HTTP, add `--insecure-registry` for that registry.
 Receiving and WMS start the chart's identity image, because their published application routes accept sessions, and give issuer trust to their application hosts.
 When the chart's images are in a registry at a loopback port, the kind nodes reach it through the container that publishes that port on the `kind` network.
 
-The command needs no checkout and builds nothing.
+Run the command from the repository checkout or one of its subdirectories.
+The command reads application declarations from that checkout and builds nothing.
 It pulls the release by its digest.
 It pulls the host, gates, identity and runner images by digest.
 It runs each case in the chart's runner image with `docker run`: the runner carries the case executables, the repository files they read, and pinned `docker`, `kind`, `kubectl` and `helm`.
@@ -42,10 +43,39 @@ Each case installs the candidate's packages from the package repository beside t
 Each case installs its environment with the release chart, as `env apply` does.
 It copies the release, its components and the role components by digest into its own registry and stamps a copy of the chart with the same image set.
 
-The package set of the release selects the cases exactly. Any other set fails.
-A Receiving release with Acme runs command histories and the baseline overlay with materializer progress.
-A Receiving release without Acme runs command histories, which calls no Acme route.
-WMS runs its released routes, partial-label completion, and restart/cache cases against the same release and host image.
+Each package declares its cases in `tests/qualification.json` beside its tests.
+The application owns this declaration. No approver or platform case list exists.
+For example, `apps/wamn_receiving/tests/qualification.json` contains:
+
+```json
+{
+  "cases": [
+    {
+      "executable": "wamn-receiving-tests",
+      "name": "route_authentication_live::cluster::route_cases::command_histories",
+      "evidence_env": "WAMN_RECEIVING_EVIDENCE_DIR"
+    }
+  ]
+}
+```
+
+`executable` names a test executable under `/cases` in the runner image.
+`name` names the exact ignored test. `evidence_env` names the variable for its evidence directory.
+
+The verb reads package ids from the pulled release manifest.
+The build owner's `build_record::source_root` maps each id to its checkout directory, including packages under `apps/platform`.
+The verb reads each declaration from that directory.
+An unfamiliar package with a valid declaration needs no platform change.
+
+The release runs the union of its packages' declarations.
+The verb removes duplicate entries and sorts by executable, exact case name, then evidence variable, in lexical order.
+A missing declaration refuses and names the package. A malformed declaration refuses and names its file and field.
+An explicit `{"cases": []}` contributes no cases. A release with an empty union refuses.
+
+Every declared case must appear in its executable's listing and execute exactly one passing test without an explicit skip.
+
+Receiving declares command histories. Acme declares the baseline overlay with materializer progress in the Receiving executable.
+WMS declares its released routes, partial-label completion, and restart/cache cases.
 
 The cases write their results in a temporary directory under the system temporary directory.
 Qualification removes that directory after the cases pass.

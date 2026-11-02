@@ -1,0 +1,9 @@
+{
+  "cases": [
+    {
+      "executable": "wamn-receiving-tests",
+      "name": "route_authentication_live::cluster::route_cases::command_histories",
+      "evidence_env": "WAMN_RECEIVING_EVIDENCE_DIR"
+    }
+  ]
+}
