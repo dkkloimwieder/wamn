@@ -12,9 +12,8 @@ mod tests {
     use uuid::Uuid;
     use wamn_execution_contract::canonical_json_bytes;
 
-    const MANIFEST: &[u8] = include_bytes!("../../../apps/target/wamn/wamn_receiving/wamn.json");
-    const OVERLAY_MANIFEST: &[u8] =
-        include_bytes!("../../../apps/target/wamn/client_acme_receiving/wamn.json");
+    const MANIFEST: &str = "wamn_receiving/wamn.json";
+    const OVERLAY_MANIFEST: &str = "client_acme_receiving/wamn.json";
     const MIGRATION: &str =
         include_str!("../../../apps/wamn_receiving/migrations/0001_initial.sql");
     const SCREEN_SQL: &str =
@@ -35,8 +34,7 @@ mod tests {
     const FIXTURE_OPERATION: &str = "admin:receiving-data-access-fixture";
     const HISTORY_SQL: &str =
         include_str!("../../../apps/wamn_receiving/query/load_purchase_order_history.sql");
-    const UPDATE_SQL: &str =
-        include_str!("../../../apps/target/wamn/wamn_receiving/sql/purchase_order/update.sql");
+    const UPDATE_SQL: &str = "wamn_receiving/sql/purchase_order/update.sql";
     const APP_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/app-schema.sql");
     /// The write log operation of `receiving.record_receipt`, without its version.
     const RECORD_RECEIPT_OPERATION: &str = "wamn-receiving:receiving/record-receipt";
@@ -46,11 +44,8 @@ mod tests {
         include_str!("../../../apps/wamn_receiving/command/record_receipt/record_receipt.sql");
     const OVERLAY_FIELDS_MIGRATION: &str =
         include_str!("../../../apps/client_acme_receiving/migrations/0001_initial.sql");
-    const OVERLAY_GET_SQL: &str =
-        include_str!("../../../apps/target/wamn/client_acme_receiving/sql/purchase_order/get.sql");
-    const OVERLAY_UPDATE_SQL: &str = include_str!(
-        "../../../apps/target/wamn/client_acme_receiving/sql/purchase_order/update.sql"
-    );
+    const OVERLAY_GET_SQL: &str = "client_acme_receiving/sql/purchase_order/get.sql";
+    const OVERLAY_UPDATE_SQL: &str = "client_acme_receiving/sql/purchase_order/update.sql";
     const OVERLAY_LOAD_DETAIL_SQL: &str =
         include_str!("../../../apps/client_acme_receiving/query/quality_purchase_order_detail.sql");
     const OVERLAY_APPROVE_INSPECTION_SQL: &str = include_str!(
@@ -65,9 +60,18 @@ mod tests {
 
     /// The generated get result of a purchase order. Its status values come
     /// from the column's CHECK.
-    const PURCHASE_ORDER_RESULT: &[u8] = include_bytes!(
-        "../../../apps/target/wamn/wamn_receiving/contracts/purchase_order/get.result.json"
-    );
+    const PURCHASE_ORDER_RESULT: &str = "wamn_receiving/contracts/purchase_order/get.result.json";
+
+    fn generated(path: &str) -> Vec<u8> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/wamn")
+            .join(path);
+        std::fs::read(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
+    }
+
+    fn generated_sql(path: &str) -> String {
+        String::from_utf8(generated(path)).expect("generated SQL is UTF-8")
+    }
 
     #[derive(Debug, Deserialize)]
     struct ResultContract {
@@ -170,9 +174,8 @@ mod tests {
     async fn open_receipt_lines_feed_measurement() -> Result<()> {
         use std::time::Instant;
 
-        const CHANGES: &str = include_str!(
-            "../../../apps/target/wamn/wamn_receiving/sql/receiving_load_open_receipt_lines/feed_changes.sql"
-        );
+        const CHANGES: &str =
+            "wamn_receiving/sql/receiving_load_open_receipt_lines/feed_changes.sql";
         const OPEN_LINES: &str =
             include_str!("../../../apps/wamn_receiving/query/load_open_receipt_lines.sql");
         const RUNS: usize = 7;
@@ -196,7 +199,7 @@ mod tests {
             .await?;
         client.batch_execute(MIGRATION).await?;
 
-        install_record_history(&client, MANIFEST).await?;
+        install_record_history(&client, &generated(MANIFEST)).await?;
         select_receiving_schema(&client).await?;
         bind_actor(&client, FIXTURE_PRINCIPAL).await?;
         client.batch_execute(
@@ -218,9 +221,10 @@ mod tests {
             .await?
             .get(0);
         ensure!(count == 10_000, "measurement needs 10,000 synthetic lines");
-        let changes = client.prepare(CHANGES).await?;
+        let changes_sql = generated_sql(CHANGES);
+        let changes = client.prepare(&changes_sql).await?;
         // Keep the generated bounds and affected CTE verbatim for its separate plan.
-        let (_, from) = CHANGES
+        let (_, from) = changes_sql
             .split_once("\nFROM (")
             .context("feed snapshot carrier")?;
         let (affected, _) = from
@@ -387,7 +391,7 @@ mod tests {
             )
             .await?;
 
-        let manifest: Value = serde_json::from_slice(MANIFEST)?;
+        let manifest: Value = serde_json::from_slice(&generated(MANIFEST))?;
         for (operation, statement) in [
             ("receiving.load_receipt_screen", "load_receipt_screen"),
             ("receiving.purchase_order_summary", "purchase_order_summary"),
@@ -405,8 +409,8 @@ mod tests {
         }
 
         // Retain only the generated view grants to exercise owner rights.
-        let mut overlay: Value = serde_json::from_slice(include_bytes!(
-            "../../../apps/target/wamn/wamn_receiving/platform-policy/data-access.json"
+        let mut overlay: Value = serde_json::from_slice(&generated(
+            "wamn_receiving/platform-policy/data-access.json",
         ))?;
         overlay["relations"]
             .as_array_mut()
@@ -547,7 +551,7 @@ mod tests {
             .await?;
         client.batch_execute(MIGRATION).await?;
 
-        install_record_history(&client, MANIFEST).await?;
+        install_record_history(&client, &generated(MANIFEST)).await?;
         client.batch_execute(OVERLAY_FIELDS_MIGRATION).await?;
 
         client
@@ -576,11 +580,11 @@ mod tests {
             .map(|(table, fields)| DataAccessRelationFields::new("receiving", table, fields))
             .collect::<Vec<_>>();
         let overlays = [
-            DataAccessOverlay::from_slice(include_bytes!(
-                "../../../apps/target/wamn/wamn_receiving/platform-policy/data-access.json"
+            DataAccessOverlay::from_slice(&generated(
+                "wamn_receiving/platform-policy/data-access.json",
             ))?,
-            DataAccessOverlay::from_slice(include_bytes!(
-                "../../../apps/target/wamn/client_acme_receiving/platform-policy/data-access.json"
+            DataAccessOverlay::from_slice(&generated(
+                "client_acme_receiving/platform-policy/data-access.json",
             ))?,
         ];
         let authority = derive_effective_data_access(&relation_fields, &overlays)?;
@@ -603,7 +607,8 @@ mod tests {
 
         // Mutate only the generated projection. Both old and repaired emitter
         // shapes reach PostgreSQL, so reverting the repair fails on authority.
-        let (before, returned) = UPDATE_SQL
+        let update_sql = generated_sql(UPDATE_SQL);
+        let (before, returned) = update_sql
             .split_once("    RETURNING")
             .context("generated update must return its row")?;
         let (_, after) = returned
@@ -644,7 +649,7 @@ mod tests {
         );
         let overlay = client
             .query_one(
-                OVERLAY_UPDATE_SQL,
+                &generated_sql(OVERLAY_UPDATE_SQL),
                 &[&id, &2_i32, &true, &Some(true), &false, &None::<String>],
             )
             .await
@@ -716,10 +721,10 @@ mod tests {
             .await?;
         client.batch_execute(MIGRATION).await?;
 
-        install_record_history(&client, MANIFEST).await?;
+        install_record_history(&client, &generated(MANIFEST)).await?;
         client.batch_execute(OVERLAY_FIELDS_MIGRATION).await?;
 
-        install_record_history(&client, OVERLAY_MANIFEST).await?;
+        install_record_history(&client, &generated(OVERLAY_MANIFEST)).await?;
         select_receiving_schema(&client).await?;
         let id = Uuid::from_u128(0x800);
         insert_purchase_order(
@@ -740,11 +745,11 @@ mod tests {
             .map(|(table, fields)| DataAccessRelationFields::new("receiving", table, fields))
             .collect::<Vec<_>>();
         let overlays = [
-            DataAccessOverlay::from_slice(include_bytes!(
-                "../../../apps/target/wamn/wamn_receiving/platform-policy/data-access.json"
+            DataAccessOverlay::from_slice(&generated(
+                "wamn_receiving/platform-policy/data-access.json",
             ))?,
-            DataAccessOverlay::from_slice(include_bytes!(
-                "../../../apps/target/wamn/client_acme_receiving/platform-policy/data-access.json"
+            DataAccessOverlay::from_slice(&generated(
+                "client_acme_receiving/platform-policy/data-access.json",
             ))?,
         ];
         let authority = derive_effective_data_access(&relation_fields, &overlays)?;
@@ -756,7 +761,7 @@ mod tests {
         bind_actor(&client, COMMAND_PRINCIPAL).await?;
         let updated = client
             .query_one(
-                OVERLAY_UPDATE_SQL,
+                &generated_sql(OVERLAY_UPDATE_SQL),
                 &[&id, &1_i32, &true, &Some(true), &false, &None::<String>],
             )
             .await
@@ -862,7 +867,7 @@ mod tests {
             "the fold did not reconstruct the effective row at each position"
         );
 
-        let manifest = serde_json::from_slice::<Value>(MANIFEST)?;
+        let manifest = serde_json::from_slice::<Value>(&generated(MANIFEST))?;
         let declared =
             manifest["custom_operations"]["receiving.load_purchase_order_history"]["relations"]
                 .as_array()
@@ -948,7 +953,7 @@ mod tests {
             .await
             .context("apply the exact Receiving migration")?;
 
-        install_record_history(&client, MANIFEST).await?;
+        install_record_history(&client, &generated(MANIFEST)).await?;
         install_write_log(&client).await?;
         select_receiving_schema(&client).await?;
 
@@ -1046,7 +1051,7 @@ mod tests {
             .await
             .context("apply the exact Acme field migration")?;
 
-        install_record_history(&client, OVERLAY_MANIFEST).await?;
+        install_record_history(&client, &generated(OVERLAY_MANIFEST)).await?;
         assert_acme_overlay(&mut client).await?;
 
         Ok(())
@@ -1202,7 +1207,7 @@ mod tests {
         bind_actor(client, COMMAND_PRINCIPAL).await?;
         let updated = client
             .query_one(
-                OVERLAY_UPDATE_SQL,
+                &generated_sql(OVERLAY_UPDATE_SQL),
                 &[
                     &purchase_order_id,
                     &1_i32,
@@ -1318,7 +1323,7 @@ mod tests {
         );
 
         let fetched = client
-            .query_one(OVERLAY_GET_SQL, &[&purchase_order_id])
+            .query_one(&generated_sql(OVERLAY_GET_SQL), &[&purchase_order_id])
             .await
             .context("execute exact Acme purchase_order.get SQL")?;
         ensure!(
@@ -2171,7 +2176,7 @@ mod tests {
     }
 
     async fn assert_status_vocabulary(client: &Client) -> Result<()> {
-        let contract: ResultContract = serde_json::from_slice(PURCHASE_ORDER_RESULT)
+        let contract: ResultContract = serde_json::from_slice(&generated(PURCHASE_ORDER_RESULT))
             .context("parse the purchase order result contract")?;
         let statuses = &contract
             .fields
@@ -2273,7 +2278,7 @@ mod tests {
         let supplier_id = Some(supplier_id);
         let row = client
             .query_one(
-                UPDATE_SQL,
+                &generated_sql(UPDATE_SQL),
                 &[&id, &expected_row_version, &true, &supplier_id],
             )
             .await

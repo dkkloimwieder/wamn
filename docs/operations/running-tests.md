@@ -66,7 +66,8 @@ It builds HTTP route bytes in release mode and materializer bytes in debug mode 
 It builds the three HTTP workflow guests under `$CARGO_TARGET_DIR/no-std`.
 It copies those debug guests to the root target path that the native host test reads.
 It builds applications through a private PostgreSQL database.
-The quality suite needs generated application files because Clippy compiles every target.
+Root workspace targets compile without `apps/target/wamn`.
+The quality suite still needs generated application files because Clippy compiles the apps workspace.
 The tool derives those application roots from Cargo metadata and builds each base before its overlays.
 It exports `WAMN_APPLICATION_COMPONENTS` and the selected guest and host paths.
 Control and CLI suites enable `ops`.
@@ -108,6 +109,14 @@ It prints the path of the retained logs.
 After failure, it prints the retained worktree path and keeps its logs and build files.
 It uses committed files from `REF`, so commit tool changes before testing them through this runner.
 Run `tools/test-revision-test` for offline self-tests with fake external commands.
+
+The client compatibility test reads the current generated widget update schema at run time.
+After application generation, run it with this path:
+
+```bash
+WAMN_GENERATED_WIDGET_UPDATE_SCHEMA="$PWD/apps/target/wamn/platform_fixture/routes/widget/update.json" \
+  cargo test --locked --offline -p wamn-client --test generated_schema -- --ignored
+```
 
 `tools/test-changes --tier kind` selects the kind targets of affected packages.
 It enables their `cluster` feature and runs ignored cases one at a time.

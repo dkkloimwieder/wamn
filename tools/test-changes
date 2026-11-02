@@ -418,8 +418,8 @@ if wamn_prerequisite fixture; then need_fixture=true; fi
 if wamn_prerequisite edge; then need_edge=true; fi
 if wamn_prerequisite nats; then need_nats=true; fi
 if wamn_prerequisite route; then need_route=true; fi
-# Clippy compiles every target, including generated application source and
-# compile-time fixture reads. Derive those application roots from Cargo targets.
+# Clippy compiles generated source in the apps workspace.
+# Derive those application roots from Cargo targets.
 declare -a applications=()
 declare -A application_seen=()
 wamn_application() {

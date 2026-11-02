@@ -1809,9 +1809,14 @@ fn authored_sql_for_a_query_generation_writes_refuses() {
     });
     manifest["models"]["widget"]["operations"]["query"]["feed"] = json!(false);
     // The statement generation writes for this query, authored as is.
-    let one_table = include_str!(
-        "../../../../apps/target/wamn/platform_fixture/sql/widget/query_created_at_ascending.sql"
-    );
+    let package = fixture::generate_fixture();
+    let one_table = std::str::from_utf8(
+        package
+            .file("generated/sql/widget/query_created_at_ascending.sql")
+            .expect("generated widget query")
+            .bytes(),
+    )
+    .expect("generated SQL is UTF-8");
     let sources = |sql: &str| {
         fixture::authored_sql()
             .into_iter()

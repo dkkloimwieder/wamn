@@ -25,6 +25,7 @@ targets = [
   { workspace="root", package="wamn-cdc-reader", target="test:event_reader_live", tier="live-nats" },
   { workspace="root", package="wamn-client", target="lib:wamn_client", tier="contract" },
   { workspace="root", package="wamn-client", target="test:captured", tier="contract" },
+  { workspace="root", package="wamn-client", target="test:generated_schema", tier="contract" },
   { workspace="root", package="wamn-client", target="test:invoke", tier="contract" },
   { workspace="root", package="wamn-client", target="test:request", tier="contract" },
   { workspace="root", package="wamn-client", target="test:session", tier="contract" },
@@ -334,11 +335,6 @@ prerequisites = ["edge"]
 [[preparation]]
 packages = ["wamn-control", "wamn-ctl"]
 features = ["ops"]
-
-[[preparation]]
-packages = ["wamn-fixture-package"]
-suites = ["quality"]
-prerequisites = ["fixture"]
 
 [[suites]]
 id = "quality"

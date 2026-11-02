@@ -202,10 +202,13 @@ async fn code_contract_preserves_absence_and_value_on_the_wire_and_blocks_null()
         credentials.clone(),
         transport.clone(),
     );
-    let schema: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../../apps/target/wamn/platform_fixture/routes/widget/update.json"
-    ))
-    .expect("read the fixture serving schema");
+    let schema = json!({"type":"array","items":{"type":"object","properties":{
+        "change":{"type":"object","properties":{
+            "code":{"type":"string","enum":["priority","standard"]},
+            "maker_id":{"type":["string","null"]},
+            "note":{"type":["string","null"]}
+        }}
+    }}});
     let schema = &schema;
     let route = RouteMetadata {
         method: "POST".into(),

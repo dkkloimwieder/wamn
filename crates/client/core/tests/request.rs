@@ -69,10 +69,9 @@ fn code_omission_stays_absent_while_explicit_null_is_refused() {
             ..scalar("change", "object", true, false)
         },
     ];
-    let schema: Value = serde_json::from_str(include_str!(
-        "../../../../apps/target/wamn/platform_fixture/routes/widget/update.json"
-    ))
-    .expect("parse the fixture route schema");
+    let schema = json!({"type":"array","items":{"type":"object","properties":{
+        "change":{"type":"object","properties":{"code":{"type":"string"}}}
+    }}});
     let schema = &schema;
     let mut request_element = json!({"request_id":"r1", "id":"00000000-0000-0000-0000-000000000001",
         "expected_edit_version": 4, "change": {}});
