@@ -942,7 +942,9 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
     // The caller holds `admin` through `project-admin`, and only the system
     // authority revokes it. The fixture revokes `project-admin` of each holder
     // and projects the change into the environment, as the control route does,
-    // then restores it after the denied call. Under
+    // then restores it after the denied call. A holder of `org-admin` keeps
+    // `project-admin` until `org-admin` goes, so the fixture revokes and
+    // restores `org-admin` for that holder. Under
     // `docs/architecture/execution.md#auth-memory`, a host drops grants on
     // delivery of the invalidation, or at MEMORY_TTL if delivery fails. Poll the
     // replay for AUTH_PROPAGATION, so a delivery failure still fails the case.
@@ -970,8 +972,12 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
         "authority fixture found no holder of {}",
         inputs.caller_role
     );
+    let mut org_admins = Vec::with_capacity(holders.len());
     for holder in &holders {
-        project_admin(inputs, &auth, holder, false).await?;
+        org_admins.push(holds_org_admin(inputs, holder).await?);
+    }
+    for (holder, org_admin) in holders.iter().zip(&org_admins) {
+        project_admin(inputs, &auth, holder, *org_admin, false).await?;
     }
     let denied = async {
         route
@@ -982,8 +988,8 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
     .await;
     let denied_state = snapshot(db, &fixture).await;
     let mut restored = Ok(());
-    for holder in &holders {
-        restored = restored.and(project_admin(inputs, &auth, holder, true).await);
+    for (holder, org_admin) in holders.iter().zip(&org_admins) {
+        restored = restored.and(project_admin(inputs, &auth, holder, *org_admin, true).await);
     }
     let denied = denied?;
     restored?;
@@ -1009,12 +1015,32 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
     )
 }
 
+/// Whether `principal` holds `org-admin` in the fixture org.
+async fn holds_org_admin(inputs: &Inputs, principal: &PrincipalId) -> Result<bool> {
+    let system = connect(&inputs.system_pg_url).await?;
+    Ok(system
+        .client
+        .query_one(
+            "SELECT EXISTS (SELECT 1 FROM identity.org_roles \
+             WHERE principal_id = $1::text::uuid AND org = $2 AND role = $3)",
+            &[
+                &principal.as_str(),
+                &inputs.org,
+                &wamn_platform_identity::org::ORG_ADMIN_ROLE,
+            ],
+        )
+        .await?
+        .get(0))
+}
+
 /// Grant or revoke `project-admin` of one principal in the system authority,
-/// then project its application authority into the environment.
+/// through `org-admin` when the principal holds it, then project its
+/// application authority into the environment.
 async fn project_admin(
     inputs: &Inputs,
     auth: &AuthChanges,
     principal: &PrincipalId,
+    org_admin: bool,
     grant: bool,
 ) -> Result<()> {
     let mut system = connect(&inputs.system_pg_url).await?;
@@ -1022,7 +1048,13 @@ async fn project_admin(
     let mut drops = AuthDrops::default();
     let authority =
         wamn_control::provision_project_env::provisioning_transaction(&mut system.client).await?;
-    if grant {
+    if org_admin && grant {
+        wamn_platform_identity::org::grant_org_admin(&authority, principal, &inputs.org).await?;
+        drops.identity(principal.as_str());
+    } else if org_admin {
+        wamn_platform_identity::org::revoke_org_admin(&authority, principal, &inputs.org, &mut drops)
+            .await?;
+    } else if grant {
         wamn_platform_identity::assign_project_role(
             &authority,
             principal,
