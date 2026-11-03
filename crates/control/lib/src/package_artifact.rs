@@ -18,8 +18,8 @@
 //!
 //! A package artifact is one OCI image manifest with artifact type
 //! [`PACKAGE_ARTIFACT_TYPE`], the empty config, and these layers in order:
-//! the exact `generated/wamn.json` bytes, then four tars (`migrations`,
-//! `publication`, `sources`, `web`), then one canonical component descriptor
+//! the exact `generated/wamn.json` bytes, then three tars (`migrations`,
+//! `publication`, `sources`), then one canonical component descriptor
 //! per component, sorted by name. Its tag is `<package_id>-<version>` under an
 //! explicit `<registry>/<repository>` base. Its digest is the SHA-256 of the
 //! manifest bytes. Each tar has sorted paths, a zero mtime and a fixed owner
@@ -55,7 +55,7 @@ pub use wamn_package_artifact::{
 };
 use wamn_package_artifact::{Repository, ensure_tag, sha256_digest};
 
-/// Media type of the four tar layers.
+/// Media type of the three tar layers.
 pub const PACKAGE_TAR_MEDIA_TYPE: &str = "application/vnd.wamn.package.v1.tar";
 
 /// Media type of layer 0, the exact `generated/wamn.json` bytes.
@@ -72,15 +72,11 @@ const COMPONENT_DIGEST_ANNOTATION: &str = "wamn.component.digest";
 /// Title of layer 0.
 const MANIFEST_TITLE: &str = "wamn.json";
 
-/// The logical path of the web client build in the `web` layer. Its files lie
-/// in the web build of the package's output root (§7.1 step 8, C10).
-const WEB_LAYER_PATH: &str = "web/dist";
-
 /// The tar layers in order: title and the logical package paths each carries.
 /// A path that a package does not have is left out, and a layer with no file is
-/// an empty tar. A `generated/` path and the `web/dist` path name files of the
+/// an empty tar. A `generated/` path names files of the
 /// package's output root (`physical_path`).
-pub const PACKAGE_TAR_LAYERS: [(&str, &[&str]); 4] = [
+pub const PACKAGE_TAR_LAYERS: [(&str, &[&str]); 3] = [
     ("migrations", &["migrations"]),
     ("publication", &["publication"]),
     (
@@ -97,7 +93,6 @@ pub const PACKAGE_TAR_LAYERS: [(&str, &[&str]); 4] = [
             "generated/routes",
         ],
     ),
-    ("web", &[WEB_LAYER_PATH]),
 ];
 
 /// Where an unpacked artifact keeps its component descriptors, one
@@ -532,25 +527,14 @@ fn tar_layer(title: &str, entries: &BTreeMap<String, Vec<u8>>) -> anyhow::Result
 }
 
 /// The file of the package-relative `logical` path. A `generated/` path names
-/// a file of the package's output root, and a [`WEB_LAYER_PATH`] path a file of
-/// the output root's web build.
+/// a file of the package's output root.
 fn physical_path(root: &Path, logical: &str) -> PathBuf {
     let logical = Path::new(logical);
     if let Ok(output) = logical.strip_prefix("generated") {
         wamn_schema_generator::output_root(root).join(output)
-    } else if let Ok(web) = logical.strip_prefix(WEB_LAYER_PATH) {
-        wamn_schema_generator::output_root(root)
-            .join(wamn_schema_generator::build::WEB_OUTPUT)
-            .join(web)
     } else {
         root.join(logical)
     }
-}
-
-/// The web client build of the package tree at `root`: the web build of its
-/// output root, which a source tree and an unpacked artifact both have there.
-pub fn web_build(root: &Path) -> PathBuf {
-    physical_path(root, WEB_LAYER_PATH)
 }
 
 /// Add every regular file under `relative` to `files`, keyed by its path
@@ -1239,8 +1223,7 @@ fn unpack_artifact(
 /// Unpack `layers` into `root`: layer 0 to `generated/wamn.json`, the tars in
 /// place, and each descriptor to `descriptors/<name>.json`. An unpacked tree
 /// keeps the `generated/` layer paths, and the output root resolver reads its
-/// `generated/` directory as its build output. So the `web/dist` entries go to
-/// the web build of that output root, `generated/web`.
+/// `generated/` directory as its build output.
 fn unpack_layers(root: &Path, layers: &[PackedLayer]) -> anyhow::Result<()> {
     let tar_count = PACKAGE_TAR_LAYERS.len();
     ensure!(
@@ -1379,7 +1362,6 @@ mod tests {
                 manifest: sha256_digest(b"manifest"),
                 files: BTreeMap::new(),
                 components,
-                web: None,
             },
         };
         write(
@@ -1547,7 +1529,6 @@ mod tests {
                 (PACKAGE_TAR_MEDIA_TYPE, "migrations"),
                 (PACKAGE_TAR_MEDIA_TYPE, "publication"),
                 (PACKAGE_TAR_MEDIA_TYPE, "sources"),
-                (PACKAGE_TAR_MEDIA_TYPE, "web"),
             ]
         );
         // Layer 0 is the exact compiled manifest, not a re-encoding.
@@ -1579,7 +1560,6 @@ mod tests {
                 "wamn.k",
             ]
         );
-        assert_eq!(paths(4), ["web/dist/index.html"]);
 
         let manifest: serde_json::Value = serde_json::from_slice(&first.manifest).unwrap();
         assert_eq!(manifest["schemaVersion"], 2);
@@ -1607,9 +1587,33 @@ mod tests {
     fn a_changed_file_changes_the_digest() {
         let root = package_tree("changed");
         let first = pack_package(&root).unwrap();
-        std::fs::write(root.join("generated/web/index.html"), b"<html>2</html>\n").unwrap();
+        std::fs::write(root.join("generated/sql/receipt.sql"), b"SELECT 2;\n").unwrap();
         assert_ne!(first.digest, pack_package(&root).unwrap().digest);
         remove(&root);
+    }
+
+    #[test]
+    fn web_edits_leave_the_package_digest_unchanged() {
+        let scratch = wamn_test_infrastructure::scratch::ScratchRoot::create().unwrap();
+        let root = scratch.path().join("wamn_receiving");
+        write(&root, "wamn.k", b"# package\n");
+        write(
+            &root,
+            "generated/wamn.json",
+            br#"{"package":{"id":"wamn_receiving","version":"2.1.0"}}"#,
+        );
+        write(&root, "generated/web/index.html", b"old output\n");
+        write(&root, "web/src/main.ts", b"old source\n");
+        write_build_record(&root);
+        let first = pack_package(&root).unwrap();
+        assert_eq!(first.layers.len(), 4, "one manifest and three tar layers");
+        std::fs::write(root.join("web/src/main.ts"), b"changed source\n").unwrap();
+        std::fs::write(root.join("generated/web/index.html"), b"changed output\n").unwrap();
+        let web = wamn_schema_generator::output_root(&root).join("web-artifact/dist");
+        write(&web, "index.html", b"standalone output\n");
+        // A package build refreshes the full input digest after a source edit.
+        write_build_record(&root);
+        assert_eq!(first.digest, pack_package(&root).unwrap().digest);
     }
 
     fn current_source_components(
@@ -1804,8 +1808,7 @@ mod tests {
                 .join("publication/components/blob-put.json.in")
                 .is_file()
         );
-        assert_eq!(web_build(&unpacked), unpacked.join("generated/web"));
-        assert!(unpacked.join("generated/web/index.html").is_file());
+        assert!(!unpacked.join("generated/web").exists());
         assert_eq!(
             std::fs::read(
                 wamn_schema_generator::output_root(&unpacked).join("required-schema-contract.json")

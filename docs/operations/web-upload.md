@@ -1,7 +1,8 @@
 # Web clients
 
 `wamn web upload` writes built browser files to an S3 or Google Cloud Storage bucket.
-It uploads application clients from package artifacts or the platform UI from the local repository.
+It uploads the platform UI from the local repository.
+Application release uploads refuse until lane 1.5 reads standalone web artifacts.
 It does not build files or change edge routing.
 [services/ctl/src/web.rs](../../services/ctl/src/web.rs) defines the arguments and output.
 [crates/control/lib/src/web_artifact.rs](../../crates/control/lib/src/web_artifact.rs) owns the upload behavior.
@@ -31,8 +32,8 @@ The build refuses a different digest or a package without `client_package`, and 
 
 Web source edits need only another `wamn web build` against that recorded contract.
 This command leaves the package build record unchanged.
-`wamn build` still builds its existing web output and includes it in package artifacts.
-The standalone directory remains separate from that output.
+`wamn build` builds package components without Vite.
+Package artifacts contain no web layer or browser files.
 
 The push packs `dist/` and canonical `web.json` into one tar layer in an OCI artifact.
 The tar sorts paths and fixes file modes, timestamps, and owners.
@@ -49,8 +50,8 @@ The push uses the existing registry client and Docker credential reader.
 The registry arguments match `apply-package`: `--artifact-base`, `--registry-auth-file`, `--insecure-registry`, and repeatable `--oci-ca-path`.
 For an anonymous push, the credential file must explicitly contain `{"auths":{"<registry>":{}}}`.
 
-The upload commands below still read package artifacts and the local platform UI.
-They do not yet read standalone web artifacts.
+`wamn web upload --platform-ui` still reads the local platform UI.
+Release uploads require the replacement in lane 1.5 before they can read web artifacts.
 
 ## Arguments
 
@@ -73,7 +74,7 @@ A bucket URL uses `s3://<bucket>[/<prefix>]` or `gs://<bucket>[/<prefix>]`.
 The optional prefix adds a directory before the upload path.
 `Sink::store` in [web_artifact.rs](../../crates/control/lib/src/web_artifact.rs) reads `AWS_*` variables for S3.
 For Google Cloud Storage, it reads `GOOGLE_*` variables and Application Default Credentials, the credentials that Google client libraries use.
-The caller needs access to create objects in the bucket. Package uploads also read object metadata.
+The caller needs access to create objects in the bucket.
 The upload does not create the bucket or grant public access.
 [Deployment](deployment.md#web-client-files) owns serving and routing prerequisites.
 
@@ -112,56 +113,15 @@ A repeated platform upload attempts the writes again and refuses an existing obj
 
 ## Package clients
 
-Use the environment configuration from [deployment ordering](deployment.md#deployment-ordering).
-Make sure that `helm` is available on the upload host and can read the selected cluster.
-[Platform::from_env](../../crates/control/lib/src/environment/mod.rs) reads that configuration before the upload starts.
-It requires these inputs even when the upload does not use their database or broker connections:
-
-| Input | Meaning |
-| --- | --- |
-| `KUBECONFIG` | File with the target cluster and a current context |
-| `WAMN_RELEASE_NAMESPACE` | Namespace of the release chart, default `wamn-system` |
-| `WAMN_CONTROL_DATABASE_URL` | Required control database URL |
-| `WAMN_RELEASE_CHART` | Required stamped chart directory |
-| `WAMN_RELEASE_ARTIFACT_BASE` | Required registry repository for release manifests |
-| `WAMN_PACKAGE_ARTIFACT_BASE` | Required registry repository for package artifacts |
-| `WAMN_REGISTRY_AUTH_FILE` | Required registry authentication file |
-| `WAMN_OCI_CA_PATHS` | Optional colon-separated paths to registry CA certificates |
-| `WAMN_NATS_URL` | Required URL for the authorization broker |
-| `WAMN_NATS_TLS_CA`, `WAMN_NATS_TLS_CERT`, `WAMN_NATS_TLS_KEY` | Required paths for the broker CA, client certificate, and key |
-| `WAMN_NATS_TLS_SERVER_NAME` | Optional broker TLS server name |
-
-[PlatformNats::from_env](../../crates/identity/platform/src/nats.rs) defines the broker inputs.
-`Platform::from_env` also parses the optional database, identity, and event configuration used by environment commands.
-If `WAMN_NATS_URL` is set, the event configuration uses the same NATS connection.
-
-1. Load the environment configuration above with the intended cluster context and release namespace.
-2. Make sure that the package artifacts include the web files from [wamn build](building.md#wamn-build).
-3. Read the manifest digest from the newest successful Helm revision of the environment release.
-4. Set `WAMN_UPLOAD_RELEASE` to that full `sha256:` digest.
-5. Run the upload with the environment coordinate and bucket URL.
-
-```bash
-wamn web upload acme/receiving/dev --release "$WAMN_UPLOAD_RELEASE" --bucket gs://example-web/clients
-```
-
-[deployed_release](../../crates/control/lib/src/environment/analyse.rs) reads Helm history and values for the environment.
-The uploader refuses a different release digest, then pulls the release manifest and each named package artifact.
-The web layer of each artifact supplies its built files, as [package_artifact.rs](../../crates/control/lib/src/package_artifact.rs) defines.
-It skips a package without `client_package.name` and a package without a web build.
-For each client, it requires a name of the form `@wamn/<project>-client` and built files that include `index.html`.
-The upload does not read or build application files from the working tree.
-
-The destination is `<prefix>/<package id>/<release digest without sha256:>/`.
-Its `config.json` contains the coordinate's organization and the project from the client package name.
-For example, `@wamn/receiving-client` produces `{"org":"acme","project":"receiving"}` for the coordinate above.
-The command prints one line per client: `<package id> <bucket URL>/<upload path>/ written`.
-If the destination already has `index.html`, it skips that client and prints `present` instead of `written`.
-It prints no line for a skipped package.
+`wamn web upload <coordinate> --release <digest> --bucket <bucket URL>` currently refuses.
+Package artifacts no longer carry the web layer that supplied its files.
+Build and push the standalone web artifact with the commands above.
+Lane 1.5 will replace the upload source with that web artifact.
+The refusal names this replacement and occurs before the CLI loads platform configuration or accesses a bucket.
 
 ## Object writes and errors
 
-Both modes write assets first, generated `config.json` next, and `index.html` last.
+The platform UI upload writes assets first, generated `config.json` next, and `index.html` last.
 Each write creates a new object and never replaces an existing object.
 A failed upload can leave objects behind. The command performs no rollback.
 A retry after a partial upload keeps each existing object whose bytes are equal, and refuses an object with other bytes.
@@ -179,14 +139,8 @@ The [CLI](../../services/ctl/src/web.rs) and [upload implementation](../../crate
 | ``read <path>; run `wamn-ctl build-platform` `` | The platform build record is absent or unreadable. Use the matching stamped chart. |
 | `the stamped chart version <version> differs from platform <version>` | Use a stamped chart that matches `deploy/platform/release/Chart.yaml`. |
 | `the platform UI build <path> differs from the platform build record <path>` | Restore the matching local build before upload. |
-| `set <variable> for wamn-ctl env` | Supply the required environment configuration for a package upload. |
-| `coordinate <value> is not org/project/env` | Pass exactly three slash-separated parts. The coordinate also must pass the platform naming rules. |
-| `--release must be sha256: and 64 lowercase hexadecimal digits` | Pass the full manifest digest. |
+| `package artifacts no longer contain web clients. Release upload requires the standalone web artifact` | Lane 1.5 replaces the package source with the web artifact. |
 | `--bucket must be s3://<bucket>[/<prefix>] or gs://<bucket>[/<prefix>]` | Use one of the two supported bucket schemes. |
-| `<coordinate> serves no release` | The environment has no successful revision with a release digest. |
-| `release <requested> is not the release <deployed> that <coordinate> serves` | Use the digest from the newest successful revision. |
-| `the package artifact <tag> holds no built web client` | Publish the package with its built web files. |
-| `the package artifact <tag> holds no web client index.html` | Include the built index in the package artifact. |
 | `the build wrote <path>, which has no declared cache rule` | Keep built files under `assets/`, except for `index.html` and `sw.js`. The uploader generates `config.json`. |
 | `the build wrote <path>, which has no declared content type` | Use a supported file extension. |
 | `write <key>; an existing object with other bytes is never replaced` | An earlier upload wrote other bytes under this release path. Inspect the object before you delete it. |

@@ -2,7 +2,6 @@
 
 use anyhow::Context as _;
 use clap::{Args, Subcommand};
-use wamn_control::environment::Platform;
 use wamn_control::web_artifact::{self, upload_platform_ui, upload_release};
 
 /// Web client commands.
@@ -18,7 +17,7 @@ pub enum WebCommand {
     Build(BuildArgs),
     /// Push a built web client as an immutable OCI artifact.
     Push(PushArgs),
-    /// Write the built web clients of the release an environment serves to a bucket.
+    /// Upload the platform UI. Release uploads refuse until lane 1.5.
     Upload(UploadArgs),
 }
 
@@ -40,17 +39,15 @@ pub struct PushArgs {
 
 #[derive(Debug, Args)]
 pub struct UploadArgs {
-    /// The environment, `org/project/env`. Its release chart names the release
-    /// it serves; the platform inputs of `wamn-ctl env` locate the chart and
-    /// the package artifacts.
+    /// The environment, `org/project/env`. Release uploads refuse until lane 1.5
+    /// reads standalone web artifacts.
     #[arg(
         required_unless_present = "platform_ui",
         conflicts_with = "platform_ui"
     )]
     pub coordinate: Option<String>,
-    /// The release the files belong to: the manifest digest, `sha256:` and 64
-    /// lowercase hexadecimal digits. The upload refuses a release that the
-    /// environment does not serve.
+    /// The release manifest digest, `sha256:` and 64 lowercase hexadecimal digits.
+    /// Release uploads refuse until lane 1.5 supplies the new source.
     #[arg(
         long,
         required_unless_present = "platform_ui",
@@ -108,28 +105,7 @@ async fn upload(args: UploadArgs) -> anyhow::Result<()> {
         println!("platform-ui {location} written");
         return Ok(());
     }
-    let platform = Platform::from_env()?;
-    let triple = crate::env_verbs::parse_coordinate(
-        args.coordinate
-            .as_deref()
-            .context("a package upload requires a coordinate")?,
-    )?;
-    for client in upload_release(
-        &platform,
-        &triple,
-        args.release
-            .as_deref()
-            .context("a package upload requires --release")?,
-        args.bucket
-            .as_deref()
-            .context("a package upload requires --bucket")?,
-    )
-    .await?
-    {
-        let state = if client.written { "written" } else { "present" };
-        println!("{} {} {state}", client.package, client.location);
-    }
-    Ok(())
+    upload_release()
 }
 
 #[cfg(test)]
@@ -161,6 +137,26 @@ mod tests {
             .is_ok()
         );
         assert!(Cli::try_parse_from(["web", "push", "--package", "apps/client"]).is_err());
+    }
+
+    #[tokio::test]
+    async fn release_upload_refuses_before_loading_platform_configuration() {
+        let args = Cli::try_parse_from([
+            "web",
+            "upload",
+            "acme/receiving/dev",
+            "--release",
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "--bucket",
+            "gs://web/clients",
+        ])
+        .unwrap()
+        .web;
+        let error = run(args).await.unwrap_err().to_string();
+        assert!(
+            error.contains("web artifact") && error.contains("Lane 1.5"),
+            "{error}"
+        );
     }
 
     #[test]

@@ -35,7 +35,6 @@ fn write_build_record(root: &Path) {
             manifest: "sha256:fixture".into(),
             files: std::collections::BTreeMap::new(),
             components: Vec::new(),
-            web: None,
         },
     };
     std::fs::write(

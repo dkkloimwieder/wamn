@@ -61,7 +61,6 @@ async fn push_package_refuses_stale_output_before_reading_its_manifest() -> anyh
             manifest: "sha256:fixture".into(),
             files: std::collections::BTreeMap::new(),
             components: Vec::new(),
-            web: None,
         },
     };
     std::fs::write(

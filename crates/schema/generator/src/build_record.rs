@@ -111,10 +111,6 @@ pub struct BuildOutputs {
     pub files: BTreeMap<String, String>,
     /// The package's components. Empty until the build compiles them.
     pub components: Vec<BuildComponent>,
-    /// The digest of the web client build (§7.1 step 8): the canonical JSON
-    /// of each built file's `sha256:` digest by its path below `web/`, or
-    /// `null` for a package without a web client.
-    pub web: Option<String>,
 }
 
 /// One built component.
@@ -602,7 +598,6 @@ mod tests {
                 manifest: bytes_sha256(b"manifest"),
                 files: BTreeMap::new(),
                 components: Vec::new(),
-                web: None,
             },
         };
         fs::write(output.join(BUILD_RECORD_FILE), build_record.to_bytes()).unwrap();
@@ -996,15 +991,9 @@ mod tests {
                 manifest: bytes_sha256(b"m"),
                 files: BTreeMap::new(),
                 components: Vec::new(),
-                web: None,
             },
         };
         let bytes = build_record.to_bytes();
-        assert!(
-            String::from_utf8(bytes.clone())
-                .unwrap()
-                .contains(r#""web":null"#)
-        );
         fs::write(scratch.0.join(BUILD_RECORD_FILE), &bytes).unwrap();
         assert_eq!(read(&scratch.0).unwrap(), build_record);
 

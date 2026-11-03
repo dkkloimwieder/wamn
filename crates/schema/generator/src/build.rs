@@ -6,8 +6,7 @@
 //! `wamn.json` (RFC 8785, hashed once). Pass two generates every consumer from
 //! those bytes and writes them, with `build.json`, to the package's build
 //! output directory. Step 7 compiles the package's components
-//! ([`build_components`]), and step 8 builds the web client of a package that
-//! has one into `web/` of the same directory.
+//! ([`build_components`]). `wamn web build` builds browser files separately.
 //!
 //! The verification database is created on the PostgreSQL server that the
 //! request names and dropped when the build ends. The server keeps the
@@ -37,7 +36,7 @@ pub use crate::components::{build_components, build_guest};
 use crate::data_access::application_schemas;
 use crate::describe::{DescribedStatement, column_type, describe_statements};
 use crate::materialize::{
-    classify_statements, client_bindings, existing_files, expected_files, generate_from_manifest,
+    classify_statements, client_bindings, expected_files, generate_from_manifest,
     introspect_with_manifest, load_authored_sql, statement_corpus_from_manifest, write_files,
 };
 use wamn_catalog::manifest::{
@@ -55,9 +54,6 @@ const HAND_WRITTEN_MANIFEST: &str = "wamn.json";
 const PLACEHOLDER_TYPE: &str = "text";
 /// The web client's source directory, relative to the package root.
 const WEB_SOURCE: &str = "web";
-/// The web client build, relative to the package's build output directory
-/// (§7.1 step 8, C10).
-pub const WEB_OUTPUT: &str = "web";
 
 /// One package build.
 #[derive(Debug, Clone)]
@@ -166,9 +162,6 @@ fn current_build_inputs(
             build_record.inputs.digest == inputs.digest
         };
         if !matches
-            // A build record written before the web build must not make an unfinished build current.
-            || (!generation_only && package_root.join("web/package.json").is_file()
-                && build_record.outputs.web.is_none())
             || !build_record
                 .outputs
                 .files
@@ -179,9 +172,6 @@ fn current_build_inputs(
                 .components
                 .iter()
                 .all(|component| output.join(&component.path).is_file())
-            || build_record.outputs.web.as_ref().is_some_and(|digest| {
-                web_digest(&output.join(WEB_OUTPUT)).as_ref().ok() != Some(digest)
-            })
             || !build_record.dependencies.iter().all(|dependency| {
                 let read = if generation_only {
                     crate::build_record::read_generated
@@ -229,8 +219,8 @@ fn current_build_inputs(
     Ok(None)
 }
 
-/// Generate package output before component and web compilation.
-/// The build record contains no compiled component or web output.
+/// Generate package output before component compilation.
+/// The build record contains no compiled components.
 ///
 /// # Errors
 ///
@@ -945,26 +935,7 @@ fn write_outputs(
         manifest: bytes_sha256(canonical),
         files: digests,
         components: Vec::new(),
-        web: None,
     })
-}
-
-/// Step 8: `pnpm build` the web client of the package, when it has one, into
-/// [`WEB_OUTPUT`] of its build output directory, and return the digest of the
-/// built files. The web client resolves its client package in the default
-/// output root, `target/wamn/<package>/client-ts`, which pass two writes when
-/// the request names that root. `write_outputs` removed the previous web build.
-pub(crate) async fn build_web(
-    package_root: &Path,
-    package_output: &Path,
-) -> Result<Option<String>> {
-    let source = package_root.join(WEB_SOURCE);
-    if !source.join("package.json").is_file() {
-        return Ok(None);
-    }
-    let web = package_output.join(WEB_OUTPUT);
-    build_web_client(package_root, &web).await?;
-    Ok(Some(web_digest(&web)?))
 }
 
 /// Build the package's web client with Vite into `dist`.
@@ -998,33 +969,13 @@ pub async fn build_web_client(package_root: &Path, dist: &Path) -> Result<()> {
     Ok(())
 }
 
-fn web_digest(web: &Path) -> Result<String> {
-    let mut files = BTreeMap::new();
-    for relative in existing_files(web)? {
-        let path = web.join(&relative);
-        let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
-        let key = relative
-            .to_str()
-            .with_context(|| format!("web path is not UTF-8: {}", relative.display()))?
-            .to_owned();
-        files.insert(key, bytes_sha256(&bytes));
-    }
-    ensure!(
-        !files.is_empty(),
-        "the web build has no file in {}",
-        web.display()
-    );
-    Ok(bytes_sha256(&canonical_json_bytes(&serde_json::json!(
-        files
-    ))))
-}
-
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
     use super::*;
     use crate::describe::DescribedColumn;
+    use crate::materialize::existing_files;
 
     #[tokio::test]
     async fn verification_migration_accepts_a_platform_file_reference() {
@@ -1158,13 +1109,13 @@ mod tests {
         assert!(output.join(COMPILED_MANIFEST_NAME).is_file());
         fs::create_dir(package.join("web")).unwrap();
         fs::write(package.join("web/package.json"), "{}").unwrap();
-        let mut unfinished = crate::build_record::read(&output).unwrap();
-        unfinished.inputs.digest = crate::build_record::input_digest(&package).unwrap();
-        fs::write(output.join(BUILD_RECORD_FILE), unfinished.to_bytes()).unwrap();
+        let mut with_web_source = crate::build_record::read(&output).unwrap();
+        with_web_source.inputs = crate::build_record::inputs(&package).unwrap();
+        fs::write(output.join(BUILD_RECORD_FILE), with_web_source.to_bytes()).unwrap();
         assert!(
             current_build(&request.package_root, &request.output_root)
                 .unwrap()
-                .is_none()
+                .is_some()
         );
         fs::remove_dir_all(root).unwrap();
     }

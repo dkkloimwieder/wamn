@@ -1529,6 +1529,51 @@ fn suite_preparation_sets_its_input_and_preserves_a_nonempty_override() {
 }
 
 #[test]
+fn application_inputs_build_web_artifacts_after_packages() {
+    let fixture = Fixture::new();
+    fixture.write("apps/web_client/wamn.k", "");
+    fixture.write("apps/web_client/web/package.json", "{}");
+    fixture.write("apps/no_web/wamn.k", "");
+    let policy = fixture.root.join("tests/selection.toml");
+    let mut text = fs::read_to_string(&policy).unwrap();
+    text.push_str(
+        r#"
+[[preparation]]
+id = "web-fixture"
+outputs = {}
+applications = ["apps/web_client", "apps/no_web"]
+"#,
+    );
+    fs::write(policy, text).unwrap();
+    fixture
+        .add_suite(&EXACT_SUITE.replace("prerequisites = []", "prerequisites = [\"web-fixture\"]"));
+    let target = fixture.directory.join("target");
+    fs::create_dir_all(target.join("debug")).unwrap();
+    executable(
+        &target.join("debug/wamn-test-postgres"),
+        "#!/usr/bin/env bash\nwhile [[ $1 != -- ]]; do shift; done\nshift\nexec \"$@\"\n",
+    );
+    executable(&target.join("debug/wamn"), FAKE_GUEST_BUILD);
+    let output = fixture
+        .tool_command(&["--suite", "fixture-exact"])
+        .env("CARGO_TARGET_DIR", &target)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fixture.guest_calls(),
+        [
+            vec!["wamn", "build", "apps/web_client", "apps/no_web"],
+            vec!["wamn", "web", "build", "--package", "apps/web_client"],
+        ]
+    );
+}
+
+#[test]
 fn the_screen_build_follows_application_generation_and_preserves_an_override() {
     let fixture = Fixture::new();
     fixture.write("apps/wamn_wms/wamn.k", "");

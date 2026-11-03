@@ -76,12 +76,12 @@ struct Built {
 }
 
 /// Compile the components of the package that `request` names, whose id is
-/// `package`, after generation, then copy clients and compile its web output.
+/// `package`, after generation, then copy clients to their consumers.
 /// Record the full input digest and compiled outputs in its `build.json`.
 ///
 /// # Errors
 ///
-/// When generated output is stale, when a guest or web client does not build,
+/// When generated output is stale, when a guest does not build,
 /// carries a local path or differs from its pin, when virtualization or
 /// composition fails, or when the output cannot be written.
 pub async fn build_components(request: &BuildRequest, package: &str) -> Result<BuildRecord> {
@@ -90,17 +90,15 @@ pub async fn build_components(request: &BuildRequest, package: &str) -> Result<B
     let mut build_record = build_record::read_generated(package_root, &output)?;
     build_record.inputs = build_record::inputs(package_root)?;
     build_record.outputs.components.clear();
-    build_record.outputs.web = None;
     let path = output.join(BUILD_RECORD_FILE);
     fs::write(&path, build_record.to_bytes())
         .with_context(|| format!("write {}", path.display()))?;
-    let mut build_record = compile_components(request, package).await?;
+    let build_record = compile_components(request, package).await?;
     crate::materialize::materialize_client_consumers(
         package_root,
         package,
         &output.join("client-ts"),
     )?;
-    build_record.outputs.web = crate::build::build_web(package_root, &output).await?;
     fs::write(&path, build_record.to_bytes())
         .with_context(|| format!("write {}", path.display()))?;
     Ok(build_record)
@@ -704,7 +702,6 @@ mod tests {
                     path: "components/base.wasm".into(),
                     sha256: bytes_sha256(&bytes),
                 }],
-                web: None,
             },
         };
         fs::write(output.join(BUILD_RECORD_FILE), built.to_bytes()).unwrap();
@@ -767,6 +764,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn package_build_does_not_run_the_web_build_or_require_web_output() {
+        let scratch = scratch("no-web-build");
+        let package = scratch.0.join("package");
+        let output_root = scratch.0.join("target/wamn");
+        let output = package_output(&output_root, "package");
+        fs::create_dir_all(package.join("web")).unwrap();
+        fs::create_dir_all(&output).unwrap();
+        fs::write(package.join("wamn.k"), "# package\n").unwrap();
+        fs::write(
+            package.join("web/package.json"),
+            r#"{"scripts":{"build":"node -e \"process.exit(1)\""}}"#,
+        )
+        .unwrap();
+        let manifest = br#"{
+            "package": {"id": "package", "version": "1.0.0"},
+            "required_platform_policy_contract": {"id": "policy", "state": "satisfied"},
+            "models": {}, "connections": {}, "components": {}
+        }"#;
+        fs::write(output.join(COMPILED_MANIFEST_NAME), manifest).unwrap();
+        let record = BuildRecord {
+            schema: build_record::BUILD_RECORD_SCHEMA.into(),
+            package: build_record::BuildPackage {
+                id: "package".into(),
+                version: "1.0.0".into(),
+            },
+            inputs: build_record::inputs(&package).unwrap(),
+            dependencies: Vec::new(),
+            generator: build_record::generator(),
+            outputs: build_record::BuildOutputs {
+                manifest: bytes_sha256(manifest),
+                files: BTreeMap::new(),
+                components: Vec::new(),
+            },
+        };
+        fs::write(output.join(BUILD_RECORD_FILE), record.to_bytes()).unwrap();
+        let built = build_components(&BuildRequest::new(&package, &output_root, ""), "package")
+            .await
+            .unwrap();
+        assert_eq!(built, record);
+        assert!(
+            crate::build::current_build(&package, &output_root)
+                .unwrap()
+                .is_some()
+        );
+        assert!(!output.join("web").exists());
+    }
+
+    #[tokio::test]
     async fn a_custom_output_cannot_hide_stale_macro_inputs() {
         let scratch = scratch("macro-inputs");
         let package = scratch.0.join("package");
@@ -800,7 +845,6 @@ mod tests {
                 manifest: "sha256:manifest".into(),
                 files: BTreeMap::new(),
                 components: Vec::new(),
-                web: None,
             },
         };
         fs::write(

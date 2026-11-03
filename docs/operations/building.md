@@ -421,14 +421,11 @@ It leaves the output files and `build.json` unchanged.
 An overlay reads the `build.json` of each base package, so build the base first.
 Package readers of `apps/target/wamn` call `wamn_schema_generator::build_record::read_current` first, as `push-package` does.
 If the package has no `build.json`, or its `inputs.digest` differs from the package tree, the reader refuses and tells you to run `wamn build`.
-If only the full digest changes, the build reuses generated output and rebuilds the package components and web client.
+If only the full digest changes, the build reuses generated output and rebuilds the package components.
 Build records the new full digest, so readers accept the rebuilt output.
 A reader still refuses changed source until Build refreshes the build record.
 After generation and component compilation, the build copies generated clients to their consumers.
-For a package that has a `web/` directory, Build runs `pnpm run build` there with Vite's `outDir` set to `web/` in the package's build output, `apps/target/wamn/<package>/web`.
-Run `pnpm install` at the repository root first.
-`build.json` records the digest of the web files as `outputs.web`, and `null` for a package without a web client.
-Each app's `vite.config.ts` names the same directory, so `pnpm run build` by hand writes there too.
+`wamn build` does not run Vite or record browser files in `build.json`.
 The build compiles the package's components as [above](#native-programs-and-app-components) describes.
 
 `wamn web build` builds a standalone web artifact against the recorded package contract.
@@ -436,6 +433,10 @@ It permits web source changes and requires the compiled manifest to match `outpu
 See [web clients](web-upload.md#build-and-push) for its output, metadata, and registry commands.
 
 ### Package digest records
+
+Removing the web layer changes existing package digests.
+After rebuilding the packages, refresh their records with `wamn build --record-digest` before the package digest test.
+No version or format bump accompanies this greenfield change.
 
 Registry tags are immutable, so a package that changes under an unchanged version cannot be pushed to the GKE registry again. Each package that a file in `deploy/gcp/environments` names has a committed `package.digest` beside its `wamn.k`. The file holds one line, the tag and the digest that the built package packs to. The test `cargo test -p wamn-control --test package_digest` builds no package, so run `wamn build` first. It refuses when the digest changed and the tag did not, and when the tag changed and the file did not.
 
@@ -483,14 +484,17 @@ A package artifact has the tag `<package_id>-<version>`. Its image manifest has 
 | 1 | `application/vnd.wamn.package.v1.tar` | `migrations` | `migrations/` |
 | 2 | `application/vnd.wamn.package.v1.tar` | `publication` | `publication/`: `attachments.json`, `wirings/`, `components/<name>.json.in`, including the declaration of each palette component a wiring names |
 | 3 | `application/vnd.wamn.package.v1.tar` | `sources` | `wamn.k`, `command/`, `query/`, `generated/platform-policy/data-access.json`, `generated/contracts/`, `generated/required-schema-contract.json`, `generated/sql/`, `generated/publication/`, `generated/routes/` |
-| 4 | `application/vnd.wamn.package.v1.tar` | `web` | `web/dist/`: the files of the web client build in `apps/target/wamn/<package>/web/` (§7.1 step 8), under their logical `web/dist/` paths; an empty tar when there is none |
-| 5..n | `application/vnd.wamn.component.descriptor.v1+json` | none | one descriptor per component, owned or palette, sorted by name, with the annotations `wamn.component.name` and `wamn.component.digest` |
+| 4..n | `application/vnd.wamn.component.descriptor.v1+json` | none | one descriptor per component, owned or palette, sorted by name, with the annotations `wamn.component.name` and `wamn.component.digest` |
+
+The package artifact contains three tar layers and no browser files.
+A web source or output edit leaves the packed package digest unchanged.
+`wamn web build` and `wamn web push` own the separate [web artifact](web-upload.md#build-and-push).
 
 The `generated/` paths of layer 3 are logical paths. `wamn build` writes those files below `apps/target/wamn/<package>/` without the `generated/` prefix, and pack reads them from there.
 
 A tar has GNU headers, sorted package-relative paths, mode 0644, uid and gid 0 and mtime 0. A descriptor is the canonical JSON of `ComponentDescriptor` (`crates/catalog/model/src/component_facts.rs`, `deny_unknown_fields`): `{component, interface-version, component-digest, operations, imports, imports-fingerprint, effects, connections: [{store-alias, requirement-type}]}`, which is `AdmittedComponent` without its scope plus its connections. The reader supplies the scope. A palette component's store alias comes from the `params.store_alias` of the wiring nodes that name it, and two aliases refuse. The manifest annotations are `wamn.package.id`, `wamn.package.version` and one `wamn.component.<name>` = `sha256:...` per component. Nothing carries a timestamp. The manifest is canonical JSON.
 
-The artifact digest is the SHA-256 of the image manifest bytes. The registry records it, and it is what `artifact_digest` means. An unpacked artifact is not build output. It keeps the logical paths: the tars in place, except that the `web/dist/` entries go to `generated/web/`; layer 0 at `generated/wamn.json`; and each descriptor at `descriptors/<name>.json`. It packs again offline to the pushed digest. `package_artifact_digest(root)` is that offline digest of a tree as it is. A source tree has no `descriptors/`, so its digest differs from the pushed digest. Only an unpacked tree packs to it.
+The artifact digest is the SHA-256 of the image manifest bytes. The registry records it, and it is what `artifact_digest` means. An unpacked artifact is not build output. The three tars keep their logical paths. Layer 0 goes to `generated/wamn.json`. Each descriptor goes to `descriptors/<name>.json`. It packs again offline to the pushed digest. `package_artifact_digest(root)` is that offline digest of a tree as it is. A source tree has no `descriptors/`, so its digest differs from the pushed digest. Only an unpacked tree packs to it.
 
 ## Host route clients
 

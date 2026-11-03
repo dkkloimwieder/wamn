@@ -1999,7 +1999,7 @@ manifest.Package {
             "inputs": {"digest": build_record::input_digest(&root).unwrap(), "generation_digest": build_record::generation_digest(&root).unwrap(), "files": {}},
             "dependencies": [],
             "generator": {"id": "generator", "toolchain": "toolchain", "sqlx": "0.9.0"},
-            "outputs": {"manifest": "sha256:fixture", "files": {}, "components": [], "web": null}
+            "outputs": {"manifest": "sha256:fixture", "files": {}, "components": []}
         }))
         .unwrap();
         fs::create_dir_all(&output).unwrap();

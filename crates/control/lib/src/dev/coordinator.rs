@@ -594,6 +594,13 @@ impl ProductionDevStageRunner {
             wamn_schema_generator::build::build_components(&request, &package.manifest.package.id)
                 .await
                 .map_err(|source| ProductionDevStageError::owner("build components", source))?;
+            if package.root.join("web/package.json").is_file() {
+                crate::web_artifact::build_web_artifact(&package.root)
+                    .await
+                    .map_err(|source| {
+                        ProductionDevStageError::owner("build web artifact", source.into())
+                    })?;
+            }
             self.pending_builds.remove(&package.manifest.package.id);
         }
         Ok(())
@@ -2222,7 +2229,7 @@ mod tests {
             "outputs": {
                 "manifest": wamn_engine::component_admission::component_digest(&manifest),
                 "files": {"wamn.json": "manifest", "generated.txt": "generated"},
-                "components": [], "web": null
+                "components": []
             },
         }))
         .unwrap();
@@ -2620,7 +2627,7 @@ mod tests {
                     "inputs": {"digest": "full", "generation_digest": inputs, "files": {}},
                     "dependencies": [{"id": "base", "version": "1.0.0", "digest": base}],
                     "generator": {"id": "generator", "toolchain": "rust", "sqlx": "0.9.0"},
-                    "outputs": {"manifest": "m", "files": {}, "components": [], "web": null},
+                    "outputs": {"manifest": "m", "files": {}, "components": []},
                 }))
                 .unwrap();
             let expected = SqlxMetadataInputs::of(&build_record);
@@ -2902,7 +2909,6 @@ mod tests {
                             component.as_bytes(),
                         ),
                     }],
-                    web: None,
                 },
             };
             fs::write(

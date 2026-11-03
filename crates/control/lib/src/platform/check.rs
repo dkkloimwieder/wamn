@@ -222,20 +222,13 @@ pub(super) fn api_route(
     anyhow::bail!("release has no protected HTTP route without path parameters")
 }
 
-/// The route hosts whose release serves a web client: the platform UI, or the
-/// selected client package when its artifact holds a web build. These are the
-/// clients that the web upload writes (wamn-wio2s.7).
+/// The route hosts whose release.json names a client package for that host,
+/// plus the platform UI hosts that carry a platform version.
 pub(super) async fn web_hosts(
     target: &Target,
     routes: &BTreeMap<String, String>,
-    registry: &PackageRegistry,
+    _registry: &PackageRegistry,
 ) -> anyhow::Result<BTreeSet<String>> {
-    let source = wamn_runtime::release_manifest_source::ReleaseManifestSource::new(
-        &super::packages::artifact_base(registry, "releases")?,
-        registry.insecure_registry,
-        &registry.registry_auth_file,
-    )?
-    .with_ca_paths(&registry.oci_ca_paths)?;
     let mut hosts = BTreeSet::new();
     for (host, name) in routes {
         let release: Value = kubectl::get(
@@ -260,24 +253,7 @@ pub(super) async fn web_hosts(
             hosts.insert(host.clone());
             continue;
         }
-        let Some(package) = live["clients"][host.as_str()].as_str() else {
-            continue;
-        };
-        let digest = live["digest"]
-            .as_str()
-            .with_context(|| format!("hosts/{name} release.json has no digest"))?;
-        let bytes = source.pull_verified(digest).await?;
-        let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
-        let version = manifest
-            .release
-            .packages
-            .iter()
-            .find(|coordinate| coordinate.package_id() == package)
-            .with_context(|| format!("release {digest} has no client package {package}"))?
-            .package_version()
-            .to_owned();
-        let opened = crate::package_artifact::open_package(registry, package, &version).await?;
-        if crate::package_artifact::web_build(opened.root()).is_dir() {
+        if live["clients"][host.as_str()].as_str().is_some() {
             hosts.insert(host.clone());
         }
     }

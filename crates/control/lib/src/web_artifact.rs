@@ -3,13 +3,8 @@
 //! A standalone artifact packs `dist/` and canonical `web.json` in one tar layer.
 //! Its metadata binds the client to the package's recorded manifest digest.
 //!
-//! `wamn web upload` writes the built client of each package of the release
-//! an environment serves, under `<prefix>/<package_id>/<release hex>/`, every
-//! built file create-only, then `config.json`, and the index last. The release
-//! must be the one the newest successful revision of the environment's release
-//! chart installed, and the built files are the `web` layer of each package
-//! artifact, which unpacks to the web build of its output root
-//! (docs/operations/building.md#wamn-build step 8).
+//! `wamn web upload --platform-ui` uploads the local platform UI.
+//! Release uploads refuse until lane 1.5 reads standalone web artifacts.
 
 use std::path::{Path, PathBuf};
 
@@ -18,17 +13,15 @@ use object_store::aws::AmazonS3Builder;
 use object_store::gcp::GoogleCloudStorageBuilder;
 use object_store::{Attribute, Attributes, ObjectStore, ObjectStoreExt as _, PutMode, PutOptions};
 use oci_client::manifest::OCI_IMAGE_MEDIA_TYPE;
-use wamn_control_registry::Triple;
 use wamn_execution_contract::{bytes_sha256, canonical_json_bytes};
 use wamn_package_artifact::registry_credentials::read_registry_push_credentials;
 use wamn_package_artifact::{Repository, ensure_digest, ensure_tag, registry_auth};
 use wamn_schema_generator::build_record::{self, BuildRecord};
 
-use crate::environment::Platform;
-use crate::package_artifact::{PackageRegistry, PackageSource, open_package_source, web_build};
-use crate::web_scope::{SCOPE_CACHE, SCOPE_CONTENT_TYPE, SCOPE_FILE, scope_file_bytes};
+use crate::package_artifact::PackageRegistry;
+use crate::web_scope::{SCOPE_CACHE, SCOPE_CONTENT_TYPE, SCOPE_FILE};
 
-/// Standalone output below a package's build directory, separate from its package web layer.
+/// Standalone output below a package's build directory.
 const ARTIFACT_DIRECTORY: &str = "web-artifact";
 /// The web artifact's metadata, beside `dist/`.
 pub const WEB_MANIFEST_FILE: &str = "web.json";
@@ -353,102 +346,17 @@ const ASSET_CACHE: &str = "public, max-age=31536000, immutable";
 /// The index names the current files, and the service worker `sw.js` keeps
 /// its name across builds, so a browser asks again at every load.
 const INDEX_CACHE: &str = "no-cache";
-/// The client of one package, as [`upload_release`] left it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UploadedClient {
-    pub package: String,
-    /// `<scheme><bucket>/<root>/`.
-    pub location: String,
-    /// False when the index was already there, so nothing was written.
-    pub written: bool,
-}
-
-/// Write the built client of each package of `release` that has one.
+/// Refuse release uploads until their source is the standalone web artifact.
 ///
 /// # Errors
 ///
-/// When `release` is not the release the environment serves, a package
-/// artifact cannot be read or its web build holds no index, or a write fails. An
-/// object is never replaced.
-pub async fn upload_release(
-    platform: &Platform,
-    triple: &Triple,
-    release: &str,
-    bucket: &str,
-) -> anyhow::Result<Vec<UploadedClient>> {
-    let hex = release_hex(release)?;
-    let env_key =
-        wamn_control_provision::project_env_key(&triple.org, &triple.project, triple.env.as_str());
-    let deployed = crate::environment::analyse::deployed_release(&platform.target, &env_key)
-        .await?
-        .with_context(|| format!("{triple} serves no release"))?;
-    ensure!(
-        deployed == release,
-        "release {release} is not the release {deployed} that {triple} serves"
-    );
-    let manifest = crate::environment::analyse::pull_release_manifest(platform, release).await?;
-    let registry = PackageRegistry {
-        artifact_base: platform
-            .package_artifact_base
-            .clone()
-            .context("set WAMN_PACKAGE_ARTIFACT_BASE; the built clients are package artifacts")?,
-        registry_auth_file: platform.registry_auth_file.clone(),
-        insecure_registry: false,
-        oci_ca_paths: platform.oci_ca_paths.clone(),
-    };
-    let sink = Sink::parse(bucket)?;
-    let store = sink.store()?;
-    let mut uploaded = Vec::new();
-    for package in &manifest.release.packages {
-        let tag = format!("{}-{}", package.package_id(), package.package_version());
-        let opened = open_package_source(PackageSource::Artifact {
-            tag: tag.clone(),
-            registry: registry.clone(),
-        })
-        .await?;
-        let manifest_path = wamn_schema_generator::package_manifest_path(opened.root());
-        let compiled: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(&manifest_path)
-                .with_context(|| format!("read {}", manifest_path.display()))?,
-        )
-        .with_context(|| format!("decode {}", manifest_path.display()))?;
-        let Some(client) = compiled
-            .pointer("/client_package/name")
-            .and_then(serde_json::Value::as_str)
-        else {
-            continue;
-        };
-        let project = client_project(client)?;
-        let dist = web_build(opened.root());
-        let Some(mut files) = built_files(&dist, &tag)? else {
-            continue;
-        };
-        let root = client_root(sink.prefix, package.package_id(), hex);
-        let location = format!("{}{}/{root}/", sink.scheme.prefix(), sink.bucket);
-        let index = object_store::path::Path::from(format!("{root}/index.html"));
-        if store.head(&index).await.is_ok() {
-            uploaded.push(UploadedClient {
-                package: package.package_id().to_owned(),
-                location,
-                written: false,
-            });
-            continue;
-        }
-        write_files(
-            store.as_ref(),
-            &root,
-            &dist,
-            &mut files,
-            &scope_file_bytes(&triple.org, project),
-        )
-        .await?;
-        uploaded.push(UploadedClient {
-            package: package.package_id().to_owned(),
-            location,
-            written: true,
-        });
-    }
-    Ok(uploaded)
+/// Always refuses because package artifacts no longer contain browser files.
+pub fn upload_release() -> anyhow::Result<()> {
+    bail!(
+        "package artifacts no longer contain web clients. Release upload requires the \
+         standalone web artifact from `wamn web build` and `wamn web push`. Lane 1.5 \
+         replaces the package source with the web artifact"
+    )
 }
 
 /// The platform UI has one bucket and one prefix per platform version.
@@ -523,28 +431,6 @@ async fn write_platform_ui(
         &crate::web_scope::platform_scope_file_bytes(org),
     )
     .await
-}
-
-/// The hexadecimal digits of a release `sha256:<64 lowercase hex>`.
-pub fn release_hex(release: &str) -> anyhow::Result<&str> {
-    release
-        .strip_prefix("sha256:")
-        .filter(|hex| {
-            hex.len() == 64
-                && hex
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        })
-        .context("--release must be sha256: and 64 lowercase hexadecimal digits")
-}
-
-/// The object root of one client: `<prefix>/<package_id>/<release hex>`.
-pub fn client_root(prefix: &str, package: &str, hex: &str) -> String {
-    [prefix.trim_matches('/'), package, hex]
-        .into_iter()
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join("/")
 }
 
 /// Write every built file create-only, then `config.json`, and the index
@@ -642,15 +528,6 @@ async fn put(
     }
 }
 
-/// The project that a client package `@wamn/<project>-client` names.
-pub fn client_project(client: &str) -> anyhow::Result<&str> {
-    client
-        .strip_prefix("@wamn/")
-        .and_then(|rest| rest.strip_suffix("-client"))
-        .filter(|project| !project.is_empty())
-        .with_context(|| format!("the client package {client} is not @wamn/<project>-client"))
-}
-
 /// The object store that a bucket value names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scheme {
@@ -719,22 +596,6 @@ impl<'a> Sink<'a> {
     }
 }
 
-/// The built files of a package web build, or `None` when the package has no
-/// web app: its empty web layer unpacks to no web build (wamn-21cms).
-fn built_files(dist: &Path, tag: &str) -> anyhow::Result<Option<Vec<PathBuf>>> {
-    if !dist.is_dir() {
-        return Ok(None);
-    }
-    let mut files = Vec::new();
-    collect(dist, &mut files)
-        .with_context(|| format!("the package artifact {tag} holds no built web client"))?;
-    ensure!(
-        files.iter().any(|file| file == &dist.join("index.html")),
-        "the package artifact {tag} holds no web client index.html"
-    );
-    Ok(Some(files))
-}
-
 /// Every file under `directory`.
 pub fn collect(directory: &Path, files: &mut Vec<PathBuf>) -> anyhow::Result<()> {
     for entry in std::fs::read_dir(directory)
@@ -787,7 +648,7 @@ mod tests {
 
     use super::{
         Scheme, Sink, WEB_MANIFEST_FILE, WebPushDisposition, artifact_output, build_web_artifact,
-        built_files, collect, pack_web_artifact, push_web_artifact, web_manifest, write_files,
+        collect, pack_web_artifact, push_web_artifact, web_manifest, write_files,
     };
 
     fn build_fixture(client: Option<&str>) -> (BuildRecord, Vec<u8>) {
@@ -821,7 +682,6 @@ mod tests {
                 manifest: bytes_sha256(&compiled),
                 files: BTreeMap::new(),
                 components: Vec::new(),
-                web: None,
             },
         };
         (record, compiled)
@@ -1090,23 +950,15 @@ fs.copyFileSync('index.html', dist + '/index.html');
     const SCOPE: &[u8] = br#"{"org":"acme","project":"receiving"}"#;
 
     #[test]
-    fn a_package_without_a_web_build_has_no_files_and_one_without_an_index_refuses() {
-        let dist = std::env::temp_dir().join(format!("wamn-web-built-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dist);
-        assert!(built_files(&dist, "wamn_wms-2.1.3").unwrap().is_none());
-        std::fs::create_dir_all(&dist).unwrap();
-        std::fs::write(dist.join("app.js"), "x").unwrap();
-        let error = built_files(&dist, "wamn_wms-2.1.3").unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "the package artifact wamn_wms-2.1.3 holds no web client index.html"
-        );
-        std::fs::write(dist.join("index.html"), "x").unwrap();
-        assert_eq!(
-            built_files(&dist, "wamn_wms-2.1.3").unwrap().unwrap().len(),
-            2
-        );
-        std::fs::remove_dir_all(&dist).unwrap();
+    fn release_upload_refuses_until_it_reads_the_web_artifact() {
+        let error = super::upload_release().unwrap_err().to_string();
+        for detail in [
+            "package artifacts no longer contain web clients",
+            "web artifact",
+            "Lane 1.5",
+        ] {
+            assert!(error.contains(detail), "{error}");
+        }
     }
 
     #[tokio::test]

@@ -91,7 +91,6 @@ pub fn write_build_record(root: &Path) {
             ),
             files: std::collections::BTreeMap::new(),
             components: Vec::new(),
-            web: None,
         },
     };
     std::fs::write(

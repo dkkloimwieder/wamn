@@ -878,7 +878,6 @@ pub(super) mod tests {
                 manifest: "sha256:fixture".into(),
                 files: BTreeMap::new(),
                 components: Vec::new(),
-                web: None,
             },
         };
         std::fs::write(

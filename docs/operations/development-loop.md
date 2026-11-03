@@ -9,7 +9,10 @@ Local saves do not publish components or release manifests to a registry.
 ## [WAMN-DEV-ENVIRONMENT] Developer session
 
 Build `wamn`, `wamn-host`, `wamn-identity`, the flow-http component, and the materializer component before starting a session.
-Build each application with `wamn build` before `dev up`, so its web bundle exists.
+Build each application with `wamn build` before `dev up`.
+For each application with a web client, run `wamn web build --package <path>` before `dev up`.
+The local server reads `web-artifact/dist/` below the package build output.
+The loop rebuilds that standalone web artifact when it builds a changed package.
 Build the platform UI with `pnpm --filter @wamn/platform-ui build`.
 `--platform-ui` defaults to `apps/platform_ui/dist` and accepts another built directory.
 If you change the manifest vocabulary of `wamn.json` or the KCL schema module, build `wamn` again first.

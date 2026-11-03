@@ -599,6 +599,10 @@ if ((${#applications[@]} > 0)); then
   wamn_step 'input applications' "$CARGO_TARGET_DIR/debug/wamn-test-postgres" \
     --database prekind_build --url-env DATABASE_URL -- \
     "$CARGO_TARGET_DIR/debug/wamn" build "${applications[@]}" || exit 1
+  for app in "${applications[@]}"; do
+    [[ -f "$app/web/package.json" ]] || continue
+    wamn_step 'input web artifact' "$CARGO_TARGET_DIR/debug/wamn" web build --package "$app" || exit 1
+  done
 fi
 for preparation in "${WAMN_DEFERRED_INPUTS[@]}"; do
   wamn_input_commands "$preparation" || exit 1

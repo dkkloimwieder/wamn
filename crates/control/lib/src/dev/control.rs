@@ -22,11 +22,11 @@ pub(super) fn preflight(args: &super::up::DevUpRequest) -> anyhow::Result<()> {
     for package in &args.packages {
         if package.join("web").is_dir() {
             wamn_schema_generator::build_record::check_current(package)?;
-            let dist = wamn_schema_generator::output_root(package).join("web");
+            let dist = crate::web_artifact::artifact_output(package).join("dist");
             anyhow::ensure!(
                 dist.join("index.html").is_file(),
-                "build the application web client before dev up: {}",
-                dist.display()
+                "run wamn web build --package {} before dev up",
+                package.display()
             );
         }
     }
@@ -182,7 +182,7 @@ pub(super) async fn start(
         .filter(|package| package.join("web").is_dir())
         .map(|package| {
             json!({"name": package.file_name().and_then(|name| name.to_str()),
-            "dist": wamn_schema_generator::output_root(package).join("web")})
+            "dist": crate::web_artifact::artifact_output(package).join("dist")})
         })
         .collect::<Vec<_>>();
     let (_, readiness) = wamn_catalog::HostRouteSet::Control

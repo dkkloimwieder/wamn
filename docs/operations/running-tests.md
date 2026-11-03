@@ -14,6 +14,8 @@ The script prepares submodules, native tools, and every package.
 It exports `CARGO_TARGET_DIR` and `WAMN_CHECKOUT_KEY`.
 Cargo output lies in `$CARGO_TARGET_DIR`, so the commands below use that path and not `target/` or `apps/target`.
 `wamn build` still writes package output to `apps/target/wamn`.
+After the package build, `tools/test-changes` runs `wamn web build` for each selected application with `web/package.json`.
+The standalone web artifacts supply browser files for the developer session tests.
 The script needs Docker and the [build prerequisites](building.md), including installed web dependencies.
 
 ## Select the relevant tests
