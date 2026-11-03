@@ -1219,8 +1219,12 @@ dependencies = [
 name = "sqlx-command"
 version = "0.1.0"
 dependencies = [
+ "futures-core",
+ "futures-executor",
+ "futures-util",
+ "log",
  "sqlx",
- "wamn-postgres-sqlx",
+ "sqlx-core",
  "wit-bindgen",
 ]
 
@@ -1520,19 +1524,6 @@ dependencies = [
  "serde_json",
  "wamn-event-reg",
  "wamn-event-wire",
-]
-
-[[package]]
-name = "wamn-postgres-sqlx"
-version = "0.1.0"
-dependencies = [
- "futures-core",
- "futures-executor",
- "futures-util",
- "log",
- "sqlx",
- "sqlx-core",
- "wit-bindgen",
 ]
 
 [[package]]

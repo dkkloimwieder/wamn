@@ -1,5 +1,14 @@
 //! Exercises SQLx queries and explicit transactions over `wamn:postgres`.
 
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "driver scalar wrappers remain covered by the inline transport tests"
+    )
+)]
+mod postgres;
+
 mod bindings {
     wit_bindgen::generate!({
         world: "wamn:sqlx-command/sqlx-command@0.1.0",
@@ -11,10 +20,8 @@ mod bindings {
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use postgres::{WamnConnection, WamnDatabaseError, WamnPgError, WamnPostgres, run_transaction};
 use sqlx::Error;
-use wamn_postgres_sqlx::{
-    WamnConnection, WamnDatabaseError, WamnPgError, WamnPostgres, run_transaction,
-};
 
 const FORCED_ROLLBACK: &str = "sqlx-command-forced-rollback";
 

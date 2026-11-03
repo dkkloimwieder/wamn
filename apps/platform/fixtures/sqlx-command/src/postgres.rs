@@ -9,7 +9,7 @@ mod bindings {
         world: "wamn:postgres-sqlx/postgres-sqlx@0.1.0",
         path: [
             "../../../../wit/wamn-postgres-0.4",
-            "wit",
+            "driver-wit",
         ],
         generate_all,
     });
@@ -592,7 +592,7 @@ pub struct WamnQueryResult {
 }
 
 impl WamnQueryResult {
-    pub fn rows_affected(&self) -> u64 {
+    pub fn rows_affected(self) -> u64 {
         self.rows_affected
     }
 }
@@ -1620,7 +1620,7 @@ mod tests {
                     .bind(true)
                     .execute(&mut **transaction)
                     .await
-                    .map(|result| result.rows_affected())
+                    .map(super::WamnQueryResult::rows_affected)
             })
         }))
         .expect("transaction result");

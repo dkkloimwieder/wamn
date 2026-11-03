@@ -1,4 +1,4 @@
-//! Real-transport acceptance gate for `wamn-postgres-sqlx` (wamn-0h0g.22.2a).
+//! Real-transport acceptance gate for the private `sqlx-command` driver (wamn-0h0g.22.2a).
 //!
 //! The separately built WASI command uses SQLx's generic API, while this host
 //! supplies the production `wamn:postgres` plugin and a real PostgreSQL 18

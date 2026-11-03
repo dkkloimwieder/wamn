@@ -887,7 +887,7 @@ mod tests {
         let statements = ComponentImports::new([STATEMENTS_INTERFACE.to_string()]);
         assert!(analyze_tenant(&statements, &granted, "application").is_ok());
 
-        // The imports of apps/platform/data/postgres-sqlx and
+        // The imports of the private sqlx-command driver and
         // apps/platform/execution/materializer.
         let platform = ComponentImports::new([
             "wamn:postgres/types@0.4.0".to_string(),
