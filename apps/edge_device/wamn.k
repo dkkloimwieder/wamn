@@ -3,7 +3,7 @@
 import manifest
 
 manifest.Package {
-    package = {id = "edge_device", version = "2.1.0", predecessor_version = "2.0.0"}
+    package = {id = "edge_device", version = "2.1.1", predecessor_version = "2.1.0"}
     required_platform_policy_contract = {id = "edge_device_data_access", state = "satisfied"}
     models = {}
     custom_operations = {

@@ -80,7 +80,7 @@ impl ReleaseFiles {
             .collect();
         std::fs::write(
             root.join("wamn.json"),
-            r#"{"package": {"id": "platform_fixture", "version": "2.1.0"}}"#,
+            r#"{"package": {"id": "platform_fixture", "version": "2.1.1"}}"#,
         )
         .unwrap();
         std::fs::create_dir_all(root.join("publication")).unwrap();

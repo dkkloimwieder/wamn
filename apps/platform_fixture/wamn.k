@@ -6,7 +6,7 @@ _schema = "inventory"
 _errors_after_input = ["retry", "timeout", "permission_denied", "internal_error"]
 
 manifest.Package {
-    package = {id = "platform_fixture", version = "2.1.0", predecessor_version = "2.0.0"}
+    package = {id = "platform_fixture", version = "2.1.1", predecessor_version = "2.1.0"}
     required_platform_policy_contract = {id = "platform_fixture_data_access", state = "satisfied"}
     sequences = {
         label = {pattern = "L-{seq:n}"}

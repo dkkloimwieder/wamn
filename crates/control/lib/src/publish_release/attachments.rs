@@ -471,10 +471,10 @@ mod tests {
         ),
     ];
     const FIXTURE_ATTACHMENTS_DIGEST: &str =
-        "sha256:5657ceb19b28ad30c47373028e2e885354d53d537c8e385365256b031a852b3e";
+        "sha256:13f357d5a605b9193a153f0f425a5155ab2cc41cde6ada400c8db397ebd6417b";
     /// The rendered fixture declaration with its generated route entries.
     const FIXTURE_DECLARATION_DIGEST: &str =
-        "sha256:350629cd2eaaac8a009f2fde7dbf062c1be7bad93a15dfbbf4e89ea77fe639ef";
+        "sha256:06410f1c216c3cbde5d598a30ec9e27690f18295ead32e81dbd137e955b56fb3";
 
     /// The overlay authors no attachments file, and a publish still reads
     /// every route entry that generation wrote beside the missing file.
@@ -580,7 +580,7 @@ mod tests {
                 declaration["operations"]
                     .as_object_mut()
                     .unwrap()
-                    .remove(&format!("platform-fixture:{operation}@2.1.0"))
+                    .remove(&format!("platform-fixture:{operation}@2.1.1"))
                     .is_some()
             );
         }

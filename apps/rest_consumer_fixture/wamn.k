@@ -1,7 +1,7 @@
 import manifest
 
 manifest.Package {
-    package = {id = "rest_consumer_fixture", version = "0.1.0"}
+    package = {id = "rest_consumer_fixture", version = "0.1.1", predecessor_version = "0.1.0"}
     required_platform_policy_contract = {id = "rest_consumer_fixture_data_access", state = "satisfied"}
     models = {
         item = manifest.Model("item", "rest_consumer_fixture") {

@@ -150,7 +150,7 @@ mod tests {
             assert_eq!(declaration.scope.env_key, scope.env_key);
             if declaration.component == "fixture_overlay" {
                 assert_eq!(declaration.scope.package_id, "platform_fixture_overlay");
-                assert_eq!(declaration.scope.package_version, "2.1.0");
+                assert_eq!(declaration.scope.package_version, "2.1.1");
             } else {
                 assert_eq!(declaration.scope.package_id, scope.package_id);
                 assert_eq!(declaration.scope.package_version, scope.package_version);

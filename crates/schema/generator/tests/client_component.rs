@@ -156,7 +156,7 @@ fn forms_keep_repeated_groups_domains_and_reserved_input_exclusion() {
     }
     assert_eq!(
         form["submit"],
-        json!({"id":"platform-fixture:widget/record-batch@2.1.0", "label":"Record a batch"})
+        json!({"id":"platform-fixture:widget/record-batch@2.1.1", "label":"Record a batch"})
     );
     assert!(source(&files, "widget").contains("\"value.line[]\": {"));
 }
@@ -211,7 +211,7 @@ fn descriptions_carry_reference_display_fields_and_label_navigation() {
         let reference = &value["presentation"]["references"]["maker_id"];
         assert_eq!(
             reference["operation"],
-            "platform-fixture:widget-maker/query@2.1.0"
+            "platform-fixture:widget-maker/query@2.1.1"
         );
         assert_eq!(reference["keyField"], "id");
         assert_eq!(reference["displayField"], "name");
@@ -286,7 +286,7 @@ fn delete_has_confirmation_and_uses_the_operation_label() {
     assert_eq!(
         description(&files, "widget", "WidgetDeleteDelete"),
         json!({
-            "id":"platform-fixture:widget/delete@2.1.0", "title":"Remove widget", "confirmation":"Confirm Remove widget?"
+            "id":"platform-fixture:widget/delete@2.1.1", "title":"Remove widget", "confirmation":"Confirm Remove widget?"
         })
     );
 }
@@ -306,7 +306,7 @@ fn unserved_operations_emit_no_description_and_generation_is_stable() {
     let second = emit(&ir);
     assert!(!source(&first, "widget").contains("export const WidgetCreateForm"));
     assert!(
-        source(&first, "index").contains("platform-fixture:widget/create@2.1.0: no HTTP route")
+        source(&first, "index").contains("platform-fixture:widget/create@2.1.1: no HTTP route")
     );
     assert_eq!(
         first

@@ -3,14 +3,14 @@
 import manifest
 
 manifest.Package {
-    package = {id = "platform_fixture_overlay", version = "2.1.0", predecessor_version = "2.0.0"}
+    package = {id = "platform_fixture_overlay", version = "2.1.1", predecessor_version = "2.1.0"}
     # The pin is the contract with the base: its version and the digest of its
     # built component. Nothing here imports the base's wamn.k.
     base_dependencies = {
         base_fixture = {
             package = "platform_fixture"
-            version = "2.1.0"
-            digest = "sha256:33e4dcc80d975cb86b0a4aa5a1c721c821a55c0066f22b03f9cd517b4562963d"
+            version = "2.1.1"
+            digest = "sha256:b32531a9acd4884b53fba549d936417188084d3236c262a722f4fe3bc61254ba"
             operations = ["widget.archive"]
         }
     }

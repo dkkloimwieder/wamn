@@ -51,7 +51,7 @@ it("invokes every public operation with its route, effects and abort options", a
     await widget[name]({ invoke }, [], options);
     expect(invoke).toHaveBeenCalledExactlyOnceWith(
       {
-        operation: `platform-fixture:widget/${operation}@2.1.0`,
+        operation: `platform-fixture:widget/${operation}@2.1.1`,
         method: ["get", "list", "query"].includes(operation) ? "GET" : "POST",
         template: `/widget/${operation.replaceAll("-", "_")}`,
         contract: expect.any(Object),
@@ -228,7 +228,7 @@ it("exposes authored descriptions through TypeScript symbols", () => {
   const docs = (symbol) => ts.displayPartsToString(symbol.getDocumentationComment(checker));
   const member = (name, field) => checker.getDeclaredTypeOfSymbol(symbol(name)).getProperty(field);
   expect(docs(symbol("WidgetRecordBatchRequest"))).toBe(
-    "Input for `platform-fixture:widget/record-batch@2.1.0`.\n\nOne submission that records several lines at once.",
+    "Input for `platform-fixture:widget/record-batch@2.1.1`.\n\nOne submission that records several lines at once.",
   );
   expect(docs(member("WidgetRecordBatchRequestValue", "note"))).toBe(
     "What the operator recorded about this batch.\n\n`text`, omittable",
@@ -237,6 +237,6 @@ it("exposes authored descriptions through TypeScript symbols", () => {
     "One line for each widget this batch records.\n\n`array`",
   );
   expect(docs(member("WidgetGetRequest", "id"))).toBe("`uuid`");
-  expect(docs(symbol("WidgetGetRequest"))).toBe("Input for `platform-fixture:widget/get@2.1.0`.");
+  expect(docs(symbol("WidgetGetRequest"))).toBe("Input for `platform-fixture:widget/get@2.1.1`.");
   expect(docs(member("WidgetGetResult", "code"))).toBe("The code an operator types to find one widget.\n\n`text`");
 });

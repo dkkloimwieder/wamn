@@ -2070,7 +2070,7 @@ manifest.Package {
         let verified = base
             .component_digest()
             .verify(base.component_digest().expected());
-        assert_eq!(verified.coordinate(), "platform_fixture@2.1.0");
+        assert_eq!(verified.coordinate(), "platform_fixture@2.1.1");
         assert_eq!(verified.digest(), base.component_digest().expected());
         assert_eq!(verified.superseded_pin(), None);
     }

@@ -575,7 +575,7 @@ async fn moved_bytes_under_an_applied_version_are_refused() {
     assert!(
         drift
             .to_string()
-            .contains("package-data-access-source-drift: package=platform_fixture@2.1.0"),
+            .contains("package-data-access-source-drift: package=platform_fixture@2.1.1"),
         "the immutable coordinate did not carry its drift refusal: {drift:#}"
     );
 
@@ -740,7 +740,7 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
         .batch_execute(
             "BEGIN; \
              SELECT set_config('app.user_id', '00000000-0000-4000-8000-0000000000f2', true), \
-                    set_config('app.operation', 'platform-fixture:widget-tag/update@2.1.0', true); \
+                    set_config('app.operation', 'platform-fixture:widget-tag/update@2.1.1', true); \
              UPDATE inventory.widget_tag SET label = 'logged' \
               WHERE id = '00000000-0000-4000-8000-00000000b003'; \
              COMMIT;",
@@ -784,7 +784,7 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
         entries[1],
         (
             "update".to_owned(),
-            "platform-fixture:widget-tag/update@2.1.0".to_owned(),
+            "platform-fixture:widget-tag/update@2.1.1".to_owned(),
             "00000000-0000-4000-8000-0000000000f2".to_owned(),
             r#"{"id": "00000000-0000-4000-8000-00000000b003"}"#.to_owned(),
             r#"{"label": "history-tag"}"#.to_owned(),
@@ -927,8 +927,8 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
     assert_eq!(
         recorded_manifests(&admin).await,
         BTreeMap::from([
-            ("platform_fixture@2.1.0".to_owned(), first.clone()),
-            ("platform_fixture_overlay@2.1.0".to_owned(), overlay_digest),
+            ("platform_fixture@2.1.1".to_owned(), first.clone()),
+            ("platform_fixture_overlay@2.1.1".to_owned(), overlay_digest),
         ]),
         "the comment does not name the presented manifest of each package"
     );
@@ -945,7 +945,7 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
     assert_eq!(
         recorded_manifests(&admin)
             .await
-            .get("platform_fixture@2.1.0"),
+            .get("platform_fixture@2.1.1"),
         Some(&second),
         "the comment kept a digest the application no longer came from"
     );
@@ -954,7 +954,7 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
             .query_one(
                 "SELECT artifact_digest FROM catalog.packages \
                   WHERE env_key = $1 AND package_id = 'platform_fixture' \
-                    AND package_version = '2.1.0'",
+                    AND package_version = '2.1.1'",
                 &[&ENV_KEY],
             )
             .await
@@ -974,7 +974,7 @@ async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
     assert!(
         drift
             .to_string()
-            .contains("package-data-access-source-drift: package=platform_fixture@2.1.0"),
+            .contains("package-data-access-source-drift: package=platform_fixture@2.1.1"),
         "the production path did not refuse the moved bytes: {drift:#}"
     );
 

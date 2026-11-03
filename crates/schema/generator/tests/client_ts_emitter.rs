@@ -36,7 +36,7 @@ fn emitted_bindings_preserve_transport_mapping_and_feed_behavior() {
     let mut handler = hidden.models[index].operations[0].clone();
     handler.name = "widget_archived".into();
     handler.type_ = "event_handler".into();
-    handler.operation = "platform-fixture:widget/widget-archived@2.1.0".into();
+    handler.operation = "platform-fixture:widget/widget-archived@2.1.1".into();
     hidden.models[index].operations.push(handler);
     hidden.models[index]
         .operations
@@ -120,7 +120,7 @@ fn invalid_client_names_refuse_before_emission() {
         assert_eq!(refusal.error_type(), ClientTsErrorType::IrreversibleName);
         assert_eq!(
             refusal.to_string(),
-            "irreversible_name: platform-fixture:widget/archive@2.1.0 field \"editVersion\" takes the member \"editVersion\", which maps back to \"edit_version\""
+            "irreversible_name: platform-fixture:widget/archive@2.1.1 field \"editVersion\" takes the member \"editVersion\", which maps back to \"edit_version\""
         );
 
         emit_ts_client(&release()).expect("every fixture name reverses");

@@ -399,7 +399,7 @@ mod tests {
             &app("platform_fixture"),
             "platform_fixture",
             "widget",
-            "platform-fixture:widget/archive@2.1.0",
+            "platform-fixture:widget/archive@2.1.1",
         );
         assert_eq!(
             archive.expect("the archive has a contract").idempotency,

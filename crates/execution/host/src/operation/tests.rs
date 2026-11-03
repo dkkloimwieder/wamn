@@ -46,7 +46,7 @@ fn a_custom_read_refuses_a_caller_without_its_grant() {
     )
     .expect("parse the fixture manifest");
     let operation = tokens
-        .get("platform-fixture:widget/list@2.1.0")
+        .get("platform-fixture:widget/list@2.1.1")
         .expect("the custom list read is its own operation grant");
     let denial = authorize_registered_operation(None, Some(operation))
         .expect_err("a caller without the grant is refused");

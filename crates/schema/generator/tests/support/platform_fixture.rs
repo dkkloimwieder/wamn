@@ -136,7 +136,7 @@ pub(crate) fn client_release_of(package: &GeneratedPackage) -> ClientContractIr 
     .map(|(model, name)| {
         // A contract identity spells its operation with hyphens, and a route
         // template keeps the operation path.
-        let identity = format!("platform-fixture:{model}/{}@2.1.0", name.replace('_', "-"));
+        let identity = format!("platform-fixture:{model}/{}@2.1.1", name.replace('_', "-"));
         (
             identity.clone(),
             RouteIr {

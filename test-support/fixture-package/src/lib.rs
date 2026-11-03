@@ -64,7 +64,7 @@ pub fn overlay_manifest_path() -> PathBuf {
     output_directory(OVERLAY_PACKAGE_ID).join("wamn.json")
 }
 
-/// Copy the fixture into a test-owned 2.2.0 successor of 2.1.0.
+/// Copy the fixture into a test-owned 2.2.0 successor of 2.1.1.
 ///
 /// The successor adds a nullable `widget_maker.note` field without a default.
 /// Every inherited migration and authored statement stays byte-identical. The
@@ -80,7 +80,7 @@ pub fn write_upgrade_package(root: &Path) -> PathBuf {
     copy_directory(&package_root(), root);
     let authored_path = root.join("wamn.k");
     let authored = std::fs::read_to_string(&authored_path).expect("read copied authored manifest");
-    let predecessor = "version = \"2.1.0\", predecessor_version = \"2.0.0\"";
+    let predecessor = "version = \"2.1.1\", predecessor_version = \"2.1.0\"";
     assert_eq!(
         authored.matches(predecessor).count(),
         1,
@@ -90,7 +90,7 @@ pub fn write_upgrade_package(root: &Path) -> PathBuf {
         authored_path,
         authored.replacen(
             predecessor,
-            "version = \"2.2.0\", predecessor_version = \"2.1.0\"",
+            "version = \"2.2.0\", predecessor_version = \"2.1.1\"",
             1,
         ),
     )

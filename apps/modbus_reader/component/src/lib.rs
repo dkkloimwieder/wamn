@@ -16,8 +16,8 @@ wit_bindgen::generate!({
     world: "wamn:modbus-example/application",
     generate_all,
     async: [
-        "export:modbus-reader:register/read@0.1.0#run",
-        "export:modbus-reader:register/read@0.1.0#run-json",
+        "export:modbus-reader:register/read@0.1.1#run",
+        "export:modbus-reader:register/read@0.1.1#run-json",
     ],
 });
 
