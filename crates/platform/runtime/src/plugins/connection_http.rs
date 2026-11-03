@@ -55,7 +55,16 @@ use transport::{ClientScope, ConnectionScope, HttpTransport};
 
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
-        world: "connection-http-plugin",
+        path: [
+            "../../../wit/wamn-connection",
+            "../../../wit/wamn-flow-http-routing",
+            "../../../wit/wamn-postgres-0.4",
+            "../../../wit/wamn-operation-0.1",
+            "../../../wit/wamn-jetstream",
+            "../../../wit/wasmcloud-blobstore",
+            "wit",
+        ],
+        world: "wamn:host/connection-http-plugin@0.1.0",
         imports: { default: async | trappable | tracing },
         wasmtime_crate: wash_runtime::wasmtime,
     });

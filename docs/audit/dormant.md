@@ -30,7 +30,7 @@ The owner gave these answers.
 
 Root made these decisions inside the brief.
 
-1. `wit/` is at the repository root. The old directories keep symbolic links, so readers that walk `wit/deps` work without a change.
+1. `wit/` is at the repository root. The owner refused symbolic links at the old paths, so the runtime bindings name each `wit/` package and its world in full, as the engine bindings do. The `bindgen!` path line in `wamn_jetstream.rs` follows the Option A ruling.
 2. The scope fence `platform/**` means `crates/control/lib/src/platform/**`.
 3. The guest commit of issue 2 waited for the repin, because its changed digests broke application preparation.
 4. The closure rule refuses only guest WIT paths into root workspace members. A wider rule refused 20 valid paths into generated output.

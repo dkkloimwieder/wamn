@@ -33,7 +33,16 @@
 #![allow(dead_code)]
 
 wash_runtime::wasmtime::component::bindgen!({
-    world: "blobstore-plugin",
+    path: [
+        "../../../wit/wamn-connection",
+        "../../../wit/wamn-flow-http-routing",
+        "../../../wit/wamn-postgres-0.4",
+        "../../../wit/wamn-operation-0.1",
+        "../../../wit/wamn-jetstream",
+        "../../../wit/wasmcloud-blobstore",
+        "wit",
+    ],
+    world: "wamn:host/blobstore-plugin@0.1.0",
     imports: { default: async | trappable | tracing },
     with: {
         "wasmcloud:blobstore/container.container": super::store::BoundContainer,

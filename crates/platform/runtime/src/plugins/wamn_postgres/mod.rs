@@ -130,7 +130,16 @@ pub use write_log::WriteLogStore;
 #[cfg(not(feature = "wasm_component_model_implements"))]
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
-        world: "postgres-plugin",
+        path: [
+            "../../../wit/wamn-connection",
+            "../../../wit/wamn-flow-http-routing",
+            "../../../wit/wamn-postgres-0.4",
+            "../../../wit/wamn-operation-0.1",
+            "../../../wit/wamn-jetstream",
+            "../../../wit/wasmcloud-blobstore",
+            "wit",
+        ],
+        world: "wamn:host/postgres-plugin@0.1.0",
         imports: { default: async | trappable | tracing },
         with: {
             "wamn:postgres/client.transaction": super::PgTransaction,
@@ -148,7 +157,16 @@ mod bindings {
 #[cfg(feature = "wasm_component_model_implements")]
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
-        world: "postgres-plugin",
+        path: [
+            "../../../wit/wamn-connection",
+            "../../../wit/wamn-flow-http-routing",
+            "../../../wit/wamn-postgres-0.4",
+            "../../../wit/wamn-operation-0.1",
+            "../../../wit/wamn-jetstream",
+            "../../../wit/wasmcloud-blobstore",
+            "wit",
+        ],
+        world: "wamn:host/postgres-plugin@0.1.0",
         imports: { default: async | trappable | tracing },
         named_imports: {
             "wamn:postgres/client": super::NamedProject,
