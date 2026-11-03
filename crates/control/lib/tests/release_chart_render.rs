@@ -18,6 +18,7 @@ use wamn_control::release_chart::{
 use wamn_engine::release_manifest::release_label;
 
 const DIGEST: &str = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+const WEB_DIGEST: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const NAMESPACE: &str = "wamn-system";
 
 fn repository_root() -> PathBuf {
@@ -136,6 +137,11 @@ fn render(chart: &Path, scratch: &Scratch, env: &str) -> Vec<Value> {
     rendered["webClients"] = serde_yaml::to_value(std::collections::BTreeMap::from([(
         input.route_host.clone(),
         "wamn_wms",
+    )]))
+    .unwrap();
+    rendered["webDigests"] = serde_yaml::to_value(std::collections::BTreeMap::from([(
+        input.route_host.clone(),
+        WEB_DIGEST,
     )]))
     .unwrap();
     std::fs::write(&path, serde_yaml::to_string(&rendered).expect("yaml")).expect("write values");
@@ -291,6 +297,7 @@ async fn the_release_chart_renders_one_host_group_and_its_role_workloads() {
     assert_eq!(row["host"], "wms.acme.example");
     assert_eq!(row["digest"], DIGEST);
     assert_eq!(row["clients"]["wms.acme.example"], "wamn_wms");
+    assert_eq!(row["webs"]["wms.acme.example"], WEB_DIGEST);
     assert_eq!(row["platformVersion"], "");
     for document in &documents {
         let annotations = &document["metadata"]["annotations"];

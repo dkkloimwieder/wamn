@@ -130,7 +130,9 @@ The name is also the host group of the environment.
 The chart holds the pinned runtime-operator subchart in host-only mode, which renders only the host.
 It adds one WorkloadDeployment for the `http` role and one for the `materializer` role.
 The `http` role starts the composed entry with `poolSize` 0, and a Service of the same name routes to it.
-When the environment has a route host, the chart also writes a ConfigMap that names the host, the release digest and the web clients.
+
+When the environment has a route host, the chart also writes a ConfigMap.
+Its `release.json` names the host, the release digest, client packages in `clients`, and pinned web digests in `webs`.
 The platform image set lives only in the default values of the chart. `wamn-ctl build-platform` stamps it.
 The release is named by its manifest digest alone.
 
@@ -142,6 +144,17 @@ Analysis makes sure that the artifact matches its digest and its package coordin
 Without `client`, the host serves no application web client.
 Revision values keep `webClients` for package ids and `webDigests` for web artifact digests.
 Apply reads the web artifact without claiming it, so environments can share one artifact.
+
+The Rust edge reads `release.json` for each request.
+It serves application files from `clients/<package>/<web digest hex>/` in the web bucket.
+The web digest must use `sha256:` and 64 lowercase hex digits.
+A host without a client package or web digest refuses with `the host has no web client`.
+The release digest does not select browser files.
+
+For application `config.json`, the edge adds `release` and `web` from the live release to the uploaded org and project.
+A web-only apply changes the bundle and `web`, while `release` stays the same.
+The edge caches other files by their full bucket path and serves `config.json` with `no-cache`.
+The platform UI still uses `platform-ui/<platform version>/` and its uploaded org configuration.
 
 `wamn-ctl env` has five verbs:
 

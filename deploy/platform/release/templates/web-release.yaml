@@ -5,5 +5,5 @@ metadata:
   name: {{ .Release.Name }}
   namespace: {{ .Release.Namespace }}
 data:
-  release.json: {{ dict "host" .Values.routeHost "digest" .Values.release.manifestDigest "clients" .Values.webClients "platformVersion" (ternary .Chart.AppVersion "" .Values.platformUi) | toJson | quote }}
+  release.json: {{ dict "host" .Values.routeHost "digest" .Values.release.manifestDigest "clients" .Values.webClients "webs" .Values.webDigests "platformVersion" (ternary .Chart.AppVersion "" .Values.platformUi) | toJson | quote }}
 {{- end }}

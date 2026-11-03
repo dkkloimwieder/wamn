@@ -68,6 +68,16 @@ fn prekind_install_renders() -> anyhow::Result<()> {
     assert_eq!(render.documents.len(), 2);
     assert_eq!(render.fixtures.releases.len(), 2);
     assert_eq!(render.cluster.org, "test");
+    let rows = render
+        .objects
+        .iter()
+        .filter_map(|(_, object)| object["data"]["release.json"].as_str())
+        .map(serde_json::from_str::<serde_json::Value>)
+        .collect::<Result<Vec<_>, _>>()?;
+    assert_eq!(rows.len(), 3);
+    for row in rows {
+        assert_eq!(row["webs"], json!({}));
+    }
     Ok(())
 }
 

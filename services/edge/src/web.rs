@@ -42,6 +42,7 @@ struct LiveRelease {
     host: String,
     digest: String,
     clients: BTreeMap<String, String>,
+    webs: BTreeMap<String, String>,
     platform_version: String,
 }
 
@@ -58,15 +59,17 @@ impl LiveRelease {
             .context("the host has no web client")?;
         ensure!(segment(package), "invalid client package");
         let hex = self
-            .digest
+            .webs
+            .get(host)
+            .context("the host has no web client")?
             .strip_prefix("sha256:")
-            .context("invalid release digest")?;
+            .context("invalid web digest")?;
         ensure!(
             hex.len() == 64
                 && hex
                     .bytes()
                     .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
-            "invalid release digest"
+            "invalid web digest"
         );
         Ok(format!("clients/{package}/{hex}"))
     }
@@ -156,7 +159,7 @@ struct File {
 #[derive(Debug)]
 struct Web {
     store: Option<Arc<dyn ObjectStore>>,
-    /// The object path includes the package and release digest (or platform version).
+    /// The object path includes the package and web digest (or platform version).
     files: RwLock<BTreeMap<String, File>>,
 }
 
@@ -195,7 +198,7 @@ impl Web {
         } else {
             self.files.read().await.get(&key).cloned()
         };
-        let file = if let Some(file) = cached {
+        let mut file = if let Some(file) = cached {
             file
         } else {
             let result = match store
@@ -224,6 +227,13 @@ impl Web {
             }
             file
         };
+        if config && row.platform_version.is_empty() {
+            let mut scope: serde_json::Map<String, serde_json::Value> =
+                serde_json::from_slice(&file.bytes).context("read web config.json")?;
+            scope.insert("release".into(), row.digest.clone().into());
+            scope.insert("web".into(), row.webs[host].clone().into());
+            file.bytes = serde_json::to_vec(&scope)?.into();
+        }
         let length = file.bytes.len();
         Ok(Response::builder()
             .header(CONTENT_TYPE, file.content_type)
@@ -374,8 +384,13 @@ mod tests {
     fn row(digit: char) -> LiveRelease {
         LiveRelease {
             host: "app.example.com".into(),
-            digest: format!("sha256:{}", digit.to_string().repeat(64)),
+            digest: format!("sha256:{}", "c".repeat(64)),
             clients: [("app.example.com".into(), "app".into())].into(),
+            webs: [(
+                "app.example.com".into(),
+                format!("sha256:{}", digit.to_string().repeat(64)),
+            )]
+            .into(),
             platform_version: String::new(),
         }
     }
@@ -392,6 +407,76 @@ mod tests {
 
     async fn body(response: Response<Full<Bytes>>) -> Bytes {
         response.into_body().collect().await.unwrap().to_bytes()
+    }
+
+    #[tokio::test]
+    async fn web_only_apply_changes_the_bundle_and_config_but_keeps_the_release() {
+        let store = Arc::new(InMemory::new());
+        let web = Web {
+            store: Some(store.clone()),
+            files: RwLock::new(BTreeMap::new()),
+        };
+        let first = row('a');
+        let second = row('b');
+        assert_ne!(
+            first.root(&first.host).unwrap(),
+            second.root(&second.host).unwrap()
+        );
+        for row in [&first, &second] {
+            put(
+                &store,
+                &row.root(&row.host).unwrap(),
+                "config.json",
+                r#"{"org":"acme","project":"app","release":"stale","web":"stale"}"#,
+            )
+            .await;
+            let response = web
+                .answer(row, &row.host, "/config.json", &Method::GET)
+                .await
+                .unwrap();
+            assert_eq!(response.headers()[CACHE_CONTROL], "no-cache");
+            let config: serde_json::Value = serde_json::from_slice(&body(response).await).unwrap();
+            assert_eq!(config["org"], "acme");
+            assert_eq!(config["project"], "app");
+            assert_eq!(config["release"], first.digest);
+            assert_eq!(config["web"], row.webs[&row.host]);
+        }
+    }
+
+    #[test]
+    fn application_root_requires_a_package_and_a_valid_web_digest() {
+        let mut row = row('a');
+        assert_eq!(
+            row.root(&row.host).unwrap(),
+            format!("clients/app/{}", "a".repeat(64))
+        );
+        for digest in [
+            "a".repeat(64),
+            format!("sha512:{}", "a".repeat(64)),
+            format!("sha256:{}", "a".repeat(63)),
+            format!("sha256:{}", "a".repeat(65)),
+            format!("sha256:{}", "A".repeat(64)),
+            format!("sha256:{}", "g".repeat(64)),
+            format!("sha256:../{}", "a".repeat(61)),
+        ] {
+            row.webs.insert(row.host.clone(), digest);
+            assert_eq!(
+                row.root(&row.host).unwrap_err().to_string(),
+                "invalid web digest"
+            );
+        }
+        row.webs.clear();
+        assert_eq!(
+            row.root(&row.host).unwrap_err().to_string(),
+            "the host has no web client"
+        );
+        row.webs
+            .insert(row.host.clone(), format!("sha256:{}", "a".repeat(64)));
+        row.clients.clear();
+        assert_eq!(
+            row.root(&row.host).unwrap_err().to_string(),
+            "the host has no web client"
+        );
     }
 
     #[tokio::test]
@@ -456,7 +541,10 @@ mod tests {
         };
         let row = row('a');
         let root = row.root(&row.host).unwrap();
-        for value in ["first", "changed"] {
+        for (project, value) in [
+            ("first", r#"{"org":"acme","project":"first"}"#),
+            ("changed", r#"{"org":"acme","project":"changed"}"#),
+        ] {
             put(&store, &root, "config.json", value).await;
             let response = web
                 .answer(
@@ -468,9 +556,25 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(response.headers()[CACHE_CONTROL], "no-cache");
-            assert_eq!(body(response).await, value);
+            let length = response.headers()[CONTENT_LENGTH]
+                .to_str()
+                .unwrap()
+                .parse::<usize>()
+                .unwrap();
+            let bytes = body(response).await;
+            assert_eq!(length, bytes.len());
+            let config: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(config["project"], project);
+            assert_eq!(config["release"], row.digest);
+            assert_eq!(config["web"], row.webs[&row.host]);
         }
         assert!(web.files.read().await.is_empty());
+        let response = web
+            .answer(&row, &row.host, "/config.json", &Method::HEAD)
+            .await
+            .unwrap();
+        assert_eq!(response.headers()[CACHE_CONTROL], "no-cache");
+        assert!(body(response).await.is_empty());
     }
 
     #[tokio::test]
@@ -482,7 +586,19 @@ mod tests {
         };
         let mut row = row('a');
         row.platform_version = "0.1.68".into();
+        row.webs.clear();
         put(&store, "platform-ui/0.1.68", "index.html", "platform").await;
+        let config = r#"{"org":"acme"}"#;
+        put(&store, "platform-ui/0.1.68", "config.json", config).await;
+        assert_eq!(
+            body(
+                web.answer(&row, &row.host, "/config.json", &Method::GET)
+                    .await
+                    .unwrap()
+            )
+            .await,
+            config
+        );
         assert_eq!(
             body(
                 web.answer(&row, &row.host, "/", &Method::GET)

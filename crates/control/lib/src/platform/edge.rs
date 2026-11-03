@@ -258,7 +258,6 @@ pub(super) async fn check(
     document: &ClusterDocument,
     environments: &Path,
     directory: &Path,
-    registry: &wamn_package_artifact::PackageRegistry,
     mut progress: impl FnMut(&str) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     if document.buckets.web.is_empty() {
@@ -272,7 +271,7 @@ pub(super) async fn check(
     let chart: Value =
         serde_yaml::from_slice(&std::fs::read(directory.join("release-chart/values.yaml"))?)?;
     // Only a host whose release serves a web client has an index to check.
-    let web = super::check::web_hosts(target, &routes, registry).await?;
+    let web = super::check::web_hosts(target, &routes).await?;
     for host in routes.keys().filter(|host| !web.contains(*host)) {
         progress(&format!(
             "4.20 Edge bucket check {host}: skipped: no web client"
@@ -508,12 +507,6 @@ mod tests {
             &document,
             Path::new("/absent"),
             Path::new("/absent"),
-            &wamn_package_artifact::PackageRegistry {
-                artifact_base: "localhost:5000/packages".into(),
-                registry_auth_file: "/absent".into(),
-                insecure_registry: true,
-                oci_ca_paths: Vec::new(),
-            },
             |line| {
                 lines.push(line.to_owned());
                 Ok(())

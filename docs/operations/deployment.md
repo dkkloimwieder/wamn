@@ -303,6 +303,13 @@ The edge sends `/api/<application>/files` and its child paths there before the g
 File requests keep the full path. Other API requests lose the `/api` prefix.
 
 The Rust edge reads the live release and serves its bucket files.
+For an application, it selects `clients/<package>/<web digest hex>/` from the host's pinned package and web digest.
+The digest uses `sha256:` and 64 lowercase hex digits. A missing or invalid web digest refuses.
+
+The edge adds `release` and `web` to the uploaded `config.json`, which supplies `org` and `project`.
+Both fields contain full `sha256:` digests. The edge serves this file with `no-cache`.
+A web-only apply changes the bundle and `web`, while `release` stays the same.
+
 In kind, the Receiving edge case uses the command. [Cluster tests](cluster-tests.md) describes that case.
 
 - An application never learns a deployment fact at build time. The same static files serve every environment.

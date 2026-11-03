@@ -129,7 +129,7 @@ pub(super) async fn apply(
     let web = if document.buckets.web.is_empty() {
         BTreeSet::new()
     } else {
-        web_hosts(target, &routes.iter().cloned().collect(), registry).await?
+        web_hosts(target, &routes.iter().cloned().collect()).await?
     };
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
@@ -222,12 +222,11 @@ pub(super) fn api_route(
     anyhow::bail!("release has no protected HTTP route without path parameters")
 }
 
-/// The route hosts whose release.json names a client package for that host,
+/// The route hosts whose release.json names a web digest for that host,
 /// plus the platform UI hosts that carry a platform version.
 pub(super) async fn web_hosts(
     target: &Target,
     routes: &BTreeMap<String, String>,
-    _registry: &PackageRegistry,
 ) -> anyhow::Result<BTreeSet<String>> {
     let mut hosts = BTreeSet::new();
     for (host, name) in routes {
@@ -246,18 +245,18 @@ pub(super) async fn web_hosts(
                 .with_context(|| format!("hosts/{name} has no release.json"))?,
         )
         .with_context(|| format!("decode hosts/{name} release.json"))?;
-        if live["platformVersion"]
-            .as_str()
-            .is_some_and(|version| !version.is_empty())
-        {
-            hosts.insert(host.clone());
-            continue;
-        }
-        if live["clients"][host.as_str()].as_str().is_some() {
+        if serves_web(&live, host) {
             hosts.insert(host.clone());
         }
     }
     Ok(hosts)
+}
+
+fn serves_web(live: &Value, host: &str) -> bool {
+    live["platformVersion"]
+        .as_str()
+        .is_some_and(|version| !version.is_empty())
+        || live["webs"][host].as_str().is_some()
 }
 
 async fn kind_check(
@@ -427,6 +426,20 @@ pub(super) fn kind_inputs(host: &str, method: &str, path: &str) -> job::JobInput
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn application_web_checks_require_the_hosts_web_digest() {
+        let host = "app.example.com";
+        let mut live = json!({"clients": {(host): "app"}, "webs": {}, "platformVersion": ""});
+        assert!(!serves_web(&live, host));
+        live["webs"] = json!({"other.example.com": format!("sha256:{}", "a".repeat(64))});
+        assert!(!serves_web(&live, host));
+        live["webs"][host] = json!(format!("sha256:{}", "b".repeat(64)));
+        assert!(serves_web(&live, host));
+        live["webs"] = json!({});
+        live["platformVersion"] = json!("0.1.68");
+        assert!(serves_web(&live, host));
+    }
 
     #[test]
     fn certificate_serial_matches_pem_and_der_and_refuses_truncation() {

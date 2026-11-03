@@ -103,6 +103,8 @@ routeHost: ""
 applications: {}
 # Host to client package id; env apply resolves the package from its declaration.
 webClients: {}
+# Host to pinned web artifact digest.
+webDigests: {}
 # The control release serves the platform UI at the chart version.
 platformUi: false
 # One entry per role: `{name: http | materializer, config: {}, environment: {}}`.

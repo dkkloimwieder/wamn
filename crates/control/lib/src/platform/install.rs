@@ -200,7 +200,6 @@ pub async fn apply(
         document,
         environments,
         work_directory,
-        registry,
         &mut progress,
     )
     .await?;
