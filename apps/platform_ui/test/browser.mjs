@@ -59,7 +59,7 @@ async function capture(page, screen) {
       );
     }
   }
-  assert.equal(await root.getAttribute("data-ui-density"), "compact");
+  assert.equal(await root.getAttribute("data-ui-density"), "default");
   assert.equal(await root.getAttribute("data-ui-theme"), null);
   assert.ok(
     await root.locator(".ui-dashboard-panel, .platform-table-screen, .ui-entry-panel").count(),
@@ -270,7 +270,7 @@ try {
   assert.equal(new URL(page.url()).pathname, `${controlPath}/projects`);
   assert.equal(await page.getByRole("navigation", { name: "Primary navigation" }).count(), 1);
   assert.equal(await page.locator("#app > [data-ui]").count(), 1);
-  assert.equal(await page.locator("#app > [data-ui]").getAttribute("data-ui-density"), "compact");
+  assert.equal(await page.locator("#app > [data-ui]").getAttribute("data-ui-density"), "default");
 
   await page
     .getByRole("table", { name: "Projects", exact: true })
