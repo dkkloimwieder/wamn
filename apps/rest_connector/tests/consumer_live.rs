@@ -21,7 +21,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 };
 
 const ENV_KEY: &str = "rest--publication--test";
-const OPERATION: &str = "rest-consumer-fixture:item/record@0.1.0";
+const OPERATION: &str = "rest-consumer-fixture:item/record@0.1.1";
 const PASSWORD: &str = "rest-consumer-live-test";
 /// The execution role of the rest_connector item: exactly the operation its
 /// graph calls that needs a grant.
@@ -578,7 +578,7 @@ pub async fn invoke(
     .await?;
     let caller = run_caller(&admin, &workflow_host, &run, ROLE).await?;
     wamn_engine::router_delivery::authorize_registered_operation(Some(&caller), Some(OPERATION))?;
-    let finish_operation = "rest-connector:sync/finish@0.1.0";
+    let finish_operation = "rest-connector:sync/finish@0.1.1";
     let connector = admissions
         .iter()
         .find(|admission| admission.component() == "rest_connector")

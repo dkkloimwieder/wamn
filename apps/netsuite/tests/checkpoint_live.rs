@@ -146,7 +146,7 @@ pub async fn invoke(
         .clone();
     assert_eq!(
         registered.as_deref(),
-        Some("rest-consumer-fixture:item/record@0.1.0")
+        Some("rest-consumer-fixture:item/record@0.1.1")
     );
     wamn_engine::router_delivery::authorize_registered_operation(
         Some(&caller),
