@@ -1,4 +1,4 @@
-use wamn_platform_fixture_data_access::generated::sequences::{label, pick_label};
+use crate::data::generated::sequences::{label, pick_label};
 use wamn_postgres_statements::Transaction;
 
 use crate::exports::platform_fixture::number::issue as contract;
@@ -19,7 +19,7 @@ async fn handle(
         batch_id: request.batch_id,
     };
     let result = async {
-        let records = wamn_platform_fixture_data_access::count_widgets(transaction).await?;
+        let records = crate::data::count_widgets(transaction).await?;
         Ok::<_, wamn_postgres_statements::StatementError>(contract::IssueResult {
             records,
             bare: label::next().await?,

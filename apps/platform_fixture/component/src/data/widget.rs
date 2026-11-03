@@ -2,16 +2,18 @@
 
 use wamn_postgres_statements::{Connection, StatementError, Transaction};
 
-use crate::error::{AccessError, AccessErrorType, Constraints};
-use crate::scalar;
-use crate::statements::wamn::{widget_archive, widget_list, widget_record_batch as batch_sql};
+use crate::data::error::{AccessError, AccessErrorType, Constraints};
+use crate::data::scalar;
+use crate::data::statements::wamn::{
+    widget_archive, widget_list, widget_record_batch as batch_sql,
+};
 
 #[doc(inline)]
-pub use crate::statements::wamn::widget_archive::ArchiveRow;
+pub use crate::data::statements::wamn::widget_archive::ArchiveRow;
 #[doc(inline)]
-pub use crate::statements::wamn::widget_list::ListRow;
+pub use crate::data::statements::wamn::widget_list::ListRow;
 #[doc(inline)]
-pub use crate::statements::wamn::widget_record_batch::FindWidgetRow;
+pub use crate::data::statements::wamn::widget_record_batch::FindWidgetRow;
 
 const MAX_BATCH_LINES: usize = 10;
 

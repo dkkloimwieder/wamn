@@ -32,7 +32,6 @@ members = [
     "platform/data/postgres-statements",
     "platform/data/postgres-sqlx",
     "platform/data/record-history",
-    "platform_fixture/data",
     "platform/fixtures/busyloop",
     "platform/fixtures/connection-http-standard",
     "platform/fixtures/sockprobe",
@@ -113,7 +112,6 @@ wamn-data-access = { path = "platform/data/access", version = "0.1.0" }
 wamn-postgres-statements = { path = "platform/data/postgres-statements", version = "0.1.0" }
 wamn-postgres-sqlx = { path = "platform/data/postgres-sqlx", version = "0.1.0" }
 wamn-record-history = { path = "platform/data/record-history", version = "0.1.0" }
-wamn-platform-fixture-data-access = { path = "platform_fixture/data", version = "0.1.0" }
 
 [profile.release]
 opt-level = "s"

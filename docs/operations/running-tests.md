@@ -398,7 +398,7 @@ cargo run --locked --offline -p wamn-test-infrastructure --example exclusion_dia
 The fixture starts disposable PostgreSQL, applies the platform fixture migration, and adds a test-only exclusion constraint on `widget`.
 It captures actual update failures under a non-superuser role.
 It regenerates the platform fixture code in a temporary copy.
-Then it runs the ignored test `error::tests::generated_update_exclusion_from_postgres` of `wamn-platform-fixture-data-access`.
+Then it runs the ignored test `data::error::tests::generated_update_exclusion_from_postgres` of `fixture`.
 `WAMN_EXCLUSION_DIAGNOSTICS` supplies the server diagnostics to that test.
 The fixture removes its database, generated copy, diagnostics, and build output when it finishes.
 The application schemas and generated files in the checkout do not change.

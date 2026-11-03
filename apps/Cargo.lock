@@ -344,7 +344,7 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
- "wamn-platform-fixture-data-access",
+ "wamn-data-access",
  "wamn-postgres-statements",
  "wit-bindgen",
 ]
@@ -1520,15 +1520,6 @@ dependencies = [
  "serde_json",
  "wamn-event-reg",
  "wamn-event-wire",
-]
-
-[[package]]
-name = "wamn-platform-fixture-data-access"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "wamn-data-access",
- "wamn-postgres-statements",
 ]
 
 [[package]]

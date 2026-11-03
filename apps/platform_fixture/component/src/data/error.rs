@@ -188,8 +188,8 @@ impl Constraints {
 mod tests {
     use wamn_postgres_statements::StatementErrorType;
 
-    use crate::generated::error::{Constraints, Error};
-    use crate::generated::widget::sql;
+    use crate::data::generated::error::{Constraints, Error};
+    use crate::data::generated::widget::sql;
 
     // The exclusion diagnostics example supplies actual PostgreSQL diagnostics,
     // and generates the fixture again with the exclusion the diagnostics name.

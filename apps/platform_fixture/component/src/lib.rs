@@ -5,15 +5,21 @@
 
 //! One package-grain component exporting every platform fixture operation.
 
+#[expect(
+    dead_code,
+    reason = "private data modules retain the complete generated and authored refusal vocabulary"
+)]
+mod data;
+
 mod number;
 mod widget;
 mod widget_maker;
 
-use wamn_platform_fixture_data_access::AccessError;
+use crate::data::AccessError;
 
 /// The generated operations, whole.
 mod generated {
-    use wamn_platform_fixture_data_access::generated as data;
+    use crate::data::generated as data;
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../target/wamn/platform_fixture/component/mod.rs"

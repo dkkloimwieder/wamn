@@ -2,11 +2,11 @@
 
 use wamn_postgres_statements::{Connection, StatementError};
 
-use crate::error::{AccessError, Constraints};
-use crate::statements::wamn::widget_maker_list;
+use crate::data::error::{AccessError, Constraints};
+use crate::data::statements::wamn::widget_maker_list;
 
 #[doc(inline)]
-pub use crate::statements::wamn::widget_maker_list::ListRow;
+pub use crate::data::statements::wamn::widget_maker_list::ListRow;
 
 /// List every widget maker in name order.
 ///

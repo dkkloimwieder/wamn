@@ -5,7 +5,7 @@
 
 use wamn_postgres_statements::{Numeric, Uuid};
 
-use crate::error::{AccessError, AccessErrorType};
+use crate::data::error::{AccessError, AccessErrorType};
 
 pub(crate) fn uuid(field: &str, value: &str) -> Result<Uuid, AccessError> {
     wamn_data_access::scalar::uuid(value)

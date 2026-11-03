@@ -1,7 +1,7 @@
 //! Migration-IR projections of the custom operations of the platform fixture.
 //!
 //! The generated operations include their own accessors, in
-//! [`crate::generated`].
+//! [`crate::data::generated`].
 
 /// Runtime projections carrying only admitted statement paths.
 pub(crate) mod wamn {

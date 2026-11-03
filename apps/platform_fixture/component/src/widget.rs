@@ -1,4 +1,4 @@
-use wamn_platform_fixture_data_access::widget;
+use crate::data::widget;
 use wamn_postgres_statements::{Connection, Transaction};
 
 use crate::detail;
