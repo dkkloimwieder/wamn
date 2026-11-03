@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio_postgres::Client;
 use uuid::Uuid;
-use wamn_platform_identity::auth_changes::AuthChanges;
+use wamn_platform_identity::PrincipalId;
+use wamn_platform_identity::auth_changes::{AuthChanges, AuthDrops};
 use wamn_platform_identity::nats::PlatformNats;
 
 use database::{
@@ -29,6 +30,11 @@ const AUTH_PROPAGATION: Duration = Duration::from_secs(5);
 #[serde(deny_unknown_fields)]
 pub(crate) struct Inputs {
     project_pg_url: String,
+    /// The system database that holds the caller's `project-admin`.
+    system_pg_url: String,
+    org: String,
+    project: String,
+    environment: String,
     auth_nats: AuthNatsInputs,
     route_endpoint: String,
     route_host: String,
@@ -933,9 +939,10 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
         "authority",
     );
     let before = snapshot(db, &fixture).await?;
-    // The caller holds `admin`, which has no permission row to remove, so the
-    // fixture uses the role writer to revoke and invalidate each holder, then
-    // restore it after the denied call. Under
+    // The caller holds `admin` through `project-admin`, and only the system
+    // authority revokes it. The fixture revokes `project-admin` of each holder
+    // and projects the change into the environment, as the control route does,
+    // then restores it after the denied call. Under
     // `docs/architecture/execution.md#auth-memory`, a host drops grants on
     // delivery of the invalidation, or at MEMORY_TTL if delivery fails. Poll the
     // replay for AUTH_PROPAGATION, so a delivery failure still fails the case.
@@ -949,51 +956,22 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
         nats_tls_server_name: Some(inputs.auth_nats.server_name.clone()),
     })
     .await?;
-    let mut writer = connect(&inputs.project_pg_url).await?;
     let holders = db
         .query(
-            "SELECT u.email FROM platform.user_role AS r \
-             JOIN platform.\"user\" AS u ON u.id=r.user_id \
-             WHERE r.role_name=$1 ORDER BY u.id",
+            "SELECT user_id::text FROM platform.user_role WHERE role_name=$1 ORDER BY user_id",
             &[&inputs.caller_role],
         )
         .await?
         .into_iter()
-        .map(|row| row.get::<_, String>(0))
-        .collect::<Vec<_>>();
+        .map(|row| row.get::<_, String>(0).parse::<PrincipalId>())
+        .collect::<Result<Vec<_>, _>>()?;
     ensure!(
         !holders.is_empty(),
         "authority fixture found no holder of {}",
         inputs.caller_role
     );
-    for user in &holders {
-        async {
-            let tx = writer.client.transaction().await?;
-            let user_id: String = tx
-                .query_one(
-                    "SELECT id::text FROM platform.\"user\" WHERE email=$1",
-                    &[user],
-                )
-                .await?
-                .get(0);
-            let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
-            let outcome = wamn_platform_identity::application::mutate_grant(
-                &tx,
-                &inputs.env_key,
-                wamn_platform_identity::application::GrantAuthority::Provisioning,
-                wamn_platform_identity::application::GrantChange::UserRole {
-                    user_id: &user_id,
-                    role: &inputs.caller_role,
-                    grant: false,
-                },
-                &mut drops,
-            )
-            .await?;
-            tx.commit().await?;
-            auth.publish(drops).await;
-            anyhow::Ok(outcome)
-        }
-        .await?;
+    for holder in &holders {
+        project_admin(inputs, &auth, holder, false).await?;
     }
     let denied = async {
         route
@@ -1004,35 +982,8 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
     .await;
     let denied_state = snapshot(db, &fixture).await;
     let mut restored = Ok(());
-    for user in &holders {
-        let result = async {
-            let tx = writer.client.transaction().await?;
-            let user_id: String = tx
-                .query_one(
-                    "SELECT id::text FROM platform.\"user\" WHERE email=$1",
-                    &[user],
-                )
-                .await?
-                .get(0);
-            let mut drops = wamn_platform_identity::auth_changes::AuthDrops::default();
-            let outcome = wamn_platform_identity::application::mutate_grant(
-                &tx,
-                &inputs.env_key,
-                wamn_platform_identity::application::GrantAuthority::Provisioning,
-                wamn_platform_identity::application::GrantChange::UserRole {
-                    user_id: &user_id,
-                    role: &inputs.caller_role,
-                    grant: true,
-                },
-                &mut drops,
-            )
-            .await?;
-            tx.commit().await?;
-            auth.publish(drops).await;
-            anyhow::Ok(outcome)
-        }
-        .await;
-        restored = restored.and(result.map(|_| ()));
+    for holder in &holders {
+        restored = restored.and(project_admin(inputs, &auth, holder, true).await);
     }
     let denied = denied?;
     restored?;
@@ -1056,6 +1007,66 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
         evidence,
         &json!({"case":"denied-then-authorized","fixture":fixture.id.to_string(),"result":"pass"}),
     )
+}
+
+/// Grant or revoke `project-admin` of one principal in the system authority,
+/// then project its application authority into the environment.
+async fn project_admin(
+    inputs: &Inputs,
+    auth: &AuthChanges,
+    principal: &PrincipalId,
+    grant: bool,
+) -> Result<()> {
+    let mut system = connect(&inputs.system_pg_url).await?;
+    let mut target = connect(&inputs.project_pg_url).await?;
+    let mut drops = AuthDrops::default();
+    let authority =
+        wamn_control::provision_project_env::provisioning_transaction(&mut system.client).await?;
+    if grant {
+        wamn_platform_identity::assign_project_role(
+            &authority,
+            principal,
+            &inputs.org,
+            &inputs.project,
+            wamn_platform_identity::control::PROJECT_ADMIN_ROLE,
+            &mut drops,
+        )
+        .await?;
+    } else {
+        wamn_platform_identity::org::revoke_project_admin(
+            &authority,
+            principal,
+            &inputs.org,
+            &inputs.project,
+            &mut drops,
+        )
+        .await?;
+    }
+    authority.commit().await?;
+    let authority = system.client.transaction().await?;
+    let transaction = target.client.transaction().await?;
+    transaction
+        .batch_execute(&wamn_control_provision::bind_platform_principal_sql(
+            wamn_control_provision::PlatformComponent::Provisioning,
+        ))
+        .await?;
+    wamn_platform_identity::application::project_authority(
+        &authority,
+        &transaction,
+        wamn_platform_identity::application::ApplicationScope {
+            org: &inputs.org,
+            project: &inputs.project,
+            env: &inputs.environment,
+            env_key: &inputs.env_key,
+        },
+        principal,
+        &mut drops,
+    )
+    .await?;
+    transaction.commit().await?;
+    authority.commit().await?;
+    auth.publish(drops).await;
+    Ok(())
 }
 
 pub(crate) fn assert_histories_with_cancellation(

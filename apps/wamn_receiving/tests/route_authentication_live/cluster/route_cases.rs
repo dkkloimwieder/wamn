@@ -56,7 +56,9 @@ async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
         )?;
         let path = evidence.join("receiving-correctness.jsonl");
         let inputs = serde_json::from_value(json!({
-            "project_pg_url":route.database_url,"route_endpoint":endpoint,
+            "project_pg_url":route.database_url,"system_pg_url":cluster.inputs.system_pg_url,
+            "org":super::super::identity().org.as_str(),"project":super::super::identity().project.as_str(),
+            "environment":super::super::identity().environment.as_str(),"route_endpoint":endpoint,
             "auth_nats":auth_nats,
             "route_host":cluster.inputs.route_host,"operator_secret":cluster.inputs.operator_secret_output,
             "env_key":super::super::identity().env_key().as_str(),"caller_role":"admin","evidence_file":path,

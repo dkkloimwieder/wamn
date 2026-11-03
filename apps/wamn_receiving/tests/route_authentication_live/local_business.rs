@@ -21,7 +21,7 @@ async fn command_histories() -> anyhow::Result<()> {
     let scratch = ScratchRoot::create()?;
     let application = start(system.url(), project.url(), scratch.path()).await?;
     let result = async {
-        histories(&application, project.url(), scratch.path()).await?;
+        histories(&application, system.url(), project.url(), scratch.path()).await?;
         acme_inspection(&application, project.url()).await?;
         reads(&application).await
     }
@@ -1053,6 +1053,7 @@ async fn reads(application: &LocalApplication) -> anyhow::Result<()> {
 
 async fn histories(
     application: &LocalApplication,
+    system_url: &str,
     database_url: &str,
     evidence: &std::path::Path,
 ) -> anyhow::Result<()> {
@@ -1064,7 +1065,9 @@ async fn histories(
             "cert":auth_nats.nats_tls_cert,"key":auth_nats.nats_tls_key,
             "server_name":auth_nats.nats_tls_server_name,
         },
-        "project_pg_url":database_url,"route_endpoint":application.endpoint,
+        "project_pg_url":database_url,"system_pg_url":system_url,
+        "org":super::identity().org.as_str(),"project":super::identity().project.as_str(),
+        "environment":super::identity().environment.as_str(),"route_endpoint":application.endpoint,
         "route_host":application.route_host,"operator_secret":application.caller_secret_path,
         "env_key":super::identity().env_key().as_str(),"caller_role":"admin","evidence_file":path,
         "component_digests":application.component_digests,
