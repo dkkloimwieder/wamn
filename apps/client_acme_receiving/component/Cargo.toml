@@ -6,10 +6,10 @@ description = "Package-grain Acme Receiving overlay operation component"
 license = "Apache-2.0"
 
 [dependencies]
+wamn-data-access = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 uuid.workspace = true
-wamn-client-acme-receiving-data-access = { workspace = true }
 wamn-postgres-statements = { workspace = true }
 wit-bindgen = { workspace = true }
 

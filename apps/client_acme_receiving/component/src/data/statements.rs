@@ -1,6 +1,6 @@
 //! Package-generator output carrying only admitted statement paths, for the
 //! custom operations. The generated operations include their own, in
-//! [`crate::generated`].
+//! [`crate::data::generated`].
 
 pub(crate) mod acme_record_receipt {
     include!(concat!(

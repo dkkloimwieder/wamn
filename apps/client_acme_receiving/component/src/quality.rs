@@ -5,7 +5,7 @@ use super::exports::client_acme_receiving::quality::{
     load_purchase_order_detail as detail_contract,
 };
 use super::{AccessError, NodeError, access_detail, private_node_error};
-use wamn_client_acme_receiving_data_access::operation;
+use crate::data::operation;
 
 pub(super) mod detail_codec {
     use super::detail_contract as contract;

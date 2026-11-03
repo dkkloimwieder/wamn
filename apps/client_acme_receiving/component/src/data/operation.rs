@@ -2,8 +2,8 @@
 
 use wamn_postgres_statements::{Connection, Transaction, Uuid as WamnUuid};
 
-use crate::error::AccessError;
-use crate::statements::{
+use crate::data::error::AccessError;
+use crate::data::statements::{
     acme_record_receipt as receipt_sql, quality_approve_inspection as approve_sql,
     quality_create_inspection as create_sql, quality_load_purchase_order_detail as detail_sql,
 };

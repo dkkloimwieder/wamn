@@ -5,9 +5,15 @@
 
 //! One package-grain component for executable Acme Receiving overlay operations.
 
+#[expect(
+    dead_code,
+    reason = "private data modules retain the complete generated and authored refusal vocabulary"
+)]
+mod data;
+
+use crate::data::{AccessError, AccessErrorType};
 use exports::client_acme_receiving::acme::record_receipt::Guest as RecordReceipt;
 use wamn::node::types::{Emission, ErrorDetail, NodeContext, NodeError};
-use wamn_client_acme_receiving_data_access::{AccessError, AccessErrorType};
 
 #[cfg(test)]
 mod codecs;
@@ -17,7 +23,7 @@ use quality::{approve_codec, detail_codec};
 
 /// The generated operations, whole.
 mod generated {
-    use wamn_client_acme_receiving_data_access::generated as data;
+    use crate::data::generated as data;
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../target/wamn/client_acme_receiving/component/mod.rs"
@@ -201,17 +207,13 @@ async fn record_receipt(
     let [outcome] = <[base::RecordReceiptOutcome; 1]>::try_from(outcomes)
         .map_err(|_| contract::RecordReceiptError::InternalError)?;
     let result = outcome.outcome.map_err(base_error)?;
-    wamn_client_acme_receiving_data_access::operation::record_inspection(
-        transaction,
-        &result.receipt_id,
-        &purchase_order_id,
-    )
-    .await
-    .map_err(|error| {
-        receipt_codec::map_error(error.error_type().literal(), |key| {
-            access_detail(&error, key, "acme.record_receipt", None, None)
-        })
-    })?;
+    crate::data::operation::record_inspection(transaction, &result.receipt_id, &purchase_order_id)
+        .await
+        .map_err(|error| {
+            receipt_codec::map_error(error.error_type().literal(), |key| {
+                access_detail(&error, key, "acme.record_receipt", None, None)
+            })
+        })?;
     Ok(contract::RecordReceiptResult {
         receipt_id: result.receipt_id,
         purchase_order_id: result.purchase_order_id,
