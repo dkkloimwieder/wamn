@@ -3,5 +3,10 @@ name = "busyloop"
 version.workspace = true
 edition.workspace = true
 
+[[bin]]
+name = "busyloop"
+path = "src/main.rs"
+test = false
+
 [lints]
 workspace = true

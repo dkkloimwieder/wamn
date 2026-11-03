@@ -3,5 +3,10 @@ name = "sockprobe"
 version.workspace = true
 edition.workspace = true
 
+[[bin]]
+name = "sockprobe"
+path = "src/main.rs"
+test = false
+
 [lints]
 workspace = true

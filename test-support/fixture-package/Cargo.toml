@@ -5,6 +5,9 @@ edition.workspace = true
 description = "The platform-owned fixture application every platform test takes"
 license = "Apache-2.0"
 
+[lib]
+test = false
+
 [dependencies]
 tokio-postgres.workspace = true
 

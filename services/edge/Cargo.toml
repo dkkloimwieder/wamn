@@ -5,6 +5,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "wamn-edge"
+path = "src/main.rs"
+test = false
+
 [dependencies]
 # The edge links the engine and run-state and never wamn-runtime. The
 # dependency test measures what these bring.

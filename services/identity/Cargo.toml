@@ -5,6 +5,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "wamn-identity"
+path = "src/main.rs"
+test = false
+
 [features]
 test-util = []
 
