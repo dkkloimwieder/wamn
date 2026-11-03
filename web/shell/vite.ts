@@ -1,5 +1,5 @@
 /**
- * The Vite configuration every application in `apps/<app>/web/` shares.
+ * The Vite configuration every Solid application of the repository shares.
  *
  * The page serves one origin. The dev server carries `/password` to the
  * identity process and `/api` to the release, and strips `/api` on the way.
@@ -11,46 +11,16 @@
  */
 
 import { readFileSync } from "node:fs";
-import type { ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
+import solid from "@solidjs/vite-plugin";
+import type { Plugin, ProxyOptions } from "vite";
+import type { ViteUserConfig as UserConfig } from "vitest/config";
 
-/** One proxied path. Vite reads the same shape. */
-interface Proxy {
-  readonly target: string;
-  readonly secure?: boolean;
-  readonly changeOrigin?: boolean;
-  readonly headers?: Record<string, string>;
-  readonly rewrite?: (path: string) => string;
-}
+/** The one Solid release that every application bundles. */
+const SOLID_VERSION = "2.0.0-rc.18";
 
-/** A dev server plugin. Vite reads the same shape. */
-interface DevPlugin {
-  readonly name: string;
-  readonly configureServer: (server: {
-    readonly middlewares: {
-      use(path: string, handle: (request: unknown, response: ServerResponse) => void): unknown;
-    };
-  }) => void;
-}
-
-/**
- * The part of a Vite configuration this module writes. It states the shape
- * itself, because the shell and each application install their own Vite.
- */
-export interface ApplicationConfig {
-  /** The dev server answers `/config.json` from `dev.json`. A build has none. */
-  readonly plugins: DevPlugin[];
-  readonly resolve: {
-    readonly dedupe: string[];
-  };
-  readonly server: {
-    readonly port: number;
-    readonly proxy?: Record<string, Proxy>;
-    readonly fs: { readonly allow: string[] };
-  };
-  /** The build writes into the package's build output directory, which it owns. */
-  readonly build: { readonly outDir: string; readonly emptyOutDir: boolean };
-}
+/** The part of a Vite configuration that `applicationConfig` writes. */
+export type ApplicationConfig = Required<Pick<UserConfig, "plugins" | "resolve" | "server" | "build">>;
 
 /** What one application states about itself. */
 export interface ApplicationOptions {
@@ -81,7 +51,7 @@ function devConfiguration(): DevConfiguration {
 }
 
 /** The proxy to the local stack, from `dev.json` and the base URL the dev loop printed. */
-function proxy(parsed: DevConfiguration): Record<string, Proxy> {
+function proxy(parsed: DevConfiguration): Record<string, ProxyOptions> {
   const route = process.env["WAMN_ROUTE_URL"];
   if (route === undefined) {
     throw new Error("set WAMN_ROUTE_URL to the base URL the dev loop printed");
@@ -102,7 +72,7 @@ function proxy(parsed: DevConfiguration): Record<string, Proxy> {
  * The dev server answers `/config.json` with the org and the project of
  * `dev.json`, as `wamn web upload` writes the file beside `index.html`.
  */
-function scopePlugin(dev: DevConfiguration): DevPlugin {
+function scopePlugin(dev: DevConfiguration): Plugin {
   return {
     name: "wamn-scope",
     configureServer(server) {
@@ -115,8 +85,47 @@ function scopePlugin(dev: DevConfiguration): DevPlugin {
 }
 
 /**
- * The resolution and the server of one application. The application adds its
- * own plugins, because it installs them.
+ * The build stops unless the bundle holds Solid `SOLID_VERSION` only, and
+ * no module of the Solid 1 UI packages that `web/ui` and `web/components` held.
+ */
+function solidVersion(application: string): Plugin {
+  return {
+    name: "solid-version",
+    generateBundle(_options, bundle) {
+      const modules = Object.values(bundle).flatMap((item) => (item.type === "chunk" ? Object.keys(item.modules) : []));
+      const solid = modules.filter((id) => /\/solid-js\//.test(id));
+      if (solid.length === 0 || solid.some((id) => !id.includes(`solid-js@${SOLID_VERSION}/`))) {
+        this.error(`The ${application} bundle must contain only Solid ${SOLID_VERSION}: ${solid.join(", ")}`);
+      }
+      if (modules.some((id) => /\/web\/(ui|components)\//.test(id))) {
+        this.error(`The ${application} bundle imports a Solid 1 UI package`);
+      }
+    },
+  };
+}
+
+/**
+ * The policy of every Solid application: the Solid compiler, the browser
+ * resolution with one copy of Solid, the Solid version check and the test
+ * environment. `dedupe` names further packages that must resolve once.
+ */
+export function solidApplication(
+  application: string,
+  dedupe: readonly string[] = [],
+): Required<Pick<UserConfig, "plugins" | "resolve" | "test">> {
+  return {
+    plugins: [solid({ performanceTracks: false }), solidVersion(application)],
+    resolve: {
+      conditions: ["browser", "development|production"],
+      dedupe: ["solid-js", "@solidjs/web", "@solidjs/signals", ...dedupe],
+    },
+    test: { environment: "jsdom", server: { deps: { inline: true } } },
+  };
+}
+
+/**
+ * The server and the output of one application. The dev server alone adds
+ * the scope response and the proxy to the local stack.
  */
 export function applicationConfig(options: ApplicationOptions): ApplicationConfig {
   const at = (path: string) => fileURLToPath(new URL(path, options.root));
@@ -125,7 +134,7 @@ export function applicationConfig(options: ApplicationOptions): ApplicationConfi
   const dev = options.command === "serve" ? devConfiguration() : undefined;
   return {
     plugins: dev === undefined ? [] : [scopePlugin(dev)],
-    resolve: { dedupe: [] },
+    resolve: {},
     server: {
       port: options.port,
       ...(dev === undefined ? {} : { proxy: proxy(dev) }),
@@ -136,30 +145,36 @@ export function applicationConfig(options: ApplicationOptions): ApplicationConfi
   };
 }
 
-/** One output file of a bundle. Vite reads the same shape. */
-interface BundleItem {
-  readonly type: string;
-  code?: string;
-}
-
-/** A build plugin. Vite reads the same shape. */
-interface BuildPlugin {
-  readonly name: string;
-  readonly enforce: "post";
-  readonly generateBundle: (options: unknown, bundle: Record<string, BundleItem>) => void;
+/**
+ * The inputs of a build with the @wfe/sync worker: the pages, and `worker`,
+ * which the build writes as `sw.js` at the root of the output, so that its
+ * scope covers every page. Every other entry goes to `assets/`.
+ */
+export function workerBuild(
+  root: string,
+  pages: Readonly<Record<string, string>>,
+  worker: string,
+): NonNullable<NonNullable<UserConfig["build"]>["rollupOptions"]> {
+  const at = (path: string) => fileURLToPath(new URL(path, root));
+  return {
+    input: { ...Object.fromEntries(Object.entries(pages).map(([name, path]) => [name, at(path)])), sw: at(worker) },
+    output: {
+      entryFileNames: (chunk: { name: string }) => (chunk.name === "sw" ? "sw.js" : "assets/[name]-[hash].js"),
+    },
+  };
 }
 
 /**
  * The @wfe/sync worker recipe: `sw.js` precaches every other bundle file and
  * the named files that Vite does not bundle, such as public assets.
  */
-export function precacheManifest(extra: readonly string[]): BuildPlugin {
+export function precacheManifest(extra: readonly string[]): Plugin {
   return {
     name: "precache-manifest",
     enforce: "post",
     generateBundle(_options, bundle) {
       const chunk = bundle["sw.js"];
-      if (chunk?.type !== "chunk" || chunk.code === undefined) throw new Error("sw.js was not built");
+      if (chunk?.type !== "chunk") throw new Error("sw.js was not built");
       const files = Object.keys(bundle).filter((name) => name !== "sw.js");
       chunk.code = chunk.code.replace("__PRECACHE_MANIFEST__", JSON.stringify(["./", ...files, ...extra]));
     },

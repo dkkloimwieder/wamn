@@ -5,16 +5,19 @@
   "private": true,
   "sideEffects": false,
   "exports": {
-    ".": "./vite.ts"
+    ".": "./vite.ts",
+    "./bundle": "./bundle.ts"
   },
   "scripts": {
     "check": "pnpm --workspace-root run wfe:build && tsc --project tsconfig.json",
     "test": "pnpm --workspace-root run wfe:build && vitest run"
   },
   "dependencies": {
+    "@solidjs/vite-plugin": "3.0.0-next.50",
     "@solidjs/web": "2.0.0-rc.18",
     "@wfe/sync": "workspace:*",
-    "solid-js": "2.0.0-rc.18"
+    "solid-js": "2.0.0-rc.18",
+    "vite": "^8.3.3"
   },
   "devDependencies": {
     "@solid-primitives/interaction": "1.0.0-next.4",

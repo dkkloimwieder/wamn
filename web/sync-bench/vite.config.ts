@@ -1,8 +1,6 @@
-import { fileURLToPath } from "node:url";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import solid from "@solidjs/vite-plugin";
 import { defineConfig } from "vitest/config";
-import { applicationConfig, precacheManifest } from "@wamn/vite";
+import { applicationConfig, precacheManifest, solidApplication, workerBuild } from "@wamn/vite";
 
 /** Serve the live page and install assets at the application's audience path. */
 export function livePage(request: IncomingMessage, _response: ServerResponse, next: () => void) {
@@ -24,22 +22,17 @@ export default defineConfig(() => {
     port: 5190,
     command: "build",
   });
+  const solid = solidApplication("sync-bench", ["@tanstack/db"]);
   return {
     ...application,
+    ...solid,
     // The measurement page, and the packaging screen on a live host.
     build: {
       ...application.build,
-      rollupOptions: {
-        input: {
-          main: fileURLToPath(new URL("index.html", import.meta.url)),
-          live: fileURLToPath(new URL("live.html", import.meta.url)),
-          sw: fileURLToPath(new URL("src/sw.ts", import.meta.url)),
-        },
-        output: { entryFileNames: (chunk) => (chunk.name === "sw" ? "sw.js" : "assets/[name]-[hash].js") },
-      },
+      rollupOptions: workerBuild(import.meta.url, { main: "index.html", live: "live.html" }, "src/sw.ts"),
     },
     plugins: [
-      solid({ performanceTracks: false }),
+      ...solid.plugins,
       ...application.plugins,
       precacheManifest(["manifest.webmanifest", "icon.svg"]),
       {
@@ -52,10 +45,5 @@ export default defineConfig(() => {
         },
       },
     ],
-    resolve: {
-      conditions: ["browser", "development|production"],
-      dedupe: ["solid-js", "@solidjs/web", "@solidjs/signals", "@tanstack/db"],
-    },
-    test: { environment: "jsdom", server: { deps: { inline: true as const } } },
   };
 });
