@@ -1,5 +1,6 @@
 // ESLint for the hand-written web code: the TypeScript recommended rules and
-// the Solid rules. Generated output and build output are not linted.
+// the Solid rules. Generated clients and build output are not linted, and
+// wfe keeps its own lint policy.
 
 import js from "@eslint/js";
 import solid from "eslint-plugin-solid/configs/typescript";
@@ -11,21 +12,17 @@ export default tseslint.config(
     ignores: [
       "**/node_modules/**",
       "**/dist/**",
-      "web/demo/**",
       "web/wfe/**",
       "target/**",
       "apps/target/**",
+      // The generated clients, which `wamn build` writes and Git ignores.
+      "apps/platform_ui/src/generated/**",
+      "apps/wamn_receiving/web/src/generated/**",
+      "web/sync-bench/src/generated/**",
     ],
   },
   {
-    files: ["apps/platform_ui/**/*.{ts,tsx}"],
-    extends: [js.configs.recommended, ...tseslint.configs.recommended],
-    languageOptions: {
-      globals: { ...globals.browser, ...globals.node },
-    },
-  },
-  {
-    files: ["web/**/*.{ts,tsx}", "apps/*/web/**/*.{ts,tsx}"],
+    files: ["web/**/*.{ts,tsx}", "apps/*/web/**/*.{ts,tsx}", "apps/platform_ui/**/*.{ts,tsx}"],
     extends: [js.configs.recommended, ...tseslint.configs.recommended, solid],
     languageOptions: {
       globals: { ...globals.browser, ...globals.node },

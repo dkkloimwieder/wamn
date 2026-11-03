@@ -14,7 +14,7 @@ import { ControlHome } from "./control-home";
 import { Environment } from "./environment";
 import type { ScreenProps, ShellSection } from "./shell";
 
-export function Projects(props: ScreenProps): JSX.Element {
+function Projects(props: ScreenProps): JSX.Element {
   const page = createServerPage<{ name: string; state?: string; projectAdmin?: boolean }>(async (input) => {
     if (!props.holds(project.PROJECT_LIST_ROUTE.operation)) {
       const mine = value(await control.mine(props.transport, [input]));
@@ -79,7 +79,7 @@ export function Projects(props: ScreenProps): JSX.Element {
   );
 }
 
-export function CreateProject(props: ScreenProps): JSX.Element {
+function CreateProject(props: ScreenProps): JSX.Element {
   const defaults = { project: "" };
   const [values, setValues] = createSignal(defaults);
   const form = createForm({

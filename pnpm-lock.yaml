@@ -181,9 +181,6 @@ importers:
       '@typescript/native':
         specifier: npm:typescript@^7.0.2
         version: typescript@7.0.2
-      '@wfe/generator':
-        specifier: workspace:*
-        version: link:web/wfe/packages/generator
       eslint:
         specifier: ^10.12.0
         version: 10.12.0(jiti@2.7.0)

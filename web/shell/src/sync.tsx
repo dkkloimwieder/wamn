@@ -9,8 +9,6 @@ import { For, Show, createMemo, createSignal, untrack } from "solid-js";
 import { outboxStatus, type Outbox, type OutboxEntry, type ShellResult } from "@wfe/sync";
 import { shellStatus } from "./status.js";
 
-export { shellStatus };
-
 /** Pending, refused, last sent and current as of, for one outbox and one collection. */
 export function SyncStatusLine(props: {
   outbox: Outbox;
