@@ -356,6 +356,10 @@ packages = ["wamn-edge"]
 prerequisites = ["edge"]
 
 [[preparation]]
+packages = ["wamn-engine"]
+features = ["wasm_component_model_implements"]
+
+[[preparation]]
 packages = ["wamn-control", "wamn-ctl"]
 features = ["ops"]
 

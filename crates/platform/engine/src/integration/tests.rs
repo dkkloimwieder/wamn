@@ -6,11 +6,16 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use wit_component::{ComponentEncoder, StringEncoding, embed_component_metadata};
 use wit_parser::Resolve;
 
+#[cfg(feature = "wasm_component_model_implements")]
 use self::node_bindings::wamn::node::types::{Emission, NodeContext, NodeError};
 
 use super::*;
 use crate::component_admission::{ComponentAdmissionErrorType, validate_integration_admission};
 
+// The application tests import one interface under two names. The engine
+// parses such a component only with this feature enabled. The host enables it
+// in its Cargo manifest, and the test selection enables it for wamn-engine.
+#[cfg(feature = "wasm_component_model_implements")]
 mod node_bindings {
     wash_runtime::wasmtime::component::bindgen!({
         path: "../../../wit/wamn-node",
@@ -335,6 +340,7 @@ async fn enforced_integration_reaches_bound_private_address_and_never_opens_unbo
     Ok(())
 }
 
+#[cfg(feature = "wasm_component_model_implements")]
 struct Application {
     store: Store<SharedCtx>,
     run: wash_runtime::wasmtime::component::TypedFunc<
@@ -346,6 +352,7 @@ struct Application {
     _egress: Arc<dyn HostHandler>,
 }
 
+#[cfg(feature = "wasm_component_model_implements")]
 impl Application {
     async fn run(&mut self, connection: &str) -> anyhow::Result<Emission> {
         let (result,) = tokio::time::timeout(
@@ -360,6 +367,7 @@ impl Application {
     }
 }
 
+#[cfg(feature = "wasm_component_model_implements")]
 async fn application(
     connections: HashMap<String, Arc<Integration>>,
 ) -> anyhow::Result<Application> {
@@ -462,6 +470,7 @@ async fn application(
     })
 }
 
+#[cfg(feature = "wasm_component_model_implements")]
 #[tokio::test]
 async fn application_calls_production_integration_imports_in_a_separate_store() -> anyhow::Result<()>
 {
@@ -495,6 +504,7 @@ async fn application_calls_production_integration_imports_in_a_separate_store() 
     Ok(())
 }
 
+#[cfg(feature = "wasm_component_model_implements")]
 #[tokio::test]
 async fn application_routes_two_named_integrations_and_refuses_unbound() -> anyhow::Result<()> {
     let (modbus_listener, ip) = private_listener().await?;
@@ -559,6 +569,7 @@ async fn application_routes_two_named_integrations_and_refuses_unbound() -> anyh
     Ok(())
 }
 
+#[cfg(feature = "wasm_component_model_implements")]
 #[tokio::test]
 async fn an_undeclared_name_refuses_before_dispatch() -> anyhow::Result<()> {
     let integration = Arc::new(
