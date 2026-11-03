@@ -201,6 +201,30 @@ pub struct Data {
     pub repeated: Vec<String>,
 }
 
+/// The copied platform images whose digest in `fixture` is not the digest in `source`.
+pub fn stale_images(source: &Value, fixture: &Value) -> Vec<&'static str> {
+    const IMAGES: [&str; 5] = [
+        "/runtime-operator/runtime/image/tag",
+        "/platform/runner/image",
+        "/platform/gates/image",
+        "/platform/identity/image",
+        "/platform/edge/image",
+    ];
+    let digest = |values: &Value, path: &str| {
+        values
+            .pointer(path)
+            .and_then(Value::as_str)
+            .and_then(|image| image.split_once('@'))
+            .map(|(_, digest)| digest.to_owned())
+    };
+    IMAGES
+        .into_iter()
+        .filter(|path| {
+            digest(source, path).is_none() || digest(source, path) != digest(fixture, path)
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FailedCheck {
     pub step: String,
@@ -436,5 +460,28 @@ mod tests {
         );
         resume(2, &mut decoded.completed.clone())?;
         Ok(())
+    }
+
+    #[test]
+    fn a_fixture_chart_with_an_old_digest_is_stale() {
+        let chart = |digest: &str| {
+            serde_json::json!({
+                "runtime-operator": {"runtime": {"image": {"tag": format!("0.1.1@sha256:{digest}")}}},
+                "platform": {
+                    "runner": {"image": format!("r/wamn-runner:0.1.1@sha256:{digest}")},
+                    "gates": {"image": format!("r/wamn-gates:0.1.1@sha256:{digest}")},
+                    "identity": {"image": format!("r/wamn-identity:0.1.1@sha256:{digest}")},
+                    "edge": {"image": format!("r/wamn-edge-web:0.1.1@sha256:{digest}")},
+                },
+            })
+        };
+        assert!(stale_images(&chart("new"), &chart("new")).is_empty());
+        let mut fixture = chart("new");
+        fixture["platform"]["gates"]["image"] = "localhost:1/wamn-gates:0.1.1@sha256:old".into();
+        assert_eq!(
+            stale_images(&chart("new"), &fixture),
+            ["/platform/gates/image"]
+        );
+        assert_eq!(stale_images(&serde_json::json!({}), &fixture).len(), 5);
     }
 }

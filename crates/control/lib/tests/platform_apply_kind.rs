@@ -58,7 +58,8 @@ mod kind_checks;
 #[path = "support/platform_checks.rs"]
 mod platform_checks;
 use platform_checks::{
-    Data, FailedCheck, Fixture, Kept, STEPS, missing, resume, reuse_from, unchanged_versions,
+    Data, FailedCheck, Fixture, Kept, STEPS, missing, resume, reuse_from, stale_images,
+    unchanged_versions,
 };
 
 struct Run {
@@ -251,7 +252,7 @@ async fn platform_apply_kind() -> anyhow::Result<()> {
         success: false,
     };
     let setup = if run.reuse {
-        Ok(())
+        refresh(&run).await
     } else {
         prepare(&mut run).await
     };
@@ -281,13 +282,6 @@ async fn prepare(run: &mut Run) -> anyhow::Result<()> {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let version =
         steps::read_platform_version(&repository.join("deploy/platform/release/Chart.yaml"))?;
-    let source_chart = platform_images::source_chart(&repository, &directory)?;
-    let source_images = wamn_control::release_chart::image_set(&source_chart).await?;
-    let source_registry = source_images
-        .host
-        .split("/wamn-host")
-        .next()
-        .context("host registry")?;
     println!("work directory {}", directory.display());
     let port = registry(&name)?;
     run.kept.registry_port = port;
@@ -314,10 +308,7 @@ cluster.Cluster {{
         ),
     )?;
     let document = ClusterDocument::compile(&file).context("compile the kind cluster document")?;
-    copy_images(source_registry, &document.registry, &version).await?;
-    let fixture_chart = directory.join("fixture-chart");
-    stamp_registry(&repository, &document.registry, &version, &fixture_chart)?;
-    let chart: Value = serde_yaml::from_slice(&std::fs::read(fixture_chart.join("values.yaml"))?)?;
+    let chart = fixture_images(&repository, &directory, &document.registry, &version).await?;
     let environments = directory.join("environments");
     std::fs::create_dir(&environments)?;
     let (source, mut environment) = fixture_environment(&repository, "receiving")?;
@@ -411,6 +402,65 @@ cluster.Cluster {{
         wms_environment,
         host_group,
     });
+    Ok(())
+}
+
+/// Copies this checkout's images into the fixture registry and stamps the fixture chart from them.
+async fn fixture_images(
+    repository: &Path,
+    directory: &Path,
+    registry: &str,
+    version: &str,
+) -> anyhow::Result<Value> {
+    let source_chart = platform_images::source_chart(repository, directory)?;
+    let source_images = wamn_control::release_chart::image_set(&source_chart).await?;
+    let source_registry = source_images
+        .host
+        .split("/wamn-host")
+        .next()
+        .context("host registry")?;
+    copy_images(source_registry, registry, version).await?;
+    let fixture_chart = directory.join("fixture-chart");
+    if fixture_chart.exists() {
+        std::fs::remove_dir_all(&fixture_chart)?;
+    }
+    stamp_registry(repository, registry, version, &fixture_chart)?;
+    let chart: Value = serde_yaml::from_slice(&std::fs::read(fixture_chart.join("values.yaml"))?)?;
+    let source: Value = serde_yaml::from_slice(&std::fs::read(source_chart.join("values.yaml"))?)?;
+    let stale = stale_images(&source, &chart);
+    ensure!(
+        stale.is_empty(),
+        "fixture chart images differ from {}: {}",
+        source_chart.display(),
+        stale.join(", ")
+    );
+    Ok(chart)
+}
+
+/// A rerun runs this checkout's images, so a merged fix reaches the kept cluster.
+async fn refresh(run: &Run) -> anyhow::Result<()> {
+    let fixture = run.kept.fixture.as_ref().context("missing fixture setup")?;
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let version =
+        steps::read_platform_version(&repository.join("deploy/platform/release/Chart.yaml"))?;
+    ensure!(
+        version == fixture.version,
+        "the kept fixture runs platform {} but this checkout is {version}",
+        fixture.version
+    );
+    let chart = fixture_images(
+        &repository,
+        &run.kept.directory,
+        &fixture.document.registry,
+        &version,
+    )
+    .await?;
+    for name in ["test--receiving--dev.json", "a-unqualified-wms.json"] {
+        let path = run.kept.directory.join("environments").join(name);
+        let mut values: Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+        values["gates_image"] = chart["platform"]["gates"]["image"].clone();
+        std::fs::write(&path, serde_json::to_vec_pretty(&values)?)?;
+    }
     Ok(())
 }
 

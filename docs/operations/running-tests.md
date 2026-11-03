@@ -807,6 +807,9 @@ cargo test --locked -p wamn-control --test platform_apply_kind -- --ignored --ex
 
 The rerun skips earlier steps and runs the selected step and every later step whose dependencies completed.
 It uses saved inputs and does not rebuild earlier steps.
+It copies the images of this checkout into the kept registry again and stamps the fixture chart from them, so a merged fix runs.
+If a fixture image digest differs from `WAMN_RELEASE_CHART`, the rerun fails and names the image.
+If the platform version differs from the kept fixture, the rerun fails.
 The install remains one step because its Jobs already skip completed work by input digest.
 Step names and dependencies live in `STEPS` in `crates/control/lib/tests/support/platform_checks.rs`.
 An unknown name fails and lists the known names.
