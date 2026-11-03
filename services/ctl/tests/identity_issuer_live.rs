@@ -201,6 +201,9 @@ async fn stable_acl(admin: &Client) -> anyhow::Result<Vec<String>> {
 
 fn approved_identity_issuer_acl() -> Vec<String> {
     [
+        "column|identity|org_memberships.org|SELECT|false",
+        "column|identity|org_memberships.principal_id|SELECT|false",
+        "column|identity|org_memberships.status|SELECT|false",
         "column|identity|org_roles.org|SELECT|false",
         "column|identity|org_roles.principal_id|SELECT|false",
         "column|identity|org_roles.role|SELECT|false",
@@ -302,6 +305,9 @@ fn approved_identity_issuer_acl() -> Vec<String> {
 
 fn approved_pat_issuance_acl() -> Vec<String> {
     [
+        "column|identity|org_memberships.org|SELECT|false",
+        "column|identity|org_memberships.principal_id|SELECT|false",
+        "column|identity|org_memberships.status|SELECT|false",
         "column|identity|org_roles.org|SELECT|false",
         "column|identity|org_roles.principal_id|SELECT|false",
         "column|identity|org_roles.role|SELECT|false",
@@ -409,6 +415,7 @@ async fn upgrade_foundation_surface(
          REVOKE SELECT (principal_id,org,project,role) ON identity.project_roles FROM wamn_identity_issuer; \
          REVOKE SELECT (id) ON registry.orgs FROM wamn_identity_issuer; \
          REVOKE SELECT (principal_id,org,role) ON identity.org_roles FROM wamn_identity_issuer; \
+         REVOKE SELECT (principal_id,org,status) ON identity.org_memberships FROM wamn_identity_issuer; \
          REVOKE USAGE ON SCHEMA registry FROM wamn_identity_issuer;"
     ).await?;
     let foundation = stable_acl(admin).await?;
@@ -485,8 +492,8 @@ async fn upgrade_read_only_pat_surface(
     ).await?;
     let previous = stable_acl(admin).await?;
     anyhow::ensure!(
-        previous.len() == 37,
-        "exchange fixture must retain its 37 grants"
+        previous.len() == 40,
+        "exchange fixture must retain its 40 grants"
     );
     for (grant, revoke) in [
         (
