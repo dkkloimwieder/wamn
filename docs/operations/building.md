@@ -419,7 +419,7 @@ A change to these inputs requires generation and compilation again without a ver
 If the input digest and base packages match the build record and its outputs exist, `wamn build` prints that the package is current.
 It leaves the output files and `build.json` unchanged.
 An overlay reads the `build.json` of each base package, so build the base first.
-Every reader of `apps/target/wamn` calls `wamn_schema_generator::build_record::read_current` first, as `push-package` does.
+Package readers of `apps/target/wamn` call `wamn_schema_generator::build_record::read_current` first, as `push-package` does.
 If the package has no `build.json`, or its `inputs.digest` differs from the package tree, the reader refuses and tells you to run `wamn build`.
 If only the full digest changes, the build reuses generated output and rebuilds the package components and web client.
 Build records the new full digest, so readers accept the rebuilt output.
@@ -430,6 +430,10 @@ Run `pnpm install` at the repository root first.
 `build.json` records the digest of the web files as `outputs.web`, and `null` for a package without a web client.
 Each app's `vite.config.ts` names the same directory, so `pnpm run build` by hand writes there too.
 The build compiles the package's components as [above](#native-programs-and-app-components) describes.
+
+`wamn web build` builds a standalone web artifact against the recorded package contract.
+It permits web source changes and requires the compiled manifest to match `outputs.manifest`.
+See [web clients](web-upload.md#build-and-push) for its output, metadata, and registry commands.
 
 ### Package digest records
 

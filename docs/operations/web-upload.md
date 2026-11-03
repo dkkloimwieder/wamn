@@ -1,10 +1,56 @@
-# Web upload
+# Web clients
 
 `wamn web upload` writes built browser files to an S3 or Google Cloud Storage bucket.
 It uploads application clients from package artifacts or the platform UI from the local repository.
 It does not build files or change edge routing.
 [services/ctl/src/web.rs](../../services/ctl/src/web.rs) defines the arguments and output.
-[crates/control/lib/src/web_upload.rs](../../crates/control/lib/src/web_upload.rs) owns the upload behavior.
+[crates/control/lib/src/web_artifact.rs](../../crates/control/lib/src/web_artifact.rs) owns the upload behavior.
+
+## Build and push
+
+`wamn web build` builds one package's browser files with Vite through `pnpm run build`.
+First, run `wamn build` for that package to generate its contract and client bindings.
+Run `pnpm install` at the repository root before the web build.
+Then run these commands from the repository root:
+
+```bash
+wamn web build --package apps/wamn_receiving
+wamn web push --package apps/wamn_receiving \
+  --artifact-base registry.example/wamn/web \
+  --registry-auth-file /path/to/dockerconfig.json
+```
+
+The build writes `apps/target/wamn/<package>/web-artifact/dist/` and `web.json` beside it.
+The source package's compiled `wamn.json` must hash to `build.json`'s `outputs.manifest`.
+The build refuses a different digest or a package without `client_package`, and names the package.
+`web.json` contains three fields:
+
+- `client_package`: The client name from the compiled manifest.
+- `package`: `<id>@<version>` from the build record.
+- `contract_digest`: `outputs.manifest`, the digest of the canonical package manifest.
+
+Web source edits need only another `wamn web build` against that recorded contract.
+This command leaves the package build record unchanged.
+`wamn build` still builds its existing web output and includes it in package artifacts.
+The standalone directory remains separate from that output.
+
+The push packs `dist/` and canonical `web.json` into one tar layer in an OCI artifact.
+The tar sorts paths and fixes file modes, timestamps, and owners.
+It includes no host names and refuses links and special files.
+The OCI artifact type is `application/vnd.wamn.web.v1`.
+The layer media type is `application/vnd.wamn.web.v1.tar`, and the configuration is the OCI empty JSON object.
+The artifact digest is the SHA-256 of the canonical OCI image manifest.
+
+The tag is `<package>-web-<version>` under `--artifact-base`.
+An existing tag with the same digest returns `AlreadyPresent` without writes.
+An existing tag with different content refuses and names the tag and both digests.
+A changed web build therefore needs an unused tag before it can be pushed.
+The push uses the existing registry client and Docker credential reader.
+The registry arguments match `apply-package`: `--artifact-base`, `--registry-auth-file`, `--insecure-registry`, and repeatable `--oci-ca-path`.
+For an anonymous push, the credential file must explicitly contain `{"auths":{"<registry>":{}}}`.
+
+The upload commands below still read package artifacts and the local platform UI.
+They do not yet read standalone web artifacts.
 
 ## Arguments
 
@@ -25,7 +71,7 @@ wamn web upload --platform-ui --org <org> [--bucket <bucket URL>]
 
 A bucket URL uses `s3://<bucket>[/<prefix>]` or `gs://<bucket>[/<prefix>]`.
 The optional prefix adds a directory before the upload path.
-`Sink::store` in [web_upload.rs](../../crates/control/lib/src/web_upload.rs) reads `AWS_*` variables for S3.
+`Sink::store` in [web_artifact.rs](../../crates/control/lib/src/web_artifact.rs) reads `AWS_*` variables for S3.
 For Google Cloud Storage, it reads `GOOGLE_*` variables and Application Default Credentials, the credentials that Google client libraries use.
 The caller needs access to create objects in the bucket. Package uploads also read object metadata.
 The upload does not create the bucket or grant public access.
@@ -55,7 +101,7 @@ wamn web upload --platform-ui --org dkk --bucket gs://example-web/clients
 
 The uploader requires the chart version to equal the version in `deploy/platform/release/Chart.yaml`, which it reads at run time.
 It also requires the local file digest to match `PlatformBuildRecord.platform_ui` before it writes any object.
-[platform_ui_source](../../crates/control/lib/src/web_upload.rs) applies these rules.
+[platform_ui_source](../../crates/control/lib/src/web_artifact.rs) applies these rules.
 [platform_ui_digest](../../crates/control/lib/src/platform_build.rs) includes each relative file path and file digest, and requires `index.html`.
 
 The destination is `<prefix>/platform-ui/<platform version>/`.
@@ -120,12 +166,12 @@ Each write creates a new object and never replaces an existing object.
 A failed upload can leave objects behind. The command performs no rollback.
 A retry after a partial upload keeps each existing object whose bytes are equal, and refuses an object with other bytes.
 
-[write_files](../../crates/control/lib/src/web_upload.rs) accepts `index.html`, the service worker `sw.js`, and files under `assets/`.
+[write_files](../../crates/control/lib/src/web_artifact.rs) accepts `index.html`, the service worker `sw.js`, and files under `assets/`.
 Assets carry `Cache-Control: public, max-age=31536000, immutable`.
 The index, `sw.js` and generated `config.json` carry `Cache-Control: no-cache`.
 The accepted extensions are `html`, `js`, `css`, `json`, `map`, `svg`, `png`, `ico`, `woff2`, and `woff`.
 
-The [CLI](../../services/ctl/src/web.rs) and [upload implementation](../../crates/control/lib/src/web_upload.rs) report these errors:
+The [CLI](../../services/ctl/src/web.rs) and [upload implementation](../../crates/control/lib/src/web_artifact.rs) report these errors:
 
 | Error text | Cause or action |
 | --- | --- |

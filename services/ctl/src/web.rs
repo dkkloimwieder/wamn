@@ -1,12 +1,9 @@
-//! Web client files in a bucket (docs/operations/deployment.md#web-client-files).
-//!
-//! `wamn_control::web_upload` writes the built client of each package of the
-//! release that an environment serves, from its package artifact.
+//! Build, push, and upload web clients (docs/operations/web-upload.md).
 
 use anyhow::Context as _;
 use clap::{Args, Subcommand};
 use wamn_control::environment::Platform;
-use wamn_control::web_upload::{upload_platform_ui, upload_release};
+use wamn_control::web_artifact::{self, upload_platform_ui, upload_release};
 
 /// Web client commands.
 #[derive(Debug, Args)]
@@ -17,8 +14,28 @@ pub struct WebArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum WebCommand {
+    /// Build a package's web client and write web.json beside dist.
+    Build(BuildArgs),
+    /// Push a built web client as an immutable OCI artifact.
+    Push(PushArgs),
     /// Write the built web clients of the release an environment serves to a bucket.
     Upload(UploadArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct BuildArgs {
+    /// Source package whose build output holds build.json and wamn.json.
+    #[arg(long)]
+    pub package: std::path::PathBuf,
+}
+
+#[derive(Debug, Args)]
+pub struct PushArgs {
+    /// Source package whose web-artifact directory holds dist and web.json.
+    #[arg(long)]
+    pub package: std::path::PathBuf,
+    #[command(flatten)]
+    pub registry: crate::package_verbs::RegistryArgs,
 }
 
 #[derive(Debug, Args)]
@@ -56,6 +73,19 @@ pub struct UploadArgs {
 
 pub async fn run(args: WebArgs) -> anyhow::Result<()> {
     match args.command {
+        WebCommand::Build(args) => {
+            let output = web_artifact::build_web_artifact(&args.package).await?;
+            println!("{} built", output.display());
+            Ok(())
+        }
+        WebCommand::Push(args) => {
+            let root = web_artifact::artifact_output(&args.package);
+            let packed = web_artifact::pack_web_artifact(&root)?;
+            let pushed =
+                web_artifact::push_web_artifact(&packed, &args.registry.registry()).await?;
+            println!("{} {} {:?}", pushed.tag, pushed.digest, pushed.disposition);
+            Ok(())
+        }
         WebCommand::Upload(args) => upload(args).await,
     }
 }
@@ -72,7 +102,7 @@ async fn upload(args: UploadArgs) -> anyhow::Result<()> {
                 .context("--platform-ui requires --org")?,
             args.bucket
                 .as_deref()
-                .unwrap_or(wamn_control::web_upload::PLATFORM_UI_BUCKET),
+                .unwrap_or(web_artifact::PLATFORM_UI_BUCKET),
         )
         .await?;
         println!("platform-ui {location} written");
@@ -111,6 +141,26 @@ mod tests {
     struct Cli {
         #[command(flatten)]
         web: WebArgs,
+    }
+
+    #[test]
+    fn build_and_push_require_their_own_inputs() {
+        assert!(Cli::try_parse_from(["web", "build", "--package", "apps/client"]).is_ok());
+        assert!(Cli::try_parse_from(["web", "build"]).is_err());
+        assert!(
+            Cli::try_parse_from([
+                "web",
+                "push",
+                "--package",
+                "apps/client",
+                "--artifact-base",
+                "registry.example/web",
+                "--registry-auth-file",
+                "auth.json",
+            ])
+            .is_ok()
+        );
+        assert!(Cli::try_parse_from(["web", "push", "--package", "apps/client"]).is_err());
     }
 
     #[test]

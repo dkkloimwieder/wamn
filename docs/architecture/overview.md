@@ -40,6 +40,10 @@ Cargo owns membership, dependencies, features, and targets. Application manifest
 
 The CLI, the dev loop, and other callers call `wamn-control`, and `wamn-control` calls the lower libraries.
 `wamn-control` never depends on `wamn-ctl`.
+The control library owns standalone web artifacts in `web_artifact`.
+`wamn web build` binds browser files to the compiled package manifest digest recorded in `build.json`.
+`wamn web push` publishes a deterministic OCI artifact under an immutable tag.
+[Web clients](../operations/web-upload.md#build-and-push) defines its layout and commands.
 A deployed service never depends on `wamn-control`. The scenario worker reads component facts through `wamn-package-artifact`, as publish does.
 A `wamn-control` operation takes ordinary inputs, keeps its own validation, and returns its result without printing.
 

@@ -191,7 +191,7 @@ fn platform_ui_inputs(
     );
     let dist = crate::platform_build::platform_ui_dist(repository);
     let mut files = Vec::new();
-    crate::web_upload::collect(&dist, &mut files)?;
+    crate::web_artifact::collect(&dist, &mut files)?;
     for path in files {
         let relative = path
             .strip_prefix(&dist)?
@@ -311,7 +311,7 @@ mod tests {
         assert_eq!(request.environment["WAMN_RELEASE_CHART"], "/inputs/chart");
         assert!(request.arguments[0].starts_with("cd /inputs;"));
         let (source, root) =
-            crate::web_upload::platform_ui_source(&inputs, &inputs.join("chart")).unwrap();
+            crate::web_artifact::platform_ui_source(&inputs, &inputs.join("chart")).unwrap();
         assert_eq!(source, platform_ui_dist(&inputs));
         assert_eq!(root, "platform-ui/0.1.7");
         std::fs::remove_dir_all(work).unwrap();

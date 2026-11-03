@@ -962,8 +962,24 @@ pub(crate) async fn build_web(
     if !source.join("package.json").is_file() {
         return Ok(None);
     }
-    let web = std::path::absolute(package_output.join(WEB_OUTPUT))
-        .with_context(|| format!("resolve {}", package_output.display()))?;
+    let web = package_output.join(WEB_OUTPUT);
+    build_web_client(package_root, &web).await?;
+    Ok(Some(web_digest(&web)?))
+}
+
+/// Build the package's web client with Vite into `dist`.
+///
+/// # Errors
+///
+/// Refuses a missing web source, a failed process, or an unreadable output path.
+pub async fn build_web_client(package_root: &Path, dist: &Path) -> Result<()> {
+    let source = package_root.join(WEB_SOURCE);
+    ensure!(
+        source.join("package.json").is_file(),
+        "{} has no web/package.json",
+        package_root.display()
+    );
+    let web = std::path::absolute(dist).with_context(|| format!("resolve {}", dist.display()))?;
     let output = tokio::process::Command::new("pnpm")
         .current_dir(&source)
         .args(["run", "build", "--outDir"])
@@ -979,7 +995,7 @@ pub(crate) async fn build_web(
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    Ok(Some(web_digest(&web)?))
+    Ok(())
 }
 
 fn web_digest(web: &Path) -> Result<String> {

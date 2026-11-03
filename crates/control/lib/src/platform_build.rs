@@ -119,7 +119,7 @@ fn ui_build_record(repository: &Path) -> anyhow::Result<PlatformBuildRecord> {
 /// Digest the built platform UI, including its index and every asset.
 pub fn platform_ui_digest(dist: &Path) -> anyhow::Result<String> {
     let mut files = Vec::new();
-    crate::web_upload::collect(dist, &mut files)?;
+    crate::web_artifact::collect(dist, &mut files)?;
     ensure!(
         files.iter().any(|file| file == &dist.join("index.html")),
         "the platform UI build {} has no index.html",

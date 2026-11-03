@@ -27,7 +27,7 @@ enum Command {
     /// Run the package development loop, or stand up the environment it needs.
     #[command(args_conflicts_with_subcommands = true)]
     Dev(Box<DevArgs>),
-    /// Build a web client and write it to a bucket.
+    /// Build, push, or upload a web client.
     Web(wamn_ctl::web::WebArgs),
     /// Print layer 0, the canonical wamn.json, of a pushed package artifact.
     Inspect(wamn_ctl::artifact_verbs::InspectArgs),

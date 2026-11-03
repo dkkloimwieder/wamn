@@ -51,8 +51,8 @@ pub mod release_composition;
 mod schema_baseline;
 pub mod sql_params;
 pub mod verification_policy;
+pub mod web_artifact;
 pub mod web_scope;
-pub mod web_upload;
 pub mod workflow_lifecycle;
 
 #[cfg(test)]
