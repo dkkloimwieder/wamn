@@ -105,6 +105,9 @@ async fn the_control_login_reads_the_control_authority_of_its_org_and_nothing_el
             ))
             .await
             .expect("record the org and its project");
+        wamn_platform_identity::org::activate_org_membership(&transaction, user.id(), ORG)
+            .await
+            .expect("activate the org membership");
         wamn_platform_identity::assign_project_role(
             &transaction,
             user.id(),

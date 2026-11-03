@@ -1042,6 +1042,7 @@ async fn admitted_user(
     role: &str,
 ) -> anyhow::Result<IssuedPat> {
     let principal = create_user(admin, subject, subject, subject).await?;
+    wamn_platform_identity::org::activate_org_membership(admin, principal.id(), ORG).await?;
     assign_project_role(
         admin,
         principal.id(),
