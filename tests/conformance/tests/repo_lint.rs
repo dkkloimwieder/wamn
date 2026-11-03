@@ -54,7 +54,7 @@ if [[ "${1-}" == tree ]]; then
       fi
       ;;
     *" -p wamn-engine "*)
-      printf '%s\n' wamn-engine anyhow async-trait boon data-encoding hex hyper opentelemetry serde serde_json sha2 tokio tracing tracing-opentelemetry wamn-catalog wamn-component-policy wamn-event-wire wamn-execution-contract wamn-project-state wamn-run-state wamn-session wash-runtime wasmparser wasmtime wasmtime-wasi-http
+      printf '%s\n' wamn-engine anyhow async-trait boon data-encoding hex hyper opentelemetry serde serde_json sha2 tokio tracing tracing-opentelemetry wamn-catalog wamn-component-policy wamn-event-wire wamn-execution-contract wamn-project-state wamn-run-state wamn-session wash-runtime wasmparser wasmtime wasmtime-wasi wasmtime-wasi-http
       if [[ " $* " != *" --prune wash-runtime "* && " $* " != *" --depth 1 "* ]]; then
         printf '%s\n' async-nats hyper-rustls hyper-util opentelemetry-otlp redis tonic
       fi
