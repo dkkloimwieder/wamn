@@ -105,16 +105,8 @@ name = "label-render"
 version = "0.1.0"
 dependencies = [
  "dlmalloc",
- "label-template",
  "serde_json",
  "wit-bindgen",
-]
-
-[[package]]
-name = "label-template"
-version = "0.1.0"
-dependencies = [
- "serde_json",
 ]
 
 [[package]]

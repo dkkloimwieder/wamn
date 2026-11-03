@@ -7,7 +7,7 @@
 //! the gate's effect-free-case path. Nothing here declares that; it follows
 //! from the imports.
 //!
-//! The rendering lives in `label-template`, whose golden vectors test the ZPL
+//! The private template module renders ZPL. Its golden vectors test the ZPL
 //! bytes. Native unit tests in this crate cover the WIT boundary: parse,
 //! delegate, and translate the error exactly once.
 //!
@@ -45,6 +45,12 @@
 extern crate std;
 
 extern crate alloc;
+
+#[expect(
+    dead_code,
+    reason = "the typed error accessor is used by the golden vectors"
+)]
+mod template;
 
 use alloc::string::{String, ToString as _};
 
@@ -102,7 +108,7 @@ impl Guest for Component {
             // vocabulary. Every render refusal is caller-supplied input, so
             // they all land on the invalid-input arm carrying the render
             // kind's code.
-            let zpl = label_template::render(template_id, fields)
+            let zpl = template::render(template_id, fields)
                 .map_err(|error| invalid_input(error.code(), error.detail()))?;
             // ENRICHING, not replacing. An edge carries a payload verbatim, so
             // a node that emitted `{zpl}` alone would destroy every upstream

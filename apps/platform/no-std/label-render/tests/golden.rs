@@ -10,8 +10,15 @@
 //! 203 dpi and is PROVISIONAL — see `LABEL_GEOMETRY` in the crate root. When
 //! real stock is chosen these vectors move with it.
 
-use label_template::{RenderErrorType, TEMPLATE_IDS, render};
+#[expect(
+    redundant_imports,
+    reason = "the shared renderer imports alloc types for its no_std guest owner"
+)]
+#[path = "../src/template.rs"]
+mod template;
+
 use serde_json::json;
+use template::{RenderErrorType, TEMPLATE_IDS, render};
 
 const PACKAGING: &str = "\
 ^XA

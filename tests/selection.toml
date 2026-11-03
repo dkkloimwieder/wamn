@@ -276,7 +276,7 @@ targets = [
   { workspace="no-std", package="http-page", target="cdylib:http_page", tier="contract" },
   { workspace="no-std", package="http-request", target="cdylib:http_request", tier="contract" },
   { workspace="no-std", package="label-render", target="cdylib:label_render", tier="contract" },
-  { workspace="no-std", package="label-template", target="test:golden", tier="contract" },
+  { workspace="no-std", package="label-render", target="test:golden", tier="contract" },
   { workspace="no-std", package="transform", target="cdylib:transform", tier="unit" },
   { workspace="root", package="wamn-control", target="test:file_fixture_live", tier="live-postgres" },
   { workspace="root", package="wamn-control", target="test:install_sequence_live", tier="live-postgres" },

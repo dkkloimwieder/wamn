@@ -152,7 +152,7 @@ The label renderer is an effect-free transform from fields to ZPL printer text.
 The closed template set is `packaging`, `location`, and `product`.
 An unknown template refuses during declaration validation or rendering.
 
-The shared [label template library](../../apps/platform/no-std/label-template/src/lib.rs) emits `^PW812`, `^LL1218`, and `^MD0`.
+The shared [label template module](../../apps/platform/no-std/label-render/src/template.rs) emits `^PW812`, `^LL1218`, and `^MD0`.
 This means 812 by 1,218 dots for provisional 4-by-6-inch labels at 203 dpi.
 The geometry is provisional.
 There is no public interface for template authoring.

@@ -182,7 +182,7 @@ fn declared_dependency_paths(source: &str) -> Vec<(usize, String, DependencyKind
 ///
 /// Both directories are relative to the repository root, so a `..` that walks
 /// off the top of the tree fails to pop and is an escape. The resolution is
-/// lexical: `../label-template` from one member of a workspace names a sibling
+/// lexical: `../http-request` from one member of a workspace names a sibling
 /// member and is not an escape, which a leading-`..` test alone cannot tell.
 fn leaves_workspace(workspace_root: &Path, manifest_directory: &Path, declared: &str) -> bool {
     let mut resolved = manifest_directory.to_path_buf();
