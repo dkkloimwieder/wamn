@@ -7,6 +7,7 @@ version = 1
 exclusions = [
 ]
 targets = [
+  { workspace="root", package="wamn-integration-tests", target="bin:http-fixture", tier="contract" },
   { workspace="root", package="wamn-authoring-model", target="lib:wamn_authoring_model", tier="contract" },
   { workspace="root", package="wamn-authoring-model", target="test:contract", tier="contract" },
   { workspace="root", package="wamn-bench", target="bin:wamn-bench", tier="contract" },

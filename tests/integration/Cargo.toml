@@ -6,6 +6,9 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+base64 = { workspace = true }
+hmac = { workspace = true }
+ring = { workspace = true }
 wamn-credential-store = { workspace = true }
 anyhow = { workspace = true }
 async-nats = { workspace = true }
@@ -65,8 +68,6 @@ wasmtime-wasi-http = { workspace = true }
 # `wamn_catalog::fixture_graph` is gated behind `test-util`.
 wamn-catalog = { workspace = true, features = ["test-util"] }
 # The session fixture of the runtime tests, which control_client_live includes.
-base64 = { workspace = true }
-ring = { workspace = true }
 tokio-rustls = { workspace = true }
 wamn-run-state = { workspace = true, features = ["test-util"] }
 wamn-test-postgres = { workspace = true }
@@ -75,3 +76,7 @@ wamn-control = { workspace = true, features = ["ops"] }
 
 [lints]
 workspace = true
+
+[[bin]]
+name = "http-fixture"
+path = "src/bin/http-fixture/server.rs"

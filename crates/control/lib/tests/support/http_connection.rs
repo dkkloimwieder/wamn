@@ -17,7 +17,8 @@ pub use super::release_documents::http::{
 use super::{NAMESPACE, ORG, PACKAGE, PASSWORD, PROJECT, Run, USER};
 use wamn_catalog::ComponentDescriptor;
 
-pub(super) const NETSUITE_PRIVATE_KEY: &str = include_str!("http-fixture/fixtures/p256.pem");
+pub(super) const NETSUITE_PRIVATE_KEY: &str =
+    include_str!("../../../../../tests/integration/src/bin/http-fixture/fixtures/p256.pem");
 
 pub(super) fn netsuite_auth() -> Value {
     json!({
@@ -621,12 +622,10 @@ async fn assert_paged_inner(
 
 pub async fn prepare_image(run: &mut Run, repository: &Path) -> anyhow::Result<()> {
     let image = format!("{}-http-fixture:debug", run.cluster);
-    let source = repository.join("crates/control/lib/tests/support/http-fixture");
+    let source = repository.join("tests/integration/src/bin/http-fixture");
     let mut hash = ring::digest::Context::new(&ring::digest::SHA256);
     for file in [
         "Dockerfile",
-        "Cargo.toml",
-        "Cargo.lock",
         "server.rs",
         "netsuite.rs",
         "oauth.rs",
@@ -635,6 +634,11 @@ pub async fn prepare_image(run: &mut Run, repository: &Path) -> anyhow::Result<(
     ] {
         hash.update(&std::fs::read(source.join(file))?);
     }
+    hash.update(&std::fs::read(repository.join("Cargo.toml"))?);
+    hash.update(&std::fs::read(repository.join("Cargo.lock"))?);
+    hash.update(&std::fs::read(
+        repository.join("tests/integration/Cargo.toml"),
+    )?);
     let digest = hex::encode(hash.finish().as_ref());
     if !run.reuse || run.kept.fixture_source != digest {
         run.run(
@@ -643,9 +647,9 @@ pub async fn prepare_image(run: &mut Run, repository: &Path) -> anyhow::Result<(
                 "build",
                 "-t",
                 &image,
-                &repository
-                    .join("crates/control/lib/tests/support/http-fixture")
-                    .to_string_lossy(),
+                "-f",
+                &source.join("Dockerfile").to_string_lossy(),
+                &repository.to_string_lossy(),
             ],
         )
         .await?;

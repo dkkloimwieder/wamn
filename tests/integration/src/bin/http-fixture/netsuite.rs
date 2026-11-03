@@ -82,8 +82,7 @@ pub(super) fn respond(
                 return customers
                     .get(id)
                     .cloned()
-                    .map(ok)
-                    .unwrap_or_else(|| Response::error("404 Not Found"));
+                    .map_or_else(|| Response::error("404 Not Found"), ok);
             }
             if !input.is_object() {
                 return Response::error("400 Bad Request");

@@ -516,7 +516,8 @@ mod http_connection {
         API_KEY_HANDLE, AWS_HANDLE, INBOUND_SECRET, OUTBOUND_HANDLE, OUTBOUND_SECRET,
         bindings_match, credential_secret, paged_wiring, scheduled_wiring, signed_wiring,
     };
-    const NETSUITE_PRIVATE_KEY: &str = include_str!("support/http-fixture/fixtures/p256.pem");
+    const NETSUITE_PRIVATE_KEY: &str =
+        include_str!("../../../../tests/integration/src/bin/http-fixture/fixtures/p256.pem");
     #[test]
     fn scheduled_credentials_stay_within_the_environment_secret_grant() {
         use wamn_credential_store::kubernetes::{secret_name, service_account_name};

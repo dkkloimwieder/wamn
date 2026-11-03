@@ -247,7 +247,7 @@ The case does not call a RESTlet. The fixture unit tests cover the RESTlet echo 
 
 The test needs the platform images and stamped chart described in `environment_apply_kind.rs`.
 Build `edge_device`, `wamn_integration`, `rest_consumer_fixture`, `rest_connector` and `netsuite`, plus the debug CLI and CDC reader, before the run.
-The fixture image builds from `tests/support/http-fixture` under `crates/control/lib`.
+The fixture image builds the named `http-fixture` binary in `tests/integration` from the repository root.
 
 The case uses two SuiteQL pages, with a limit of two and `hasMore: false` on the second page.
 It seeds four consumer rows and advances the private, inactive CDC slot past those seed writes before starting the reader.

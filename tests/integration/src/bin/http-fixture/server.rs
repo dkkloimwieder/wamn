@@ -4,6 +4,7 @@ use hmac::{Hmac, KeyInit as _, Mac as _};
 use serde_json::json;
 use sha2::{Digest as _, Sha256};
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::io::{Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
@@ -81,10 +82,12 @@ fn verify_aws(method: &str, url: &url::Url, headers: &HashMap<String, &str>, bod
         let Some(value) = headers.get(name) else {
             return false;
         };
-        canonical.push_str(&format!(
-            "{name}:{}\n",
+        writeln!(
+            canonical,
+            "{name}:{}",
             value.split_whitespace().collect::<Vec<_>>().join(" ")
-        ));
+        )
+        .expect("writing to a String cannot fail");
     }
     let mut query = url
         .query_pairs()
@@ -110,9 +113,7 @@ fn verify_aws(method: &str, url: &url::Url, headers: &HashMap<String, &str>, bod
     let key = mac(&key, b"us-east-1");
     let key = mac(&key, b"execute-api");
     let key = mac(&key, b"aws4_request");
-    hex::decode(signature)
-        .ok()
-        .is_some_and(|value| value == mac(&key, to_sign.as_bytes()))
+    hex::decode(signature).is_ok_and(|value| value == mac(&key, to_sign.as_bytes()))
 }
 fn serve_socket(
     mut socket: TcpStream,

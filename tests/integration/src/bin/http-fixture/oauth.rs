@@ -148,8 +148,8 @@ pub(crate) mod tests {
             .1;
         let start = assertion.rfind('.').unwrap() + 1;
         assertion.replace_range(
-            start..start + 1,
-            if &assertion[start..start + 1] == "A" {
+            start..=start,
+            if &assertion[start..=start] == "A" {
                 "B"
             } else {
                 "A"
