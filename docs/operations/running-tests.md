@@ -203,7 +203,7 @@ The following commands select individual test targets:
 cargo test --locked --offline -p wamn-schema-generator --test platform_generation
 cargo test --locked --offline -p wamn-wms-tests --lib
 cargo test --manifest-path apps/Cargo.toml --locked --offline \
-  -p wamn-receiving-data-access --all-targets
+  -p receiving --all-targets
 ```
 
 The application READMEs identify additional tests and binary owners.
@@ -410,7 +410,7 @@ cargo run --locked --offline -p wamn-receiving-tests --example exclusion_diagnos
 ```
 
 The Receiving fixture does the same steps with the Receiving migration and a test-only exclusion constraint on `purchase_order`.
-Then it runs the ignored test `error::tests::generated_update_exclusion_from_postgres` of `wamn-receiving-data-access`.
+Then it runs the ignored test `data::error::tests::generated_update_exclusion_from_postgres` of `receiving`.
 
 ## Capture a run
 

@@ -1,6 +1,6 @@
 //! The statement accessors of the Receiving custom operations, materialized in
 //! the package. The generated operations include their own, in
-//! [`crate::generated`].
+//! [`crate::data::generated`].
 
 /// Runtime projections carrying only admitted statement paths.
 pub(crate) mod wamn {

@@ -1,7 +1,7 @@
 //! Typed read handlers over the existing application operations.
 
+use crate::data::{AccessError, AccessErrorType, read};
 use wamn_postgres_statements::{Connection, Uuid};
-use wamn_receiving_data_access::{AccessError, AccessErrorType, read};
 
 pub(super) fn error_detail(
     error: &AccessError,
@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn bounded_projection_rows_preserve_the_declared_wire_scalars() {
-        let row = wamn_receiving_data_access::read::ListLocationsRow {
+        let row = crate::data::read::ListLocationsRow {
             id: Uuid("00000000-0000-0000-0000-000000000001".to_owned()),
             location_code: "DOCK-A".to_owned(),
         };
@@ -257,7 +257,7 @@ mod tests {
             "a read outcome carries no request identity"
         );
 
-        let row = wamn_receiving_data_access::generated::receiving_load_receipt_screen::Row {
+        let row = crate::data::generated::receiving_load_receipt_screen::Row {
             purchase_order_id: Uuid("00000000-0000-0000-0000-000000000002".to_owned()),
             purchase_order_number: "PO-1".to_owned(),
             purchase_order_status: "open".to_owned(),
@@ -288,7 +288,7 @@ mod tests {
         assert_eq!(row["line_id"], "00000000-0000-0000-0000-000000000004");
         assert_eq!(row["ordered_quantity"], "12.3400");
 
-        let row = wamn_receiving_data_access::read::PurchaseOrderSummaryRow {
+        let row = crate::data::read::PurchaseOrderSummaryRow {
             purchase_order_id: Uuid("00000000-0000-0000-0000-000000000002".to_owned()),
             purchase_order_number: "PO-1".to_owned(),
             status: "open".to_owned(),

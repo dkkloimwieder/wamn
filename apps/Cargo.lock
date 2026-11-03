@@ -974,8 +974,10 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+ "wamn-data-access",
+ "wamn-execution-contract",
  "wamn-postgres-statements",
- "wamn-receiving-data-access",
+ "wamn-record-history",
  "wit-bindgen",
 ]
 
@@ -1565,18 +1567,6 @@ name = "wamn-postgres-statements"
 version = "0.1.0"
 dependencies = [
  "wit-bindgen",
-]
-
-[[package]]
-name = "wamn-receiving-data-access"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "uuid",
- "wamn-data-access",
- "wamn-execution-contract",
- "wamn-postgres-statements",
- "wamn-record-history",
 ]
 
 [[package]]

@@ -41,7 +41,7 @@ WAMN_DEV_ENV_SYSTEM_DATABASE_URL="$SYSTEM_DATABASE_URL" \
 "$CARGO_TARGET_DIR/debug/wamn" dev --config "$WAMN_DEV_ENV_DIR/dev.json" \
   --overlay-root "$PWD/apps/wamn_receiving" --watch --hold
 "$CARGO_TARGET_DIR/debug/wamn" dev clean-check --repository "$PWD" \
-  --package wamn-receiving-data-access \
+  --package receiving \
   --case operation::tests::envelope_requires_all_request_ids_before_item_processing \
   --result "$CHANGE_RESULT"
 ```
@@ -128,7 +128,7 @@ The covering case tests the message.
 
 ## Covering case
 
-`wamn dev clean-check` built the library tests of `wamn-receiving-data-access` in the apps workspace.
+`wamn dev clean-check` built the library tests of `receiving` in the apps workspace.
 It ran `operation::tests::envelope_requires_all_request_ids_before_item_processing` with the edit applied.
 The result records source `8934079994519c5d89e21a65f6514d6c378e8daf` with uncommitted changes, and it passed.
 A second run of the same test binary printed `1 passed; 0 failed; 0 ignored; 0 measured; 39 filtered out`.

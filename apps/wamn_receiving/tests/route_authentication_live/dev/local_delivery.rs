@@ -26,7 +26,7 @@ const MIGRATIONS: &str = "apps/wamn_receiving/migrations";
 const APPENDED: &str = "apps/wamn_receiving/migrations/0002_location_note.sql";
 const APPENDED_SQL: &[u8] = b"ALTER TABLE receiving.location ADD COLUMN note text;\n";
 const CODE_BEFORE: &str = "read::location_list(connection)";
-const CODE_AFTER: &str = "async { let mut rows = read::location_list(connection).await?; for row in &mut rows { row.location_code.push_str(\"-edited\"); } Ok::<_, wamn_receiving_data_access::AccessError>(rows) }";
+const CODE_AFTER: &str = "async { let mut rows = read::location_list(connection).await?; for row in &mut rows { row.location_code.push_str(\"-edited\"); } Ok::<_, crate::data::AccessError>(rows) }";
 const MANIFEST_BEFORE: &str = "table = \"location\"\n            owner = \"wamn_receiving\"\n            server_owned_fields = []";
 const MANIFEST_AFTER: &str = "table = \"location\"\n            owner = \"wamn_receiving\"\n            server_owned_fields = [\"note\"]";
 const APPENDED_EDIT: &[u8] =

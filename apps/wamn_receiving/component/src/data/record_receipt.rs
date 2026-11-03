@@ -12,8 +12,8 @@ use uuid::Uuid;
 use wamn_execution_contract::canonical_json_bytes;
 use wamn_postgres_statements::{Json, StatementError, TimestampTz, Transaction, Uuid as WamnUuid};
 
-use crate::error::{AccessError, AccessErrorType, AllowedConstraints};
-use crate::statements::wamn::receiving_record_receipt as generated;
+use crate::data::error::{AccessError, AccessErrorType, AllowedConstraints};
+use crate::data::statements::wamn::receiving_record_receipt as generated;
 
 /// Maximum number of receipt facts in one command request element.
 pub const MAX_RECORD_RECEIPT_LINES: usize = 100;

@@ -410,13 +410,14 @@ mod tests {
         let constraint = diagnostic["constraint"]
             .as_str()
             .expect("server constraint name");
-        let update = crate::generated::error::Constraints {
-            unique: crate::generated::purchase_order::sql::UPDATE_UNIQUE_CONSTRAINTS,
-            foreign_key: crate::generated::purchase_order::sql::UPDATE_FOREIGN_KEY_CONSTRAINTS,
-            check: crate::generated::purchase_order::sql::UPDATE_CHECK_CONSTRAINTS,
-            exclusion: crate::generated::purchase_order::sql::UPDATE_EXCLUSION_CONSTRAINTS,
+        let update = crate::data::generated::error::Constraints {
+            unique: crate::data::generated::purchase_order::sql::UPDATE_UNIQUE_CONSTRAINTS,
+            foreign_key:
+                crate::data::generated::purchase_order::sql::UPDATE_FOREIGN_KEY_CONSTRAINTS,
+            check: crate::data::generated::purchase_order::sql::UPDATE_CHECK_CONSTRAINTS,
+            exclusion: crate::data::generated::purchase_order::sql::UPDATE_EXCLUSION_CONSTRAINTS,
         };
-        let error = crate::generated::error::Error::from_parts(
+        let error = crate::data::generated::error::Error::from_parts(
             StatementErrorType::ExclusionViolation,
             Some(constraint),
             &update,
@@ -424,7 +425,7 @@ mod tests {
         );
         assert_eq!(
             error,
-            crate::generated::error::Error::ExclusionViolation {
+            crate::data::generated::error::Error::ExclusionViolation {
                 constraint: "purchase_order_supplier_id_excl".to_owned()
             }
         );

@@ -272,7 +272,6 @@ targets = [
   { workspace="apps", package="wamn-platform-fixture-data-access", target="lib:wamn_platform_fixture_data_access", tier="contract" },
   { workspace="apps", package="wamn-postgres-sqlx", target="lib:wamn_postgres_sqlx", tier="contract" },
   { workspace="apps", package="wamn-postgres-statements", target="lib:wamn_postgres_statements", tier="contract" },
-  { workspace="apps", package="wamn-receiving-data-access", target="lib:wamn_receiving_data_access", tier="contract" },
   { workspace="apps", package="wamn-record-history", target="lib:wamn_record_history", tier="contract" },
   { workspace="apps", package="wamn-record-history", target="test:fold", tier="contract" },
   { workspace="apps", package="wamn-wms-data-access", target="lib:wamn_wms_data_access", tier="contract" },

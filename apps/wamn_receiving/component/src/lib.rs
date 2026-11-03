@@ -5,10 +5,16 @@
 
 //! One package-grain component exporting every Receiving operation.
 
+#[expect(
+    dead_code,
+    reason = "private data modules retain the complete generated and authored refusal vocabulary"
+)]
+mod data;
+
+use crate::data::record_receipt as receipt;
 use exports::wamn_receiving::receiving::record_receipt as contract;
 #[cfg(test)]
 use wamn::node::types::NodeError;
-use wamn_receiving_data_access::record_receipt as receipt;
 
 #[cfg(test)]
 mod codecs;
@@ -16,7 +22,7 @@ mod reads;
 
 /// The generated operations, whole.
 mod generated {
-    use wamn_receiving_data_access::generated as data;
+    use crate::data::generated as data;
     include!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../target/wamn/wamn_receiving/component/mod.rs"

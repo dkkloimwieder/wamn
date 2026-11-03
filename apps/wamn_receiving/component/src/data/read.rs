@@ -1,7 +1,7 @@
 //! Application-owned read connections and history image projection.
 
-use crate::error::{AccessError, AllowedConstraints};
-use crate::statements::wamn::{
+use crate::data::error::{AccessError, AllowedConstraints};
+use crate::data::statements::wamn::{
     location_list as location_sql, receiving_load_purchase_order_history as history_sql,
     receiving_purchase_order_summary as summary_sql,
 };
@@ -58,7 +58,7 @@ fn history_value(
             wamn_record_history::retain_columns(
                 &text,
                 &PURCHASE_ORDER_HISTORY_COLUMNS,
-                crate::generated::purchase_order::TIMESTAMPTZ_COLUMNS,
+                crate::data::generated::purchase_order::TIMESTAMPTZ_COLUMNS,
             )
         })
         .ok_or_else(|| AccessError::internal("history read returned no JSON object image"))
@@ -163,14 +163,14 @@ fn history_position(after_cursor: Option<&str>, id: &Uuid) -> Result<i64, Access
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::AccessErrorType;
+    use crate::data::AccessErrorType;
     use serde_json::Value;
     use wamn_postgres_statements::TimestampTz;
 
     #[test]
     fn history_columns_are_the_declared_purchase_order_columns() {
         let manifest: Value = serde_json::from_str(include_str!(
-            "../../../target/wamn/wamn_receiving/wamn.json"
+            "../../../../target/wamn/wamn_receiving/wamn.json"
         ))
         .unwrap();
         // Generation derives the relation from the statement, in name order.
