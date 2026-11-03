@@ -743,6 +743,12 @@ Build the debug test binaries before the cases:
 cargo build --locked -p wamn-ctl --bins -p wamn-cdc-reader -p wamn-component-virtualizer
 ```
 
+Both cases run `wamn` and `wamn-ctl` from `PATH`. Put the debug directory first:
+
+```bash
+export PATH="$CARGO_TARGET_DIR/debug:$PATH"
+```
+
 When the owner requests kind tests, run both cases together from the prepared shell:
 
 ```bash
@@ -807,8 +813,9 @@ cargo test --locked -p wamn-control --test platform_apply_kind -- --ignored --ex
 
 The rerun skips earlier steps and runs the selected step and every later step whose dependencies completed.
 It uses saved inputs and does not rebuild earlier steps.
-It copies the images of this checkout into the kept registry again and stamps the fixture chart from them, so a merged fix runs.
-If a fixture image digest differs from `WAMN_RELEASE_CHART`, the rerun fails and names the image.
+It copies the images of this checkout into the kept registry again and stamps the fixture chart and the install chart `work/release-chart` from them, so a merged fix runs.
+The install chart names the runner image of the provisioning Jobs, and the install keeps it while the registry and version match.
+If an image digest in either chart differs from `WAMN_RELEASE_CHART`, the rerun fails and names the chart and the image.
 If the platform version differs from the kept fixture, the rerun fails.
 The install remains one step because its Jobs already skip completed work by input digest.
 Step names and dependencies live in `STEPS` in `crates/control/lib/tests/support/platform_checks.rs`.

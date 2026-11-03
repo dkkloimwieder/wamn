@@ -2,7 +2,7 @@
 use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use wamn_control::environment::document::EnvironmentDocument;
 use wamn_control::package_artifact::PackageRegistry;
@@ -199,6 +199,13 @@ pub struct Data {
     pub invite_modified: Option<SystemTime>,
     pub control_secrets: Vec<(String, Value)>,
     pub repeated: Vec<String>,
+}
+
+/// The charts a rerun stamps again: the fixture chart and the install chart, whose
+/// runner image runs the provisioning Jobs. The install keeps its chart while the
+/// registry and version match, so a rerun must replace it.
+pub fn rerun_charts(directory: &Path, work: &Path) -> [PathBuf; 2] {
+    [directory.join("fixture-chart"), work.join("release-chart")]
 }
 
 /// The copied platform images whose digest in `fixture` is not the digest in `source`.
@@ -483,5 +490,18 @@ mod tests {
             ["/platform/gates/image"]
         );
         assert_eq!(stale_images(&serde_json::json!({}), &fixture).len(), 5);
+        let mut install = chart("new");
+        install["platform"]["runner"]["image"] = "localhost:1/wamn-runner:0.1.1@sha256:old".into();
+        assert_eq!(
+            stale_images(&chart("new"), &install),
+            ["/platform/runner/image"]
+        );
+    }
+
+    #[test]
+    fn a_rerun_restamps_the_install_chart() {
+        let charts = rerun_charts(Path::new("/var/tmp/p"), Path::new("/var/tmp/p/work"));
+        assert!(charts.contains(&PathBuf::from("/var/tmp/p/work/release-chart")));
+        assert!(charts.contains(&PathBuf::from("/var/tmp/p/fixture-chart")));
     }
 }

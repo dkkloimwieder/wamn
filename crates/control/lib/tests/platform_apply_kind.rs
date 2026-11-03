@@ -58,8 +58,8 @@ mod kind_checks;
 #[path = "support/platform_checks.rs"]
 mod platform_checks;
 use platform_checks::{
-    Data, FailedCheck, Fixture, Kept, STEPS, missing, resume, reuse_from, stale_images,
-    unchanged_versions,
+    Data, FailedCheck, Fixture, Kept, STEPS, missing, rerun_charts, resume, reuse_from,
+    stale_images, unchanged_versions,
 };
 
 struct Run {
@@ -308,7 +308,14 @@ cluster.Cluster {{
         ),
     )?;
     let document = ClusterDocument::compile(&file).context("compile the kind cluster document")?;
-    let chart = fixture_images(&repository, &directory, &document.registry, &version).await?;
+    let chart = fixture_images(
+        &repository,
+        &directory,
+        &document.registry,
+        &version,
+        &[directory.join("fixture-chart")],
+    )
+    .await?;
     let environments = directory.join("environments");
     std::fs::create_dir(&environments)?;
     let (source, mut environment) = fixture_environment(&repository, "receiving")?;
@@ -405,12 +412,14 @@ cluster.Cluster {{
     Ok(())
 }
 
-/// Copies this checkout's images into the fixture registry and stamps the fixture chart from them.
+/// Copies this checkout's images into the fixture registry and stamps each chart from them.
+/// Returns the values of the first chart.
 async fn fixture_images(
     repository: &Path,
     directory: &Path,
     registry: &str,
     version: &str,
+    charts: &[std::path::PathBuf],
 ) -> anyhow::Result<Value> {
     let source_chart = platform_images::source_chart(repository, directory)?;
     let source_images = wamn_control::release_chart::image_set(&source_chart).await?;
@@ -420,21 +429,25 @@ async fn fixture_images(
         .next()
         .context("host registry")?;
     copy_images(source_registry, registry, version).await?;
-    let fixture_chart = directory.join("fixture-chart");
-    if fixture_chart.exists() {
-        std::fs::remove_dir_all(&fixture_chart)?;
-    }
-    stamp_registry(repository, registry, version, &fixture_chart)?;
-    let chart: Value = serde_yaml::from_slice(&std::fs::read(fixture_chart.join("values.yaml"))?)?;
     let source: Value = serde_yaml::from_slice(&std::fs::read(source_chart.join("values.yaml"))?)?;
-    let stale = stale_images(&source, &chart);
-    ensure!(
-        stale.is_empty(),
-        "fixture chart images differ from {}: {}",
-        source_chart.display(),
-        stale.join(", ")
-    );
-    Ok(chart)
+    let mut first = None;
+    for chart in charts {
+        if chart.exists() {
+            std::fs::remove_dir_all(chart)?;
+        }
+        stamp_registry(repository, registry, version, chart)?;
+        let values: Value = serde_yaml::from_slice(&std::fs::read(chart.join("values.yaml"))?)?;
+        let stale = stale_images(&source, &values);
+        ensure!(
+            stale.is_empty(),
+            "{} images differ from {}: {}",
+            chart.display(),
+            source_chart.display(),
+            stale.join(", ")
+        );
+        first.get_or_insert(values);
+    }
+    first.context("no chart to stamp")
 }
 
 /// A rerun runs this checkout's images, so a merged fix reaches the kept cluster.
@@ -453,6 +466,7 @@ async fn refresh(run: &Run) -> anyhow::Result<()> {
         &run.kept.directory,
         &fixture.document.registry,
         &version,
+        &rerun_charts(&run.kept.directory, &run.kept.work),
     )
     .await?;
     for name in ["test--receiving--dev.json", "a-unqualified-wms.json"] {
