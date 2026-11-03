@@ -33,7 +33,7 @@ pub fn admit(
     let scope = ComponentPackageScope {
         env_key: "rest--publication--test".into(),
         package_id: manifest(package)["package"]["id"].as_str().unwrap().into(),
-        package_version: "0.1.0".into(),
+        package_version: "0.1.1".into(),
     };
     let declaration = match palette {
         Some(template) => {

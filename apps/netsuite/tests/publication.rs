@@ -67,7 +67,7 @@ fn fixture() -> Fixture {
     let scope = ComponentPackageScope {
         env_key: "rest--publication--test".into(),
         package_id: "netsuite".into(),
-        package_version: "0.1.0".into(),
+        package_version: "0.1.1".into(),
     };
     let documents: Vec<_> = [
         "netsuite_pull",
@@ -103,7 +103,7 @@ fn fixture() -> Fixture {
         run_schema: "catalog".into(),
         packages: ["wamn_integration", "netsuite", "rest_consumer_fixture"]
             .into_iter()
-            .map(|name| PackageCoordinate::new(name, "0.1.0").unwrap())
+            .map(|name| PackageCoordinate::new(name, "0.1.1").unwrap())
             .collect(),
     };
     Fixture {

@@ -2133,7 +2133,7 @@ manifest.Package {
             error.error_type(),
             DevPackageErrorType::BaseDependencyMissing
         );
-        assert_eq!(error.coordinate(), Some("platform_fixture@2.1.0"));
+        assert_eq!(error.coordinate(), Some("platform_fixture@2.1.1"));
         assert_eq!(error.dependency_digest(), Some(expected.digest.as_str()));
         assert_eq!(error.searched_roots(), std::slice::from_ref(&overlay_root));
 
@@ -2150,7 +2150,7 @@ manifest.Package {
             error.error_type(),
             DevPackageErrorType::BaseDependencyAmbiguous
         );
-        assert_eq!(error.coordinate(), Some("platform_fixture@2.1.0"));
+        assert_eq!(error.coordinate(), Some("platform_fixture@2.1.1"));
         assert_eq!(error.dependency_digest(), Some(expected.digest.as_str()));
         assert_eq!(
             error.searched_roots(),

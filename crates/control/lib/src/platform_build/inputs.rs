@@ -833,6 +833,7 @@ pub(super) mod tests {
             ("tools/bench/src/main.rs", "fn main() {}"),
             ("tools/submodule-check/src/main.rs", "fn main() {}"),
             ("vendor/example/src/lib.rs", "// dependency"),
+            ("wit/example/world.wit", "package example:world;"),
             ("docs/readme.md", "docs\n"),
             ("target/release/wamn-host", "binary"),
         ] {
