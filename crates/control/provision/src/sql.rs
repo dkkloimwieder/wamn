@@ -853,6 +853,11 @@ pub const IDENTITY_READER_RELATIONS: [&str; 5] = [
     "password_logins",
 ];
 
+/// The columns the identity reader reads beside [`IDENTITY_READER_RELATIONS`]:
+/// session admission checks the active org membership (`wamn-ms1sn.2`).
+pub const IDENTITY_READER_COLUMNS: [(&str, &[&str]); 1] =
+    [("org_memberships", &["principal_id", "org", "status"])];
+
 /// Converge one system-plane reader's stable ACL role to exactly `SELECT` on
 /// `relations` inside `schema`, and nothing anywhere else in the control plane.
 ///
@@ -935,7 +940,14 @@ pub fn grant_identity_reader_surface_sql() -> String {
         "identity",
         &IDENTITY_READER_RELATIONS,
     );
-    sql.push_str(" GRANT SELECT (principal_id, org, status) ON identity.org_memberships TO wamn_identity_reader;");
+    for (relation, columns) in IDENTITY_READER_COLUMNS {
+        write!(
+            sql,
+            " GRANT SELECT ({}) ON identity.{relation} TO wamn_identity_reader;",
+            columns.join(", "),
+        )
+        .expect("writing to a String cannot fail");
+    }
     sql
 }
 

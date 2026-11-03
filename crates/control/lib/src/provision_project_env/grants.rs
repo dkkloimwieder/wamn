@@ -105,6 +105,7 @@ impl StableGrantSet {
                 SystemReader::Registry,
                 "registry",
                 &sql::REGISTRY_READER_RELATIONS,
+                &[],
                 role,
                 database,
                 required_database,
@@ -114,6 +115,7 @@ impl StableGrantSet {
                 SystemReader::Identity,
                 "identity",
                 &sql::IDENTITY_READER_RELATIONS,
+                &sql::IDENTITY_READER_COLUMNS,
                 role,
                 database,
                 required_database,
@@ -1002,10 +1004,17 @@ pub(super) fn verify_connection_reader_grants(
 /// An empty grant set is only acceptable in a database that is not the target:
 /// the control database MUST carry the grant set, and every other database in
 /// the cluster must carry nothing at all.
+///
+/// `columns` names the column reads in `schema` beside the whole relations.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the reader's surface and the database it is measured in are separate facts"
+)]
 pub(super) fn verify_system_reader_grants(
     reader: impl std::fmt::Display,
     schema: &str,
     relations: &[&str],
+    columns: &[(&str, &[&str])],
     role: &str,
     database: &str,
     required_database: &str,
@@ -1055,6 +1064,16 @@ pub(super) fn verify_system_reader_grants(
             relation.to_string(),
             "SELECT".to_string(),
         ));
+    }
+    for (relation, names) in columns {
+        for column in *names {
+            expected.insert((
+                "column".to_string(),
+                schema.to_string(),
+                format!("{relation}.{column}"),
+                "SELECT".to_string(),
+            ));
+        }
     }
     anyhow::ensure!(
         actual == expected,

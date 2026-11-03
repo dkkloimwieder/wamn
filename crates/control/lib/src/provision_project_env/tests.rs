@@ -436,6 +436,7 @@ fn the_registry_reader_grants_are_exact_and_never_reach_identity() {
             SystemReader::Registry,
             "registry",
             &sql::REGISTRY_READER_RELATIONS,
+            &[],
             WorkloadRoleFamily::RegistryReader.acl_role(),
             database,
             "wamn_system",
@@ -494,12 +495,21 @@ fn the_identity_reader_grants_are_exact_and_never_allow_a_write() {
         role_acl("relation", "identity", "principals", "SELECT"),
         role_acl("relation", "identity", "project_env_memberships", "SELECT"),
         role_acl("relation", "identity", "project_roles", "SELECT"),
+        role_acl(
+            "column",
+            "identity",
+            "org_memberships.principal_id",
+            "SELECT",
+        ),
+        role_acl("column", "identity", "org_memberships.org", "SELECT"),
+        role_acl("column", "identity", "org_memberships.status", "SELECT"),
     ];
     let verify = |grants: &[RoleAcl], database: &str| {
         verify_system_reader_grants(
             SystemReader::Identity,
             "identity",
             &sql::IDENTITY_READER_RELATIONS,
+            &sql::IDENTITY_READER_COLUMNS,
             WorkloadRoleFamily::IdentityReader.acl_role(),
             database,
             "wamn_system",
@@ -518,6 +528,8 @@ fn the_identity_reader_grants_are_exact_and_never_allow_a_write() {
         role_acl("relation", "identity", "project_env_memberships", "UPDATE"),
         role_acl("relation", "identity", "project_env_memberships", "DELETE"),
         role_acl("column", "identity", "pats.token_hash", "UPDATE"),
+        role_acl("column", "identity", "org_memberships.status", "UPDATE"),
+        role_acl("relation", "identity", "org_memberships", "SELECT"),
         // …and the other reader's plane.
         role_acl("schema", "registry", "registry", "USAGE"),
         role_acl("relation", "registry", "event_readers", "SELECT"),
@@ -533,6 +545,14 @@ fn the_identity_reader_grants_are_exact_and_never_allow_a_write() {
             "refused for the wrong reason: {error}"
         );
     }
+    // The membership columns are part of the exact set, so a reader without
+    // one of them fails too.
+    let narrowed = exact
+        .iter()
+        .filter(|acl| acl.object_name != "org_memberships.status")
+        .cloned()
+        .collect::<Vec<_>>();
+    verify(&narrowed, "wamn_system").expect_err("a reader without a membership column passed");
     verify(&[], "wamn_system").expect_err("an empty control-database grant set passed");
     verify(&[], "some_project_db").unwrap();
 }
